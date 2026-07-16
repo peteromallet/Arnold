@@ -54,6 +54,7 @@ class AgentRequest:
     resume_handler: str | None = None
     target_id: str | None = None
     launch_origin: Mapping[str, Any] | None = None
+    report_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -189,6 +190,12 @@ class FakeAgentRunner:
             registration = tools.get(call.tool_name)
             tool_name = registration.name
             operation_kind = registration.operation_kind
+            denial = _report_only_tool_denial(
+                registration.name, registration.operation_kind, runtime_context
+            )
+            if denial is not None:
+                result_payload = denial
+                raise _ReportOnlyToolDenied
             tool_input = registration.input_model.model_validate(arguments)
             raw_result = await asyncio.wait_for(
                 _run_tool_handler(registration.handler, tool_input, runtime_context),
@@ -202,6 +209,8 @@ class FakeAgentRunner:
                 "message": f"tool timed out after {self.tool_timeout_s:g}s",
                 "data": {"error": "timeout"},
             }
+        except _ReportOnlyToolDenied:
+            pass
         except (ValidationError, Exception) as exc:
             result_payload = {
                 "ok": False,
@@ -357,6 +366,7 @@ class CodexCliAgentRunner(DispatchProtocol):
         started_at = perf_counter()
         timeout_recovered = False
         with tempfile.NamedTemporaryFile(prefix="resident-codex-", suffix=".txt") as output:
+            effective_sandbox = "read-only" if request.report_only else self.sandbox
             cmd = [
                 "codex",
                 "exec",
@@ -367,7 +377,7 @@ class CodexCliAgentRunner(DispatchProtocol):
                 "-c",
                 'approval_policy="never"',
                 "--sandbox",
-                self.sandbox,
+                effective_sandbox,
                 "--skip-git-repo-check",
                 "--output-last-message",
                 output.name,
@@ -431,7 +441,8 @@ class CodexCliAgentRunner(DispatchProtocol):
             "runner": "codex_cli",
             "model": model_name,
             "reasoning_effort": self.config.codex_reasoning_effort,
-            "sandbox": self.sandbox,
+            "sandbox": effective_sandbox,
+            "report_only": request.report_only,
         }
         if timeout_recovered:
             metadata["timeout_recovery"] = {
@@ -484,7 +495,13 @@ class CodexCliAgentRunner(DispatchProtocol):
             "Keep final Discord replies concise. Messages are delivered to the user through Discord, "
             "so do not reference local filesystem paths or local-file links in user-facing replies; "
             "describe durable artifacts by run ID or human-readable name instead.\n\n"
-            "Resident request JSON:\n"
+            + (
+                "This request is report-only. The runner sandbox is read-only: do not launch or "
+                "follow up agents, start/resume cloud work, edit files, or mutate git. Only report "
+                "evidence and todo reconciliation recommendations.\n\n"
+                if request.report_only else ""
+            )
+            + "Resident request JSON:\n"
             + json.dumps(payload, sort_keys=True, default=str)
         )
         if len(prompt) > self.config.max_prompt_chars:
@@ -576,6 +593,12 @@ async def _execute_registered_tool(
         registration = tools.get(tool_name)
         tool_name = registration.name
         operation_kind = registration.operation_kind
+        denial = _report_only_tool_denial(
+            registration.name, registration.operation_kind, runtime_context
+        )
+        if denial is not None:
+            result_payload = denial
+            raise _ReportOnlyToolDenied
         tool_input = registration.input_model.model_validate(arguments)
         raw_result = await asyncio.wait_for(
             _run_tool_handler(registration.handler, tool_input, runtime_context),
@@ -583,6 +606,8 @@ async def _execute_registered_tool(
         )
         result_model = _coerce_tool_result(registration.output_model, raw_result)
         result_payload = result_model.model_dump(mode="json")
+    except _ReportOnlyToolDenied:
+        pass
     except asyncio.TimeoutError:
         result_payload = {
             "ok": False,
@@ -604,6 +629,39 @@ async def _execute_registered_tool(
         result=result_payload,
         duration_ms=duration_ms,
     )
+
+
+class _ReportOnlyToolDenied(Exception):
+    """Internal control flow for a denied report-only tool call."""
+
+
+_REPORT_ONLY_TODO_MUTATIONS = frozenset(
+    {"complete_todo_item", "reconcile_todo_item", "supersede_todo_item"}
+)
+
+
+def _report_only_tool_denial(
+    tool_name: str,
+    operation_kind: str,
+    runtime_context: ToolRuntimeContext,
+) -> dict[str, Any] | None:
+    origin = runtime_context.launch_origin
+    report_only = bool(
+        isinstance(origin, Mapping) and origin.get("report_only") is True
+    )
+    if not report_only:
+        return None
+    if operation_kind in {"read", "cloud_read"} or tool_name in _REPORT_ONLY_TODO_MUTATIONS:
+        return None
+    return {
+        "ok": False,
+        "message": "scheduled audit is report-only; execution mutation denied",
+        "data": {
+            "error": "report_only_execution_denied",
+            "tool_name": tool_name,
+            "allowed_mutation": "todo reconciliation only",
+        },
+    }
 
 
 def openai_client_from_config(config: ResidentConfig) -> Any:

@@ -24,6 +24,7 @@ from .provenance import provenance_from_environment
 from .reply_chain import decode_reply_cursor, reply_chain_page
 from .runtime import ResidentRuntime
 from .scheduler import make_store_scheduler
+from . import vp_todo
 from .status_tree import DEFAULT_NODE_LIMIT, MAX_NODE_LIMIT, read_cloud_status_node
 from .context_tree import read_context_node, search_context
 from arnold_pipelines.megaplan.cloud import status_snapshot
@@ -117,6 +118,23 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
     inspect_queue_parser.add_argument("--project-dir")
     inspect_queue_parser.add_argument("--limit", type=int, default=8)
 
+    supersede_todo_parser = sub.add_parser(
+        "supersede-todo",
+        parents=[shared],
+        help=(
+            "Supersede obsolete pending todo intent using canonical retirement or "
+            "replacement evidence without asserting completion"
+        ),
+    )
+    supersede_todo_parser.add_argument("--id", required=True)
+    supersede_todo_parser.add_argument("--canonical-record-id", required=True)
+    supersede_todo_parser.add_argument("--evidence", required=True)
+    supersede_todo_parser.add_argument("--resolution", required=True)
+    supersede_todo_parser.add_argument(
+        "--todo-path",
+        help="Explicit todo store path; defaults to the resident configuration",
+    )
+
 
 def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
     config = _resident_config(args)
@@ -131,6 +149,8 @@ def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
             return _resident_queue_subagent_successor(root, config, args)
         if action == "inspect-subagent-queue":
             return _resident_inspect_subagent_queue(root, args)
+        if action == "supersede-todo":
+            return _resident_supersede_todo(config, args)
         if action == "read-reply-chain":
             return _resident_read_reply_chain(
                 store,
@@ -164,6 +184,33 @@ def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
         if callable(close):
             close()
     raise CliError("invalid_args", f"Unknown resident action: {getattr(args, 'resident_action', None)!r}")
+
+
+def _resident_supersede_todo(
+    config: ResidentConfig, args: argparse.Namespace
+) -> dict[str, Any]:
+    path = Path(
+        args.todo_path or config.special_requests_todo_path
+    ).expanduser().resolve()
+    try:
+        item = vp_todo.supersede_by_record(
+            path,
+            args.id,
+            canonical_record_id=args.canonical_record_id,
+            evidence=args.evidence,
+            resolution=args.resolution,
+        )
+    except ValueError as exc:
+        raise CliError("todo_reconciliation_rejected", str(exc)) from exc
+    if item is None:
+        raise CliError("todo_not_found", f"todo item not found: {args.id}")
+    return {
+        "success": True,
+        "step": "resident",
+        "action": "supersede-todo",
+        "todo_path": str(path),
+        "item": vp_todo.public_item(item),
+    }
 
 
 def _resident_queue_subagent_successor(

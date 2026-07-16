@@ -88,6 +88,48 @@ def test_codex_cli_runner_uses_configured_sandbox(tmp_path: Path) -> None:
     assert runner.sandbox == "danger-full-access"
 
 
+def test_codex_cli_runner_forces_read_only_for_report_only_request(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls.txt"
+    codex = bin_dir / "codex"
+    codex.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$@\" > \"$CODEX_CALLS\"\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  if [[ \"$1\" == \"--output-last-message\" ]]; then shift; printf 'audit\\n' > \"$1\"; fi\n"
+        "  shift || true\n"
+        "done\n"
+        "cat >/dev/null\n",
+        encoding="utf-8",
+    )
+    codex.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("CODEX_CALLS", str(calls))
+    runner = CodexCliAgentRunner(
+        ResidentConfig(model_provider="codex", codex_sandbox="danger-full-access"),
+        cwd=tmp_path,
+    )
+
+    response = asyncio.run(
+        runner.run(
+            AgentRequest(
+                conversation_id="audit-conversation",
+                messages=({"role": "user", "content": "audit"},),
+                system_prompt="system",
+                report_only=True,
+            ),
+            ToolRegistry(),
+        )
+    )
+
+    assert "--sandbox\nread-only" in calls.read_text(encoding="utf-8")
+    assert response.metadata["sandbox"] == "read-only"
+    assert response.metadata["report_only"] is True
+
+
 def test_codex_cli_runner_recovers_same_invocation_after_initial_timeout(
     tmp_path: Path, monkeypatch
 ) -> None:
