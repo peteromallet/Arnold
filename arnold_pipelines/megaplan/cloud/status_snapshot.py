@@ -359,6 +359,7 @@ def plan_activity_summary(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
             "operator_next": entry.get("operator_next"),
             "latest_activity": entry.get("latest_activity"),
             "progress": entry.get("progress"),
+            "accepted_progress": entry.get("accepted_progress"),
         }
         status = entry.get("status")
         if status == "running":
@@ -1066,6 +1067,102 @@ def _build_session_entry(
             worker_pid = _as_int(raw_worker_pid)
             if worker_pid is None or not _pid_is_live(worker_pid):
                 active_step_for_advancement = False
+    # ── Successor gate parameters ─────────────────────────────────────
+    _successors: list = []
+    _completion_contract_mode = "shadow"
+    _has_final_acceptance_receipt = False
+    _final_milestone_label = None
+    _chain_state_doc: dict[str, Any] | None = None
+    if remote_spec and chain_complete:
+        try:
+            _spec = load_chain_spec(Path(remote_spec))
+            _successors = getattr(_spec, "successors", None) or []
+            if chain_health:
+                _completion_contract_mode = str(
+                    chain_health.get("completion_contract_mode", "shadow")
+                )
+            if _spec.milestones:
+                _final_milestone_label = _spec.milestones[-1].label
+                # Load the chain state file directly to check for an
+                # acceptance receipt on the final milestone.
+                _state_path, _chain_state_doc = _load_latest_chain_state(workspace)
+                if isinstance(_chain_state_doc, dict):
+                    _completed = _chain_state_doc.get("completed")
+                    if isinstance(_completed, list):
+                        for _rec in _completed:
+                            if isinstance(_rec, dict) and _rec.get("label") == _final_milestone_label:
+                                _has_final_acceptance_receipt = isinstance(
+                                    _rec.get("acceptance_receipt"), dict
+                                )
+                                break
+        except Exception:
+            pass
+
+    # ── Accepted-progress projection ─────────────────────────────────
+    # Compute which milestones carry acceptance receipts so consumers
+    # (watchdog, resident, human operators) can distinguish authoritative
+    # milestone transitions from worker activity, review, repair, custody,
+    # and fixer-infrastructure liveness signals.  This is purely a status
+    # projection — it never gates transitions.
+    _accepted_milestone_labels: list[str] = []
+    _acceptance_required = False
+    _waiting_for_acceptance = False
+    _acceptance_contract_mode = _completion_contract_mode
+    if remote_spec and chain_health:
+        try:
+            _acceptance_contract_mode = str(
+                chain_health.get("completion_contract_mode", "shadow")
+            )
+        except Exception:
+            _acceptance_contract_mode = "shadow"
+
+    if _chain_state_doc is None and remote_spec:
+        try:
+            _state_path2, _chain_state_doc = _load_latest_chain_state(workspace)
+        except Exception:
+            _chain_state_doc = None
+
+    if isinstance(_chain_state_doc, dict):
+        _completed_records = _chain_state_doc.get("completed")
+        if isinstance(_completed_records, list):
+            for _rec in _completed_records:
+                if isinstance(_rec, dict) and isinstance(_rec.get("acceptance_receipt"), dict):
+                    _label = _rec.get("label")
+                    if isinstance(_label, str) and _label:
+                        _accepted_milestone_labels.append(_label)
+
+    # Determine whether acceptance is required for successor chains.
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        is_fail_closed_mode,
+    )
+    _is_fail_closed = is_fail_closed_mode(_acceptance_contract_mode)
+    if _is_fail_closed:
+        try:
+            _succ_spec = _successors if _successors else (
+                getattr(load_chain_spec(Path(remote_spec)), "successors", None) or []
+                if remote_spec else []
+            )
+            _acceptance_required = any(
+                getattr(_s, "require_accepted_transaction", True)
+                for _s in _succ_spec
+            )
+        except Exception:
+            _acceptance_required = bool(_successors)
+
+    _waiting_for_acceptance = (
+        chain_complete
+        and _is_fail_closed
+        and _acceptance_required
+        and not _has_final_acceptance_receipt
+    )
+
+    accepted_progress: dict[str, Any] = {
+        "accepted_milestones": _accepted_milestone_labels,
+        "final_milestone_accepted": _has_final_acceptance_receipt,
+        "mode": _acceptance_contract_mode,
+        "acceptance_required": _acceptance_required,
+        "waiting_for_acceptance": _waiting_for_acceptance,
+    }
     advancement = assess_advancement(
         advancement_policy,
         current_state=plan_current_state,
@@ -1075,6 +1172,11 @@ def _build_session_entry(
         active_step=active_step_for_advancement,
         explicit_human_gate=(operator_next if status == "blocked" else None),
         failure_kind=latest_failure.get("kind"),
+        successors=_successors,
+        completion_contract_mode=_completion_contract_mode,
+        completed_count=completed_count or 0,
+        has_final_acceptance_receipt=_has_final_acceptance_receipt,
+        final_milestone_label=_final_milestone_label,
     )
     active_step = (
         plan_state_doc.get("active_step")
@@ -1137,6 +1239,12 @@ def _build_session_entry(
         "milestone_count": milestone_count,
         "chain_complete": chain_complete,
         "plan_state": plan_current_state or None,
+        # Accepted-progress projection: distinguishes authoritative
+        # milestone transitions (backed by acceptance receipts) from
+        # worker activity, review, repair, custody, and fixer-infra
+        # liveness signals.  Consumers read this to decide whether
+        # progress is accepted or merely observed.
+        "accepted_progress": accepted_progress,
         **presentation,
         "progress": _session_progress(
             completed_count=completed_count,

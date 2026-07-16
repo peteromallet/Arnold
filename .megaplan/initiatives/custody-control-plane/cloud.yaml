@@ -2,7 +2,7 @@ provider: ssh
 
 repo:
   url: https://github.com/peteromallet/Arnold.git
-  branch: main
+  branch: consolidate/arnold-runtime-activation-20260714
   workspace: /workspace/custody-control-plane-20260714/Arnold
 
 agents:
@@ -19,10 +19,10 @@ chain:
   spec: /workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/chain.yaml
 
 megaplan:
-  ref: editible-install
+  ref: consolidate/arnold-runtime-activation-20260714
   codex_auth: chatgpt
   repo: https://github.com/peteromallet/Arnold.git
-  src_path: /workspace/arnold-custody-runtime
+  src_path: /workspace/arnold-consolidation-20260714
 
 resources:
   volume: agent-volume

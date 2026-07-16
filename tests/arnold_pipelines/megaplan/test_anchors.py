@@ -21,7 +21,7 @@ from arnold_pipelines.megaplan.chain.spec import (
     validate_required_anchor,
     warn_undeclared_north_star,
 )
-from arnold_pipelines.megaplan.cli.parser import build_parser
+from arnold_pipelines.megaplan.cli import build_parser
 from arnold_pipelines.megaplan.types import CliError
 
 

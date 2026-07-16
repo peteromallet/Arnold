@@ -30,7 +30,7 @@
       }
     },
     {
-      "compiled_manifest_hash": "sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba",
+      "compiled_manifest_hash": "sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96",
       "disposition": "migrate",
       "example_docs": {
         "exists": true,
@@ -42,14 +42,14 @@
       "pipeline_id": "megaplan",
       "registry_entry": {
         "m6_disposition": "keep",
-        "manifest_hash": "sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba",
+        "manifest_hash": "sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96",
         "name": "megaplan",
         "seam_ids": [],
         "stable_id": "megaplan.core",
         "typed_contract_capable": false
       },
       "registry_id": "megaplan.core",
-      "registry_manifest_hash": "sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba",
+      "registry_manifest_hash": "sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96",
       "registry_path": "arnold_pipelines/megaplan/pipeline_ids.json",
       "skill_docs": {
         "exists": true,
@@ -158,7 +158,7 @@
       }
     },
     {
-      "compiled_manifest_hash": "sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba",
+      "compiled_manifest_hash": "sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96",
       "disposition": "migrate",
       "example_docs": {
         "exists": true,
@@ -170,14 +170,14 @@
       "pipeline_id": "megaplan",
       "registry_entry": {
         "m6_disposition": "keep",
-        "manifest_hash": "sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba",
+        "manifest_hash": "sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96",
         "name": "planning",
         "seam_ids": [],
         "stable_id": "megaplan.planning",
         "typed_contract_capable": true
       },
       "registry_id": "megaplan.planning",
-      "registry_manifest_hash": "sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba",
+      "registry_manifest_hash": "sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96",
       "registry_path": "arnold_pipelines/megaplan/pipeline_ids.json",
       "skill_docs": {
         "exists": true,
