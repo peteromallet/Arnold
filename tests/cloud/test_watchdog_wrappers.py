@@ -80,6 +80,16 @@ def test_progress_auditor_review_uses_bounded_pointer_and_typed_response() -> No
     assert 'data["hypothesis"] = text[:2000]' in text
 
 
+def test_progress_auditor_completion_evidence_records_approval_corrective_path() -> None:
+    text = _wrapper("arnold-progress-auditor")
+
+    assert 'escalation.get("decision") == "approval_required"' in text
+    assert 'corrective_path.get("action") == "await_human_pr_merge"' in text
+    assert 'corrective_path.get("repair_dispatch_permitted") is False' in text
+    assert '"recommendation": "auditor_escalate_to_human"' in text
+    assert 'aggregate_next_event = "human_approval.pr_merge"' in text
+
+
 def test_relaunch_scripts_preserve_managed_repair_route_context() -> None:
     watchdog = _wrapper("arnold-watchdog")
     repair_loop = _repair_wrapper()
