@@ -136,7 +136,9 @@ def test_long_running_superfixer_wrappers_pin_syntax_checked_source_snapshot(
     assert "mktemp" in text
     assert "bash -n" in text
     assert f"export {prefix}_SNAPSHOT_ACTIVE=1" in text
-    assert 'trap \'rm -f -- "${BASH_SOURCE[0]:-$0}"\' EXIT' in text
+    assert f'{prefix}_SNAPSHOT_PATH="${{BASH_SOURCE[0]:-$0}}"' in text
+    assert f'trap \'rm -f -- "${prefix}_SNAPSHOT_PATH"\' EXIT' in text
+    assert 'trap \'rm -f -- "${BASH_SOURCE[0]:-$0}"\' EXIT' not in text
 
 
 @pytest.mark.parametrize(
