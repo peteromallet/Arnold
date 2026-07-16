@@ -137,6 +137,11 @@ def discover_running_sessions(status_node: Mapping[str, Any] | None) -> list[Map
     for row in sessions:
         if not isinstance(row, Mapping):
             continue
+        # Presentation state owns presentation grouping.  A runner can remain
+        # live while canonical plan progress is blocked, but that liveness
+        # must not turn the chain's display state back into "Running".
+        if (_canonical_progress_state(row) or "").casefold() == "blocked":
+            continue
         status = str(row.get("status") or "").casefold()
         if status in _RUNNING_SESSION_STATUSES or row.get("repairing") is True:
             discovered.append(row)
@@ -154,32 +159,64 @@ def discover_running_sessions(status_node: Mapping[str, Any] | None) -> list[Map
 def discover_attention_sessions(
     status_node: Mapping[str, Any] | None,
 ) -> list[Mapping[str, Any]]:
-    """Return recently active canonical attention/blocked non-live chains.
+    """Return canonical blocked/attention chains that remain useful to show.
 
     ``latest_activity`` is the status projection's authoritative activity
     timestamp.  The snapshot observation clock is deliberately used as the
     reference, so replayed snapshots preserve their truthful rolling window.
-    The boundary is inclusive: activity exactly twelve hours before the
-    snapshot is shown.
+    The boundary is inclusive.  Canonically blocked chains with a live runner
+    remain visible regardless of the rolling window: runner liveness is useful
+    detail, but does not make their display state running.
     """
 
     if not isinstance(status_node, Mapping) or status_node.get("stale_banner"):
         return []
     snapshot_time = _parse_utc_timestamp(status_node.get("generated_at"))
-    if snapshot_time is None:
-        return []
     sessions = status_node.get("sessions")
     if not isinstance(sessions, list):
         return []
     running = {id(row) for row in discover_running_sessions(status_node)}
-    return [
-        row for row in sessions
-        if isinstance(row, Mapping)
-        and id(row) not in running
-        and str(row.get("status") or "").casefold()
-        in {_ATTENTION_SESSION_STATUS, "blocked"}
-        and _is_within_attention_window(row, snapshot_time)
-    ]
+    discovered: list[Mapping[str, Any]] = []
+    for row in sessions:
+        if not isinstance(row, Mapping) or id(row) in running:
+            continue
+        canonical_blocked = (
+            (_canonical_progress_state(row) or "").casefold() == "blocked"
+        )
+        session_attention = str(row.get("status") or "").casefold() in {
+            _ATTENTION_SESSION_STATUS,
+            "blocked",
+        }
+        if not (canonical_blocked or session_attention):
+            continue
+        if canonical_blocked and _runner_is_live(row):
+            discovered.append(row)
+        elif snapshot_time is not None and _is_within_attention_window(
+            row, snapshot_time
+        ):
+            discovered.append(row)
+    return discovered
+
+
+def _canonical_progress_state(row: Mapping[str, Any]) -> str | None:
+    """Return canonical presentation state with the required fallback order."""
+
+    progress = row.get("progress")
+    if not isinstance(progress, Mapping):
+        return None
+    return _optional_label(progress.get("display_state")) or _optional_label(
+        progress.get("plan_state")
+    )
+
+
+def _runner_is_live(row: Mapping[str, Any]) -> bool:
+    """Keep process/session liveness distinct from canonical display state."""
+
+    return (
+        str(row.get("status") or "").casefold() in _RUNNING_SESSION_STATUSES
+        or row.get("process") is True
+        or row.get("repairing") is True
+    )
 
 
 def _is_within_attention_window(
@@ -562,6 +599,7 @@ def _render_session(row: Mapping[str, Any]) -> str:
         name_label = f"{name_label} · `{_safe_label(current_plan)}`"
 
     display_state = _optional_label(progress.get("display_state"))
+    canonical_progress_state = _canonical_progress_state(row)
     active_phase = progress.get("active_phase")
     if active_phase is None:
         active_phase = row.get("active_phase")
@@ -570,6 +608,13 @@ def _render_session(row: Mapping[str, Any]) -> str:
         effective_session_status == "repairing" and display_state.casefold() == "failed"
     ):
         status = display_state
+    elif (
+        canonical_progress_state
+        and canonical_progress_state.casefold() == "blocked"
+    ):
+        # A stale execute-phase marker must not override the required
+        # plan-state fallback when canonical display_state is absent.
+        status = canonical_progress_state
     elif _phase_name(active_phase) == "execute":
         status = "executing"
     else:
@@ -592,13 +637,20 @@ def _render_session(row: Mapping[str, Any]) -> str:
     if plan_percent is not None:
         details.append(f"{plan_percent}% plan bookkeeping (not acceptance)")
     session_status = effective_session_status
+    blocked_with_live_runner = status.casefold() == "blocked" and _runner_is_live(row)
+    if blocked_with_live_runner:
+        if row.get("process") is True:
+            details.append("runner process alive")
+        elif session_status:
+            details.append(f"runner {session_status}")
     if session_status and session_status.casefold() == _ATTENTION_SESSION_STATUS:
         details.append("⚠️ attention")
         operator_next = _optional_label(row.get("operator_next"))
         if operator_next:
             details.append(_safe_label(operator_next))
     elif session_status and session_status.casefold() != status.casefold():
-        details.append(f"chain {session_status}")
+        if not blocked_with_live_runner:
+            details.append(f"chain {session_status}")
     return f"• {name_label}\n  `{_safe_label(status)}` · {' · '.join(details)}"
 
 
