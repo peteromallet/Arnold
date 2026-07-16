@@ -1,61 +1,88 @@
 # Durable Session Knowledge Compiler
 
 Build an automatic, evidence-linked knowledge compiler for every managed agent
-session. It incrementally records what happened, reusable knowledge, paper-cut
-observations, and improvement candidates without changing the outcome or
-latency contract of the managed work itself.
+session. It records activity, reusable knowledge, paper-cut observations, and
+improvement candidates without changing the outcome or latency contract of the
+managed work itself. `NORTHSTAR.md` is the unchanged end-state authority.
 
-## Concise user request and product intent
+## Current truth
 
-The user wants every managed agent/session to compile durable knowledge
-automatically at roughly 100,000 newly persisted tokens and at terminal states.
-The compiler must keep immutable evidence-linked checkpoints plus rolling/final
-syntheses; separate activity, reusable knowledge, paper-cut observations, and
-improvement candidates; label observed/performed/inferred/proposed/unverified
-claims; promote project knowledge cautiously; preserve source observations
-through backlog deduplication; and expose lightweight record, correction,
-search, and promotion controls. Bounded extraction should use the same cheap
-direct DeepSeek Pro semantics as partnered-5.
+This initiative is now an eleven-sprint Megaplan epic. Each sprint represents
+approximately two weeks of skilled human engineering, including design,
+implementation, tests, review, and its predecessor/successor handoff. The
+canonical executable front door is `chain.yaml`, a symlink to the versioned
+successor spec `chain-v2-20260716.yaml`; current briefs live only under
+`briefs/`.
 
-## Concise factual conversation/session record
+| Sprint | Theme | Human estimate | Required predecessor handoff |
+|---|---|---:|---|
+| M1 | Canonical capture, identity, and source-position contracts | ~2 weeks | Initiative evidence and current backend inventory |
+| M2 | Durable cursors, jobs, leases, and trigger lifecycle | ~2 weeks | M1 capture-contract handoff |
+| M3 | Four-record schemas, evidence references, and persistence | ~2 weeks | M2 checkpoint-commit handoff |
+| M4 | Bounded direct-Pro extraction and atomic acceptance | ~2 weeks | M3 record-schema handoff |
+| M5 | Rolling/final synthesis and append-only correction | ~2 weeks | M4 accepted-checkpoint handoff |
+| M6 | Scoped search and five agent-facing controls | ~2 weeks | M5 synthesis/correction handoff |
+| M7 | Promotion candidates, applicability, and review authority | ~2 weeks | M6 promotion-candidate handoff |
+| M8 | Contradiction, supersession, invalidation, and revision-aware search | ~2 weeks | M7 promotion-governance handoff |
+| M9 | Paper-cut consolidation, ranking, and ticket adapter | ~2 weeks | M8 governed-search handoff |
+| M10 | Rollout controls, budgets, diagnostics, and rollback | ~2 weeks | M9 backlog-lineage handoff |
+| M11 | Cross-backend conformance, failure hardening, and operator docs | ~2 weeks | M10 rollout-readiness handoff |
 
-The authoritative resident conversation shows the product emerging across the
-user and assistant turns from `msg_af16e8600ccc` through `msg_534f83393205` on
-2026-07-13. The delegated operator then searched that conversation, created
-this five-milestone initiative, wrote its North Star, audit, prep record,
-briefs, and chain, verified the exact
-`partnered-5` direct-provider routing, and initialized chain
-`chain-c256f171485f` with M1 plan
-`m1-durable-capture-cursors-20260713-2045`. Resident completion message
-`msg_3e70b98cfb87` independently records the prepared assets and initialization.
-No product implementation was completed in that session: at
-2026-07-13T21:07:18Z the plan remained `initialized`, with its original `prep`
-worker dead/stale and no active lock. This factual record is deliberately
-separate from the intended product behavior above.
+The original milestones were too broad for the two-week sizing contract. The
+recorded estimates are M1 ~4 weeks, M2 ~4 weeks, M3 ~4 weeks, M4 ~4 weeks, and
+M5 ~6 weeks, for approximately 22 weeks total. The resize preserves that total
+outcome while separating durable dependency boundaries instead of creating
+micro-milestones.
 
-## Initiative assets
+## Initialized M1 disposition
 
-- `NORTHSTAR.md` defines the durable product destination and invariants.
-- `research/conversation-audit-20260713.md` records the authoritative product
-  discussion and provenance used to prepare the epic.
-- `notes/megaplan-prep-20260713.md` records sizing and run-dial choices.
-- `briefs/m1.md` through `briefs/m5.md` are self-contained sprint briefs.
-- `chain.yaml` is the executable five-milestone Megaplan chain.
+Historical chain `chain-c256f171485f` initialized plan
+`m1-durable-capture-cursors-20260713-2045` on 2026-07-13. It was not
+implemented and is not complete. Its brief was snapshotted at initialization,
+so neither that plan nor its five-milestone chain is mutated or resumed by this
+resize. The original spec and briefs are retained verbatim under
+`archive/20260713-initialized-five-milestone/` and are superseded for future
+execution only.
 
-## Prep record
+Any future run must start from root `chain.yaml`. Because that symlink resolves
+to the new versioned spec path, the file-backed chain-state identity is fresh;
+operators must not copy old chain state, resume `chain-c256f171485f`, or treat
+its initialized M1 as predecessor completion. No chain was launched as part of
+this planning update.
 
-This is an epic because persistence and scheduling, evidence compilation,
-synthesis and UX, project promotion governance, and backlog consolidation are
-separate architectural deliverables with sequential contracts. Each milestone
-is scoped to no more than roughly two weeks of skilled engineering work.
+## Canonical asset index
 
-Every milestone is overall plan difficulty 5/5 and uses `partnered-5/full`
-with default depth. A locally plausible design could pass focused tests while
-silently losing evidence, advancing an idempotency cursor incorrectly,
-promoting stale claims, or erasing source observations during deduplication.
-DeepSeek routing is explicitly `direct`; canonical Pro slots resolve to
-`hermes:deepseek:deepseek-v4-pro`.
+- `NORTHSTAR.md` — durable outcome and load-bearing invariants; unchanged by
+  the resize because the intended product boundary is unchanged.
+- `chain.yaml` — canonical front door symlink for the successor chain.
+- `chain-v2-20260716.yaml` — current eleven-milestone executable spec.
+- `briefs/` — the eleven current self-contained milestone briefs.
+- `notes/resize-20260716.md` — duration estimates, decomposition logic, rubric
+  choices, and initialized-plan custody decision.
+- `research/conversation-audit-20260713.md` — authoritative product discussion
+  and provenance.
+- `notes/megaplan-prep-20260713.md` — historical five-milestone prep record;
+  superseded for sizing/profile choices but retained as provenance.
+- `archive/20260713-initialized-five-milestone/README.md` — non-destructive
+  index of the original snapshotted planning inputs.
 
-The pinned runtime has no configured `execution.auto_approve`. The chain is
-therefore review-gated with `driver.auto_approve: false`; launch is authorized,
-but destructive code execution still requires the harness approval checkpoint.
+## Product boundaries retained
+
+- Roughly 100,000 newly persisted tokens and terminal states drive eligibility.
+- Evidence remains primary; checkpoints are immutable, idempotent, and
+  correction-friendly.
+- Compiler failure is visible and retryable but harmless to primary-session
+  completion and delivery.
+- Activity, reusable knowledge, paper cuts, and improvement candidates remain
+  distinct and carry observed/performed/inferred/proposed/unverified claim kind.
+- Promotion is explicit, evidence-linked, repository/revision-aware, and
+  contradiction-sensitive.
+- Consolidation never deletes source observations, and bounded extraction uses
+  canonical `hermes:deepseek:deepseek-v4-pro` through provider `direct`.
+
+## Launch boundary
+
+These are planning assets only. Product implementation, chain launch/resume,
+deployment, push, remote PR merge, and restart remain unauthorized by this
+update. `driver.auto_approve` remains `false` and failure/escalation stop the
+successor chain.
