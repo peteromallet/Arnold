@@ -348,6 +348,43 @@ def test_terminal_repair_failure_is_not_semantic_progress() -> None:
     assert gate["progress"]["terminal_repair_failure_without_progress"] is True
 
 
+def test_terminal_l2_receipt_completes_process_evidence_without_live_pid() -> None:
+    finding = _true_stall()
+    finding["current_target"]["tmux_process"] = {
+        "session": "custody-control-plane",
+        "live_status": "unknown",
+    }
+    finding["active_step_liveness"] = {"present": False}
+    finding["prior_watchdog_report_refs"] = [{"matched_status": "dispatched"}]
+    finding["meta_repair_summary"].update(
+        {
+            "should_dispatch": True,
+            "meta_run_refs": [
+                {
+                    "current_episode": True,
+                    "failure_code": "meta_repair_authority_blocked",
+                }
+            ],
+            "failed_meta_run_count": 1,
+            "failed_meta_run_evidence": True,
+        }
+    )
+    finding["deterministic_superfixer_evidence"].update(
+        {
+            "actionable": True,
+            "failed_l2_evidence": True,
+            "runner_dead": True,
+            "chain_incomplete": True,
+        }
+    )
+
+    gate = classify_true_stall(finding)
+
+    assert gate["evidence_sources"]["live_process"]["state"] == "dead"
+    assert "incomplete_or_incoherent_evidence" not in gate["blocks"]
+    assert gate["eligible"] is True
+
+
 def test_ordinary_retrigger_failure_is_l2_fixed_axis_not_tracking_axis() -> None:
     finding = _true_stall()
     finding["meta_repair_summary"]["failed_meta_run_count"] = 0
