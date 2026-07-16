@@ -30,6 +30,7 @@ MAX_CONTEXT_BYTES = 64 * 1024
 MAX_RECEIPT_BYTES = 64 * 1024
 MAX_OBSERVATION_BUNDLE_BYTES = 48 * 1024
 META_REPAIR_OBSERVATION_BUNDLE_SCHEMA = "arnold-meta-repair-observation-bundle-v1"
+REPAIR_OBSERVATION_BUNDLE_SCHEMA = "arnold-repair-observation-bundle-v1"
 INVESTIGATION_TARGET_KINDS = frozenset({"l1_repair_target", "l2_repair_system"})
 EVIDENCE_SOURCE_KINDS = frozenset(
     {
@@ -1531,6 +1532,75 @@ def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
     return bundle
 
 
+def build_repair_observation_bundle(context_path: str | Path) -> dict[str, Any]:
+    """Broker one bounded L1 view when the host cannot enforce read-only tools."""
+
+    context = _load_bounded_json(
+        context_path,
+        max_bytes=MAX_CONTEXT_BYTES,
+        label="repair investigation context",
+    )
+    if context.get("schema_version") != REPAIR_INVESTIGATION_CONTEXT_SCHEMA:
+        raise ValueError("repair investigation context schema is invalid")
+    digest = str(context.get("context_digest") or "")
+    recomputed = _digest({key: value for key, value in context.items() if key != "context_digest"})
+    if not digest or digest != recomputed:
+        raise ValueError("repair investigation context digest disagrees")
+
+    observations: list[dict[str, Any]] = []
+    for source in context.get("evidence_sources") or []:
+        if not isinstance(source, Mapping) or source.get("kind") not in EVIDENCE_SOURCE_KINDS:
+            raise ValueError("repair investigation evidence source is invalid")
+        observations.append(
+            {
+                "kind": source.get("kind"),
+                "path": str(source.get("path") or ""),
+                "authority": source.get("authority"),
+                "observed": _bound_observation_value(source.get("observed")),
+            }
+        )
+
+    analysis_keys = (
+        "exact_error",
+        "frozen_checkpoint",
+        "current",
+        "current_phase_result",
+        "custody_contradictions",
+        "custody_status",
+        "durable_quality_block",
+        "goal_continuity",
+        "intended_recovery",
+        "l2_replan_authorization",
+        "prior_repairs",
+        "recovery_contract",
+        "repair_outcome",
+        "request",
+        "safe_repair_boundaries",
+    )
+    required_receipt = context.get("required_investigator_output")
+    required_receipt = dict(required_receipt) if isinstance(required_receipt, Mapping) else {}
+    required_receipt["context_digest"] = digest
+    bundle = redact_payload(
+        {
+            "schema_version": REPAIR_OBSERVATION_BUNDLE_SCHEMA,
+            "context_digest": digest,
+            "session": context.get("session"),
+            "goal_id": context.get("goal_id"),
+            "target_kind": context.get("target_kind"),
+            "access_verified": True,
+            "analysis_context": {
+                key: context.get(key) for key in analysis_keys if key in context
+            },
+            "required_receipt_shape": required_receipt,
+            "observations": observations,
+        }
+    )
+    encoded_bundle = json.dumps(bundle, sort_keys=True, separators=(",", ":")).encode()
+    if len(encoded_bundle) > MAX_OBSERVATION_BUNDLE_BYTES:
+        raise ValueError("brokered repair observations exceed 48 KiB")
+    return bundle
+
+
 def validate_investigator_receipt(
     value: Mapping[str, Any], *, expected_context_digest: str,
     observation_bundle: Mapping[str, Any] | None = None,
@@ -1879,6 +1949,9 @@ def _parser() -> argparse.ArgumentParser:
     observe_meta = sub.add_parser("observe-meta")
     observe_meta.add_argument("--context", required=True)
     observe_meta.add_argument("--output", required=True)
+    observe = sub.add_parser("observe")
+    observe.add_argument("--context", required=True)
+    observe.add_argument("--output", required=True)
     validate = sub.add_parser("validate")
     validate.add_argument("--receipt", required=True)
     validate.add_argument("--context-digest", required=True)
@@ -1916,6 +1989,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         _atomic_write(Path(args.output), value)
     elif args.command == "observe-meta":
         value = build_meta_observation_bundle(args.context)
+        _atomic_write(Path(args.output), value)
+    elif args.command == "observe":
+        value = build_repair_observation_bundle(args.context)
         _atomic_write(Path(args.output), value)
     else:
         value = validate_investigator_receipt(
@@ -1966,6 +2042,7 @@ __all__ = [
     "INVESTIGATION_TARGET_KINDS",
     "build_meta_investigation_context",
     "build_meta_observation_bundle",
+    "build_repair_observation_bundle",
     "build_investigation_context",
     "summarize_investigation_artifacts",
     "validate_meta_investigation_context",

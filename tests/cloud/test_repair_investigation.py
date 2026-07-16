@@ -17,6 +17,7 @@ from arnold_pipelines.megaplan.cloud.repair_investigation import (
     build_meta_investigation_context,
     build_meta_observation_bundle,
     build_investigation_context,
+    build_repair_observation_bundle,
     summarize_investigation_artifacts,
     validate_meta_investigation_context,
     validate_investigator_receipt,
@@ -134,6 +135,66 @@ def test_context_is_bounded_and_carries_exact_error_and_recent_repairs(tmp_path:
     assert context["required_investigator_output"][
         "action_specific_handoff_examples"
     ]["recover_state"]["allowed_mutations"] == [f"supported_cli:{supported_cli}"]
+
+
+def test_l1_broker_observation_is_digest_bound_typed_and_bounded(tmp_path: Path) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+    context_path = tmp_path / "context.json"
+    _write(context_path, context)
+
+    observation = build_repair_observation_bundle(context_path)
+
+    assert observation["schema_version"] == "arnold-repair-observation-bundle-v1"
+    assert observation["context_digest"] == context["context_digest"]
+    assert observation["access_verified"] is True
+    assert observation["required_receipt_shape"]["context_digest"] == context["context_digest"]
+    assert {item["kind"] for item in observation["observations"]} >= {
+        "plan_state",
+        "repair_data",
+        "repair_queue",
+    }
+    assert len(json.dumps(observation, sort_keys=True, separators=(",", ":")).encode()) <= 48 * 1024
+
+    context["exact_error"]["message"] = "tampered"
+    _write(context_path, context)
+    with pytest.raises(ValueError, match="context digest disagrees"):
+        build_repair_observation_bundle(context_path)
+
+
+def test_l1_broker_observation_fails_closed_above_48_kib(tmp_path: Path) -> None:
+    context = {
+        "schema_version": "arnold-repair-investigation-context-v1",
+        "context_digest": "",
+        "session": "demo",
+        "goal_id": "goal-demo",
+        "target_kind": "l1_repair_target",
+        "exact_error": {"message": "x" * 50_000},
+        "evidence_sources": [],
+        "required_investigator_output": {},
+    }
+    digest_payload = {key: value for key, value in context.items() if key != "context_digest"}
+    context["context_digest"] = hashlib.sha256(
+        json.dumps(
+            digest_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode()
+    ).hexdigest()
+    context_path = tmp_path / "oversized-observation-context.json"
+    _write(context_path, context)
+    assert context_path.stat().st_size <= MAX_CONTEXT_BYTES
+
+    with pytest.raises(ValueError, match="brokered repair observations exceed 48 KiB"):
+        build_repair_observation_bundle(context_path)
 
 
 def test_context_normalizes_mapping_validation_from_real_repair_report(tmp_path: Path) -> None:
@@ -1168,10 +1229,15 @@ def test_repair_loop_uses_bounded_context_pointer_from_sandbox_root() -> None:
     assert 'type: arnold-repair-investigation-context' in wrapper
     assert 'sha256: $context_sha256' in wrapper
     assert 'prompt_bytes > 65536' in wrapper
+    assert 'bwrap --ro-bind / / true' in wrapper
+    assert 'investigator_mode="brokered_no_tools"' in wrapper
+    assert '--toolsets ""' in wrapper
+    assert "repair_investigation observe" in wrapper
+    assert '--context "$INVESTIGATION_CONTEXT_PATH"' in wrapper
     assert "<investigation_handoff>" in wrapper
 
 
-def test_repair_loop_has_one_pointer_only_invalid_receipt_correction() -> None:
+def test_repair_loop_has_one_bounded_invalid_receipt_correction() -> None:
     wrapper = (
         REPO_ROOT
         / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
@@ -1185,7 +1251,9 @@ def test_repair_loop_has_one_pointer_only_invalid_receipt_correction() -> None:
     assert ":correction:2" not in function
     assert "invalid_candidate_receipt; path:" in function
     assert "validator_error; path:" in function
-    assert 'cat "$invalid_receipt_path"' not in function
+    assert 'cat "$invalid_receipt_path"' in function
+    assert 'if [[ "$investigator_mode" == "brokered_no_tools" ]]' in function
+    assert '<verified_bounded_observation>' in function
     assert '${validation_output:0:2000}' in function
     assert "invalid_receipt_bytes > 65536" in function
     assert "prompt_bytes > 65536" in function
