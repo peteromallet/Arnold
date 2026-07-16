@@ -6228,7 +6228,11 @@ from arnold_pipelines.megaplan.cloud.repair_investigation import validate_invest
 context_path, receipt_path, expected_digest, mutation_label = sys.argv[1:]
 context = json.loads(Path(context_path).read_text(encoding="utf-8"))
 receipt = json.loads(Path(receipt_path).read_text(encoding="utf-8"))
-validated = validate_investigator_receipt(receipt, expected_context_digest=expected_digest)
+validated = validate_investigator_receipt(
+    receipt,
+    expected_context_digest=expected_digest,
+    investigation_context=context,
+)
 recomputed = hashlib.sha256(json.dumps(
     {key: value for key, value in context.items() if key != "context_digest"},
     sort_keys=True, separators=(",", ":"), default=str,
@@ -6408,7 +6412,8 @@ EOF
   if [[ "$rc" != "0" ]] || ! PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
       arnold_pipelines.megaplan.cloud.repair_investigation validate \
       --receipt "$INVESTIGATOR_RECEIPT_PATH" \
-      --context-digest "$context_digest" >>"$LOG" 2>&1; then
+      --context-digest "$context_digest" \
+      --context "$INVESTIGATION_CONTEXT_PATH" >>"$LOG" 2>&1; then
     repair_data_set_outcome "fixer_infrastructure_failure"
     persist_repair_investigation_failure \
       "investigator_dispatch_or_validation" \
@@ -6427,7 +6432,12 @@ data_path, context_path, receipt_path, digest, run_id = sys.argv[1:]
 payload = load_json(pathlib.Path(data_path), default={})
 from arnold_pipelines.megaplan.cloud.repair_investigation import validate_investigator_receipt
 receipt = json.loads(pathlib.Path(receipt_path).read_text(encoding="utf-8"))
-validated = validate_investigator_receipt(receipt, expected_context_digest=digest)
+context = json.loads(pathlib.Path(context_path).read_text(encoding="utf-8"))
+validated = validate_investigator_receipt(
+    receipt,
+    expected_context_digest=digest,
+    investigation_context=context,
+)
 payload["investigation"] = {
     "context_path": context_path,
     "context_digest": digest,

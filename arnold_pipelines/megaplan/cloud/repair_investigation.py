@@ -33,6 +33,7 @@ EVIDENCE_SOURCE_KINDS = frozenset(
         "chain_state",
         "plan_state",
         "phase_result",
+        "review_artifact",
         "event_log",
         "chain_log",
         "repair_data",
@@ -156,6 +157,80 @@ def _phase_result_summary(plan_state_path: object) -> dict[str, Any]:
         "blocked_tasks": [item if isinstance(item, Mapping) else _text(item, 1000) for item in blocked_tasks[-20:]],
         "deviations": [item if isinstance(item, Mapping) else {"message": _text(item, 4000)} for item in deviations[-20:]],
         "external_error": value.get("external_error"),
+    }
+
+
+def _review_quality_blocker_summary(plan_state_path: object) -> dict[str, Any]:
+    """Return bounded authoritative rework evidence for a blocked review.
+
+    A workspace HEAD change is not evidence that a review blocker was fixed.
+    Keep the review verdict and its concrete rework target in the L1 envelope so
+    the investigator cannot replace the persisted quality decision with a
+    generic stale-state inference.
+    """
+
+    if not plan_state_path:
+        return {}
+    path = Path(str(plan_state_path)).parent / "review.json"
+    try:
+        stat = path.stat()
+        if stat.st_size > 2 * 1024 * 1024:
+            raise ValueError(f"review artifact exceeds 2 MiB bound: {path}")
+        raw = path.read_bytes()
+        if len(raw) != stat.st_size:
+            raise ValueError(f"review artifact changed while read: {path}")
+        value = json.loads(raw)
+    except FileNotFoundError:
+        return {"path": str(path), "present": False}
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        raise ValueError(f"review artifact is unreadable: {path}") from exc
+    if not isinstance(value, Mapping):
+        raise ValueError(f"review artifact is not an object: {path}")
+
+    criteria = value.get("criteria") if isinstance(value.get("criteria"), list) else []
+    failed_criteria = []
+    for item in criteria:
+        if not isinstance(item, Mapping) or str(item.get("pass") or "").lower() != "fail":
+            continue
+        failed_criteria.append(
+            {
+                "name": _text(item.get("name"), 750),
+                "evidence": _text(item.get("evidence"), 1000),
+            }
+        )
+    rework = value.get("rework_items") if isinstance(value.get("rework_items"), list) else []
+    rework_items = []
+    for item in rework[-6:]:
+        if not isinstance(item, Mapping):
+            continue
+        check = item.get("deterministic_check")
+        check_summary = {}
+        if isinstance(check, Mapping):
+            check_summary = {
+                "command": _text(check.get("command"), 1500),
+                "baseline_status": _text(check.get("baseline_status"), 500),
+                "post_status": _text(check.get("post_status"), 500),
+            }
+        rework_items.append(
+            {
+                "task_id": _text(item.get("task_id"), 200),
+                "issue": _text(item.get("issue"), 1000),
+                "expected": _text(item.get("expected"), 1000),
+                "actual": _text(item.get("actual"), 1000),
+                "evidence_file": _text(item.get("evidence_file"), 500),
+                "deterministic_check": check_summary,
+            }
+        )
+    return {
+        "path": str(path),
+        "present": True,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "size_bytes": len(raw),
+        "review_verdict": _text(value.get("review_verdict"), 300),
+        "summary": _text(value.get("summary"), 1000),
+        "issues": [_text(item, 1000) for item in (value.get("issues") or [])[-6:]],
+        "failed_criteria": failed_criteria[-6:],
+        "rework_items": rework_items,
     }
 
 
@@ -377,6 +452,24 @@ def build_investigation_context(
     phase_result_blocked = bool(
         phase_result and phase_exit_kind not in {"", "success", "succeeded", "completed", "done"}
     )
+    latest_failure = (
+        current.get("latest_failure")
+        if isinstance(current.get("latest_failure"), Mapping)
+        else {}
+    )
+    latest_failure_kind = _text(latest_failure.get("kind"), 300).lower()
+    durable_quality_block = bool(
+        str(current.get("plan_state") or "").lower() == "blocked"
+        and (
+            "quality" in latest_failure_kind
+            or phase_exit_kind == "blocked_by_quality"
+        )
+    )
+    review_quality_blocker = (
+        _review_quality_blocker_summary(current.get("plan_state_path"))
+        if durable_quality_block
+        else {}
+    )
     request_signature = (
         request.get("problem_signature")
         if isinstance(request.get("problem_signature"), Mapping)
@@ -516,6 +609,15 @@ def build_investigation_context(
         evidence_sources.append(
             _evidence_source("phase_result", phase_result.get("path"), phase_result, authority=5)
         )
+    if review_quality_blocker:
+        evidence_sources.append(
+            _evidence_source(
+                "review_artifact",
+                review_quality_blocker.get("path"),
+                review_quality_blocker,
+                authority=5,
+            )
+        )
     if external_observation:
         evidence_sources.append(
             _evidence_source(
@@ -588,6 +690,25 @@ def build_investigation_context(
         "recovery_contract": recovery_contract,
         "current": current,
         "current_phase_result": phase_result,
+        "durable_quality_block": {
+            "active": durable_quality_block,
+            "recover_state_allowed": False if durable_quality_block else True,
+            "reason": (
+                "A persisted blocked review verdict is authoritative until its concrete "
+                "rework is repaired; an unrelated workspace HEAD change is not blocker clearance."
+                if durable_quality_block
+                else ""
+            ),
+            "review_artifact": {
+                key: review_quality_blocker.get(key)
+                for key in ("path", "present", "sha256", "size_bytes", "review_verdict")
+            },
+            "allowed_actions": (
+                ["repair_source", "repair_target", "replan"]
+                if durable_quality_block
+                else ["preserve_live", "repair_source", "repair_target", "recover_state", "replan"]
+            ),
+        },
         "exact_error": external_failure
         or current.get("latest_failure")
         or (phase_result if phase_result_blocked else {})
@@ -1226,6 +1347,7 @@ def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
 def validate_investigator_receipt(
     value: Mapping[str, Any], *, expected_context_digest: str,
     observation_bundle: Mapping[str, Any] | None = None,
+    investigation_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if value.get("schema_version") != REPAIR_INVESTIGATOR_RECEIPT_SCHEMA:
         raise ValueError("investigator receipt schema is invalid")
@@ -1328,6 +1450,19 @@ def validate_investigator_receipt(
     }
     if target_kind not in allowed_targets[action]:
         raise ValueError("investigator action and safe repair target disagree")
+    if isinstance(investigation_context, Mapping):
+        if investigation_context.get("context_digest") != expected_context_digest:
+            raise ValueError("investigator context digest disagrees")
+        quality_block = investigation_context.get("durable_quality_block")
+        if (
+            isinstance(quality_block, Mapping)
+            and quality_block.get("active") is True
+            and action == "recover_state"
+        ):
+            raise ValueError(
+                "state recovery cannot replay a durable review-quality block before its "
+                "bounded rework target is repaired"
+            )
     if isinstance(observation_bundle, Mapping):
         if observation_bundle.get("context_digest") != expected_context_digest:
             raise ValueError("investigator observation bundle digest disagrees")
@@ -1402,7 +1537,11 @@ def summarize_investigation_artifacts(
             "receipt_path": str(receipt_path),
         }
     try:
-        validated = validate_investigator_receipt(receipt, expected_context_digest=digest)
+        validated = validate_investigator_receipt(
+            receipt,
+            expected_context_digest=digest,
+            investigation_context=context,
+        )
     except ValueError as exc:
         return {
             "required": True,
@@ -1490,6 +1629,7 @@ def _parser() -> argparse.ArgumentParser:
     validate.add_argument("--receipt", required=True)
     validate.add_argument("--context-digest", required=True)
     validate.add_argument("--observation", default="")
+    validate.add_argument("--context", default="")
     return parser
 
 
@@ -1527,6 +1667,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             _load(args.receipt),
             expected_context_digest=args.context_digest,
             observation_bundle=_load(args.observation) if args.observation else None,
+            investigation_context=_load(args.context) if args.context else None,
         )
     print(json.dumps(value, sort_keys=True))
     return 0
