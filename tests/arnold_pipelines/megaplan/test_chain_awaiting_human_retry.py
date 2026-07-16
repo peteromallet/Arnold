@@ -1115,6 +1115,49 @@ def test_no_push_reconciliation_never_fabricates_open_pr_as_merged(
     }
 
 
+def test_one_stops_after_ground_truth_reconciles_local_milestone(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    state = ChainState(current_milestone_index=0, completed=[])
+    state_after = ChainState(
+        current_milestone_index=1,
+        completed=[
+            {
+                "label": "m7",
+                "plan": "m7-plan",
+                "status": "done",
+                "pr_number": None,
+                "pr_state": None,
+                "local_commit_sha": "b" * 40,
+            }
+        ],
+    )
+    save_chain_state(spec_path, state)
+
+    with (
+        patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
+        patch(
+            "arnold_pipelines.megaplan.chain._reconcile_chain_from_ground_truth",
+            return_value=state_after,
+        ),
+        patch("arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery") as drive,
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            no_push=True,
+            no_git_refresh=True,
+            one=True,
+            require_anchor_override=False,
+            missing_anchor_ack_override="unit test uses a minimal chain spec",
+        )
+
+    drive.assert_not_called()
+    assert result["status"] == "done"
+    assert result["reason"] == "one-milestone limit reached during ground-truth reconciliation"
+
+
 def test_run_chain_rearms_fresh_session_execute_block_on_restart(
     tmp_path: Path,
 ) -> None:

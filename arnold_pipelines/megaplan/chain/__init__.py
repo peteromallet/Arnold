@@ -3736,6 +3736,11 @@ def _append_reconciled_completed_record_with_guard(
         "pr_number": pr_number,
         "pr_state": pr_state,
     }
+    if pr_number is None:
+        local_commit_sha = _current_git_head(root)
+        if local_commit_sha is not None:
+            record["local_commit_sha"] = local_commit_sha
+            record["publication_evidence"] = "local_no_push_reconciliation"
     appended, reason = _append_completed_with_guard(
         root,
         state,
@@ -6082,6 +6087,7 @@ def run_chain(
         "yes",
         "YES",
     }
+    completed_before_reconciliation = len(state.completed)
     state = _reconcile_chain_from_ground_truth(
         root,
         spec_path,
@@ -6092,6 +6098,15 @@ def run_chain(
     )
 
     events: list[dict[str, Any]] = []
+
+    if one and len(state.completed) > completed_before_reconciliation:
+        return _result(
+            "done",
+            state,
+            events,
+            spec=spec,
+            reason="one-milestone limit reached during ground-truth reconciliation",
+        )
 
     def log(msg: str, **fields: Any) -> None:
         events.append({"msg": msg, **fields})
