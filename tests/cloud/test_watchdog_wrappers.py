@@ -8255,6 +8255,9 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     assert 'tmux new-session -d -s "$session"' in text
     assert 'launch_receipt="$RUN_DIR/mechanical-launch-$iteration-receipt.json"' in text
     assert '"schema_version": "arnold-mechanical-launch-receipt-v1"' in text
+    assert 'export ARNOLD_AUTONOMY=$(printf \'%q\' "${ARNOLD_AUTONOMY:-}")' in text
+    assert 'export ARNOLD_REPAIR_TRIGGER_ENABLED=$(printf \'%q\' "${ARNOLD_REPAIR_TRIGGER_ENABLED:-}")' in text
+    assert '"started_at": started_at' in text
     assert 'echo "terminal:$post_status:receipt=$launch_receipt"' in text
     assert '"authorized-recovery-launch-failed"' in text
     assert text.index('if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]') < text.index(

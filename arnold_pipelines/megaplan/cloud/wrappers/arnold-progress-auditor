@@ -484,6 +484,27 @@ def _plan_dirs(workspace: pathlib.Path) -> list[pathlib.Path]:
         return []
 
 
+def _authoritative_current_plan(workspace: pathlib.Path) -> str:
+    chain_root = workspace / ".megaplan" / "plans" / ".chains"
+    try:
+        candidates = sorted(
+            chain_root.glob("*.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return ""
+    for path in candidates:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        current = str(payload.get("current_plan_name") or "").strip()
+        if current:
+            return current
+    return ""
+
+
 def _merge(
     entries: dict[tuple[str, str], dict],
     workspace: pathlib.Path,
@@ -555,7 +576,9 @@ for marker_path in sorted(pathlib.Path(marker_dir).glob("*.json")):
         marker_plan_dir = workspace / ".megaplan" / "plans" / marker_plan_name
         plan_dirs = [marker_plan_dir] if marker_plan_dir.is_dir() else []
     else:
-        plan_dirs = _plan_dirs(workspace)
+        current_plan = _authoritative_current_plan(workspace)
+        current_dir = workspace / ".megaplan" / "plans" / current_plan
+        plan_dirs = [current_dir] if current_plan and current_dir.is_dir() else _plan_dirs(workspace)
     for plan_dir in plan_dirs:
         _merge(entries, workspace, plan_dir, session, "marker", updated, marker_path, payload)
 
@@ -612,6 +635,11 @@ for workspace in workspace_children:
         events_path = plan_dir / "events.ndjson"
         if _recent_mtime(state_path) or _recent_mtime(events_path):
             _merge(entries, workspace, plan_dir, workspace.name, "workspace_activity")
+
+for entry in entries.values():
+    current_plan = _authoritative_current_plan(pathlib.Path(entry["workspace"]))
+    entry["authoritative_current_plan"] = current_plan
+    entry["session_evidence_scope"] = bool(current_plan and current_plan == entry["plan"])
 
 with open(out, "w", encoding="utf-8") as handle:
     for entry in sorted(entries.values(), key=lambda item: (item["workspace"], item["plan"])):
@@ -679,6 +707,7 @@ from arnold_pipelines.megaplan.cloud.auditor_external_evidence import (
 )
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
+from arnold_pipelines.megaplan.cloud.progress_auditor_liveness import classify_runner_liveness
 try:
     from arnold_pipelines.megaplan.cloud.repair_investigation import summarize_investigation_artifacts
 except ImportError:
@@ -1036,7 +1065,7 @@ def _collect_meta_run_refs(session):
     if not META_RUN_DIR.exists():
         return refs
     safe_session = "".join(ch if ch.isalnum() or ch in "_.-" else "-" for ch in str(session))
-    candidates = list(META_RUN_DIR.glob(f"*{safe_session}*")) + list(META_RUN_DIR.glob(f"*{session}*"))
+    candidates = list(META_RUN_DIR.glob(f"*{safe_session}*.log")) + list(META_RUN_DIR.glob(f"*{session}*.log"))
     seen = set()
     ordered = []
     for path in candidates:
@@ -1047,33 +1076,19 @@ def _collect_meta_run_refs(session):
         ordered.append((_mtime(path), path))
     ordered.sort(reverse=True)
     selected = list(ordered[:5])
-    failure_by_path = {}
-    selected_failure_codes = set()
-    window_seconds = float(window) * 3600
-    for mtime, path in ordered[:MAX_META_RUN_INSPECT_ITEMS]:
-        if mtime and now.timestamp() - mtime > window_seconds:
-            continue
-        failure_code = _meta_run_failure_code(path)
-        if not failure_code:
-            continue
-        failure_by_path[str(path)] = failure_code
-        if failure_code in selected_failure_codes:
-            continue
-        selected_failure_codes.add(failure_code)
-        if all(existing != path for _, existing in selected):
-            selected.append((mtime, path))
-        if len(selected_failure_codes) >= 4:
-            break
-    for mtime, path in selected:
+    for index, (mtime, path) in enumerate(selected):
         tail = _tail_with_line_numbers(path, lines=12)
-        failure_code = failure_by_path.get(str(path)) or _meta_run_failure_code(path)
-        launch_failure = bool(failure_code) or _text_has_meta_launch_failure(tail)
+        failure_code = _meta_run_failure_code(path)
+        current_episode = index == 0
+        launch_failure = bool(current_episode and (failure_code or _text_has_meta_launch_failure(tail)))
         refs.append(
             {
                 "path": _redact_scalar(path),
                 "mtime_age_min": int((now.timestamp() - mtime) // 60) if mtime else None,
                 "tail": _redact_scalar(tail),
                 "launch_failure": launch_failure,
+                "current_episode": current_episode,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                 **({"failure_code": failure_code} if failure_code else {}),
             }
         )
@@ -1091,7 +1106,14 @@ def _meta_run_failure_code(path):
         text = (prefix + b"\n" + suffix).decode("utf-8", errors="replace")
     except OSError:
         return ""
-    lowered = text.lower()
+    event_lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.lstrip().startswith("[meta-repair ") or line.lstrip().startswith("bwrap:")
+    ]
+    lowered = "\n".join(event_lines).lower()
+    if re.search(r"l2 replan handoff ordinary repair completed .*returncode=[1-9][0-9]*", lowered):
+        return "ordinary_retrigger_failed"
     if (
         "investigator_read_sandbox_unavailable" in lowered
         or "bwrap: no permissions to create new namespace" in lowered
@@ -1159,7 +1181,7 @@ def _repair_attempt_signals(repair_payload):
                 break
     repair_outcome = str(repair_payload.get("outcome") or "") if isinstance(repair_payload, dict) else ""
     attempt_outcomes = [
-        str(item.get("outcome") or repair_outcome or "").strip()
+        str(item.get("outcome") or "").strip()
         for item in recent_attempts + recent_iterations
         if isinstance(item, dict)
     ]
@@ -1947,6 +1969,7 @@ def _chain_state_summary(workspace, plan):
             "chain_complete": data.get("chain_complete"),
             "pr_number": data.get("pr_number"),
             "pr_state": data.get("pr_state"),
+            "base_branch": data.get("base_branch") or data.get("target_base") or "",
             "reason": data.get("reason") or data.get("error") or "",
             "events": data.get("events")[-8:] if isinstance(data.get("events"), list) else [],
             "completed": [],
@@ -1970,7 +1993,19 @@ def _chain_state_summary(workspace, plan):
         summaries.append(summary)
     current = next((item for item in summaries if item.get("current_plan_name") == plan), None)
     if current is None:
-        current = summaries[0] if summaries else {}
+        current = next(
+            (
+                item
+                for item in summaries
+                if any(
+                    isinstance(completed, dict) and completed.get("plan") == plan
+                    for completed in item.get("completed") or []
+                )
+            ),
+            None,
+        )
+    if current is None:
+        current = {}
     return {"current": current, "all": summaries}
 
 def _accepted_event_receipt(events_path):
@@ -2234,7 +2269,21 @@ def _repair_data_summary(session):
             else {}
         ),
         "mtime_age_min": int((now.timestamp() - _mtime(path)) // 60) if _mtime(path) else None,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         "outcome": payload.get("outcome") if isinstance(payload, dict) else "",
+        "l1_outcome_raw": payload.get("outcome") if isinstance(payload, dict) else "",
+        "meta_replan_handoff": (
+            payload.get("meta_replan_handoff")
+            if isinstance(payload, dict) and isinstance(payload.get("meta_replan_handoff"), dict)
+            else {}
+        ),
+        "effective_custody_outcome": (
+            "ordinary_retrigger_failed"
+            if isinstance(payload, dict)
+            and isinstance(payload.get("meta_replan_handoff"), dict)
+            and int(payload["meta_replan_handoff"].get("returncode") or 0) != 0
+            else (payload.get("outcome") if isinstance(payload, dict) else "")
+        ),
         "current_attempt_id": payload.get("current_attempt_id") if isinstance(payload, dict) else "",
         "attempt_count": len(attempts),
         "attempt_ids": (
@@ -3959,6 +4008,9 @@ def _workflow_cursor_mismatch_reason(ev):
     )
 
 def _superfixer_cycle_evidence(ev):
+    from arnold_pipelines.megaplan.cloud.progress_auditor_liveness import (
+        classify_runner_liveness,
+    )
     resolver = ev.get("resolver_state") if isinstance(ev, dict) else {}
     resolver = resolver if isinstance(resolver, dict) else {}
     canonical_state = str(resolver.get("canonical_state") or "UNKNOWN").strip().upper()
@@ -4003,24 +4055,25 @@ def _superfixer_cycle_evidence(ev):
     active = ev.get("active_step_liveness") if isinstance(ev, dict) else {}
     active = active if isinstance(active, dict) else {}
     tmux_process = target.get("tmux_process") if isinstance(target.get("tmux_process"), dict) else {}
-    tmux_live = (
-        tmux_process.get("pid_live") is True
-        or tmux_process.get("session_live") is True
-        or str(tmux_process.get("live_status") or "").strip().lower() == "alive"
-    )
-    dead_active_step = active.get("present") is True and active.get("worker_pid_alive") is False
-    explicit_stopped = str(tmux_process.get("live_status") or "").strip().lower() in {
-        "dead", "missing", "stopped", "unavailable"
-    }
     watchdog_refs = ev.get("prior_watchdog_report_refs") if isinstance(ev, dict) else []
     watchdog_refs = watchdog_refs if isinstance(watchdog_refs, list) else []
+    liveness = classify_runner_liveness(
+        tmux_process,
+        active,
+        [
+            str(item.get("matched_status") or "")
+            for item in watchdog_refs
+            if isinstance(item, dict)
+        ],
+    )
+    dead_active_step = active.get("present") is True and active.get("worker_pid_alive") is False
     watchdog_stopped = any(
         str(item.get("matched_status") or "").strip().lower()
-        in {"stopped", "dead", "progress_stall", "broken_superfixer"}
+        in {"stopped", "dead", "progress_stall", "broken_superfixer", "canonical_launch_evidence_missing"}
         for item in watchdog_refs
         if isinstance(item, dict)
     )
-    runner_dead = bool(not tmux_live and (dead_active_step or explicit_stopped or watchdog_stopped))
+    runner_dead = liveness["dead"]
     incomplete_chain = _chain_state_looks_nonterminal(chain_current)
 
     meta_ages = [
@@ -4059,6 +4112,7 @@ def _superfixer_cycle_evidence(ev):
         "repair_outcome": repair_outcome,
         "repair_age_min": repair_age,
         "runner_dead": runner_dead,
+        "runner_liveness": liveness,
         "dead_active_step": dead_active_step,
         "tmux_live_status": tmux_process.get("live_status"),
         "chain_incomplete": incomplete_chain,
@@ -4230,11 +4284,15 @@ def _normalize_engine_tree_evidence(value, *, repo_root, workspace_root):
         normalized["import_consumers"] = impacted_consumers if isinstance(impacted_consumers, list) else []
     return normalized
 
-def _collect_external_ci_health(repo_root, *, pr_number=None):
+def _collect_external_ci_health(repo_root, *, pr_number=None, base_branch=""):
     if not repo_root.is_dir():
         return _ci_health_unavailable(repo_root, reason="repo_context_unavailable")
     try:
-        payload = collect_ci_health(repo_root, base_branch="main", pr_number=pr_number)
+        payload = collect_ci_health(
+            repo_root,
+            base_branch=str(base_branch or "main"),
+            pr_number=pr_number,
+        )
     except Exception as exc:
         return _ci_health_unavailable(
             repo_root,
@@ -4244,6 +4302,115 @@ def _collect_external_ci_health(repo_root, *, pr_number=None):
     if not isinstance(payload, dict):
         return _ci_health_unavailable(repo_root, reason="ci_health_invalid_payload")
     return dict(payload)
+
+
+def _cached_external_ci_health(repair_summary, *, expected_pr_number=None):
+    meta = repair_summary.get("meta_investigation_summary") if isinstance(repair_summary, dict) else {}
+    meta = meta if isinstance(meta, dict) else {}
+    access_path_text = str(meta.get("access_receipt_path") or "").strip()
+    expected_context_digest = str(meta.get("context_digest") or "").strip()
+    if not access_path_text:
+        return _ci_health_unavailable("", reason="typed_external_cache_pointer_missing")
+    access_path = pathlib.Path(access_path_text)
+    bundle = _load_json(access_path)
+    if (
+        bundle.get("schema_version") != "arnold-meta-repair-observation-bundle-v1"
+        or bundle.get("access_verified") is not True
+        or not expected_context_digest
+        or bundle.get("context_digest") != expected_context_digest
+    ):
+        return _ci_health_unavailable(
+            "",
+            reason="typed_external_cache_bundle_invalid",
+            cache_source_path=str(access_path),
+        )
+    observation = next(
+        (
+            item
+            for item in bundle.get("observations") or []
+            if isinstance(item, dict) and item.get("kind") == "external_state"
+        ),
+        None,
+    )
+    if not isinstance(observation, dict):
+        return _ci_health_unavailable(
+            "",
+            reason="typed_external_cache_observation_missing",
+            cache_source_path=str(access_path),
+        )
+    artifact_path = pathlib.Path(str(observation.get("path") or ""))
+    try:
+        raw = artifact_path.read_bytes()
+    except OSError:
+        return _ci_health_unavailable(
+            "",
+            reason="typed_external_cache_artifact_unreadable",
+            cache_source_path=str(access_path),
+            artifact_path=str(artifact_path),
+        )
+    expected_size = observation.get("size_bytes")
+    expected_sha = str(observation.get("sha256") or "").strip()
+    if (
+        not expected_sha
+        or not isinstance(expected_size, int)
+        or len(raw) != expected_size
+        or hashlib.sha256(raw).hexdigest() != expected_sha
+    ):
+        return _ci_health_unavailable(
+            "",
+            reason="typed_external_cache_integrity_mismatch",
+            cache_source_path=str(access_path),
+            artifact_path=str(artifact_path),
+        )
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        payload = {}
+    pull_request = payload.get("pull_request") if isinstance(payload, dict) else {}
+    pull_request = pull_request if isinstance(pull_request, dict) else {}
+    observed_pr = pull_request.get("number")
+    if (
+        expected_pr_number not in (None, "")
+        and str(observed_pr or "") != str(expected_pr_number)
+    ):
+        return _ci_health_unavailable(
+            "",
+            reason="typed_external_cache_pr_mismatch",
+            expected_pr_number=expected_pr_number,
+            pr_number=observed_pr,
+            cache_source_path=str(access_path),
+            artifact_path=str(artifact_path),
+        )
+    rollup = pull_request.get("statusCheckRollup")
+    rollup = rollup if isinstance(rollup, list) else []
+    failed = [
+        item for item in rollup
+        if isinstance(item, dict)
+        and str(item.get("conclusion") or "").upper() not in {"", "SUCCESS", "NEUTRAL", "SKIPPED"}
+    ]
+    pending = [
+        item for item in rollup
+        if isinstance(item, dict)
+        and str(item.get("status") or "").upper() not in {"", "COMPLETED"}
+    ]
+    status = "red" if failed else ("pending" if pending else "green")
+    return {
+        "status": status,
+        "available": bool(payload.get("available") is True and observed_pr),
+        "base_branch": pull_request.get("baseRefName") or "",
+        "pr_number": observed_pr,
+        "pr_state": pull_request.get("state") or "",
+        "pr_head_oid": pull_request.get("headRefOid") or "",
+        "merge_state": pull_request.get("mergeStateStatus") or "",
+        "is_draft": pull_request.get("isDraft"),
+        "failed_checks": failed,
+        "pending_checks": pending,
+        "checks": rollup,
+        "evidence_source": "typed_l2_external_cache",
+        "cache_source_path": str(access_path),
+        "artifact_path": str(artifact_path),
+        "artifact_sha256": expected_sha,
+    }
 
 def _candidate_engine_tree_roots(workspace_root, repo_root):
     candidates = [repo_root, workspace_root / ".megaplan" / "runtime" / "editable-engine"]
@@ -4509,10 +4676,44 @@ def _plan_evidence(entry):
     )
     resolver_state = _resolve_resolver_state_payload(current_target)
     repair_custody = _repair_custody_summary(session, state, current_target)
-    ci_health = _collect_external_ci_health(
+    cached_ci_health = _cached_external_ci_health(
+        repair_data,
+        expected_pr_number=chain_current.get("pr_number") if isinstance(chain_current, dict) else None,
+    )
+    live_ci_health = _collect_external_ci_health(
         workspace_path,
         pr_number=chain_current.get("pr_number") if isinstance(chain_current, dict) else None,
+        base_branch=cached_ci_health.get("base_branch") or chain_current.get("base_branch") or "",
     )
+    expected_pr_number = chain_current.get("pr_number") if isinstance(chain_current, dict) else None
+    live_pr_number = live_ci_health.get("pr_number") if isinstance(live_ci_health, dict) else None
+    live_coherent = bool(
+        isinstance(live_ci_health, dict)
+        and live_ci_health.get("available") is True
+        and (expected_pr_number in (None, "") or str(live_pr_number or "") == str(expected_pr_number))
+    )
+    if live_coherent:
+        ci_health = dict(live_ci_health)
+        if cached_ci_health.get("available") is True:
+            ci_health["typed_cache_corroboration"] = {
+                "status": cached_ci_health.get("status"),
+                "cache_source_path": cached_ci_health.get("cache_source_path"),
+                "artifact_path": cached_ci_health.get("artifact_path"),
+                "artifact_sha256": cached_ci_health.get("artifact_sha256"),
+            }
+    elif cached_ci_health.get("available") is True:
+        ci_health = dict(cached_ci_health)
+        ci_health["live_probe"] = {
+            "status": live_ci_health.get("status"),
+            "reason": live_ci_health.get("reason"),
+        }
+    else:
+        ci_health = dict(live_ci_health)
+        ci_health["typed_cache_failure"] = {
+            "reason": cached_ci_health.get("reason"),
+            "cache_source_path": cached_ci_health.get("cache_source_path"),
+            "artifact_path": cached_ci_health.get("artifact_path"),
+        }
     engine_tree = _collect_external_engine_tree(repo_root, workspace_path)
     projection_input = audit_input.get("projection_input") if isinstance(audit_input.get("projection_input"), dict) else {}
     projection_input = {
@@ -4582,6 +4783,8 @@ def _plan_evidence(entry):
         "plan": plan_dir.name,
         "workspace": workspace,
         "session": session,
+        "authoritative_current_plan": entry.get("authoritative_current_plan") or "",
+        "session_evidence_scope": bool(entry.get("session_evidence_scope")),
         "state_path": str(state_path),
         "sources": entry.get("sources") or [],
         "session_header": session_header,
@@ -4640,6 +4843,8 @@ def _plan_evidence(entry):
         "incident_audit": incident_audit,
         "current_target": current_target,
         "resolver_state": resolver_state,
+        "ci_health": ci_health,
+        "engine_tree": engine_tree,
         "incident_handoff_gap_count": len(expired_claims),
         "incident_handoff_gap_refs": incident_handoff_gap_refs,
         "incident_dead_worker_count": dead_worker_count,
@@ -4740,7 +4945,11 @@ for entry in plans:
     if repeated_failures:
         corroboration.append(f"repair data repeats same failure signature {repeated_failures[0].get('count')}x")
     meta_summary = ev.get("meta_repair_summary") or {}
-    authoritative_plan = str(chain_current.get("current_plan_name") or "").strip()
+    authoritative_plan = str(
+        ev.get("authoritative_current_plan")
+        or chain_current.get("current_plan_name")
+        or ""
+    ).strip()
     finding_state = str(ev.get("current_state") or "").strip().lower()
     completed_shadow = bool(
         finding_state in {"done", "complete", "completed", "finalized"}
@@ -4748,15 +4957,16 @@ for entry in plans:
         and authoritative_plan != str(ev.get("plan") or "").strip()
     )
     session_reasons = []
-    if meta_summary.get("missing_meta_run_evidence"):
+    session_evidence_scope = bool(ev.get("session_evidence_scope"))
+    if session_evidence_scope and meta_summary.get("missing_meta_run_evidence"):
         meta_gap_reason = f"meta-repair trigger {meta_summary.get('trigger')} has no meta record or run log"
         session_reasons.append(meta_gap_reason)
-    if meta_summary.get("failed_meta_run_evidence"):
+    if session_evidence_scope and meta_summary.get("failed_meta_run_evidence"):
         session_reasons.append(
             f"meta-repair trigger {meta_summary.get('trigger')} has only failed launch/no-output evidence "
             f"(bad_records={meta_summary.get('failed_meta_record_count')} bad_run_logs={meta_summary.get('failed_meta_run_count')})"
         )
-    for deterministic_reason in (
+    for deterministic_reason in ((
         _meta_record_no_verdict_reason(ev),
         _meta_repair_launch_failure_reason(ev),
         _watchdog_chain_health_disagreement_reason(ev),
@@ -4772,7 +4982,7 @@ for entry in plans:
         _liveness_without_acceptance_progress_reason(ev),
         _repair_dispatch_during_preserve_live_reason(ev),
         _stale_l1_l2_cycle_reason(ev),
-    ):
+    ) if session_evidence_scope else ()):
         if deterministic_reason:
             session_reasons.append(deterministic_reason)
     if not completed_shadow:
@@ -4826,6 +5036,7 @@ for entry in plans:
             "incident_projection": ev.get("incident_projection"),
             "problem_projection": ev.get("problem_projection"),
             "incident_audit": ev.get("incident_audit"),
+            "chain_state_summary": ev.get("chain_state_summary"),
             "suppression": ev.get("suppression"),
             "auditor_wrapper_runtime": ev.get("auditor_wrapper_runtime"),
             "source_refs": ev.get("source_refs"),
@@ -4976,6 +5187,50 @@ PY
 FINDING_COUNT="$(python3 -c 'import json,sys; print(len((json.load(open(sys.argv[1], encoding="utf-8")).get("findings") or [])) )' "$GATHER_DIR/findings.json")"
 
 log "suspicious_plans=$FINDING_COUNT stall_flags=$stall_summary"
+
+revalidate_audit_snapshot() {
+  python3 - "$GATHER_DIR/findings.json" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+superseded = 0
+for finding in payload.get("findings") or []:
+    refs = []
+    repair = finding.get("repair_data_summary") or {}
+    if repair.get("path") and repair.get("sha256"):
+        refs.append((repair["path"], repair["sha256"], "repair_data"))
+    for item in (finding.get("meta_repair_summary") or {}).get("meta_run_refs") or []:
+        if item.get("current_episode") and item.get("path") and item.get("sha256"):
+            refs.append((item["path"], item["sha256"], "current_meta_run"))
+    changed = []
+    for raw_path, expected, kind in refs:
+        artifact = pathlib.Path(raw_path)
+        try:
+            observed = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        except OSError:
+            observed = "missing"
+        if observed != expected:
+            changed.append({"kind": kind, "path": raw_path, "expected_sha256": expected, "observed_sha256": observed})
+    if not changed:
+        finding["evidence_snapshot"] = {"status": "current", "revalidated_ref_count": len(refs)}
+        continue
+    superseded += 1
+    finding["evidence_snapshot"] = {"status": "superseded", "changed_refs": changed}
+    finding.setdefault("reasons", []).append(
+        "evidence_snapshot_superseded: volatile repair/meta evidence changed after deterministic gather; dispatch fails closed until the next bounded gather"
+    )
+    superfixer = finding.get("deterministic_superfixer_evidence")
+    if isinstance(superfixer, dict):
+        superfixer["actionable"] = False
+        superfixer["snapshot_superseded"] = True
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+print(superseded)
+PY
+}
 
 # For each suspicious plan, dispatch Codex as the audit orchestrator. Codex then reads the subagent-launcher skill
 # and may use bounded DeepSeek research subagents for independent review;
@@ -5754,6 +6009,7 @@ PY
 }
 
 # Snapshot each finding into its own gather file for the subagent.
+revalidate_audit_snapshot >/dev/null
 python3 - "$GATHER_DIR/findings.json" "$GATHER_DIR" <<'PY'
 import json, os, sys
 findings_path, gather_dir = sys.argv[1], sys.argv[2]
@@ -5772,6 +6028,10 @@ if [[ "$AUDIT_MUTATION_AUTHORIZED_FLAG" == "1" ]]; then
 else
   log "autofix observed but mutation blocked; skipping Codex dispatch for findings=$N_FINDINGS"
 fi
+
+# Model review can outlast a repair attempt.  Revalidate again before the
+# effect controller so a changed custody snapshot cannot dispatch stale work.
+revalidate_audit_snapshot >/dev/null
 
 record_incident_audits "$GATHER_DIR/findings.json"
 

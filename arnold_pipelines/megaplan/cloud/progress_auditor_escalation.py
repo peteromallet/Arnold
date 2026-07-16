@@ -18,6 +18,7 @@ import json
 from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.managed_agent import validate_automatic_managed_manifest
+from arnold_pipelines.megaplan.cloud.progress_auditor_liveness import classify_runner_liveness
 
 
 ESCALATION_SCHEMA = "arnold-progress-auditor-escalation-v1"
@@ -156,24 +157,21 @@ def _process_evidence(finding: Mapping[str, Any]) -> dict[str, Any]:
     target = _mapping(finding.get("current_target"))
     tmux = _mapping(target.get("tmux_process"))
     active = _mapping(finding.get("active_step_liveness"))
-    known = any(
-        value is not None and value != ""
-        for value in (
-            tmux.get("pid_live"),
-            tmux.get("session_live"),
-            tmux.get("live_status"),
-            active.get("worker_pid_alive"),
-        )
-    )
-    live = bool(
-        tmux.get("pid_live") is True
-        or tmux.get("session_live") is True
-        or _text(tmux.get("live_status")).lower() == "alive"
-        or active.get("worker_pid_alive") is True
+    watchdog_statuses = [
+        _text(item.get("matched_status"))
+        for item in _list(finding.get("prior_watchdog_report_refs"))
+        if isinstance(item, Mapping)
+    ]
+    liveness = classify_runner_liveness(
+        tmux,
+        active,
+        watchdog_statuses,
     )
     return {
-        "present": known,
-        "live": live,
+        "present": liveness["known"],
+        "live": liveness["live"],
+        "state": liveness["state"],
+        "source": liveness["source"],
         "tmux": dict(tmux),
         "active_step": dict(active),
     }
@@ -467,7 +465,9 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
     failure_codes = {
         _text(item.get("failure_code"))
         for item in _list(meta.get("meta_run_refs"))
-        if isinstance(item, Mapping) and item.get("failure_code")
+        if isinstance(item, Mapping)
+        and item.get("failure_code")
+        and item.get("current_episode") is not False
     }
     access_failure = bool(
         str(investigation.get("failure_code") or "").startswith("investigator_")
@@ -571,6 +571,8 @@ def classify_true_stall(
         missing_sources.append("canonical_chain_path")
 
     blocks: list[str] = []
+    if _text(_mapping(finding.get("evidence_snapshot")).get("status")) == "superseded":
+        blocks.append("evidence_snapshot_superseded")
     if missing_sources:
         blocks.append("incomplete_or_incoherent_evidence")
     if resolver_state in _INTENTIONAL_WAIT_STATES or intentional_wait:
