@@ -31,6 +31,7 @@ from typing import Any, Literal
 from agentbox.redaction import redact_text
 from arnold_pipelines.megaplan.managed_agent import (
     ACTIVE_STATUSES as SHARED_ACTIVE_STATUSES,
+    TERMINAL_STATUSES as SHARED_TERMINAL_STATUSES,
     MANAGED_AGENT_CUSTODIAN,
     MANAGED_AGENT_SCHEMA,
     is_managed_manifest,
@@ -108,9 +109,12 @@ _NON_EXECUTION_TASK_KINDS = frozenset(
     {"lookup", "extraction", "research", "root_cause", "architecture", "review"}
 )
 _ACTIVE_STATUSES = SHARED_ACTIVE_STATUSES
-_TERMINAL_STATUSES = frozenset(
-    {"completed", "failed", "interrupted", "cancelled", "superseded"}
-)
+_TERMINAL_STATUSES = SHARED_TERMINAL_STATUSES
+# ``abandoned`` is a historical/control-plane terminal label rather than a
+# valid managed-agent terminal outcome.  Accept it only while observing a
+# predecessor so an older abandoned parent cannot leave a current successor
+# queued forever.  The successor itself still terminalizes as ``failed``.
+_DEPENDENCY_TERMINAL_STATUSES = _TERMINAL_STATUSES | {"abandoned"}
 _CONTROL_TERMINAL_STATUSES = frozenset({"cancelled", "superseded"})
 _DELIVERY_RETRY_BASE_S = 30
 _DELIVERY_RETRY_MAX_S = 60 * 60
@@ -2036,7 +2040,7 @@ def _queue_predecessor_state(
         state.update(
             result_state="invalid", attention="predecessor_status_unknown"
         )
-    elif status in {"cancelled", "superseded"}:
+    elif status in {"cancelled", "superseded", "abandoned"}:
         state.update(result_state="not_applicable", attention=f"predecessor_{status}")
     elif status in {"failed", "interrupted"}:
         state.update(
@@ -4209,7 +4213,11 @@ def _normalized_queue_predecessor_status(predecessor: Mapping[str, Any]) -> str:
     """Return a canonical managed status without inventing terminal success."""
 
     status = str(predecessor.get("status") or "").strip().casefold()
-    if status in _ACTIVE_STATUSES or status in _TERMINAL_STATUSES or status == "queued":
+    if (
+        status in _ACTIVE_STATUSES
+        or status in _DEPENDENCY_TERMINAL_STATUSES
+        or status == "queued"
+    ):
         return status
     return "unknown"
 
@@ -4357,7 +4365,7 @@ def reconcile_managed_subagent_queues(
                     state
                     for state in predecessor_states
                     if state["status"] == "unknown"
-                    or state["status"] in _TERMINAL_STATUSES
+                    or state["status"] in _DEPENDENCY_TERMINAL_STATUSES
                     and (
                         state["status"] != "completed"
                         or state["result_state"] != "valid"
@@ -4386,7 +4394,7 @@ def reconcile_managed_subagent_queues(
                 failed_closed += 1
                 continue
             if any(
-                state["status"] not in _TERMINAL_STATUSES
+                state["status"] not in _DEPENDENCY_TERMINAL_STATUSES
                 for state in predecessor_states
             ):
                 waiting_state, waiting_attention = _queue_waiting_labels(
@@ -5188,11 +5196,12 @@ def _retry_completion_turn(manifest_path: Path, *, now: datetime, exc: Exception
         completion = dict(manifest.get("resident_completion_turn") or {})
         attempt = max(1, int(completion.get("attempt_count") or 1))
         if attempt >= _DELIVERY_MAX_ATTEMPTS:
-            run_id = str(manifest.get("run_id") or manifest_path.parent.name)
+            terminal_content, _ = _completion_message(manifest, manifest_path)
             content = (
-                "The resident could not establish an independent verification turn for delegated "
-                f"run {run_id} after bounded retries. The verification outcome is unknown, and the "
-                "delegated terminal result is not being treated as proof; operator inspection is required."
+                f"{terminal_content}\n\n"
+                "The resident could not establish an independent verification turn after bounded "
+                "retries. The verification outcome is unknown, and no delegated claim is being "
+                "treated as proof; operator inspection is required."
             )
             payload = _completion_payload(
                 manifest,
@@ -5236,6 +5245,47 @@ def _retry_completion_turn(manifest_path: Path, *, now: datetime, exc: Exception
         return "retry_pending"
 
 
+def _dependency_failure_message(
+    manifest: Mapping[str, Any], manifest_path: Path
+) -> str | None:
+    """Render a fail-closed terminal dependency summary from durable manifests.
+
+    This is the no-model fallback.  It deliberately reports only artifact
+    existence, never a predecessor's unverified claims as successful work.
+    """
+
+    queue = manifest.get("queue")
+    if not isinstance(queue, Mapping) or queue.get("state") != "dependency_failed":
+        return None
+    run_id = str(manifest.get("run_id") or manifest_path.parent.name)
+    predecessor_run_id = str(queue.get("failed_predecessor_run_id") or "unknown")
+    predecessor_status = str(queue.get("predecessor_status") or "unknown")
+    reason = str(queue.get("attention") or "terminal_dependency_failure")
+    partial_result = False
+    if predecessor_run_id != "unknown":
+        predecessor_path = manifest_path.parent.parent / predecessor_run_id / "manifest.json"
+        try:
+            predecessor = _read_managed_resident_manifest(predecessor_path)
+            result_path = _queue_artifact_path(
+                predecessor_path, predecessor, "result_path", "result.md"
+            )
+            partial_result = result_path.is_file() and result_path.stat().st_size > 0
+        except (OSError, SubagentQueueError, ValueError):
+            partial_result = False
+    partial_text = (
+        "The predecessor left a non-empty partial result artifact, but that artifact was not "
+        "accepted as successful evidence."
+        if partial_result
+        else "No usable predecessor result was accepted as successful evidence."
+    )
+    return (
+        f"The synthesis/delivery owner {run_id} did not run because required predecessor "
+        f"{predecessor_run_id} ended with status {predecessor_status} ({reason}). "
+        f"{partial_text} Downstream synthesis was not performed. This is a truthful terminal "
+        "dependency failure, not a successful completion."
+    )
+
+
 def _completion_message(manifest: Mapping[str, Any], manifest_path: Path) -> tuple[str, str]:
     run_id = str(manifest.get("run_id") or manifest_path.parent.name)
     status = str(manifest.get("status") or "unknown")
@@ -5261,6 +5311,9 @@ def _completion_message(manifest: Mapping[str, Any], manifest_path: Path) -> tup
             "message. The run is not being reported as a successful result.",
             "missing_result",
         )
+    dependency_failure = _dependency_failure_message(manifest, manifest_path)
+    if dependency_failure is not None:
+        return dependency_failure, "terminal_dependency_failure"
     return (
         f"The managed subagent did not complete this request successfully (run {run_id}, "
         f"status: {status}). No successful final result was produced.",

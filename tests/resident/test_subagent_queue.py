@@ -725,6 +725,7 @@ def test_queue_fanin_waits_for_all_then_launches_exactly_once_after_restart(
         ("failed", "", "failed", "predecessor_terminal_failure"),
         ("cancelled", "", "cancelled", "predecessor_cancelled"),
         ("superseded", "", "superseded", "predecessor_superseded"),
+        ("abandoned", "partial predecessor result", "failed", "predecessor_abandoned"),
         ("completed", "", "failed", "predecessor_result_empty_or_invalid"),
     ],
 )
