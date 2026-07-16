@@ -122,6 +122,7 @@ arnold_supervisor_runtime_init progress-auditor "$ARNOLD_SRC" || exit $?
 DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
 LAUNCHER="${MEGAPLAN_AUDIT_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
 AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"
+AUDIT_WORKSPACE_ROOT="${MEGAPLAN_AUDIT_WORKSPACE_ROOT:-/workspace}"
 if ! "$MEGAPLAN_SUPERVISOR_STDLIB_PYTHON" - "$AUDIT_WINDOW_HOURS" <<'PY'
 import math
 import sys
@@ -452,7 +453,7 @@ run_recovery_sweep() {
 run_recovery_sweep
 
 # Build the plan worklist from marker, tmux, and workspace-activity discovery.
-python3 - "$MARKER_DIR" "$WORKLIST" "$AUDIT_WINDOW_HOURS" "$DISCOVER_BIN" "/workspace" "$ARNOLD_SRC" <<'PY'
+python3 - "$MARKER_DIR" "$WORKLIST" "$AUDIT_WINDOW_HOURS" "$DISCOVER_BIN" "$AUDIT_WORKSPACE_ROOT" "$ARNOLD_SRC" <<'PY'
 import datetime as dt
 import json
 import os

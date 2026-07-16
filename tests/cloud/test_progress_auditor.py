@@ -49,6 +49,13 @@ def test_auditor_gather_prefers_deployed_source_over_caller_cwd() -> None:
     assert cwd_at < deployed_source_at
 
 
+def test_auditor_workspace_discovery_root_is_operator_scopable() -> None:
+    text = _wrapper("arnold-progress-auditor")
+
+    assert 'AUDIT_WORKSPACE_ROOT="${MEGAPLAN_AUDIT_WORKSPACE_ROOT:-/workspace}"' in text
+    assert '"$DISCOVER_BIN" "$AUDIT_WORKSPACE_ROOT" "$ARNOLD_SRC"' in text
+
+
 def _systemd_file(name: str) -> str:
     return (SYSTEMD_DIR / name).read_text(encoding="utf-8")
 
