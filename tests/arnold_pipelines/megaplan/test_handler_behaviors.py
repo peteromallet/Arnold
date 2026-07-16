@@ -53,6 +53,7 @@ class TestAdaptiveCritiqueRouting:
             tier_models={
                 "critique": {
                     4: ["codex:gpt-5.5", "claude:claude-sonnet-4-6"],
+                    6: "codex:gpt-5.5",
                 }
             }
         )
@@ -90,6 +91,7 @@ class TestAdaptiveCritiqueRouting:
                 "critique": {
                     4: "codex:gpt-5.5",
                     2: "hermes:deepseek:deepseek-v4-flash",
+                    6: "codex:gpt-5.5",
                 }
             }
         )
@@ -143,6 +145,7 @@ class TestAdaptiveCritiqueRouting:
                         "3": "hermes:deepseek:deepseek-v4-pro",
                         "4": "codex:gpt-5.4",
                         "5": "codex:gpt-5.5",
+                        "6": "codex:gpt-5.5",
                     }
                 },
             }
