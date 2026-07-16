@@ -6061,6 +6061,63 @@ def test_quality_recovery_context_bound_fails_closed(tmp_path: Path) -> None:
     assert "65536-byte bound" in result.stderr
 
 
+def test_chain_marker_plan_identity_binds_from_validated_context(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plan_name = "current-chain-plan"
+    state_path = workspace / ".megaplan" / "plans" / plan_name / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text("{}", encoding="utf-8")
+    context = tmp_path / "context.json"
+    context.write_text(
+        json.dumps({"current": {"plan_name": plan_name}}), encoding="utf-8"
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("bind_plan_name_from_investigation_context"),
+            f"INVESTIGATION_CONTEXT_PATH={str(context)!r}",
+            f"WORKSPACE={str(workspace)!r}",
+            "PLAN_NAME=",
+            "bind_plan_name_from_investigation_context",
+            "printf '%s\\n' \"$PLAN_NAME\"",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == plan_name
+
+
+def test_context_plan_identity_cannot_override_marker_identity(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plan_name = "context-plan"
+    state_path = workspace / ".megaplan" / "plans" / plan_name / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text("{}", encoding="utf-8")
+    context = tmp_path / "context.json"
+    context.write_text(
+        json.dumps({"current": {"plan_name": plan_name}}), encoding="utf-8"
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("bind_plan_name_from_investigation_context"),
+            f"INVESTIGATION_CONTEXT_PATH={str(context)!r}",
+            f"WORKSPACE={str(workspace)!r}",
+            "PLAN_NAME=marker-plan",
+            "bind_plan_name_from_investigation_context",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 76
+    assert "conflicts with validated investigation context" in result.stderr
+
+
 def test_receipted_live_runner_gets_bounded_launch_settle_observation(
     tmp_path: Path,
 ) -> None:

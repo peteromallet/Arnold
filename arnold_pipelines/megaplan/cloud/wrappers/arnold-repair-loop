@@ -6840,6 +6840,45 @@ save_repair_data(pathlib.Path(data_path), payload)
 PY
 }
 
+bind_plan_name_from_investigation_context() {
+  local bounded_plan_name
+  bounded_plan_name="$(python3 -P - "$INVESTIGATION_CONTEXT_PATH" "$WORKSPACE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+context_path = Path(sys.argv[1])
+workspace = Path(sys.argv[2])
+try:
+    if context_path.stat().st_size > 65_536:
+        raise ValueError("investigation context exceeds 65536-byte bound")
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+except Exception as exc:
+    raise SystemExit(f"cannot bind plan identity from investigation context: {exc}")
+current = context.get("current")
+current = current if isinstance(current, dict) else {}
+plan_name = str(current.get("plan_name") or "").strip()
+if not plan_name:
+    raise SystemExit(0)
+if len(plan_name.encode("utf-8")) > 255 or plan_name in {".", ".."} or "/" in plan_name or "\\" in plan_name:
+    raise SystemExit("investigation context contains an unsafe plan identity")
+state_path = workspace / ".megaplan" / "plans" / plan_name / "state.json"
+if not state_path.is_file():
+    raise SystemExit("investigation context plan identity has no authoritative state.json")
+print(plan_name)
+PY
+  )" || return 76
+  if [[ -z "$bounded_plan_name" ]]; then
+    return 0
+  fi
+  if [[ -n "${PLAN_NAME:-}" && "$PLAN_NAME" != "$bounded_plan_name" ]]; then
+    echo "marker plan identity conflicts with validated investigation context" >&2
+    return 76
+  fi
+  PLAN_NAME="$bounded_plan_name"
+  export PLAN_NAME
+}
+
 run_repair_investigator_turn() {
   require_repair_lock_held
   local request_path context_digest run_id_file investigator_run_id rc investigator_timeout recommended_action
@@ -7020,6 +7059,15 @@ PY
     return 1
   }
   export INVESTIGATOR_SUPPORTED_CLI
+  if ! bind_plan_name_from_investigation_context; then
+    repair_data_set_outcome "fixer_infrastructure_failure"
+    persist_repair_investigation_failure \
+      "plan_identity_binding" \
+      "validated investigation context could not bind the current plan identity" \
+      "" "$context_digest" "$investigator_run_id"
+    log "repair investigator plan identity binding failed closed session=$SESSION run_id=${investigator_run_id:-unknown}"
+    return 1
+  fi
   log "bounded repair investigator receipt accepted session=$SESSION run_id=$investigator_run_id digest=$context_digest action=$recommended_action"
   if [[ "$recommended_action" == "replan" ]]; then
     repair_data_set_outcome "deterministic_failure"
