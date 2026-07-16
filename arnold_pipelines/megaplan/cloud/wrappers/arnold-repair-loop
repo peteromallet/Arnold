@@ -7963,6 +7963,10 @@ PY
 investigator_rc=0
 run_repair_investigator_turn || investigator_rc=$?
 if [[ "$investigator_rc" == "2" ]]; then
+  repair_goal_record_terminal_failure \
+    "investigator-replan-required" \
+    "replan_required" \
+    "validated investigator requires L2 replan before any target mutation" || true
   log "investigator requires L2 replan before any target mutation session=$SESSION"
   exit 1
 elif [[ "$investigator_rc" != "0" ]]; then

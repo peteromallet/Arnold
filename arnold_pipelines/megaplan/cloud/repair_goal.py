@@ -1236,6 +1236,29 @@ def evaluate_repair_goal(
             -1 if contract_rank is None else contract_rank
         )
         evaluation = evaluate_checkpoint(effective_frozen, observation)
+        active_replan_epoch = int(payload.get("active_replan_epoch") or 0)
+        terminal_failure = (
+            payload.get("last_terminal_failure")
+            if isinstance(payload.get("last_terminal_failure"), Mapping)
+            else {}
+        )
+        terminal_failure_epoch = int(terminal_failure.get("replan_epoch") or 0)
+        if (
+            evaluation["status"] == GOAL_ACTIVE
+            and terminal_failure.get("phase") == "investigator-replan-required"
+            and terminal_failure.get("escalation_required") is True
+            and terminal_failure_epoch == active_replan_epoch
+        ):
+            evaluation.update(
+                {
+                    "control_action": "meta_repair",
+                    "reason": (
+                        "validated L1 investigation requires an L2 replan before any "
+                        "target mutation"
+                    ),
+                    "failed_fixer_evidence": deepcopy(terminal_failure),
+                }
+            )
         followup_seconds = int(
             contract.get("minimum_followup_seconds")
             if contract.get("minimum_followup_seconds") is not None
@@ -1414,7 +1437,6 @@ def evaluate_repair_goal(
                     "failed_fixer_evidence": receipt["failed_fixer_evidence"],
                 }
             )
-        active_replan_epoch = int(payload.get("active_replan_epoch") or 0)
         owner_cycle = (
             action.startswith("owner-iteration-") or "post-dev-fix" in action
         ) and evaluation.get("control_action") not in {
@@ -1532,6 +1554,7 @@ def record_terminal_failure(
             "owner_manifest_path": owner_manifest_path,
             "goal_id": str(payload.get("goal_id") or ""),
             "checkpoint_digest": str(payload.get("checkpoint_digest") or ""),
+            "replan_epoch": int(payload.get("active_replan_epoch") or 0),
             "unresolved_checkpoint": deepcopy(dict(frozen)),
             "last_evaluation": deepcopy(payload.get("last_evaluation") or {}),
             "last_observation": deepcopy(payload.get("last_observation") or {}),
