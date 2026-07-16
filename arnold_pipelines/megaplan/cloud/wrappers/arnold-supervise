@@ -21,6 +21,24 @@ quota_count=0; other_count=0
 last_err=""; streak=0
 log() { echo "[supervise $(date -Iseconds)] $*" | tee -a "$LOG"; }
 
+deterministic_failure_reason() {
+  local run_log="$1"
+  if grep -q '"error"[[:space:]]*:[[:space:]]*"chain_execution_binding_drift"' "$run_log"; then
+    printf '%s\n' chain_execution_binding_drift
+    return 0
+  fi
+  if grep -q '"error"[[:space:]]*:[[:space:]]*"gh_pr_view_failed"' "$run_log" \
+    && grep -q 'gh auth login\|GH_TOKEN environment variable' "$run_log"; then
+    printf '%s\n' github_auth_unavailable
+    return 0
+  fi
+  if grep -q '"error"[[:space:]]*:[[:space:]]*"\(invalid_spec\|initiative_retired\)"' "$run_log"; then
+    printf '%s\n' invalid_or_retired_initiative
+    return 0
+  fi
+  return 1
+}
+
 l1_mutation_authorized() {
   PYTHONPATH="${PYTHONPATH:-}:/workspace/arnold" python3 -B -c \
     'from arnold_pipelines.megaplan.cloud.feature_flags import MUTATION_PATH_L1, mutation_authorized; raise SystemExit(0 if mutation_authorized(MUTATION_PATH_L1) else 1)'
@@ -78,6 +96,12 @@ while true; do
   if [[ $rc -eq 0 ]]; then
     log "cmd exited clean (rc=0) — supervisor exiting; inner driver owns plan state"
     rm -f "$RUN_LOG"; exit 0
+  fi
+  deterministic_reason="$(deterministic_failure_reason "$RUN_LOG" || true)"
+  if [[ -n "$deterministic_reason" ]]; then
+    log "deterministic failure ($deterministic_reason) — refusing retry spin"
+    rm -f "$RUN_LOG"
+    exit_with_repair_request "deterministic supervised failure: $deterministic_reason"
   fi
   if grep -q 'quota_exceeded\|insufficient_quota\|rate_limit' "$RUN_LOG"; then
     err_class="quota"
