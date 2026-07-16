@@ -14490,6 +14490,47 @@ repair_unintended_stop() { printf 'l1\n' >> "$DISPATCH_PATH"; }
     assert "suppressing replacement-owner dispatch" in log_path.read_text(encoding="utf-8")
 
 
+def test_watchdog_suppresses_unowned_goal_while_runner_finishes_backstop(
+    tmp_path: Path,
+) -> None:
+    """A live canonical runner remains authoritative after active_step clears."""
+
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    report_path = tmp_path / "report.tsv"
+    dispatch_path = tmp_path / "dispatch.log"
+    log_path = tmp_path / "watchdog.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"MEGAPLAN_SUPERVISOR_PYTHON={sys.executable!r}",
+            f"LOG={str(log_path)!r}",
+            f"DISPATCH_PATH={str(dispatch_path)!r}",
+            """
+log() { printf '%s\n' "$*" >> "$LOG"; }
+report_item() { printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"; }
+repair_goal_watchdog_status() { printf 'active_unowned\tgoal-live\tcited fix missing from target history\tinvestigate\ttrue\n'; }
+current_target_has_live_worker() { return 1; }
+dispatch_meta_repair() { printf 'l2\n' >> "$DISPATCH_PATH"; }
+repair_unintended_stop() { printf 'l1\n' >> "$DISPATCH_PATH"; }
+""".strip(),
+            f"launch_chain_tick custody-control-plane {str(tmp_path / 'workspace')!r} {str(tmp_path / 'chain.yaml')!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert not dispatch_path.exists()
+    assert "preserve authoritative live target worker" in report_path.read_text(encoding="utf-8")
+    assert "suppressing replacement-owner dispatch" in log_path.read_text(encoding="utf-8")
+
+
 def test_current_target_live_worker_requires_active_pid_bound_heartbeat() -> None:
     function = _extract_wrapper_function("current_target_has_live_worker")
     live = json.dumps(

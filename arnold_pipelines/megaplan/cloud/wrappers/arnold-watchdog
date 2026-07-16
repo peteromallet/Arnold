@@ -7654,8 +7654,31 @@ for path in goals:
     evaluation = result.get("evaluation") or {}
     reason = str(evaluation.get("reason") or "")
     control_action = str(evaluation.get("control_action") or "")
+    observation = result.get("observation") or {}
+    runner_transition = (
+        observation.get("runner_transition")
+        if isinstance(observation, dict)
+        and isinstance(observation.get("runner_transition"), dict)
+        else {}
+    )
+    active_worker = (
+        observation.get("active_worker")
+        if isinstance(observation, dict)
+        and isinstance(observation.get("active_worker"), dict)
+        else {}
+    )
+    target_worker_live = bool(
+        runner_transition.get("runner_pid_live") is True
+        and runner_transition.get("runner_pid")
+    ) or bool(
+        active_worker.get("worker_pid_live") is True
+        and active_worker.get("worker_pid")
+    )
     if status != "active":
-        print(f"{status}\t{result.get('goal_id') or ''}\t{reason}\t{control_action}")
+        print(
+            f"{status}\t{result.get('goal_id') or ''}\t{reason}\t{control_action}\t"
+            f"{'true' if target_worker_live else 'false'}"
+        )
         raise SystemExit(0)
     refreshed = json.loads(path.read_text(encoding="utf-8"))
     owner_live = False
@@ -7673,10 +7696,11 @@ for path in goals:
             continue
     print(
         f"{'active_owner' if owner_live else 'active_unowned'}\t"
-        f"{result.get('goal_id') or ''}\t{reason}\t{control_action}"
+        f"{result.get('goal_id') or ''}\t{reason}\t{control_action}\t"
+        f"{'true' if target_worker_live else 'false'}"
     )
     raise SystemExit(0)
-print("none\t\t\t")
+print("none\t\t\t\tfalse")
 PY
 }
 
@@ -7771,8 +7795,8 @@ PY
     log "current-target observe session=$session evidence=$current_target_observation"
   fi
 
-  local repair_goal_status repair_goal_id repair_goal_reason repair_goal_control_action
-  IFS=$'\t' read -r repair_goal_status repair_goal_id repair_goal_reason repair_goal_control_action <<< "$(repair_goal_watchdog_status "$session" || printf 'none\t\t\t')"
+  local repair_goal_status repair_goal_id repair_goal_reason repair_goal_control_action repair_goal_target_worker_live
+  IFS=$'\t' read -r repair_goal_status repair_goal_id repair_goal_reason repair_goal_control_action repair_goal_target_worker_live <<< "$(repair_goal_watchdog_status "$session" || printf 'none\t\t\t\tfalse')"
   case "$repair_goal_status" in
     active_owner)
       log "durable repair goal still owns frozen target session=$session goal_id=$repair_goal_id; waiting for authoritative acceptance progress"
@@ -7780,7 +7804,8 @@ PY
       return 0
       ;;
     active_unowned)
-      if current_target_has_live_worker "$current_target_observation"; then
+      if [[ "$repair_goal_target_worker_live" == "true" ]] \
+        || current_target_has_live_worker "$current_target_observation"; then
         log "durable repair goal is unowned while authoritative target worker remains live; suppressing replacement-owner dispatch session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
         report_item "$report_items" "$session" "observe" "recovery_observation" "preserve authoritative live target worker while durable goal remains open: $repair_goal_reason" "$workspace" "$remote_spec"
         return 0
