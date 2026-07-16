@@ -522,7 +522,13 @@ revise = "claude"
 
 class TestBoundary:
     def test_profiles_module_has_no_megaplan_imports(self) -> None:
-        source = Path(__file__).resolve().parents[3] / "arnold" / "pipeline" / "profiles.py"
+        source = (
+            Path(__file__).resolve().parents[3]
+            / "arnold_pipelines"
+            / "megaplan"
+            / "profiles"
+            / "neutral.py"
+        )
         tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
         violations: list[str] = []
         for node in ast.walk(tree):

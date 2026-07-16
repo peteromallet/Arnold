@@ -1,0 +1,8 @@
+{
+  "baseline_test_command": "pytest -q",
+  "test_selection": {
+    "command_override": null
+  },
+  "baseline_content_hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd0004",
+  "baseline_timestamp": "2024-01-01T00:00:00Z"
+}

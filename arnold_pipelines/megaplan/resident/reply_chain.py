@@ -1,10 +1,21 @@
-"""Bounded, store-backed Discord reply ancestry capture and traversal."""
+"""Bounded, store-backed Discord reply ancestry capture and traversal.
+
+Also provides :func:`check_resident_continuation_acceptance_gate` so
+resident-facing continuation callers can verify that a chain's acceptance
+state supports advancing past an acceptance milestone (e.g. M5A) before the
+resident dispatches a chain continuation.  In fail-closed (atomic/enforce)
+mode a chain whose declared successors require acceptance MUST carry a
+validated acceptance receipt for its final milestone.  When the receipt is
+absent the continuation caller must emit a typed blocker event instead of
+silently observing the blocked state.
+"""
 
 from __future__ import annotations
 
 import base64
 import json
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from agentbox.redaction import redact_text
@@ -392,3 +403,76 @@ def _parent_id(provenance: object) -> str | None:
 def _safe_reason(value: object, default: str) -> str:
     text = str(value or "").strip()
     return text[:80] if text else default
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Resident continuation acceptance gate
+# ────────────────────────────────────────────────────────────────────────────
+
+RESIDENT_CONTINUATION_BLOCKER_KIND = (
+    "resident_continuation_acceptance_gate_closed"
+)
+
+
+def check_resident_continuation_acceptance_gate(
+    spec_path: str,
+    *,
+    workspace: str | None = None,
+    chain_state_path: str | None = None,
+) -> dict[str, Any]:
+    """Check the acceptance gate before a resident-initiated chain continuation.
+
+    When the resident detects that a chain has completed a milestone with
+    declared successors that require acceptance, it must verify that a
+    validated acceptance receipt exists before dispatching continuation.
+    In fail-closed (atomic/enforce) mode, the absence of a receipt produces
+    a typed blocker event rather than silently observing the blocked state.
+
+    This function delegates to
+    :func:`~arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate.check_wrapper_acceptance_gate`
+    with ``caller_kind="cloud_wrapper"`` (the resident continuation path
+    is treated as a generic cloud wrapper caller for gate purposes) and then
+    overrides the blocker-event kind with the resident-specific typed kind.
+
+    Parameters
+    ----------
+    spec_path:
+        Path to the chain spec (YAML).
+    workspace:
+        Project workspace directory (used to locate chain-state when
+        *chain_state_path* is not provided).
+    chain_state_path:
+        Explicit path to the persisted chain-state JSON.
+
+    Returns
+    -------
+    dict
+        ``{"gate_open": true, "reason": "..."}`` when continuation may proceed,
+        or ``{"gate_open": false, "reason": "...", "blocker_event": {...}}``
+        when the gate is closed and the resident MUST NOT continue.
+    """
+    from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import (
+        check_wrapper_acceptance_gate,
+    )
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+    )
+
+    result = check_wrapper_acceptance_gate(
+        spec_path,
+        workspace=workspace,
+        chain_state_path=chain_state_path,
+        caller_kind="cloud_wrapper",
+    )
+
+    # ── override blocker kind with resident-continuation typed kind ─────
+    if not result.get("gate_open") and isinstance(result.get("blocker_event"), dict):
+        blocker_event = result["blocker_event"]
+        blocker_event["kind"] = RESIDENT_CONTINUATION_BLOCKER_KIND
+        blocker_event["evidence_kind"] = "resident_continuation"
+        blocker_event.setdefault(
+            "predicate_kind", PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE
+        )
+        result["blocker_event"] = blocker_event
+
+    return result

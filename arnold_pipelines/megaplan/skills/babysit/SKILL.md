@@ -1,1 +1,1 @@
-/workspace/arnold/arnold_pipelines/megaplan/data/babysit_skill.md
+../../data/babysit_skill.md

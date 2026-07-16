@@ -240,6 +240,26 @@ def _extract_wrapper_function_until(name: str, next_name: str) -> str:
     return text[start:end]
 
 
+def _extract_relaunch_functions(wrapper_kind: str) -> list[str]:
+    """Extract the resolver with its complete wrapper-specific dependency closure."""
+    extract = (
+        _extract_wrapper_function
+        if wrapper_kind == "watchdog"
+        else _extract_repair_function
+    )
+    names = [
+        "default_plan_relaunch_command",
+        "resume_plan_relaunch_command",
+        "chain_resume_plan_relaunch_command_if_needed",
+        "stale_marker_relaunch_command",
+        "default_chain_relaunch_command",
+    ]
+    if wrapper_kind == "repair":
+        names.append("_repair_loop_acceptance_gate")
+    names.append("resolve_relaunch_command")
+    return [extract(name) for name in names]
+
+
 def _extract_reap_program() -> str:
     text = _wrapper("arnold-watchdog")
     start = text.index("reap_stale_repair_candidates() {")
@@ -5587,12 +5607,7 @@ def test_shared_cloud_discover_finds_markerless_arnold_tmux_session_and_skips_su
 def test_watchdog_plan_markers_relaunch_with_auto_not_chain_start(tmp_path: Path) -> None:
     script = "\n\n".join(
         [
-            _extract_wrapper_function("default_plan_relaunch_command"),
-            _extract_wrapper_function("resume_plan_relaunch_command"),
-            _extract_wrapper_function("chain_resume_plan_relaunch_command_if_needed"),
-            _extract_wrapper_function("stale_marker_relaunch_command"),
-            _extract_wrapper_function("default_chain_relaunch_command"),
-            _extract_wrapper_function("resolve_relaunch_command"),
+            *_extract_relaunch_functions("watchdog"),
             f"SRC_DIR={str(REPO_ROOT)!r}",
             "SYNC_BRANCH=editible-install",
             "resolve_relaunch_command demo-session /tmp/workspace /tmp/not-a-chain.yaml plan demo-plan ''",
@@ -5617,12 +5632,7 @@ def test_watchdog_stale_marker_relaunch_command_regenerates_clean_runtime_chain_
     )
     script = "\n\n".join(
         [
-            _extract_wrapper_function("default_plan_relaunch_command"),
-            _extract_wrapper_function("resume_plan_relaunch_command"),
-            _extract_wrapper_function("chain_resume_plan_relaunch_command_if_needed"),
-            _extract_wrapper_function("stale_marker_relaunch_command"),
-            _extract_wrapper_function("default_chain_relaunch_command"),
-            _extract_wrapper_function("resolve_relaunch_command"),
+            *_extract_relaunch_functions("watchdog"),
             f"SRC_DIR={str(REPO_ROOT)!r}",
             "SYNC_BRANCH=editible-install",
             (
@@ -5645,12 +5655,7 @@ def test_watchdog_stale_marker_relaunch_command_regenerates_clean_runtime_chain_
 def test_watchdog_nonstale_marker_relaunch_command_is_preserved() -> None:
     script = "\n\n".join(
         [
-            _extract_wrapper_function("default_plan_relaunch_command"),
-            _extract_wrapper_function("resume_plan_relaunch_command"),
-            _extract_wrapper_function("chain_resume_plan_relaunch_command_if_needed"),
-            _extract_wrapper_function("stale_marker_relaunch_command"),
-            _extract_wrapper_function("default_chain_relaunch_command"),
-            _extract_wrapper_function("resolve_relaunch_command"),
+            *_extract_relaunch_functions("watchdog"),
             f"SRC_DIR={str(REPO_ROOT)!r}",
             "SYNC_BRANCH=editible-install",
             "resolve_relaunch_command demo-session /tmp/workspace /tmp/chain.yaml chain '' 'echo marker-command'",
@@ -5697,16 +5702,10 @@ def test_chain_resume_authority_outranks_marker_command_and_discovers_plan(
         encoding="utf-8",
     )
 
-    extract = _extract_wrapper_function if wrapper_kind == "watchdog" else _extract_repair_function
     source_var = "SRC_DIR" if wrapper_kind == "watchdog" else "ARNOLD_SRC"
     script = "\n\n".join(
         [
-            extract("default_plan_relaunch_command"),
-            extract("resume_plan_relaunch_command"),
-            extract("chain_resume_plan_relaunch_command_if_needed"),
-            extract("stale_marker_relaunch_command"),
-            extract("default_chain_relaunch_command"),
-            extract("resolve_relaunch_command"),
+            *_extract_relaunch_functions(wrapper_kind),
             f"{source_var}={str(REPO_ROOT)!r}",
             "SYNC_BRANCH=editible-install",
             (
@@ -5734,12 +5733,7 @@ def test_repair_loop_stale_marker_relaunch_command_regenerates_clean_runtime_cha
     )
     script = "\n\n".join(
         [
-            _extract_repair_function("default_plan_relaunch_command"),
-            _extract_repair_function("resume_plan_relaunch_command"),
-            _extract_repair_function("chain_resume_plan_relaunch_command_if_needed"),
-            _extract_repair_function("stale_marker_relaunch_command"),
-            _extract_repair_function("default_chain_relaunch_command"),
-            _extract_repair_function("resolve_relaunch_command"),
+            *_extract_relaunch_functions("repair"),
             f"ARNOLD_SRC={str(REPO_ROOT)!r}",
             "SYNC_BRANCH=editible-install",
             (
@@ -6390,12 +6384,7 @@ def test_watchdog_chain_relaunch_prefers_plan_resume_for_external_resume_require
     )
     script = "\n\n".join(
         [
-            _extract_wrapper_function("default_plan_relaunch_command"),
-            _extract_wrapper_function("resume_plan_relaunch_command"),
-            _extract_wrapper_function("chain_resume_plan_relaunch_command_if_needed"),
-            _extract_wrapper_function("stale_marker_relaunch_command"),
-            _extract_wrapper_function("default_chain_relaunch_command"),
-            _extract_wrapper_function("resolve_relaunch_command"),
+            *_extract_relaunch_functions("watchdog"),
             f"SRC_DIR={str(REPO_ROOT)!r}",
             "SYNC_BRANCH=editible-install",
             (
@@ -6430,12 +6419,7 @@ def test_repair_loop_chain_relaunch_prefers_plan_resume_for_external_resume_requ
     )
     script = "\n\n".join(
         [
-            _extract_repair_function("default_plan_relaunch_command"),
-            _extract_repair_function("resume_plan_relaunch_command"),
-            _extract_repair_function("chain_resume_plan_relaunch_command_if_needed"),
-            _extract_repair_function("stale_marker_relaunch_command"),
-            _extract_repair_function("default_chain_relaunch_command"),
-            _extract_repair_function("resolve_relaunch_command"),
+            *_extract_relaunch_functions("repair"),
             f"ARNOLD_SRC={str(REPO_ROOT)!r}",
             "SYNC_BRANCH=editible-install",
             (
@@ -6448,6 +6432,41 @@ def test_repair_loop_chain_relaunch_prefers_plan_resume_for_external_resume_requ
     assert result.returncode == 0, result.stderr
     assert "python3 -P -m arnold_pipelines.megaplan resume --plan demo-plan" in result.stdout
     assert "chain start" not in result.stdout
+
+
+def test_extracted_repair_relaunch_resolver_preserves_rejected_acceptance_gate(
+    tmp_path: Path,
+) -> None:
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    script = "\n\n".join(
+        [
+            *_extract_relaunch_functions("repair"),
+            "log() { :; }",
+            "report_item() { :; }",
+            "python3() {",
+            "  if [[ \"$1\" == \"-P\" && \"$2\" == \"-\" ]]; then",
+            "    echo '{\"gate_open\": false, \"reason\": \"fixture rejection\"}'",
+            "    return 0",
+            "  fi",
+            "  command python3 \"$@\"",
+            "}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            f"REPAIR_DATA_DIR={str(tmp_path)!r}",
+            f"REPORT_PATH={str(tmp_path / 'report.tsv')!r}",
+            "SYNC_BRANCH=editible-install",
+            (
+                f"resolve_relaunch_command demo-session {str(tmp_path)!r} "
+                f"{str(spec_path)!r} chain '' 'echo must-not-run'"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 1
+    assert result.stdout == "failed:acceptance_gate_closed\n"
+    assert "command not found" not in result.stderr
+    assert "must-not-run" not in result.stdout
 
 
 def test_watchdog_done_plan_reports_complete_without_repair_or_relaunch(tmp_path: Path) -> None:

@@ -170,7 +170,7 @@ The `arnold/conformance/legacy_reference_allowlist.json` and `arnold/conformance
 
 | Plan/Brief Reference | Live Command / Module | Notes |
 |---------------------|----------------------|-------|
-| `arnold pipelines describe megaplan` | `megaplan describe` → `cli/__init__.py:handle_describe()` | The `arnold` top-level CLI routes `workflow` and operator commands only. |
+| Retired top-level pipeline-describe form for Megaplan | `megaplan describe` → `cli/__init__.py:handle_describe()` | The `arnold` top-level CLI routes `workflow` and operator commands only. |
 | `arnold pipelines run megaplan --describe` | `megaplan run megaplan --describe` → `cli/run.py:cli_run()` | The live megaplan CLI is a standalone entrypoint. |
 | `cli/arnold.py` | `arnold_pipelines/megaplan/cli/__init__.py` | Monolithic CLI (2987 lines). Also `cli/arnold.py` exists as a legacy top-level dispatch (M6 deletion target per `deleted_surfaces.py` line 53). |
 

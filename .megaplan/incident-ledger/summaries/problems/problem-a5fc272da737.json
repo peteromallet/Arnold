@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-14T19:36:15.112827+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-custody-control-plane-20260714"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 1,
+  "owner_actor": "immediate_repair",
+  "problem_id": "problem-a5fc272da737",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:b9e00b9015dccf525eeed0f0dc694918cee5c4fa1fe7dac5261a891228040212",
+    "last_seq": 522,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-a5fc272da737: managed automatic_repair_retry accepted execution custody"
+}

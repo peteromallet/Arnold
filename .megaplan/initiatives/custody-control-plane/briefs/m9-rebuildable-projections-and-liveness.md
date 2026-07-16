@@ -54,6 +54,11 @@ Scope is no more than two weeks.
   signature drift, unclosed custody, index mismatch, detection-SLO breach,
   executor/repair overlap, cross-session joins, projection amplification, full
   seriality, oversized rework, invalid model, and missing ledger coverage.
+- Canonically normalize structured quality-status families (`fail`, `failed`,
+  `failed: <detail>`, and `error: <detail>`) without discarding their commands,
+  criterion IDs, hashes, or exact occurrence identity. A legacy
+  `human_required`/unknown projection that disagrees with deterministic source
+  evidence emits drift and cannot suppress repair eligibility or escalation.
 
 ## Out of scope
 
@@ -134,6 +139,10 @@ disabled during shadow comparison and fault testing.
 - Each deterministic reason fixture fires exactly once with exact evidence IDs;
   an idle pinned-runtime projection canary has zero false stalls and rebuild
   digest parity before control consumers are promoted.
+- Replaying the captured M5 review artifact classifies its structured failed
+  criteria deterministically at every canonical consumer, reports the legacy
+  unknown/human-required view as drift, and never treats parser loss as proof
+  that no eligible blocker event exists.
 - Generated reader inventory has zero unapproved raw authority reader and every
   expiring compatibility projection is non-authoritative.
 - Every consumer row in `research/wbc-boundary-adoption-matrix.md` uses the
