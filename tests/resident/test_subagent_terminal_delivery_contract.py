@@ -6,6 +6,9 @@ import json
 from pathlib import Path
 
 from arnold_pipelines.megaplan.resident import subagent as subagent_module
+from arnold_pipelines.megaplan.resident.runtime import (
+    _managed_completion_verification_prompt,
+)
 from arnold_pipelines.megaplan.resident.subagent import (
     ManagedCompletionTurnResult,
     list_managed_resident_agents,
@@ -153,6 +156,62 @@ def _write_terminal_manifest(
     return manifest_path
 
 
+def _mark_dependency_failed(
+    tmp_path: Path,
+    manifest_path: Path,
+    *,
+    predecessor_status: str = "failed",
+) -> Path:
+    predecessor_run_id = "subagent-dependency"
+    predecessor_dir = manifest_path.parent.parent / predecessor_run_id
+    predecessor_dir.mkdir()
+    predecessor_result = predecessor_dir / "result.md"
+    predecessor_result.write_text("partial predecessor finding", encoding="utf-8")
+    predecessor_manifest = predecessor_dir / "manifest.json"
+    predecessor_manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": "arnold-resident-agent-run-v1",
+                "run_kind": "resident_delegated_agent",
+                "custodian": "arnold.megaplan.resident",
+                "run_id": predecessor_run_id,
+                "status": predecessor_status,
+                "result_path": str(predecessor_result),
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = json.loads(manifest_path.read_text())
+    manifest.update(
+        {
+            "status": "failed",
+            "terminal_outcome": "failed",
+            "error": "queued successor dependency failed closed",
+            "error_class": "ResidentSubagentDependencyFailure",
+            "queue": {
+                "schema_version": "arnold-resident-subagent-queue-v1",
+                "state": "dependency_failed",
+                "attention": (
+                    "predecessor_abandoned"
+                    if predecessor_status == "abandoned"
+                    else "predecessor_terminal_failure"
+                ),
+                "failed_predecessor_run_id": predecessor_run_id,
+                "predecessor_status": predecessor_status,
+                "predecessor_states": [
+                    {
+                        "run_id": predecessor_run_id,
+                        "status": predecessor_status,
+                        "result_state": "not_applicable",
+                    }
+                ],
+            },
+        }
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    return predecessor_manifest
+
+
 class _AcceptedOutbound:
     def __init__(self, message_id: str = "1526249999999999999") -> None:
         self.message_id = message_id
@@ -161,6 +220,138 @@ class _AcceptedOutbound:
     async def send(self, message) -> None:
         self.sent.append(message)
         message.metadata["discord_message_ids"] = [self.message_id]
+
+
+def test_dependency_failed_owner_delivers_truthful_partial_fallback_exactly_once(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_terminal_manifest(
+        tmp_path, status="failed", with_verified_payload=False
+    )
+    _mark_dependency_failed(tmp_path, manifest_path, predecessor_status="failed")
+    outbound = _AcceptedOutbound()
+
+    first = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound,
+            project_root=tmp_path,
+            workspace_root=None,
+        )
+    )
+    second = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound,
+            project_root=tmp_path,
+            workspace_root=None,
+        )
+    )
+
+    delivery = json.loads(manifest_path.read_text())["completion_delivery"]
+    assert first.delivered == 1
+    assert second.delivered == 0
+    assert len(outbound.sent) == 1
+    assert "did not run because required predecessor subagent-dependency" in (
+        outbound.sent[0].content
+    )
+    assert "non-empty partial result artifact" in outbound.sent[0].content
+    assert "Downstream synthesis was not performed" in outbound.sent[0].content
+    assert delivery["result_kind"] == "terminal_dependency_failure"
+    assert delivery["status"] == "delivered"
+
+
+def test_abandoned_predecessor_owner_uses_verifier_and_preserves_failure_truth(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_terminal_manifest(
+        tmp_path, status="failed", with_verified_payload=False
+    )
+    _mark_dependency_failed(tmp_path, manifest_path, predecessor_status="abandoned")
+    calls = 0
+
+    async def verify(_path, manifest):
+        nonlocal calls
+        calls += 1
+        assert manifest["queue"]["failed_predecessor_run_id"] == (
+            "subagent-dependency"
+        )
+        return ManagedCompletionTurnResult(
+            final_text=(
+                "The predecessor produced partial findings, but it was abandoned; the "
+                "synthesis owner never ran. The verification outcome is partial."
+            ),
+            verification_outcome="partial",
+            turn_id="turn_dependency_completion",
+            outbound_message_id="msg_dependency_completion",
+        )
+
+    outbound = _AcceptedOutbound()
+    first = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound,
+            project_root=tmp_path,
+            workspace_root=None,
+            completion_turn_handler=verify,
+        )
+    )
+    second = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound,
+            project_root=tmp_path,
+            workspace_root=None,
+            completion_turn_handler=verify,
+        )
+    )
+
+    assert first.delivered == 1
+    assert second.delivered == 0
+    assert calls == 1
+    assert len(outbound.sent) == 1
+    assert "abandoned" in outbound.sent[0].content
+    assert "never ran" in outbound.sent[0].content
+
+
+def test_dependency_failed_verifier_prompt_requires_partial_and_blocker_truth(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_terminal_manifest(
+        tmp_path, status="failed", with_verified_payload=False
+    )
+    _mark_dependency_failed(tmp_path, manifest_path, predecessor_status="abandoned")
+    manifest = json.loads(manifest_path.read_text())
+
+    prompt = _managed_completion_verification_prompt(
+        manifest_path=manifest_path,
+        manifest=manifest,
+        source_message="original request",
+    )
+
+    assert "Terminal dependency evidence" in prompt
+    assert '"failed_predecessor_run_id": "subagent-dependency"' in prompt
+    assert '"predecessor_status": "abandoned"' in prompt
+    assert "label it as partial/unverified" in prompt
+    assert "never claim downstream synthesis ran" in prompt
+
+
+def test_shared_unknown_terminal_status_is_deliverable(tmp_path: Path) -> None:
+    manifest_path = _write_terminal_manifest(
+        tmp_path, status="unknown", with_verified_payload=False
+    )
+    outbound = _AcceptedOutbound()
+
+    result = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound,
+            project_root=tmp_path,
+            workspace_root=None,
+        )
+    )
+
+    assert result.delivered == 1
+    assert len(outbound.sent) == 1
+    assert "status: unknown" in outbound.sent[0].content
+    assert json.loads(manifest_path.read_text())["completion_delivery"]["status"] == (
+        "delivered"
+    )
 
 
 def test_launch_turn_can_end_before_verified_terminal_reply(tmp_path: Path) -> None:

@@ -1548,6 +1548,30 @@ def _managed_completion_verification_prompt(
         if isinstance(completion_verification, Mapping)
         else ""
     )
+    queue = manifest.get("queue")
+    dependency_context = ""
+    if isinstance(queue, Mapping) and queue.get("state") == "dependency_failed":
+        dependency_context = (
+            "Terminal dependency evidence from the synthesis/delivery owner's durable queue:\n"
+            + json.dumps(
+                {
+                    key: queue.get(key)
+                    for key in (
+                        "state",
+                        "attention",
+                        "failed_predecessor_run_id",
+                        "predecessor_status",
+                        "predecessor_states",
+                    )
+                    if queue.get(key) is not None
+                },
+                sort_keys=True,
+                default=str,
+            )
+            + "\nThe synthesis/delivery child did not execute. Inspect predecessor manifests and "
+            "artifacts for partial work, label it as partial/unverified as appropriate, clearly "
+            "name the blocked or abandoned dependency, and never claim downstream synthesis ran.\n\n"
+        )
     return (
         "A resident-managed delegated execution has reached a terminal state and now requires "
         "independent completion verification. Do not accept its final response as proof.\n\n"
@@ -1561,6 +1585,7 @@ def _managed_completion_verification_prompt(
         f"Full delegated log: {resolved_path('full_log_path', str(manifest.get('log_path') or 'run.log'))}\n\n"
         f"{relationship_context}"
         f"{verification_context}"
+        f"{dependency_context}"
         "Authoritative original user request (preserve its requirements):\n"
         f"{source_message[:12000]}"
     )
