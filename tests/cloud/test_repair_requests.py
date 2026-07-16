@@ -335,6 +335,33 @@ def test_problem_signature_dedupe_ignores_timestamp_but_not_signature(tmp_path: 
     ]
 
 
+def test_same_signature_does_not_coalesce_across_sessions(tmp_path: Path) -> None:
+    queue_dir = _queue_root(tmp_path)
+
+    first = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="session-a",
+        source="watchdog",
+        problem_signature=_signature(),
+        root_cause_hint="same failure",
+    )
+    second = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="session-b",
+        source="watchdog",
+        problem_signature=_signature(),
+        root_cause_hint="same failure",
+    )
+
+    assert first["status"] == second["status"] == "queued"
+    assert first["request"]["request_id"] != second["request"]["request_id"]
+    assert first["request"]["blocker_id"] != second["request"]["blocker_id"]
+    assert {record["session"] for record in repair_requests.iter_repair_requests(queue_dir)} == {
+        "session-a",
+        "session-b",
+    }
+
+
 def test_distinct_redacted_root_cause_hints_have_distinct_hashes() -> None:
     secret_a = "Authorization: Bearer sk-proj-abcdefghijklmnopqrstuvwxyz123456"
     secret_b = "Authorization: Bearer sk-proj-abcdefghijklmnopqrstuvwxyz999999"
