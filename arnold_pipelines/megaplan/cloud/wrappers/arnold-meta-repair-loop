@@ -713,7 +713,74 @@ PY
 }
 
 
-if ! l2_mutation_authorized; then
+# ── acceptance gate before meta-repair dispatch ────────────────────
+# In atomic/enforce mode a completed chain with successors requiring
+# acceptance must carry a validated acceptance receipt before any
+# meta-repair dispatch.  The meta-repair itself may fix the repair
+# system, but the ordinary repair loop will be blocked anyway until
+# acceptance evidence is present.
+_meta_repair_acceptance_gate() {
+  local marker_path remote_spec workspace gate_json gate_open reason
+  marker_path="$MARKER_DIR/$SESSION.json"
+  if [[ ! -f "$marker_path" ]]; then
+    return 0
+  fi
+  remote_spec="$(python3 -c "
+import json, sys
+try:
+    payload = json.loads(open(sys.argv[1], encoding='utf-8').read())
+except Exception:
+    raise SystemExit(1)
+spec = payload.get('remote_spec') or payload.get('spec') or ''
+workspace = payload.get('workspace') or ''
+print(f'{spec}\t{workspace}')
+" "$marker_path" 2>/dev/null || true)"
+  if [[ -z "$remote_spec" ]]; then
+    return 0
+  fi
+  workspace="${remote_spec#*$'\t'}"
+  remote_spec="${remote_spec%%$'\t'*}"
+  if [[ -z "$remote_spec" || ! -f "$remote_spec" ]]; then
+    return 0
+  fi
+  gate_json="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$remote_spec" "$workspace" "meta_repair" <<'PY'
+import json, sys
+from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import check_wrapper_acceptance_gate
+spec_path, workspace, caller = sys.argv[1:4]
+result = check_wrapper_acceptance_gate(spec_path, workspace=workspace, caller_kind=caller)
+print(json.dumps(result, sort_keys=True))
+PY
+)" || true
+  if [[ -z "$gate_json" ]]; then
+    return 0
+  fi
+  gate_open="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('gate_open',True))" <<<"$gate_json" 2>/dev/null || echo True)"
+  if [[ "$gate_open" == "True" || "$gate_open" == "true" ]]; then
+    return 0
+  fi
+  reason="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('reason','unknown'))" <<<"$gate_json" 2>/dev/null || echo "acceptance gate closed")"
+  log "[meta-repair] acceptance gate closed session=$SESSION: $reason"
+  blocker_event="$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d.get('blocker_event',{})))" <<<"$gate_json" 2>/dev/null || true)"
+  if [[ -n "$blocker_event" && "$blocker_event" != "{}" ]]; then
+    local blocker_file="$REPAIR_DATA_DIR/meta/${SESSION}.blocker-acceptance-gate.json"
+    python3 -c "
+import json, pathlib, sys
+pathlib.Path(sys.argv[1]).parent.mkdir(parents=True, exist_ok=True)
+pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
+" "$blocker_file" "$blocker_event" 2>/dev/null || true
+    log "[meta-repair] blocker event persisted: $blocker_file"
+  fi
+  printf '%s\n' "NO_FIX" "Meta-repair dispatch blocked: acceptance gate closed ($reason)" > "$RESP_PATH"
+  : > "$ERR_PATH"
+  return 1
+}
+
+_meta_repair_acceptance_gate_accepted=0
+_meta_repair_acceptance_gate && _meta_repair_acceptance_gate_accepted=1
+
+if [[ "$_meta_repair_acceptance_gate_accepted" == "0" ]]; then
+  log "[meta-repair] acceptance gate blocked dispatch; exiting"
+elif ! l2_mutation_authorized; then
   log "observed: L2 Codex dispatch blocked by master-plus-path authorization gate"
   printf '%s\n' "NO_FIX" "Meta-repair mutation is not authorized." > "$RESP_PATH"
   : > "$ERR_PATH"

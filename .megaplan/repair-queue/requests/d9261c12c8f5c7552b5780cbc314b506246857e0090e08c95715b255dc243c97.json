@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request",
+  "request_id": "d9261c12c8f5c7552b5780cbc314b506246857e0090e08c95715b255dc243c97",
+  "created_at": "2026-07-15T12:03:30Z",
+  "source": "lifecycle_failure",
+  "session": "m5a-atomic-fail-closed-20260715-0149",
+  "workspace": "/workspace/custody-control-plane-20260714/Arnold",
+  "run_kind": "plan",
+  "marker_dir": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m5a-atomic-fail-closed-20260715-0149",
+  "queue_dir": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/repair-queue",
+  "target": {
+    "plan_dir": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m5a-atomic-fail-closed-20260715-0149",
+    "plan_name": "m5a-atomic-fail-closed-20260715-0149",
+    "workspace_path": "/workspace/custody-control-plane-20260714/Arnold"
+  },
+  "problem_signature": {
+    "failure_kind": "execution_blocked",
+    "current_state": "blocked",
+    "phase_or_step": "execute",
+    "milestone_or_plan": "m5a-atomic-fail-closed-20260715-0149",
+    "gate_recommendation": "Review blocking deviations and resume execute with a fresh session.",
+    "blocked_task_id": "",
+    "event_signature": ""
+  },
+  "problem_signature_key": "29aaf7b272b5cfd522dbe8cdc4db9e930ce64f6fad02b577d96a27d78cecc5d3",
+  "root_cause_hint_hash": "f2a01f7c3785d76d20efe316f4b7808e62896d314e82be57491cb3cd408f0853",
+  "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
+  "resident_delegation": {
+    "schema_version": "arnold-resident-delegation-provenance-v1",
+    "applicability": "applicable",
+    "transport": "discord",
+    "correlation_id": "discord-corr-ae39739ee9b53c758841e748",
+    "custody_id": "discord-custody-ae39739ee9b53c758841e748",
+    "resident_conversation_id": "rconv_85a1c2bfd5f1",
+    "source_record_id": "msg_d91108e46b1f",
+    "conversation_key": "discord:dm:301463647895683072",
+    "discord_message_id": "1526920259997532264",
+    "reply_to_message_id": "1526920259997532264",
+    "guild_id": null,
+    "channel_id": "1451308037074714654",
+    "thread_id": null,
+    "dm_user_id": "301463647895683072",
+    "resident_turn_id": "turn_86030e2e353e",
+    "root_run_id": "subagent-20260715-115702-43a46bbc",
+    "source_kind": "discord_inbound_message",
+    "timezone_name": "UTC"
+  }
+}

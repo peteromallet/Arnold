@@ -12,7 +12,7 @@ import pytest
 
 from arnold_pipelines.megaplan._core.io import plans_root
 from arnold_pipelines.megaplan._core.state import write_plan_state
-from arnold_pipelines.megaplan.cli.parser import build_parser
+from arnold_pipelines.megaplan.cli import build_parser
 from arnold_pipelines.megaplan.cli.status_view import handle_progress, handle_status
 from arnold_pipelines.megaplan.handlers import override as override_handler
 from arnold_pipelines.megaplan.handlers.init import handle_init

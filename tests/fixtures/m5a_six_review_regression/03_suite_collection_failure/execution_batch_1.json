@@ -1,0 +1,10 @@
+{
+  "task_updates": [
+    {
+      "task_id": "T1",
+      "status": "done",
+      "commands_run": ["pytest --collect-only -q 2>&1 | tail -5"],
+      "files_changed": []
+    }
+  ]
+}

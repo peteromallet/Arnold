@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 from base64 import b64decode, b64encode
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Literal, Mapping, Sequence
 
@@ -391,10 +392,35 @@ def journal_commit_path(root: Path, tx_id: str) -> Path:
     return journal_root(root) / f"tx-{tx_id}.commit"
 
 
-def journal_text_write(path: Path, content: str, *, tx_id: str | None = None) -> dict[str, Any]:
+def _validate_cas_guards(
+    expected_prior_sha256: str | None,
+    target_absent: bool,
+) -> None:
+    """Reject contradictory CAS guard combinations.
+
+    ``expected_prior_sha256`` (target must exist with this prior hash) and
+    ``target_absent`` (target must not exist) are mutually exclusive.  Both
+    unset is the default non-CAS path.
+    """
+    if expected_prior_sha256 is not None and target_absent:
+        raise ValueError(
+            "journal CAS guards are mutually exclusive: "
+            "expected_prior_sha256 and target_absent cannot both be set"
+        )
+
+
+def journal_text_write(
+    path: Path,
+    content: str,
+    *,
+    tx_id: str | None = None,
+    expected_prior_sha256: str | None = None,
+    target_absent: bool = False,
+) -> dict[str, Any]:
+    _validate_cas_guards(expected_prior_sha256, target_absent)
     storage, inline = _serialize_inline_payload(content)
     temp_name = f".{path.name}.tx-{tx_id or 'pending'}.tmp"
-    return {
+    entry: dict[str, Any] = {
         "target_path": str(path),
         "temp_path": str(path.parent / temp_name),
         "content_storage": storage,
@@ -402,12 +428,27 @@ def journal_text_write(path: Path, content: str, *, tx_id: str | None = None) ->
         "content_sha256": _content_sha256(content),
         "prior_content_sha256": _path_sha256(path) if path.exists() else None,
     }
+    # CAS guard keys are only emitted when set so non-CAS entries remain
+    # byte-identical to the pre-CAS journal format.
+    if expected_prior_sha256 is not None:
+        entry["expected_prior_sha256"] = expected_prior_sha256
+    if target_absent:
+        entry["target_absent"] = True
+    return entry
 
 
-def journal_bytes_write(path: Path, content: bytes, *, tx_id: str | None = None) -> dict[str, Any]:
+def journal_bytes_write(
+    path: Path,
+    content: bytes,
+    *,
+    tx_id: str | None = None,
+    expected_prior_sha256: str | None = None,
+    target_absent: bool = False,
+) -> dict[str, Any]:
+    _validate_cas_guards(expected_prior_sha256, target_absent)
     storage, inline = _serialize_inline_payload(content)
     temp_name = f".{path.name}.tx-{tx_id or 'pending'}.tmp"
-    return {
+    entry: dict[str, Any] = {
         "target_path": str(path),
         "temp_path": str(path.parent / temp_name),
         "content_storage": storage,
@@ -415,6 +456,11 @@ def journal_bytes_write(path: Path, content: bytes, *, tx_id: str | None = None)
         "content_sha256": _content_sha256(content),
         "prior_content_sha256": _path_sha256(path) if path.exists() else None,
     }
+    if expected_prior_sha256 is not None:
+        entry["expected_prior_sha256"] = expected_prior_sha256
+    if target_absent:
+        entry["target_absent"] = True
+    return entry
 
 
 def journal_event_log(path: Path, records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -430,10 +476,13 @@ def journal_blob_promotion(
     *,
     extension: str,
     metadata: Mapping[str, Any],
+    expected_prior_sha256: str | None = None,
+    target_absent: bool = False,
 ) -> dict[str, Any]:
+    _validate_cas_guards(expected_prior_sha256, target_absent)
     storage, inline = _serialize_inline_payload(content)
     normalized_ext = extension.lstrip(".")
-    return {
+    entry: dict[str, Any] = {
         "blob_dir": str(blob_dir),
         "staging_path": str(blob_dir / "data.staging"),
         "final_path": str(blob_dir / f"data.{normalized_ext}"),
@@ -443,6 +492,11 @@ def journal_blob_promotion(
         "content_sha256": _content_sha256(content),
         "metadata": dict(metadata),
     }
+    if expected_prior_sha256 is not None:
+        entry["expected_prior_sha256"] = expected_prior_sha256
+    if target_absent:
+        entry["target_absent"] = True
+    return entry
 
 
 def framed_json_record_bytes(record: Mapping[str, Any]) -> bytes:
@@ -729,6 +783,153 @@ def discard_uncommitted_journal_transaction(root: Path, tx_id: str) -> None:
         return
     payload["journal_root"] = str(root)
     _cleanup_prepared_transaction(payload)
+
+
+# ---------------------------------------------------------------------------
+# Compare-And-Swap (CAS) journal guards
+# ---------------------------------------------------------------------------
+#
+# CAS guards are an *extension layer* over the existing journal machinery
+# (SD1).  A write/blob entry may carry two optional guards that are evaluated
+# at commit time, **before** the commit marker is written:
+#
+# * ``expected_prior_sha256`` — the target file must currently exist and its
+#   on-disk SHA-256 must equal this value.  Detects concurrent modification
+#   between prepare and commit (lost update).
+# * ``target_absent`` — the target file must NOT currently exist.  Enforces
+#   create-only semantics.
+#
+# When both guards are unset (the default), journal behaviour is byte-identical
+# to the pre-CAS code paths.  The guards are evaluated before the commit marker
+# so that a CAS violation never produces a durable commit record: the prepared
+# transaction is discarded (temp files + prepare.json removed, no marker), and
+# recovery therefore treats it as never-committed.
+
+
+@dataclass(frozen=True)
+class JournalCASViolation:
+    """A single failed CAS guard for one journal entry.
+
+    ``guard`` is either ``"expected_prior_sha256"`` or ``"target_absent"``.
+    ``expected``/``actual`` carry the compared values (SHA-256 strings or
+    ``None`` when the target is absent).
+    """
+
+    section: str
+    entry_index: int
+    target_path: str
+    guard: str
+    expected: str | None
+    actual: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "section": self.section,
+            "entry_index": self.entry_index,
+            "target_path": self.target_path,
+            "guard": self.guard,
+            "expected": self.expected,
+            "actual": self.actual,
+        }
+
+
+@dataclass(frozen=True)
+class JournalCASResult:
+    """Outcome of a CAS-aware journal commit.
+
+    ``committed`` is True when the transaction was durably committed (CAS guards
+    satisfied, or no guards present).  When False, ``violations`` lists every
+    entry whose guard failed and the prepared transaction has been discarded.
+    """
+
+    tx_id: str
+    committed: bool
+    violations: tuple[JournalCASViolation, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "tx_id": self.tx_id,
+            "committed": self.committed,
+            "violations": [violation.to_dict() for violation in self.violations],
+        }
+
+
+def evaluate_cas_guards(payload: Mapping[str, Any]) -> tuple[JournalCASViolation, ...]:
+    """Evaluate CAS guards for every write/blob entry in *payload*.
+
+    Returns a tuple of :class:`JournalCASViolation` (empty when all guards
+    pass or no guards are present).  This is a pure read of current filesystem
+    state — it performs no writes.
+    """
+    violations: list[JournalCASViolation] = []
+    # section -> the key that names the target path within each entry.
+    for section, path_key in (("writes", "target_path"), ("blob_promotions", "final_path")):
+        entries = payload.get(section)
+        if not isinstance(entries, list):
+            continue
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, Mapping):
+                continue
+            path_value = entry.get(path_key)
+            if not isinstance(path_value, str):
+                continue
+            target_path = Path(path_value)
+            expected_sha = entry.get("expected_prior_sha256")
+            target_absent = bool(entry.get("target_absent"))
+            exists = target_path.exists()
+            actual_sha = _path_sha256(target_path) if exists else None
+            if expected_sha is not None:
+                # File must exist AND hash must match the expected prior hash.
+                if actual_sha != expected_sha:
+                    violations.append(
+                        JournalCASViolation(
+                            section=section,
+                            entry_index=index,
+                            target_path=str(target_path),
+                            guard="expected_prior_sha256",
+                            expected=str(expected_sha),
+                            actual=actual_sha,
+                        )
+                    )
+            elif target_absent:
+                # File must NOT exist.
+                if exists:
+                    violations.append(
+                        JournalCASViolation(
+                            section=section,
+                            entry_index=index,
+                            target_path=str(target_path),
+                            guard="target_absent",
+                            expected=None,
+                            actual=actual_sha,
+                        )
+                    )
+    return tuple(violations)
+
+
+def commit_journal_transaction_cas(root: Path, tx_id: str) -> JournalCASResult:
+    """Commit a journal transaction under CAS guards.
+
+    CAS guards on each write/blob entry are evaluated **before** the commit
+    marker is written.  If any guard fails, the prepared transaction is
+    discarded (temp files + prepare.json removed, no commit marker created) and
+    a failure :class:`JournalCASResult` is returned — the transaction is
+    indistinguishable from never-committed to recovery.
+
+    When no guards are present (or all pass), this delegates to the existing
+    :func:`commit_journal_transaction` so non-CAS commit, apply, and cleanup
+    behaviour is unchanged.
+    """
+    prepare_path = journal_prepare_path(root, tx_id)
+    payload = read_json(prepare_path)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Malformed prepare payload at {prepare_path}")
+    violations = evaluate_cas_guards(payload)
+    if violations:
+        discard_uncommitted_journal_transaction(root, tx_id)
+        return JournalCASResult(tx_id=tx_id, committed=False, violations=violations)
+    commit_journal_transaction(root, tx_id)
+    return JournalCASResult(tx_id=tx_id, committed=True, violations=())
 
 
 def scrub_stale_staging_files(root: Path, *, older_than_seconds: int = 3600) -> list[Path]:

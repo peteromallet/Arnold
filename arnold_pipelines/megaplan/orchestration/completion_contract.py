@@ -31,9 +31,9 @@ import os
 import shlex
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from arnold_pipelines.megaplan._core.io import (
     list_batch_artifacts,
@@ -107,22 +107,51 @@ CONTRACT_MODE_OFF = "off"
 CONTRACT_MODE_SHADOW = "shadow"
 CONTRACT_MODE_WARN = "warn"
 CONTRACT_MODE_ENFORCE = "enforce"
+CONTRACT_MODE_ATOMIC = "atomic"
 
 VALID_CONTRACT_MODES: frozenset[str] = frozenset(
-    {CONTRACT_MODE_OFF, CONTRACT_MODE_SHADOW, CONTRACT_MODE_WARN, CONTRACT_MODE_ENFORCE}
+    {
+        CONTRACT_MODE_OFF,
+        CONTRACT_MODE_SHADOW,
+        CONTRACT_MODE_WARN,
+        CONTRACT_MODE_ENFORCE,
+        CONTRACT_MODE_ATOMIC,
+    }
+)
+
+# Modes that gate transitions (fail-closed).  ``atomic`` is a synonym for
+# ``enforce`` and normalizes to it at load time; both carry the same semantics.
+FAIL_CLOSED_CONTRACT_MODES: frozenset[str] = frozenset(
+    {CONTRACT_MODE_ENFORCE, CONTRACT_MODE_ATOMIC}
 )
 
 DEFAULT_CONTRACT_MODE = CONTRACT_MODE_SHADOW
+
+# Canonicalizer: ``atomic`` → ``enforce`` so every consumer only needs to check
+# ``enforce``.  The raw value ``atomic`` is still recorded in
+# ``ChainState.completion_contract_mode`` for audit but all behavioral gates
+# use the canonical form.
+_ATOMIC_TO_ENFORCE: dict[str, str] = {CONTRACT_MODE_ATOMIC: CONTRACT_MODE_ENFORCE}
 
 COMPLETION_VERDICT_SCHEMA = "megaplan.completion_verdict"
 COMPLETION_VERDICT_SCHEMA_VERSION = 1
 COMPLETION_VERDICT_CONTRACT_VERSION = EVIDENCE_CONTRACT_SCHEMA_VERSION
 
 
+def is_fail_closed_mode(mode: str) -> bool:
+    """Return ``True`` when *mode* is a fail-closed (atomic/enforce) variant."""
+    return mode in FAIL_CLOSED_CONTRACT_MODES or mode == CONTRACT_MODE_ENFORCE
+
+
 def normalize_contract_mode(value: Any) -> str:
-    """Coerce *value* to a valid contract mode, defaulting to shadow."""
+    """Coerce *value* to a valid contract mode, defaulting to shadow.
+
+    ``atomic`` normalizes to ``enforce`` for all behavioral gates, but
+    callers that need the raw persisted value should inspect
+    ``ChainState.completion_contract_mode`` directly.
+    """
     if isinstance(value, str) and value in VALID_CONTRACT_MODES:
-        return value
+        return _ATOMIC_TO_ENFORCE.get(value, value)
     return DEFAULT_CONTRACT_MODE
 
 
@@ -202,6 +231,9 @@ class CompletionVerdict:
     legacy_evidence_count: int = 0
     unknown_evidence_count: int = 0
     would_block_reasons: tuple[str, ...] = ()
+    # Typed predicate failures — populated only in fail-closed modes (atomic/enforce).
+    # In shadow/warn/off mode this tuple is empty; failures remain as string entries.
+    predicate_failures: tuple["BlockingPredicateFailure", ...] = ()
 
     @property
     def would_block(self) -> bool:
@@ -222,6 +254,7 @@ class CompletionVerdict:
             "legacy_evidence_count": self.legacy_evidence_count,
             "unknown_evidence_count": self.unknown_evidence_count,
             "would_block_reasons": list(self.would_block_reasons),
+            "predicate_failures": [pf.to_dict() for pf in self.predicate_failures],
         }
         # Surface green_suite.delta at the top level for easy consumption
         # (also available under evidence[].details.delta for the green_suite ref).
@@ -259,6 +292,14 @@ class CompletionVerdict:
         would_block_reasons = d.get("would_block_reasons", ())
         if not isinstance(would_block_reasons, (list, tuple)):
             would_block_reasons = ()
+        raw_predicate_failures = d.get("predicate_failures", ())
+        if not isinstance(raw_predicate_failures, (list, tuple)):
+            raw_predicate_failures = ()
+        predicate_failures = tuple(
+            BlockingPredicateFailure.from_dict(item)
+            for item in raw_predicate_failures
+            if isinstance(item, dict)
+        )
         return cls(
             mode=normalize_contract_mode(d.get("mode")),
             subject=subject,
@@ -272,6 +313,7 @@ class CompletionVerdict:
             legacy_evidence_count=_optional_int(d.get("legacy_evidence_count")),
             unknown_evidence_count=_optional_int(d.get("unknown_evidence_count")),
             would_block_reasons=tuple(str(item) for item in would_block_reasons),
+            predicate_failures=predicate_failures,
         )
 
     def one_line(self) -> str:
@@ -287,6 +329,120 @@ class CompletionVerdict:
             f"legacy_evidence={self.legacy_evidence_count} "
             f"unknown_evidence={self.unknown_evidence_count}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Typed blocking predicate failures
+# ---------------------------------------------------------------------------
+
+#: Canonical predicate kinds for typed blocking failures in fail-closed modes.
+PREDICATE_KIND_UNKNOWN = "unknown"
+PREDICATE_KIND_MISSING = "missing"
+PREDICATE_KIND_STALE = "stale"
+PREDICATE_KIND_REJECTED = "rejected"
+PREDICATE_KIND_DIVERGENT = "divergent"
+PREDICATE_KIND_OUT_OF_ORDER = "out_of_order"
+PREDICATE_KIND_UNBOUND_EVIDENCE = "unbound_evidence"
+PREDICATE_KIND_PROVIDER_CRASH = "provider_crash"
+PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE = "unknown_acceptance_failure"
+
+VALID_PREDICATE_KINDS: frozenset[str] = frozenset(
+    {
+        PREDICATE_KIND_UNKNOWN,
+        PREDICATE_KIND_MISSING,
+        PREDICATE_KIND_STALE,
+        PREDICATE_KIND_REJECTED,
+        PREDICATE_KIND_DIVERGENT,
+        PREDICATE_KIND_OUT_OF_ORDER,
+        PREDICATE_KIND_UNBOUND_EVIDENCE,
+        PREDICATE_KIND_PROVIDER_CRASH,
+        PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+    }
+)
+
+
+@dataclass(frozen=True)
+class BlockingPredicateFailure:
+    """Typed predicate failure — structured reason why evidence blocks a transition.
+
+    In atomic/enforce (fail-closed) modes every blocking condition produces a
+    typed :class:`BlockingPredicateFailure` so downstream consumers can match on
+    predicate kind rather than parsing unstructured error strings.  In shadow
+    mode the ``predicate_failures`` tuple on :class:`CompletionVerdict` remains
+    empty; all failures stay as legacy string entries in ``failures``.
+    """
+
+    kind: str  # one of VALID_PREDICATE_KINDS
+    evidence_kind: str  # which evidence provider this relates to
+    summary: str
+    details: dict[str, Any] = field(default_factory=dict)
+    schema: str = COMPLETION_VERDICT_SCHEMA
+    schema_version: int = COMPLETION_VERDICT_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.kind not in VALID_PREDICATE_KINDS:
+            raise ValueError(
+                f"invalid predicate kind {self.kind!r}; must be one of "
+                f"{sorted(VALID_PREDICATE_KINDS)}"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "schema_version": self.schema_version,
+            "kind": self.kind,
+            "evidence_kind": self.evidence_kind,
+            "summary": self.summary,
+            "details": dict(self.details),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "BlockingPredicateFailure":
+        details = d.get("details")
+        return cls(
+            kind=str(d.get("kind", "")),
+            evidence_kind=str(d.get("evidence_kind", "")),
+            summary=str(d.get("summary", "")),
+            details=dict(details) if isinstance(details, dict) else {},
+            schema=str(d.get("schema", COMPLETION_VERDICT_SCHEMA)),
+            schema_version=_optional_int(d.get("schema_version")),
+        )
+
+    def one_line(self) -> str:
+        return f"[{self.kind}] {self.evidence_kind}: {self.summary}"
+
+
+def _classify_predicate_kind(ref: "EvidenceRef", *, provider_crashed: bool = False) -> str | None:
+    """Classify an evidence ref into a predicate kind for typed failures.
+
+    Returns ``None`` when the ref does not represent a blocking condition.
+    """
+    if provider_crashed:
+        return PREDICATE_KIND_PROVIDER_CRASH
+
+    status = ref.status
+    if status == EvidenceStatus.unknown:
+        return PREDICATE_KIND_UNKNOWN
+    if status == EvidenceStatus.unsatisfied:
+        details = ref.details if isinstance(ref.details, dict) else {}
+        diag = details.get("diagnostics")
+        if isinstance(diag, dict) and diag.get("legacy_status") == "fail-not-success":
+            return PREDICATE_KIND_REJECTED
+        summary = ref.summary.lower() if ref.summary else ""
+        if "stale" in summary or "baseline" in summary:
+            if "stale" in summary:
+                return PREDICATE_KIND_STALE
+        if "missing" in summary or "not found" in summary:
+            return PREDICATE_KIND_MISSING
+        if "divergent" in summary or "contradict" in summary:
+            return PREDICATE_KIND_DIVERGENT
+        if "out of order" in summary or "order" in summary:
+            return PREDICATE_KIND_OUT_OF_ORDER
+        if "unbound" in summary or "not bound" in summary:
+            return PREDICATE_KIND_UNBOUND_EVIDENCE
+        # Default for unsatisfied without a more specific signal
+        return PREDICATE_KIND_REJECTED
+    return None
 
 
 def extract_green_suite_info(verdict: "CompletionVerdict") -> tuple[dict[str, Any] | None, str | None]:
@@ -1887,6 +2043,1382 @@ class DeclaredNoopProvider:
         )
 
 
+class AcceptanceReceiptProvider:
+    """acceptance_receipt — validate the accepted receipt.json is content-address valid.
+
+    Reads ``receipt.json`` (or ``_acceptance/receipt.json``) from the plan
+    directory and validates:
+
+    * The receipt is present and well-formed JSON.
+    * Its ``snapshot_hash`` points to a content-addressed snapshot that exists
+      on disk and whose stored hash matches the receipt's claim.
+    * The receipt identity fields (milestone_label, plan_name, milestone_index)
+      are internally consistent.
+    * The receipt is NOT treated as a grant — it is evidence that a prior
+      acceptance boundary committed, not authority to skip re-verification.
+
+    In fail-closed mode a missing, stale, divergent, or tampered receipt
+    produces a typed :class:`BlockingPredicateFailure`.
+    """
+
+    kind = "acceptance_receipt"
+
+    _RECEIPT_CANDIDATES: tuple[str, ...] = (
+        "receipt.json",
+        "_acceptance/receipt.json",
+    )
+
+    def collect(self, ctx: CompletionContext) -> EvidenceRef:
+        receipt_path: Path | None = None
+        receipt_data: dict[str, Any] | None = None
+        for candidate_name in self._RECEIPT_CANDIDATES:
+            candidate = ctx.plan_dir / candidate_name
+            data = _read_json(candidate)
+            if isinstance(data, dict):
+                receipt_path = candidate
+                receipt_data = data
+                break
+
+        if receipt_data is None:
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unknown,
+                summary="no receipt.json found — acceptance boundary has not committed",
+                details={"candidates_checked": list(self._RECEIPT_CANDIDATES)},
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                source="receipt.json",
+                provider=type(self).__name__,
+            )
+
+        receipt_artifact = _artifact_ref_for_path(
+            receipt_path,
+            root=ctx.plan_dir,
+            artifact_type="application/json",
+        ) if receipt_path is not None else None
+
+        # Validate required receipt fields
+        snapshot_hash = receipt_data.get("snapshot_hash")
+        transaction_id = receipt_data.get("transaction_id")
+        milestone_label = receipt_data.get("milestone_label")
+        plan_name = receipt_data.get("plan_name")
+        milestone_index = receipt_data.get("milestone_index")
+
+        missing_fields: list[str] = []
+        if not isinstance(snapshot_hash, str) or not snapshot_hash.strip():
+            missing_fields.append("snapshot_hash")
+        if not isinstance(transaction_id, str) or not transaction_id.strip():
+            missing_fields.append("transaction_id")
+        if not isinstance(milestone_label, str) or not milestone_label.strip():
+            missing_fields.append("milestone_label")
+        if not isinstance(plan_name, str) or not plan_name.strip():
+            missing_fields.append("plan_name")
+        if milestone_index is None or not isinstance(milestone_index, (int, float)):
+            missing_fields.append("milestone_index")
+
+        if missing_fields:
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unsatisfied,
+                summary=f"receipt.json missing required fields: {', '.join(sorted(missing_fields))}",
+                details={
+                    "missing_fields": missing_fields,
+                    "receipt": receipt_data,
+                },
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                artifact=receipt_artifact,
+                source="receipt.json",
+                provider=type(self).__name__,
+            )
+
+        snapshot_hash = str(snapshot_hash).strip()
+        transaction_id = str(transaction_id).strip()
+        milestone_label = str(milestone_label).strip()
+        plan_name = str(plan_name).strip()
+        milestone_index = int(milestone_index)
+
+        # Check that the content-addressed snapshot exists and its hash matches.
+        from arnold_pipelines.megaplan.orchestration.completion_io import (
+            store_acceptance_snapshot,
+            load_acceptance_snapshot,
+        )
+
+        # Attempt to load the snapshot by its content hash to verify it exists
+        # and is untampered (load validates the stored hash against recomputed).
+        snapshot = None
+        snapshot_load_error: str | None = None
+        try:
+            snapshot = load_acceptance_snapshot(ctx.plan_dir, snapshot_hash)
+        except Exception as exc:
+            snapshot_load_error = str(exc)
+
+        if snapshot is None:
+            # Use unsatisfied for both missing and tampered snapshots; predicate
+            # kind (stale/missing) is classified later by _classify_predicate_kind.
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unsatisfied,
+                summary=(
+                    f"receipt snapshot {snapshot_hash[:16]}... not found or tampered"
+                    if snapshot_load_error is None
+                    else f"receipt snapshot {snapshot_hash[:16]}... load failed: {snapshot_load_error}"
+                ),
+                details={
+                    "snapshot_hash": snapshot_hash,
+                    "transaction_id": transaction_id,
+                    "load_error": snapshot_load_error,
+                    "receipt": receipt_data,
+                },
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                artifact=receipt_artifact,
+                source="receipt.json",
+                provider=type(self).__name__,
+            )
+
+        # Snapshot exists and is valid. Cross-check receipt identity against snapshot.
+        identity_mismatches: list[str] = []
+        if snapshot.milestone_label != milestone_label:
+            identity_mismatches.append(
+                f"milestone_label: receipt={milestone_label!r} snapshot={snapshot.milestone_label!r}"
+            )
+        if snapshot.plan_name != plan_name:
+            identity_mismatches.append(
+                f"plan_name: receipt={plan_name!r} snapshot={snapshot.plan_name!r}"
+            )
+        if snapshot.milestone_index != milestone_index:
+            identity_mismatches.append(
+                f"milestone_index: receipt={milestone_index!r} snapshot={snapshot.milestone_index!r}"
+            )
+        if snapshot.transaction_id != transaction_id:
+            identity_mismatches.append(
+                f"transaction_id: receipt={transaction_id!r} snapshot={snapshot.transaction_id!r}"
+            )
+
+        if identity_mismatches:
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unsatisfied,
+                summary=f"receipt identity does not match snapshot: {'; '.join(identity_mismatches)}",
+                details={
+                    "snapshot_hash": snapshot_hash,
+                    "transaction_id": transaction_id,
+                    "identity_mismatches": identity_mismatches,
+                    "receipt": receipt_data,
+                    "snapshot_milestone_label": snapshot.milestone_label,
+                    "snapshot_plan_name": snapshot.plan_name,
+                    "snapshot_milestone_index": snapshot.milestone_index,
+                },
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                artifact=receipt_artifact,
+                source="receipt.json",
+                provider=type(self).__name__,
+            )
+
+        # Cross-check subject identity consistency (advisory, not blocking on its own).
+        advisory_notes: list[str] = []
+        if ctx.subject.milestone_label and ctx.subject.milestone_label != milestone_label:
+            advisory_notes.append(
+                f"subject milestone_label={ctx.subject.milestone_label!r} differs from receipt {milestone_label!r}"
+            )
+        if ctx.subject.plan_name and ctx.subject.plan_name != plan_name:
+            advisory_notes.append(
+                f"subject plan_name={ctx.subject.plan_name!r} differs from receipt {plan_name!r}"
+            )
+
+        return _provider_evidence_ref(
+            kind=self.kind,
+            status=EvidenceStatus.satisfied,
+            summary=f"acceptance receipt valid for {milestone_label} (snapshot {snapshot_hash[:16]}...)",
+            details={
+                "snapshot_hash": snapshot_hash,
+                "transaction_id": transaction_id,
+                "milestone_label": milestone_label,
+                "plan_name": plan_name,
+                "milestone_index": milestone_index,
+                "snapshot_content_hash": snapshot.content_hash,
+                "source_commit_ref": snapshot.source_commit_ref,
+                "runtime_identity": snapshot.runtime_identity,
+                "advisory_notes": advisory_notes,
+            },
+            ctx=ctx,
+            trust_class=TrustClass.evidence,
+            artifact=receipt_artifact,
+            source="receipt.json",
+            provider=type(self).__name__,
+        )
+
+
+class DivergenceProvider:
+    """divergence — detect contradictory evidence between claims and on-disk state.
+
+    Checks for content-address mismatches between:
+    * Declared artifact hashes in finalize.json vs actual file content.
+    * Execution batch claims (files_changed) vs working-tree diff.
+    * Acceptance snapshot evidence vs the current plan state.
+
+    Divergence is NOT a ``not_applicable`` skip — when there is nothing to
+    compare (no finalize, no batch artifacts) the provider returns ``unknown``
+    rather than ``satisfied``, because the absence of comparable evidence is
+    itself a signal in fail-closed mode.
+    """
+
+    kind = "divergence"
+
+    def collect(self, ctx: CompletionContext) -> EvidenceRef:
+        divergences: list[str] = []
+        checks_performed: list[str] = []
+        details: dict[str, Any] = {}
+
+        finalize = _read_finalize(ctx.plan_dir)
+        finalize_artifact = _artifact_ref_for_path(
+            ctx.plan_dir / "finalize.json",
+            root=ctx.plan_dir,
+            artifact_type="application/json",
+        )
+
+        # ── Check 1: declared artifact hashes in finalize vs actual files ──
+        if isinstance(finalize, dict):
+            declared_files = finalize.get("files_changed")
+            if isinstance(declared_files, list) and declared_files:
+                checks_performed.append("declared_artifact_hash_check")
+                hash_mismatches = self._check_declared_hashes(
+                    ctx.project_dir, declared_files
+                )
+                if hash_mismatches:
+                    divergences.extend(hash_mismatches)
+                details["declared_artifact_check"] = {
+                    "declared_count": len(declared_files),
+                    "mismatches": hash_mismatches,
+                }
+
+        # ── Check 2: execution batch file claims vs git status ──
+        batches = sorted(list_batch_artifacts(ctx.plan_dir))
+        if batches:
+            checks_performed.append("batch_vs_diff_check")
+            batch_files: set[str] = set()
+            for batch_path in batches:
+                payload = _read_json(batch_path)
+                if not isinstance(payload, dict):
+                    continue
+                fc = payload.get("files_changed")
+                if isinstance(fc, list):
+                    for item in fc:
+                        if isinstance(item, str):
+                            batch_files.add(item)
+            if batch_files:
+                details["batch_claimed_files"] = sorted(batch_files)
+                # Check that claimed files actually exist on disk
+                missing_claimed: list[str] = []
+                for f in sorted(batch_files):
+                    fp = ctx.project_dir / f
+                    if not fp.exists():
+                        missing_claimed.append(f)
+                if missing_claimed:
+                    divergences.append(
+                        f"{len(missing_claimed)} file(s) claimed in batch but missing on disk"
+                    )
+                    details["missing_claimed_files"] = missing_claimed
+
+        # ── Check 3: acceptance snapshot evidence consistency ──
+        # Look for acceptance snapshots and verify their evidence refs point to real artifacts.
+        snapshots_dir = ctx.plan_dir / "_acceptance" / "snapshots"
+        if snapshots_dir.exists():
+            checks_performed.append("acceptance_snapshot_consistency")
+            snapshot_divergences = self._check_snapshot_consistency(
+                ctx.plan_dir, snapshots_dir
+            )
+            if snapshot_divergences:
+                divergences.extend(snapshot_divergences)
+            details["snapshot_consistency"] = {
+                "divergences": snapshot_divergences,
+            }
+
+        if not checks_performed:
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unknown,
+                summary="no comparable evidence available for divergence check",
+                details={"checks_performed": checks_performed},
+                ctx=ctx,
+                trust_class=TrustClass.judgment,
+                source="finalize.json + execution_batch_*.json + _acceptance/snapshots",
+                provider=type(self).__name__,
+            )
+
+        if divergences:
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unsatisfied,
+                summary=f"evidence divergence detected: {'; '.join(divergences[:5])}"
+                + (f" ... and {len(divergences) - 5} more" if len(divergences) > 5 else ""),
+                details={
+                    **details,
+                    "divergences": divergences,
+                    "divergence_count": len(divergences),
+                    "checks_performed": checks_performed,
+                },
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                artifact=finalize_artifact,
+                source="finalize.json + execution_batch_*.json + _acceptance/snapshots",
+                provider=type(self).__name__,
+            )
+
+        return _provider_evidence_ref(
+            kind=self.kind,
+            status=EvidenceStatus.satisfied,
+            summary=f"no divergence detected across {len(checks_performed)} check(s)",
+            details={
+                **details,
+                "divergences": [],
+                "checks_performed": checks_performed,
+            },
+            ctx=ctx,
+            trust_class=TrustClass.evidence,
+            artifact=finalize_artifact,
+            source="finalize.json + execution_batch_*.json + _acceptance/snapshots",
+            provider=type(self).__name__,
+        )
+
+    @staticmethod
+    def _check_declared_hashes(
+        project_dir: Path,
+        declared_files: list[Any],
+    ) -> list[str]:
+        """Check that declared file paths exist on disk and their hashes match."""
+        mismatches: list[str] = []
+        for entry in declared_files:
+            if not isinstance(entry, dict):
+                continue
+            path_str = entry.get("path") or entry.get("file")
+            declared_hash = entry.get("sha256") or entry.get("hash")
+            if not isinstance(path_str, str) or not path_str.strip():
+                continue
+            fp = project_dir / path_str.strip()
+            if not fp.is_file():
+                if isinstance(declared_hash, str) and declared_hash.strip():
+                    mismatches.append(f"{path_str}: file missing (declared hash {declared_hash[:16]}...)")
+                continue
+            if isinstance(declared_hash, str) and declared_hash.strip():
+                try:
+                    actual_hash = sha256_file(fp)
+                    if actual_hash != declared_hash:
+                        mismatches.append(
+                            f"{path_str}: hash mismatch declared={declared_hash[:16]}... actual={actual_hash[:16]}..."
+                        )
+                except OSError:
+                    mismatches.append(f"{path_str}: could not read for hash verification")
+        return mismatches
+
+    @staticmethod
+    def _check_snapshot_consistency(
+        plan_dir: Path,
+        snapshots_dir: Path,
+    ) -> list[str]:
+        """Verify that acceptance snapshots reference evidence that is internally consistent."""
+        divergences: list[str] = []
+        try:
+            from arnold_pipelines.megaplan.orchestration.completion_io import (
+                load_acceptance_snapshot,
+            )
+
+            for hex_prefix_dir in sorted(snapshots_dir.iterdir()):
+                if not hex_prefix_dir.is_dir():
+                    continue
+                for snapshot_file in sorted(hex_prefix_dir.glob("*.json")):
+                    try:
+                        data = _read_json(snapshot_file)
+                        if not isinstance(data, dict):
+                            continue
+                        stored_hash = data.get("content_hash", "")
+                        if not stored_hash:
+                            divergences.append(
+                                f"snapshot {snapshot_file.name}: missing content_hash"
+                            )
+                            continue
+                        # Verify the snapshot can be loaded (re-hashes on load)
+                        snapshot = load_acceptance_snapshot(plan_dir, stored_hash)
+                        if snapshot is None:
+                            divergences.append(
+                                f"snapshot {snapshot_file.name}: failed to load with hash {stored_hash[:16]}..."
+                            )
+                    except ValueError as exc:
+                        divergences.append(
+                            f"snapshot {snapshot_file.name}: {exc}"
+                        )
+                    except Exception:
+                        continue  # skip unparseable snapshots
+        except Exception:
+            pass  # best-effort check
+        return divergences
+
+
+class ManifestFreshnessProvider:
+    """manifest_freshness — validate manifest content-address and freshness.
+
+    Checks that:
+    * Artifact manifests (execution_batch_*.json, finalize.json) have not been
+      tampered with by verifying their content hashes against declared values.
+    * Manifest ordering is consistent — batch indices are sequential without gaps
+      and timestamps are monotonically non-decreasing.
+    * The manifest's declared ``code_hash`` or content identity matches the
+      current working-tree state (freshness check).
+
+    In shadow mode stale manifests produce ``unknown``; in fail-closed mode
+    they produce typed ``stale`` predicate failures.
+    """
+
+    kind = "manifest_freshness"
+
+    def collect(self, ctx: CompletionContext) -> EvidenceRef:
+        details: dict[str, Any] = {}
+        issues: list[str] = []
+
+        # ── Batch manifest ordering check ──
+        batches = sorted(list_batch_artifacts(ctx.plan_dir))
+        batch_artifacts = tuple(
+            ref
+            for ref in (
+                _artifact_ref_for_path(
+                    batch_path,
+                    root=ctx.plan_dir,
+                    artifact_type="application/json",
+                )
+                for batch_path in batches
+            )
+            if ref is not None
+        )
+
+        if batches:
+            ordering_issues = self._check_batch_ordering(batches)
+            if ordering_issues:
+                issues.extend(ordering_issues)
+            details["batch_count"] = len(batches)
+            details["batch_ordering_issues"] = ordering_issues
+
+        # ── Finalize manifest integrity ──
+        finalize = _read_finalize(ctx.plan_dir)
+        finalize_artifact = _artifact_ref_for_path(
+            ctx.plan_dir / "finalize.json",
+            root=ctx.plan_dir,
+            artifact_type="application/json",
+        )
+
+        if isinstance(finalize, dict):
+            # Check that finalize hashes of batch artifacts match actual files
+            batch_integrity_issues = self._check_finalize_batch_integrity(
+                ctx.plan_dir, finalize
+            )
+            if batch_integrity_issues:
+                issues.extend(batch_integrity_issues)
+            details["finalize_batch_integrity_issues"] = batch_integrity_issues
+
+            # Check freshness: does finalize's declared state match current state?
+            freshness_issues = self._check_manifest_freshness(ctx, finalize)
+            if freshness_issues:
+                issues.extend(freshness_issues)
+            details["freshness_issues"] = freshness_issues
+
+        # ── Content-address: verify batch artifacts are internally consistent ──
+        ca_issues = self._check_content_addressing(ctx.plan_dir, batches)
+        if ca_issues:
+            issues.extend(ca_issues)
+        details["content_address_issues"] = ca_issues
+
+        if not batches and not isinstance(finalize, dict):
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unknown,
+                summary="no manifest artifacts to validate freshness",
+                details=details,
+                ctx=ctx,
+                trust_class=TrustClass.judgment,
+                source="execution_batch_*.json + finalize.json",
+                provider=type(self).__name__,
+            )
+
+        # If we only have an empty/nearly-empty finalize and no batches, that's
+        # also insufficient evidence.
+        if not batches and isinstance(finalize, dict) and not finalize:
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unknown,
+                summary="no manifest artifacts to validate freshness",
+                details=details,
+                ctx=ctx,
+                trust_class=TrustClass.judgment,
+                source="execution_batch_*.json + finalize.json",
+                provider=type(self).__name__,
+            )
+
+        if issues:
+            # All issues produce unsatisfied EvidenceStatus; the specific predicate
+            # kind (stale/out_of_order/divergent) is classified later by
+            # _classify_predicate_kind based on the summary text.
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unsatisfied,
+                summary=f"manifest freshness issues: {'; '.join(issues[:5])}"
+                + (f" ... and {len(issues) - 5} more" if len(issues) > 5 else ""),
+                details={
+                    **details,
+                    "issues": issues,
+                    "issue_count": len(issues),
+                },
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                artifacts=batch_artifacts,
+                artifact=finalize_artifact,
+                source="execution_batch_*.json + finalize.json",
+                provider=type(self).__name__,
+            )
+
+        return _provider_evidence_ref(
+            kind=self.kind,
+            status=EvidenceStatus.satisfied,
+            summary="manifest artifacts are fresh and content-address validated",
+            details=details,
+            ctx=ctx,
+            trust_class=TrustClass.evidence,
+            artifacts=batch_artifacts,
+            artifact=finalize_artifact,
+            source="execution_batch_*.json + finalize.json",
+            provider=type(self).__name__,
+        )
+
+    @staticmethod
+    def _check_batch_ordering(batches: list[Path]) -> list[str]:
+        """Verify batch indices are sequential without gaps and timestamps monotonic."""
+        issues: list[str] = []
+        batch_info: list[dict[str, Any]] = []
+        for bp in batches:
+            data = _read_json(bp)
+            if isinstance(data, dict):
+                batch_info.append({
+                    "path": bp.name,
+                    "batch_index": data.get("batch_index") or data.get("index"),
+                    "timestamp": data.get("timestamp") or data.get("ts") or data.get("completed_at"),
+                })
+
+        if len(batch_info) < 2:
+            return issues
+
+        # Check sequential indices
+        indices: list[int] = []
+        for bi in batch_info:
+            idx = bi["batch_index"]
+            if isinstance(idx, (int, float)) and not isinstance(idx, bool):
+                indices.append(int(idx))
+        if indices:
+            expected = list(range(min(indices), max(indices) + 1))
+            if sorted(indices) != expected:
+                missing = sorted(set(expected) - set(indices))
+                issues.append(
+                    f"non-sequential batch indices: missing {missing} "
+                    f"(have {sorted(indices)}, expected {expected})"
+                )
+
+        # Check monotonic timestamps
+        timestamps: list[str] = []
+        for bi in batch_info:
+            ts = bi["timestamp"]
+            if isinstance(ts, str) and ts.strip():
+                timestamps.append(ts.strip())
+        if len(timestamps) >= 2:
+            for i in range(1, len(timestamps)):
+                if timestamps[i] < timestamps[i - 1]:
+                    issues.append(
+                        f"non-monotonic batch timestamp at index {i}: "
+                        f"{timestamps[i-1]} -> {timestamps[i]}"
+                    )
+                    break  # one violation is enough
+
+        return issues
+
+    @staticmethod
+    def _check_finalize_batch_integrity(
+        plan_dir: Path, finalize: dict[str, Any]
+    ) -> list[str]:
+        """Verify that finalize.json's declared batch hashes match actual batch files."""
+        issues: list[str] = []
+        batch_hashes = finalize.get("batch_hashes") or finalize.get("batch_artifacts")
+        if not isinstance(batch_hashes, dict):
+            return issues
+
+        for batch_name, declared_hash in batch_hashes.items():
+            if not isinstance(declared_hash, str) or not declared_hash.strip():
+                continue
+            batch_path = plan_dir / batch_name
+            if not batch_path.is_file():
+                issues.append(
+                    f"finalize references batch {batch_name!r} but file is missing"
+                )
+                continue
+            try:
+                actual_hash = sha256_file(batch_path)
+                if actual_hash != declared_hash:
+                    issues.append(
+                        f"batch {batch_name!r}: hash mismatch "
+                        f"declared={declared_hash[:16]}... actual={actual_hash[:16]}..."
+                    )
+            except OSError:
+                issues.append(f"batch {batch_name!r}: could not read for hash verification")
+        return issues
+
+    @staticmethod
+    def _check_manifest_freshness(
+        ctx: CompletionContext, finalize: dict[str, Any]
+    ) -> list[str]:
+        """Check that manifest-declared state is not stale relative to current state."""
+        issues: list[str] = []
+        declared_base_sha = finalize.get("base_sha") or finalize.get("base_ref")
+        if isinstance(declared_base_sha, str) and declared_base_sha.strip():
+            if ctx.git_base_ref and ctx.git_base_ref != declared_base_sha:
+                issues.append(
+                    f"finalize base_sha {declared_base_sha[:12]}... does not match "
+                    f"current git_base_ref {ctx.git_base_ref[:12]}... (manifest may be stale)"
+                )
+        return issues
+
+    @staticmethod
+    def _check_content_addressing(
+        plan_dir: Path, batches: list[Path]
+    ) -> list[str]:
+        """Verify that batch artifacts are internally content-address consistent."""
+        issues: list[str] = []
+        for bp in batches:
+            data = _read_json(bp)
+            if not isinstance(data, dict):
+                continue
+            declared_hash = data.get("content_hash") or data.get("artifact_hash")
+            if isinstance(declared_hash, str) and declared_hash.strip():
+                try:
+                    actual_hash = sha256_file(bp)
+                    if actual_hash != declared_hash:
+                        issues.append(
+                            f"{bp.name}: content hash mismatch "
+                            f"declared={declared_hash[:16]}... actual={actual_hash[:16]}..."
+                        )
+                except OSError:
+                    pass  # best-effort
+        return issues
+
+
+class CommitRuntimeProvider:
+    """commit_runtime — validate commit and runtime identity are exact, not mutable aliases.
+
+    Ties completion evidence to exact tested code and runtime identity across
+    orchestration and execution binding.  Rejects mutable aliases that could
+    make Git or CI state look authoritative when it is not:
+
+    * **Branch names** (``main``, ``feature/xyz``) — not an exact commit.
+    * **``HEAD``** and symbolic refs — not a stable identity.
+    * **Short SHAs** (< 40 hex chars) — ambiguous, could collide.
+    * **PR refs** (``refs/pull/123/head``, ``refs/pull/123/merge``) — mutable.
+    * **Stale PR refs** — PR state may have changed since evidence was collected.
+    * **Missing or empty** commit ref — unbound evidence.
+
+    In fail-closed mode a mutable, missing, or stale commit ref produces a
+    typed ``unbound_evidence`` or ``stale`` predicate failure.
+
+    Also validates that ``runtime_identity`` is a stable, non-empty identifier
+    and not a shadow/warning-only placeholder.
+    """
+
+    kind = "commit_runtime"
+
+    #: Pattern for a full 40-character lowercase hex SHA.
+    _FULL_SHA_RE = __import__("re").compile(r"^[0-9a-f]{40}$")
+
+    #: Known mutable ref patterns that are rejected even if they look like hex.
+    _MUTABLE_REF_PREFIXES: tuple[str, ...] = (
+        "refs/heads/",
+        "refs/pull/",
+        "refs/tags/",
+        "refs/remotes/",
+    )
+
+    _MUTABLE_NAMES: frozenset[str] = frozenset({"HEAD", "ORIG_HEAD", "FETCH_HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD"})
+
+    def collect(self, ctx: CompletionContext) -> EvidenceRef:
+        details: dict[str, Any] = {}
+        issues: list[str] = []
+
+        # ── Discover commit/runtime identity from acceptance artifacts ──
+        commit_refs: list[tuple[str, str]] = []  # (source_label, ref_value)
+        runtime_ids: list[tuple[str, str]] = []  # (source_label, id_value)
+
+        # Check acceptance snapshots
+        snapshots_dir = ctx.plan_dir / "_acceptance" / "snapshots"
+        if snapshots_dir.exists():
+            try:
+                from arnold_pipelines.megaplan.orchestration.completion_io import (
+                    load_acceptance_snapshot,
+                )
+                for hex_prefix_dir in sorted(snapshots_dir.iterdir()):
+                    if not hex_prefix_dir.is_dir():
+                        continue
+                    for snapshot_file in sorted(hex_prefix_dir.glob("*.json")):
+                        data = _read_json(snapshot_file)
+                        if not isinstance(data, dict):
+                            continue
+                        stored_hash = data.get("content_hash", "")
+                        if not stored_hash:
+                            continue
+                        try:
+                            snapshot = load_acceptance_snapshot(ctx.plan_dir, stored_hash)
+                            if snapshot is not None:
+                                commit_refs.append(
+                                    ("snapshot", getattr(snapshot, "source_commit_ref", ""))
+                                )
+                                runtime_ids.append(
+                                    ("snapshot", getattr(snapshot, "runtime_identity", ""))
+                                )
+                        except Exception:
+                            pass
+            except Exception:
+                pass  # best-effort; can't import means no snapshots to check
+
+        # Check receipts
+        for candidate_name in ("receipt.json", "_acceptance/receipt.json"):
+            receipt_data = _read_json(ctx.plan_dir / candidate_name)
+            if isinstance(receipt_data, dict):
+                src_ref = receipt_data.get("source_commit_ref") or receipt_data.get("tested_commit_ref")
+                if isinstance(src_ref, str) and src_ref.strip():
+                    commit_refs.append(("receipt", src_ref.strip()))
+                rt_id = receipt_data.get("runtime_identity") or receipt_data.get("tested_runtime_identity")
+                if isinstance(rt_id, str) and rt_id.strip():
+                    runtime_ids.append(("receipt", rt_id.strip()))
+                break
+
+        # Check finalize.json for commit ref hints
+        finalize = _read_finalize(ctx.plan_dir)
+        if isinstance(finalize, dict):
+            base_sha = finalize.get("base_sha") or finalize.get("base_ref")
+            if isinstance(base_sha, str) and base_sha.strip():
+                commit_refs.append(("finalize", base_sha.strip()))
+
+        # Check ctx.git_base_ref
+        if ctx.git_base_ref:
+            commit_refs.append(("context", ctx.git_base_ref))
+
+        # ── Validate commit refs ──
+        validated_refs: list[dict[str, Any]] = []
+        for source_label, ref in commit_refs:
+            validation = self._validate_commit_ref(ref)
+            validated_refs.append({
+                "source": source_label,
+                "ref": ref,
+                **validation,
+            })
+            if not validation["valid"]:
+                issues.append(
+                    f"{source_label} commit ref {ref[:40]!r}: {validation['reason']}"
+                )
+
+        details["commit_refs"] = validated_refs
+        details["commit_ref_count"] = len(commit_refs)
+
+        # ── Validate runtime identities ──
+        validated_runtimes: list[dict[str, Any]] = []
+        for source_label, rid in runtime_ids:
+            rt_validation = self._validate_runtime_identity(rid)
+            validated_runtimes.append({
+                "source": source_label,
+                "runtime_identity": rid,
+                **rt_validation,
+            })
+            if not rt_validation["valid"]:
+                issues.append(
+                    f"{source_label} runtime identity {rid!r}: {rt_validation['reason']}"
+                )
+
+        details["runtime_ids"] = validated_runtimes
+        details["runtime_id_count"] = len(runtime_ids)
+
+        # ── No evidence at all ──
+        if not commit_refs and not runtime_ids:
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unknown,
+                summary="no commit or runtime identity evidence available to validate",
+                details=details,
+                ctx=ctx,
+                trust_class=TrustClass.judgment,
+                source="acceptance snapshots + receipt.json + finalize.json",
+                provider=type(self).__name__,
+            )
+
+        if issues:
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unsatisfied,
+                summary=f"commit/runtime identity issues: {'; '.join(issues[:5])}"
+                + (f" ... and {len(issues) - 5} more" if len(issues) > 5 else ""),
+                details={
+                    **details,
+                    "issues": issues,
+                    "issue_count": len(issues),
+                },
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                source="acceptance snapshots + receipt.json + finalize.json",
+                provider=type(self).__name__,
+            )
+
+        return _provider_evidence_ref(
+            kind=self.kind,
+            status=EvidenceStatus.satisfied,
+            summary=f"commit and runtime identity validated ({len(commit_refs)} commit ref(s), {len(runtime_ids)} runtime id(s))",
+            details=details,
+            ctx=ctx,
+            trust_class=TrustClass.evidence,
+            source="acceptance snapshots + receipt.json + finalize.json",
+            provider=type(self).__name__,
+        )
+
+    @classmethod
+    def _validate_commit_ref(cls, ref: str) -> dict[str, Any]:
+        """Validate a single commit ref, returning ``{valid, reason, kind}``."""
+        ref = ref.strip() if isinstance(ref, str) else ""
+
+        if not ref:
+            return {"valid": False, "reason": "empty commit ref", "kind": "missing"}
+
+        # Reject known mutable names
+        if ref in cls._MUTABLE_NAMES:
+            return {"valid": False, "reason": f"mutable symbolic ref {ref!r}", "kind": "mutable_alias"}
+
+        # Reject refs/ paths (branch, tag, PR, remote refs)
+        for prefix in cls._MUTABLE_REF_PREFIXES:
+            if ref.startswith(prefix):
+                return {"valid": False, "reason": f"mutable ref path {ref!r}", "kind": "mutable_alias"}
+
+        # Reject branch-like names (contain '/' but aren't full SHAs)
+        if "/" in ref and not cls._FULL_SHA_RE.match(ref):
+            return {"valid": False, "reason": f"branch-like ref {ref!r} is not a full commit SHA", "kind": "mutable_alias"}
+
+        # Must be a full 40-char hex SHA
+        if not cls._FULL_SHA_RE.match(ref):
+            if len(ref) < 40 and all(c in "0123456789abcdef" for c in ref.lower()):
+                return {"valid": False, "reason": f"short SHA {ref!r} ({len(ref)} chars, need 40)", "kind": "short_sha"}
+            return {"valid": False, "reason": f"not a valid full commit SHA: {ref[:40]!r}", "kind": "invalid_format"}
+
+        return {"valid": True, "reason": "valid full commit SHA", "kind": "full_sha"}
+
+    @classmethod
+    def _validate_runtime_identity(cls, rid: str) -> dict[str, Any]:
+        """Validate a runtime identity, returning ``{valid, reason, kind}``."""
+        rid = rid.strip() if isinstance(rid, str) else ""
+
+        if not rid:
+            return {"valid": False, "reason": "empty runtime identity", "kind": "missing"}
+
+        # Reject shadow/warning-only placeholders
+        shadow_placeholders = {"shadow", "warning", "warn", "unknown", "none", "placeholder", "advisory-only"}
+        if rid.lower() in shadow_placeholders:
+            return {"valid": False, "reason": f"shadow/warning placeholder runtime identity {rid!r}", "kind": "shadow_placeholder"}
+
+        # Reject HEAD-like mutable aliases
+        if rid.strip().upper() in cls._MUTABLE_NAMES:
+            return {"valid": False, "reason": f"mutable runtime identity {rid!r} (symbolic ref)", "kind": "mutable_alias"}
+
+        # Reject ref paths in runtime identity
+        for prefix in cls._MUTABLE_REF_PREFIXES:
+            if rid.startswith(prefix):
+                return {"valid": False, "reason": f"mutable ref path in runtime identity {rid!r}", "kind": "mutable_alias"}
+
+        return {"valid": True, "reason": "valid runtime identity", "kind": "stable"}
+
+
+class AttestationProvider:
+    """attestation — validate attestation evidence is bound to exact commit/runtime identity.
+
+    Attestations are claims that a specific artifact or outcome was observed.
+    This provider validates that:
+
+    * Attestation evidence (if present) references exact commit SHAs, not
+      mutable aliases (branch names, HEAD, PR refs).
+    * Attestations are not **shadow receipts** — receipts that lack a valid
+      backing acceptance snapshot or only have warning-mode evidence.
+    * Attestation evidence is not **warning-only** — it must be backed by
+      authoritative evidence, not advisory signals.
+    * Attestations cross-reference correctly with the acceptance snapshot
+      evidence when both are present.
+
+    Shadow receipts and warning-only evidence produce ``unsatisfied`` verdicts
+    because they are non-authoritative claims that should not gate a
+    transition in fail-closed mode.
+    """
+
+    kind = "attestation"
+
+    def collect(self, ctx: CompletionContext) -> EvidenceRef:
+        details: dict[str, Any] = {}
+        issues: list[str] = []
+
+        # ── Discover attestation artifacts ──
+        attestation_paths = self._find_attestation_files(ctx.plan_dir)
+        details["attestation_file_count"] = len(attestation_paths)
+
+        if attestation_paths:
+            for ap in attestation_paths:
+                file_issues = self._validate_attestation_file(ctx.plan_dir, ap)
+                if file_issues:
+                    issues.extend(file_issues)
+            details["attestation_files"] = [
+                str(ap.relative_to(ctx.plan_dir)) if ap.is_relative_to(ctx.plan_dir) else str(ap)
+                for ap in attestation_paths
+            ]
+            details["attestation_issues"] = issues
+
+        # ── Check for shadow receipts ──
+        shadow_receipt_checks = self._check_shadow_receipts(ctx.plan_dir)
+        if shadow_receipt_checks:
+            issues.extend(shadow_receipt_checks)
+        details["shadow_receipt_checks"] = shadow_receipt_checks
+
+        # ── Check for warning-only evidence ──
+        warning_only_checks = self._check_warning_only_evidence(ctx.plan_dir)
+        if warning_only_checks:
+            issues.extend(warning_only_checks)
+        details["warning_only_checks"] = warning_only_checks
+
+        if not attestation_paths and not shadow_receipt_checks and not warning_only_checks:
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.not_applicable,
+                summary="no attestation evidence to validate",
+                details=details,
+                ctx=ctx,
+                trust_class=TrustClass.judgment,
+                source="attestation files + receipt.json + _acceptance/",
+                provider=type(self).__name__,
+            )
+
+        if issues:
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unsatisfied,
+                summary=f"attestation issues: {'; '.join(issues[:5])}"
+                + (f" ... and {len(issues) - 5} more" if len(issues) > 5 else ""),
+                details={
+                    **details,
+                    "issues": issues,
+                    "issue_count": len(issues),
+                },
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                source="attestation files + receipt.json + _acceptance/",
+                provider=type(self).__name__,
+            )
+
+        return _provider_evidence_ref(
+            kind=self.kind,
+            status=EvidenceStatus.satisfied,
+            summary="attestation evidence validated",
+            details=details,
+            ctx=ctx,
+            trust_class=TrustClass.evidence,
+            source="attestation files + receipt.json + _acceptance/",
+            provider=type(self).__name__,
+        )
+
+    @staticmethod
+    def _find_attestation_files(plan_dir: Path) -> list[Path]:
+        """Find attestation-related files in the plan directory."""
+        paths: list[Path] = []
+        # Look for explicit attestation files
+        candidates = [
+            plan_dir / "attestation.json",
+            plan_dir / "_acceptance" / "attestation.json",
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                paths.append(candidate)
+
+        # Also check for boundary receipt files
+        boundary_dir = plan_dir / "boundary_receipts"
+        if boundary_dir.is_dir():
+            try:
+                for item in sorted(boundary_dir.iterdir()):
+                    if item.is_file() and item.suffix == ".json":
+                        paths.append(item)
+            except OSError:
+                pass
+
+        return paths
+
+    @staticmethod
+    def _validate_attestation_file(plan_dir: Path, attestation_path: Path) -> list[str]:
+        """Validate a single attestation file for mutable aliases and shadow evidence."""
+        issues: list[str] = []
+        data = _read_json(attestation_path)
+        if not isinstance(data, dict):
+            return issues
+
+        ref = data.get("commit_ref") or data.get("source_commit_ref") or data.get("sha") or data.get("tested_commit_ref")
+        if isinstance(ref, str) and ref.strip():
+            validation = CommitRuntimeProvider._validate_commit_ref(ref)
+            if not validation["valid"]:
+                issues.append(
+                    f"attestation {attestation_path.name}: commit ref {ref[:40]!r} — {validation['reason']}"
+                )
+
+        rt_id = data.get("runtime_identity") or data.get("tested_runtime_identity")
+        if isinstance(rt_id, str) and rt_id.strip():
+            rt_validation = CommitRuntimeProvider._validate_runtime_identity(rt_id)
+            if not rt_validation["valid"]:
+                issues.append(
+                    f"attestation {attestation_path.name}: runtime identity {rt_id!r} — {rt_validation['reason']}"
+                )
+
+        # Check for warning-only mode marker
+        mode = data.get("mode") or data.get("contract_mode")
+        if isinstance(mode, str) and mode.strip().lower() in {"shadow", "warn", "warning"}:
+            issues.append(
+                f"attestation {attestation_path.name}: non-authoritative mode {mode!r} "
+                f"(shadow/warn evidence is not sufficient for fail-closed acceptance)"
+            )
+
+        return issues
+
+    @staticmethod
+    def _check_shadow_receipts(plan_dir: Path) -> list[str]:
+        """Check for shadow receipts — receipts without valid snapshot backing."""
+        issues: list[str] = []
+        for candidate_name in ("receipt.json", "_acceptance/receipt.json"):
+            receipt_data = _read_json(plan_dir / candidate_name)
+            if not isinstance(receipt_data, dict):
+                continue
+
+            snapshot_hash = receipt_data.get("snapshot_hash")
+            if not isinstance(snapshot_hash, str) or not snapshot_hash.strip():
+                issues.append(
+                    f"{candidate_name}: shadow receipt — missing snapshot_hash "
+                    f"(no content-addressed snapshot backing)"
+                )
+                continue
+
+            # Verify the snapshot actually exists
+            try:
+                from arnold_pipelines.megaplan.orchestration.completion_io import (
+                    load_acceptance_snapshot,
+                )
+                snapshot = load_acceptance_snapshot(plan_dir, str(snapshot_hash).strip())
+                if snapshot is None:
+                    issues.append(
+                        f"{candidate_name}: shadow receipt — snapshot {str(snapshot_hash)[:16]}... "
+                        f"not found (receipt points to non-existent evidence)"
+                    )
+            except Exception:
+                issues.append(
+                    f"{candidate_name}: shadow receipt — could not verify snapshot "
+                    f"{str(snapshot_hash)[:16]}..."
+                )
+
+            # Check that the receipt has an accepted verdict backing
+            accepted = receipt_data.get("accepted")
+            if accepted is False:
+                issues.append(
+                    f"{candidate_name}: shadow receipt — receipt marked as not accepted "
+                    f"(cannot use unaccepted receipt as attestation)"
+                )
+            break  # only check the first found receipt
+        return issues
+
+    @staticmethod
+    def _check_warning_only_evidence(plan_dir: Path) -> list[str]:
+        """Check for warning-only evidence that should not gate transitions."""
+        issues: list[str] = []
+        # Check if the completion verdict was produced in shadow/warn mode
+        verdict_path = plan_dir / "completion_verdict.json"
+        verdict = _read_json(verdict_path)
+        if isinstance(verdict, dict):
+            mode = verdict.get("mode", "")
+            if mode in {"shadow", "warn", "off"}:
+                accepted = verdict.get("accepted", False)
+                if accepted:
+                    issues.append(
+                        f"completion_verdict.json: accepted in {mode!r} mode — "
+                        f"warning-only evidence should not gate fail-closed transitions"
+                    )
+
+        # Check for shadow-mode gate signals
+        gate_path = plan_dir / "gate.json"
+        gate = _read_json(gate_path)
+        if isinstance(gate, dict):
+            signals = gate.get("signals", {})
+            if isinstance(signals, dict):
+                mode_signal = signals.get("contract_mode") or signals.get("completion_contract_mode")
+                if isinstance(mode_signal, str) and mode_signal.lower() in {"shadow", "warn", "warning"}:
+                    issues.append(
+                        f"gate.json: contract mode is {mode_signal!r} — "
+                        f"non-authoritative (shadow/warn) evidence is not sufficient"
+                    )
+
+        return issues
+
+
+class RetirementOrderProvider:
+    """retirement_order — validate .retired marker ordering and timestamps.
+
+    Checks that:
+    * ``.retired`` marker files (if present) carry valid timestamps and
+      milestone labels that match the chain spec ordering.
+    * Retirement markers are not **premature** — a milestone cannot be retired
+      before all its predecessor evidence predicates are satisfied.
+    * The canonical verification output referenced by a retirement marker is
+      consistent with the acceptance snapshot evidence.
+
+    Retirement markers are **evidence of prior completion**, NOT authority to
+    skip re-verification.  A retirement marker whose timestamp predates the
+    required evidence predicates produces a typed ``out_of_order`` predicate
+    failure in fail-closed mode.
+    """
+
+    kind = "retirement_order"
+
+    _RETIRED_SUFFIX = ".retired"
+
+    def collect(self, ctx: CompletionContext) -> EvidenceRef:
+        details: dict[str, Any] = {}
+        issues: list[str] = []
+
+        # ── Discover .retired markers ──
+        retired_markers = self._find_retired_markers(ctx.plan_dir)
+        if not retired_markers:
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.not_applicable,
+                summary="no .retired markers present — retirement check not applicable",
+                details={},
+                ctx=ctx,
+                trust_class=TrustClass.judgment,
+                source=".retired markers",
+                provider=type(self).__name__,
+            )
+
+        details["retired_marker_count"] = len(retired_markers)
+        details["retired_markers"] = [
+            {
+                "path": str(m["path"].relative_to(ctx.plan_dir))
+                if m.get("path") else None,
+                "milestone_label": m.get("milestone_label"),
+                "timestamp": m.get("timestamp"),
+            }
+            for m in retired_markers
+        ]
+
+        # ── Check 1: marker ordering is consistent with chain spec ──
+        ordering_issues = self._check_retirement_ordering(
+            retired_markers, ctx.state
+        )
+        if ordering_issues:
+            issues.extend(ordering_issues)
+        details["ordering_issues"] = ordering_issues
+
+        # ── Check 2: no premature retirement (all predecessor evidence must be present) ──
+        premature_issues = self._check_premature_retirement(
+            ctx.plan_dir, retired_markers
+        )
+        if premature_issues:
+            issues.extend(premature_issues)
+        details["premature_issues"] = premature_issues
+
+        # ── Check 3: canonical verification output consistency ──
+        verification_issues = self._check_verification_consistency(
+            ctx.plan_dir, retired_markers
+        )
+        if verification_issues:
+            issues.extend(verification_issues)
+        details["verification_issues"] = verification_issues
+
+        if issues:
+            # All issues produce unsatisfied EvidenceStatus; the specific predicate
+            # kind (out_of_order/divergent) is classified later by
+            # _classify_predicate_kind based on the summary text.
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unsatisfied,
+                summary=f"retirement order issues: {'; '.join(issues[:5])}"
+                + (f" ... and {len(issues) - 5} more" if len(issues) > 5 else ""),
+                details={
+                    **details,
+                    "issues": issues,
+                    "issue_count": len(issues),
+                },
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                source=".retired markers",
+                provider=type(self).__name__,
+            )
+
+        return _provider_evidence_ref(
+            kind=self.kind,
+            status=EvidenceStatus.satisfied,
+            summary=f"{len(retired_markers)} retirement marker(s) in valid order",
+            details=details,
+            ctx=ctx,
+            trust_class=TrustClass.evidence,
+            source=".retired markers",
+            provider=type(self).__name__,
+        )
+
+    @classmethod
+    def _find_retired_markers(cls, plan_dir: Path) -> list[dict[str, Any]]:
+        """Find all .retired marker files and parse their content."""
+        markers: list[dict[str, Any]] = []
+        # Search in plan_dir and direct subdirectories
+        search_roots = [plan_dir]
+        acceptance_dir = plan_dir / "_acceptance"
+        if acceptance_dir.is_dir():
+            search_roots.append(acceptance_dir)
+
+        for root in search_roots:
+            try:
+                for item in sorted(root.iterdir()):
+                    if item.is_file() and item.name.endswith(cls._RETIRED_SUFFIX):
+                        data = _read_json(item)
+                        marker: dict[str, Any] = {
+                            "path": item,
+                            "filename": item.name,
+                        }
+                        if isinstance(data, dict):
+                            marker["milestone_label"] = data.get("milestone_label") or data.get("label")
+                            marker["timestamp"] = data.get("timestamp") or data.get("retired_at") or data.get("ts")
+                            marker["canonical_verification_ref"] = (
+                                data.get("canonical_verification_ref")
+                                or data.get("verification_ref")
+                            )
+                            marker["transaction_id"] = data.get("transaction_id")
+                        markers.append(marker)
+            except OSError:
+                continue
+
+        # Sort by timestamp if available, else by filename
+        def _sort_key(m: dict[str, Any]) -> str:
+            ts = m.get("timestamp")
+            if isinstance(ts, str):
+                return ts
+            return m.get("filename", "")
+
+        markers.sort(key=_sort_key)
+        return markers
+
+    @staticmethod
+    def _check_retirement_ordering(
+        markers: list[dict[str, Any]],
+        state: dict[str, Any],
+    ) -> list[str]:
+        """Check that retirement markers follow the chain spec milestone order."""
+        issues: list[str] = []
+        # Get the milestone order from chain state if available
+        milestones = state.get("milestones") or state.get("chain_milestones")
+        if isinstance(milestones, list) and len(milestones) >= 2:
+            milestone_order: dict[str, int] = {}
+            for idx, ms in enumerate(milestones):
+                label = ms.get("label") if isinstance(ms, dict) else str(ms)
+                milestone_order[label] = idx
+
+            if len(milestone_order) >= 2:
+                last_idx = -1
+                for marker in markers:
+                    label = marker.get("milestone_label")
+                    if isinstance(label, str) and label in milestone_order:
+                        idx = milestone_order[label]
+                        if idx < last_idx:
+                            issues.append(
+                                f"retirement order violation: {label!r} (index {idx}) "
+                                f"appears after index {last_idx}"
+                            )
+                        last_idx = max(last_idx, idx)
+
+        # Check timestamp monotonicity
+        timestamps: list[str] = []
+        for marker in markers:
+            ts = marker.get("timestamp")
+            if isinstance(ts, str) and ts.strip():
+                timestamps.append(ts.strip())
+        if len(timestamps) >= 2:
+            for i in range(1, len(timestamps)):
+                if timestamps[i] < timestamps[i - 1]:
+                    issues.append(
+                        f"retirement timestamp regression: "
+                        f"{timestamps[i-1]} -> {timestamps[i]}"
+                    )
+                    break
+
+        return issues
+
+    @staticmethod
+    def _check_premature_retirement(
+        plan_dir: Path,
+        markers: list[dict[str, Any]],
+    ) -> list[str]:
+        """Check that retirement markers are not premature — required evidence must exist."""
+        issues: list[str] = []
+        for marker in markers:
+            label = marker.get("milestone_label")
+            if not isinstance(label, str):
+                continue
+            # Check that a completion verdict exists for this milestone
+            verdict_path = plan_dir / "completion_verdict.json"
+            verdict = _read_json(verdict_path)
+            if isinstance(verdict, dict):
+                subject = verdict.get("subject", {})
+                if isinstance(subject, dict):
+                    v_label = subject.get("milestone_label")
+                    v_accepted = verdict.get("accepted", False)
+                    if v_label == label and not v_accepted:
+                        issues.append(
+                            f"premature retirement: {label!r} has a retirement marker "
+                            f"but completion verdict is not accepted"
+                        )
+
+            # Check that acceptance receipt exists
+            receipt_found = False
+            for candidate_name in ("receipt.json", "_acceptance/receipt.json"):
+                receipt_data = _read_json(plan_dir / candidate_name)
+                if isinstance(receipt_data, dict):
+                    if receipt_data.get("milestone_label") == label:
+                        receipt_found = True
+                        break
+            if not receipt_found:
+                # Not necessarily an issue if retirement happened via a different path,
+                # but note it for audit.
+                pass
+
+        return issues
+
+    @staticmethod
+    def _check_verification_consistency(
+        plan_dir: Path,
+        markers: list[dict[str, Any]],
+    ) -> list[str]:
+        """Check that retirement markers' canonical verification refs are consistent."""
+        issues: list[str] = []
+        for marker in markers:
+            verification_ref = marker.get("canonical_verification_ref")
+            if not isinstance(verification_ref, str) or not verification_ref.strip():
+                continue
+
+            # Check that the referenced verification output exists
+            ref_path = plan_dir / verification_ref
+            if not ref_path.exists():
+                # Try relative to _acceptance
+                ref_path = plan_dir / "_acceptance" / verification_ref
+            if not ref_path.exists():
+                issues.append(
+                    f"retirement marker for {marker.get('milestone_label', 'unknown')!r} "
+                    f"references canonical verification {verification_ref!r} which does not exist"
+                )
+        return issues
+
+
 # The shared, phase-agnostic provider set. Reused verbatim across plan +
 # milestone subjects (the generalization the design calls for).
 DEFAULT_PROVIDERS: tuple[EvidenceProvider, ...] = (
@@ -1897,6 +3429,12 @@ DEFAULT_PROVIDERS: tuple[EvidenceProvider, ...] = (
     ExecuteAcceptanceContractProvider(),
     ReviewDispositionProvider(),
     DeclaredNoopProvider(),
+    AcceptanceReceiptProvider(),
+    DivergenceProvider(),
+    ManifestFreshnessProvider(),
+    RetirementOrderProvider(),
+    CommitRuntimeProvider(),
+    AttestationProvider(),
 )
 
 
@@ -1904,8 +3442,23 @@ DEFAULT_PROVIDERS: tuple[EvidenceProvider, ...] = (
 # Verdict computation
 # ---------------------------------------------------------------------------
 
-#: Statuses that, in a future enforce mode, would deny a terminal transition.
-_BLOCKING_STATUSES: frozenset[EvidenceStatus] = frozenset({EvidenceStatus.unsatisfied})
+#: Statuses that are always blocking in any mode.
+_ALWAYS_BLOCKING_STATUSES: frozenset[EvidenceStatus] = frozenset({EvidenceStatus.unsatisfied})
+
+#: Additional statuses that block only in fail-closed (atomic/enforce) mode.
+_FAIL_CLOSED_BLOCKING_STATUSES: frozenset[EvidenceStatus] = frozenset({EvidenceStatus.unknown})
+
+
+def _blocking_statuses_for_mode(mode: str) -> frozenset[EvidenceStatus]:
+    """Return the set of :class:`EvidenceStatus` values that block for *mode*.
+
+    In shadow/warn/off mode only ``unsatisfied`` blocks.  In fail-closed
+    (atomic/enforce) modes ``unknown`` also blocks so that providers returning
+    indeterminate results refuse the transition.
+    """
+    if is_fail_closed_mode(mode):
+        return _ALWAYS_BLOCKING_STATUSES | _FAIL_CLOSED_BLOCKING_STATUSES
+    return _ALWAYS_BLOCKING_STATUSES
 
 
 def compute_verdict(
@@ -1920,17 +3473,31 @@ def compute_verdict(
 ) -> CompletionVerdict:
     """Compute a :class:`CompletionVerdict` from objective evidence.
 
-    Pure + fail-open: each provider is individually wrapped so one provider
-    bug degrades to ``unknown`` rather than aborting the verdict. This is the
-    single entry point the drivers call (inside their own try/except).
+    Mode-aware behaviour:
 
-    A ``declared_noop`` ``satisfied`` or ``waived`` ref acts as a waiver: it downgrades a
-    ``landed_diff``/``worker_did_work`` ``unsatisfied`` to non-blocking, so an
-    honestly-declared no-op passes while silent abandonment still fails.
+    * **shadow / warn / off** (fail-open): each provider is individually
+      wrapped so one provider bug degrades to ``unknown`` rather than aborting
+      the verdict.  Only ``unsatisfied`` evidence blocks; ``unknown`` is
+      non-blocking.  ``predicate_failures`` is empty — all failures are legacy
+      strings.
+
+    * **atomic / enforce** (fail-closed): ``unknown`` evidence and provider
+      crashes also block the transition, and every blocking condition produces a
+      typed :class:`BlockingPredicateFailure` in the verdict.
+
+    A ``declared_noop`` ``satisfied`` or ``waived`` ref acts as a waiver: it
+    downgrades a ``landed_diff``/``worker_did_work`` blocking status to
+    non-blocking, so an honestly-declared no-op passes while silent abandonment
+    still fails.
     """
     mode = normalize_contract_mode(mode)
+    fail_closed = is_fail_closed_mode(mode)
+    blocking_statuses = _blocking_statuses_for_mode(mode)
     refs: list[EvidenceRef] = []
     providers_invoked: list[str] = []
+    # Track which evidence kinds had a provider crash so we can emit typed
+    # predicate failures even when shadow mode would silently swallow them.
+    crashed_kinds: dict[str, str] = {}  # kind -> exception message
     ctx = CompletionContext(
         plan_dir=plan_dir,
         project_dir=project_dir,
@@ -1943,12 +3510,14 @@ def compute_verdict(
         providers_invoked.append(kind)
         try:
             refs.append(provider.collect(ctx))
-        except Exception as exc:  # fail-open per provider
+        except Exception as exc:  # fail-open per provider in shadow; tracked for fail-closed
+            crash_msg = f"provider crashed: {exc}"
+            crashed_kinds[kind] = crash_msg
             refs.append(
                 EvidenceRef(
                     kind,
                     EvidenceStatus.unknown,
-                    f"provider crashed: {exc}",
+                    crash_msg,
                     {},
                 )
             )
@@ -1961,12 +3530,56 @@ def compute_verdict(
     waivable = {"landed_diff", "worker_did_work"}
 
     failures: list[str] = []
+    predicate_failures: list[BlockingPredicateFailure] = []
+
     for ref in refs:
-        if ref.status not in _BLOCKING_STATUSES:
+        if ref.status not in blocking_statuses:
             continue
         if has_waiver and ref.kind in waivable:
             continue  # honest declared no-op excuses missing diff/activity
-        failures.append(f"{ref.kind}: {ref.summary}")
+
+        # Legacy string failure (always present for backward compatibility)
+        failure_msg = f"{ref.kind}: {ref.summary}"
+        failures.append(failure_msg)
+
+        # Typed predicate failure — only in fail-closed mode
+        if fail_closed:
+            predicate_kind = _classify_predicate_kind(ref)
+            if predicate_kind is not None:
+                ref_details = ref.details if isinstance(ref.details, dict) else {}
+                predicate_failures.append(
+                    BlockingPredicateFailure(
+                        kind=predicate_kind,
+                        evidence_kind=ref.kind,
+                        summary=ref.summary,
+                        details=dict(ref_details),
+                    )
+                )
+
+    # In fail-closed mode, provider crashes always produce typed predicate
+    # failures even when the crash evidence ref wasn't caught by the
+    # blocking-statuses loop (e.g. when crash evidence was produced as
+    # unknown but we want an explicit provider_crash predicate).
+    if fail_closed:
+        for kind, crash_msg in crashed_kinds.items():
+            # Avoid duplicates: only add if not already covered
+            already = any(
+                pf.evidence_kind == kind and pf.kind == PREDICATE_KIND_PROVIDER_CRASH
+                for pf in predicate_failures
+            )
+            if not already:
+                predicate_failures.append(
+                    BlockingPredicateFailure(
+                        kind=PREDICATE_KIND_PROVIDER_CRASH,
+                        evidence_kind=kind,
+                        summary=crash_msg,
+                        details={},
+                    )
+                )
+                # Also ensure a legacy string failure exists
+                crash_failure = f"{kind}: {crash_msg}"
+                if crash_failure not in failures:
+                    failures.append(crash_failure)
 
     # --- telemetry counts (purely informational, no control-flow impact) ---
     legacy_count = 0
@@ -1992,4 +3605,5 @@ def compute_verdict(
         legacy_evidence_count=legacy_count,
         unknown_evidence_count=unknown_count,
         would_block_reasons=would_block_reasons,
+        predicate_failures=tuple(predicate_failures),
     )

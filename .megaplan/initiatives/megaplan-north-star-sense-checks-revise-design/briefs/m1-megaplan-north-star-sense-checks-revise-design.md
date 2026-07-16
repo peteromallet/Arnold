@@ -22,7 +22,7 @@ explicit North Star questions become enforceable revise/review actions.
 Read these first:
 
 1. `.megaplan/initiatives/megaplan-north-star-sense-checks-revise-design/NORTHSTAR.md`
-2. `.megaplan/initiatives/megaplan-north-star-sense-checks-revise-design/docs/research.md`
+2. `.megaplan/initiatives/megaplan-north-star-sense-checks-revise-design/research/research.md`
 3. `arnold_pipelines/megaplan/handlers/gate.py`
 4. `arnold_pipelines/megaplan/orchestration/critique_runtime.py`
 5. `arnold_pipelines/megaplan/schemas/runtime.py`

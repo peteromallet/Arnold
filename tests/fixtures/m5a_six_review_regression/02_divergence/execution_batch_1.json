@@ -1,0 +1,19 @@
+{
+  "task_updates": [
+    {
+      "task_id": "T1",
+      "status": "done",
+      "commands_run": ["pytest -q"],
+      "files_changed": [
+        {
+          "path": "src/app.py",
+          "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0001"
+        },
+        {
+          "path": "src/missing.py",
+          "sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0002"
+        }
+      ]
+    }
+  ]
+}
