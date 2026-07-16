@@ -222,6 +222,30 @@ def test_megaplan_refresh_recognizes_linked_worktree_gitfile() -> None:
     assert 'export MEGAPLAN_LAUNCH_RUNTIME_SRC="${MEGAPLAN_RUNTIME_SRC:-}"' in command
 
 
+def test_tmux_chain_launch_without_editable_sync_never_refreshes_remote_git() -> None:
+    spec = replace(
+        _cloud_spec(),
+        megaplan=MegaplanSpec(
+            ref="local-runtime",
+            src_path="/workspace/local-runtime",
+        ),
+    )
+
+    command = _tmux_chain_launch_command(
+        "/workspace/project",
+        "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
+        spec=spec,
+        refresh_editable_install=False,
+    )
+
+    assert "git push" not in command
+    assert "git fetch" not in command
+    assert "git pull" not in command
+    assert 'BRANCH="$(git -C "$SRC" branch --show-current)"' in command
+    assert "runtime_provenance --expected-root" in command
+    assert 'export MEGAPLAN_LAUNCH_RUNTIME_SRC="$MEGAPLAN_RUNTIME_SRC"' in command
+
+
 def test_preflight_phase_model_materialization_preserves_profile_tier_routing() -> None:
     result = _phase_model_by_label_from_preflight(
         {

@@ -22,7 +22,7 @@ megaplan:
   ref: consolidate/arnold-runtime-activation-20260714
   codex_auth: chatgpt
   repo: https://github.com/peteromallet/Arnold.git
-  src_path: /workspace/arnold-custody-runtime
+  src_path: /workspace/arnold-consolidation-20260714
 
 resources:
   volume: agent-volume
