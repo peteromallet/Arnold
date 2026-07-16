@@ -38,12 +38,15 @@ repair queue, or substitute for raw producer artifacts.
 10. The reviser records one action or explicit non-action per requested finding;
     the gate sees complete cumulative truth and cannot infer absence from an
     omitted prompt row.
-11. WBC owns supported-runtime attempts/effects, declarations, durable payload
-    references, boundary receipts, and boundary-semantic findings. This epic
-    owns critique-loop semantic reconciliation and compatible projections only.
-12. Shadow mode is report-only. Canary and rollout are allowlisted, observable,
-    reversible, and gated by evidence; disabling briefing use preserves raw
-    occurrence custody and replayability.
+11. WBC owns supported-runtime attempt/effect evidence, durable payload
+    references, receipts, persistence, and compatibility boundaries. The
+    critique ledger owns immutable critic occurrences, semantic finding
+    identities, disposition/reopen events, bounded history briefings, and
+    rebuildable derived projections.
+12. Existing Megaplan components retain critic selection, revision, gate, and
+    lifecycle authority. The migration switches the complete critique loop at
+    one coordinated cutover and then retires the replaced path; custody failure
+    stops admission rather than falling back silently or declaring convergence.
 
 ## Success measures
 
@@ -55,8 +58,10 @@ repair queue, or substitute for raw producer artifacts.
 - At least 95% of closure/non-action dispositions cite adequate evidence.
 - Stale briefings, missing occurrences, invalid schemas, unsupported closures,
   and incomplete WBC custody fail closed before revise/gate behavior changes.
-- Token, latency, false-merge, false-closure, reopen, novelty, and rollback
-  metrics are durable and attributable to exact corpus/model/profile versions.
+- Minimum cutover evidence is durable and attributable to exact source,
+  implementation, corpus, schema, model, and profile revisions.
+- After cutover there is one supported critique-ledger architecture, no active
+  legacy consumption path, and projections rebuild from WBC-backed evidence.
 
 ## Anti-scope
 
@@ -66,5 +71,7 @@ repair queue, or substitute for raw producer artifacts.
   queue, or lifecycle state.
 - No silent truncation, historical backfill that invents semantic relations,
   automatic closure from wording similarity, or severity/disposition collapse.
-- No production-wide enablement, old-reader deletion, deployment, restart, or
-  chain launch by these planning assets.
+- No canary, prolonged shadow authority, dual-write period, broad mixed-version
+  support, per-boundary rollback, or rollout dashboard program.
+- No deployment, restart, chain launch, or runtime mutation by these planning
+  assets themselves.

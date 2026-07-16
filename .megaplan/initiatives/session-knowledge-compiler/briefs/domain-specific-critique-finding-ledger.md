@@ -4,7 +4,8 @@ slug: domain-specific-critique-finding-ledger
 title: Cumulative Domain-Specific Critique Finding Ledger
 epic: session-knowledge-compiler
 created_at: '2026-07-16T20:37:02Z'
-status: planning-only
+updated_at: '2026-07-16T21:35:06Z'
+status: canonical-planning-source
 ---
 
 # Cumulative Domain-Specific Critique Finding Ledger
@@ -25,10 +26,10 @@ problem. Preserve independent discovery where it is useful, then reconcile it
 against the cumulative record. Do not begin with a semantic database, embedding
 index, hard-coded similarity threshold, or elaborate lineage graph.
 
-This is a planning-only adjunct to the existing Durable Session Knowledge
-Compiler initiative. It is not an executable chain milestone, does not alter
-`chain.yaml`, and grants no authority to implement, launch, replay, deploy, or
-change an in-flight plan.
+This is the canonical source brief for the critique-ledger epic within the
+Durable Session Knowledge Compiler initiative. The executable implementation
+plan lives under `../../critique-ledger/`; this brief does not itself perform a
+cutover, deploy, restart, or mutate an in-flight plan.
 
 ## Why this initiative is the canonical home
 
@@ -39,12 +40,12 @@ survive synthesis, derived records to remain distinguishable from facts, and
 source observations to survive consolidation. A critique finding ledger is a
 specialized application of those invariants.
 
-Workflow Boundary Contracts remains an important integration boundary: it owns
-supported-runtime attempt/effect evidence and semantic findings about declared
-workflow boundaries. This plan must consume or project from that authority when
-appropriate; it must not create a competing execution-attempt ledger or grant
-execution authority. The exact persistence boundary is an open design decision
-for the implementation planner.
+Workflow Boundary Contracts is the integration substrate: it owns durable
+attempt/effect evidence, payload references, receipts, persistence, and
+compatibility boundaries. The critique ledger owns immutable critic occurrences,
+semantic finding identities, disposition/reopen events, bounded history
+briefings, and derived projections. Existing Megaplan components retain critic
+selection, revision, gate, and lifecycle authority.
 
 ## Decision posture
 
@@ -81,7 +82,7 @@ for the implementation planner.
    Four round-5 lenses then raised the same semantic conflict, while the gate's
    exact-text metric reported zero recurrence.
 
-### Initial design choices to validate in shadow mode
+### Locked architecture for the coordinated migration
 
 - Use a two-stage domain task by default: optional blind discovery followed by
   mandatory context-aware reconciliation. The evaluator may omit the blind pass
@@ -102,7 +103,7 @@ for the implementation planner.
 - Embedding similarity, Jaccard thresholds, or exact-text matching as semantic
   authority.
 - A large ontology that attempts to encode every possible critique relation
-  before shadow evidence exists.
+  before the M6 implementation gate passes.
 - Preloading full history into every initial critic pass.
 - Dropping minor, rejected, deferred, failed-producer, or accepted-tradeoff
   findings from reviser/gate context merely because they are non-blocking.
@@ -124,8 +125,8 @@ for the implementation planner.
 - Make the gate's claims about recurrence, resolution, and accepted risk honest.
 - Preserve complete evidence and provenance while allowing bounded synthesized
   briefings to evolve.
-- Establish a reversible shadow evaluation before changing production critique
-  behavior.
+- Validate reconstruction and the semantic loop early, then complete one
+  coordinated cutover and retire the replaced path.
 
 ## Non-goals
 
@@ -139,7 +140,7 @@ for the implementation planner.
 - Solving general project memory, general RAG, or all session-knowledge storage
   in this slice.
 - Changing severity policy or forcing every minor finding to block the gate.
-- Retrofitting every historical plan before the shadow experiment proves value.
+- Inventing semantic relationships while importing historical plans.
 
 ## Conceptual record and briefing shape
 
@@ -199,7 +200,7 @@ occurrences to pretend an earlier semantic judgment was always known.
 ### Minimum disposition semantics
 
 The exact enum is an implementation choice, but the following meanings must be
-representable from the first shadow prototype:
+representable from the first accepted target schema:
 
 - `open`: actionable concern remains.
 - `addressed_pending_verification`: a revision action claims to respond, but the
@@ -406,7 +407,7 @@ The minimum deterministic machinery is load-bearing:
 ## M6 worked example and acceptance fixture
 
 The preserved plan
-`m6-exact-contract-and-20260716-1303` is the first required shadow fixture.
+`m6-exact-contract-and-20260716-1303` is the first required migration fixture.
 
 Direct artifact evidence:
 
@@ -453,51 +454,42 @@ tradeoff because absent source artifacts were represented as unavailable or
 disposition and reopen only if the plan later claims successful replay, the
 source artifacts become available, or the unavailable-marker contract changes.
 
-## Rollout and shadow evaluation
+## Migration validation and cutover
 
-### Phase 0 — offline reconstruction
+### Gate 1 — early M6 reconstruction and thin semantic loop
 
-Do not alter live prompts. Feed all preserved M6 producer outputs, evaluator
-verdicts, revisions, and gate artifacts into a standalone curator/reconciler.
-Measure whether it reconstructs the known semantic families and retains every
-occurrence and disposition.
+Before durable integration, feed the preserved M6 outputs, evaluator verdicts,
+revisions, and gate artifacts through the target record contract. It must retain
+every occurrence and disposition, reconstruct the five-occurrence semantic
+family, preserve the accepted replay limitation, produce bounded briefings, and
+fail closed without lifecycle mutation. This is an implementation gate, not a
+long-lived report-only operating mode.
 
-### Phase 1 — controlled comparison
+### Gate 2 — WBC-backed integrated loop
 
-Evaluate four arms against the same preserved plan snapshots:
+After persistence, routing, reconciliation, reviser, and gate adapters exist,
+rerun the same oracle through the complete WBC-backed path. Require complete
+occurrence/action coverage, deterministic replay/projection hashes, honest zero/
+no-new claims, and negative proof that the ledger grants no Megaplan authority.
 
-1. current-context control;
-2. history-preloaded critique;
-3. blind critique followed by history-aware reconciliation;
-4. recommended hybrid: optional blind discovery, full domain briefing,
-   reconciliation, and deterministic occurrence custody/freshness.
+### Gate 3 — coordinated cutover and retirement
 
-Hold plan snapshots, brief, repository/runtime revision, lens assignments,
-models, prompts other than the context treatment, and output budgets constant.
-Repeat once with the original mixed profile and once with a fixed homogeneous
-critic model. Use blind adjudication of outputs. Attribute improvement to
-context only when its direction persists across profile/model conditions.
+Against the exact cutover revisions, create and verify one content-addressed
+backup, prove whole-cutover restore in isolation, quiesce admission, account for
+in-flight attempts, import retained history once, and switch every critique-loop
+consumer together. Run the bounded healthy/failure smoke checks, resume only on
+complete WBC and ledger custody, then retire the replaced writers, readers,
+flags, and fallback path.
 
-### Phase 2 — report-only live shadow
-
-Generate ledger/briefing candidates beside ordinary critique runs. They may
-produce comparison reports but cannot change critic selection, revise prompts,
-gate verdicts, plan state, or chain state. Review false merges, unsupported
-closures, missed occurrences, stale briefings, token cost, latency, and novel
-finding recall.
-
-### Phase 3 — gated canary
-
-Only after shadow thresholds pass, enable the context-aware briefing for a
-small allowlisted set of new plans. Keep deterministic fallback to the existing
-path, preserve both evidence sets, and make rollback disable briefing use while
-retaining observation and ledger append.
-
-No production-wide rollout is authorized by this brief.
+Recovery stops admission and restores the complete verified pre-cutover bundle
+and prior runtime/config revision. It preserves failed append-only evidence and
+never resumes a mixed state. Canaries, prolonged shadow authority, dual-write
+windows, per-boundary rollback, broad mixed-version support, and rollout
+dashboards are not part of this migration.
 
 ## Success measures and failure criteria
 
-Initial shadow thresholds, taken from the evidence-led context investigation:
+Migration gates, grounded in the evidence-led context investigation:
 
 - zero dropped flagged producer outputs;
 - 100% recall of the named M6 regressions/rediscoveries in the curated record;
@@ -509,7 +501,7 @@ Initial shadow thresholds, taken from the evidence-led context investigation:
   adjacent exact-text matches; and
 - valid no-additional-findings outcomes without novelty pressure.
 
-Fail the experiment on any suppressed significant concern, silent occurrence
+Fail the migration gate on any suppressed significant concern, silent occurrence
 loss, unsupported closure, false semantic merge that prevents review, stale
 briefing used as current, materially lower novel-finding recall, or any ledger
 state that incorrectly grants execution/gate authority.
@@ -524,8 +516,8 @@ disposition coverage, and stable results across model/profile changes.
   preserve an unseeded exploration budget, require evidence and reopen
   predicates, and measure new-family recall.
 - **Hallucinated semantic merges.** Keep occurrences immutable, make merge/split
-  decisions explicit, permit `uncertain`, and subject reconciliations to blind
-  evaluation in shadow mode.
+  decisions explicit, permit `uncertain`, and adjudicate the fixed migration
+  fixture before cutover.
 - **Context-window pressure.** Use domain routing, relevance explanations,
   hierarchical evidence-linked summaries, and explicit overflow/split behavior;
   never silently truncate.
@@ -538,49 +530,45 @@ disposition coverage, and stable results across model/profile changes.
 - **Disposition laundering.** Keep severity independent from disposition,
   require rationale/evidence, and preserve accepted/rejected/deferred findings
   in gate context.
-- **Competing authority.** Decide the WBC/session-knowledge/plan-artifact storage
-  boundary before implementation; keep the ledger derived and non-authoritative
-  for execution.
+- **Competing authority.** Enforce the settled WBC/critique-ledger/Megaplan
+  ownership split and keep projections non-authoritative for execution.
 - **Model/profile confounding.** Use crossed fixed-input experiments and blind
   judging before attributing gains to the context design.
 
 ## Unresolved questions
 
-1. Which existing contract is the durable authority for occurrence receipts and
-   finding events: plan-local critique custody, WBC semantic findings, the
-   session knowledge compiler, or a versioned adapter/projection across them?
-2. Should the evaluator itself curate the ledger, or should it launch a
+1. Should the evaluator itself curate the ledger, or should it launch a
    dedicated curator with the evaluator retaining final disposition authority?
-3. What is the smallest compatible disposition schema after existing flag and
+2. What is the smallest target disposition schema after existing flag and
    gate states are inventoried? Which meanings are projections versus stored
    events?
-4. How is a stable evaluator-assigned finding identity represented without
+3. How is a stable evaluator-assigned finding identity represented without
    turning model judgment into an opaque, irreversible semantic merge?
-5. What domain catalog and mandatory safety/correctness floors apply at each
+4. What domain catalog and mandatory safety/correctness floors apply at each
    robustness level?
-6. When is the blind pass worth its cost, and what minimum exploration budget
+5. When is the blind pass worth its cost, and what minimum exploration budget
    prevents history from narrowing discovery too aggressively?
-7. How are cross-domain relevance and briefing overflow explained and audited?
-8. What evidence change automatically satisfies a reopen predicate, and what
+6. How are cross-domain relevance and briefing overflow explained and audited?
+7. What evidence change automatically satisfies a reopen predicate, and what
    still requires evaluator judgment?
-9. How should failed or malformed producer attempts with partially recoverable
+8. How should failed or malformed producer attempts with partially recoverable
    findings enter custody without promoting invalid output?
-10. What retention/redaction/access rules apply when a finding links to private
+9. What retention/redaction/access rules apply when a finding links to private
     repository, transcript, tool, or external evidence?
-11. How will historical flag registries be read without falsely reconstructing
+10. How will historical flag registries be imported without falsely reconstructing
     semantic relationships that were never recorded?
-12. Which component owns the honest replacement name and UX for the current
+11. Which component owns the honest replacement name and UX for the current
     `recurring_critiques` exact-text signal?
 
 ## Successor implementation-planning work packages
 
 These are dependent planning packages, not authorized implementation tasks.
 
-1. **Authority and compatibility inventory.** Map current critique custody,
+1. **Authority and cutover inventory.** Map current critique custody,
    flag registry, evaluator verdict, revision metadata, gate signals/output,
    WBC finding/evidence, and session-knowledge contracts. Decide the one writer
    and projection boundaries before proposing storage changes.
-2. **M6 fixture and shadow oracle.** Freeze the exact M6 artifact/repository
+2. **M6 fixture and semantic-loop oracle.** Freeze the exact M6 artifact/repository
    revisions, expected 20-family audit, blocked-handoff cluster, accepted replay
    limitation, and failed/dropped-producer cases. Build an evaluation protocol
    that does not change live plan state.
@@ -592,14 +580,14 @@ These are dependent planning packages, not authorized implementation tasks.
    domain instructions, cross-domain relevance, context budgets, blind-pass
    policy, overflow behavior, and curator authority.
 5. **Role-flow integration plan.** Trace the exact evaluator → parallel critic
-   → reconciler → reviser → gate call sites and define fail-closed/fallback
-   behavior without creating another transition authority.
-6. **Shadow and rollout plan.** Define fixtures, crossed model/profile arms,
-   blind adjudication, metrics, observability, canary gates, rollback, and the
-   explicit later authorization required for live enablement.
+   → reconciler → reviser → gate call sites and define fail-closed behavior
+   without creating another transition authority.
+6. **Cutover and retirement plan.** Define the exact-build gates, one-time import,
+   minimum backup/restore proof, atomic checklist, custody smoke checks, and
+   replaced-path retirement evidence.
 
 The successor should not begin implementation until work packages 1–3 agree on
-authority, compatibility, and M6 acceptance fixtures.
+authority, target schema, and M6 acceptance fixtures.
 
 ## Evidence and source audit
 
@@ -720,11 +708,14 @@ was repeated with the supported maximum of 25. Broad M6 results were narrowed
 to the exact 19:58–20:27 UTC proposal thread and then verified through immutable
 reply ancestry.
 
-## Exact artifacts written by this planning task
+## Original planning provenance and current canonical assets
 
 - `.megaplan/initiatives/session-knowledge-compiler/briefs/domain-specific-critique-finding-ledger.md`
 - `.megaplan/initiatives/session-knowledge-compiler/README.md` (one canonical
   index entry only)
 
-No source code, tests, chain specs, North Star, runtime state, tickets, services,
-schedules, commits, branches, or remotes are changed by this task.
+The original creation wrote only the two files above. The superseding big-bang
+decision is implemented by the canonical `../../critique-ledger/README.md`,
+`NORTHSTAR.md`, `chain.yaml`, `cloud.yaml`, milestone briefs, WBC annex, and M6
+validation record. Those planning assets authorize no cutover, deployment, or
+restart outside an executed and reviewed chain milestone.

@@ -3,8 +3,9 @@
 ## Outcome
 
 Freeze the minimum versioned critique-ledger contract, its exact WBC/Megaplan
-ownership boundaries, and a content-addressed read-only M6 corpus/oracle. Leave
-CL2 an accepted schema/compatibility bundle with no unknown writer or corpus row.
+ownership boundaries, and a content-addressed read-only M6 corpus/oracle. Prove
+a thin end-to-end semantic loop against M6 before durable migration work begins.
+Leave CL2 an accepted target-schema bundle with no unknown writer or corpus row.
 
 ## In scope
 
@@ -16,10 +17,13 @@ CL2 an accepted schema/compatibility bundle with no unknown writer or corpus row
 - Map explicit dispositions for acted-on, ignored/wont-fix, deferred, rejected,
   duplicate, accepted-risk, unknown, and resolved semantics; keep severity
   orthogonal and require reopen conditions.
-- Freeze historical/mixed-version unknown behavior, privacy/retention classes,
+- Freeze one-time historical-import unknown behavior, privacy/retention classes,
   failure/atomicity table, and evaluator-versus-curator authority.
 - Copy/redact/content-address the preserved M6 inputs without mutating their
   source and encode the required oracle facts in the validation plan.
+- Exercise the occurrence → semantic identity → disposition/reopen → bounded
+  briefing → reviser/gate projection loop on the frozen M6 fixture. This is a
+  migration gate, not a report-only production mode.
 
 ## Out of scope
 
@@ -67,6 +71,9 @@ This sprint must fit roughly two weeks including review.
 - M6 manifest hashes every required input; replay twice produces identical
   inventory/oracle hashes; the five-occurrence family and accepted replay
   limitation are mechanically asserted.
+- The thin semantic loop reconstructs the five occurrences as one semantic
+  finding, preserves the replay limitation and reopen rule, and fails closed on
+  missing custody without writing lifecycle state.
 - Current versus proposed behavior and all unresolved product/authority gates
   are explicit; no implementation is falsely marked landed.
 
@@ -86,7 +93,7 @@ feature. Do not edit or resume M6.
 ## Written handoff to CL2
 
 Write and review `docs/critique-ledger/handoffs/cl1-contract-oracle.json` with
-schema/version hashes, owner and compatibility matrices, WBC revision/receipt
+schema/version hashes, owner and cutover mappings, WBC revision/receipt
 refs, M6 corpus/oracle hashes, privacy/retention and atomicity decisions, open
 gates, implementation touchpoints, and `accepted_for_cl2: true`. CL2 must reject
 a missing, stale, unreviewed, or blocker-bearing handoff.

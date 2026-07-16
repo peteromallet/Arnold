@@ -1,0 +1,39 @@
+provider: ssh
+
+repo:
+  url: /workspace/arnold-runtime-resident-scheduling-1e76dbe
+  branch: resident-scheduling/deployed-20260716
+  workspace: /workspace/critique-ledger-bigbang-20260716/Arnold
+
+agents:
+  default: codex
+
+codex:
+  model: gpt-5.6-sol
+  reasoning: high
+
+chain_session: critique-ledger-bigbang-20260716
+mode: idle
+
+chain:
+  spec: /workspace/critique-ledger-bigbang-20260716/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml
+
+megaplan:
+  ref: resident-scheduling/deployed-20260716
+  codex_auth: chatgpt
+  repo: /workspace/arnold-runtime-resident-scheduling-1e76dbe
+  src_path: /workspace/arnold-runtime-resident-scheduling-1e76dbe
+
+resources:
+  volume: agent-volume
+  port: 8080
+
+ssh:
+  host: 159.69.51.216
+  user: root
+  port: 22
+  remote_dir: /opt/megaplan-cloud/deploy
+  workspace_dir: /opt/megaplan-cloud/workspace
+  container: megaplan-cloud-agent
+
+secrets: []

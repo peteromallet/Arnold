@@ -25,7 +25,7 @@ finding may have many occurrences, and no known finding disappears by omission.
 ## Out of scope
 
 Changing execution approval, severity thresholds, gate authority, automatic
-repair, shadow/canary enablement, or treating the model's semantic judgment as a
+repair, cutover execution, or treating the model's semantic judgment as a
 deterministic truth or lifecycle mutation.
 
 ## Locked decisions
@@ -65,7 +65,7 @@ reviewable within roughly two weeks.
 - Gate/finalize fixtures prove honest zero/no-new claims, accepted tradeoffs,
   open minor findings, disputed merges, reopen, and unsupported closure failure.
 - Existing flag/revise/gate/finalize/critique custody/WBC tests pass, plus
-  negative authority and rollback compatibility tests.
+  negative-authority and fail-closed custody tests.
 
 ## Touchpoints
 
@@ -85,5 +85,5 @@ silent compatibility deletion.
 Write and review `docs/critique-ledger/handoffs/cl4-role-flow.json` with accepted
 role-flow/schema hashes, disposition/reopen matrix, reconciliation and action-
 coverage proofs, gate-claim compatibility map, WBC receipts, negative-authority
-results, M6 dry replay, and rollback instructions. CL5 uses this exact contract
-as the candidate implementation under test.
+results, M6 semantic-loop replay, and backup/restore prerequisites. CL5 uses
+this exact contract as the cutover candidate and rejects any stale handoff.

@@ -1,6 +1,6 @@
 # Workflow Boundary Contracts integration annex
 
-This annex is binding for all six critique-ledger sprints. It distinguishes the
+This annex is binding for all five critique-ledger sprints. It distinguishes the
 landed WBC substrate from proposed critique-ledger behavior and prevents a
 second authority or execution ledger.
 
@@ -8,10 +8,9 @@ second authority or execution ledger.
 
 | Boundary | Canonical owner | Critique-ledger role |
 |---|---|---|
-| Supported-runtime attempt/effect start, terminal result, ordering, payload reference, retention/redaction | WBC kernel execution-attempt ledger and payload policy | Reference exact attempt/event/payload identities; never rewrite or re-authorize them. |
-| Boundary declaration, evidence/receipt, compatibility, conformance, boundary-semantic mismatch | WBC | Emit/consume declared critique-loop boundary envelopes and map failures to WBC semantic findings without making them critique dispositions. |
-| Critic producer output and per-round zero-loss custody | Megaplan critique custody | Extend compatibly with context mode, ledger/briefing inputs, and immutable occurrence references. |
-| Critic selection and semantic relationship/disposition judgment | Critique evaluator, optionally assisted by a curator | Produce append-only model judgments; never mutate lifecycle, gate authority, or raw occurrences. |
+| Supported-runtime attempt/effect evidence, payload references, receipts, persistence, retention/redaction, and compatibility boundaries | WBC kernel execution-attempt ledger and payload policy | Reference exact attempt/event/payload identities; never rewrite or re-authorize them. |
+| Critic occurrences, semantic finding identities, disposition/reopen events, bounded history briefings, and derived projections | Critique ledger | Append immutable/domain records over WBC custody; projections remain rebuildable and non-authoritative. |
+| Critic selection | Existing Megaplan evaluator | Select critics and optionally accept curator proposals; the ledger does not take routing authority. |
 | Flag lifecycle, revision action, gate verdict, finalize/execute admission | Existing Megaplan flag/revise/gate/finalize owners | Consume ledger projections and bind exact revisions; retain current decision authority. |
 | Session/project knowledge | Session Knowledge Compiler | Optional later projection/retention consumer only; not the first implementation's finding authority. |
 
@@ -68,7 +67,7 @@ the declared compatibility profile, never silently dropped.
   Deterministic validators enforce shape, coverage, hashes, ordering, and
   evidence availability—not semantic sameness.
 
-## Disposition compatibility and migration
+## Disposition migration
 
 The first schema must represent `acted_on/addressed_pending_verification`,
 `ignored/wont_fix`, `deferred`, `rejected_invalid|rejected_out_of_scope`,
@@ -76,19 +75,19 @@ The first schema must represent `acted_on/addressed_pending_verification`,
 `resolved_verified`. Existing `open`, `addressed`, and `verified` flag states and
 gate settled decisions are compatibility inputs, not a complete replacement.
 
-Historical critique artifacts are read-only. Migration creates explicit
+Historical critique artifacts are read-only. The one-time migration creates explicit
 `legacy_unknown` occurrences/projections when semantic relationships,
 instructions, or reopen conditions were never recorded. It must not backfill
-invented duplicates or resolutions. Mixed-version readers must handle old-only,
-dual-written, new-only, partial, future-version, corrupted, and rolled-back
-runs. Old readers retain their existing artifacts until CL6 proves retirement
-criteria; deletion is outside this epic without separate approval.
+invented duplicates or resolutions. The target reader accepts the cutover
+schema, rejects unsupported future/corrupt inputs, and never silently drops
+fields. Old readers remain only as pre-cutover recovery material and are
+retired after CL5 verifies the coordinated switch.
 
 ## Persistence and replay
 
 - Append attempt/occurrence evidence through the landed WBC ledger/object-store
   interfaces when they satisfy CL1's contract; keep plan-local critique artifacts
-  as compatibility views and raw evidence.
+  as raw/import/recovery evidence, not a parallel live view after cutover.
 - Persist start before dispatch. Commit accepted producer result, occurrence
   envelope, durable payload ref, and receipt through a transaction or durable
   prepare/outbox protocol. Terminal persistence failure is
@@ -130,25 +129,26 @@ Fail closed before revise/gate on dropped attempts, unmapped occurrences,
 incomplete disposition coverage, stale evidence, unsupported closure, silent
 budget truncation, projection/replay mismatch, or terminal persistence failure.
 Do not downgrade these to `no_additional_findings`. Semantic uncertainty becomes
-an explicit unknown disposition. Shadow failures leave ordinary runtime behavior
-unchanged and emit diagnostics. Canary failures disable ledger consumption and
-fall back to the validated legacy path while retaining append-only evidence.
+an explicit unknown disposition. During cutover, any integrity failure keeps
+admission closed and invokes the single whole-cutover recovery procedure; there
+is no partial boundary fallback.
 
-## Observability
+## Minimum integrity evidence
 
-Emit per plan/round/domain, with content-safe identifiers:
+Retain only evidence needed to prove custody and diagnose a failed cutover, with
+content-safe identifiers:
 
 - selected/skipped critics and reasons; blind/history-aware counts;
 - attempts, parse failures, custody loss, reconciliation coverage, stale or
   rebuilt briefings, overflow/splits, and durable-reference availability;
 - new/duplicate/refinement/regression/reopen/no-additional outcomes;
 - disposition counts/age/evidence coverage and unsupported-closure rejects;
-- prompt/context tokens, latency, cost, model/profile/schema/version vectors;
-- duplicate revision actions, new-family recall, false merge/closure/reopen
-  adjudications, gate outcome deltas, fallback/disable/rollback events.
+- prompt/context tokens and model/profile/schema/source vectors; and
+- cutover revision, import/backup/restore hashes, smoke verdicts, and retired
+  writer/reader inventory.
 
-Metrics are projections from immutable evidence and never authorize progression.
-Dashboards must separate current behavior, shadow candidate, and canary behavior.
+These records are projections from immutable evidence and never authorize
+progression. No rollout dashboard or long-lived comparison telemetry is required.
 
 ## Test strategy
 
@@ -160,31 +160,26 @@ Dashboards must separate current behavior, shadow candidate, and canary behavior
 3. Existing critique custody, parallel reducer, evaluator validation, flag,
    revise, gate, finalize, WBC ledger/evidence/compatibility/conformance tests.
 4. Producer-driven boundary fixtures for evaluator → critic → reconciler →
-   reviser → gate in healthy, unavailable, malformed, and rollback cases.
+   reviser → gate in healthy, unavailable, malformed, and recovery cases.
 5. M6 corpus oracle tests, including the five-occurrence blocked-handoff family,
    accepted replay limitation, failed producer, and exact-text false zero.
-6. Mixed-version matrix for legacy-only, dual-write, new-only, downgrade,
-   rollback, future-version, redacted, and unavailable evidence.
-7. Negative authority tests proving shadow/replay/evaluator/ledger code performs
+6. One-time legacy import, target-version, future/corrupt rejection, redacted,
+   unavailable, backup, and isolated whole-cutover restore fixtures.
+7. Negative authority tests proving replay/evaluator/ledger code performs
    zero lifecycle, gate, queue, Git/provider, delivery, or external-effect writes.
 
-## Shadow, canary, rollout, and rollback gates
+## Coordinated cutover and bounded recovery
 
-Shadow is report-only and default-off for ordinary users until CL5. Promotion
-to canary requires the acceptance thresholds in `../validation/m6-end-to-end.md`,
-zero authority leakage, reviewed false-merge/closure samples, complete WBC
-conformance, a rollback rehearsal, and named runtime/product/contract owners.
+CL5 may cut over only when CL1–CL4 handoffs match the exact source revision,
+M6 and full semantic-loop checks pass, WBC receipts and payload references are
+complete, and a content-addressed backup plus isolated restore proof exist.
+Quiesce admission, account for in-flight attempts, import once, switch every
+critique-loop consumer together, run the bounded smoke checks, then retire the
+replaced readers/writers/fallbacks.
 
-Canary is allowlisted by new plan/run identity, never by mutable name alone. It
-preserves both legacy and candidate inputs/outputs and can disable independently
-at selection, briefing, reconciliation, reviser, and gate consumption boundaries.
-Automatic rollback triggers include occurrence loss, unsupported closure,
-significant-finding suppression, stale briefing use, schema/receipt failure,
-novel-recall threshold breach, persistent latency/token budget breach, or gate
-behavior divergence outside approved policy.
-
-Rollback disables candidate consumption and restores the last validated legacy
-path; it does not delete occurrence/reconciliation evidence or rewrite gate
-history. Old reader/artifact retirement, broad enablement, deployment, and
-service restart require separate authority after two accepted observation
-windows and are not done criteria for this planning chain.
+Occurrence loss, unsupported closure, stale briefing use, schema/receipt or
+payload-reference failure, replay mismatch, or false clean custody keeps
+admission closed. Recovery restores the complete verified pre-cutover bundle
+and prior runtime/config revision, then verifies projection hashes and WBC
+receipts before any resume. It preserves append-only failure evidence and never
+creates a supported mixed state or component-level rollback path.
