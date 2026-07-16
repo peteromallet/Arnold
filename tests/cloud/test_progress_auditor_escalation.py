@@ -385,6 +385,42 @@ def test_terminal_l2_receipt_completes_process_evidence_without_live_pid() -> No
     assert gate["eligible"] is True
 
 
+def test_terminal_l2_all_launch_paths_failed_is_dispatchable_immediately() -> None:
+    finding = _true_stall()
+    finding["current_target"]["tmux_process"] = {"live_status": "unknown"}
+    finding["active_step_liveness"] = {"present": False}
+    finding["meta_repair_summary"].update(
+        {
+            "should_dispatch": True,
+            "missing_meta_run_evidence": False,
+            "meta_run_refs": [
+                {
+                    "current_episode": True,
+                    "failure_code": "meta_repair_launch_failure",
+                    "launch_failure": True,
+                    "terminal_failure": True,
+                }
+            ],
+            "failed_meta_run_count": 1,
+            "failed_meta_run_evidence": True,
+        }
+    )
+    finding["deterministic_superfixer_evidence"].update(
+        {
+            "actionable": True,
+            "failed_l2_evidence": True,
+            "runner_dead": True,
+            "chain_incomplete": True,
+        }
+    )
+
+    gate = classify_true_stall(finding)
+
+    assert gate["custody_walk"]["L2"]["FIXED"] is False
+    assert gate["evidence_sources"]["live_process"]["state"] == "dead"
+    assert gate["eligible"] is True
+
+
 def test_ordinary_retrigger_failure_is_l2_fixed_axis_not_tracking_axis() -> None:
     finding = _true_stall()
     finding["meta_repair_summary"]["failed_meta_run_count"] = 0
