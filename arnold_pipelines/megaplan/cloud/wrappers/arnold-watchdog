@@ -4,8 +4,15 @@ set -uo pipefail
 # The resident watchdog can outlive multiple source activations.  Bash parses
 # large scripts lazily, so run from one validated immutable snapshot and retain
 # the origin path separately for source/sibling reconciliation.
-ARNOLD_WATCHDOG_ORIGIN="${ARNOLD_WATCHDOG_ORIGIN:-${BASH_SOURCE[0]:-$0}}"
-if [[ "${ARNOLD_WATCHDOG_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
+watchdog_current="${BASH_SOURCE[0]:-$0}"
+if [[ "${ARNOLD_WATCHDOG_SNAPSHOT_ACTIVE:-0}" != "1" \
+  || -z "${ARNOLD_WATCHDOG_SNAPSHOT_PATH:-}" \
+  || "$watchdog_current" != "$ARNOLD_WATCHDOG_SNAPSHOT_PATH" ]]; then
+  if [[ "${ARNOLD_WATCHDOG_SNAPSHOT_ACTIVE:-0}" == "1" ]]; then
+    ARNOLD_WATCHDOG_ORIGIN="$watchdog_current"
+  else
+    ARNOLD_WATCHDOG_ORIGIN="${ARNOLD_WATCHDOG_ORIGIN:-$watchdog_current}"
+  fi
   watchdog_snapshot="$(mktemp "${TMPDIR:-/tmp}/arnold-watchdog.XXXXXXXX")"
   if ! cp -- "$ARNOLD_WATCHDOG_ORIGIN" "$watchdog_snapshot" \
     || ! bash -n "$watchdog_snapshot"; then
@@ -15,9 +22,9 @@ if [[ "${ARNOLD_WATCHDOG_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
   fi
   export ARNOLD_WATCHDOG_ORIGIN
   export ARNOLD_WATCHDOG_SNAPSHOT_ACTIVE=1
+  export ARNOLD_WATCHDOG_SNAPSHOT_PATH="$watchdog_snapshot"
   exec bash "$watchdog_snapshot" "$@"
 fi
-ARNOLD_WATCHDOG_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"
 trap 'rm -f -- "$ARNOLD_WATCHDOG_SNAPSHOT_PATH"' EXIT
 
 # Caller-provided supervisor runtime controls are an explicit invocation

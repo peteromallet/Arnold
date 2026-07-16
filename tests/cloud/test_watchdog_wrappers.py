@@ -131,12 +131,14 @@ def test_long_running_superfixer_wrappers_pin_syntax_checked_source_snapshot(
 ) -> None:
     text = _wrapper(wrapper_name)
 
-    assert f'{prefix}_ORIGIN="${{{prefix}_ORIGIN:-' in text
+    assert f'{prefix}_ORIGIN="$' in text
+    assert '_current"' in text
     assert f'${{{prefix}_SNAPSHOT_ACTIVE:-0}}' in text
+    assert f'"${{{prefix}_SNAPSHOT_PATH:-}}"' in text
     assert "mktemp" in text
     assert "bash -n" in text
     assert f"export {prefix}_SNAPSHOT_ACTIVE=1" in text
-    assert f'{prefix}_SNAPSHOT_PATH="${{BASH_SOURCE[0]:-$0}}"' in text
+    assert f'export {prefix}_SNAPSHOT_PATH="$' in text
     assert f'trap \'rm -f -- "${prefix}_SNAPSHOT_PATH"\' EXIT' in text
     assert 'trap \'rm -f -- "${BASH_SOURCE[0]:-$0}"\' EXIT' not in text
 
@@ -167,6 +169,44 @@ def test_wrapper_snapshot_is_removed_after_fail_closed_usage_exit(
 
     assert result.returncode == expected_returncode
     assert not list(snapshot_dir.glob(f"{prefix}.*"))
+
+
+@pytest.mark.parametrize(
+    ("wrapper_name", "prefix"),
+    [
+        ("arnold-repair-loop", "ARNOLD_REPAIR_LOOP"),
+        ("arnold-meta-repair-loop", "ARNOLD_META_REPAIR_LOOP"),
+    ],
+)
+def test_inherited_snapshot_flag_cannot_delete_a_new_wrapper_invocation(
+    tmp_path: Path, wrapper_name: str, prefix: str
+) -> None:
+    origin = tmp_path / wrapper_name
+    origin.write_bytes((WRAPPER_DIR / wrapper_name).read_bytes())
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    inherited_snapshot = tmp_path / "parent-snapshot"
+    inherited_snapshot.write_text("parent", encoding="utf-8")
+    env = {
+        **os.environ,
+        "TMPDIR": str(snapshot_dir),
+        f"{prefix}_ORIGIN": str(tmp_path / "parent-origin"),
+        f"{prefix}_SNAPSHOT_ACTIVE": "1",
+        f"{prefix}_SNAPSHOT_PATH": str(inherited_snapshot),
+    }
+
+    result = subprocess.run(
+        ["bash", str(origin)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 64
+    assert origin.exists()
+    assert inherited_snapshot.read_text(encoding="utf-8") == "parent"
+    assert not list(snapshot_dir.iterdir())
 
 
 def test_repair_wrapper_snapshot_survives_origin_replacement_while_waiting(
