@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
+import shlex
 
 import pytest
 
@@ -10,6 +12,7 @@ from arnold_pipelines.megaplan.resident import vp_todo
 from arnold_pipelines.megaplan.resident import agent_loop as agent_loop_module
 from arnold_pipelines.megaplan.resident.agent_loop import ToolRuntimeContext
 from arnold_pipelines.megaplan.resident.auth import ResidentAuthorizer
+from arnold_pipelines.megaplan.resident.cli import _register_resident_subcommands
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
 from arnold_pipelines.megaplan.resident.profile import (
     AddTodoItemInput,
@@ -304,6 +307,37 @@ def test_hot_context_exposes_managed_resident_agents(tmp_path, monkeypatch) -> N
     assert "explicit approval" in policy["external_actions"]
     assert "label it unintegrated" in policy["tentative_work"]
     assert "durable ancestry evidence" in policy["completion_evidence"]
+
+
+def test_hot_context_fan_in_example_matches_tool_and_cli_contract(tmp_path) -> None:
+    context = asyncio.run(_profile(tmp_path).load_hot_context("missing-conversation"))
+    queued = context["resident_runtime"]["subagent_launch"]["queued_successors"]
+    owner = queued["fan_in_example"]["synthesis_delivery_owner"]
+
+    assert owner["resident_tool"] == "launch_subagent"
+    tool_payload = LaunchSubagentInput(**owner["arguments"])
+    assert tool_payload.aggregation_role == "synthesis_delivery_owner"
+    assert tool_payload.depends_on_run_id is None
+    assert tool_payload.depends_on_run_ids == [
+        "subagent-20260716-120000-a1b2c3d4",
+        "subagent-20260716-120100-b2c3d4e5",
+    ]
+
+    parser = argparse.ArgumentParser()
+    _register_resident_subcommands(parser)
+    cli_tokens = shlex.split(queued["cli_create"])
+    cli_args = parser.parse_args(
+        cli_tokens[cli_tokens.index("queue-subagent-successor") :]
+    )
+    assert cli_args.after_run_id is None
+    assert cli_args.after_run_ids == tool_payload.depends_on_run_ids
+
+    singular_tokens = shlex.split(queued["singular_compatibility"]["cli_create"])
+    singular_args = parser.parse_args(
+        singular_tokens[singular_tokens.index("queue-subagent-successor") :]
+    )
+    assert singular_args.after_run_id == tool_payload.depends_on_run_ids[0]
+    assert singular_args.after_run_ids is None
 
 
 def test_hot_context_vp_todos_is_empty_when_no_pending_items(tmp_path) -> None:

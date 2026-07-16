@@ -1333,11 +1333,48 @@ class MegaplanResidentProfile:
                             "launch_subagent with depends_on_run_id (legacy singular) or "
                             "depends_on_run_ids (multi-predecessor fan-in)"
                         ),
+                        "fan_in_example": {
+                            "contributor_contract": (
+                                "Launch independent contributors with "
+                                "aggregation_role=internal_contributor and one shared "
+                                "synthesis_group; retain each returned durable run ID."
+                            ),
+                            "synthesis_delivery_owner": {
+                                "resident_tool": "launch_subagent",
+                                "arguments": {
+                                    "task": (
+                                        "Read both contributor result artifacts, synthesize "
+                                        "their findings, complete verification, and deliver one "
+                                        "final reply."
+                                    ),
+                                    "description": "Synthesize contributor results and deliver",
+                                    "aggregation_role": "synthesis_delivery_owner",
+                                    "depends_on_run_ids": [
+                                        "subagent-20260716-120000-a1b2c3d4",
+                                        "subagent-20260716-120100-b2c3d4e5",
+                                    ],
+                                },
+                            },
+                        },
                         "cli_create": (
                             "python -P -m arnold_pipelines.megaplan resident "
-                            "queue-subagent-successor --after-run-ids <run-id> [<run-id> ...] --description "
-                            "'<concise purpose>' --prompt '<check the output of this agent and use it to XYZ>'"
+                            "queue-subagent-successor --after-run-ids "
+                            "subagent-20260716-120000-a1b2c3d4 "
+                            "subagent-20260716-120100-b2c3d4e5 --description "
+                            "'Synthesize contributor results and deliver' --prompt "
+                            "'Read both contributor result artifacts, synthesize their findings, "
+                            "complete verification, and deliver one final reply.'"
                         ),
+                        "singular_compatibility": {
+                            "resident_tool": "launch_subagent with depends_on_run_id",
+                            "cli_create": (
+                                "python -P -m arnold_pipelines.megaplan resident "
+                                "queue-subagent-successor --after-run-id "
+                                "subagent-20260716-120000-a1b2c3d4 --description "
+                                "'Synthesize one predecessor result' --prompt "
+                                "'Read the predecessor result, finish verification, and deliver.'"
+                            ),
+                        },
                         "cli_inspect": (
                             "python -P -m arnold_pipelines.megaplan resident "
                             "inspect-subagent-queue --run-id <run-id>"
