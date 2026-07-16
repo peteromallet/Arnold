@@ -269,10 +269,21 @@ def run_chain(
             plan_name = chain_state.current_plan_name
             if not plan_name:
                 plan_name = pack_runner.prepare_plan(root=root, node=node)
-                from arnold_pipelines.megaplan.chain import _attach_chain_anchors_to_plan
+                from arnold_pipelines.megaplan.chain import (
+                    _attach_chain_anchors_to_plan,
+                    _plan_current_state_from_payload,
+                )
 
                 _attach_chain_anchors_to_plan(root, spec_path, plan_name, spec, milestone)
+                # Persist the prepared successor's cursor and lifecycle as one
+                # custody transition.  Otherwise the predecessor's terminal
+                # state can make this live plan look complete to repair/status
+                # consumers until the driver returns.
+                chain_state.current_milestone_index = index
                 chain_state.current_plan_name = plan_name
+                chain_state.last_state = (
+                    _plan_current_state_from_payload(root, plan_name) or "initialized"
+                )
                 chain_spec.save_chain_state(spec_path, chain_state)
                 event("plan_prepared", label=milestone.label, plan=plan_name)
                 _bridge_lifecycle(
