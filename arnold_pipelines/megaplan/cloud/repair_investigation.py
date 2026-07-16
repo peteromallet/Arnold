@@ -1341,6 +1341,78 @@ def _verified_reference_bytes(ref: Mapping[str, Any]) -> bytes:
         return handle.read(8192)
 
 
+def _superseded_failure_evidence(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Expose when a repeated-failure block points at superseded history."""
+
+    latest = value.get("latest_failure")
+    history = value.get("history")
+    if not isinstance(latest, Mapping) or not isinstance(history, list):
+        return {"detected": False}
+    if str(latest.get("kind") or "").strip() != "repeated_failure_signature":
+        return {"detected": False}
+    metadata = latest.get("metadata")
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    failure_step = str(metadata.get("failure_step") or "").strip().lower()
+    failure_message = _text(metadata.get("failure_message"), 600)
+    reported_index = metadata.get("failure_history_index")
+    matching_index: int | None = None
+    if isinstance(reported_index, int) and 0 <= reported_index < len(history):
+        matching_index = reported_index
+    if matching_index is None:
+        for index, entry in enumerate(history):
+            if not isinstance(entry, Mapping):
+                continue
+            step = str(entry.get("step") or entry.get("phase") or "").strip().lower()
+            message = _text(entry.get("message"), 600)
+            if failure_step and step != failure_step:
+                continue
+            if failure_message and message != failure_message:
+                continue
+            result = str(entry.get("result") or "").strip().lower()
+            if result in {"error", "failed", "failure", "blocked"}:
+                matching_index = index
+    if matching_index is None:
+        return {"detected": False}
+    historical = history[matching_index]
+    historical_step = str(
+        historical.get("step") or historical.get("phase") or failure_step
+    ).strip().lower()
+    later_successes: list[dict[str, Any]] = []
+    for index, entry in enumerate(history[matching_index + 1 :], matching_index + 1):
+        if not isinstance(entry, Mapping):
+            continue
+        step = str(entry.get("step") or entry.get("phase") or "").strip().lower()
+        result = str(entry.get("result") or "").strip().lower()
+        if step == historical_step and result in {
+            "success", "succeeded", "done", "pass", "passed", "ok",
+        }:
+            later_successes.append(
+                {
+                    "history_index": index,
+                    "timestamp": _text(
+                        entry.get("timestamp") or entry.get("completed_at"), 100
+                    ),
+                    "artifact_hash": _text(entry.get("artifact_hash"), 100),
+                }
+            )
+    return {
+        "detected": bool(later_successes),
+        "failure_step": historical_step,
+        "historical_failure_index": matching_index,
+        "historical_failure_timestamp": _text(
+            historical.get("timestamp") or historical.get("completed_at"), 100
+        ),
+        "later_same_phase_successes": later_successes[-5:],
+        "reported_repeat_count": metadata.get("count"),
+        "root_cause_hint": (
+            "historical same-phase failure was counted after a later success; "
+            "repair repeated-failure occurrence tracking and retrigger ordinary repair"
+            if later_successes
+            else ""
+        ),
+    }
+
+
 def _bounded_observation(kind: str, encoded: bytes) -> Any:
     try:
         value = json.loads(encoded)
@@ -1457,7 +1529,8 @@ def _bounded_observation(kind: str, encoded: bytes) -> Any:
                 _attempt_summary(item) for item in items[-3:] if isinstance(item, Mapping)
             ]
     if kind == "plan_state" and isinstance(selected.get("history"), list):
-        selected["history"] = selected["history"][-5:]
+        selected["superseded_failure_evidence"] = _superseded_failure_evidence(value)
+        selected["history"] = selected["history"][-8:]
     return _bound_observation_value(
         selected or {"keys": sorted(str(key) for key in value)[:100]}
     )
@@ -1483,6 +1556,61 @@ def _bound_observation_value(value: Any, *, depth: int = 0) -> Any:
             _bound_observation_value(item, depth=depth + 1) for item in value[-3:]
         ]
     return value
+
+
+def _external_guard_applicability(
+    observations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Decide whether PR/CI state is operative for the current blocker."""
+
+    chain_state = ""
+    failure_kind = ""
+    failure_phase = ""
+    for item in observations:
+        observed = item.get("observed")
+        if not isinstance(observed, Mapping):
+            continue
+        if item.get("kind") == "chain_state":
+            current = observed.get("current")
+            current = current if isinstance(current, Mapping) else {}
+            chain_state = str(
+                observed.get("last_state") or current.get("last_state") or ""
+            ).strip().lower()
+        elif item.get("kind") == "plan_state":
+            latest = observed.get("latest_failure")
+            latest = latest if isinstance(latest, Mapping) else {}
+            metadata = latest.get("metadata")
+            metadata = metadata if isinstance(metadata, Mapping) else {}
+            failure_kind = str(latest.get("kind") or "").strip().lower()
+            failure_phase = str(
+                metadata.get("phase")
+                or metadata.get("failure_step")
+                or observed.get("current_phase")
+                or ""
+            ).strip().lower()
+    pr_states = {"awaiting_pr_merge", "pr_pending", "ci_pending", "ci_failed"}
+    pr_phases = {"pr", "pull_request", "merge", "ci", "publication", "publish"}
+    pr_stage_known = (
+        chain_state in pr_states
+        or failure_phase in pr_phases
+        or failure_kind.startswith(("pr_", "ci_", "publication_"))
+    )
+    non_pr_failure_known = bool(failure_kind or failure_phase) and not pr_stage_known
+    current_stage_known = pr_stage_known or non_pr_failure_known
+    applies = pr_stage_known or not non_pr_failure_known
+    return {
+        "applies": applies,
+        "chain_state": chain_state,
+        "failure_kind": failure_kind,
+        "failure_phase": failure_phase,
+        "reason": (
+            "current workflow phase is unavailable, so external guards remain fail-closed"
+            if not current_stage_known
+            else "external PR/CI state is the operative workflow gate"
+            if applies
+            else "external PR/CI state is corroborating context for the active non-PR blocker"
+        ),
+    }
 
 
 def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
@@ -1543,7 +1671,12 @@ def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
     missing_quality_commits = quality_resolution_commit_custody.get(
         "missing_commits"
     ) not in (None, "", [], "[]")
-    if external_guard_status != "clear" or missing_quality_commits:
+    external_guard_applicability = _external_guard_applicability(observations)
+    external_guard_blocks = (
+        external_guard_applicability["applies"]
+        and external_guard_status != "clear"
+    )
+    if external_guard_blocks or missing_quality_commits:
         required_receipt["recommended_action"] = "replan"
         required_receipt["safe_repair_target"]["kind"] = "repair_custody"
         required_receipt["handoff"] = {
@@ -1562,10 +1695,12 @@ def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
             "access_verified": True,
             "required_receipt_shape": required_receipt,
             "external_guard_policy": (
-                "A failed or pending PR/CI check forbids recover_state and chain-state "
-                "synchronization. Return replan targeting repair_custody so ordinary L1 "
-                "receives the fresh external failure; never hand-advance the chain."
+                "A failed or pending PR/CI check forbids recover_state only when the "
+                "current chain/failure phase makes that external guard operative. When a "
+                "non-PR blocker is active, PR state is corroborating context and must not "
+                "displace the actual failure. Never hand-advance the chain."
             ),
+            "external_guard_applicability": external_guard_applicability,
             "quality_resolution_commit_custody": quality_resolution_commit_custody,
             "quality_commit_policy": (
                 "Missing durable quality-resolution commits forbid recover_state and "
@@ -1809,6 +1944,14 @@ def validate_investigator_receipt(
         if observation_bundle.get("context_digest") != expected_context_digest:
             raise ValueError("investigator observation bundle digest disagrees")
         external_guard = {}
+        external_guard_applicability = observation_bundle.get(
+            "external_guard_applicability"
+        )
+        external_guard_applicability = (
+            external_guard_applicability
+            if isinstance(external_guard_applicability, Mapping)
+            else {"applies": True}
+        )
         live_worker_observed = False
         bundle_commit_custody = observation_bundle.get(
             "quality_resolution_commit_custody"
@@ -1881,7 +2024,11 @@ def validate_investigator_receipt(
                     and missing not in (None, "", [], "[]")
                 ):
                     missing_quality_commits = True
-        if external_guard.get("status") != "clear" and action == "recover_state":
+        if (
+            external_guard_applicability.get("applies") is not False
+            and external_guard.get("status") != "clear"
+            and action == "recover_state"
+        ):
             raise ValueError(
                 "state recovery cannot bypass a failing or pending external PR/CI guard"
             )

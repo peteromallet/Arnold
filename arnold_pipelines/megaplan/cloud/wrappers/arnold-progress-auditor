@@ -3541,6 +3541,56 @@ def _latest_failure_staleness(latest_failure, events_path):
         "last_success_after_failure_event": excerpt,
     }
 
+def _superseded_repeated_failure_evidence(latest_failure, history):
+    if not isinstance(latest_failure, dict) or not isinstance(history, list):
+        return {"historical_failure_recount": False}
+    if str(latest_failure.get("kind") or "").strip() != "repeated_failure_signature":
+        return {"historical_failure_recount": False}
+    metadata = latest_failure.get("metadata") if isinstance(latest_failure.get("metadata"), dict) else {}
+    failure_step = str(metadata.get("failure_step") or "").strip().lower()
+    failure_message = " ".join(str(metadata.get("failure_message") or "").split())
+    reported_index = metadata.get("failure_history_index")
+    failure_index = reported_index if isinstance(reported_index, int) and 0 <= reported_index < len(history) else None
+    if failure_index is None:
+        for index, item in enumerate(history):
+            if not isinstance(item, dict):
+                continue
+            step = str(item.get("step") or item.get("phase") or "").strip().lower()
+            message = " ".join(str(item.get("message") or "").split())
+            result = str(item.get("result") or "").strip().lower()
+            if failure_step and step != failure_step:
+                continue
+            if failure_message and message != failure_message:
+                continue
+            if result in {"error", "failed", "failure", "blocked"}:
+                failure_index = index
+    if failure_index is None:
+        return {"historical_failure_recount": False}
+    historical = history[failure_index]
+    historical_step = str(historical.get("step") or historical.get("phase") or failure_step).strip().lower()
+    later_successes = []
+    for index, item in enumerate(history[failure_index + 1:], failure_index + 1):
+        if not isinstance(item, dict):
+            continue
+        step = str(item.get("step") or item.get("phase") or "").strip().lower()
+        result = str(item.get("result") or "").strip().lower()
+        if step == historical_step and result in {"success", "succeeded", "done", "pass", "passed", "ok"}:
+            later_successes.append(
+                {
+                    "history_index": index,
+                    "timestamp": str(item.get("timestamp") or item.get("completed_at") or ""),
+                    "artifact_hash": str(item.get("artifact_hash") or ""),
+                }
+            )
+    return {
+        "historical_failure_recount": bool(later_successes),
+        "historical_failure_step": historical_step,
+        "historical_failure_index": failure_index,
+        "historical_failure_timestamp": str(historical.get("timestamp") or historical.get("completed_at") or ""),
+        "later_same_phase_successes": later_successes[-5:],
+        "reported_repeat_count": metadata.get("count"),
+    }
+
 def _blocked_history_entry(item):
     if not isinstance(item, dict):
         return False
@@ -3660,6 +3710,7 @@ def _between_milestone_cycling(chain_log, chain_state, repair_data):
 
 def _stale_state_evidence(plan_latest_failure, latest_failure, events_path, history, chain_log, chain_state, repair_data, run_kind):
     evidence = _latest_failure_staleness(latest_failure, events_path)
+    evidence.update(_superseded_repeated_failure_evidence(latest_failure, history))
     evidence.update(_stale_block_replay(history, chain_log, chain_state, run_kind))
     if run_kind == "chain":
         evidence.update(_between_milestone_cycling(chain_log, chain_state, repair_data))
@@ -3683,6 +3734,10 @@ def _stale_state_evidence(plan_latest_failure, latest_failure, events_path, hist
         clear_actions.append("reconcile the accepted terminal milestone and initialize the next milestone")
     if evidence.get("stale_repair_goal"):
         clear_actions.append("supersede the stale repair goal and dispatch against the current chain cursor")
+    if evidence.get("historical_failure_recount"):
+        clear_actions.append(
+            "fix repeated-failure occurrence tracking so same-phase success supersedes old failures, then retrigger ordinary repair"
+        )
     evidence["recommended_state_clear_actions"] = clear_actions
     return evidence
 
@@ -4238,6 +4293,24 @@ def _deterministic_failure_exhaustion_reason(ev):
             f"signature={str(strongest.get('signature') or '')[:240]}"
         )
     return ""
+
+def _historical_failure_recount_reason(ev):
+    stale = ev.get("stale_state_evidence") if isinstance(ev, dict) else {}
+    stale = stale if isinstance(stale, dict) else {}
+    if not stale.get("historical_failure_recount"):
+        return ""
+    later = stale.get("later_same_phase_successes") or []
+    later = later if isinstance(later, list) else []
+    latest_success_index = "unknown"
+    if later and isinstance(later[-1], dict):
+        latest_success_index = later[-1].get("history_index", "unknown")
+    return (
+        "historical_failure_recount: repeated_failure_signature references one historical "
+        f"{stale.get('historical_failure_step') or 'unknown'} failure at history index "
+        f"{stale.get('historical_failure_index', 'unknown')} that was superseded by later "
+        f"same-phase success at index {latest_success_index}; fix auto repeated-failure "
+        "occurrence tracking and retrigger ordinary repair"
+    )
 
 def _installed_wrapper_drift_reason(ev):
     runtime = ev.get("auditor_wrapper_runtime") if isinstance(ev, dict) else {}
@@ -5274,6 +5347,13 @@ for entry in plans:
             "stale block replay "
             f"{stale_state.get('stale_block_replay_count')}x hash={stale_state.get('stale_block_replay_hash')}"
         )
+    if stale_state.get("historical_failure_recount"):
+        later_successes = stale_state.get("later_same_phase_successes") or []
+        corroboration.append(
+            "repeated failure recounts history index "
+            f"{stale_state.get('historical_failure_index')} after "
+            f"{len(later_successes)} later same-phase success(es)"
+        )
     if stale_state.get("between_milestone_cycling"):
         corroboration.append(
             "between-milestone cycling "
@@ -5339,6 +5419,7 @@ for entry in plans:
         _nested_repair_queue_custody_drift_reason(ev),
         _queue_coalesced_without_live_owner_reason(ev),
         _deterministic_failure_exhaustion_reason(ev),
+        _historical_failure_recount_reason(ev),
         _liveness_without_acceptance_progress_reason(ev),
         _repair_dispatch_during_preserve_live_reason(ev),
         _stale_l1_l2_cycle_reason(ev),
@@ -5811,6 +5892,12 @@ Evaluate these questions in order:
 - Is this failure STALE (predates a success) or LIVE (no success since)? If stale, recommend clearing the state + re-driving, not a source fix.
 - Is latest_failure still live, or does stale_state_evidence.latest_failure_is_stale show a later successful event?
 - If latest_failure predates a later successful event, classify STALE. Recommend clearing latest_failure and re-driving; do not fix source for the stale failure.
+- If stale_state_evidence.historical_failure_recount is true, the terminal
+  repeated_failure_signature is an engine accounting defect: its historical
+  same-phase failure was superseded by a later success but was polled and counted
+  again. Include the failure phase, history index, and later-success evidence in
+  the repair request; require a repeated-failure occurrence-tracking source fix
+  followed by the ordinary repair path, never a direct chain-state edit.
 - Is stale_state_evidence.stale_block_replay true because blocked history repeats duration_ms=0 with the same artifact hash and the chain exits immediately?
 - If stale block replay is present, classify STALE or INEFFICIENT and recommend clearing/quarantining the stale block artifact/state before re-driving.
 

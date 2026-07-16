@@ -220,6 +220,64 @@ def test_l3_routes_stranded_cursor_and_stale_repair_goal() -> None:
     assert "active repair goal is stale" in reason
 
 
+def test_l3_detects_repeated_failure_recount_after_same_phase_success() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _superseded_repeated_failure_evidence(latest_failure, history):")
+    end = text.index("\ndef _blocked_history_entry", start)
+    namespace: dict[str, object] = {}
+    exec(text[start:end], namespace)
+    latest_failure = {
+        "kind": "repeated_failure_signature",
+        "metadata": {
+            "count": 3,
+            "failure_step": "gate",
+            "failure_message": "gate verdict did not match the structural enum",
+            "failure_history_index": 0,
+        },
+    }
+    history = [
+        {
+            "step": "gate",
+            "result": "error",
+            "message": "gate verdict did not match the structural enum",
+            "timestamp": "2026-07-16T15:30:03Z",
+        },
+        {
+            "step": "gate",
+            "result": "success",
+            "timestamp": "2026-07-16T15:32:13Z",
+            "artifact_hash": "fresh-gate-artifact",
+        },
+    ]
+
+    evidence = namespace["_superseded_repeated_failure_evidence"](
+        latest_failure, history
+    )
+
+    assert evidence["historical_failure_recount"] is True
+    assert evidence["historical_failure_index"] == 0
+    assert evidence["later_same_phase_successes"][0]["history_index"] == 1
+
+    reason_start = text.index("def _historical_failure_recount_reason(ev):")
+    reason_end = text.index("\ndef _installed_wrapper_drift_reason", reason_start)
+    reason_namespace: dict[str, object] = {}
+    exec(text[reason_start:reason_end], reason_namespace)
+    reason = reason_namespace["_historical_failure_recount_reason"](
+        {"stale_state_evidence": evidence}
+    )
+    assert reason.startswith("historical_failure_recount:")
+    assert "occurrence tracking" in reason
+    assert "retrigger ordinary repair" in reason
+
+
+def test_l3_prompt_carries_historical_recount_repair_context() -> None:
+    text = _wrapper("arnold-progress-auditor")
+
+    assert "stale_state_evidence.historical_failure_recount" in text
+    assert "failure phase, history index, and later-success evidence" in text
+    assert "ordinary repair path" in text
+
+
 def test_l3_derives_bounded_root_cause_when_active_retry_replaces_investigation() -> None:
     text = _wrapper("arnold-progress-auditor")
     start = text.index("def _repair_owner_terminal_failure_reason(ev):")

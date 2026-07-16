@@ -735,6 +735,109 @@ def test_failing_external_guard_rejects_state_recovery_handoff() -> None:
         )
 
 
+def test_nonoperative_external_guard_does_not_displace_gate_recovery() -> None:
+    receipt = _receipt(target_kind="l2_repair_system")
+    receipt["recommended_action"] = "recover_state"
+    receipt["handoff"] = {
+        "action": "recover_state",
+        "allowed_mutations": ["supported recovery CLI"],
+        "forbidden_mutations": ["direct state edit"],
+    }
+    receipt["safe_repair_target"] = {
+        "kind": "repair_custody",
+        "scope": "repair custody",
+        "rationale": "reconcile stale repeated-failure accounting",
+    }
+    observation = {
+        "context_digest": "digest-1",
+        "external_guard_applicability": {
+            "applies": False,
+            "reason": "the active blocker is a gate accounting failure",
+        },
+        "observations": [
+            {
+                "kind": "external_state",
+                "observed": {"external_guard": {"status": "pending"}},
+            }
+        ],
+    }
+
+    validated = validate_investigator_receipt(
+        receipt,
+        expected_context_digest="digest-1",
+        observation_bundle=observation,
+    )
+
+    assert validated["recommended_action"] == "recover_state"
+
+
+def test_plan_observation_exposes_failure_superseded_by_same_phase_success() -> None:
+    plan_state = {
+        "current_state": "blocked",
+        "latest_failure": {
+            "kind": "repeated_failure_signature",
+            "metadata": {
+                "count": 3,
+                "failure_step": "gate",
+                "failure_message": "gate verdict did not match the structural enum",
+                "failure_history_index": 0,
+            },
+        },
+        "history": [
+            {
+                "step": "gate",
+                "result": "error",
+                "message": "gate verdict did not match the structural enum",
+                "timestamp": "2026-07-16T15:30:03Z",
+            },
+            {
+                "step": "gate",
+                "result": "success",
+                "timestamp": "2026-07-16T15:32:13Z",
+                "artifact_hash": "fresh-gate-artifact",
+            },
+        ],
+    }
+
+    observed = repair_investigation._bounded_observation(
+        "plan_state", json.dumps(plan_state).encode()
+    )
+
+    evidence = observed["superseded_failure_evidence"]
+    assert evidence["detected"] is True
+    assert evidence["historical_failure_index"] == 0
+    assert evidence["failure_step"] == "gate"
+    assert "occurrence tracking" in evidence["root_cause_hint"]
+
+
+def test_external_guard_applicability_follows_current_workflow_phase() -> None:
+    blocked_gate = repair_investigation._external_guard_applicability(
+        [
+            {"kind": "chain_state", "observed": {"last_state": "blocked"}},
+            {
+                "kind": "plan_state",
+                "observed": {
+                    "current_phase": "gate",
+                    "latest_failure": {"kind": "repeated_failure_signature"},
+                },
+            },
+        ]
+    )
+    awaiting_pr = repair_investigation._external_guard_applicability(
+        [
+            {
+                "kind": "chain_state",
+                "observed": {"last_state": "awaiting_pr_merge"},
+            }
+        ]
+    )
+    unknown_stage = repair_investigation._external_guard_applicability([])
+
+    assert blocked_gate["applies"] is False
+    assert awaiting_pr["applies"] is True
+    assert unknown_stage["applies"] is True
+
+
 def test_missing_quality_commit_custody_rejects_state_recovery_handoff() -> None:
     receipt = _receipt(target_kind="l2_repair_system")
     receipt["recommended_action"] = "recover_state"

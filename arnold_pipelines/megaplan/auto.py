@@ -1564,13 +1564,24 @@ def _latest_meaningful_history_failure(
     history = state_data.get("history")
     if not isinstance(history, list):
         return None
-    for entry in reversed(history):
+    succeeded_steps: set[str] = set()
+    for history_index in range(len(history) - 1, -1, -1):
+        entry = history[history_index]
         if not isinstance(entry, dict):
             continue
+        step = str(entry.get("step") or entry.get("phase") or "").strip().lower()
         result = str(entry.get("result") or "").strip().lower()
         message = _normalize_failure_message(entry.get("message"))
+        if result in {"success", "succeeded", "done", "pass", "passed", "ok"}:
+            if step:
+                succeeded_steps.add(step)
+            continue
+        if step and step in succeeded_steps:
+            continue
         if result in {"error", "failed", "failure", "blocked"} or message:
-            return entry
+            failure = dict(entry)
+            failure["_history_index"] = history_index
+            return failure
     return None
 
 
@@ -1597,6 +1608,21 @@ def _repeated_failure_signature(
     message = _normalize_failure_message(failure.get("message"))
     if not message:
         return None
+    history_index = int(failure.get("_history_index", -1))
+    occurrence_raw = json.dumps(
+        {
+            "history_index": history_index,
+            "timestamp": failure.get("timestamp") or failure.get("completed_at"),
+            "artifact_hash": failure.get("artifact_hash"),
+            "raw_output_file": failure.get("raw_output_file"),
+            "invocation_id": failure.get("invocation_id"),
+            "session_id": failure.get("session_id"),
+            "step": step,
+            "result": result,
+            "message": message,
+        },
+        sort_keys=True,
+    )
     raw = json.dumps(
         {
             "state": status.get("state"),
@@ -1612,7 +1638,30 @@ def _repeated_failure_signature(
         "step": step,
         "result": result,
         "message": message,
+        "history_index": history_index,
+        "timestamp": failure.get("timestamp") or failure.get("completed_at") or "",
+        "occurrence_id": hashlib.sha256(occurrence_raw.encode("utf-8")).hexdigest(),
     }
+
+
+def _update_repeated_failure_counter(
+    repeat: dict[str, Any] | None,
+    *,
+    tracked_signature: str | None,
+    tracked_occurrence: str | None,
+    count: int,
+) -> tuple[str | None, str | None, int]:
+    """Count distinct failure occurrences, never polls of one history entry."""
+
+    if repeat is None:
+        return None, None, 0
+    signature = str(repeat["hash"])
+    occurrence = str(repeat["occurrence_id"])
+    if signature != tracked_signature:
+        return signature, occurrence, 1
+    if occurrence == tracked_occurrence:
+        return signature, occurrence, count
+    return signature, occurrence, count + 1
 
 
 def _auto_verify_deferred_must_criteria(plan_dir: Path | None, *, log) -> bool:
@@ -3808,6 +3857,7 @@ def drive(
     external_retry_counts_by_phase: dict[str, int] = {}
     blocked_retry_count = 0
     repeated_failure_signature: str | None = None
+    repeated_failure_occurrence: str | None = None
     repeated_failure_signature_count = 0
     invalid_transition_signature: str | None = None
     invalid_transition_signature_count = 0
@@ -4120,13 +4170,16 @@ def drive(
         )
 
         repeat = _repeated_failure_signature(plan_dir, status)
-        if repeat is None:
-            pass
-        elif repeat["hash"] == repeated_failure_signature:
-            repeated_failure_signature_count += 1
-        else:
-            repeated_failure_signature = str(repeat["hash"])
-            repeated_failure_signature_count = 1
+        (
+            repeated_failure_signature,
+            repeated_failure_occurrence,
+            repeated_failure_signature_count,
+        ) = _update_repeated_failure_counter(
+            repeat,
+            tracked_signature=repeated_failure_signature,
+            tracked_occurrence=repeated_failure_occurrence,
+            count=repeated_failure_signature_count,
+        )
         if (
             repeat is not None
             and max_repeated_failure_signatures > 0
@@ -4165,6 +4218,9 @@ def drive(
                     "failure_step": repeat.get("step"),
                     "failure_result": repeat.get("result"),
                     "failure_message": repeat.get("message"),
+                    "failure_occurrence_id": repeat.get("occurrence_id"),
+                    "failure_history_index": repeat.get("history_index"),
+                    "failure_timestamp": repeat.get("timestamp"),
                     "iteration": iteration,
                 },
             )
