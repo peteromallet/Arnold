@@ -12,6 +12,7 @@ SUPERVISE_SESSION="${ARNOLD_SUPERVISE_SESSION:-}"
 SUPERVISE_WORKSPACE="${ARNOLD_SUPERVISE_WORKSPACE:-}"
 SUPERVISE_REMOTE_SPEC="${ARNOLD_SUPERVISE_REMOTE_SPEC:-}"
 SUPERVISE_RUN_KIND="${ARNOLD_SUPERVISE_RUN_KIND:-}"
+SUPERVISE_SOURCE="${MEGAPLAN_SUPERVISOR_SOURCE:-${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"
 QUOTA_MAX=4; QUOTA_BACKOFF=1800
 OTHER_MAX=5
 # Exponential backoff: 60s, 120s, 240s, 480s, 960s
@@ -92,7 +93,7 @@ PY
 }
 
 l1_mutation_authorized() {
-  PYTHONPATH="${PYTHONPATH:-}:/workspace/arnold" python3 -B -c \
+  PYTHONPATH="$SUPERVISE_SOURCE:${PYTHONPATH:-}" python3 -B -c \
     'from arnold_pipelines.megaplan.cloud.feature_flags import MUTATION_PATH_L1, mutation_authorized; raise SystemExit(0 if mutation_authorized(MUTATION_PATH_L1) else 1)'
 }
 
@@ -103,7 +104,7 @@ queue_repair_request() {
     return 0
   fi
   local queue_root="${ARNOLD_REPAIR_QUEUE_ROOT:-${SUPERVISE_WORKSPACE}/.megaplan/repair-queue}"
-  PYTHONPATH="/workspace/arnold:${PYTHONPATH:-}" python3 - "$queue_root" "$MARKER_DIR" "$SUPERVISE_SESSION" "$SUPERVISE_WORKSPACE" "$SUPERVISE_REMOTE_SPEC" "$SUPERVISE_RUN_KIND" "$reason" "$LOG" <<'PY'
+  PYTHONPATH="$SUPERVISE_SOURCE:${PYTHONPATH:-}" python3 - "$queue_root" "$MARKER_DIR" "$SUPERVISE_SESSION" "$SUPERVISE_WORKSPACE" "$SUPERVISE_REMOTE_SPEC" "$SUPERVISE_RUN_KIND" "$reason" "$LOG" <<'PY'
 import json
 import sys
 
