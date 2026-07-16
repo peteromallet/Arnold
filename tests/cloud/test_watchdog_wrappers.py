@@ -2075,6 +2075,8 @@ def test_repair_data_dev_and_mechanical_writers_preserve_legacy_shapes(tmp_path:
             "mechanical_log_path": "/tmp/mech.log",
         }
     ]
+
+
     assert payload["attempts"] == [
         {
             "attempt_id": 4,
@@ -2116,6 +2118,49 @@ def test_repair_data_dev_and_mechanical_writers_preserve_legacy_shapes(tmp_path:
             "post_launch_failure_context": failure_context,
         }
     ]
+
+
+def test_repair_data_records_iteration_zero_baseline_without_index_error(
+    tmp_path: Path,
+) -> None:
+    data_path = tmp_path / "repair-data.json"
+    failure_context_path = tmp_path / "failure-context.json"
+    data_path.write_text('{"attempts": [], "iterations": []}\n', encoding="utf-8")
+    failure_context_path.write_text(
+        json.dumps(
+            {
+                "failure_classification": "stale_chain_state_after_terminal_plan",
+                "chain_state_summary": {"last_state": "awaiting_pr_merge"},
+                "plan_runtime_state": {"current_state": "done"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    program = _extract_repair_program(
+        "repair_data_record_mechanical",
+        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$iteration\" \"$attempt_id\" \"$status\" \"$detail\" \"$failure_context_file\" <<'PY'",
+    )
+
+    result = _run_embedded_python(
+        program,
+        str(data_path),
+        "0",
+        "0",
+        "failed:awaiting_pr_merge",
+        "baseline supported CLI returned rc=0 but PR remains open",
+        str(failure_context_path),
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(data_path.read_text(encoding="utf-8"))
+    assert payload["iterations"] == []
+    assert payload["baseline_mechanical"]["i"] == 0
+    assert payload["baseline_mechanical"]["mechanical_launch"] == (
+        "failed:awaiting_pr_merge"
+    )
+    assert payload["baseline_mechanical"]["chain_state_summary"] == {
+        "last_state": "awaiting_pr_merge"
+    }
 
 
 def test_repair_data_kimi_and_outcome_writers_preserve_legacy_shapes(tmp_path: Path) -> None:

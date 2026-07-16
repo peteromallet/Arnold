@@ -4650,33 +4650,42 @@ attempt_id = int(attempt_id_raw)
 payload = load_json(pathlib.Path(path), default={})
 failure_context_payload = json.loads(pathlib.Path(failure_context_path).read_text(encoding="utf-8"))
 iterations = payload.setdefault("iterations", [])
-while len(iterations) < iteration:
-    iterations.append({"i": len(iterations) + 1})
-entry = iterations[iteration - 1]
-entry["i"] = iteration
-entry["mechanical_launch"] = status
-entry["mechanical_detail"] = detail
-entry["failure_context"] = failure_context_payload
-entry["failure_classification"] = failure_context_payload.get("failure_classification", "")
-entry["stale_state"] = failure_context_payload.get("stale_state", {})
-entry["state_mismatch"] = failure_context_payload.get("state_mismatch", {})
-entry["raw_failure_signals"] = failure_context_payload.get("raw_failure_signals", [])
-entry["chain_log_tail"] = failure_context_payload.get("chain_log_tail", "")
-entry["chain_log_path"] = failure_context_payload.get("chain_log_path", "")
-entry["run_log_tail"] = failure_context_payload.get("run_log_tail", "")
-entry["run_log_path"] = failure_context_payload.get("run_log_path", "")
-entry["chain_recent_events"] = failure_context_payload.get("chain_recent_events", [])
-entry["plan_events_tail"] = failure_context_payload.get("plan_events_tail", "")
-entry["plan_events_path"] = failure_context_payload.get("plan_events_path", "")
-entry["mechanical_log_tail"] = failure_context_payload.get("mechanical_log_tail", "")
-entry["mechanical_log_path"] = failure_context_payload.get("mechanical_log_path", "")
-entry["plan_latest_failure"] = failure_context_payload.get("plan_latest_failure", {})
-entry["chain_state_summary"] = failure_context_payload.get("chain_state_summary", {})
-entry["plan_runtime_state"] = failure_context_payload.get("plan_runtime_state", {})
-entry["last_gate"] = failure_context_payload.get("last_gate", {})
-entry["user_action_context"] = failure_context_payload.get("user_action_context", {})
-entry["execute_attempt_context"] = failure_context_payload.get("execute_attempt_context", {})
-entry["resolver_output"] = failure_context_payload.get("resolver_output", {})
+mechanical_record = {
+    "i": iteration,
+    "attempt_id": attempt_id,
+    "mechanical_launch": status,
+    "mechanical_detail": detail,
+    "failure_context": failure_context_payload,
+    "failure_classification": failure_context_payload.get("failure_classification", ""),
+    "stale_state": failure_context_payload.get("stale_state", {}),
+    "state_mismatch": failure_context_payload.get("state_mismatch", {}),
+    "raw_failure_signals": failure_context_payload.get("raw_failure_signals", []),
+    "chain_log_tail": failure_context_payload.get("chain_log_tail", ""),
+    "chain_log_path": failure_context_payload.get("chain_log_path", ""),
+    "run_log_tail": failure_context_payload.get("run_log_tail", ""),
+    "run_log_path": failure_context_payload.get("run_log_path", ""),
+    "chain_recent_events": failure_context_payload.get("chain_recent_events", []),
+    "plan_events_tail": failure_context_payload.get("plan_events_tail", ""),
+    "plan_events_path": failure_context_payload.get("plan_events_path", ""),
+    "mechanical_log_tail": failure_context_payload.get("mechanical_log_tail", ""),
+    "mechanical_log_path": failure_context_payload.get("mechanical_log_path", ""),
+    "plan_latest_failure": failure_context_payload.get("plan_latest_failure", {}),
+    "chain_state_summary": failure_context_payload.get("chain_state_summary", {}),
+    "plan_runtime_state": failure_context_payload.get("plan_runtime_state", {}),
+    "last_gate": failure_context_payload.get("last_gate", {}),
+    "user_action_context": failure_context_payload.get("user_action_context", {}),
+    "execute_attempt_context": failure_context_payload.get("execute_attempt_context", {}),
+    "resolver_output": failure_context_payload.get("resolver_output", {}),
+}
+if iteration > 0:
+    while len(iterations) < iteration:
+        iterations.append({"i": len(iterations) + 1})
+    entry = iterations[iteration - 1]
+    entry.update(mechanical_record)
+else:
+    # Baseline recovery intentionally uses iteration zero. Preserve its
+    # evidence without indexing an empty one-based iteration list.
+    payload["baseline_mechanical"] = mechanical_record
 attempts = payload.setdefault("attempts", [])
 for item in attempts:
     if not isinstance(item, dict) or int(item.get("attempt_id") or 0) != attempt_id:
