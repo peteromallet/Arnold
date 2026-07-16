@@ -196,3 +196,48 @@ and, for every accepted request older than the dispatch SLO:
 `accepted = claimed_or_terminal + durable_claim_alert`.
 
 An empty producer coverage set is `UNKNOWN`, never healthy zero.
+
+## Concrete repair-intake implementation follow-up
+
+The authorized implementation run rooted at source message `msg_38f029a87998`
+confirmed the audit's queue-boundary diagnosis against the raw M6 plan
+`/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m6-exact-contract-and-20260716-1303/`.
+The phase state (captured SHA-256
+`71f6737808c524f9058e4fc0ae82a9345bff2577f443f4730d75fbde83cb57db`)
+records the third identical critique contract failure. The accepted queue marker
+`844ad06e9a0dd0bd2af37b53e5c8f4021b9117adfae2b8d4756164281450bdd2`
+(captured SHA-256
+`ac2b43d6613d4ad06de53b8b6b15f8cdf7c66b1670b9a8c7e452c6d442e5652c`)
+contains an empty `blocked_task_id` and no blocker fingerprint/ID. Its two later
+claim decisions at 2026-07-16T14:24:48Z and 2026-07-16T14:27:58Z both say
+`canonical blocker_id missing`; no matching claim or attempt exists. The full
+evidence/inference/telemetry split and individual producer-artifact hashes are
+curated in
+`../../megaplan-maintenance/research/custody-control-plane-superfixer-recovery-plan-20260716.md#M6-critique-repair-identity-follow-up--2026-07-16`.
+
+The concrete implementation closes the authoritative intake invariant without
+claiming the broader proposed `ActionableRecordV2` migration complete:
+
+- queue intake canonicalizes missing task scope to `phase:<phase>` or
+  `plan:<plan>`, allocates and persists a deterministic blocker fingerprint/ID
+  before acceptance, and rejects direct identity-free `accepted` decisions;
+- lifecycle failure capture carries the persisted retry strategy into the
+  immutable request target;
+- projection prefers the accepted record's persisted identity and fails closed
+  on conflicting active identities instead of manufacturing claim authority;
+- identity-free legacy markers remain byte-preserved and non-authoritative for
+  dedupe; replay creates a deterministic claimable successor rather than
+  rewriting or coalescing onto the legacy marker;
+- pending coalescing requires matching session and blocker identity, closing
+  the audit's confirmed cross-session suppression chain;
+- the exact deterministic phase-contract shape is machine-repairable only with
+  current-target evidence, and the real trigger wrapper proves the persisted
+  blocker ID reaches claim and managed autofixer launch.
+
+Focused regression coverage includes parallel critique aggregation, repeated
+worker-local flag IDs, blank/missing evidence, lifecycle intake, immutable
+persistence/reload, deterministic replay, legacy successor allocation,
+cross-session non-coalescing, blocker-scoped claim, and end-to-end trigger
+launch. The broader review/semantic/ActionableRecordV2 gaps inventoried above
+remain sequenced work; this implementation neither reconstructs the historical
+M6 record nor treats it as newly claimable.

@@ -462,7 +462,11 @@ def enqueue_repair_request(
         return {"status": "superseded", "request": record, "path": str(request_path), "decision": decision}
 
     existing = find_pending_by_signature(
-        queue_root, normalized_signature, extra_fields=extra_fields
+        queue_root,
+        normalized_signature,
+        extra_fields=extra_fields,
+        session=str(session or "").strip(),
+        blocker_id=blocker_id,
     )
     if existing is not None and existing["request_id"] != request_id:
         decision = write_decision(
@@ -647,6 +651,8 @@ def find_pending_by_signature(
     problem_signature: Mapping[str, Any],
     *,
     extra_fields: tuple[str, ...] = (),
+    session: str = "",
+    blocker_id: str = "",
 ) -> dict[str, Any] | None:
     key = problem_signature_key(problem_signature, extra_fields=extra_fields)
     decided = _decided_request_ids(queue_dir)
@@ -654,6 +660,10 @@ def find_pending_by_signature(
         if record.get("request_id") in decided:
             continue
         if not _has_canonical_blocker_identity(record):
+            continue
+        if session and str(record.get("session") or "").strip() != session:
+            continue
+        if blocker_id and str(record.get("blocker_id") or "").strip() != blocker_id:
             continue
         if record.get("problem_signature_key") == key:
             return record
