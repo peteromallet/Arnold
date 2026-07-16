@@ -111,6 +111,25 @@ STALE_EVIDENCE_KINDS = {
 HOT_ENV_PATH = Path(os.environ.get("ARNOLD_CLOUD_HOT_ENV", "/workspace/.cloud-hot-env"))
 
 
+def _is_typed_supervisor_binding_drift(record: Mapping[str, Any]) -> bool:
+    """Return whether a supervisor exit carries exact binding-drift custody."""
+
+    signature = (
+        record.get("problem_signature")
+        if isinstance(record.get("problem_signature"), Mapping)
+        else {}
+    )
+    return bool(
+        record.get("source") == "arnold_supervise_exit"
+        and signature.get("failure_kind") == "chain_execution_binding_drift"
+        and signature.get("phase_or_step") == "chain_execution_binding"
+        and str(signature.get("blocked_task_id") or "").startswith(
+            "chain_execution_binding:"
+        )
+        and "active_errors=" in str(signature.get("event_signature") or "")
+    )
+
+
 def _load_hot_env(path: Path = HOT_ENV_PATH) -> None:
     """Load simple KEY=VALUE lines so systemd path activation sees hot flags."""
 
@@ -162,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
             if str(record.get("request_id") or "") == requested_request_id
         ]
     def requested_mutation_path(record: Mapping[str, Any]) -> str:
+        if _is_typed_supervisor_binding_drift(record):
+            return feature_flags.MUTATION_PATH_L2
         target = record.get("target") if isinstance(record.get("target"), Mapping) else {}
         deterministic = (
             target.get("deterministic_superfixer_evidence")
@@ -1135,8 +1156,11 @@ def _classify_request(
         and isinstance(request_target.get("deterministic_superfixer_evidence"), Mapping)
         and request_target["deterministic_superfixer_evidence"].get("actionable") is True
     )
-    l2_actionable = decision.decision == "broken_superfixer" and deterministic_l3 and bool(
-        projection.get("blocker_id")
+    typed_supervisor_binding_drift = _is_typed_supervisor_binding_drift(record)
+    l2_actionable = (
+        decision.decision == "broken_superfixer"
+        and (deterministic_l3 or typed_supervisor_binding_drift)
+        and bool(projection.get("blocker_id"))
     )
     requested_deep = bool(
         deterministic_l3
