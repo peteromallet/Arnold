@@ -74,6 +74,22 @@ status, and receipt projections are visibly non-authoritative as bearer tokens
 and have no route back into dispatch, repair, retry, completion, cancellation,
 publication, or delivery.
 
+## Implemented adjacent slice: review/rework presentation
+
+Source commit `07f428d361f63c465b0dafaca9783585efeaa4b9` implements the
+current artifact-backed presentation semantics across the shared status
+projection, cloud snapshot/formatter, resident hot context/status tree, CLI,
+and `/whats-cooking`. An active execute after `needs_rework` is presented as
+`reworking`; active review is `reviewing`; pending rework is `needs_rework`;
+and full task weight is labeled plan bookkeeping rather than acceptance.
+Approved idle-finalized and genuinely completed states retain precedence.
+
+The focused status/resident verification recorded 170 passing tests, with
+Python compilation and `git diff --check` also passing. This is an adjacent M9
+consumer-consistency slice, not M9 completion: it does not claim the later WBC,
+Run Authority, custody-cursor, rebuildability, or rollout evidence required by
+this brief.
+
 ## Open questions
 
 - What freshness/lag SLO and bounded reread policy applies per dimension?

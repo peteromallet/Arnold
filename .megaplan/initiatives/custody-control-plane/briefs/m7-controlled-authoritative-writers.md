@@ -141,7 +141,7 @@ legacy authoritative writer or erases a quarantined attempt.
 ## Handoff and dependencies
 
 Dependency: accepted M6 proof/ownership bundle, completed M6A substrate, and
-approval record. Handoff to
+machine-verifiable ownership-decision record. Handoff to
 M8: controlled-writer/adaptor registry, fence/idempotency/partial-persistence
 conformance, immutable attempt and repair-receipt contracts, projection append/
 atomic-rebuild and idle-canary proof, compatibility expiry map, reconciliation
