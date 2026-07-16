@@ -6976,6 +6976,35 @@ for finding in findings:
         if isinstance(finding.get("l3_escalation"), dict)
         else {}
     )
+    corrective_path = (
+        escalation.get("corrective_path")
+        if isinstance(escalation.get("corrective_path"), dict)
+        else {}
+    )
+    if (
+        escalation.get("decision") == "approval_required"
+        and corrective_path.get("kind") == "approval_gate"
+        and corrective_path.get("action") == "await_human_pr_merge"
+        and corrective_path.get("repair_dispatch_permitted") is False
+    ):
+        # This is a valid non-mutating L3 corrective verdict, not a missing
+        # repair dispatch. Preserve the historical repair failure findings, but
+        # make the current next event and escalation receipt unambiguous.
+        audit_findings.append(
+            {
+                "layer": "l3",
+                "code": "approval_required",
+                "status": "warn",
+                "severity": "warn",
+                "message": str(corrective_path.get("reason") or "")[:2000],
+                "recommendation": "auditor_escalate_to_human",
+                "corrective_action": "await_human_pr_merge",
+                "pr_number": corrective_path.get("pr_number"),
+                "escalation_id": escalation.get("escalation_id"),
+            }
+        )
+        aggregate_outcome = "auditor_human_escalation"
+        aggregate_next_event = "human_approval.pr_merge"
     if escalation.get("repair_dispatched") is True:
         dispatch_ref = (
             escalation.get("managed_manifest_path")
