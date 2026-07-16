@@ -5549,7 +5549,7 @@ route_l1_launch_failure_to_meta_repair() {
   local meta_dispatch_result
   [[ "${REPAIR_DISPATCH_RESULT:-}" == "launch_failed" ]] || return 1
   if dispatch_meta_repair \
-    "$session" "$workspace" "$remote_spec" "$report_items" "l1_launch_failed"; then
+    "$session" "$workspace" "$remote_spec" "$report_items" "model_tool_launch_failure"; then
     meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
     if [[ "$meta_dispatch_result" == "dispatched" || "$meta_dispatch_result" == "busy" ]]; then
       log "ordinary repair launch failed; L2 now has custody session=$session result=$meta_dispatch_result"
