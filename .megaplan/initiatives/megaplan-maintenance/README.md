@@ -6,6 +6,7 @@ The chain-referenced milestone briefs under `briefs/` are canonical. Architectur
 
 ## Current incident and recovery plans
 
+- [Resident non-mutating success-chain incident — 2026-07-16](research/resident-nonmutating-success-chain-incident-20260716.md) — four-run Discord chain reconstruction, root verification/classification contract correction, regression evidence, local integration custody, and durable follow-up proof.
 - [Custody control plane Superfixer recovery plan — 2026-07-16](research/custody-control-plane-superfixer-recovery-plan-20260716.md) — evidence-backed reconstruction of the `custody-control-plane-20260714` repair sessions, L1/L2/L3 failure analysis, implementation and deployment controls, and the operational automated-recovery acceptance gate.
 
 The retired `.megaplan/initiatives/superfixer-repair-custody/` document set remains historical input. Custody Control Plane owns the authority/transition contracts; this initiative owns the operational repair and audit product. Do not launch a duplicate Superfixer initiative from the retired set.

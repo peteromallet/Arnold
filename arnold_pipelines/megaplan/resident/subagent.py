@@ -80,6 +80,7 @@ DELEGATED_TASK_KINDS = (
     "autonomous",
 )
 DELEGATED_WORK_INTENTS = ("auto", "execution", "review", "speculative")
+DELEGATED_MUTATION_CLAIMS = ("auto", "none", "git_backed")
 DelegatedTaskKind = Literal[
     "routine",
     "lookup",
@@ -95,6 +96,7 @@ DelegatedTaskKind = Literal[
     "autonomous",
 ]
 DelegatedWorkIntent = Literal["auto", "execution", "review", "speculative"]
+DelegatedMutationClaim = Literal["auto", "none", "git_backed"]
 _BOUNDED_TASK_KINDS = frozenset({"lookup", "extraction", "mechanical"})
 _HIGH_RISK_TASK_KINDS = frozenset(
     {"root_cause", "architecture", "migration", "review", "autonomous"}
@@ -136,6 +138,7 @@ MAX_MODEL_SESSION_LOG_PREFIX_BYTES = 1024 * 1024
 FOLLOWUP_SCHEMA = "arnold-resident-agent-followup-v1"
 AGGREGATION_SCHEMA = "arnold-resident-agent-aggregation-v1"
 AGGREGATION_ROLES = frozenset({"synthesis_delivery_owner", "internal_contributor"})
+COMPLETION_VERIFICATION_SCHEMA = "arnold-resident-completion-verification-v1"
 DISCORD_FOLLOWUP_WINDOW = timedelta(minutes=15)
 _RUN_ID_RE = re.compile(r"^subagent-[0-9]{8}-[0-9]{6}-[A-Za-z0-9]{8}$")
 _RESIDENT_TURN_ID_RE = re.compile(r"^turn_[A-Za-z0-9]{12,64}$")
@@ -341,15 +344,50 @@ def resolve_delegated_work_intent(
     return "review" if task_kind in _NON_EXECUTION_TASK_KINDS else "execution"
 
 
+def resolve_delegated_mutation_claim(
+    *,
+    task_kind: DelegatedTaskKind,
+    work_intent: Literal["execution", "review", "speculative"],
+    mutation_claim: DelegatedMutationClaim = "auto",
+) -> Literal["none", "git_backed"]:
+    """Separate execution authority from the git effect a task actually claims.
+
+    Bounded lookup/extraction/mechanical execution is result-producing work, not
+    an implicit repository mutation.  Mutation-shaped execution remains strict
+    by default, while an explicit claim lets callers truthfully classify an
+    unusual task without weakening the completion gate for git-backed work.
+    """
+
+    if mutation_claim not in DELEGATED_MUTATION_CLAIMS:
+        raise ValueError(
+            "mutation_claim must be one of "
+            f"{', '.join(DELEGATED_MUTATION_CLAIMS)}; got {mutation_claim!r}"
+        )
+    if work_intent != "execution":
+        if mutation_claim == "git_backed":
+            raise ValueError(
+                "review/speculative work cannot claim an integrated git-backed mutation"
+            )
+        return "none"
+    if task_kind not in _BOUNDED_TASK_KINDS:
+        if mutation_claim == "none":
+            raise ValueError(
+                "mutation-shaped execution cannot opt out of strict git custody"
+            )
+        return "git_backed"
+    return "git_backed" if mutation_claim == "git_backed" else "none"
+
+
 def _delegation_delivery_instruction(
     work_intent: Literal["execution", "review", "speculative"],
+    mutation_claim: Literal["none", "git_backed"],
 ) -> str:
     common = (
         "This instruction is appended by the resident launch boundary and does not expand the "
         "user's authority. Preserve the inherited immutable Discord/delegation provenance; never "
         "replace, reconstruct, or reinterpret its source envelope."
     )
-    if work_intent == "execution":
+    if work_intent == "execution" and mutation_claim == "git_backed":
         applicable = (
             "This is execution work: complete and proportionally verify the explicitly authorized "
             "implementation in an isolated worktree, then integrate it into the clearly identified "
@@ -359,6 +397,14 @@ def _delegation_delivery_instruction(
             "does not authorize push, remote merge, deployment, restart, destructive cleanup, credential "
             "changes, or any other external effect unless the user or established policy explicitly "
             "authorizes that effect."
+        )
+    elif work_intent == "execution":
+        applicable = (
+            "This is authorized non-mutating execution: produce and verify the requested durable "
+            "result without changing a repository, branch, worktree, service, or external system. "
+            "Git commit/diff/clean-worktree custody is not applicable to successful completion. "
+            "If the task actually requires a git-backed mutation, stop and report the contract "
+            "mismatch instead of mutating under this claim."
         )
     elif work_intent == "review":
         applicable = (
@@ -377,6 +423,7 @@ def _delegation_delivery_instruction(
         f"{DELEGATION_DELIVERY_INSTRUCTION_HEADER}\n"
         f"- schema: {DELEGATION_DELIVERY_INSTRUCTION_SCHEMA}\n"
         f"- resolved work intent: {work_intent}\n"
+        f"- resolved mutation claim: {mutation_claim}\n"
         f"{applicable} {common}"
     )
 
@@ -575,6 +622,7 @@ def _delivery_prompt(
     *,
     task_kind: DelegatedTaskKind = DEFAULT_DELEGATED_TASK_KIND,
     work_intent: DelegatedWorkIntent = DEFAULT_DELEGATED_WORK_INTENT,
+    mutation_claim: DelegatedMutationClaim = "auto",
     context_directory: Mapping[str, Any] | None = None,
     query_relationship: Mapping[str, Any] | None = None,
     contributors: list[Mapping[str, Any]] | None = None,
@@ -588,7 +636,14 @@ def _delivery_prompt(
         task_kind=task_kind,
         work_intent=work_intent,
     )
-    delivery_instruction = _delegation_delivery_instruction(resolved_work_intent)
+    resolved_mutation_claim = resolve_delegated_mutation_claim(
+        task_kind=task_kind,
+        work_intent=resolved_work_intent,
+        mutation_claim=mutation_claim,
+    )
+    delivery_instruction = _delegation_delivery_instruction(
+        resolved_work_intent, resolved_mutation_claim
+    )
     prompt = (
         f"{task.rstrip()}\n\n"
         f"{delivery_instruction}\n\n"
@@ -600,7 +655,7 @@ def _delivery_prompt(
     )
     if context_directory is not None:
         prompt += _render_delegated_context_directory(context_directory) + "\n"
-    if resolved_work_intent == "execution" and git_custody is not None:
+    if resolved_mutation_claim == "git_backed" and git_custody is not None:
         prompt += render_git_custody_contract(git_custody) + "\n"
     relationship_context = _render_query_relationship(query_relationship)
     if relationship_context:
@@ -1767,18 +1822,40 @@ def _validate_queue_authorization(
             raise SubagentQueueError(
                 f"queued successor cannot broaden predecessor {field} authorization"
             )
+    predecessor_mutation = str(
+        predecessor.get("mutation_claim")
+        or resolve_delegated_mutation_claim(
+            task_kind=str(predecessor.get("task_kind") or DEFAULT_DELEGATED_TASK_KIND),
+            work_intent=str(predecessor.get("work_intent") or "execution"),
+        )
+    )
+    successor_mutation = str(
+        successor.get("mutation_claim")
+        or resolve_delegated_mutation_claim(
+            task_kind=str(successor.get("task_kind") or DEFAULT_DELEGATED_TASK_KIND),
+            work_intent=str(successor.get("work_intent") or "execution"),
+        )
+    )
+    if predecessor_mutation != successor_mutation:
+        raise SubagentQueueError(
+            "queued successor cannot broaden predecessor mutation_claim authorization"
+        )
     predecessor_aggregation = predecessor.get("aggregation")
     successor_aggregation = successor.get("aggregation")
     if not isinstance(predecessor_aggregation, Mapping) or not isinstance(
         successor_aggregation, Mapping
     ):
         raise SubagentQueueError("queued dependency lacks aggregation custody")
-    if successor_aggregation.get("role") != "synthesis_delivery_owner":
-        raise SubagentQueueError("queued successor must be the sole synthesis delivery owner")
     if same_request:
         if predecessor_aggregation.get("key") != successor_aggregation.get("key"):
             raise SubagentQueueError("queued successor changed logical delivery ownership")
+        if successor_aggregation.get("role") not in AGGREGATION_ROLES:
+            raise SubagentQueueError("queued successor has invalid aggregation role")
         return
+    if successor_aggregation.get("role") != "synthesis_delivery_owner":
+        raise SubagentQueueError(
+            "cross-request queued successor must be the sole synthesis delivery owner"
+        )
     queue = successor.get("queue")
     authorizations = (
         queue.get("cross_request_authorizations")
@@ -1922,6 +1999,17 @@ def _queue_result_is_valid(
         return False, "predecessor_terminal_outcome_invalid"
     if int(predecessor.get("returncode") or 0) != 0:
         return False, "predecessor_returncode_nonzero"
+    verification = predecessor.get("completion_verification")
+    if isinstance(verification, Mapping) and (
+        verification.get("status") != "success"
+        or verification.get("classification")
+        not in {
+            "applicable_non_mutating_success",
+            "git_backed_mutation_custody_verified",
+            "legacy_lifecycle_success",
+        }
+    ):
+        return False, "predecessor_completion_verification_invalid"
     try:
         result_path = _queue_artifact_path(
             predecessor_path, predecessor, "result_path", "result.md"
@@ -2581,6 +2669,11 @@ def follow_up_managed_subagent(
                     or target.get("work_intent")
                     or DEFAULT_DELEGATED_WORK_INTENT
                 ),
+                mutation_claim=str(
+                    tip.get("mutation_claim")
+                    or target.get("mutation_claim")
+                    or "auto"
+                ),
                 difficulty=int(tip.get("difficulty") or target.get("difficulty") or 4),
                 route_class="resident_followup_continuation",
                 run_root=root,
@@ -2706,6 +2799,7 @@ def launch_codex_subagent_detached(
     reasoning_effort: str = "medium",
     task_kind: DelegatedTaskKind = DEFAULT_DELEGATED_TASK_KIND,
     work_intent: DelegatedWorkIntent = DEFAULT_DELEGATED_WORK_INTENT,
+    mutation_claim: DelegatedMutationClaim = "auto",
     difficulty: int = DEFAULT_DELEGATED_DIFFICULTY,
     route_class: str = "routine",
     run_root: str | Path = DEFAULT_MANAGED_RUN_ROOT,
@@ -2769,6 +2863,7 @@ def launch_codex_subagent_detached(
     )
     provenance = current_provenance
     requested_work_intent = work_intent
+    requested_mutation_claim = mutation_claim
     if dependency_run_ids:
         for predecessor_run_id in dependency_run_ids:
             predecessor_path = root / predecessor_run_id / "manifest.json"
@@ -2864,6 +2959,33 @@ def launch_codex_subagent_detached(
                 f"{predecessor_work_intent!r}"
             )
         work_intent = predecessor_work_intent
+        predecessor_mutation_claim = str(
+            predecessor.get("mutation_claim")
+            or resolve_delegated_mutation_claim(
+                task_kind=task_kind,
+                work_intent=resolve_delegated_work_intent(
+                    task_kind=task_kind, work_intent=work_intent
+                ),
+            )
+        )
+        if any(
+            str(item.get("mutation_claim") or predecessor_mutation_claim)
+            != predecessor_mutation_claim
+            for item in predecessors[1:]
+        ):
+            raise SubagentQueueError(
+                "all predecessors must share one resolved mutation_claim"
+            )
+        if (
+            requested_mutation_claim != "auto"
+            and requested_mutation_claim != predecessor_mutation_claim
+        ):
+            raise SubagentQueueError(
+                "queued successor must inherit predecessor mutation_claim; "
+                f"requested {requested_mutation_claim!r}, predecessor has "
+                f"{predecessor_mutation_claim!r}"
+            )
+        mutation_claim = predecessor_mutation_claim
         difficulty = int(predecessor.get("difficulty") or difficulty)
         route_class = (
             "queued_successor" if same_request else "queued_cross_request_successor"
@@ -2879,7 +3001,6 @@ def launch_codex_subagent_detached(
             "key"
         ):
             raise SubagentQueueError("predecessor lacks logical aggregation custody")
-        aggregation_role = "synthesis_delivery_owner"
         if same_request:
             synthesis_group = (
                 str(predecessor_aggregation.get("synthesis_group") or "") or None
@@ -2921,6 +3042,11 @@ def launch_codex_subagent_detached(
     resolved_work_intent = resolve_delegated_work_intent(
         task_kind=task_kind,
         work_intent=work_intent,
+    )
+    resolved_mutation_claim = resolve_delegated_mutation_claim(
+        task_kind=task_kind,
+        work_intent=resolved_work_intent,
+        mutation_claim=mutation_claim,
     )
     if aggregation_role not in AGGREGATION_ROLES:
         raise ValueError(
@@ -2973,6 +3099,7 @@ def launch_codex_subagent_detached(
         launch_selector,
         task_digest,
         resolved_work_intent,
+        resolved_mutation_claim,
         agent_description,
         aggregation_role,
         synthesis_group or "",
@@ -3043,16 +3170,21 @@ def launch_codex_subagent_detached(
         project_root=project_root,
         provenance=provenance,
     )
-    git_custody = resolve_launch_git_custody(
-        project_root=project_root,
-        runtime_root=str(context_directory["resident_runtime_source"]),
-        evidence_path=git_custody_evidence_path,
+    git_custody = (
+        resolve_launch_git_custody(
+            project_root=project_root,
+            runtime_root=str(context_directory["resident_runtime_source"]),
+            evidence_path=git_custody_evidence_path,
+        )
+        if resolved_mutation_claim == "git_backed"
+        else None
     )
     prompt = _delivery_prompt(
         effective_task,
         str(provenance.get("timezone_name") or "UTC"),
         task_kind=task_kind,
         work_intent=resolved_work_intent,
+        mutation_claim=resolved_mutation_claim,
         context_directory=context_directory,
         query_relationship=query_relationship,
         contributors=contributors,
@@ -3077,11 +3209,15 @@ def launch_codex_subagent_detached(
         "reasoning_effort": reasoning_effort,
         "task_kind": task_kind,
         "work_intent": resolved_work_intent,
+        "mutation_claim": resolved_mutation_claim,
         "delegation_delivery_instruction": {
             "schema_version": DELEGATION_DELIVERY_INSTRUCTION_SCHEMA,
             "resolved_work_intent": resolved_work_intent,
+            "resolved_mutation_claim": resolved_mutation_claim,
             "sha256": hashlib.sha256(
-                _delegation_delivery_instruction(resolved_work_intent).encode("utf-8")
+                _delegation_delivery_instruction(
+                    resolved_work_intent, resolved_mutation_claim
+                ).encode("utf-8")
             ).hexdigest(),
         },
         "description": agent_description,
@@ -3097,7 +3233,20 @@ def launch_codex_subagent_detached(
         "task_sha256": task_digest,
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         "context_directory": context_directory,
-        "git_custody": git_custody,
+        "completion_verification_contract": {
+            "schema_version": COMPLETION_VERIFICATION_SCHEMA,
+            "applicability": "applicable",
+            "result_requirement": "worker_exit_zero",
+            "git_custody_requirement": (
+                "strict" if resolved_mutation_claim == "git_backed" else "not_applicable"
+            ),
+            "basis": {
+                "task_kind": task_kind,
+                "work_intent": resolved_work_intent,
+                "mutation_claim": resolved_mutation_claim,
+            },
+        },
+        **({"git_custody": git_custody} if git_custody is not None else {}),
         "launch_idempotency_key": launch_key,
         "correlation_id": provenance.get("correlation_id") or run_id,
         "custody_id": provenance.get("custody_id") or stable_identity("resident-custody", run_id),
@@ -3501,6 +3650,71 @@ def _await_continuation_parent(
         time.sleep(1)
 
 
+def _verify_managed_completion_contract(
+    manifest_path: Path, manifest: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Apply only the completion checks that the run's effect claim requires."""
+
+    if not any(
+        field in manifest
+        for field in (
+            "completion_verification_contract",
+            "mutation_claim",
+            "work_intent",
+        )
+    ):
+        return {
+            "schema_version": COMPLETION_VERIFICATION_SCHEMA,
+            "status": "success",
+            "classification": "legacy_lifecycle_success",
+            "git_custody": "not_declared_by_legacy_manifest",
+            "basis": {"manifest_contract": "legacy_pre_verification_contract"},
+        }
+    task_kind = str(manifest.get("task_kind") or DEFAULT_DELEGATED_TASK_KIND)
+    work_intent = str(manifest.get("work_intent") or "execution")
+    mutation_claim = str(
+        manifest.get("mutation_claim")
+        or resolve_delegated_mutation_claim(
+            task_kind=task_kind,
+            work_intent=work_intent,
+        )
+    )
+    evidence_path = manifest_path.parent / "git-custody-evidence.json"
+    if mutation_claim == "none":
+        if evidence_path.exists():
+            raise GitCustodyError(
+                "non-mutating completion contract received a git-backed mutation claim; "
+                "relaunch with mutation_claim='git_backed'"
+            )
+        return {
+            "schema_version": COMPLETION_VERIFICATION_SCHEMA,
+            "status": "success",
+            "classification": "applicable_non_mutating_success",
+            "git_custody": "not_applicable",
+            "basis": {
+                "task_kind": task_kind,
+                "work_intent": work_intent,
+                "mutation_claim": mutation_claim,
+            },
+        }
+    custody = manifest.get("git_custody")
+    if not isinstance(custody, Mapping):
+        raise GitCustodyError("git-backed mutation is missing launch custody")
+    verified = validate_git_custody_evidence(custody)
+    return {
+        "schema_version": COMPLETION_VERIFICATION_SCHEMA,
+        "status": "success",
+        "classification": "git_backed_mutation_custody_verified",
+        "git_custody": "verified",
+        "basis": {
+            "task_kind": task_kind,
+            "work_intent": work_intent,
+            "mutation_claim": mutation_claim,
+        },
+        "evidence": verified,
+    }
+
+
 def _run_codex_manifest(manifest_path: Path) -> int:
     execution_handle = (manifest_path.parent / ".execution.lock").open("a+b")
     try:
@@ -3617,23 +3831,23 @@ def _run_codex_manifest(manifest_path: Path) -> int:
                 "recorded_at": _utc_now(),
             }
         custody_error: str | None = None
-        if returncode == 0 and manifest.get("work_intent") == "execution":
-            custody = manifest.get("git_custody")
-            if isinstance(custody, Mapping):
-                project_snapshot = custody.get("launch_checkouts")
-                project_snapshot = (
-                    project_snapshot.get("project")
-                    if isinstance(project_snapshot, Mapping)
-                    else None
+        if returncode == 0:
+            try:
+                manifest["completion_verification"] = _verify_managed_completion_contract(
+                    manifest_path, manifest
                 )
-                if isinstance(project_snapshot, Mapping) and project_snapshot.get("git"):
-                    try:
-                        manifest["git_custody_verification"] = validate_git_custody_evidence(
-                            custody
-                        )
-                    except GitCustodyError as exc:
-                        custody_error = str(exc)
-                        returncode = 2
+                evidence = manifest["completion_verification"].get("evidence")
+                if isinstance(evidence, Mapping):
+                    manifest["git_custody_verification"] = dict(evidence)
+            except (GitCustodyError, ValueError) as exc:
+                custody_error = str(exc)
+                returncode = 2
+                manifest["completion_verification"] = {
+                    "schema_version": COMPLETION_VERIFICATION_SCHEMA,
+                    "status": "failed",
+                    "classification": "completion_contract_failed_closed",
+                    "error": custody_error,
+                }
         manifest.update(
             {
                 "status": "completed" if returncode == 0 else "failed",
@@ -5806,6 +6020,7 @@ async def launch_subagent_task(
     reasoning_effort: str | None = None,
     task_kind: DelegatedTaskKind = DEFAULT_DELEGATED_TASK_KIND,
     work_intent: DelegatedWorkIntent = DEFAULT_DELEGATED_WORK_INTENT,
+    mutation_claim: DelegatedMutationClaim = "auto",
     difficulty: int = DEFAULT_DELEGATED_DIFFICULTY,
     request_id: str | None = None,
     launch_origin: Mapping[str, Any] | None = None,
@@ -5851,6 +6066,7 @@ async def launch_subagent_task(
             reasoning_effort=selected_effort,
             task_kind=route.task_kind,
             work_intent=work_intent,
+            mutation_claim=mutation_claim,
             difficulty=route.difficulty,
             route_class=(
                 "explicit_override"
@@ -5902,6 +6118,7 @@ async def launch_subagent_task(
                 str(compatibility_provenance.get("timezone_name") or "UTC"),
                 task_kind=task_kind,
                 work_intent=work_intent,
+                mutation_claim=mutation_claim,
                 context_directory=_delegated_context_directory(
                     project_root=Path(project_dir or Path.cwd()).resolve(),
                     provenance=compatibility_provenance,
@@ -5956,6 +6173,11 @@ def _build_local_seam_parser() -> argparse.ArgumentParser:
         "--work-intent",
         choices=DELEGATED_WORK_INTENTS,
         default=DEFAULT_DELEGATED_WORK_INTENT,
+    )
+    launch.add_argument(
+        "--mutation-claim",
+        choices=DELEGATED_MUTATION_CLAIMS,
+        default="auto",
     )
     launch.add_argument("--difficulty", type=int, default=DEFAULT_DELEGATED_DIFFICULTY)
     launch.add_argument("--request-id")
@@ -6026,6 +6248,7 @@ def _main(argv: list[str] | None = None) -> int:
                 reasoning_effort=args.reasoning_effort,
                 task_kind=args.task_kind,
                 work_intent=args.work_intent,
+                mutation_claim=args.mutation_claim,
                 difficulty=args.difficulty,
                 request_id=args.request_id,
                 retry_of_run_id=args.retry_of_run_id,
