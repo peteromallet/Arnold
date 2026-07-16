@@ -325,6 +325,7 @@ def build_investigation_context(
     goal_path: str | Path,
     l2_handoff_path: str | Path | None = None,
     l2_context_digest: str = "",
+    l2_replan_epoch: int | str | None = None,
     max_prior_attempts: int = 6,
 ) -> dict[str, Any]:
     repair_data = _load(repair_data_path)
@@ -393,6 +394,7 @@ def build_investigation_context(
     access_receipt = _load(access_receipt_path)
     external_observation: dict[str, Any] = {}
     external_observation_path = ""
+    l2_replan_authorization: dict[str, Any] = {"verified": False}
     if explicit_handoff_path or str(meta_handoff.get("access_receipt_path") or "").strip():
         expected_handoff_digest = (
             str(l2_context_digest or "").strip()
@@ -416,6 +418,50 @@ def build_investigation_context(
                 break
         if not external_observation:
             raise ValueError("L2-to-L1 evidence handoff lacks external state")
+        requested_epoch = int(l2_replan_epoch or 0)
+        if requested_epoch:
+            active_epoch = int(goal.get("active_replan_epoch") or 0)
+            replans = goal.get("l2_replans") if isinstance(goal.get("l2_replans"), list) else []
+            matching_replan = next(
+                (
+                    item
+                    for item in replans
+                    if isinstance(item, Mapping)
+                    and int(item.get("epoch") or 0) == requested_epoch
+                    and str(item.get("context_digest") or "") == expected_handoff_digest
+                ),
+                None,
+            )
+            target_identity = {
+                "session": _text(goal_target.get("session"), 300),
+                "workspace": str(Path(str(goal_target.get("workspace") or ""))),
+                "remote_spec": _text(goal_target.get("remote_spec"), 2000),
+            }
+            actual_identity = {
+                "session": _text(session, 300),
+                "workspace": str(Path(workspace)),
+                "remote_spec": _text(remote_spec, 2000),
+            }
+            if (
+                active_epoch != requested_epoch
+                or matching_replan is None
+                or target_identity != actual_identity
+            ):
+                raise ValueError("L2-to-L1 replan authorization is stale or disagrees with goal identity")
+            l2_replan_authorization = {
+                "verified": True,
+                "replan_epoch": requested_epoch,
+                "context_digest": expected_handoff_digest,
+                "frozen_checkpoint_digest": _text(
+                    matching_replan.get("frozen_checkpoint_digest"), 100
+                ),
+                "allowed_recovery": "recover_state_via_supported_cli_only",
+                "forbidden": [
+                    "direct_state_edit",
+                    "hand_advance_chain",
+                    "duplicate_live_worker",
+                ],
+            }
     evidence_sources = [
         _evidence_source("repair_data", repair_data_path, {
             "outcome": repair_data.get("outcome"),
@@ -540,6 +586,7 @@ def build_investigation_context(
         "repair_outcome": _text(repair_data.get("outcome"), 300),
         "managed_run_id": _text(repair_data.get("managed_agent_run_id"), 300),
         "evidence_sources": evidence_sources,
+        "l2_replan_authorization": l2_replan_authorization,
         "custody_status": "contradictory" if contradictions else "consistent",
         "custody_contradictions": contradictions,
         "goal_continuity": {
@@ -1370,6 +1417,7 @@ def _parser() -> argparse.ArgumentParser:
     build.add_argument("--goal-path", required=True)
     build.add_argument("--l2-handoff-path", default="")
     build.add_argument("--l2-context-digest", default="")
+    build.add_argument("--l2-replan-epoch", default="0")
     build.add_argument("--output", required=True)
     build_meta = sub.add_parser("build-meta")
     build_meta.add_argument("--session", required=True)
@@ -1402,6 +1450,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             goal_path=args.goal_path,
             l2_handoff_path=args.l2_handoff_path,
             l2_context_digest=args.l2_context_digest,
+            l2_replan_epoch=args.l2_replan_epoch,
         )
         _atomic_write(Path(args.output), value)
     elif args.command == "build-meta":

@@ -6314,6 +6314,7 @@ run_repair_investigator_turn() {
     context_build_cmd+=(
       --l2-handoff-path "$ARNOLD_REPAIR_L2_HANDOFF_PATH"
       --l2-context-digest "${ARNOLD_REPAIR_L2_CONTEXT_DIGEST:-}"
+      --l2-replan-epoch "${ARNOLD_REPAIR_L2_REPLAN_EPOCH:-0}"
     )
   fi
   if ! PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
@@ -6341,7 +6342,7 @@ EOF
   cat >> "$INVESTIGATOR_PROMPT_PATH" <<EOF
 </authoritative_repair_context>
 
-Determine the actual failure mechanism and whether the correct target worker must be preserved. Reconcile every evidence source and custody contradiction, state the intended recovery predicate and one safe repair target, and provide an explicit mutation handoff using the required_investigator_output schema embedded in the context. Apply TRACKED/FIXED/INTENT/CONTEXT. A frozen repair checkpoint is the immutable acceptance baseline for an outcome, not a requirement that every successor blocker have the same failure label; when goal/session/plan identity remains consistent, a fresh authoritative successor blocker should receive its bounded repair action under the same goal. Unknown or genuinely conflicting identity/custody, guard-weakening risk, or no safe target must recommend replan. When contradictory repair ownership is itself the bounded root cause, use replan with safe_repair_target.kind=repair_custody; that names the L2/root-cause target but authorizes no L1 mutation. Do not edit files, change plan state, kill/restart processes, weaken guards, or launch another mutating owner. Return ONLY one JSON object matching schema_version="arnold-repair-investigator-receipt-v2".
+Determine the actual failure mechanism and whether the correct target worker must be preserved. Reconcile every evidence source and custody contradiction, state the intended recovery predicate and one safe repair target, and provide an explicit mutation handoff using the required_investigator_output schema embedded in the context. Apply TRACKED/FIXED/INTENT/CONTEXT. A frozen repair checkpoint is the immutable acceptance baseline for an outcome, not a requirement that every successor blocker have the same failure label; when goal/session/plan identity remains consistent, a fresh authoritative successor blocker should receive its bounded repair action under the same goal. Unknown or genuinely conflicting identity/custody, guard-weakening risk, or no safe target must recommend replan. When l2_replan_authorization.verified is true, its receipt-bound epoch resolves the otherwise-unowned repair-custody contradiction for this one L1 cycle: if identity and external guards agree and no runner must be preserved, choose recover_state with the exact supported_cli mutation; never replan solely because the goal was previously unowned. Without that verified authorization, contradictory repair ownership must use replan with safe_repair_target.kind=repair_custody, which names the L2/root-cause target but authorizes no L1 mutation. Do not edit files, change plan state, kill/restart processes, weaken guards, or launch another mutating owner. Return ONLY one JSON object matching schema_version="arnold-repair-investigator-receipt-v2".
 EOF
   redact_file_in_place "$INVESTIGATOR_PROMPT_PATH"
   investigator_timeout="$(cap_timeout_to_repair_budget "$DEV_ROOT_CAUSE_TIMEOUT" "repair-investigator")"
