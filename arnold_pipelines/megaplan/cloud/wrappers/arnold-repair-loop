@@ -6907,8 +6907,10 @@ PY
 
 run_repair_investigator_turn() {
   require_repair_lock_held
-  local request_path context_digest run_id_file investigator_run_id rc investigator_timeout recommended_action
-  local -a parent_args context_build_cmd
+  local request_path context_digest context_bytes context_sha256 run_id_file investigator_run_id rc investigator_timeout recommended_action
+  local validation_output invalid_receipt_path invalid_receipt_bytes invalid_receipt_sha256 correction_prompt_path validation_error_path validation_error_bytes validation_error_sha256 prompt_bytes
+  local command_index
+  local -a parent_args context_build_cmd managed_cmd correction_cmd
   request_path="$REPAIR_QUEUE_DIR/requests/${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-missing}.json"
   context_build_cmd=(
     "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m
@@ -6941,73 +6943,179 @@ run_repair_investigator_turn() {
     return 1
   fi
   context_digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["context_digest"])' "$INVESTIGATION_CONTEXT_PATH")"
+  context_bytes="$(wc -c < "$INVESTIGATION_CONTEXT_PATH" | tr -d ' ')"
+  context_sha256="$(sha256sum "$INVESTIGATION_CONTEXT_PATH" | awk '{print $1}')"
   cat > "$INVESTIGATOR_PROMPT_PATH" <<EOF
 You are the read-only investigator for automatic repair session $SESSION.
 
-The bounded authoritative context is embedded below so investigation does not depend on filesystem sandbox availability. Its digest is $context_digest. The identical durable copy is at $INVESTIGATION_CONTEXT_PATH.
-It contains the exact current error, frozen goal checkpoint, current process/stage evidence, queued request identity, and recent prior repair history. Treat the embedded object as authoritative; inspect only cited paths needed to resolve contradictions if filesystem reads are available.
+Objective: determine the actual failure mechanism, preserve the correct target worker, and return one typed mutation handoff. Do not mutate anything.
 
-<authoritative_repair_context>
-EOF
-  cat "$INVESTIGATION_CONTEXT_PATH" >> "$INVESTIGATOR_PROMPT_PATH"
-  cat >> "$INVESTIGATOR_PROMPT_PATH" <<EOF
-</authoritative_repair_context>
+Immutable identity and provenance:
+- session: $SESSION
+- repair_request_id: ${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-missing}
+- blocker_id: ${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-missing}
+- context_digest: $context_digest
+
+Authoritative bounded artifact (the read-only sandbox is rooted at its parent directory):
+- type: arnold-repair-investigation-context
+- path: $INVESTIGATION_CONTEXT_PATH
+- bytes: $context_bytes
+- sha256: $context_sha256
+
+Read that artifact. It contains the exact current error, frozen goal checkpoint, process/stage evidence, immutable authorization, queued request identity, and bounded repair history. Treat it as authoritative; inspect only its cited paths when needed and accessible.
 
 Determine the actual failure mechanism and whether the correct target worker must be preserved. Reconcile every evidence source and custody contradiction, state the intended recovery predicate and one safe repair target, and provide an explicit mutation handoff using the required_investigator_output schema embedded in the context. Apply TRACKED/FIXED/INTENT/CONTEXT. A frozen repair checkpoint is the immutable acceptance baseline for an outcome, not a requirement that every successor blocker have the same failure label; when goal/session/plan identity remains consistent, a fresh authoritative successor blocker should receive its bounded repair action under the same goal. Unknown or genuinely conflicting identity/custody, guard-weakening risk, or no safe target must recommend replan. When l2_replan_authorization.verified is true, its receipt-bound epoch resolves the otherwise-unowned repair-custody contradiction for this one L1 cycle: if identity and external guards agree and no runner must be preserved, choose recover_state with the exact supported_cli mutation; never replan solely because the goal was previously unowned. Without that verified authorization, contradictory repair ownership must use replan with safe_repair_target.kind=repair_custody, which names the L2/root-cause target but authorizes no L1 mutation. Do not edit files, change plan state, kill/restart processes, weaken guards, or launch another mutating owner. Return ONLY one JSON object matching schema_version="arnold-repair-investigator-receipt-v2".
 EOF
   redact_file_in_place "$INVESTIGATOR_PROMPT_PATH"
+  prompt_bytes="$(wc -c < "$INVESTIGATOR_PROMPT_PATH" | tr -d ' ')"
+  if [[ ! "$prompt_bytes" =~ ^[0-9]+$ ]] || (( prompt_bytes > 65536 )); then
+    log "L1 investigator launch envelope failed 64 KiB preflight bytes=${prompt_bytes:-unknown}"
+    return 1
+  fi
   investigator_timeout="$(cap_timeout_to_repair_budget "$DEV_ROOT_CAUSE_TIMEOUT" "repair-investigator")"
   run_id_file="$RUN_DIR/repair-investigator-managed-run-id"
   parent_args=()
   if [[ -n "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" ]]; then
     parent_args=(--parent-run-id "$ARNOLD_MANAGED_AGENT_RUN_ID")
   fi
-  (
-    cd "$(repair_agent_workdir)" || exit 1
-    python3 -m arnold_pipelines.megaplan.managed_agent run \
-      --run-kind automatic_research_subagent \
-      --identity-key "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:investigator:$context_digest" \
-      --project-dir "$(repair_agent_workdir)" \
-      --task-kind root_cause \
-      --difficulty 8 \
-      --model "$REPAIR_INVESTIGATOR_MODEL" \
-      --reasoning-effort high \
-      --route-class repair_read_only_investigator \
-      --backend codex \
-      --command-display "automatic repair bounded investigator" \
-      --description "Read-only investigation of ${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-repair blocker} for $SESSION at ${PLAN_NAME:-current plan}; produce evidence and a mutation verdict" \
-      --origin-kind repair_loop_worker \
-      --origin-id "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}" \
-      --origin-component arnold-repair-loop \
-      --trigger-id "investigator:$context_digest" \
-      --require-output \
-      --lineage-key "repair-investigator:${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}" \
-      --run-id-file "$run_id_file" \
-      --stdin-file "$INVESTIGATOR_PROMPT_PATH" \
-      --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" \
-      --link "blocker_id=${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" \
-      --link "cloud_session=$SESSION" \
-      --link "phase=repair_investigator" \
-      "${parent_args[@]}" \
-      -- timeout "$investigator_timeout" codex exec --skip-git-repo-check --sandbox read-only \
-        -c model="$REPAIR_INVESTIGATOR_MODEL" -c model_reasoning_effort=high \
-        --output-last-message "$INVESTIGATOR_RECEIPT_PATH" -
-  ) >>"$LOG" 2>&1
+  managed_cmd=(
+    python3 -m arnold_pipelines.megaplan.managed_agent run
+    --run-kind automatic_research_subagent
+    --identity-key "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:investigator:$context_digest"
+    --project-dir "$RUN_DIR"
+    --task-kind root_cause
+    --difficulty 8
+    --model "$REPAIR_INVESTIGATOR_MODEL"
+    --reasoning-effort high
+    --route-class repair_read_only_investigator
+    --backend codex
+    --command-display "automatic repair bounded investigator"
+    --description "Read-only investigation of ${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-repair blocker} for $SESSION at ${PLAN_NAME:-current plan}; produce evidence and a mutation verdict"
+    --origin-kind repair_loop_worker
+    --origin-id "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}"
+    --origin-component arnold-repair-loop
+    --trigger-id "investigator:$context_digest"
+    --require-output
+    --lineage-key "repair-investigator:${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}"
+    --run-id-file "$run_id_file"
+    --stdin-file "$INVESTIGATOR_PROMPT_PATH"
+    --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
+    --link "blocker_id=${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}"
+    --link "cloud_session=$SESSION"
+    --link "phase=repair_investigator"
+    "${parent_args[@]}"
+    -- timeout "$investigator_timeout" codex exec --skip-git-repo-check --sandbox read-only
+      -c model="$REPAIR_INVESTIGATOR_MODEL" -c model_reasoning_effort=high
+      --output-last-message "$INVESTIGATOR_RECEIPT_PATH" -
+  )
+  (cd "$RUN_DIR" && "${managed_cmd[@]}") >>"$LOG" 2>&1
   rc=$?
   investigator_run_id="$(cat "$run_id_file" 2>/dev/null || true)"
-  if [[ "$rc" != "0" ]] || ! PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+  if [[ "$rc" != "0" ]]; then
+    repair_data_set_outcome "fixer_infrastructure_failure"
+    persist_repair_investigation_failure \
+      "investigator_dispatch_or_validation" \
+      "investigator dispatch failed" \
+      "" "$context_digest" "$investigator_run_id"
+    log "repair investigator dispatch failed session=$SESSION run_id=${investigator_run_id:-unknown}"
+    return 1
+  fi
+  validation_output="$(
+    PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
+      "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+      arnold_pipelines.megaplan.cloud.repair_investigation validate \
+      --receipt "$INVESTIGATOR_RECEIPT_PATH" \
+      --context-digest "$context_digest" \
+      --context "$INVESTIGATION_CONTEXT_PATH" 2>&1
+  )" || {
+    printf '%s\n' "$validation_output" >>"$LOG"
+    invalid_receipt_path="${INVESTIGATOR_RECEIPT_PATH%.json}.invalid-1.json"
+    correction_prompt_path="${INVESTIGATOR_PROMPT_PATH%.md}.correction-1.md"
+    validation_error_path="$RUN_DIR/repair-investigator-validation-error-1.txt"
+    if [[ ! -f "$INVESTIGATOR_RECEIPT_PATH" ]]; then
+      repair_data_set_outcome "fixer_infrastructure_failure"
+      persist_repair_investigation_failure \
+        "investigator_dispatch_or_validation" \
+        "investigator returned no receipt" \
+        "" "$context_digest" "$investigator_run_id"
+      log "repair investigator returned no receipt session=$SESSION run_id=${investigator_run_id:-unknown}"
+      return 1
+    fi
+    invalid_receipt_bytes="$(wc -c < "$INVESTIGATOR_RECEIPT_PATH" | tr -d ' ')"
+    if [[ ! "$invalid_receipt_bytes" =~ ^[0-9]+$ ]] || (( invalid_receipt_bytes > 65536 )); then
+      repair_data_set_outcome "fixer_infrastructure_failure"
+      persist_repair_investigation_failure \
+        "investigator_dispatch_or_validation" \
+        "invalid investigator receipt exceeds 65536-byte correction bound" \
+        "" "$context_digest" "$investigator_run_id"
+      log "repair investigator invalid receipt exceeds correction bound session=$SESSION bytes=${invalid_receipt_bytes:-unknown}"
+      return 1
+    fi
+    cp -- "$INVESTIGATOR_RECEIPT_PATH" "$invalid_receipt_path" || return 1
+    printf '%s\n' "${validation_output:0:2000}" >"$validation_error_path"
+    invalid_receipt_sha256="$(sha256sum "$invalid_receipt_path" | awk '{print $1}')"
+    validation_error_bytes="$(wc -c < "$validation_error_path" | tr -d ' ')"
+    validation_error_sha256="$(sha256sum "$validation_error_path" | awk '{print $1}')"
+    cat >"$correction_prompt_path" <<EOF
+You are the read-only receipt corrector for automatic repair session $SESSION.
+
+Objective: correct one schema-invalid investigator receipt. Return one complete corrected JSON object only; do not mutate any target or invent evidence.
+
+Immutable identity and authorization:
+- session: $SESSION
+- repair_request_id: ${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-missing}
+- blocker_id: ${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-missing}
+- context_digest: $context_digest
+- authorization: read-only correction; target mutation forbidden
+
+Authoritative bounded artifacts (all are inside the read-only sandbox root):
+- type: repair_investigation_context; path: $INVESTIGATION_CONTEXT_PATH; bytes: $context_bytes; sha256: $context_sha256
+- type: invalid_candidate_receipt; path: $invalid_receipt_path; bytes: $invalid_receipt_bytes; sha256: $invalid_receipt_sha256
+- type: validator_error; path: $validation_error_path; bytes: $validation_error_bytes; sha256: $validation_error_sha256
+
+Read those artifacts. Preserve the evidence-grounded diagnosis, authority boundary, and safety guards. Correct only the contract defect. Return ONLY one JSON object matching schema_version="arnold-repair-investigator-receipt-v2".
+EOF
+    redact_file_in_place "$correction_prompt_path"
+    prompt_bytes="$(wc -c < "$correction_prompt_path" | tr -d ' ')"
+    if [[ ! "$prompt_bytes" =~ ^[0-9]+$ ]] || (( prompt_bytes > 65536 )); then
+      log "L1 investigator correction envelope failed 64 KiB preflight bytes=${prompt_bytes:-unknown}"
+      return 1
+    fi
+    correction_cmd=("${managed_cmd[@]}")
+    for command_index in "${!correction_cmd[@]}"; do
+      if [[ "${correction_cmd[$command_index]}" == "$INVESTIGATOR_PROMPT_PATH" ]]; then
+        correction_cmd[$command_index]="$correction_prompt_path"
+      elif [[ "${correction_cmd[$command_index]}" == "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:investigator:$context_digest" ]]; then
+        correction_cmd[$command_index]="${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}:investigator:$context_digest:correction:1"
+      elif [[ "${correction_cmd[$command_index]}" == "investigator:$context_digest" ]]; then
+        correction_cmd[$command_index]="investigator:$context_digest:correction:1"
+      fi
+    done
+    log "L1 investigator receipt failed schema validation; launching one bounded correction session=$SESSION invalid_receipt=$invalid_receipt_path"
+    if ! (cd "$RUN_DIR" && "${correction_cmd[@]}") >>"$LOG" 2>&1; then
+      repair_data_set_outcome "fixer_infrastructure_failure"
+      persist_repair_investigation_failure \
+        "investigator_dispatch_or_validation" \
+        "investigator correction dispatch failed" \
+        "$validation_error_path" "$context_digest" "$investigator_run_id"
+      return 1
+    fi
+    investigator_run_id="$(cat "$run_id_file" 2>/dev/null || true)"
+    if ! PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
+      "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
       arnold_pipelines.megaplan.cloud.repair_investigation validate \
       --receipt "$INVESTIGATOR_RECEIPT_PATH" \
       --context-digest "$context_digest" \
       --context "$INVESTIGATION_CONTEXT_PATH" >>"$LOG" 2>&1; then
-    repair_data_set_outcome "fixer_infrastructure_failure"
-    persist_repair_investigation_failure \
-      "investigator_dispatch_or_validation" \
-      "investigator failed or returned no valid receipt" \
-      "" "$context_digest" "$investigator_run_id"
-    log "repair investigator failed or returned an invalid receipt session=$SESSION run_id=${investigator_run_id:-unknown}"
-    return 1
-  fi
+      repair_data_set_outcome "fixer_infrastructure_failure"
+      persist_repair_investigation_failure \
+        "investigator_dispatch_or_validation" \
+        "investigator correction returned no valid receipt" \
+        "$validation_error_path" "$context_digest" "$investigator_run_id"
+      log "repair investigator correction returned an invalid receipt session=$SESSION run_id=${investigator_run_id:-unknown}"
+      return 1
+    fi
+  }
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
     "$DATA_FILE" "$INVESTIGATION_CONTEXT_PATH" "$INVESTIGATOR_RECEIPT_PATH" "$context_digest" "$investigator_run_id" <<'PY' || return 1
 import json

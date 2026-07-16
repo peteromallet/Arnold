@@ -23,6 +23,7 @@ REPAIR_INVESTIGATION_CONTEXT_SCHEMA = "arnold-repair-investigation-context-v1"
 META_REPAIR_INVESTIGATION_ENVELOPE_SCHEMA = "arnold-meta-repair-investigation-envelope-v2"
 REPAIR_INVESTIGATOR_RECEIPT_SCHEMA = "arnold-repair-investigator-receipt-v2"
 MAX_CONTEXT_BYTES = 64 * 1024
+MAX_RECEIPT_BYTES = 64 * 1024
 MAX_OBSERVATION_BUNDLE_BYTES = 48 * 1024
 META_REPAIR_OBSERVATION_BUNDLE_SCHEMA = "arnold-meta-repair-observation-bundle-v1"
 INVESTIGATION_TARGET_KINDS = frozenset({"l1_repair_target", "l2_repair_system"})
@@ -63,6 +64,23 @@ def _load(path: str | Path | None) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError, TypeError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _load_bounded_json(path: str | Path, *, max_bytes: int, label: str) -> dict[str, Any]:
+    source = Path(path)
+    try:
+        encoded = source.open("rb").read(max_bytes + 1)
+    except OSError as exc:
+        raise ValueError(f"cannot read {label}: {source}") from exc
+    if len(encoded) > max_bytes:
+        raise ValueError(f"{label} exceeds {max_bytes}-byte bound")
+    try:
+        value = json.loads(encoded.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} is not valid UTF-8 JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    return value
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -1865,10 +1883,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         _atomic_write(Path(args.output), value)
     else:
         value = validate_investigator_receipt(
-            _load(args.receipt),
+            _load_bounded_json(
+                args.receipt,
+                max_bytes=MAX_RECEIPT_BYTES,
+                label="investigator receipt",
+            ),
             expected_context_digest=args.context_digest,
-            observation_bundle=_load(args.observation) if args.observation else None,
-            investigation_context=_load(args.context) if args.context else None,
+            observation_bundle=(
+                _load_bounded_json(
+                    args.observation,
+                    # The builder bounds the compact JSON payload to 48 KiB,
+                    # while its durable pretty-printed representation can be
+                    # larger. Keep the transport ceiling at the shared 64 KiB
+                    # fail-closed envelope.
+                    max_bytes=MAX_CONTEXT_BYTES,
+                    label="investigator observation bundle",
+                )
+                if args.observation
+                else None
+            ),
+            investigation_context=(
+                _load_bounded_json(
+                    args.context,
+                    max_bytes=MAX_CONTEXT_BYTES,
+                    label="repair investigation context",
+                )
+                if args.context
+                else None
+            ),
         )
     print(json.dumps(value, sort_keys=True))
     return 0
@@ -1880,6 +1922,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "MAX_CONTEXT_BYTES",
+    "MAX_RECEIPT_BYTES",
     "META_REPAIR_INVESTIGATION_ENVELOPE_SCHEMA",
     "REPAIR_INVESTIGATION_CONTEXT_SCHEMA",
     "REPAIR_INVESTIGATOR_RECEIPT_SCHEMA",
