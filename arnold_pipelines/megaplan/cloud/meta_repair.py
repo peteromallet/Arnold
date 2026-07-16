@@ -4,7 +4,7 @@ When ordinary repair fails as a system, meta-repair diagnoses the
 repair-system failure, builds a redacted Codex/DeepSeek prompt, and
 prepares evidence for the meta-repair loop to act on.
 
-Trigger types (seven specified + explicit non-trigger):
+Trigger types (eleven specified + explicit non-trigger):
     1. repair_timeout            – repair took longer than its allotted budget
     2. persistent_recurring_retry – same failure repeats across attempts
     3. state_inspection_failure   – resolver/snapshot failed to read state
@@ -14,6 +14,10 @@ Trigger types (seven specified + explicit non-trigger):
        human escalation
     7. l1_custody_failure         – L1 could not establish canonical
        request/blocker/claim custody
+    8. repair_goal_owner_missing – durable repair goal has no valid owner
+    9. repair_context_target_mismatch – repair handoff targets stale custody
+   10. repair_goal_circuit_breaker – repeated goal mechanism must replan
+   11. l3_progress_auditor       – validated typed L3 true-stall escalation
 
 Non-trigger: healthy repair, non-system error, stale evidence, etc.
 """
@@ -86,6 +90,7 @@ class MetaRepairTrigger(str, Enum):
     REPAIR_GOAL_OWNER_MISSING = "repair_goal_owner_missing"
     REPAIR_CONTEXT_TARGET_MISMATCH = "repair_context_target_mismatch"
     REPAIR_GOAL_CIRCUIT_BREAKER = "repair_goal_circuit_breaker"
+    L3_PROGRESS_AUDITOR = "l3_progress_auditor"
 
 
 # Canonical ordering for display / prompt ordering
@@ -100,6 +105,7 @@ _TRIGGER_ORDER: dict[MetaRepairTrigger, int] = {
     MetaRepairTrigger.REPAIR_GOAL_OWNER_MISSING: 8,
     MetaRepairTrigger.REPAIR_CONTEXT_TARGET_MISMATCH: 9,
     MetaRepairTrigger.REPAIR_GOAL_CIRCUIT_BREAKER: 10,
+    MetaRepairTrigger.L3_PROGRESS_AUDITOR: 11,
 }
 
 # Outcomes that suppress another meta-repair dispatch.  Fresh activity remains

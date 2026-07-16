@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
+from pathlib import Path
 from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.managed_agent import validate_automatic_managed_manifest
@@ -27,6 +28,8 @@ DEEP_REPAIR_RUN_KIND = "automatic_root_cause_repair"
 DEEP_REPAIR_MODEL = "gpt-5.6-sol"
 DEEP_REPAIR_DIFFICULTY = 9
 DEEP_REPAIR_REASONING = "high"
+L3_REPAIR_CONTEXT_MAX_BYTES = 64 * 1024
+L3_REPAIR_REQUEST_MAX_BYTES = 256 * 1024
 
 _MACHINE_ACTION_STATES = frozenset(
     {
@@ -103,6 +106,134 @@ def _canonical_json(value: object) -> str:
 
 def evidence_digest(value: object) -> str:
     return sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def validate_l3_repair_dispatch_context(
+    *,
+    context_path: str | Path,
+    request_path: str | Path,
+    expected_session: str,
+    expected_context_digest: str,
+    expected_escalation_id: str,
+    expected_request_id: str,
+) -> dict[str, Any]:
+    """Validate the typed custody handoff for an L3 repair launch.
+
+    A command-line trigger is not authority. The auditor context and queued
+    request must independently agree on identity, provenance, eligibility,
+    path, and digest. Only a compact pointer envelope is returned so callers
+    do not inline the expanding evidence artifact in a prompt.
+    """
+
+    normalized_session = _text(expected_session)
+    normalized_digest = _text(expected_context_digest)
+    normalized_escalation = _text(expected_escalation_id)
+    normalized_request_id = _text(expected_request_id)
+    if not all(
+        (
+            normalized_session,
+            normalized_digest,
+            normalized_escalation,
+            normalized_request_id,
+        )
+    ):
+        raise ValueError("L3 dispatch identity is incomplete")
+
+    def load_bounded(
+        path_value: str | Path, *, maximum: int, label: str
+    ) -> tuple[Path, dict[str, Any], int]:
+        path = Path(path_value).resolve(strict=True)
+        encoded = path.read_bytes()
+        if not encoded or len(encoded) > maximum:
+            raise ValueError(f"{label} artifact violates its byte bound")
+        try:
+            value = json.loads(encoded)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"{label} artifact is not valid JSON") from exc
+        if not isinstance(value, dict):
+            raise ValueError(f"{label} artifact must be a JSON object")
+        return path, value, len(encoded)
+
+    context_resolved, context, context_bytes = load_bounded(
+        context_path,
+        maximum=L3_REPAIR_CONTEXT_MAX_BYTES,
+        label="L3 repair context",
+    )
+    request_resolved, request, request_bytes = load_bounded(
+        request_path,
+        maximum=L3_REPAIR_REQUEST_MAX_BYTES,
+        label="L3 repair request",
+    )
+
+    observed_digest = _text(context.get("context_digest"))
+    recomputed_digest = evidence_digest(
+        {key: value for key, value in context.items() if key != "context_digest"}
+    )
+    gate = _mapping(context.get("gate"))
+    if (
+        observed_digest != normalized_digest
+        or recomputed_digest != normalized_digest
+        or _text(context.get("session")) != normalized_session
+        or _text(gate.get("session")) != normalized_session
+        or _text(gate.get("schema_version")) != ESCALATION_SCHEMA
+        or _text(gate.get("policy_version")) != POLICY_VERSION
+        or gate.get("eligible") is not True
+        or _text(gate.get("decision")) != "true_stall"
+        or _list(gate.get("blocks"))
+        or _text(gate.get("escalation_id")) != normalized_escalation
+    ):
+        raise ValueError(
+            "L3 repair context failed identity, integrity, or eligibility validation"
+        )
+
+    target = _mapping(request.get("target"))
+    request_gate = _mapping(target.get("l3_escalation_gate"))
+    request_context_path = Path(_text(target.get("repair_context_path"))).resolve(
+        strict=False
+    )
+    provenance = _mapping(request.get("resident_delegation"))
+    if (
+        _text(request.get("kind")) != "repair_request"
+        or _text(request.get("source")) != "six_hour_auditor"
+        or _text(request.get("request_id")) != normalized_request_id
+        or request_resolved.name != f"{normalized_request_id}.json"
+        or _text(request.get("session")) != normalized_session
+        or _text(target.get("dispatch_intent")) != "deep_superfixer_repair"
+        or _text(target.get("retry_strategy")) != "deep_superfixer_repair"
+        or request_context_path != context_resolved
+        or _text(target.get("repair_context_digest")) != normalized_digest
+        or _text(target.get("root_cause_identity")) != normalized_escalation
+        or _text(request_gate.get("escalation_id")) != normalized_escalation
+        or _text(request_gate.get("evidence_digest"))
+        != _text(gate.get("evidence_digest"))
+        or request_gate.get("eligible") is not True
+        or _list(request_gate.get("blocks"))
+        or not provenance
+        or _text(provenance.get("schema_version"))
+        != "arnold-resident-delegation-provenance-v1"
+    ):
+        raise ValueError("L3 repair request disagrees with its context or provenance")
+
+    custody = _mapping(gate.get("custody_walk"))
+    return {
+        "schema_version": "arnold-l3-meta-repair-pointer-v1",
+        "session": normalized_session,
+        "request_id": normalized_request_id,
+        "escalation_id": normalized_escalation,
+        "context": {
+            "path": str(context_resolved),
+            "digest": normalized_digest,
+            "bytes": context_bytes,
+        },
+        "request": {"path": str(request_resolved), "bytes": request_bytes},
+        "gate": {
+            "decision": "true_stall",
+            "first_broken_layer": _text(custody.get("first_broken_layer")),
+            "first_broken_axis": _text(custody.get("first_broken_axis")),
+            "missed_by_layer": _text(custody.get("missed_by_layer")),
+            "missed_by_axis": _text(custody.get("missed_by_axis")),
+        },
+    }
 
 
 def semantic_cursor(finding: Mapping[str, Any]) -> dict[str, Any]:
@@ -450,10 +581,19 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
     meta = _mapping(finding.get("meta_repair_summary"))
     superfixer = _mapping(finding.get("deterministic_superfixer_evidence"))
     reasons = _reason_tokens(finding)
+    current_meta_refs = [
+        item
+        for item in _list(meta.get("meta_run_refs"))
+        if isinstance(item, Mapping) and item.get("current_episode") is not False
+    ]
+    current_episode_present = bool(current_meta_refs)
     failed_launch = bool(meta.get("failed_meta_run_count") or meta.get("failed_meta_record_count"))
     missing = bool(
         meta.get("missing_meta_run_evidence")
-        or superfixer.get("absent_or_stale_l2")
+        or (
+            superfixer.get("absent_or_stale_l2")
+            and not current_episode_present
+        )
         or any("meta-repair trigger" in item and "no meta record" in item for item in reasons)
     )
     false_success = any(
@@ -467,10 +607,8 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
     )
     failure_codes = {
         _text(item.get("failure_code"))
-        for item in _list(meta.get("meta_run_refs"))
-        if isinstance(item, Mapping)
-        and item.get("failure_code")
-        and item.get("current_episode") is not False
+        for item in current_meta_refs
+        if item.get("failure_code")
     }
     access_failure = bool(
         str(investigation.get("failure_code") or "").startswith("investigator_")
@@ -1090,6 +1228,8 @@ __all__ = [
     "DEEP_REPAIR_RUN_KIND",
     "ESCALATION_SCHEMA",
     "EscalationPolicy",
+    "L3_REPAIR_CONTEXT_MAX_BYTES",
+    "L3_REPAIR_REQUEST_MAX_BYTES",
     "POLICY_VERSION",
     "bounded_repair_context",
     "classify_true_stall",
@@ -1099,6 +1239,7 @@ __all__ = [
     "plan_dispatch",
     "record_reverification",
     "semantic_cursor",
+    "validate_l3_repair_dispatch_context",
     "validate_managed_launch",
     "verify_recovery",
 ]

@@ -82,6 +82,26 @@ def test_meta_repair_wrapper_fails_closed_on_commit_custody() -> None:
     assert "verify_meta_repair_commit_custody" in text
 
 
+def test_l3_trigger_requires_typed_request_and_uses_pointer_prompt() -> None:
+    text = _meta_repair_wrapper()
+
+    assert 'if [[ "$WATCHDOG_TRIGGER" == "l3_progress_auditor" ]]' in text
+    assert "validate_l3_repair_dispatch_context" in text
+    assert '"${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"' in text
+    assert '"${ARNOLD_REPAIR_QUEUE_ROOT:-}"' in text
+    assert '"${ARNOLD_L3_REPAIR_OUTCOME_PATH:-}"' in text
+    assert "arnold-l3-meta-repair-pointer-v1" in (
+        REPO_ROOT
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "progress_auditor_escalation.py"
+    ).read_text(encoding="utf-8")
+    assert "deep repair pointer exceeds its 8 KiB prompt budget" in text
+    assert "json.dumps(pointer, indent=2, sort_keys=True)" in text
+    assert "json.dumps(payload, indent=2, sort_keys=True)" not in text
+
+
 def test_meta_repair_provenance_bootstrap_uses_safe_python_path() -> None:
     text = _meta_repair_wrapper()
     assert 'PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$marker_path"' in text

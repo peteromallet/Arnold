@@ -1765,8 +1765,9 @@ class TestEdgeCases:
             "repair_goal_owner_missing",
             "repair_context_target_mismatch",
             "repair_goal_circuit_breaker",
+            "l3_progress_auditor",
         }
-        assert len(triggers) == 10
+        assert len(triggers) == 11
 
     def test_trigger_label_for_non_trigger(self) -> None:
         result = classify_repair_system_failure(session="edge-5")

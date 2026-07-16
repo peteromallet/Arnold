@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+from pathlib import Path
+
+import pytest
 
 from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
     DEEP_REPAIR_DIFFICULTY,
@@ -14,6 +17,7 @@ from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
     next_attempt_state,
     plan_dispatch,
     record_reverification,
+    validate_l3_repair_dispatch_context,
     validate_managed_launch,
     verify_recovery,
 )
@@ -148,6 +152,80 @@ def _true_stall() -> dict:
     }
 
 
+def test_l3_dispatch_context_requires_coherent_bounded_request_custody(
+    tmp_path: Path,
+) -> None:
+    context = bounded_repair_context(_true_stall())
+    context_path = tmp_path / "repair-context.json"
+    context_path.write_text(json.dumps(context), encoding="utf-8")
+    request_id = "a" * 64
+    request_path = tmp_path / f"{request_id}.json"
+    gate = context["gate"]
+    request = {
+        "schema_version": 1,
+        "kind": "repair_request",
+        "request_id": request_id,
+        "source": "six_hour_auditor",
+        "session": context["session"],
+        "resident_delegation": {
+            "schema_version": "arnold-resident-delegation-provenance-v1",
+            "source_record_id": "message-1",
+        },
+        "target": {
+            "dispatch_intent": "deep_superfixer_repair",
+            "retry_strategy": "deep_superfixer_repair",
+            "repair_context_path": str(context_path),
+            "repair_context_digest": context["context_digest"],
+            "root_cause_identity": gate["escalation_id"],
+            "l3_escalation_gate": gate,
+        },
+    }
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+
+    pointer = validate_l3_repair_dispatch_context(
+        context_path=context_path,
+        request_path=request_path,
+        expected_session=context["session"],
+        expected_context_digest=context["context_digest"],
+        expected_escalation_id=gate["escalation_id"],
+        expected_request_id=request_id,
+    )
+
+    assert pointer["schema_version"] == "arnold-l3-meta-repair-pointer-v1"
+    assert pointer["context"]["bytes"] == context_path.stat().st_size
+    assert pointer["gate"]["first_broken_layer"] == "L1"
+
+    request["target"]["repair_context_digest"] = "b" * 64
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+    with pytest.raises(ValueError, match="disagrees"):
+        validate_l3_repair_dispatch_context(
+            context_path=context_path,
+            request_path=request_path,
+            expected_session=context["session"],
+            expected_context_digest=context["context_digest"],
+            expected_escalation_id=gate["escalation_id"],
+            expected_request_id=request_id,
+        )
+
+
+def test_l3_dispatch_context_fails_closed_above_64_kib(tmp_path: Path) -> None:
+    context_path = tmp_path / "repair-context.json"
+    context_path.write_bytes(b"{" + b" " * (64 * 1024) + b"}")
+    request_id = "c" * 64
+    request_path = tmp_path / f"{request_id}.json"
+    request_path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="byte bound"):
+        validate_l3_repair_dispatch_context(
+            context_path=context_path,
+            request_path=request_path,
+            expected_session="stuck-chain",
+            expected_context_digest="d" * 64,
+            expected_escalation_id="l3-escalation:test",
+            expected_request_id=request_id,
+        )
+
+
 def test_true_stall_gate_requires_all_six_sources_and_walks_l1_l2_l3() -> None:
     gate = classify_true_stall(_true_stall())
 
@@ -245,7 +323,9 @@ def test_ordinary_retrigger_failure_is_l2_fixed_axis_not_tracking_axis() -> None
             "launch_failure": False,
         }
     ]
-    finding["deterministic_superfixer_evidence"]["absent_or_stale_l2"] = False
+    # "No healthy L2" is not the same as "no current L2 context": this
+    # current failed episode is sufficient context for the FIXED-axis verdict.
+    finding["deterministic_superfixer_evidence"]["absent_or_stale_l2"] = True
 
     gate = classify_true_stall(finding)
 
