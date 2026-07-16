@@ -5626,6 +5626,211 @@ def test_repair_loop_stale_marker_relaunch_command_regenerates_clean_runtime_cha
     assert "refusing editable install refresh: tracked changes in source checkout" not in result.stdout
 
 
+@pytest.mark.parametrize("wrapper_kind", ["watchdog", "repair"])
+def test_persisted_push_capable_marker_command_is_always_regenerated(
+    wrapper_kind: str,
+) -> None:
+    stale_command = (
+        "echo '[megaplan-refresh] refusing editable install refresh:'; "
+        "echo 'source checkout dirty; using clean runtime mirror'; "
+        "echo 'source checkout has local commits not contained in origin/$REF; attempting push'; "
+        "git -C \"$SRC\" push origin \"$REF\"; "
+        "git -C \"$MEGAPLAN_RUNTIME_SRC\" merge-base --is-ancestor HEAD \"origin/$REF\""
+    )
+    extract = _extract_wrapper_function if wrapper_kind == "watchdog" else _extract_repair_function
+    source_var = "SRC_DIR" if wrapper_kind == "watchdog" else "ARNOLD_SRC"
+    script = "\n\n".join(
+        [
+            extract("default_plan_relaunch_command"),
+            extract("resume_plan_relaunch_command"),
+            extract("chain_resume_plan_relaunch_command_if_needed"),
+            extract("stale_marker_relaunch_command"),
+            extract("default_chain_relaunch_command"),
+            extract("resolve_relaunch_command"),
+            f"{source_var}={str(REPO_ROOT)!r}",
+            "SYNC_BRANCH=editible-install",
+            (
+                "resolve_relaunch_command demo-session /tmp/workspace /tmp/chain.yaml "
+                f"chain '' {shlex.quote(stale_command)}"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
+    assert "using current source checkout at $SRC" in result.stdout
+    assert "attempting push" not in result.stdout
+    assert 'git -C "$SRC" push origin' not in result.stdout
+
+
+def _post_dev_quality_recovery_fixture(tmp_path: Path) -> tuple[Path, Path, Path, str]:
+    from arnold_pipelines.megaplan.orchestration.phase_result import Deviation, PhaseResult
+
+    workspace = tmp_path / "workspace"
+    plan_name = "quality-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "blocked",
+                "active_step": None,
+                "resume_cursor": {"phase": "review", "retry_strategy": "manual_review"},
+                "latest_failure": {
+                    "kind": "review_quality_blocked_unknown",
+                    "phase": "review",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "phase_result.json").write_text(
+        json.dumps(
+            PhaseResult(
+                phase="review",
+                invocation_id="review-invocation",
+                exit_kind="blocked_by_quality",
+                deviations=(
+                    Deviation(
+                        kind="quality_gate",
+                        message="review found a deterministic acceptance defect",
+                    ),
+                ),
+            ).to_dict()
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    subprocess.run(["git", "-C", str(workspace), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(workspace), "commit", "-qm", "quality repair"], check=True)
+    head = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    report_path = tmp_path / "dev-report.json"
+    safe_target = {"kind": "target_file", "path": "module.py"}
+    dev_report = {
+        "local_commit": head,
+        "safe_repair_target": safe_target,
+        "validation": {"focused": "passed"},
+    }
+    report_path.write_text(json.dumps(dev_report), encoding="utf-8")
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "iterations": [
+                    {
+                        "i": 1,
+                        "dev_turn_rc": 0,
+                        "dev_report_path": str(report_path),
+                        "dev_before_sha": "a" * 40,
+                        "dev_after_sha": head,
+                        "dev_fix_sha": head,
+                        "dev_fix_changed": True,
+                        "dev_report": dev_report,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    receipt_path = tmp_path / "investigator.json"
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "recommended_action": "repair_target",
+                "safe_repair_target": safe_target,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return workspace, data_path, receipt_path, plan_name
+
+
+def test_post_dev_quality_recovery_uses_fixed_resolution_and_supported_cli(
+    tmp_path: Path,
+) -> None:
+    workspace, data_path, receipt_path, plan_name = _post_dev_quality_recovery_fixture(tmp_path)
+    script = "\n\n".join(
+        [
+            _extract_repair_function("post_dev_fix_quality_recovery_command_if_needed"),
+            f"WORKSPACE={str(workspace)!r}",
+            f"PLAN_NAME={plan_name!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            f"INVESTIGATOR_RECEIPT_PATH={str(receipt_path)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            "post_dev_fix_quality_recovery_command_if_needed 1 'echo ordinary-relaunch'",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "quality-gate resolve" in result.stdout
+    assert "--resolution fixed" in result.stdout
+    assert "override recover-blocked" in result.stdout
+    assert "ordinary-relaunch" in result.stdout
+    assert "accepted_with_debt" not in result.stdout
+    assert "local dev fix commit:" in result.stdout
+    assert len(result.stdout.encode("utf-8")) <= 16384
+
+
+def test_post_dev_quality_recovery_rejects_unchanged_or_unbounded_evidence(
+    tmp_path: Path,
+) -> None:
+    workspace, data_path, receipt_path, plan_name = _post_dev_quality_recovery_fixture(tmp_path)
+    payload = json.loads(data_path.read_text(encoding="utf-8"))
+    payload["iterations"][0]["dev_fix_changed"] = False
+    data_path.write_text(json.dumps(payload), encoding="utf-8")
+    script = "\n\n".join(
+        [
+            _extract_repair_function("post_dev_fix_quality_recovery_command_if_needed"),
+            f"WORKSPACE={str(workspace)!r}",
+            f"PLAN_NAME={plan_name!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            f"INVESTIGATOR_RECEIPT_PATH={str(receipt_path)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            "post_dev_fix_quality_recovery_command_if_needed 1 'echo ordinary-relaunch'",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+
+
+def test_prior_receipted_legacy_dev_fix_can_enter_quality_recovery(tmp_path: Path) -> None:
+    workspace, data_path, receipt_path, plan_name = _post_dev_quality_recovery_fixture(tmp_path)
+    payload = json.loads(data_path.read_text(encoding="utf-8"))
+    entry = payload["iterations"][0]
+    entry.pop("dev_before_sha")
+    entry.pop("dev_after_sha")
+    entry.pop("dev_fix_changed")
+    entry.pop("dev_report_path")
+    data_path.write_text(json.dumps(payload), encoding="utf-8")
+    script = "\n\n".join(
+        [
+            _extract_repair_function("prior_receipted_dev_fix_iteration"),
+            _extract_repair_function("post_dev_fix_quality_recovery_command_if_needed"),
+            f"WORKSPACE={str(workspace)!r}",
+            f"PLAN_NAME={plan_name!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            f"INVESTIGATOR_RECEIPT_PATH={str(receipt_path)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            "prior_receipted_dev_fix_iteration",
+            "post_dev_fix_quality_recovery_command_if_needed 1 'echo ordinary-relaunch'",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert lines[0] == "1"
+    assert "quality-gate resolve" in result.stdout
+    assert f"bounded repair data:{data_path}#iterations[0].dev_report" in result.stdout
+
+
 def test_watchdog_chain_relaunch_prefers_plan_resume_for_external_resume_required(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"

@@ -1316,6 +1316,14 @@ PY
 
 stale_marker_relaunch_command() {
   local relaunch_command="${1:-}"
+  # Older persisted marker commands refreshed a dirty/ahead checkout through
+  # a clean remote mirror and could even push the local branch before launch.
+  # Those commands bypass a just-committed local repair and exceed the repair
+  # owner's delivery authority.  Regenerate them from the installed wrapper.
+  [[ "$relaunch_command" == *'source checkout dirty; using clean runtime mirror'* ]] && return 0
+  [[ "$relaunch_command" == *'source checkout has local commits not contained in origin/'* ]] && return 0
+  [[ "$relaunch_command" == *'attempting push'* ]] && return 0
+  [[ "$relaunch_command" == *'git -C "$SRC" push origin'* ]] && return 0
   [[ "$relaunch_command" == *"[megaplan-refresh] refusing editable install refresh:"* ]] || return 1
   [[ "$relaunch_command" == *'source checkout dirty; using current source checkout at $SRC to avoid stale runtime mirror'* ]] && return 1
   [[ "$relaunch_command" == *'git -C "$MEGAPLAN_RUNTIME_SRC" merge-base --is-ancestor HEAD "origin/$REF"'* ]] && return 1
@@ -4385,10 +4393,34 @@ entry["dev_model"] = dispatch_model
 if fallback_reason:
     entry["dev_model_fallback"] = fallback_reason
 entry["dev_turn_rc"] = int(turn_rc)
-entry["dev_fix_sha"] = (
-    report.get("pushed_commit")
-    or report.get("commit")
-    or (after_sha if after_sha and after_sha != before_sha else "")
+entry["dev_report_path"] = report_path
+entry["dev_before_sha"] = before_sha
+entry["dev_after_sha"] = after_sha
+
+def _commit_sha(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return text if len(text) == 40 and all(ch in "0123456789abcdef" for ch in text) else ""
+
+reported_sha = next(
+    (
+        sha
+        for sha in (
+            _commit_sha(report.get("local_commit")),
+            _commit_sha(report.get("commit")),
+            _commit_sha(report.get("pushed_commit")),
+        )
+        if sha
+    ),
+    "",
+)
+observed_after = _commit_sha(after_sha)
+observed_before = _commit_sha(before_sha)
+changed_sha = observed_after if observed_after and observed_after != observed_before else ""
+entry["dev_fix_sha"] = reported_sha or changed_sha
+entry["dev_fix_changed"] = bool(
+    int(turn_rc) == 0
+    and changed_sha
+    and entry["dev_fix_sha"] == observed_after
 )
 entry["dev_hypothesis"] = (
     report.get("hypothesis")
@@ -5500,6 +5532,283 @@ PY
   fi
 }
 
+post_dev_fix_quality_recovery_command_if_needed() {
+  local iteration="${1:-0}"
+  local normal_relaunch_command="${2:-}"
+  PYTHONPATH="${WRAPPER_REPO_ROOT:-$ARNOLD_SRC}:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
+    "$WORKSPACE" "$PLAN_NAME" "$DATA_FILE" "$INVESTIGATOR_RECEIPT_PATH" \
+    "$ARNOLD_SRC" "$iteration" "$normal_relaunch_command" <<'PY'
+import json
+import shlex
+import sys
+from pathlib import Path
+
+(
+    workspace_raw,
+    plan_name,
+    data_raw,
+    investigator_receipt_raw,
+    arnold_src_raw,
+    iteration_raw,
+    normal_relaunch_command,
+) = sys.argv[1:]
+workspace = Path(workspace_raw)
+data_path = Path(data_raw)
+receipt_path = Path(investigator_receipt_raw)
+arnold_src = Path(arnold_src_raw)
+
+
+def load_object(path: Path) -> dict[str, object]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def valid_sha(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if len(text) != 40 or any(ch not in "0123456789abcdef" for ch in text):
+        return ""
+    return text
+
+
+if not plan_name or "/" in plan_name or not normal_relaunch_command.strip():
+    raise SystemExit(0)
+try:
+    iteration = int(iteration_raw)
+except ValueError:
+    raise SystemExit(0)
+if iteration < 1:
+    raise SystemExit(0)
+
+receipt = load_object(receipt_path)
+if receipt.get("recommended_action") != "repair_target":
+    raise SystemExit(0)
+safe_target = receipt.get("safe_repair_target")
+if not isinstance(safe_target, dict) or safe_target.get("kind") in {None, "", "none"}:
+    raise SystemExit(0)
+
+repair_data = load_object(data_path)
+iterations = repair_data.get("iterations")
+if not isinstance(iterations, list) or len(iterations) < iteration:
+    raise SystemExit(0)
+entry = iterations[iteration - 1]
+if not isinstance(entry, dict):
+    raise SystemExit(0)
+try:
+    dev_turn_rc = int(entry.get("dev_turn_rc"))
+except (TypeError, ValueError):
+    raise SystemExit(0)
+if dev_turn_rc != 0:
+    raise SystemExit(0)
+after_sha = valid_sha(entry.get("dev_after_sha"))
+report_path = Path(str(entry.get("dev_report_path") or ""))
+embedded_report = entry.get("dev_report")
+embedded_report = embedded_report if isinstance(embedded_report, dict) else {}
+if not report_path.is_file():
+    run_dir = Path(str(repair_data.get("run_dir") or ""))
+    candidate = run_dir / f"iter{iteration}-dev-fix-report.json"
+    report_path = candidate if candidate.is_file() else Path()
+
+try:
+    import subprocess
+
+    current_head = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    ).stdout.strip().lower()
+except Exception:
+    raise SystemExit(0)
+legacy_report_sha = str(embedded_report.get("local_commit") or "").strip().lower()
+legacy_changed = bool(
+    not entry.get("dev_before_sha")
+    and not entry.get("dev_after_sha")
+    and valid_sha(entry.get("dev_fix_sha")) == current_head
+    and len(legacy_report_sha) >= 7
+    and current_head.startswith(legacy_report_sha)
+)
+if not legacy_changed and (
+    entry.get("dev_fix_changed") is not True
+    or not after_sha
+    or valid_sha(entry.get("dev_fix_sha")) != after_sha
+    or after_sha != current_head
+):
+    raise SystemExit(0)
+if legacy_changed:
+    after_sha = current_head
+if not report_path.is_file() and not embedded_report:
+    raise SystemExit(0)
+dev_report = embedded_report or load_object(report_path)
+prior_target = dev_report.get("safe_repair_target")
+prior_target = prior_target if isinstance(prior_target, dict) else {}
+current_locator = str(safe_target.get("scope") or safe_target.get("path") or "").strip()
+prior_locator = str(prior_target.get("scope") or prior_target.get("path") or "").strip()
+if (
+    not current_locator
+    or prior_target.get("kind") != safe_target.get("kind")
+    or prior_locator != current_locator
+    or not dev_report.get("validation")
+):
+    raise SystemExit(0)
+
+plan_dir = workspace / ".megaplan" / "plans" / plan_name
+state = load_object(plan_dir / "state.json")
+cursor = state.get("resume_cursor")
+cursor = cursor if isinstance(cursor, dict) else {}
+failure = state.get("latest_failure")
+failure = failure if isinstance(failure, dict) else {}
+if (
+    state.get("current_state") != "blocked"
+    or state.get("active_step")
+    or cursor.get("phase") != "review"
+    or cursor.get("retry_strategy") != "manual_review"
+    or not str(failure.get("kind") or "").startswith("review_quality_blocked")
+    or failure.get("phase") != "review"
+):
+    raise SystemExit(0)
+
+from arnold_pipelines.megaplan.blocker_recovery import quality_blocker_id
+from arnold_pipelines.megaplan.orchestration.phase_result import read_phase_result
+
+phase_result = read_phase_result(plan_dir)
+if phase_result is None or phase_result.phase != "review":
+    raise SystemExit(0)
+blocker_ids = sorted(
+    {
+        quality_blocker_id(deviation)
+        for deviation in phase_result.deviations
+        if str(getattr(deviation, "message", "")).strip()
+    }
+)
+if not blocker_ids:
+    raise SystemExit(0)
+
+base = [
+    "python3",
+    "-P",
+    "-m",
+    "arnold_pipelines.megaplan",
+]
+commands: list[str] = []
+for blocker_id in blocker_ids:
+    commands.append(
+        shlex.join(
+            base
+            + [
+                "quality-gate",
+                "resolve",
+                "--project-dir",
+                str(workspace),
+                "--plan",
+                plan_name,
+                "--blocker-id",
+                blocker_id,
+                "--resolution",
+                "fixed",
+                "--phase",
+                "review",
+                "--evidence",
+                f"validated investigator receipt:{receipt_path}",
+                "--evidence",
+                f"local dev fix commit:{after_sha}",
+                "--evidence",
+                (
+                    f"bounded dev report:{report_path}"
+                    if report_path.is_file()
+                    else f"bounded repair data:{data_path}#iterations[{iteration - 1}].dev_report"
+                ),
+            ]
+        )
+    )
+commands.append(
+    shlex.join(
+        base
+        + [
+            "override",
+            "recover-blocked",
+            "--project-dir",
+            str(workspace),
+            "--plan",
+            plan_name,
+            "--reason",
+            "validated automatic source repair; rerun review without accepting debt",
+        ]
+    )
+)
+env_prefix = (
+    f"cd {shlex.quote(str(workspace))} && "
+    "MEGAPLAN_ACTOR_ID=arnold-repair-loop "
+    "PYTHONSAFEPATH=1 "
+    f"PYTHONPATH={shlex.quote(str(arnold_src))}:${{PYTHONPATH:-}} "
+)
+recovery = env_prefix + (" && ".join(commands)) + " && { " + normal_relaunch_command + "; }"
+if len(recovery.encode("utf-8")) > 16384:
+    raise SystemExit("post-dev quality recovery command exceeds 16384-byte bound")
+print(recovery)
+PY
+}
+
+prior_receipted_dev_fix_iteration() {
+  PYTHONPATH="${WRAPPER_REPO_ROOT:-$ARNOLD_SRC}:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
+    "$WORKSPACE" "$DATA_FILE" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+workspace = Path(sys.argv[1])
+data_path = Path(sys.argv[2])
+try:
+    payload = json.loads(data_path.read_text(encoding="utf-8"))
+    head = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    ).stdout.strip().lower()
+except Exception:
+    raise SystemExit(0)
+if len(head) != 40 or any(ch not in "0123456789abcdef" for ch in head):
+    raise SystemExit(0)
+iterations = payload.get("iterations")
+if not isinstance(iterations, list):
+    raise SystemExit(0)
+for index in range(len(iterations) - 1, -1, -1):
+    entry = iterations[index]
+    if not isinstance(entry, dict):
+        continue
+    try:
+        if int(entry.get("dev_turn_rc")) != 0:
+            continue
+    except (TypeError, ValueError):
+        continue
+    sha = str(entry.get("dev_fix_sha") or "").strip().lower()
+    if sha != head:
+        continue
+    report = entry.get("dev_report")
+    report = report if isinstance(report, dict) else {}
+    local_commit = str(report.get("local_commit") or "").strip().lower()
+    new_receipt = bool(
+        entry.get("dev_fix_changed") is True
+        and str(entry.get("dev_after_sha") or "").strip().lower() == head
+    )
+    legacy_receipt = bool(
+        len(local_commit) >= 7
+        and head.startswith(local_commit)
+        and not entry.get("dev_before_sha")
+        and not entry.get("dev_after_sha")
+    )
+    if new_receipt or legacy_receipt:
+        print(index + 1)
+        raise SystemExit(0)
+PY
+}
+
 verify_started_and_holding() {
   local session="$1"
   local workspace="$2"
@@ -5590,6 +5899,20 @@ mechanical_launch_step() {
       echo "failed:missing_relaunch_command"
       return 1
     }
+    if [[ -n "${POST_DEV_FIX_ITERATION:-}" ]]; then
+      local quality_recovery_command
+      quality_recovery_command="$(
+        post_dev_fix_quality_recovery_command_if_needed \
+          "$POST_DEV_FIX_ITERATION" "$quoted_command"
+      )" || {
+        echo "failed:quality_recovery_command_invalid"
+        return 1
+      }
+      if [[ -n "$quality_recovery_command" ]]; then
+        log "using receipt-bound supported quality recovery before ordinary relaunch session=$session iteration=$iteration" >&2
+        quoted_command="$quality_recovery_command"
+      fi
+    fi
   fi
   if tmux has-session -t "$session" 2>/dev/null; then
     log "mechanical relaunch fenced: existing tmux session is not this owner's custody session=$session iteration=$iteration" >&2
@@ -7534,6 +7857,44 @@ if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]; then
   fi
 fi
 
+# A previous L1 owner may already have committed the investigator-authorized
+# target repair but failed to re-enter the blocked quality phase because an
+# older marker command merely restarted the chain. Reuse that durable commit
+# receipt under the current validated investigator handoff before launching a
+# duplicate mutating fixer. The generated command records resolution=fixed,
+# invokes the supported recover-blocked CLI, and therefore still requires a
+# fresh review; it never accepts the finding as debt or rewrites state JSON.
+if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "repair_target" ]]; then
+  prior_fix_iteration="$(prior_receipted_dev_fix_iteration || true)"
+  if [[ -n "$prior_fix_iteration" ]]; then
+    export POST_DEV_FIX_ITERATION="$prior_fix_iteration"
+    require_investigation_before_mutation "prior-dev-fix-quality-recovery"
+    mechanical_status="$(mechanical_launch_step "$prior_fix_iteration" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
+      repair_data_record_mechanical "$prior_fix_iteration" "0" "$mechanical_status" "prior receipted dev-fix quality recovery: $mechanical_status"
+    }
+    if [[ "${mechanical_status:-}" == "running" ]]; then
+      repair_data_record_mechanical "$prior_fix_iteration" "0" "running" "prior receipted dev fix entered supported quality recovery and held"
+      if wait_for_repair_goal_progress_if_live "prior-dev-fix-quality-recovery"; then
+        exit 0
+      elif [[ "$?" == "2" ]]; then
+        exit 1
+      fi
+      repair_goal_evaluate_or_exit "prior-dev-fix-quality-recovery-observed" || true
+    elif [[ "${mechanical_status:-}" == terminal:* ]]; then
+      repair_data_record_mechanical "$prior_fix_iteration" "0" "terminal" "$mechanical_status"
+      repair_goal_evaluate_or_exit "prior-dev-fix-quality-recovery-terminal" || true
+    else
+      repair_data_set_outcome "recovery_not_verified"
+      repair_goal_record_terminal_failure \
+        "prior-dev-fix-quality-recovery-failed" \
+        "recovery_not_verified" \
+        "$mechanical_status" || true
+      log "prior receipted dev fix could not enter supported quality recovery; fresh investigation required session=$SESSION status=$mechanical_status"
+    fi
+    exit 1
+  fi
+fi
+
 GLM_MODEL=""
 GLM_FALLBACK="zhipu:glm-5.2 disabled by default for watchdog repair; using gpt-5.4 for iteration 1"
 if [[ "${CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM:-0}" == "1" ]]; then
@@ -7602,6 +7963,7 @@ for iteration in 1 2 3; do
     break
   fi
   run_dev_fix_turn "$iteration" "$CURRENT_ATTEMPT_ID" "${CURRENT_RECURRING:-0}" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL" "$DEV_DISPATCH_KIND" "$DEV_FALLBACK_REASON"
+  export POST_DEV_FIX_ITERATION="$iteration"
   exit_if_repair_target_complete "iteration-$iteration-post-dev-fix"
   recover_blocked_after_dev_fix_if_possible "$iteration" "$CURRENT_ATTEMPT_ID" || true
   if wait_for_repair_goal_progress_if_live "owner-iteration-$iteration-post-dev-fix"; then

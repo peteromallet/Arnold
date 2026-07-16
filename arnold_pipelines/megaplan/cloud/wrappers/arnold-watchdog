@@ -4203,6 +4203,12 @@ PY
 
 stale_marker_relaunch_command() {
   local relaunch_command="${1:-}"
+  # Reject persisted launch commands from the former remote-mirror/push
+  # transport. They can hide a local repair or exceed delivery authority.
+  [[ "$relaunch_command" == *'source checkout dirty; using clean runtime mirror'* ]] && return 0
+  [[ "$relaunch_command" == *'source checkout has local commits not contained in origin/'* ]] && return 0
+  [[ "$relaunch_command" == *'attempting push'* ]] && return 0
+  [[ "$relaunch_command" == *'git -C "$SRC" push origin'* ]] && return 0
   [[ "$relaunch_command" == *"[megaplan-refresh] refusing editable install refresh:"* ]] || return 1
   [[ "$relaunch_command" == *'source checkout dirty; using current source checkout at $SRC to avoid stale runtime mirror'* ]] && return 1
   [[ "$relaunch_command" == *'git -C "$MEGAPLAN_RUNTIME_SRC" merge-base --is-ancestor HEAD "origin/$REF"'* ]] && return 1
