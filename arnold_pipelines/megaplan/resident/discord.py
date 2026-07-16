@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
 import hashlib
 import json
 import logging
@@ -17,7 +16,7 @@ from urllib.parse import urlparse
 
 import httpx
 from agentbox.redaction import redact_text
-from arnold_pipelines.megaplan.store import ScheduledJobInput, deterministic_idempotency_key
+from arnold_pipelines.megaplan.store import deterministic_idempotency_key
 
 from .auth import AuthorizationSubject
 from .currently_running import (
@@ -1390,8 +1389,8 @@ class ResidentDiscordService:
             else:
                 reaction_delivery = None
             self._log_transcription_readiness()
-            self._ensure_scheduler_started(client)
             self._seed_special_requests_job()
+            self._ensure_scheduler_started(client)
             user = getattr(client, "user", None)
             guilds = getattr(client, "guilds", ())
             LOGGER.info(
@@ -1857,35 +1856,20 @@ class ResidentDiscordService:
             or f"discord:dm:{subject_user_id}"
         )
         store = self.runtime.store
-        if store.list_scheduled_jobs(job_type="vp_todo_sweep", status="pending", limit=1):
-            return
-        target = DiscordDeliveryTarget.from_conversation_key(conversation_key)
-        interval_s = int(config.special_requests_interval_s)
-        payload = {
-            "conversation_key": conversation_key,
-            "subject_user_id": subject_user_id,
-            "guild_id": target.guild_id,
-            # A DM has no channel id; leave it unset so the inbound channel
-            # allowlist (if any) doesn't block the system-generated turn.
-            "channel_id": None if target.dm_user_id else target.channel_id,
-            "dm_user_id": target.dm_user_id,
-            "interval_s": interval_s,
-        }
-        store.create_scheduled_job(
-            ScheduledJobInput(
-                job_type="vp_todo_sweep",
-                payload=payload,
-                scheduled_for=datetime.now(UTC),
-                max_attempts=3,
-            ),
-            idempotency_key=deterministic_idempotency_key(
-                "resident-vp-todo-sweep-seed", conversation_key
-            ),
+        from .schedules import reconcile_vp_todo_schedule
+
+        receipt = reconcile_vp_todo_schedule(
+            store,
+            interval_seconds=int(config.special_requests_interval_s),
         )
         LOGGER.info(
-            "VP to-do sweep job seeded target=%s interval_s=%s",
+            "VP to-do recurrence reconciled target=%s interval_s=%s "
+            "schedule_id=%s next_occurrence=%s cancelled_legacy=%s",
             conversation_key,
-            interval_s,
+            config.special_requests_interval_s,
+            receipt["schedule_id"],
+            receipt["next_occurrence"],
+            len(receipt["cancelled_legacy_job_ids"]),
         )
 
     async def _scheduler_loop(self, client: Any) -> None:

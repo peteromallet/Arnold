@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
 import json
 import os
 from pathlib import Path
@@ -143,6 +144,48 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
     create.add_argument("--file", required=True)
     create.add_argument("--idempotency-key", required=True)
     create.add_argument("--dry-run", action="store_true")
+    add = schedule_sub.add_parser(
+        "add",
+        help=(
+            "Create an authorized schedule from one-shot, anchored interval, cron, or "
+            "wall-clock calendar input"
+        ),
+    )
+    add.add_argument("--id", required=True, dest="schedule_id")
+    add.add_argument("--description", required=True)
+    prompt_source = add.add_mutually_exclusive_group(required=True)
+    prompt_source.add_argument("--prompt")
+    prompt_source.add_argument("--prompt-file")
+    add.add_argument(
+        "--grant-file", required=True,
+        help="Immutable AuthorizationGrant JSON; schedule timing never expands this grant",
+    )
+    timing_source = add.add_mutually_exclusive_group(required=True)
+    timing_source.add_argument(
+        "--at", help="ISO instant/local wall time or 'next <weekday> HH:MM'"
+    )
+    timing_source.add_argument("--every", help="Positive ISO 8601 interval, for example PT6H")
+    timing_source.add_argument("--cron", help="Five-field cron expression")
+    timing_source.add_argument(
+        "--calendar", help="Wall-clock expression such as 'Monday at 6:00 AM'"
+    )
+    add.add_argument(
+        "--start", help="Required interval anchor; use 'now' or an ISO/wall-clock timestamp"
+    )
+    add.add_argument(
+        "--timezone",
+        help="IANA timezone; defaults only to the current resident provenance timezone",
+    )
+    add.add_argument("--gap-policy", choices=["reject", "skip", "next_valid"], default="reject")
+    add.add_argument("--fold-policy", choices=["first", "second", "both"], default="first")
+    add.add_argument("--work-intent", choices=["speculative", "review", "execution"], default="review")
+    add.add_argument("--task-kind", default="other")
+    add.add_argument("--model", default="gpt-5.6-terra")
+    add.add_argument("--profile", default="resident-subagent-standard")
+    add.add_argument("--project-dir")
+    add.add_argument("--max-occurrences", type=int)
+    add.add_argument("--idempotency-key")
+    add.add_argument("--dry-run", action="store_true")
     preview = schedule_sub.add_parser("preview", help="Preview nominal instants without writing")
     preview.add_argument("--file", required=True)
     preview.add_argument("--count", type=int, default=10)
@@ -151,6 +194,8 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
     get.add_argument("--history", action="store_true")
     listing = schedule_sub.add_parser("list")
     listing.add_argument("--state")
+    listing.add_argument("--upcoming-hours", type=int, default=12)
+    listing.add_argument("--limit", type=int, default=20)
     update = schedule_sub.add_parser("update")
     update.add_argument("schedule_id")
     update.add_argument("--file", required=True)
@@ -158,7 +203,10 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
     for action in ("activate", "pause", "resume", "cancel"):
         lifecycle = schedule_sub.add_parser(action)
         lifecycle.add_argument("schedule_id")
-        lifecycle.add_argument("--if-revision", required=True, type=int)
+        lifecycle.add_argument(
+            "--if-revision", type=int,
+            help="Optional optimistic revision; defaults to the currently observed revision",
+        )
         lifecycle.add_argument("--reason", required=True)
     occurrences = schedule_sub.add_parser("occurrences")
     occurrences.add_argument("schedule_id")
@@ -254,7 +302,8 @@ def _resident_supersede_todo(
 
 def _resident_schedule(root: Path, store: Store, args: argparse.Namespace) -> dict[str, Any]:
     from .schedules import (
-        AuthorizationGrant, ScheduleService, definition_from_file, schedule_store_root,
+        AuthorizationGrant, ScheduleService, build_operator_schedule_definition,
+        definition_from_file, schedule_projection, schedule_store_root,
     )
 
     store_root = schedule_store_root(store)
@@ -283,6 +332,61 @@ def _resident_schedule(root: Path, store: Store, args: argparse.Namespace) -> di
                 "created": changed, "definition": created.model_dump(mode="json", by_alias=True),
                 "nominal_times": [item.isoformat() for item in preview],
             }
+        if action == "add":
+            if args.prompt_file:
+                prompt = Path(args.prompt_file).expanduser().resolve().read_text(encoding="utf-8")
+            else:
+                prompt = str(args.prompt or "")
+            grant = AuthorizationGrant.model_validate_json(
+                Path(args.grant_file).expanduser().resolve().read_text(encoding="utf-8")
+            )
+            provenance = provenance_from_environment(strict=True)
+            timezone = args.timezone or (
+                str(provenance.get("timezone_name"))
+                if provenance and provenance.get("timezone_name") else None
+            )
+            if not timezone:
+                raise ValueError(
+                    "--timezone is required when current resident provenance has no configured timezone"
+                )
+            definition = build_operator_schedule_definition(
+                schedule_id=args.schedule_id,
+                description=args.description,
+                prompt=prompt,
+                authorization=grant,
+                timezone=timezone,
+                at=args.at,
+                every=args.every,
+                start=args.start,
+                cron=args.cron,
+                calendar=args.calendar,
+                gap_policy=args.gap_policy,
+                fold_policy=args.fold_policy,
+                work_intent=args.work_intent,
+                task_kind=args.task_kind,
+                model=args.model,
+                profile=args.profile,
+                project_dir=args.project_dir,
+                max_occurrences=args.max_occurrences,
+            )
+            preview = service.preview(definition, count=10)
+            if args.dry_run:
+                return {
+                    "success": True, "step": "resident", "action": "schedule-add",
+                    "dry_run": True,
+                    "definition": definition.model_dump(mode="json", by_alias=True),
+                    "nominal_times": [item.isoformat() for item in preview],
+                }
+            created, changed = service.create(
+                definition,
+                idempotency_key=args.idempotency_key or f"schedule-add:{args.schedule_id}",
+            )
+            return {
+                "success": True, "step": "resident", "action": "schedule-add",
+                "created": changed,
+                "schedule": schedule_projection(service, created),
+                "nominal_times": [item.isoformat() for item in preview],
+            }
         if action == "get":
             definition = service.repo.read_definition(args.schedule_id)
             payload: dict[str, Any] = {
@@ -297,10 +401,24 @@ def _resident_schedule(root: Path, store: Store, args: argparse.Namespace) -> di
             return payload
         if action == "list":
             rows = service.repo.definitions(state=args.state)
+            if args.upcoming_hours < 1 or args.upcoming_hours > 24 * 31:
+                raise ValueError("--upcoming-hours must be between 1 and 744")
+            if args.limit < 1 or args.limit > 100:
+                raise ValueError("--limit must be between 1 and 100")
+            now = datetime.now(UTC)
+            horizon = now + timedelta(hours=args.upcoming_hours)
+            projections = [schedule_projection(service, row, now=now) for row in rows]
+            for item in projections:
+                trigger = item.get("next_trigger_at")
+                item["within_upcoming_window"] = bool(
+                    trigger and datetime.fromisoformat(str(trigger)) <= horizon
+                )
             return {
                 "success": True, "step": "resident", "action": "schedule-list",
-                "count": len(rows),
-                "items": [row.model_dump(mode="json", by_alias=True) for row in rows],
+                "count": len(rows), "returned_count": min(len(rows), args.limit),
+                "upcoming_hours": args.upcoming_hours,
+                "items": projections[: args.limit],
+                "omitted_count": max(0, len(rows) - args.limit),
             }
         if action == "update":
             replacement = definition_from_file(Path(args.file).expanduser().resolve())
@@ -311,8 +429,11 @@ def _resident_schedule(root: Path, store: Store, args: argparse.Namespace) -> di
             }
         if action in {"activate", "pause", "resume", "cancel"}:
             state = {"activate": "active", "resume": "active", "pause": "paused", "cancel": "cancelled"}[action]
+            observed = service.repo.read_definition(args.schedule_id)
             revised = service.set_state(
-                args.schedule_id, state, if_revision=args.if_revision, audit_reason=args.reason,
+                args.schedule_id, state,
+                if_revision=args.if_revision or observed.revision,
+                audit_reason=args.reason,
             )
             return {
                 "success": True, "step": "resident", "action": f"schedule-{action}",

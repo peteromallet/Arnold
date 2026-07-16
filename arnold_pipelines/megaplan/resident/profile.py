@@ -102,6 +102,11 @@ from .context_tree import (
     search_context,
 )
 from .knowledge_context import KNOWLEDGE_LIFECYCLE, build_knowledge_context
+from .schedules import (
+    schedule_cli_capabilities,
+    schedule_hot_context,
+    schedule_store_root,
+)
 
 MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v10"
 # The watchdog refreshes the snapshot roughly hourly; tolerate up to two ticks
@@ -1228,6 +1233,12 @@ class MegaplanResidentProfile:
             "The command must fail closed unless the installed unit proves its main-process-only "
             "stop boundary. Be explicit that the current Discord turn can be interrupted even though "
             "durable resident agents and Megaplan/cloud chains are preserved."
+            " For schedule requests, use the supported commands and examples under "
+            "`resident_schedules.guidance`. Wall-clock/calendar input is interpreted in the explicit "
+            "IANA timezone or configured user timezone and retains DST gap/fold policy; anchored "
+            "intervals require an explicit start (including the explicit value `now`). Never invent "
+            "an unspecified hour. Creating a schedule cannot expand the immutable grant, task work "
+            "intent, delivery route, expiry, or other authority of the underlying task."
         )
 
     def system_prompt_for(self, request_text: str | None) -> str:
@@ -1279,6 +1290,26 @@ class MegaplanResidentProfile:
             status_snapshot.plan_activity_summary(full_cloud_status_snapshot)
         )
         compact_agents = _compact_resident_agents(resident_agents)
+        resident_schedule_root = schedule_store_root(self.store)
+        if resident_schedule_root is not None:
+            try:
+                resident_schedules = schedule_hot_context(resident_schedule_root)
+            except (OSError, ValueError, RuntimeError) as exc:
+                resident_schedules = {
+                    "schema_version": "arnold-resident-schedule-hot-context-v1",
+                    "available": False,
+                    "error": f"schedule projection unavailable: {type(exc).__name__}",
+                    "upcoming_enabled": [],
+                    "bounded_limit": 8,
+                }
+        else:
+            resident_schedules = {
+                "schema_version": "arnold-resident-schedule-hot-context-v1",
+                "available": False,
+                "error": "single-writer resident schedule store is not enabled",
+                "upcoming_enabled": [],
+                "bounded_limit": 8,
+            }
         base: dict[str, Any] = {
             "conversation_id": conversation_id,
             "prompt_version": MEGAPLAN_RESIDENT_PROMPT_VERSION,
@@ -1455,6 +1486,7 @@ class MegaplanResidentProfile:
             "local_epic_chain_state": local_epic_chain_state,
             "live_cloud_chain": live_cloud_chain,
             "resident_agents": compact_agents,
+            "resident_schedules": resident_schedules,
             "vp_special_requests_todos": todo_context,
         }
         base["context_root"] = build_context_root(
@@ -1466,6 +1498,7 @@ class MegaplanResidentProfile:
             ticket_count=len(knowledge_context.tickets),
             document_count=len(knowledge_context.documents),
             todos=todo_context,
+            schedules=resident_schedules,
             runtime={
                 "model_provider": self.config.model_provider,
                 "model": self.config.model_name,
@@ -1484,6 +1517,7 @@ class MegaplanResidentProfile:
                 "tickets": list(knowledge_context.tickets),
                 "documents": list(knowledge_context.documents),
                 "todos": [vp_todo.public_item(item) for item in vp_todo.load_items(self._todo_path())],
+                "schedules": list(resident_schedules.get("upcoming_enabled") or []),
                 "runtime": {
                     "model_provider": self.config.model_provider,
                     "model": self.config.model_name,
@@ -1497,7 +1531,9 @@ class MegaplanResidentProfile:
                     item.model_dump(mode="json") if hasattr(item, "model_dump") else item
                     for item in messages
                 ],
-                "capabilities": self.tool_registry.as_compact_catalog(),
+                "capabilities": (
+                    self.tool_registry.as_compact_catalog() + schedule_cli_capabilities()
+                ),
             }
             while len(self._context_source_cache) > 32:
                 self._context_source_cache.pop(next(iter(self._context_source_cache)))

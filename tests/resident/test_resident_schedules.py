@@ -11,15 +11,21 @@ from types import SimpleNamespace
 import pytest
 
 from arnold_pipelines.megaplan.resident.schedules import (
+    AuthorizationGrant,
     ScheduleDefinition,
     ScheduleService,
+    VP_TODO_SCHEDULE_ID,
+    build_operator_schedule_definition,
     parse_cron,
+    parse_wall_clock_at,
+    reconcile_vp_todo_schedule,
+    schedule_hot_context,
 )
 from arnold_pipelines.megaplan.resident.cli import (
     _register_resident_subcommands,
     run_resident_cli,
 )
-from arnold_pipelines.megaplan.store import FileStore
+from arnold_pipelines.megaplan.store import FileStore, ScheduledJobInput
 
 
 NOW = datetime(2026, 7, 16, 18, 0, tzinfo=UTC)
@@ -426,3 +432,183 @@ def test_cli_create_list_run_and_occurrence_projection(tmp_path: Path) -> None:
     occurrences = run_resident_cli(tmp_path, occurrences_args)
     assert occurrences["count"] == 1
     assert occurrences["items"][0]["state"] == "terminal"
+
+
+def _grant() -> AuthorizationGrant:
+    return definition().authorization
+
+
+def test_next_sunday_requires_hour_and_resolves_in_explicit_timezone() -> None:
+    parsed = parse_wall_clock_at(
+        "next Sunday at 9:00 AM", timezone="America/New_York", now=NOW
+    )
+    assert parsed == datetime(2026, 7, 19, 13, 0, tzinfo=UTC)
+    with pytest.raises(ValueError, match="requires an explicit hour"):
+        parse_wall_clock_at("next Sunday", timezone="America/New_York", now=NOW)
+
+
+def test_easy_calendar_and_anchored_interval_creation_paths_end_to_end(tmp_path: Path) -> None:
+    parser = argparse.ArgumentParser()
+    _register_resident_subcommands(parser)
+    store_root = tmp_path / "resident-store"
+    grant_file = tmp_path / "grant.json"
+    grant_file.write_text(_grant().model_dump_json(), encoding="utf-8")
+
+    calendar_args = parser.parse_args(
+        [
+            "schedule", "--store-root", str(store_root), "add",
+            "--id", "sched_monday_wall_clock",
+            "--description", "Monday wall-clock review",
+            "--prompt", "Review the authorized Monday evidence.",
+            "--grant-file", str(grant_file),
+            "--calendar", "Monday at 6:00 AM",
+            "--timezone", "America/New_York",
+        ]
+    )
+    calendar = run_resident_cli(tmp_path, calendar_args)
+    assert calendar["created"] is True
+    assert calendar["schedule"]["type"] == "calendar"
+    assert calendar["schedule"]["timezone"] == "America/New_York"
+    assert "DST gap=reject, fold=first" in calendar["schedule"]["recurrence"]
+
+    interval_args = parser.parse_args(
+        [
+            "schedule", "--store-root", str(store_root), "add",
+            "--id", "sched_six_hour_anchor",
+            "--description", "Anchored six-hour review",
+            "--prompt", "Review the authorized interval evidence.",
+            "--grant-file", str(grant_file),
+            "--every", "PT6H", "--start", "now",
+            "--timezone", "America/New_York",
+        ]
+    )
+    interval = run_resident_cli(tmp_path, interval_args)
+    assert interval["created"] is True
+    assert interval["schedule"]["type"] == "interval"
+    assert "every PT6H" in interval["schedule"]["recurrence"]
+
+    listing = run_resident_cli(
+        tmp_path,
+        parser.parse_args(
+            ["schedule", "--store-root", str(store_root), "list", "--upcoming-hours", "12"]
+        ),
+    )
+    assert {item["schedule_id"] for item in listing["items"]} == {
+        "sched_monday_wall_clock", "sched_six_hour_anchor"
+    }
+    cancelled = run_resident_cli(
+        tmp_path,
+        parser.parse_args(
+            [
+                "schedule", "--store-root", str(store_root), "cancel",
+                "sched_six_hour_anchor", "--reason", "operator test cleanup",
+            ]
+        ),
+    )
+    assert cancelled["definition"]["state"] == "cancelled"
+
+
+def test_operator_builder_supports_cron_and_rejects_missing_interval_anchor() -> None:
+    cron = build_operator_schedule_definition(
+        schedule_id="sched_cron_review",
+        description="Cron review",
+        prompt="Review the authorized evidence.",
+        authorization=_grant(),
+        timezone="Europe/London",
+        cron="15 6 * * 1",
+        now=NOW,
+    )
+    assert cron.schedule.kind == "cron"
+    assert ScheduleService(Path("/tmp/unused-schedule-preview")).preview(
+        cron, count=1, start=NOW
+    )[0] == datetime(2026, 7, 20, 5, 15, tzinfo=UTC)
+    with pytest.raises(ValueError, match="require --start"):
+        build_operator_schedule_definition(
+            schedule_id="sched_missing_anchor",
+            description="Bad interval",
+            prompt="Review evidence.",
+            authorization=_grant(),
+            timezone="UTC",
+            every="PT6H",
+            now=NOW,
+        )
+
+
+def test_hot_context_projects_only_bounded_next_twelve_hours_with_local_fields(
+    tmp_path: Path,
+) -> None:
+    service = ScheduleService(tmp_path)
+    for number, hour in enumerate((19, 20, 21), start=1):
+        row = definition(
+            schedule_id=f"sched_hot_{number}",
+            timing={
+                "kind": "at",
+                "at": datetime(2026, 7, 16, hour, 0, tzinfo=UTC).isoformat(),
+                "timezone": "America/New_York",
+            },
+        )
+        service.create(row, idempotency_key=f"hot-{number}")
+    context = schedule_hot_context(tmp_path, now=NOW, hours=12, limit=2)
+    assert context["upcoming_enabled_count"] == 3
+    assert len(context["upcoming_enabled"]) == 2
+    assert context["omitted_count"] == 1
+    first = context["upcoming_enabled"][0]
+    assert first["schedule_id"] == "sched_hot_1"
+    assert first["next_trigger_at"] == "2026-07-16T19:00:00+00:00"
+    assert first["next_trigger_local"] == "2026-07-16 15:00:00 EDT (UTC-04:00)"
+    guidance = context["guidance"]
+    assert "Monday at 6:00 AM" in guidance["create_calendar_sample"]
+    assert "--every PT6H --start now" in guidance["create_anchored_interval_sample"]
+    assert "schedule list" in guidance["list"]
+    assert "schedule cancel" in guidance["cancel"]
+    assert "never expands" in guidance["authority"]
+
+
+def test_six_hour_migration_is_idempotent_and_leaves_one_authoritative_recurrence(
+    tmp_path: Path,
+) -> None:
+    store = FileStore(tmp_path)
+    next_due = datetime(2026, 7, 16, 23, 56, 38, tzinfo=UTC)
+    payload = {
+        "conversation_key": "discord:dm:123",
+        "subject_user_id": "123",
+        "interval_s": 21600,
+        "last_retained_todo_digest": "digest-before-cutover",
+        "consecutive_unchanged_sweeps": 8,
+    }
+    first_job = store.create_scheduled_job(
+        ScheduledJobInput(
+            job_type="vp_todo_sweep", payload=payload,
+            scheduled_for=next_due, max_attempts=3,
+        )
+    )
+    duplicate_job = store.create_scheduled_job(
+        ScheduledJobInput(
+            job_type="vp_todo_sweep", payload=payload,
+            scheduled_for=next_due + timedelta(minutes=5), max_attempts=3,
+        )
+    )
+    first = reconcile_vp_todo_schedule(
+        store, interval_seconds=21600, now=NOW
+    )
+    second = reconcile_vp_todo_schedule(
+        store, interval_seconds=21600, now=NOW + timedelta(minutes=1)
+    )
+    assert first["schedule_id"] == VP_TODO_SCHEDULE_ID
+    assert first["created"] is True
+    assert first["active_recurrence_count"] == 1
+    assert first["next_occurrence"] == next_due.isoformat()
+    assert set(first["cancelled_legacy_job_ids"]) == {first_job.id, duplicate_job.id}
+    assert second["created"] is False
+    assert second["active_recurrence_count"] == 1
+    assert second["cancelled_legacy_job_ids"] == []
+    assert store.load_scheduled_job(first_job.id).status == "cancelled"
+    assert store.load_scheduled_job(duplicate_job.id).status == "cancelled"
+    service = ScheduleService(tmp_path)
+    active = [
+        row for row in service.repo.definitions(state="active")
+        if row.target.operation == "vp_todo_sweep"
+    ]
+    assert [row.schedule_id for row in active] == [VP_TODO_SCHEDULE_ID]
+    assert active[0].schedule.cadence == "fixed_delay"
+    assert active[0].target.payload["last_retained_todo_digest"] == "digest-before-cutover"

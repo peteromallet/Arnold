@@ -453,6 +453,29 @@ class ResidentJobHandlers:
         audit_context: Mapping[str, Any] | None,
     ) -> None:
         if bool(job.payload.get("schedule_owned")):
+            payload = dict(job.payload)
+            if audit_context is None:
+                payload.pop("last_retained_todo_digest", None)
+                payload.pop("last_audit_scope_digest", None)
+                payload.pop("consecutive_unchanged_sweeps", None)
+            else:
+                repeat_state = audit_context["repeat_state"]
+                payload["last_retained_todo_digest"] = repeat_state[
+                    "retained_todo_digest"
+                ]
+                payload["last_audit_scope_digest"] = repeat_state[
+                    "audit_scope_digest"
+                ]
+                payload["consecutive_unchanged_sweeps"] = repeat_state[
+                    "consecutive_unchanged_sweeps"
+                ]
+            self.store.update_scheduled_job(
+                job.id,
+                payload=payload,
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-vp-todo-schedule-state", job.id, job.attempt_count
+                ),
+            )
             return
         pending = self.store.list_scheduled_jobs(job_type="vp_todo_sweep", status="pending", limit=1)
         if pending:

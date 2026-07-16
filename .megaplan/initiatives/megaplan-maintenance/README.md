@@ -7,6 +7,7 @@ The chain-referenced milestone briefs under `briefs/` are canonical. Architectur
 ## Resident-managed scheduling
 
 - [Flexible resident-managed scheduling implementation and operator handoff](handoff/flexible-resident-managed-scheduling-implementation-20260716.md) — delivered single-resident control-plane foundation for durable definitions, immutable occurrences, managed-agent launch custody, time/event scheduling, lifecycle, recovery, quotas, observability, and deployment evidence.
+- The live six-hour VP progress audit is the first recurrence migrated to that control plane: one fixed-delay resident definition owns recurrence, while the existing report-only handler and payload remain the occurrence target. The supported `resident schedule add/list/cancel` front door covers explicit-time one-shots, anchored intervals, cron, and timezone/DST-aware wall-clock calendars.
 - Canonical requirements source: `research/flexible-resident-managed-subagent-scheduling-architecture-20260716.md`, authored by durable resident run `subagent-20260716-180912-f35a37b5`. The raw run artifacts are cited in the implementation handoff so the source analysis remains auditable even though it was produced in the separate project checkout.
 
 ## Current incident and recovery plans

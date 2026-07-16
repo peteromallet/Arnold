@@ -13,6 +13,7 @@ from datetime import UTC, datetime, time, timedelta
 import fcntl
 import hashlib
 import json
+from itertools import islice
 import os
 from pathlib import Path
 import re
@@ -22,6 +23,8 @@ from uuid import uuid4
 from zoneinfo import TZPATH, ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from .timezone import format_timestamp, localize_wall_time, validate_timezone_name
 
 
 ScheduleState = Literal["draft", "active", "paused", "cancelled", "exhausted"]
@@ -36,6 +39,23 @@ _DAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
 _DURATION = re.compile(
     r"^P(?:(?P<days>\d+)D)?(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+(?:\.\d+)?)S)?)?$"
 )
+_NEXT_WEEKDAY = re.compile(
+    r"^next\s+(?P<day>monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
+    r"(?:\s+at)?\s+(?P<clock>\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]m)?)$",
+    re.IGNORECASE,
+)
+_CALENDAR_EXPRESSION = re.compile(
+    r"^(?P<days>[A-Za-z]+(?:\s*,\s*[A-Za-z]+)*)\s+at\s+"
+    r"(?P<clock>\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]m)?)$",
+    re.IGNORECASE,
+)
+VP_TODO_SCHEDULE_ID = "sched_vp_todo_six_hour"
+VP_TODO_SCHEDULE_PROMPT = (
+    "Run the established report-only VP special-request todo audit through the "
+    "resident orchestrator turn. This schedule grants no additional task authority."
+)
+UPCOMING_HORIZON_HOURS = 12
+UPCOMING_HOT_LIMIT = 8
 
 
 def utc_now() -> datetime:
@@ -61,6 +81,90 @@ def parse_duration(value: str) -> timedelta:
     if result <= timedelta(0):
         raise ValueError("duration must be positive")
     return result
+
+
+def parse_wall_clock_at(
+    value: str,
+    *,
+    timezone: str,
+    now: datetime | None = None,
+    fold_policy: Literal["first", "second"] = "first",
+) -> datetime:
+    """Parse an ISO instant or ``next <weekday> HH:MM`` in one IANA timezone.
+
+    Human weekday input deliberately requires an explicit clock time.  A bare
+    ``next Sunday`` is rejected instead of silently inventing an hour.
+    """
+
+    name = validate_timezone_name(timezone)
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("--at requires an ISO timestamp or 'next <weekday> HH:MM'")
+    match = _NEXT_WEEKDAY.fullmatch(text)
+    if match:
+        clock = _parse_clock(match.group("clock"))
+        reference = _utc(now or utc_now()).astimezone(ZoneInfo(name))
+        wanted = _DAYS[match.group("day").lower()]
+        days = (wanted - reference.weekday()) % 7 or 7
+        wall = datetime.combine(reference.date() + timedelta(days=days), clock)
+        return localize_wall_time(
+            wall, name, fold=0 if fold_policy == "first" else 1
+        ).astimezone(UTC)
+    if re.fullmatch(
+        r"next\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+at)?",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        raise ValueError(
+            "a next-weekday schedule requires an explicit hour, for example "
+            "'next Sunday 09:00'"
+        )
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(
+            "unsupported --at value; use an ISO timestamp or "
+            "'next <weekday> HH:MM'"
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = localize_wall_time(
+            parsed, name, fold=0 if fold_policy == "first" else 1
+        )
+    return parsed.astimezone(UTC)
+
+
+def parse_calendar_expression(value: str) -> tuple[list[str], str]:
+    """Parse ``Monday[,Wednesday] at HH:MM [AM|PM]`` without guessing fields."""
+
+    text = str(value or "").strip()
+    match = _CALENDAR_EXPRESSION.fullmatch(text)
+    if not match:
+        raise ValueError(
+            "calendar expression must be '<weekday>[,<weekday>...] at HH:MM [AM|PM]', "
+            "for example 'Monday at 6:00 AM'"
+        )
+    days = [item.strip().lower() for item in match.group("days").split(",")]
+    unknown = [item for item in days if item not in _DAYS]
+    if unknown:
+        raise ValueError(f"unknown calendar weekday: {unknown[0]}")
+    clock = _parse_clock(match.group("clock"))
+    canonical_days = [item.capitalize() for item in dict.fromkeys(days)]
+    return canonical_days, clock.isoformat()
+
+
+def _parse_clock(value: str) -> time:
+    text = " ".join(str(value).strip().upper().split())
+    if text.endswith(("AM", "PM")):
+        compact = re.sub(r"(?<=\d)(AM|PM)$", r" \1", text)
+        clock_format = "%I:%M:%S %p" if compact.count(":") == 2 else "%I:%M %p"
+        try:
+            return datetime.strptime(compact, clock_format).time()
+        except ValueError as exc:
+            raise ValueError(f"invalid 12-hour wall-clock time: {value!r}") from exc
+    try:
+        return time.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError(f"invalid 24-hour wall-clock time: {value!r}") from exc
 
 
 def _digest(value: object) -> str:
@@ -205,6 +309,7 @@ class Target(BaseModel):
     project_dir: str | None = None
     operation: Literal["managed_launch", "vp_todo_sweep", "probe"] = "managed_launch"
     dependencies: list[str] = Field(default_factory=list, max_length=8)
+    payload: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def prompt_is_immutable(self) -> "Target":
@@ -706,7 +811,7 @@ class ScheduleService:
             values = [cursor + every * offset for offset in range(count)]
         else:
             horizon = start + timedelta(days=370)
-            values = list(_local_nominals(timing, start, horizon))
+            values = list(islice(_local_nominals(timing, start, horizon), count))
         if definition.bounds.end_at:
             values = [item for item in values if item <= definition.bounds.end_at]
         return values[:count]
@@ -1057,13 +1162,35 @@ class ScheduleService:
                     FileStore, ScheduledJobInput, deterministic_idempotency_key,
                 )
                 store = FileStore(self.repo.root.parent)
+                payload = dict(target.payload)
+                # The legacy handler carried repeat-state evidence forward in
+                # the next one-shot job.  Schedule-owned jobs persist that
+                # evidence on the fired job, so copy the newest projection into
+                # this occurrence without moving recurrence custody back.
+                recent = store.list_scheduled_jobs(
+                    job_type="vp_todo_sweep", status="fired", limit=20
+                )
+                prior = next(
+                    (job for job in recent if job.payload.get("schedule_owned")),
+                    None,
+                )
+                if prior is not None:
+                    for key in (
+                        "last_retained_todo_digest",
+                        "last_audit_scope_digest",
+                        "consecutive_unchanged_sweeps",
+                    ):
+                        if key in prior.payload:
+                            payload[key] = prior.payload[key]
+                payload.update({
+                    "schedule_owned": True,
+                    "recurrence_owner": occurrence.schedule_id,
+                    "schedule_occurrence": schedule_context,
+                })
                 job = store.create_scheduled_job(
                     ScheduledJobInput(
                         job_type="vp_todo_sweep", scheduled_for=now,
-                        payload={
-                            "schedule_owned": True,
-                            "schedule_occurrence": schedule_context,
-                        },
+                        payload=payload,
                         max_attempts=RetryPolicy.model_validate(pinned["retry"]).launch_max_attempts,
                     ),
                     idempotency_key=deterministic_idempotency_key(
@@ -1191,6 +1318,438 @@ class ScheduleService:
                 )
                 reconciled += 1
         return reconciled
+
+
+def build_operator_schedule_definition(
+    *,
+    schedule_id: str,
+    description: str,
+    prompt: str,
+    authorization: AuthorizationGrant,
+    timezone: str,
+    at: str | None = None,
+    every: str | None = None,
+    start: str | None = None,
+    cron: str | None = None,
+    calendar: str | None = None,
+    gap_policy: Literal["reject", "skip", "next_valid"] = "reject",
+    fold_policy: Literal["first", "second", "both"] = "first",
+    work_intent: Literal["speculative", "review", "execution"] = "review",
+    task_kind: str = "other",
+    model: str = "gpt-5.6-terra",
+    profile: str = "resident-subagent-standard",
+    project_dir: str | None = None,
+    max_occurrences: int | None = None,
+    now: datetime | None = None,
+) -> ScheduleDefinition:
+    """Build the easy CLI/API shape while retaining the full grant boundary."""
+
+    effective_now = _utc(now or utc_now())
+    name = validate_timezone_name(timezone)
+    selected = [value is not None for value in (at, every, cron, calendar)]
+    if sum(selected) != 1:
+        raise ValueError("choose exactly one of --at, --every, --cron, or --calendar")
+    if every is None and start is not None:
+        raise ValueError("--start is valid only with --every")
+    if every is not None:
+        parse_duration(every)
+        if not start:
+            raise ValueError(
+                "interval schedules require --start (use '--start now' for an explicit current anchor)"
+            )
+        anchor = (
+            effective_now
+            if start.strip().lower() == "now"
+            else parse_wall_clock_at(
+                start,
+                timezone=name,
+                now=effective_now,
+                fold_policy="second" if fold_policy == "second" else "first",
+            )
+        )
+        timing = Timing(
+            kind="interval", every=every, anchor_at=anchor,
+            cadence="fixed_rate", timezone=name,
+        )
+    elif at is not None:
+        timing = Timing(
+            kind="at",
+            at=parse_wall_clock_at(
+                at,
+                timezone=name,
+                now=effective_now,
+                fold_policy="second" if fold_policy == "second" else "first",
+            ),
+            timezone=name,
+            gap_policy=gap_policy,
+            fold_policy=fold_policy,
+        )
+        max_occurrences = 1
+    elif cron is not None:
+        timing = Timing(
+            kind="cron", expression=cron, timezone=name,
+            gap_policy=gap_policy, fold_policy=fold_policy,
+        )
+    else:
+        days, local_time = parse_calendar_expression(str(calendar))
+        timing = Timing(
+            kind="calendar", days=days, local_time=local_time,
+            timezone=name, gap_policy=gap_policy, fold_policy=fold_policy,
+        )
+    clean_description = str(description or "").strip()
+    clean_prompt = str(prompt or "").strip()
+    if not clean_description:
+        raise ValueError("schedule description must not be empty")
+    if not clean_prompt:
+        raise ValueError("scheduled prompt must not be empty")
+    origin = authorization.launch_origin
+    principal = str(
+        origin.get("dm_user_id")
+        or origin.get("discord_message_id")
+        or origin.get("custody_id")
+        or authorization.grant_id
+    )
+    return ScheduleDefinition(
+        schedule_id=schedule_id,
+        state="active",
+        owner=Owner(
+            principal_id=f"resident_operator:{principal}",
+            custody_scope=str(origin.get("custody_id") or authorization.grant_id),
+        ),
+        authorization=authorization,
+        schedule=timing,
+        bounds=Bounds(max_occurrences=max_occurrences),
+        target=Target(
+            kind="resident_managed_agent",
+            prompt_ref=f"resident-schedule://{schedule_id}/prompt-v1",
+            prompt=clean_prompt,
+            prompt_digest="sha256:" + hashlib.sha256(clean_prompt.encode()).hexdigest(),
+            model=model,
+            profile=profile,
+            work_intent=work_intent,
+            task_kind=task_kind,
+            description=clean_description,
+            project_dir=project_dir,
+            operation="managed_launch",
+        ),
+        delivery=Delivery(route_ref=authorization.route_ref),
+        created_at=effective_now,
+        updated_at=effective_now,
+        audit_reason="created through resident schedule operator front door",
+    )
+
+
+def _recurrence_text(definition: ScheduleDefinition) -> str:
+    timing = definition.schedule
+    if timing.kind == "at":
+        return "one shot"
+    if timing.kind == "interval":
+        return (
+            f"every {timing.every} from {timing.anchor_at.isoformat()} "
+            f"({timing.cadence})"
+        )
+    if timing.kind == "cron":
+        return f"cron '{timing.expression}' in {timing.timezone}"
+    if timing.kind == "calendar":
+        return (
+            f"{','.join(timing.days)} at {timing.local_time} in {timing.timezone}; "
+            f"DST gap={timing.gap_policy}, fold={timing.fold_policy}"
+        )
+    return f"{timing.kind} schedule"
+
+
+def _next_trigger(
+    service: ScheduleService,
+    definition: ScheduleDefinition,
+    *,
+    now: datetime,
+) -> tuple[datetime | None, str]:
+    if definition.state != "active":
+        return None, f"disabled: {definition.state}"
+    timing = definition.schedule
+    if timing.kind == "event":
+        return None, "enabled; waiting for matching event"
+    if timing.kind == "interval" and timing.cadence == "fixed_delay":
+        rows = [
+            row for row in service.repo.occurrences(definition.schedule_id)
+            if row.occurrence.generation == definition.generation
+        ]
+        if rows:
+            latest = max(rows, key=lambda row: row.occurrence.nominal_at)
+            if latest.state not in TERMINAL_OCCURRENCE_STATES:
+                return None, "enabled; next trigger waits for the active occurrence to finish"
+            return latest.updated_at + parse_duration(str(timing.every)), "enabled"
+    values = [item for item in service.preview(definition, count=100, start=now) if item >= now]
+    return (values[0], "enabled") if values else (None, "enabled; no future occurrence")
+
+
+def schedule_projection(
+    service: ScheduleService,
+    definition: ScheduleDefinition,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    effective_now = _utc(now or utc_now())
+    next_trigger, actionable = _next_trigger(service, definition, now=effective_now)
+    return {
+        "schedule_id": definition.schedule_id,
+        "description": definition.target.description,
+        "type": definition.schedule.kind,
+        "state": definition.state,
+        "enabled": definition.state == "active",
+        "next_trigger_at": next_trigger.isoformat() if next_trigger else None,
+        "next_trigger_local": (
+            format_timestamp(next_trigger, definition.schedule.timezone)
+            if next_trigger else None
+        ),
+        "timezone": definition.schedule.timezone,
+        "recurrence": _recurrence_text(definition),
+        "status": actionable,
+        "revision": definition.revision,
+    }
+
+
+def schedule_hot_context(
+    store_root: Path,
+    *,
+    now: datetime | None = None,
+    hours: int = UPCOMING_HORIZON_HOURS,
+    limit: int = UPCOMING_HOT_LIMIT,
+) -> dict[str, Any]:
+    """Return bounded guidance plus enabled occurrences; never the definition database."""
+
+    effective_now = _utc(now or utc_now())
+    service = ScheduleService(store_root)
+    horizon = effective_now + timedelta(hours=hours)
+    projected = [
+        schedule_projection(service, row, now=effective_now)
+        for row in service.repo.definitions(state="active")
+    ]
+    upcoming = [
+        row for row in projected
+        if row["next_trigger_at"] is not None
+        and datetime.fromisoformat(str(row["next_trigger_at"])) <= horizon
+    ]
+    upcoming.sort(key=lambda row: (str(row["next_trigger_at"]), str(row["schedule_id"])))
+    command = "python -P -m arnold_pipelines.megaplan resident schedule"
+    return {
+        "schema_version": "arnold-resident-schedule-hot-context-v1",
+        "window": {
+            "start_at": effective_now.isoformat(),
+            "end_at": horizon.isoformat(),
+            "hours": hours,
+        },
+        "upcoming_enabled": upcoming[:limit],
+        "upcoming_enabled_count": len(upcoming),
+        "omitted_count": max(0, len(upcoming) - limit),
+        "bounded_limit": limit,
+        "guidance": {
+            "authority": (
+                "A schedule only reuses its immutable grant; it never expands the underlying "
+                "task authority, work intent, delivery route, or expiry."
+            ),
+            "timezone": (
+                "Wall-clock and calendar input uses an explicit IANA timezone (or the current "
+                "resident provenance timezone); DST gap/fold policies are stored on the schedule."
+            ),
+            "create_one_shot_sample": (
+                f"{command} add --id sched_sample_sunday --description 'Sample Sunday check' "
+                "--prompt 'Run the explicitly authorized sample check.' --grant-file <grant.json> "
+                "--at 'next Sunday at 9:00 AM' --timezone '<configured-user-timezone>'"
+            ),
+            "create_calendar_sample": (
+                f"{command} add --id sched_sample_monday --description 'Sample Monday check' "
+                "--prompt 'Run the explicitly authorized sample check.' --grant-file <grant.json> "
+                "--calendar 'Monday at 6:00 AM' --timezone '<configured-user-timezone>'"
+            ),
+            "create_anchored_interval_sample": (
+                f"{command} add --id sched_sample_six_hour --description 'Sample six-hour check' "
+                "--prompt 'Run the explicitly authorized sample check.' --grant-file <grant.json> "
+                "--every PT6H --start now --timezone '<configured-user-timezone>'"
+            ),
+            "list": f"{command} list --upcoming-hours 12",
+            "cancel": f"{command} cancel <schedule-id> --reason '<reason>'",
+            "sample_notice": "All example hours above are explicitly labeled sample times.",
+        },
+    }
+
+
+def schedule_cli_capabilities() -> list[dict[str, str]]:
+    """Constrained discovery entries for resident context capability listings."""
+
+    return [
+        {
+            "name": "resident_schedule_add",
+            "kind": "cli",
+            "operation": "write",
+            "description": (
+                "Create an authorized one-shot, anchored interval, cron, or wall-clock "
+                "calendar schedule; requires an immutable grant."
+            ),
+            "command": "python -P -m arnold_pipelines.megaplan resident schedule add --help",
+        },
+        {
+            "name": "resident_schedule_list",
+            "kind": "cli",
+            "operation": "read",
+            "description": "List bounded schedule status and upcoming triggers.",
+            "command": "python -P -m arnold_pipelines.megaplan resident schedule list --upcoming-hours 12",
+        },
+        {
+            "name": "resident_schedule_cancel",
+            "kind": "cli",
+            "operation": "write",
+            "description": "Cancel one schedule by stable ID with an audit reason.",
+            "command": "python -P -m arnold_pipelines.megaplan resident schedule cancel <schedule-id> --reason '<reason>'",
+        },
+    ]
+
+
+def reconcile_vp_todo_schedule(
+    store: Any,
+    *,
+    interval_seconds: int,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Idempotently cut the legacy six-hour VP recurrence over to one definition."""
+
+    root = schedule_store_root(store)
+    if root is None:
+        raise ValueError("resident-managed schedules require the single-writer FileStore")
+    effective_now = _utc(now or utc_now())
+    service = ScheduleService(root)
+    legacy = list(store.list_scheduled_jobs(job_type="vp_todo_sweep", limit=100))
+    pending = [row for row in legacy if row.status == "pending"]
+    claimed = [row for row in legacy if row.status == "claimed"]
+    source = min(pending, key=lambda row: row.scheduled_for) if pending else None
+    compatibility_payload = dict(source.payload) if source is not None else {}
+    compatibility_payload["interval_s"] = interval_seconds
+    anchor = source.scheduled_for if source is not None else effective_now
+    existing = None
+    try:
+        existing = service.repo.read_definition(VP_TODO_SCHEDULE_ID)
+    except FileNotFoundError:
+        pass
+    created = False
+    if existing is None:
+        route = str(compatibility_payload.get("conversation_key") or "resident-special-requests")
+        approved_at = source.created_at if source is not None else effective_now
+        digest_source = {
+            "operation": "vp_todo_sweep",
+            "route": route,
+            "interval_seconds": interval_seconds,
+        }
+        grant = AuthorizationGrant(
+            grant_id="grant_resident_vp_todo_sweep_v1",
+            source_envelope_digest=_digest(digest_source),
+            approved_at=approved_at,
+            maximum_work_intent="review",
+            launch_origin={"applicability": "not_applicable", "source_kind": "resident_config"},
+            route_ref=route,
+        )
+        definition = ScheduleDefinition(
+            schedule_id=VP_TODO_SCHEDULE_ID,
+            state="active",
+            owner=Owner(
+                principal_id="resident_role:vp_special_requests",
+                custody_scope="resident-special-requests",
+            ),
+            authorization=grant,
+            schedule=Timing(
+                kind="interval",
+                every=(
+                    f"PT{interval_seconds // 3600}H"
+                    if interval_seconds % 3600 == 0
+                    else f"PT{interval_seconds}S"
+                ),
+                anchor_at=anchor, cadence="fixed_delay", timezone="UTC",
+            ),
+            policies=Policies(
+                misfire="latest_once", overlap="forbid", max_active=1,
+                grace="PT5M", maximum_queue_age="PT24H",
+            ),
+            target=Target(
+                kind="resident_orchestrator_turn",
+                prompt_ref="resident-prompt://vp-todo-six-hour/v1",
+                prompt=VP_TODO_SCHEDULE_PROMPT,
+                prompt_digest="sha256:" + hashlib.sha256(VP_TODO_SCHEDULE_PROMPT.encode()).hexdigest(),
+                work_intent="review",
+                task_kind="audit",
+                description="Six-hour VP special-request progress audit",
+                operation="vp_todo_sweep",
+                payload=compatibility_payload,
+            ),
+            delivery=Delivery(route_ref=route),
+            retry=RetryPolicy(launch_max_attempts=3),
+            quota=Quota(max_runs_per_day=8, max_concurrent_runs=1),
+            created_at=approved_at,
+            updated_at=effective_now,
+            audit_reason="migrate legacy six-hour recurrence without changing audit semantics",
+        )
+        existing, created = service.create(
+            definition, idempotency_key="resident-vp-todo-six-hour-migration-v1",
+            actor="resident-startup-migration",
+        )
+    elif existing.state != "active":
+        existing = service.set_state(
+            existing.schedule_id, "active", if_revision=existing.revision,
+            actor="resident-startup-migration",
+            audit_reason="restore the authoritative configured six-hour recurrence",
+        )
+    cancelled_jobs: list[str] = []
+    for job in pending:
+        store.update_scheduled_job(
+            job.id,
+            status="cancelled",
+            cancelled_at=effective_now,
+            last_error="recurrence migrated to resident-managed schedule",
+            idempotency_key=f"vp-schedule-migration-cancel:{job.id}",
+        )
+        cancelled_jobs.append(job.id)
+    claimed_jobs: list[str] = []
+    for job in claimed:
+        payload = dict(job.payload)
+        payload["schedule_owned"] = True
+        payload["recurrence_owner"] = VP_TODO_SCHEDULE_ID
+        store.update_scheduled_job(
+            job.id,
+            payload=payload,
+            idempotency_key=f"vp-schedule-migration-claim:{job.id}",
+        )
+        claimed_jobs.append(job.id)
+    other_active = [
+        row for row in service.repo.definitions(state="active")
+        if row.schedule_id != VP_TODO_SCHEDULE_ID
+        and row.target.operation == "vp_todo_sweep"
+    ]
+    retired_schedules: list[str] = []
+    for row in other_active:
+        service.set_state(
+            row.schedule_id, "cancelled", if_revision=row.revision,
+            actor="resident-startup-migration",
+            audit_reason=f"superseded by authoritative {VP_TODO_SCHEDULE_ID}",
+        )
+        retired_schedules.append(row.schedule_id)
+    active_authorities = [
+        row.schedule_id for row in service.repo.definitions(state="active")
+        if row.target.operation == "vp_todo_sweep"
+    ]
+    if active_authorities != [VP_TODO_SCHEDULE_ID]:
+        raise RuntimeError(
+            f"six-hour recurrence authority is not singular: {active_authorities}"
+        )
+    projection = schedule_projection(service, existing, now=effective_now)
+    return {
+        "schema_version": "arnold-resident-vp-todo-schedule-migration-v1",
+        "schedule_id": VP_TODO_SCHEDULE_ID,
+        "created": created,
+        "cancelled_legacy_job_ids": cancelled_jobs,
+        "adopted_claimed_job_ids": claimed_jobs,
+        "retired_duplicate_schedule_ids": retired_schedules,
+        "active_recurrence_count": len(active_authorities),
+        "next_occurrence": projection["next_trigger_at"],
+        "projection": projection,
+    }
 
 
 def definition_from_file(path: Path) -> ScheduleDefinition:

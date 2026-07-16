@@ -45,6 +45,7 @@ _ABSOLUTE_TIMESTAMP_KEYS = frozenset(
         "delivered_at",
         "attempted_at",
         "next_attempt_at",
+        "next_trigger_at",
         "materialized_at",
     }
 )
