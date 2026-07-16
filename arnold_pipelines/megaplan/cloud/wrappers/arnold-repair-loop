@@ -67,6 +67,7 @@ KIMI_MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
 KIMI_BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"
 DEV_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_TIMEOUT_SECS:-600}"
 DEV_ROOT_CAUSE_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_ROOT_CAUSE_TIMEOUT_SECS:-3600}"
+DEV_PROMPT_MAX_BYTES="${CLOUD_WATCHDOG_DEV_PROMPT_MAX_BYTES:-65536}"
 KIMI_TIMEOUT="${CLOUD_WATCHDOG_KIMI_TIMEOUT_SECS:-600}"
 MECHANICAL_VERIFY_INITIAL_SECS="${CLOUD_WATCHDOG_MECHANICAL_VERIFY_INITIAL_SECS:-12}"
 MECHANICAL_VERIFY_HOLD_SECS="${CLOUD_WATCHDOG_MECHANICAL_VERIFY_HOLD_SECS:-18}"
@@ -6594,7 +6595,7 @@ print(render_process_custody_policy())
 PY
 }
 
-write_dev_prompt() {
+write_dev_prompt_legacy() {
   set +a
   local prompt_path="$1"
   local requested_model="$2"
@@ -6708,6 +6709,77 @@ Constraints:
 - End the turn as soon as you have either a narrow fix or a concrete blocker, unless recurrence was detected; in that case stay long enough to name the root mechanism.
 EOF
   redact_file_in_place "$prompt_path"
+}
+
+# The mutating owner receives only immutable identity, authorization, and bounded
+# typed pointers. The investigator context and receipt are already individually
+# byte-bounded and digest-bound; re-embedding derived state here recreates an
+# expanding evidence channel and lets stale projections compete with the receipt.
+write_dev_prompt() {
+  set +a
+  local prompt_path="$1"
+  local requested_model="$2"
+  local dispatch_model="$3"
+  local report_path="$4"
+  local recurrence_mode="${5:-0}"
+  local process_custody_policy delivery_policy mode_tasks prompt_bytes max_bytes
+  delivery_policy="$(repair_delivery_policy)"
+  process_custody_policy="$(render_process_custody_policy)" || return 1
+  [[ -n "$process_custody_policy" ]] || return 1
+  if [[ "$recurrence_mode" == "1" ]]; then
+    mode_tasks="The controlled-field symptom recurred. Trace the exact regenerating mechanism, but remain inside the receipt's mutation boundary."
+  else
+    mode_tasks="Keep the turn bounded to the receipt-authorized repair and its verification."
+  fi
+  cat > "$prompt_path" <<EOF
+You are the sole mutating owner for one watchdog L1 repair cycle.
+
+$process_custody_policy
+
+Immutable identity and provenance:
+- session: $SESSION
+- repair request: ${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-unavailable}
+- blocker: ${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-unavailable}
+- durable goal: $ARNOLD_REPAIR_GOAL_ID at $ARNOLD_REPAIR_GOAL_PATH
+- frozen checkpoint digest: $ARNOLD_REPAIR_CHECKPOINT_DIGEST
+- managed provenance manifest: ${ARNOLD_MANAGED_AGENT_MANIFEST:-unavailable}
+
+Bounded authoritative pointers:
+- investigator context (maximum 65,536 bytes): $INVESTIGATION_CONTEXT_PATH
+- validated receipt (maximum 65,536 bytes): $INVESTIGATOR_RECEIPT_PATH
+- investigator context digest: ${INVESTIGATION_CONTEXT_DIGEST:-unavailable}
+- repair data: $DATA_FILE
+- target workspace: $WORKSPACE
+- editable runtime source: $ARNOLD_SRC on $SYNC_BRANCH
+- output report: $report_path
+
+Objective:
+1. Read the bounded context and receipt. Verify their digest-bound identity, provenance, recommended action, safe target, allowed and forbidden mutations, and intended recovery before changing anything.
+2. Act only inside the receipt's mutation scope. Do not independently choose another target. Follow typed evidence pointers only as needed; never copy expanding logs, histories, state blobs, or evidence bundles into prompts or reports.
+3. Preserve all completion, review, safety, authority, and verification guards. If evidence contradicts the receipt or the deterministic progress token repeats, make no mutation and report replan.
+4. Apply the narrowest systemic fix, run the smallest relevant behavior test plus required safety/authority regressions, and write exact commands and results to the report.
+5. $delivery_policy
+6. Do not relaunch, hand-advance, directly edit control-plane state, push without authority, or merge a remote PR. A commit or live process is not success; the wrapper must prove blocker clearance and fresh progress beyond the frozen checkpoint.
+7. $mode_tasks
+
+Report keys: classification, hypothesis, what_tried, validation, pushed_commit, remaining_blockers, structural_pattern, other_instantiations, human_review_recommendation, findings_doc_path, findings_doc_appended.
+Requested model: $requested_model
+Dispatched model: $dispatch_model
+Do not ask for user input.
+EOF
+  redact_file_in_place "$prompt_path"
+  max_bytes="${DEV_PROMPT_MAX_BYTES:-65536}"
+  if [[ ! "$max_bytes" =~ ^[0-9]+$ ]] || (( max_bytes <= 0 )); then
+    rm -f -- "$prompt_path"
+    echo "invalid dev prompt byte bound: $max_bytes" >&2
+    return 1
+  fi
+  prompt_bytes="$(wc -c < "$prompt_path" | tr -d '[:space:]')"
+  if [[ ! "$prompt_bytes" =~ ^[0-9]+$ ]] || (( prompt_bytes > max_bytes )); then
+    rm -f -- "$prompt_path"
+    echo "dev prompt exceeds ${max_bytes}-byte bound" >&2
+    return 1
+  fi
 }
 
 write_kimi_prompt() {
@@ -8413,13 +8485,14 @@ for iteration in 1 2 3; do
   run_dev_fix_turn "$iteration" "$CURRENT_ATTEMPT_ID" "${CURRENT_RECURRING:-0}" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL" "$DEV_DISPATCH_KIND" "$DEV_FALLBACK_REASON"
   export POST_DEV_FIX_ITERATION="$iteration"
   exit_if_repair_target_complete "iteration-$iteration-post-dev-fix"
-  recover_blocked_after_dev_fix_if_possible "$iteration" "$CURRENT_ATTEMPT_ID" || true
-  if wait_for_repair_goal_progress_if_live "owner-iteration-$iteration-post-dev-fix"; then
-    exit 0
-  elif [[ "$?" == "2" ]]; then
-    BREAKER_TRIPPED="1"
-    break
-  fi
+  # The receipt authorized the target mutation against its captured checkpoint;
+  # it cannot also authorize state recovery after that mutation changed the
+  # checkpoint. End this owner cycle so the watchdog must capture fresh evidence
+  # and obtain a new receipt before any recovery launch. This also keeps the
+  # legacy direct blocked-state synchronizer unreachable from the ordinary path.
+  repair_data_set_outcome "repair_applied_reinvestigate"
+  log "dev fix recorded; fresh investigation required before recovery session=$SESSION iteration=$iteration attempt_id=$CURRENT_ATTEMPT_ID"
+  exit 1
 
   mechanical_status="$(mechanical_launch_step "$iteration" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
     repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "$mechanical_status" "$mechanical_status"
