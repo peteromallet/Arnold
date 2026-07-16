@@ -890,6 +890,13 @@ class ReconcileTodoItemInput(ToolInput):
     resolution: str
 
 
+class SupersedeTodoItemInput(ToolInput):
+    id: str
+    canonical_record_id: str
+    evidence: str
+    resolution: str
+
+
 class AddTodoItemInput(ToolInput):
     task: str
     when: str = ""
@@ -1721,6 +1728,7 @@ class MegaplanResidentProfile:
             ToolRegistration("complete_todo_item", "Mark a to-do item done and clear it from the list; pass a short result summary.", "write", CompleteTodoItemInput, ToolResult, self._complete_todo_item),
             ToolRegistration("fail_todo_item", "Mark a to-do item failed (retained for retry); pass the reason.", "write", FailTodoItemInput, ToolResult, self._fail_todo_item),
             ToolRegistration("reconcile_todo_item", "Resolve a pending launch intent as superseded by an already-existing canonical run. Requires the stable run id, durable evidence location, and reconciliation reason; never use task-text overlap alone.", "write", ReconcileTodoItemInput, ToolResult, self._reconcile_todo_item),
+            ToolRegistration("supersede_todo_item", "Retire obsolete pending todo intent using a durable canonical retirement or replacement record. This does not assert completion.", "write", SupersedeTodoItemInput, ToolResult, self._supersede_todo_item),
             ToolRegistration("add_todo_item", "Append a new pending item to the VP to-do list. Optional `when` is a natural-language condition the agent checks before executing (e.g. 'once epic <id> is done').", "write", AddTodoItemInput, ToolResult, self._add_todo_item),
             ToolRegistration("follow_up_subagent", "Durably attach an instruction to one exact resident-managed persistent session. Returns a follow-up receipt and continuation run ID, or an explicit fail-closed error.", "write", FollowUpSubagentInput, ToolResult, self._follow_up_subagent),
             ToolRegistration("launch_subagent", "Launch or durably queue a resident-managed Codex agent with a manifest, bounded predecessor references, concise description, full log, and result path. `depends_on_run_id` remains the legacy singular dependency; `depends_on_run_ids` creates an all-success fan-in. A queued successor inherits provenance/authorization and becomes the one synthesis/delivery owner. Mixed singular/plural inputs are rejected. Legacy synchronous Hermes requires an explicit backend override.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
@@ -2954,6 +2962,24 @@ class MegaplanResidentProfile:
             return _fail("todo item not found", id=payload.id)
         return _ok(
             "todo launch intent reconciled to canonical run",
+            item=vp_todo.public_item(resolved),
+        )
+
+    def _supersede_todo_item(self, payload: SupersedeTodoItemInput) -> ToolResult:
+        try:
+            resolved = vp_todo.supersede_by_record(
+                self._todo_path(),
+                payload.id,
+                canonical_record_id=payload.canonical_record_id,
+                evidence=payload.evidence,
+                resolution=payload.resolution,
+            )
+        except ValueError as exc:
+            return _fail(str(exc), id=payload.id)
+        if resolved is None:
+            return _fail("todo item not found", id=payload.id)
+        return _ok(
+            "todo intent superseded by canonical record without asserting completion",
             item=vp_todo.public_item(resolved),
         )
 

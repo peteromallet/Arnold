@@ -896,6 +896,9 @@ class ResidentRuntime:
                 turn_id=turn.id,
                 timezone_name=_timezone_name_from_hot_context(hot_context),
             ),
+            report_only=bool(items) and all(
+                item.event.raw.get("report_only") is True for item in items
+            ),
         )
         try:
             response = await self.runner.run(request, self.profile.tools())
@@ -1131,12 +1134,16 @@ class ResidentRuntime:
                 item.event.raw.get("source_kind") == "scheduled_turn"
                 for item in items
             )
+            report_only = bool(items) and all(
+                item.event.raw.get("report_only") is True for item in items
+            )
             return {
                 "transport": "non_discord",
                 "applicability": "not_applicable",
                 "source_kind": (
                     "scheduled_turn" if scheduled_turn else "scheduler_or_internal_turn"
                 ),
+                "report_only": report_only,
             }
         item = discord_items[0]
         message_id = _optional_string(item.event.raw.get("discord_message_id"))

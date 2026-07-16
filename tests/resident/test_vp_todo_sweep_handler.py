@@ -145,20 +145,18 @@ def test_sweep_dispatches_when_pending(tmp_path) -> None:
     assert event.subject.guild_id == "g"
     assert event.subject.channel_id == "c"
     assert event.idempotency_key
-    assert "launch_subagent" in event.content
+    assert "This audit is report-only" in event.content
+    assert "`launch_subagent`" not in event.content
     assert "reconcile_todo_item" in event.content
-    assert "backend=codex" in event.content
-    assert "background=true" in event.content
-    assert "request_id" in event.content
-    assert "Never use Hermes" in event.content
+    assert "start/resume cloud work" in event.content
     assert '"pending_count": 2' in event.content
     assert "read_todo_list" in event.content
     assert "consecutive_unchanged_sweeps" in event.content
     assert "launch-intent" in event.content
     assert "genuinely conditional" in event.content
-    assert "Escalate any material ambiguity" in event.content
+    assert "Historical bookkeeping" in event.content
     context = event.raw["vp_todo_audit_context"]
-    assert context["schema_version"] == "resident-vp-special-request-audit-context-v1"
+    assert context["schema_version"] == "resident-vp-special-request-audit-context-v2"
     assert context["summary"]["retained_count"] == 2
     assert context["summary"]["delegation_blocked_count"] == 2
     assert context["evidence_routes"]["running_agents"]["arguments"] == {
@@ -298,17 +296,176 @@ def test_sweep_context_includes_full_retained_set_and_verified_custody(tmp_path)
     asyncio.run(worker.run_due_once(now=NOW))
 
     context = runtime.received[0].raw["vp_todo_audit_context"]
-    assert context["summary"] == {
-        "retained_count": 3,
-        "pending_count": 2,
-        "conditional_pending_count": 1,
-        "delegation_blocked_count": 0,
-    }
+    assert context["summary"]["retained_count"] == 3
+    assert context["summary"]["pending_count"] == 2
+    assert context["summary"]["conditional_pending_count"] == 1
+    assert context["summary"]["delegation_blocked_count"] == 0
+    assert context["summary"]["current_blocker_count"] == 2
+    assert context["summary"]["historical_bookkeeping_count"] == 1
     by_task = {item["task"]: item for item in context["items"]}
     assert by_task["launch the canonical chain"]["authoritative_inbound"]["state"] == "verified"
     assert by_task["retained failed diagnostic"]["status"] == "failed"
     assert by_task["launch downstream work"]["conditional"] is True
     assert context["todo_source"]["full_list_tool"] == "read_todo_list"
+
+
+def test_sweep_classifies_retired_target_and_failed_history_without_current_drag(tmp_path) -> None:
+    store = FileStore(tmp_path / "store")
+    todo = tmp_path / ".megaplan" / "resident" / "vp_todo_list.json"
+    marker = (
+        tmp_path
+        / ".megaplan"
+        / "initiatives"
+        / "workflow-boundary-contracts"
+        / ".retired"
+    )
+    marker.parent.mkdir(parents=True)
+    marker.write_text(
+        json.dumps(
+            {
+                "schema_version": "arnold.megaplan.initiative-retirement.v1",
+                "initiative": "workflow-boundary-contracts",
+                "status": "retired",
+                "retirement_id": "iret-wbc",
+                "superseded_by": "custody-control-plane",
+                "truthfulness": {"completion_asserted": False},
+            }
+        )
+    )
+    failed = vp_todo.add_item(todo, "old failed diagnostic")
+    vp_todo.fail_item(todo, failed["id"], "historical failure")
+    retired = vp_todo.add_item(
+        todo,
+        "Launch `.megaplan/initiatives/workflow-boundary-contracts/chain.yaml`.",
+    )
+    current = vp_todo.add_item(
+        todo,
+        "Launch the current downstream chain",
+        when="after the replacement initiative genuinely completes",
+    )
+    config = ResidentConfig(
+        special_requests_enabled=True,
+        special_requests_todo_path=todo,
+    )
+    runtime = FakeRuntime()
+    worker = _worker(store, config, runtime)
+    _seed(store, _payload())
+
+    asyncio.run(worker.run_due_once(now=NOW))
+
+    event = runtime.received[0]
+    context = event.raw["vp_todo_audit_context"]
+    by_id = {item["id"]: item for item in context["items"]}
+    assert event.raw["report_only"] is True
+    assert by_id[failed["id"]]["report_scope"] == "historical_bookkeeping"
+    assert by_id[retired["id"]]["report_scope"] == "historical_bookkeeping"
+    assert by_id[retired["id"]]["current_blocker"] is False
+    retirement = by_id[retired["id"]]["initiative_retirement_evidence"][0]
+    assert retirement["superseded_by"] == "custody-control-plane"
+    assert retirement["completion_asserted"] is False
+    assert by_id[current["id"]]["report_scope"] == "current_blocker"
+    assert context["summary"]["current_blocker_ids"] == [current["id"]]
+    assert context["summary"]["pending_reconciliation_ids"] == []
+    assert context["summary"]["historical_bookkeeping_ids"] == [
+        failed["id"],
+        retired["id"],
+    ]
+    dispatch = context["dispatch_summary"]
+    assert dispatch["mode"] == "report_only"
+    assert dispatch["agent_launches"] == 0
+    assert dispatch["cloud_starts_or_resumes"] == 0
+    assert dispatch["audited_workspace_edits"] == 0
+    assert dispatch["git_mutations"] == 0
+    assert dispatch["allowed_mutation"] == "separately authorized todo reconciliation only"
+    assert dispatch["todo_reconciliations"][0]["todo_item_id"] == retired["id"]
+    assert dispatch["todo_reconciliations"][0]["completion_asserted"] is False
+    assert "Scheduled VP special-request todo audit (not general project status)" in event.content
+    assert "`launch_subagent`" not in event.content
+    assert "This audit is report-only" in event.content
+
+
+def test_next_checkin_after_supersession_reports_only_remaining_current_condition(tmp_path) -> None:
+    store = FileStore(tmp_path / "store")
+    todo = tmp_path / ".megaplan" / "resident" / "vp_todo_list.json"
+    failed = vp_todo.add_item(todo, "old failed request")
+    vp_todo.fail_item(todo, failed["id"], "historical failure")
+    obsolete = vp_todo.add_item(todo, "launch obsolete WBC chain")
+    vp_todo.supersede_by_record(
+        todo,
+        obsolete["id"],
+        canonical_record_id="initiative:custody-control-plane",
+        evidence="refs/heads/main:.megaplan/initiatives/workflow-boundary-contracts/.retired@abc",
+        resolution="canonical retirement replaced the standalone launch intent",
+    )
+    current = vp_todo.add_item(
+        todo,
+        "launch sequential fallbacks",
+        when="after the replacement WBC owner genuinely completes and lands",
+    )
+    config = ResidentConfig(
+        special_requests_enabled=True,
+        special_requests_todo_path=todo,
+    )
+    runtime = FakeRuntime()
+    worker = _worker(store, config, runtime)
+    _seed(store, _payload())
+
+    asyncio.run(worker.run_due_once(now=NOW))
+
+    context = runtime.received[0].raw["vp_todo_audit_context"]
+    assert context["summary"]["current_blocker_ids"] == [current["id"]]
+    assert context["summary"]["pending_reconciliation_ids"] == []
+    assert context["summary"]["historical_bookkeeping_ids"] == [
+        failed["id"],
+        obsolete["id"],
+    ]
+    assert context["summary"]["pending_count"] == 1
+    assert context["dispatch_summary"]["mode"] == "report_only"
+
+
+def test_retired_only_sweep_reconciles_todo_but_dispatches_no_model(tmp_path) -> None:
+    store = FileStore(tmp_path / "store")
+    todo = tmp_path / ".megaplan" / "resident" / "vp_todo_list.json"
+    marker = tmp_path / ".megaplan" / "initiatives" / "obsolete" / ".retired"
+    marker.parent.mkdir(parents=True)
+    marker.write_text(
+        json.dumps(
+            {
+                "initiative": "obsolete",
+                "status": "retired",
+                "retirement_id": "iret-obsolete",
+                "superseded_by": "replacement",
+                "truthfulness": {"completion_asserted": False},
+            }
+        )
+    )
+    item = vp_todo.add_item(
+        todo, "Launch `.megaplan/initiatives/obsolete/chain.yaml`."
+    )
+    config = ResidentConfig(
+        special_requests_enabled=True,
+        special_requests_todo_path=todo,
+    )
+    runtime = FakeRuntime()
+    worker = _worker(store, config, runtime)
+    _seed(store, _payload())
+
+    asyncio.run(worker.run_due_once(now=NOW))
+
+    retained = vp_todo.load_items(todo)
+    assert retained[0]["id"] == item["id"]
+    assert retained[0]["status"] == vp_todo.SUPERSEDED_BY_RECORD
+    assert runtime.received == []
+    logs = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in (tmp_path / "store" / "system_logs").glob("*.json")
+    ]
+    transition = next(
+        row
+        for row in logs
+        if row["event_type"] == "resident_vp_todo_canonical_supersession"
+    )
+    assert transition["details"]["completion_asserted"] is False
 
 
 def test_sweep_missing_inbound_writes_internal_diagnostic(tmp_path) -> None:

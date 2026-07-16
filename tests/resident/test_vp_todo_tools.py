@@ -22,6 +22,7 @@ from arnold_pipelines.megaplan.resident.profile import (
     MegaplanResidentProfile,
     ReadTodoListInput,
     ReconcileTodoItemInput,
+    SupersedeTodoItemInput,
 )
 from arnold_pipelines.megaplan.resident.subagent import SubagentResult
 from arnold_pipelines.megaplan.store import FileStore
@@ -92,6 +93,27 @@ def test_reconcile_existing_canonical_run_is_terminal_and_idempotent(tmp_path) -
     assert item["status"] == vp_todo.SUPERSEDED
     assert item["canonical_run_id"] == "canonical-chain-7"
     assert item["canonical_run_evidence"] == "/evidence/canonical-chain-7.json"
+    assert profile._read_todo_list(ReadTodoListInput()).data["pending"] == 0
+
+
+def test_supersede_tool_uses_canonical_record_without_claiming_completion(tmp_path) -> None:
+    profile = _profile(tmp_path)
+    added = profile._add_todo_item(AddTodoItemInput(task="launch retired chain")).data["item"]
+    payload = SupersedeTodoItemInput(
+        id=added["id"],
+        canonical_record_id="initiative:custody-control-plane",
+        evidence="refs/heads/main:.megaplan/initiatives/wbc/.retired@deadbeef",
+        resolution="standalone chain was canonically retired and replaced",
+    )
+
+    first = profile._supersede_todo_item(payload)
+    second = profile._supersede_todo_item(payload)
+
+    assert first.ok is True and second.ok is True
+    item = profile._read_todo_list(ReadTodoListInput()).data["items"][0]
+    assert item["status"] == vp_todo.SUPERSEDED_BY_RECORD
+    assert item["canonical_record_id"] == "initiative:custody-control-plane"
+    assert "completion" in first.message
     assert profile._read_todo_list(ReadTodoListInput()).data["pending"] == 0
 
 
@@ -457,3 +479,53 @@ def test_launch_subagent_tool_rejects_empty_task(tmp_path) -> None:
         )
     )
     assert result.ok is False
+
+
+def test_supersede_todo_cli_requires_canonical_record_evidence() -> None:
+    parser = argparse.ArgumentParser()
+    _register_resident_subcommands(parser)
+
+    args = parser.parse_args(
+        [
+            "supersede-todo",
+            "--id",
+            "todo-7",
+            "--canonical-record-id",
+            "initiative:replacement",
+            "--evidence",
+            "refs/heads/main:.megaplan/initiatives/old/.retired@abc",
+            "--resolution",
+            "canonical retirement replaced the old launch intent",
+            "--todo-path",
+            "/tmp/todo.json",
+        ]
+    )
+
+    assert args.resident_action == "supersede-todo"
+    assert args.canonical_record_id == "initiative:replacement"
+    assert args.evidence.endswith("@abc")
+
+
+def test_report_only_tool_boundary_denies_non_reconciliation_mutation(tmp_path) -> None:
+    profile = _profile(tmp_path)
+
+    audit = asyncio.run(
+        agent_loop_module._execute_registered_tool(
+            tools=profile.tools(),
+            tool_name="add_todo_item",
+            arguments={"task": "must not be added"},
+            audit_id="audit-denied",
+            timeout_s=5,
+            runtime_context=ToolRuntimeContext(
+                conversation_id="scheduled-audit",
+                launch_origin={
+                    "source_kind": "scheduled_turn",
+                    "report_only": True,
+                },
+            ),
+        )
+    )
+
+    assert audit.result["ok"] is False
+    assert audit.result["data"]["error"] == "report_only_execution_denied"
+    assert vp_todo.load_items(profile.config.special_requests_todo_path) == []
