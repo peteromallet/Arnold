@@ -1574,6 +1574,8 @@ def validate_investigator_receipt(
     if value.get("preserve_live") and value.get("recommended_action") != "preserve_live":
         raise ValueError("preserve_live receipt action disagrees")
     action = str(value.get("recommended_action") or "")
+    if action == "preserve_live" and value.get("preserve_live") is not True:
+        raise ValueError("preserve_live action requires an explicit live-worker receipt")
     target_kind = str(target.get("kind") or "")
     allowed_targets = {
         "preserve_live": {"none"},
@@ -1623,19 +1625,55 @@ def validate_investigator_receipt(
         if observation_bundle.get("context_digest") != expected_context_digest:
             raise ValueError("investigator observation bundle digest disagrees")
         external_guard = {}
+        live_worker_observed = False
         for item in observation_bundle.get("observations") or []:
-            if isinstance(item, Mapping) and item.get("kind") == "external_state":
-                observed = item.get("observed")
-                if isinstance(observed, Mapping):
+            if not isinstance(item, Mapping):
+                continue
+            observed = item.get("observed")
+            observed = observed if isinstance(observed, Mapping) else {}
+            if item.get("kind") == "external_state":
+                if observed:
                     external_guard = (
                         observed.get("external_guard")
                         if isinstance(observed.get("external_guard"), Mapping)
                         else {}
                     )
-                break
+            if item.get("kind") == "live_process" and any(
+                observed.get(field) is True
+                for field in ("live", "pid_live", "session_live", "canonical_runner_live")
+            ):
+                live_worker_observed = True
+            if item.get("kind") == "repair_data":
+                target_observation = observed.get("target")
+                target_observation = (
+                    target_observation
+                    if isinstance(target_observation, Mapping)
+                    else {}
+                )
+                heartbeat = target_observation.get("active_step_heartbeat")
+                heartbeat = heartbeat if isinstance(heartbeat, Mapping) else {}
+                tmux_process = target_observation.get("tmux_process")
+                tmux_process = (
+                    tmux_process if isinstance(tmux_process, Mapping) else {}
+                )
+                if (
+                    heartbeat.get("active") is True
+                    and heartbeat.get("pid_live") is True
+                ) or (
+                    tmux_process.get("live_status") == "alive"
+                    and (
+                        tmux_process.get("pid_live") is True
+                        or tmux_process.get("session_live") is True
+                    )
+                ):
+                    live_worker_observed = True
         if external_guard.get("status") != "clear" and action == "recover_state":
             raise ValueError(
                 "state recovery cannot bypass a failing or pending external PR/CI guard"
+            )
+        if action == "preserve_live" and not live_worker_observed:
+            raise ValueError(
+                "preserve_live cannot strand an active goal without verified live-worker evidence"
             )
     if (
         action == "replan"

@@ -587,6 +587,55 @@ def test_failing_external_guard_rejects_state_recovery_handoff() -> None:
         )
 
 
+def test_preserve_live_requires_verified_live_worker_evidence() -> None:
+    receipt = _receipt()
+    receipt["recommended_action"] = "preserve_live"
+    receipt["preserve_live"] = True
+    receipt["handoff"] = {
+        "action": "preserve_live",
+        "allowed_mutations": ["none"],
+        "forbidden_mutations": ["all_mutations"],
+    }
+    receipt["safe_repair_target"] = {
+        "kind": "none",
+        "scope": "current live worker",
+        "rationale": "preserve a verified correct worker",
+    }
+    observation = {
+        "context_digest": "digest-1",
+        "observations": [
+            {
+                "kind": "repair_data",
+                "observed": {
+                    "target": {
+                        "active_step_heartbeat": {
+                            "active": False,
+                            "pid_live": False,
+                        }
+                    }
+                },
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="without verified live-worker evidence"):
+        validate_investigator_receipt(
+            receipt,
+            expected_context_digest="digest-1",
+            observation_bundle=observation,
+        )
+
+    observation["observations"][0]["observed"]["target"][
+        "active_step_heartbeat"
+    ] = {"active": True, "pid_live": True}
+    validated = validate_investigator_receipt(
+        receipt,
+        expected_context_digest="digest-1",
+        observation_bundle=observation,
+    )
+    assert validated["recommended_action"] == "preserve_live"
+
+
 def test_durable_quality_block_rejects_blind_state_recovery_handoff() -> None:
     receipt = _receipt()
     receipt["actual_failure"]["classification"] = "stale_state"

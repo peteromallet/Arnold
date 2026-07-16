@@ -385,3 +385,20 @@ def test_retrigger_helper_passes_workspace_and_remote_spec(tmp_path: Path) -> No
     assert payload["retrigger_command"] == (
         f"{repair_loop_bin} demo-session {workspace} {spec_path}"
     )
+
+
+def test_meta_investigator_gets_one_bounded_schema_correction_retry() -> None:
+    wrapper = _meta_repair_wrapper()
+
+    assert "invalid_candidate_receipt" in wrapper
+    assert "validator_error" in wrapper
+    assert ".invalid-1.json" in wrapper
+    assert ".correction-1.md" in wrapper
+    assert "correction envelope failed 64 KiB preflight" in wrapper
+    assert ":correction:1" in wrapper
+    assert "launching one bounded correction" in wrapper
+    assert "invent new evidence, broaden mutation scope" in wrapper
+    assert (
+        "preserve_live is valid only when a correct live worker is actually present"
+        in wrapper
+    )
