@@ -29,6 +29,9 @@ from arnold_pipelines.megaplan.orchestration.critique_status import (
     annotate_unverifiable_checks,
     unverifiable_detail,
 )
+from arnold_pipelines.megaplan.orchestration.critique_custody import (
+    canonical_critique_flag_id,
+)
 from arnold_pipelines.megaplan.model_seam import ModelTier
 from arnold_pipelines.megaplan.prompts.critique import single_check_critique_prompt, write_single_check_template
 from arnold_pipelines.megaplan.pipelines.creative.prompts.critique_joke import single_check_critique_joke_prompt
@@ -41,7 +44,9 @@ from arnold_pipelines.megaplan.workers.result_metadata import aggregate_rate_lim
 _CRITIQUE_WORKER_SHAPE_RETRIES = 2
 _CRITIQUE_REPAIR_INSTRUCTION = (
     "Return a JSON object with a top-level `checks` array containing EXACTLY ONE "
-    "check object for this single lens. Do not include multiple checks or wrap it differently."
+    "check object for this single lens. Do not include multiple checks or wrap it differently. "
+    "Every flag must be an object with non-empty concern and evidence strings. Flag IDs are "
+    "worker-local labels only; the reducer assigns canonical global IDs."
 )
 _CRITIQUE_UNVERIFIABLE_SHAPE_REASON = (
     "parallel critique worker output did not contain a usable check object for "
@@ -56,16 +61,26 @@ _SANDBOX_NAMESPACE_REASON_MARKERS = (
 )
 
 
-class _RetryableCritiqueShapeError(Exception):
-    """Internal signal for a critique worker payload that can be repaired by retry."""
+class _RetryableCritiqueContractError(Exception):
+    """Internal signal for a locally attributable worker contract failure."""
+
+    def __init__(self, check_id: str, diagnostic: str, raw_payload: Any) -> None:
+        super().__init__(f"Parallel critique worker '{check_id}' {diagnostic}")
+        self.check_id = check_id
+        self.diagnostic = diagnostic
+        self.raw_payload = raw_payload
+
+
+class _RetryableCritiqueShapeError(_RetryableCritiqueContractError):
+    """Internal signal for a critique worker shape that can be repaired by retry."""
 
     def __init__(self, check_id: str, check_count: int, raw_payload: Any) -> None:
         super().__init__(
-            f"Parallel critique output for check '{check_id}' did not contain exactly one check"
+            check_id,
+            f"returned {check_count} checks instead of exactly one",
+            raw_payload,
         )
-        self.check_id = check_id
         self.check_count = check_count
-        self.raw_payload = raw_payload
 
 
 def _critique_raw_output_path(output_path: Path) -> Path:
@@ -119,13 +134,20 @@ def _unverifiable_check_payload(
     return payload
 
 
-def _source_flags(raw_payload: Any, check_id: str) -> list[dict[str, Any]]:
-    """Preserve typed worker flags and bind them to their producing lens."""
+def _source_flags_with_id_map(
+    raw_payload: Any, check_id: str
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """Validate one producer and assign reducer-owned globally stable flag IDs."""
     if not isinstance(raw_payload, dict) or not isinstance(raw_payload.get("flags"), list):
-        return []
+        return [], {}
     sourced: list[dict[str, Any]] = []
-    for raw_flag in raw_payload["flags"]:
+    local_to_global: dict[str, str] = {}
+    local_id_indices: dict[str, int] = {}
+    canonical_id_indices: dict[str, int] = {}
+    issues: list[str] = []
+    for index, raw_flag in enumerate(raw_payload["flags"]):
         if not isinstance(raw_flag, dict):
+            issues.append(f"flags[{index}] is not an object")
             continue
         flag = dict(raw_flag)
         producer_category = str(flag.get("category") or "other").strip().lower()
@@ -158,11 +180,50 @@ def _source_flags(raw_payload: Any, check_id: str) -> list[dict[str, Any]]:
         flag["severity_hint"] = severity_hint
         if producer_severity != severity_hint:
             flag["producer_severity"] = producer_severity
-        flag["concern"] = str(flag.get("concern") or flag.get("evidence") or "").strip()
-        flag["evidence"] = str(flag.get("evidence") or flag.get("concern") or "").strip()
+        concern = str(flag.get("concern") or flag.get("evidence") or "").strip()
+        evidence = str(flag.get("evidence") or "").strip() or concern
+        if not concern:
+            issues.append(f"flags[{index}].concern and evidence are blank")
+            continue
+        if not evidence:
+            issues.append(f"flags[{index}].evidence is blank and cannot be normalized")
+            continue
+        flag["concern"] = concern
+        flag["evidence"] = evidence
         flag["source_check_id"] = check_id
+        local_id = str(flag.get("id") or "").strip()
+        canonical_id = canonical_critique_flag_id(flag)
+        if local_id:
+            prior = local_to_global.get(local_id)
+            if prior is not None:
+                issues.append(
+                    f"flags[{index}].id {local_id!r} duplicates flags[{local_id_indices[local_id]}]"
+                )
+                continue
+            local_to_global[local_id] = canonical_id
+            local_id_indices[local_id] = index
+            flag["producer_flag_id"] = local_id
+        if canonical_id in canonical_id_indices:
+            issues.append(
+                f"flags[{index}] duplicates the canonical finding at "
+                f"flags[{canonical_id_indices[canonical_id]}]"
+            )
+            continue
+        canonical_id_indices[canonical_id] = index
+        flag["id"] = canonical_id
         sourced.append(flag)
-    return sourced
+    if issues:
+        raise _RetryableCritiqueContractError(
+            check_id,
+            "failed producer validation: " + "; ".join(issues),
+            raw_payload,
+        )
+    return sourced, local_to_global
+
+
+def _source_flags(raw_payload: Any, check_id: str) -> list[dict[str, Any]]:
+    """Compatibility wrapper returning validated, canonically identified flags."""
+    return _source_flags_with_id_map(raw_payload, check_id)[0]
 
 
 def _infer_unverifiable_cause(reason: str) -> tuple[str | None, bool | None, str | None]:
@@ -547,11 +608,16 @@ def run_parallel_critique(
             if _flags_only is not None:
                 _verified = raw_payload.get("verified_flag_ids", [])
                 _disputed = raw_payload.get("disputed_flag_ids", [])
+                _flags, _id_map = _source_flags_with_id_map(raw_payload, str(_cid))
                 return (
                     _flags_only,
-                    _source_flags(raw_payload, str(_cid)),
-                    _verified if isinstance(_verified, list) else [],
-                    _disputed if isinstance(_disputed, list) else [],
+                    _flags,
+                    [_id_map.get(value, value) for value in _verified]
+                    if isinstance(_verified, list)
+                    else [],
+                    [_id_map.get(value, value) for value in _disputed]
+                    if isinstance(_disputed, list)
+                    else [],
                 )
         if isinstance(_checks_list, list) and len(_checks_list) != 1:
             _matching = [
@@ -589,11 +655,16 @@ def run_parallel_critique(
             _check_payload = dict(_check_payload)
             _check_payload["question"] = unit.extra.get("question", "")
         annotate_unverifiable_checks({"checks": [_check_payload]})
+        _flags, _id_map = _source_flags_with_id_map(raw_payload, str(_cid))
         return (
             _check_payload,
-            _source_flags(raw_payload, str(_cid)),
-            _verified if isinstance(_verified, list) else [],
-            _disputed if isinstance(_disputed, list) else [],
+            _flags,
+            [_id_map.get(value, value) for value in _verified]
+            if isinstance(_verified, list)
+            else [],
+            [_id_map.get(value, value) for value in _disputed]
+            if isinstance(_disputed, list)
+            else [],
         )
 
     def _repair_unit(unit: WorkerUnit) -> WorkerUnit:
@@ -684,7 +755,7 @@ def run_parallel_critique(
     _sr = _scatter_raw(units)
     _accumulate_scatter_totals(_sr)
 
-    _failures: dict[int, _RetryableCritiqueShapeError] = {}
+    _failures: dict[int, _RetryableCritiqueContractError] = {}
     for _idx, _item in enumerate(_sr.ordered_results):
         _payload = _item.payload if isinstance(_item, WorkerUnitResult) else _item
         atomic_write_json(
@@ -700,7 +771,7 @@ def run_parallel_critique(
         _rate_limits.append(_item.rate_limit if isinstance(_item, WorkerUnitResult) else None)
         try:
             _parsed_results[_idx] = _parse_result(_idx, _payload, units[_idx])
-        except _RetryableCritiqueShapeError as exc:
+        except _RetryableCritiqueContractError as exc:
             if isinstance(_item, WorkerUnitResult):
                 _persist_critique_raw_output(units[_idx].output_path, _item.raw_output)
             _failures[_idx] = exc
@@ -714,8 +785,8 @@ def run_parallel_critique(
         _retry_indices = list(_failures)
         for _failure in _failures.values():
             print(
-                f"[parallel-critique] worker '{_failure.check_id}' returned "
-                f"{_failure.check_count} checks, retrying (attempt {_next_attempt}/{_total_attempts})",
+                f"[parallel-critique] worker '{_failure.check_id}' contract invalid: "
+                f"{_failure.diagnostic}; retrying (attempt {_next_attempt}/{_total_attempts})",
                 file=sys.stderr,
             )
 
@@ -724,7 +795,7 @@ def run_parallel_critique(
         _retry_sr = _scatter_raw(_subset_units)
         _accumulate_scatter_totals(_retry_sr)
 
-        _next_failures: dict[int, _RetryableCritiqueShapeError] = {}
+        _next_failures: dict[int, _RetryableCritiqueContractError] = {}
         for _subset_pos, _item in enumerate(_retry_sr.ordered_results):
             _original_idx = _retry_indices[_subset_pos]
             _unit = _retry_units_by_index[_original_idx]
@@ -746,7 +817,7 @@ def run_parallel_critique(
             _rate_limits.append(_item.rate_limit if isinstance(_item, WorkerUnitResult) else None)
             try:
                 _parsed_results[_original_idx] = _parse_result(_original_idx, _payload, _unit)
-            except _RetryableCritiqueShapeError as exc:
+            except _RetryableCritiqueContractError as exc:
                 if isinstance(_item, WorkerUnitResult):
                     _persist_critique_raw_output(_unit.output_path, _item.raw_output)
                 _next_failures[_original_idx] = exc
@@ -757,8 +828,8 @@ def run_parallel_critique(
     for _idx, _failure in _failures.items():
         _unit = _retry_units[_idx]
         print(
-            f"[parallel-critique] worker '{_failure.check_id}' returned "
-            f"{_failure.check_count} checks after retry budget; marking check unverifiable",
+            f"[parallel-critique] worker '{_failure.check_id}' contract invalid after retry "
+            f"budget: {_failure.diagnostic}; marking check unverifiable",
             file=sys.stderr,
         )
         _parsed_results[_idx] = (
