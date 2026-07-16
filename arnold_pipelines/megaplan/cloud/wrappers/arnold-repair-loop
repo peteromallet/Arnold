@@ -5680,6 +5680,29 @@ if not legacy_changed and (
     raise SystemExit(0)
 if legacy_changed:
     after_sha = current_head
+try:
+    upstream = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "--abbrev-ref", "@{upstream}"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    ).stdout.strip()
+except Exception:
+    upstream = ""
+if upstream:
+    durable_in_upstream = subprocess.run(
+        ["git", "-C", str(workspace), "merge-base", "--is-ancestor", after_sha, upstream],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=5,
+    ).returncode == 0
+    if not durable_in_upstream:
+        raise SystemExit(
+            "verified quality repair commit is not contained in tracked branch "
+            f"{upstream}; publication authorization is required before chain recovery"
+        )
 if not report_path.is_file() and not embedded_report:
     raise SystemExit(0)
 dev_report = embedded_report or load_object(report_path)

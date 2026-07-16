@@ -5894,6 +5894,68 @@ def test_post_dev_quality_recovery_rejects_unchanged_or_unbounded_evidence(
     assert result.stdout == ""
 
 
+def test_post_dev_quality_recovery_rejects_unpublished_tracked_branch_fix(
+    tmp_path: Path,
+) -> None:
+    workspace, data_path, receipt_path, plan_name = _post_dev_quality_recovery_fixture(tmp_path)
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+    subprocess.run(["git", "-C", str(workspace), "remote", "add", "origin", str(remote)], check=True)
+    branch = subprocess.run(
+        ["git", "-C", str(workspace), "branch", "--show-current"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "-C", str(workspace), "push", "-q", "-u", "origin", branch],
+        check=True,
+    )
+    before = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    (workspace / "module.py").write_text("fixed = True\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(workspace), "add", "module.py"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "commit", "-qm", "local repair"], check=True)
+    after = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    payload = json.loads(data_path.read_text(encoding="utf-8"))
+    entry = payload["iterations"][0]
+    entry["dev_before_sha"] = before
+    entry["dev_after_sha"] = after
+    entry["dev_fix_sha"] = after
+    entry["dev_fix_changed"] = True
+    entry["dev_report"]["local_commit"] = after
+    report_path = Path(entry["dev_report_path"])
+    report_path.write_text(json.dumps(entry["dev_report"]), encoding="utf-8")
+    data_path.write_text(json.dumps(payload), encoding="utf-8")
+    script = "\n\n".join(
+        [
+            _extract_repair_function("post_dev_fix_quality_recovery_command_if_needed"),
+            f"WORKSPACE={str(workspace)!r}",
+            f"PLAN_NAME={plan_name!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            f"INVESTIGATOR_RECEIPT_PATH={str(receipt_path)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            "post_dev_fix_quality_recovery_command_if_needed 1 'echo ordinary-relaunch'",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "not contained in tracked branch" in result.stderr
+    assert "publication authorization is required" in result.stderr
+
+
 def test_prior_receipted_legacy_dev_fix_can_enter_quality_recovery(tmp_path: Path) -> None:
     workspace, data_path, receipt_path, plan_name = _post_dev_quality_recovery_fixture(tmp_path)
     payload = json.loads(data_path.read_text(encoding="utf-8"))
