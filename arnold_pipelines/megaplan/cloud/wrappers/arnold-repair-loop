@@ -4957,7 +4957,7 @@ repair_goal_record_terminal_failure() {
 }
 
 wait_for_repair_goal_progress_if_live() {
-  local phase="$1" result status action reason runner_live sleep_secs
+  local phase="$1" result status action reason runner_live owner_launch_live sleep_secs
   local settle_started="$SECONDS"
   local settle_secs="${CLOUD_WATCHDOG_REPAIR_LAUNCH_SETTLE_SECS:-120}"
   if ! [[ "$settle_secs" =~ ^[0-9]+$ ]]; then
@@ -5010,10 +5010,15 @@ wait_for_repair_goal_progress_if_live() {
         # successful launch/hold receipt. Give that exact canonical runner a
         # bounded settle window to emit authoritative phase activity; bare
         # process liveness still cannot satisfy the recovery goal.
-        if [[ "$runner_live" == "true" && "$((SECONDS - settle_started))" -lt "$settle_secs" ]]; then
+        owner_launch_live=false
+        if tmux has-session -t "$SESSION" 2>/dev/null; then
+          owner_launch_live=true
+        fi
+        if [[ "$((SECONDS - settle_started))" -lt "$settle_secs" ]] && \
+          { [[ "$runner_live" == "true" ]] || [[ "$owner_launch_live" == "true" ]]; }; then
           ensure_repair_budget_available "goal-launch-settle-$phase"
           sleep_secs="$(cap_timeout_to_repair_budget "$REPAIR_GOAL_POLL_SECS" "goal-launch-settle-$phase")"
-          log "observing receipted canonical launch during bounded settle window session=$SESSION phase=$phase poll_secs=$sleep_secs reason=$reason"
+          log "observing receipted owner launch during bounded settle window session=$SESSION phase=$phase runner_live=$runner_live owner_launch_live=$owner_launch_live poll_secs=$sleep_secs reason=$reason"
           sleep "$sleep_secs"
           continue
         fi
