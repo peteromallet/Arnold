@@ -5197,10 +5197,14 @@ verify_relaunch_health demo /workspace/demo /workspace/demo/chain.yaml chain '' 
 
 def test_supervise_exhaustion_queues_repair_request() -> None:
     text = _wrapper("arnold-supervise")
+    helper = (REPO_ROOT / "arnold_pipelines/megaplan/cloud/supervise.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "queue_repair_request()" in text
-    assert 'source="arnold_supervise_exit"' in text
-    assert '"failure_kind": "supervised_run_exhausted"' in text
+    assert "enqueue_supervisor_repair_request" in text
+    assert 'source="arnold_supervise_exit"' in helper
+    assert '"failure_kind": "supervised_run_exhausted"' in helper
     assert "non-quota retries exhausted" in text
     assert "exit_with_repair_request" in text
     assert "SUPERVISE_SESSION" in text
@@ -8724,6 +8728,9 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     assert '"schema_version": "arnold-mechanical-launch-receipt-v1"' in text
     assert 'export ARNOLD_AUTONOMY=$(printf \'%q\' "${ARNOLD_AUTONOMY:-}")' in text
     assert 'export ARNOLD_REPAIR_TRIGGER_ENABLED=$(printf \'%q\' "${ARNOLD_REPAIR_TRIGGER_ENABLED:-}")' in text
+    assert "l1_mutation_authorized()" in text
+    assert "observed: L1 mutation blocked before $mutation_label" in text
+    assert "investigation custody check failed closed before mutation" in text
     assert '"started_at": started_at' in text
     assert 'echo "terminal:$post_status:receipt=$launch_receipt"' in text
     assert '"authorized-recovery-launch-failed"' in text
@@ -8735,6 +8742,62 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     verify_start = text.index('health="$(verify_started_and_holding', launch_start)
     assert text[launch_start:verify_start].rstrip().endswith("fi")
     assert 'repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "running"' in text
+
+
+def test_meta_replan_effects_require_l2_mutation_authority() -> None:
+    text = _wrapper("arnold-meta-repair-loop")
+
+    branch = text.index('if [[ "$META_INVESTIGATION_ACTION" == "replan" ]]')
+    authority = text.index("if ! l2_mutation_authorized; then", branch)
+    reconciliation = text.index('REPLAN_RECONCILIATION="$', branch)
+    retrigger = text.index('log "accepted L2 replan handoff; retriggering ordinary repair', branch)
+
+    assert branch < authority < reconciliation < retrigger
+    assert "observed: L2 replan effects blocked by master-plus-path authorization gate" in text
+
+
+@pytest.mark.parametrize(
+    ("authorized", "supervisor_python", "expected_rc", "expected_log"),
+    [
+        (False, "/bin/true", 77, "L1 mutation blocked before test-mutation"),
+        (True, "/bin/false", 76, "investigation custody check failed closed"),
+    ],
+)
+def test_repair_mutation_guard_cannot_be_ignored(
+    tmp_path: Path,
+    authorized: bool,
+    supervisor_python: str,
+    expected_rc: int,
+    expected_log: str,
+) -> None:
+    effect = tmp_path / "effect"
+    script = "\n\n".join(
+        [
+            _extract_repair_function("require_investigation_before_mutation"),
+            f"""
+require_repair_lock_held() {{ :; }}
+l1_mutation_authorized() {{ return {0 if authorized else 1}; }}
+log() {{ printf '%s\\n' "$*"; }}
+MEGAPLAN_SUPERVISOR_PYTHON={supervisor_python}
+WRAPPER_REPO_ROOT=/workspace/unused
+ARNOLD_SRC=/workspace/unused
+INVESTIGATION_CONTEXT_PATH=/workspace/unused-context
+INVESTIGATOR_RECEIPT_PATH=/workspace/unused-receipt
+INVESTIGATION_CONTEXT_DIGEST=unused
+SESSION=test-session
+require_investigation_before_mutation test-mutation
+touch {effect}
+""".strip(),
+        ]
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == expected_rc
+    assert expected_log in result.stdout
+    assert not effect.exists()
 
 
 def test_repair_loop_health_treats_orphaned_chain_process_as_alive(tmp_path: Path) -> None:

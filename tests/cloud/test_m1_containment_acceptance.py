@@ -138,6 +138,8 @@ def _run_auditor_dispatch(tmp_path: Path) -> dict[str, object]:
          "AUDIT_CODEX_MODEL=gpt-5.6-sol",
          "SUBAGENT_PROFILE=partnered-5",
          "CODEX_TIMEOUT=30",
+         "AUDIT_REVIEW_EVIDENCE_MAX_BYTES=65536",
+         "AUDIT_REVIEW_BRIEF_MAX_BYTES=131072",
          'AUDIT_AUTOFIX_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_enabled)"',
          'AUDIT_MUTATION_AUTHORIZED_FLAG="$(audit_flag_enabled audit_autofix_mutation_authorized)"',
          'AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_commit_enabled)"',
@@ -258,7 +260,7 @@ def test_master_plus_path_gate_and_real_l1_wrapper_fail_closed(tmp_path: Path) -
         env=env,
         check=False,
     )
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 77, result.stderr
     assert not effects.exists()
     assert "observed: L1 supervisor mutation blocked" in result.stdout
 
@@ -411,7 +413,7 @@ def test_real_auditor_dispatch_proves_exact_model_and_read_only_receipt(tmp_path
         validate_audit_model_inputs({"CODEX_MODEL": "gpt-5.5"})
 
     result = _run_auditor_dispatch(tmp_path)
-    assert result["codex_argv"] == [
+    assert result["codex_argv"][:7] == [
         "exec",
         "--sandbox",
         "read-only",
@@ -419,8 +421,10 @@ def test_real_auditor_dispatch_proves_exact_model_and_read_only_receipt(tmp_path
         "model=gpt-5.6-sol",
         "-c",
         "model_reasoning_effort=high",
-        "-",
     ]
+    assert result["codex_argv"][7] == "--output-last-message"
+    assert Path(result["codex_argv"][8]).name == "model-response-m1-acceptance.txt"
+    assert result["codex_argv"][9:] == ["-"]
     receipt_path = (
         Path(str(result["dispatch_receipt_root"]))
         / "dispatch_receipts"

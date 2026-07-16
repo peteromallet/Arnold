@@ -6648,9 +6648,19 @@ repair_agent_workdir() {
   fi
 }
 
+l1_mutation_authorized() {
+  PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
+    "$MEGAPLAN_SUPERVISOR_PYTHON" -P -c \
+    'from arnold_pipelines.megaplan.cloud.feature_flags import MUTATION_PATH_L1, mutation_authorized; raise SystemExit(0 if mutation_authorized(MUTATION_PATH_L1) else 1)'
+}
+
 require_investigation_before_mutation() {
   require_repair_lock_held
   local mutation_label="${1:-mutation}"
+  if ! l1_mutation_authorized; then
+    log "observed: L1 mutation blocked before $mutation_label (requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED)"
+    exit 77
+  fi
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
     "$INVESTIGATION_CONTEXT_PATH" "$INVESTIGATOR_RECEIPT_PATH" "$INVESTIGATION_CONTEXT_DIGEST" "$mutation_label" <<'PY' >>"$LOG" 2>&1
 import hashlib
@@ -6703,6 +6713,11 @@ print(json.dumps({
     "safe_repair_target": target,
 }, sort_keys=True))
 PY
+  local validation_rc=$?
+  if [[ "$validation_rc" != "0" ]]; then
+    log "investigation custody check failed closed before mutation session=$SESSION label=$mutation_label rc=$validation_rc"
+    exit 76
+  fi
 }
 
 persist_repair_investigation_failure() {

@@ -779,6 +779,10 @@ if validated.get("recommended_action") != "replan":
 if (validated.get("safe_repair_target") or {}).get("kind") != "repair_custody":
     raise SystemExit("L2 replan handoff did not target repair custody")
 PY
+  if ! l2_mutation_authorized; then
+    log "observed: L2 replan effects blocked by master-plus-path authorization gate session=$SESSION"
+    exit 77
+  fi
   REPLAN_RECONCILIATION="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
     "$REPAIR_DATA_PATH" "$MARKER_DIR/$SESSION.json" "$SESSION" "$META_INVESTIGATION_CONTEXT_DIGEST" "$META_INVESTIGATION_RECEIPT_PATH" <<'PY'
 import json
