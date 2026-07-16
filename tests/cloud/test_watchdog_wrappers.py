@@ -3574,7 +3574,7 @@ echo "status:$REPAIR_DISPATCH_RESULT"
         "REPORT:meta_repair:dispatched:L2 took custody after confirmed L1 launch failure",
         "status:dispatched",
     ]
-    assert "META:l1_launch_failed" in result.stderr
+    assert "META:model_tool_launch_failure" in result.stderr
     assert "L2 now has custody" in result.stderr
 
 
