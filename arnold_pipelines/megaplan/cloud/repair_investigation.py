@@ -376,6 +376,7 @@ def _durable_phase_contract_repair_evidence(
         else {}
     )
     failure_kind = _text(latest_failure.get("kind"), 300).lower()
+    failure_fingerprint = _text(latest_failure.get("fingerprint"), 300)
     failure_phase = _text(
         latest_failure.get("phase") or current.get("target_stage"), 300
     ).lower()
@@ -383,13 +384,17 @@ def _durable_phase_contract_repair_evidence(
     if (
         str(current.get("plan_state") or "").lower() != "blocked"
         or failure_kind != "deterministic_phase_failure"
+        or not failure_fingerprint
         or len(workspace_head) != 40
         or any(char not in "0123456789abcdef" for char in workspace_head)
     ):
         return {
             "verified": False,
             "workspace_head": workspace_head,
-            "reason": "current target is not a deterministic phase-contract block with a Git HEAD",
+            "reason": (
+                "current target is not a fingerprinted deterministic phase-contract "
+                "block with a Git HEAD"
+            ),
         }
     candidates = [
         item
@@ -435,6 +440,7 @@ def _durable_phase_contract_repair_evidence(
             "dev_fix_sha": dev_fix_sha,
             "attempt_id": item.get("attempt_id") or item.get("i"),
             "failure_kind": failure_kind,
+            "failure_fingerprint": failure_fingerprint,
             "phase": failure_phase,
             "plan_name": current_plan,
             "validation_present": True,
@@ -924,22 +930,32 @@ def build_investigation_context(
                 "automatic repair verified that the repeated-failure block references "
                 "a historical occurrence superseded by a later same-phase success"
             )
-        recover_blocked_cli = shlex.join(
-            [
-                "python",
-                "-P",
-                "-m",
-                "arnold_pipelines.megaplan",
-                "override",
-                "recover-blocked",
-                "--project-dir",
-                str(Path(workspace)),
-                "--plan",
-                plan_name,
-                "--reason",
-                recovery_reason,
-            ]
-        )
+        recover_blocked_args = [
+            "python",
+            "-P",
+            "-m",
+            "arnold_pipelines.megaplan",
+            "override",
+            "recover-blocked",
+            "--project-dir",
+            str(Path(workspace)),
+            "--plan",
+            plan_name,
+        ]
+        if durable_phase_contract_repair.get("verified") is True:
+            recover_blocked_args.extend(
+                [
+                    "--repair-commit",
+                    _text(durable_phase_contract_repair.get("dev_fix_sha"), 100),
+                    "--failure-fingerprint",
+                    _text(
+                        durable_phase_contract_repair.get("failure_fingerprint"),
+                        300,
+                    ),
+                ]
+            )
+        recover_blocked_args.extend(["--reason", recovery_reason])
+        recover_blocked_cli = shlex.join(recover_blocked_args)
         supported_recovery_cli = f"{recover_blocked_cli} && {chain_start_cli}"
     required_investigator_output = _common_required_output("l1_repair_target")
     required_investigator_output["action_specific_handoff_examples"]["recover_state"][

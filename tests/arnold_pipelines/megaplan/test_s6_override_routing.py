@@ -3,8 +3,11 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from arnold.control.interface import ControlTransition
 from arnold.workflow import authoring
@@ -15,6 +18,7 @@ from arnold_pipelines.megaplan.handlers.override import handle_override
 from arnold_pipelines.megaplan.outcomes import OverrideOutcome, OverridePolicyRoute
 from arnold_pipelines.megaplan.planning.control_binding import planning_run_state_view
 from arnold_pipelines.megaplan.semantic_health import inspect_semantic_health
+from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan import workflows
 from arnold_pipelines.megaplan.workflows import planning
 from arnold_pipelines.megaplan.workflows.override_matrix import OVERRIDE_ACTION_MATRIX
@@ -520,6 +524,112 @@ def test_recover_blocked_emits_authority_receipt_and_stale_state_fails(
     assert "SH-override_recover_blocked_authority-authority-evidence-hash-mismatch-0" in _finding_ids(
         plan_dir
     )
+
+
+def test_recover_blocked_replays_repaired_deterministic_phase_without_phase_result(
+    tmp_path: Path,
+) -> None:
+    plan_dir = _plan_dir(tmp_path)
+    state = _base_state(tmp_path, current_state="blocked")
+    state["resume_cursor"] = {
+        "phase": "finalize",
+        "retry_strategy": "repair_phase_contract",
+    }
+    state["latest_failure"] = {
+        "kind": "deterministic_phase_failure",
+        "phase": "finalize",
+        "fingerprint": "f" * 64,
+        "message": "phase contract failed before phase_result emission",
+    }
+    _write_json(plan_dir / "state.json", state)
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"], cwd=tmp_path, check=True
+    )
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "validated deterministic repair"],
+        cwd=tmp_path,
+        check=True,
+    )
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    with pytest.raises(CliError, match="does not match the target workspace HEAD"):
+        apply_transition(
+            planning_run_state_view(state),
+            ControlTransition(
+                op="override",
+                target_id="recover-blocked",
+                payload={
+                    "reason": "unbound deterministic phase repair",
+                    "repair_commit": "a" * 40,
+                    "failure_fingerprint": "f" * 64,
+                    "root": str(tmp_path),
+                },
+            ),
+            "megaplan",
+            plan_dir=plan_dir,
+        )
+
+    with pytest.raises(CliError, match="exact current failure fingerprint"):
+        apply_transition(
+            planning_run_state_view(state),
+            ControlTransition(
+                op="override",
+                target_id="recover-blocked",
+                payload={
+                    "reason": "stale deterministic phase repair",
+                    "repair_commit": head,
+                    "failure_fingerprint": "e" * 64,
+                    "root": str(tmp_path),
+                },
+            ),
+            "megaplan",
+            plan_dir=plan_dir,
+        )
+
+    result = apply_transition(
+        planning_run_state_view(state),
+        ControlTransition(
+            op="override",
+            target_id="recover-blocked",
+            payload={
+                "reason": "validated deterministic phase repair",
+                "repair_commit": head,
+                "failure_fingerprint": "f" * 64,
+                "root": str(tmp_path),
+            },
+        ),
+        "megaplan",
+        plan_dir=plan_dir,
+    )
+
+    assert result.accepted is True
+    assert result.artifacts["phase_contract_repair"] == {
+        "failure_kind": "deterministic_phase_failure",
+        "phase": "finalize",
+        "repair_commit": head,
+        "workspace_head": head,
+        "failure_fingerprint": "f" * 64,
+        "authority": "explicit_repair_commit_bound_to_target_head",
+    }
+    persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert persisted["current_state"] == "gated"
+    assert "latest_failure" not in persisted
+    assert persisted["meta"]["overrides"][-1]["phase_contract_repair"][
+        "repair_commit"
+    ] == head
 
 
 def test_resume_clarify_emits_authority_receipt(tmp_path: Path) -> None:
