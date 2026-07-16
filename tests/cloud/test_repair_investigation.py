@@ -138,6 +138,66 @@ def test_context_is_bounded_and_carries_exact_error_and_recent_repairs(tmp_path:
     ]["recover_state"]["allowed_mutations"] == [f"supported_cli:{supported_cli}"]
 
 
+def test_historical_recount_recovery_uses_guarded_override_before_chain_start(
+    tmp_path: Path,
+) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    state_path = workspace / ".megaplan/plans/current-m5a/state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    failure_message = "gate structural enum mismatch"
+    state["latest_failure"] = {
+        "kind": "repeated_failure_signature",
+        "metadata": {
+            "count": 3,
+            "failure_step": "gate",
+            "failure_message": failure_message,
+        },
+    }
+    state["resume_cursor"] = {
+        "phase": "gate",
+        "retry_strategy": "repair_repeated_failure",
+    }
+    state["history"] = [
+        {
+            "step": "gate",
+            "result": "error",
+            "message": failure_message,
+            "timestamp": "2026-07-16T15:30:03Z",
+        },
+        {
+            "step": "gate",
+            "result": "success",
+            "timestamp": "2026-07-16T15:32:13Z",
+            "artifact_hash": "fresh-gate-artifact",
+        },
+    ]
+    _write(state_path, state)
+
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+
+    supported_cli = context["safe_repair_boundaries"]["supported_recovery_cli"]
+    assert context["historical_failure_recovery"]["applicable"] is True
+    assert context["historical_failure_recovery"]["evidence"][
+        "historical_failure_index"
+    ] == 0
+    assert "override recover-blocked" in supported_cli
+    assert "--plan current-m5a" in supported_cli
+    assert " && " in supported_cli
+    assert supported_cli.endswith(
+        f"chain start --spec {spec} --project-dir {workspace}"
+    )
+    assert context["required_investigator_output"][
+        "action_specific_handoff_examples"
+    ]["recover_state"]["allowed_mutations"] == [f"supported_cli:{supported_cli}"]
+
+
 def test_l1_broker_observation_is_digest_bound_typed_and_bounded(tmp_path: Path) -> None:
     workspace, spec, repair_data, request, goal = _fixture(tmp_path)
     context = build_investigation_context(

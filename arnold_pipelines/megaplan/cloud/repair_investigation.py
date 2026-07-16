@@ -757,7 +757,7 @@ def build_investigation_context(
         and current_authoritative_failure
         and _digest(dict(frozen_failure)) != _digest(dict(current_authoritative_failure))
     )
-    supported_recovery_cli = shlex.join(
+    chain_start_cli = shlex.join(
         [
             "python",
             "-P",
@@ -771,6 +771,35 @@ def build_investigation_context(
             str(Path(workspace)),
         ]
     )
+    plan_state_payload = _load(current.get("plan_state_path"))
+    superseded_failure = _superseded_failure_evidence(plan_state_payload)
+    historical_failure_recovery = {
+        "applicable": bool(superseded_failure.get("detected")),
+        "evidence": superseded_failure,
+        "authority": "guarded_override_cli_then_ordinary_chain_start",
+    }
+    supported_recovery_cli = chain_start_cli
+    if superseded_failure.get("detected") is True and plan_name:
+        recover_blocked_cli = shlex.join(
+            [
+                "python",
+                "-P",
+                "-m",
+                "arnold_pipelines.megaplan",
+                "override",
+                "recover-blocked",
+                "--project-dir",
+                str(Path(workspace)),
+                "--plan",
+                plan_name,
+                "--reason",
+                (
+                    "automatic repair verified that the repeated-failure block references "
+                    "a historical occurrence superseded by a later same-phase success"
+                ),
+            ]
+        )
+        supported_recovery_cli = f"{recover_blocked_cli} && {chain_start_cli}"
     required_investigator_output = _common_required_output("l1_repair_target")
     required_investigator_output["action_specific_handoff_examples"]["recover_state"][
         "allowed_mutations"
@@ -918,6 +947,7 @@ def build_investigation_context(
                 "custody contradiction."
             ),
         },
+        "historical_failure_recovery": historical_failure_recovery,
         "intended_recovery": {
             "predicate": _text(
                 recovery_contract.get("predicate")
@@ -1767,6 +1797,7 @@ def build_repair_observation_bundle(context_path: str | Path) -> dict[str, Any]:
         "custody_status",
         "durable_quality_block",
         "goal_continuity",
+        "historical_failure_recovery",
         "intended_recovery",
         "l2_replan_authorization",
         "prior_repairs",
