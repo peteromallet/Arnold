@@ -5971,6 +5971,124 @@ def test_prior_receipted_attempt_can_enter_recover_state_quality_recovery(
     assert f"bounded repair data:{data_path}#attempts[0].dev_report" in result.stdout
 
 
+def test_verified_quality_recovery_cannot_fall_back_without_receipt_locator(
+    tmp_path: Path,
+) -> None:
+    context = tmp_path / "context.json"
+    context.write_text(
+        json.dumps(
+            {
+                "durable_quality_block": {
+                    "active": True,
+                    "repair_evidence": {"verified": True},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("quality_recovery_requirement"),
+            _extract_repair_function("select_mechanical_relaunch_command"),
+            "post_dev_fix_quality_recovery_command_if_needed() { printf '%s\\n' 'unsafe-fallback'; }",
+            f"INVESTIGATION_CONTEXT_PATH={str(context)!r}",
+            "INVESTIGATOR_RECOMMENDED_ACTION=recover_state",
+            "POST_DEV_FIX_ITERATION=",
+            "select_mechanical_relaunch_command 'ordinary-relaunch'",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 76
+    assert result.stdout == ""
+    assert "no bounded dev-fix receipt locator" in result.stderr
+
+
+def test_verified_quality_recovery_cannot_fall_back_when_receipt_mismatches(
+    tmp_path: Path,
+) -> None:
+    context = tmp_path / "context.json"
+    context.write_text(
+        json.dumps(
+            {
+                "durable_quality_block": {
+                    "active": True,
+                    "repair_evidence": {"verified": True},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("quality_recovery_requirement"),
+            _extract_repair_function("select_mechanical_relaunch_command"),
+            "post_dev_fix_quality_recovery_command_if_needed() { return 0; }",
+            f"INVESTIGATION_CONTEXT_PATH={str(context)!r}",
+            "INVESTIGATOR_RECOMMENDED_ACTION=recover_state",
+            "POST_DEV_FIX_ITERATION=attempts:17",
+            "select_mechanical_relaunch_command 'ordinary-relaunch'",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 76
+    assert result.stdout == ""
+    assert "could not construct its receipt-bound command" in result.stderr
+
+
+def test_quality_recovery_context_bound_fails_closed(tmp_path: Path) -> None:
+    context = tmp_path / "context.json"
+    context.write_text(" " * 65_537, encoding="utf-8")
+    script = "\n\n".join(
+        [
+            _extract_repair_function("quality_recovery_requirement"),
+            _extract_repair_function("select_mechanical_relaunch_command"),
+            "post_dev_fix_quality_recovery_command_if_needed() { return 0; }",
+            f"INVESTIGATION_CONTEXT_PATH={str(context)!r}",
+            "INVESTIGATOR_RECOMMENDED_ACTION=recover_state",
+            "POST_DEV_FIX_ITERATION=attempts:17",
+            "select_mechanical_relaunch_command 'ordinary-relaunch'",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 76
+    assert result.stdout == ""
+    assert "65536-byte bound" in result.stderr
+
+
+def test_receipted_live_runner_gets_bounded_launch_settle_observation(
+    tmp_path: Path,
+) -> None:
+    calls = tmp_path / "calls"
+    script = "\n\n".join(
+        [
+            _extract_repair_function("wait_for_repair_goal_progress_if_live"),
+            f"CALLS={str(calls)!r}",
+            "repair_goal_control_snapshot() { if [[ -f \"$CALLS\" ]]; then printf '%s\\n' '{\"status\":\"progressed\",\"evaluation\":{\"control_action\":\"\",\"reason\":\"accepted\"},\"observation\":{}}'; else : > \"$CALLS\"; printf '%s\\n' '{\"status\":\"active\",\"evaluation\":{\"control_action\":\"investigate\",\"reason\":\"awaiting activity\"},\"observation\":{\"runner_transition\":{\"runner_pid_live\":true}}}'; fi; }",
+            "repair_data_set_outcome() { :; }",
+            "clear_repair_markers() { :; }",
+            "repair_goal_record_terminal_failure() { :; }",
+            "ensure_repair_budget_available() { :; }",
+            "cap_timeout_to_repair_budget() { printf '%s\\n' 0; }",
+            "log() { :; }",
+            "SESSION=test-session",
+            "REPAIR_GOAL_POLL_SECS=0",
+            "CLOUD_WATCHDOG_REPAIR_LAUNCH_SETTLE_SECS=120",
+            "wait_for_repair_goal_progress_if_live post-launch",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert calls.exists()
+
+
 def test_watchdog_chain_relaunch_prefers_plan_resume_for_external_resume_required(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"

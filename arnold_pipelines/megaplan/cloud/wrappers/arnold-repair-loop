@@ -4957,15 +4957,20 @@ repair_goal_record_terminal_failure() {
 }
 
 wait_for_repair_goal_progress_if_live() {
-  local phase="$1" result status action reason sleep_secs
+  local phase="$1" result status action reason runner_live sleep_secs
+  local settle_started="$SECONDS"
+  local settle_secs="${CLOUD_WATCHDOG_REPAIR_LAUNCH_SETTLE_SECS:-120}"
+  if ! [[ "$settle_secs" =~ ^[0-9]+$ ]]; then
+    settle_secs=120
+  fi
   while true; do
     result="$(repair_goal_control_snapshot "$phase")" || {
       repair_data_set_outcome "repairing"
       log "repair goal control snapshot failed closed session=$SESSION phase=$phase"
       return 1
     }
-    IFS=$'\t' read -r status action reason <<< "$(
-      python3 -c 'import json,sys; d=json.load(sys.stdin); e=d.get("evaluation") or {}; print("\t".join((str(d.get("status") or ""), str(e.get("control_action") or ""), str(e.get("reason") or ""))))' <<< "$result"
+    IFS=$'\t' read -r status action runner_live reason <<< "$(
+      python3 -c 'import json,sys; d=json.load(sys.stdin); e=d.get("evaluation") or {}; o=d.get("observation") or {}; r=o.get("runner_transition") or {}; w=o.get("active_worker") or {}; live=bool(r.get("runner_pid_live") or w.get("worker_pid_live")); print("\t".join((str(d.get("status") or ""), str(e.get("control_action") or ""), "true" if live else "false", str(e.get("reason") or ""))))' <<< "$result"
     )"
     case "$status:$action" in
       progressed:*)
@@ -4999,6 +5004,20 @@ wait_for_repair_goal_progress_if_live() {
         repair_data_set_outcome "deterministic_failure"
         log "deterministic owner circuit breaker requires L2 replan session=$SESSION phase=$phase reason=$reason"
         return 2
+        ;;
+      active:investigate)
+        # This function is reached only after the current repair owner has a
+        # successful launch/hold receipt. Give that exact canonical runner a
+        # bounded settle window to emit authoritative phase activity; bare
+        # process liveness still cannot satisfy the recovery goal.
+        if [[ "$runner_live" == "true" && "$((SECONDS - settle_started))" -lt "$settle_secs" ]]; then
+          ensure_repair_budget_available "goal-launch-settle-$phase"
+          sleep_secs="$(cap_timeout_to_repair_budget "$REPAIR_GOAL_POLL_SECS" "goal-launch-settle-$phase")"
+          log "observing receipted canonical launch during bounded settle window session=$SESSION phase=$phase poll_secs=$sleep_secs reason=$reason"
+          sleep "$sleep_secs"
+          continue
+        fi
+        return 1
         ;;
       *)
         return 1
@@ -5780,6 +5799,62 @@ print(recovery)
 PY
 }
 
+quality_recovery_requirement() {
+  python3 -P - "$INVESTIGATION_CONTEXT_PATH" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    if path.stat().st_size > 65_536:
+        raise ValueError("investigation context exceeds 65536-byte bound")
+    context = json.loads(path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"invalid:{exc}", file=sys.stderr)
+    raise SystemExit(1)
+quality = context.get("durable_quality_block")
+quality = quality if isinstance(quality, dict) else {}
+evidence = quality.get("repair_evidence")
+evidence = evidence if isinstance(evidence, dict) else {}
+print(
+    "required"
+    if quality.get("active") is True and evidence.get("verified") is True
+    else "not_required"
+)
+PY
+}
+
+select_mechanical_relaunch_command() {
+  local normal_command="$1"
+  local requirement="not_required"
+  local quality_command=""
+  if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]; then
+    requirement="$(quality_recovery_requirement)" || return 76
+  fi
+  if [[ -z "${POST_DEV_FIX_ITERATION:-}" ]]; then
+    if [[ "$requirement" == "required" ]]; then
+      echo "verified quality recovery has no bounded dev-fix receipt locator" >&2
+      return 76
+    fi
+    printf '%s\n' "$normal_command"
+    return 0
+  fi
+  quality_command="$(
+    post_dev_fix_quality_recovery_command_if_needed \
+      "$POST_DEV_FIX_ITERATION" "$normal_command"
+  )" || return 76
+  if [[ -z "$quality_command" ]]; then
+    if [[ "$requirement" == "required" ]]; then
+      echo "verified quality recovery could not construct its receipt-bound command" >&2
+      return 76
+    fi
+    printf '%s\n' "$normal_command"
+    return 0
+  fi
+  printf '%s\n' "$quality_command"
+}
+
 prior_receipted_dev_fix_iteration() {
   PYTHONPATH="${WRAPPER_REPO_ROOT:-$ARNOLD_SRC}:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
     "$WORKSPACE" "$DATA_FILE" "$PLAN_NAME" <<'PY'
@@ -5959,20 +6034,15 @@ mechanical_launch_step() {
       return 1
     }
   fi
-  if [[ -n "${POST_DEV_FIX_ITERATION:-}" ]]; then
-    local quality_recovery_command
-    quality_recovery_command="$(
-      post_dev_fix_quality_recovery_command_if_needed \
-        "$POST_DEV_FIX_ITERATION" "$quoted_command"
-    )" || {
-      echo "failed:quality_recovery_command_invalid"
-      return 1
-    }
-    if [[ -n "$quality_recovery_command" ]]; then
-      log "using receipt-bound supported quality recovery before ordinary relaunch session=$session iteration=$iteration" >&2
-      quoted_command="$quality_recovery_command"
-    fi
+  local selected_relaunch_command
+  selected_relaunch_command="$(select_mechanical_relaunch_command "$quoted_command")" || {
+    echo "failed:quality_recovery_command_invalid"
+    return 1
+  }
+  if [[ "$selected_relaunch_command" != "$quoted_command" ]]; then
+    log "using receipt-bound supported quality recovery before ordinary relaunch session=$session iteration=$iteration" >&2
   fi
+  quoted_command="$selected_relaunch_command"
   if tmux has-session -t "$session" 2>/dev/null; then
     log "mechanical relaunch fenced: existing tmux session is not this owner's custody session=$session iteration=$iteration" >&2
     echo "failed:existing_tmux_custody_unverified"
