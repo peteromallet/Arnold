@@ -232,6 +232,11 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         ),
     )
     sync_parser.add_argument(
+        "--on-box",
+        action="store_true",
+        help="Sync from inside the agentbox without SSH.",
+    )
+    sync_parser.add_argument(
         "--workspace",
         default=None,
         help="Explicit remote workspace override. Use only for manual migration.",
