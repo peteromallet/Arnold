@@ -4,6 +4,11 @@ Canonical initiative for Megaplan maintenance research, watchdog supervision, sa
 
 The chain-referenced milestone briefs under `briefs/` are canonical. Architecture decisions live under `decisions/`, evidence syntheses under `research/`, and operator handoffs under `handoff/`.
 
+## Resident-managed scheduling
+
+- [Flexible resident-managed scheduling implementation and operator handoff](handoff/flexible-resident-managed-scheduling-implementation-20260716.md) — delivered single-resident control-plane foundation for durable definitions, immutable occurrences, managed-agent launch custody, time/event scheduling, lifecycle, recovery, quotas, observability, and deployment evidence.
+- Canonical requirements source: `research/flexible-resident-managed-subagent-scheduling-architecture-20260716.md`, authored by durable resident run `subagent-20260716-180912-f35a37b5`. The raw run artifacts are cited in the implementation handoff so the source analysis remains auditable even though it was produced in the separate project checkout.
+
 ## Current incident and recovery plans
 
 - [Resident non-mutating success-chain incident — 2026-07-16](research/resident-nonmutating-success-chain-incident-20260716.md) — four-run Discord chain reconstruction, root verification/classification contract correction, regression evidence, local integration custody, and durable follow-up proof.

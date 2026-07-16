@@ -2818,6 +2818,7 @@ def launch_codex_subagent_detached(
     depends_on_run_id: str | None = None,
     depends_on_run_ids: Sequence[str] | None = None,
     queue_max_launch_attempts: int = _QUEUE_MAX_LAUNCH_ATTEMPTS,
+    schedule_context: Mapping[str, Any] | None = None,
 ) -> SubagentResult:
     """Launch a durable, fully-permissioned Codex worker managed by Arnold.
 
@@ -3080,6 +3081,21 @@ def launch_codex_subagent_detached(
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
+    normalized_schedule_context = (
+        json.loads(json.dumps(dict(schedule_context), sort_keys=True, default=str))
+        if isinstance(schedule_context, Mapping)
+        else None
+    )
+    if normalized_schedule_context is not None:
+        if normalized_schedule_context.get("schema_version") != "arnold-resident-schedule-occurrence-v1":
+            raise ValueError("schedule_context requires the resident schedule occurrence v1 schema")
+        if not normalized_schedule_context.get("occurrence_key"):
+            raise ValueError("schedule_context requires an immutable occurrence_key")
+        if len(json.dumps(normalized_schedule_context, sort_keys=True)) > 16_384:
+            raise ValueError("schedule_context exceeds the bounded manifest allowance")
+    schedule_context_digest = hashlib.sha256(
+        json.dumps(normalized_schedule_context, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     # Discord launch identity is owned by the inbound source record.  A model
     # or compatibility caller may still provide request_id, but it cannot
     # sever custody or turn the same inbound request into duplicate workers.
@@ -3110,6 +3126,7 @@ def launch_codex_subagent_detached(
         continued_session_id or "",
         followup_id or "",
         dependency_identity,
+        schedule_context_digest,
     )
     launch_lock = root / ".launch.lock"
     launch_handle = launch_lock.open("a+b")
@@ -3248,6 +3265,7 @@ def launch_codex_subagent_detached(
         },
         **({"git_custody": git_custody} if git_custody is not None else {}),
         "launch_idempotency_key": launch_key,
+        "schedule_occurrence": normalized_schedule_context,
         "correlation_id": provenance.get("correlation_id") or run_id,
         "custody_id": provenance.get("custody_id") or stable_identity("resident-custody", run_id),
         "launch_provenance": provenance,
@@ -6029,6 +6047,7 @@ async def launch_subagent_task(
     depends_on_run_id: str | None = None,
     depends_on_run_ids: Sequence[str] | None = None,
     queue_max_launch_attempts: int = _QUEUE_MAX_LAUNCH_ATTEMPTS,
+    schedule_context: Mapping[str, Any] | None = None,
 ) -> SubagentResult:
     """Dispatch ``task`` through the resident-owned delegated-agent seam.
 
@@ -6080,6 +6099,7 @@ async def launch_subagent_task(
             depends_on_run_id=depends_on_run_id,
             depends_on_run_ids=depends_on_run_ids,
             queue_max_launch_attempts=queue_max_launch_attempts,
+            schedule_context=schedule_context,
         )
     if backend != "hermes":
         raise ValueError(f"unsupported subagent backend: {backend}")
