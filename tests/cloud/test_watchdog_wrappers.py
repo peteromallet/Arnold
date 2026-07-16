@@ -5783,6 +5783,8 @@ def test_post_dev_quality_recovery_uses_fixed_resolution_and_supported_cli(
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     assert "quality-gate resolve" in result.stdout
+    assert "quality-gate resolve --project-dir" not in result.stdout
+    assert "override recover-blocked --project-dir" in result.stdout
     assert "--resolution fixed" in result.stdout
     assert "override recover-blocked" in result.stdout
     assert "ordinary-relaunch" in result.stdout
@@ -5827,6 +5829,8 @@ def test_post_dev_quality_recovery_accepts_exact_recover_state_cli(
 
     assert result.returncode == 0, result.stderr
     assert "quality-gate resolve" in result.stdout
+    assert "quality-gate resolve --project-dir" not in result.stdout
+    assert "override recover-blocked --project-dir" in result.stdout
     assert "--resolution fixed" in result.stdout
     assert "override recover-blocked" in result.stdout
     assert ordinary_relaunch in result.stdout
