@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -41,6 +41,7 @@ class SchedulerRunResult:
     fired: int = 0
     retried: int = 0
     cancelled: int = 0
+    schedules: dict[str, int] | None = None
 
 
 class ScheduledJobBackend(Protocol):
@@ -127,13 +128,16 @@ class ScheduledJobWorker:
         *,
         handlers: dict[str, JobHandler] | None = None,
         worker_id: str | None = None,
+        before_claim: Callable[[datetime], Awaitable[Mapping[str, int]]] | None = None,
     ) -> None:
         self.backend = backend
         self.worker_id = worker_id or f"resident-scheduler-{uuid4()}"
         self.handlers = handlers or {}
+        self.before_claim = before_claim
 
     async def run_due_once(self, *, now: datetime | None = None) -> SchedulerRunResult:
         now = now or utc_now()
+        schedule_receipt = dict(await self.before_claim(now)) if self.before_claim else None
         jobs = await self.backend.claim_due_jobs(worker_id=self.worker_id, now=now)
         fired = retried = cancelled = 0
         for job in jobs:
@@ -153,7 +157,13 @@ class ScheduledJobWorker:
             else:
                 await self.backend.mark_fired(str(job["id"]), now=now)
                 fired += 1
-        return SchedulerRunResult(claimed=len(jobs), fired=fired, retried=retried, cancelled=cancelled)
+        return SchedulerRunResult(
+            claimed=len(jobs),
+            fired=fired,
+            retried=retried,
+            cancelled=cancelled,
+            schedules=schedule_receipt,
+        )
 
 
 @dataclass
@@ -333,6 +343,8 @@ class ResidentJobHandlers:
         return ids[0]
 
     def _reschedule_vp_todo_sweep(self, job: ScheduledJob) -> None:
+        if bool(job.payload.get("schedule_owned")):
+            return
         pending = self.store.list_scheduled_jobs(job_type="vp_todo_sweep", status="pending", limit=1)
         if pending:
             return
@@ -604,7 +616,44 @@ def make_store_scheduler(
         stale_after_seconds=int(config.stale_claim_timeout_s),
         batch_size=config.scheduler_batch_size,
     )
-    return ScheduledJobWorker(backend, handlers=handlers.handlers(), worker_id=worker_name)
+    before_claim = None
+    from .schedules import ScheduleService, schedule_store_root
+
+    schedule_root = schedule_store_root(store)
+    if schedule_root is not None:
+        schedule_service = ScheduleService(schedule_root)
+
+        async def _run_schedules(now: datetime) -> Mapping[str, int]:
+            try:
+                receipt = await schedule_service.run_due_once(
+                    worker_id=worker_name,
+                    now=now,
+                    limit=config.scheduler_batch_size,
+                )
+            except Exception as exc:
+                # Rich schedules are additive: a corrupt definition must not
+                # starve legacy confirmation, cloud-check, or VP jobs.
+                with schedule_service.repo.locked():
+                    schedule_service.repo._append(
+                        schedule_service.repo.root / "worker-errors.jsonl",
+                        {
+                            "schema_version": "arnold-resident-schedule-worker-error-v1",
+                            "at": now,
+                            "worker_id": worker_name,
+                            "error_type": type(exc).__name__,
+                            "error": str(exc)[:1000],
+                        },
+                    )
+                return {"worker_errors": 1}
+            return receipt.model_dump()
+
+        before_claim = _run_schedules
+    return ScheduledJobWorker(
+        backend,
+        handlers=handlers.handlers(),
+        worker_id=worker_name,
+        before_claim=before_claim,
+    )
 
 
 def _cloud_request_for_job(job: ScheduledJob, run: CloudRun) -> CloudToolRequest:

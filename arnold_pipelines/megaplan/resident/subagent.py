@@ -1946,6 +1946,7 @@ def launch_managed_subagent_detached(
     outcome_contract: str | None = None,
     outcome_key: str | None = None,
     delivery_suppression_override_reason: str | None = None,
+    schedule_context: Mapping[str, Any] | None = None,
 ) -> SubagentResult:
     """Launch a durable, fully-permissioned provider worker managed by Arnold.
 
@@ -2025,6 +2026,30 @@ def launch_managed_subagent_detached(
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
+    normalized_schedule_context = (
+        json.loads(json.dumps(dict(schedule_context), sort_keys=True, default=str))
+        if isinstance(schedule_context, Mapping)
+        else None
+    )
+    if normalized_schedule_context is not None:
+        if (
+            normalized_schedule_context.get("schema_version")
+            != "arnold-resident-schedule-occurrence-v1"
+        ):
+            raise ValueError(
+                "schedule_context requires the resident schedule occurrence v1 schema"
+            )
+        if not normalized_schedule_context.get("occurrence_key"):
+            raise ValueError("schedule_context requires an immutable occurrence_key")
+        if len(json.dumps(normalized_schedule_context, sort_keys=True)) > 16_384:
+            raise ValueError("schedule_context exceeds the bounded manifest allowance")
+    schedule_context_digest = hashlib.sha256(
+        json.dumps(
+            normalized_schedule_context,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
     # Discord launch identity is owned by the inbound source record.  A model
     # or compatibility caller may still provide request_id, but it cannot
     # sever custody or turn the same inbound request into duplicate workers.
@@ -2050,6 +2075,7 @@ def launch_managed_subagent_detached(
         lineage_root_run_id or "",
         continued_session_id or "",
         followup_id or "",
+        schedule_context_digest,
     )
     launch_lock = root / ".launch.lock"
     launch_handle = launch_lock.open("a+b")
@@ -2154,6 +2180,7 @@ def launch_managed_subagent_detached(
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         "context_directory": context_directory,
         "launch_idempotency_key": launch_key,
+        "schedule_occurrence": normalized_schedule_context,
         "correlation_id": provenance.get("correlation_id") or run_id,
         "custody_id": provenance.get("custody_id") or stable_identity("resident-custody", run_id),
         "launch_provenance": provenance,
@@ -4383,6 +4410,7 @@ async def launch_subagent_task(
     launch_origin: Mapping[str, Any] | None = None,
     retry_of_run_id: str | None = None,
     query_relationship: Mapping[str, Any] | None = None,
+    schedule_context: Mapping[str, Any] | None = None,
 ) -> SubagentResult:
     """Dispatch ``task`` through the resident-owned delegated-agent seam.
 
@@ -4452,6 +4480,7 @@ async def launch_subagent_task(
             launch_origin=launch_origin,
             retry_of_run_id=retry_of_run_id,
             query_relationship=query_relationship,
+            schedule_context=schedule_context,
         )
         if provider_route.backend == "codex":
             return launch_codex_subagent_detached(**launch_kwargs)
