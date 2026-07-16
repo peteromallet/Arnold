@@ -15041,6 +15041,17 @@ def test_two_stage_repair_fails_closed_before_mutating_fixer_and_is_described() 
     assert repair.index('run_dev_fix_turn "$iteration"', mutating_loop) > investigator_call
 
 
+def test_repair_investigator_prompts_preserve_receipt_field_contracts() -> None:
+    repair = _wrapper("arnold-repair-loop")
+
+    assert "historical_failure_recovery is analysis embedded in the authoritative plan_state context, not an evidence kind" in repair
+    assert "prior_repairs_considered must remain a non-empty JSON array of non-empty strings" in repair
+    assert 'use ["none"] when there are no prior repairs, never the string "none"' in repair
+    assert "Preserve every already-valid field, JSON container type" in repair
+    assert "Change only the validator-named contract defect" in repair
+    assert repair.count("live_process, session_marker, chain_state, plan_state, phase_result") == 2
+
+
 def test_meta_repair_wrapper_has_deepseek_hermes_subagent_instructions() -> None:
     """Wrapper must instruct Codex to delegate to DeepSeek/Hermes subagents."""
     text = _meta_repair_wrapper()
