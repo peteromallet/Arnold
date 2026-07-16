@@ -157,6 +157,16 @@ def test_l1_broker_observation_is_digest_bound_typed_and_bounded(tmp_path: Path)
     assert observation["context_digest"] == context["context_digest"]
     assert observation["access_verified"] is True
     assert observation["required_receipt_shape"]["context_digest"] == context["context_digest"]
+    assert observation["external_guard_applicability"] == {
+        "applies": False,
+        "chain_state": "blocked",
+        "failure_kind": "",
+        "failure_phase": "execute",
+        "reason": "external PR/CI state is corroborating context for the active non-PR blocker",
+    }
+    assert "must not displace the actual failure" in observation[
+        "external_guard_policy"
+    ]
     assert {item["kind"] for item in observation["observations"]} >= {
         "plan_state",
         "repair_data",
@@ -766,6 +776,57 @@ def test_nonoperative_external_guard_does_not_displace_gate_recovery() -> None:
         receipt,
         expected_context_digest="digest-1",
         observation_bundle=observation,
+    )
+
+    assert validated["recommended_action"] == "recover_state"
+
+
+def test_l1_bundle_propagates_nonoperative_guard_into_recovery_validation(
+    tmp_path: Path,
+) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+    context_path = tmp_path / "context.json"
+    _write(context_path, context)
+    observation = build_repair_observation_bundle(context_path)
+    observation["observations"].append(
+        {
+            "kind": "external_state",
+            "observed": {"external_guard": {"status": "pending"}},
+        }
+    )
+    receipt = _receipt(context["context_digest"], target_kind="l1_repair_target")
+    receipt["recommended_action"] = "recover_state"
+    receipt["handoff"] = {
+        "action": "recover_state",
+        "allowed_mutations": [
+            f"supported_cli:python -P -m arnold_pipelines.megaplan chain start "
+            f"--spec {spec} --project-dir {workspace}"
+        ],
+        "forbidden_mutations": [
+            "direct_chain_state_edit",
+            "hand_advance_chain",
+            "guard_weakening",
+        ],
+    }
+    receipt["safe_repair_target"] = {
+        "kind": "plan_state_via_cli",
+        "scope": str(workspace),
+        "rationale": "resume through the supported chain command",
+    }
+
+    validated = validate_investigator_receipt(
+        receipt,
+        expected_context_digest=context["context_digest"],
+        observation_bundle=observation,
+        investigation_context=context,
     )
 
     assert validated["recommended_action"] == "recover_state"
