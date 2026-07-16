@@ -333,6 +333,34 @@ def test_guarded_rebind_adopts_inserted_successor_without_moving_cursor(tmp_path
     assert labels == ["m5", "m5a", "m6"]
 
 
+def test_guarded_rebind_accepts_explicit_no_current_plan_sentinel(tmp_path: Path) -> None:
+    spec_path = _pinned_chain(tmp_path, ("m5", "m6", "m7"))
+    state = _bound_state(spec_path)
+    state.completed = [{"label": "m5", "plan": "m5-plan", "status": "done"}]
+    state.current_milestone_index = 1
+    state.current_plan_name = None
+    previous_bundle = state.metadata["execution_binding"]["launched_identity"][
+        "bundle_sha256"
+    ]
+
+    _replace_and_repin(spec_path, ("m5", "m6", "m7a"))
+    active_bundle = active_execution_identity(spec_path)["bundle_sha256"]
+    result = rebind_execution_identity(
+        spec_path,
+        state,
+        expected_previous_bundle_sha256=previous_bundle,
+        expected_active_bundle_sha256=active_bundle,
+        expected_current_milestone="m6",
+        expected_current_plan="@none",
+        expected_next_milestone="m7a",
+        reason="adopt successor while parked between milestone plans",
+    )
+
+    assert result["event"]["current_plan"] == ""
+    assert state.current_plan_name is None
+    assert result["execution_binding"]["status"] == "match"
+
+
 @pytest.mark.parametrize(
     ("guard", "message"),
     [
