@@ -3734,6 +3734,8 @@ def _reconcile_chain_from_ground_truth(
             state.pr_state = None
             if next_index >= len(spec.milestones):
                 state.last_state = "done"
+            else:
+                state.last_state = "between_milestones"
 
     _append_reconciliation_audit(
         state,
@@ -5542,6 +5544,8 @@ def _reconcile_chain_from_ground_truth(
             state.pr_state = None
             if next_index >= len(spec.milestones):
                 state.last_state = "done"
+            else:
+                state.last_state = "between_milestones"
 
     _append_reconciliation_audit(
         state,
