@@ -643,6 +643,10 @@ def test_trigger_keeps_accepted_request_visible_until_dispatchable(tmp_path: Pat
     observe = next(event for event in _events(result) if event["event"] == "repair_trigger_observe")
     assert observe["request_id"] == queued["request"]["request_id"]
     assert observe["dispatch_intent"] == "dispatch_l1"
+    blocked = next(event for event in _events(result) if event["event"] == "repair_trigger")
+    assert blocked["reason"] == (
+        "L1 mutation requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED"
+    )
     assert {item["decision"] for item in _decisions(marker_dir)} == {"accepted"}
 
 

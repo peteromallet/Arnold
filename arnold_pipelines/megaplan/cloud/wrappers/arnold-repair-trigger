@@ -416,6 +416,7 @@ def _scan_under_lock(
         return 0
 
     if not authorized:
+        mutation_path = str(dispatch_candidate.get("dispatch_intent") or "dispatch_l1")
         _emit(
             {
                 "event": "repair_trigger",
@@ -424,7 +425,9 @@ def _scan_under_lock(
                 "authorized": False,
                 "reason": (
                     "L3 mutation requires ARNOLD_AUTONOMY and ARNOLD_AUDIT_AUTOFIX_ENABLED"
-                    if request_id
+                    if mutation_path == "deep_superfixer_repair"
+                    else "L2 mutation requires ARNOLD_AUTONOMY and ARNOLD_META_REPAIR_ENABLED"
+                    if mutation_path == "broken_superfixer"
                     else "L1 mutation requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED"
                 ),
             }

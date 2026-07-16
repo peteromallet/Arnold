@@ -388,6 +388,42 @@ def test_superfixer_cycle_fails_closed_on_unknown_custody_evidence() -> None:
     assert projected["unknown_evidence"] is True
 
 
+def test_superfixer_cycle_catches_unknown_state_with_accepted_unclaimed_request() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+    evidence["resolver_state"] = {"canonical_state": "UNKNOWN"}
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason.startswith("stale_l1_l2_cycle:")
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["canonical_state"] == "UNKNOWN"
+    assert projected["actionable"] is True
+    assert projected["accepted_unclaimed_request_ids"] == ["7473fa42"]
+
+
+def test_unclaimed_exhaustion_correlates_alert_to_current_request() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _stale_unclaimed_repair_custody_reason(ev):")
+    end = text.index("\ndef _nested_repair_queue_custody_drift_reason", start)
+    namespace = {"_chain_state_looks_nonterminal": lambda _chain: True}
+    exec(text[start:end], namespace)
+    evidence = {
+        "repair_custody_summary": {
+            "accepted_unclaimed_request_ids": ["current-request"],
+            "claim_alert_request_ids": ["older-request"],
+            "retry_budget": {"alert_required": False},
+        },
+        "chain_state_summary": {"current": {"last_state": "blocked"}},
+    }
+
+    assert namespace["_stale_unclaimed_repair_custody_reason"](evidence) == ""
+    evidence["repair_custody_summary"]["claim_alert_request_ids"] = ["current-request"]
+    assert namespace["_stale_unclaimed_repair_custody_reason"](evidence).startswith(
+        "stale_unclaimed_repair_custody:"
+    )
+
+
 def test_marker_launch_failure_without_chain_state_reason() -> None:
     namespace = _load_superfixer_cycle_functions()
     evidence = {
