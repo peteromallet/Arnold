@@ -1071,7 +1071,12 @@ def _collect_meta_run_refs(session):
     if not META_RUN_DIR.exists():
         return refs
     safe_session = "".join(ch if ch.isalnum() or ch in "_.-" else "-" for ch in str(session))
-    candidates = list(META_RUN_DIR.glob(f"*{safe_session}*.log")) + list(META_RUN_DIR.glob(f"*{session}*.log"))
+    candidates = (
+        list(META_RUN_DIR.glob(f"*{safe_session}*.log"))
+        + list(META_RUN_DIR.glob(f"*{session}*.log"))
+        + list(META_RUN_DIR.glob(f"*{safe_session}*investigator-receipt.json"))
+        + list(META_RUN_DIR.glob(f"*{session}*investigator-receipt.json"))
+    )
     seen = set()
     ordered = []
     for path in candidates:
@@ -1082,6 +1087,22 @@ def _collect_meta_run_refs(session):
         ordered.append((_mtime(path), path))
     ordered.sort(reverse=True)
     selected = list(ordered[:5])
+    # Keep a bounded typed investigator failure even when later successful logs
+    # would otherwise evict it from the five-file tail. It remains historical
+    # corroboration; only index zero may become current launch-failure evidence.
+    retained_failure_codes = {
+        _meta_run_failure_code(path) for _, path in selected
+    }
+    for mtime, path in ordered[5:]:
+        failure_code = _meta_run_failure_code(path)
+        if (
+            not failure_code.startswith("investigator_")
+            or failure_code in retained_failure_codes
+            or len(selected) >= 10
+        ):
+            continue
+        selected.append((mtime, path))
+        retained_failure_codes.add(failure_code)
     for index, (mtime, path) in enumerate(selected):
         tail = _tail_with_line_numbers(path, lines=12)
         failure_code = _meta_run_failure_code(path)
@@ -1118,6 +1139,11 @@ def _collect_meta_run_refs(session):
     return refs
 
 def _meta_run_failure_code(path):
+    if path.name.endswith("investigator-receipt.json"):
+        payload = _load_json(path)
+        typed = str(payload.get("failure_code") or "").strip()
+        if typed.startswith("investigator_"):
+            return typed
     try:
         size = path.stat().st_size
         with path.open("rb") as handle:
@@ -1146,7 +1172,10 @@ def _meta_run_failure_code(path):
         return "investigator_read_sandbox_unavailable"
     if "l2 investigator launch envelope failed 64 kib preflight" in lowered:
         return "investigator_envelope_overflow"
-    if "l2 investigator failed or returned no valid receipt" in lowered:
+    if (
+        "l2 investigator failed or returned no valid receipt" in lowered
+        or "l2 investigation failed or returned no valid receipt" in lowered
+    ):
         return "investigator_invalid_or_missing_receipt"
     if _text_has_meta_launch_failure(text):
         return "meta_repair_launch_failure"
