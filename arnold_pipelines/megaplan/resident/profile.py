@@ -72,6 +72,8 @@ from .subagent import (
     DELEGATED_TASK_KINDS,
     MANAGED_RUN_SCHEMA,
     DelegatedTaskKind,
+    SubagentFollowupError,
+    follow_up_managed_subagent,
     launch_subagent_task,
     list_managed_resident_agents,
 )
@@ -81,7 +83,10 @@ from .reply_chain import (
     decode_reply_cursor,
     reply_chain_page,
 )
-from .query_relationship import correlate_semantic_follow_up
+from .query_relationship import (
+    correlate_semantic_follow_up,
+    relationship_from_environment_or_project,
+)
 from .status_tree import (
     DEFAULT_NODE_LIMIT,
     MAX_NODE_LIMIT,
@@ -949,6 +954,33 @@ class LaunchSubagentInput(ToolInput):
     )
 
 
+class FollowUpSubagentInput(ToolInput):
+    run_id: str = Field(
+        description="Exact resident-managed run ID whose persistent session should continue."
+    )
+    message: str = Field(
+        min_length=1,
+        max_length=32_000,
+        description="The exact follow-up instruction to commit to the managed lineage.",
+    )
+    project_dir: str | None = None
+    idempotency_key: str | None = Field(
+        default=None,
+        max_length=160,
+        description="Stable retry key, reusable only for identical content and custody.",
+    )
+    aggregation_role: Literal[
+        "synthesis_delivery_owner", "internal_contributor"
+    ] = Field(
+        default="synthesis_delivery_owner",
+        description=(
+            "Use internal_contributor when another run already exclusively owns delivery for "
+            "the current request."
+        ),
+    )
+    synthesis_group: str | None = Field(default=None, max_length=80)
+
+
 def _resident_core_prompt() -> str:
     """Small permanent contract; task-specific detail is loaded as policy packs."""
 
@@ -1620,6 +1652,7 @@ class MegaplanResidentProfile:
             ToolRegistration("fail_todo_item", "Mark a to-do item failed (retained for retry); pass the reason.", "write", FailTodoItemInput, ToolResult, self._fail_todo_item),
             ToolRegistration("reconcile_todo_item", "Resolve a pending launch intent as superseded by an already-existing canonical run. Requires the stable run id, durable evidence location, and reconciliation reason; never use task-text overlap alone.", "write", ReconcileTodoItemInput, ToolResult, self._reconcile_todo_item),
             ToolRegistration("add_todo_item", "Append a new pending item to the VP to-do list. Optional `when` is a natural-language condition the agent checks before executing (e.g. 'once epic <id> is done').", "write", AddTodoItemInput, ToolResult, self._add_todo_item),
+            ToolRegistration("follow_up_subagent", "Durably attach an instruction to one exact resident-managed persistent session. Returns a follow-up receipt and continuation run ID, or an explicit fail-closed error.", "write", FollowUpSubagentInput, ToolResult, self._follow_up_subagent),
             ToolRegistration("launch_subagent", "Launch or durably queue a resident-managed Codex agent with a manifest, bounded predecessor references, concise description, full log, and result path. `depends_on_run_id` creates a success-gated successor that inherits provenance/authorization and becomes the one synthesis/delivery owner. Legacy synchronous Hermes requires an explicit backend override.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
         )
         for registration in registrations:
@@ -2868,6 +2901,56 @@ class MegaplanResidentProfile:
             ),
         )
         return _ok("todo item added", item=vp_todo.public_item(item))
+
+    def _follow_up_subagent(self, payload: FollowUpSubagentInput) -> ToolResult:
+        runtime_context = current_tool_runtime_context()
+        launch_origin = runtime_context.launch_origin if runtime_context is not None else None
+        if not isinstance(launch_origin, Mapping) or launch_origin.get(
+            "applicability"
+        ) != "applicable":
+            return _fail(
+                "resident follow-up requires immutable Discord turn provenance"
+            )
+        project_root = Path(payload.project_dir or Path.cwd()).resolve()
+        source_record_id = str(launch_origin.get("source_record_id") or "")
+        query_relationship = relationship_from_environment_or_project(
+            source_record_id, project_root=project_root
+        )
+        try:
+            result = follow_up_managed_subagent(
+                run_id=payload.run_id,
+                message=payload.message,
+                project_dir=project_root,
+                workspace_root=None,
+                idempotency_key=(
+                    payload.idempotency_key
+                    or f"resident-turn:{launch_origin.get('resident_turn_id')}:{payload.run_id}"
+                ),
+                caller_provenance=launch_origin,
+                query_relationship=query_relationship,
+                aggregation_role=payload.aggregation_role,
+                synthesis_group=payload.synthesis_group,
+            )
+        except (SubagentFollowupError, ValueError, OSError) as exc:
+            return _fail(
+                str(exc),
+                error="resident_followup_rejected",
+                error_class=exc.__class__.__name__,
+                target_run_id=payload.run_id,
+            )
+        return _ok(
+            "subagent follow-up durably accepted",
+            followup_id=result.followup_id,
+            target_run_id=result.target_run_id,
+            parent_run_id=result.parent_run_id,
+            lineage_root_run_id=result.lineage_root_run_id,
+            continuation_run_id=result.continuation_run_id,
+            status=result.status,
+            evidence_path=result.evidence_path,
+            message_path=result.message_path,
+            continuation_manifest_path=result.continuation_manifest_path,
+            idempotent_replay=result.idempotent_replay,
+        )
 
     async def _launch_subagent(self, payload: LaunchSubagentInput) -> ToolResult:
         task = payload.task.strip()

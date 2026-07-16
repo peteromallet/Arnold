@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
@@ -8,11 +9,20 @@ import threading
 import pytest
 
 from arnold_pipelines.megaplan.resident import subagent
+from arnold_pipelines.megaplan.resident.agent_loop import (
+    AgentRequest,
+    FakeAgentRunner,
+    FakeAgentStep,
+)
+from arnold_pipelines.megaplan.resident.auth import ResidentAuthorizer
+from arnold_pipelines.megaplan.resident.config import ResidentConfig
+from arnold_pipelines.megaplan.resident.profile import MegaplanResidentProfile
 from arnold_pipelines.megaplan.resident.provenance import (
     DELEGATION_CONTEXT_ENV,
     encoded_provenance,
     normalize_delegation_provenance,
 )
+from arnold_pipelines.megaplan.store import FileStore
 
 
 SESSION_ID = "019f5d2e-d5da-75f3-a617-4712a1c57cc4"
@@ -141,6 +151,114 @@ def test_terminal_followup_creates_auditable_session_continuation(
     assert child["discord_origin"]["reply_target_source_record_id"] == (
         "msg_newfollowupsrc"
     )
+
+
+def test_registered_followup_tool_returns_durable_receipt(
+    tmp_path: Path, monkeypatch, caller_provenance: dict
+) -> None:
+    _write_run(tmp_path)
+    monkeypatch.setattr(subagent.subprocess, "Popen", lambda *a, **k: _Supervisor())
+    store = FileStore(tmp_path / "store")
+    config = ResidentConfig()
+    profile = MegaplanResidentProfile(
+        store=store,
+        authorizer=ResidentAuthorizer(config),
+        config=config,
+    )
+    runner = FakeAgentRunner(
+        [
+            FakeAgentStep.call(
+                "follow_up_subagent",
+                {
+                    "run_id": TARGET_RUN_ID,
+                    "message": "Expose dependency state in hot context.",
+                    "project_dir": str(tmp_path),
+                },
+            ),
+            FakeAgentStep.final("The follow-up has a durable receipt."),
+        ]
+    )
+    request = AgentRequest(
+        conversation_id="rconv_followuptest",
+        messages=({"role": "user", "content": "attach this"},),
+        system_prompt="test",
+        launch_origin={**caller_provenance, "resident_turn_id": "turn_123456789abc"},
+    )
+
+    response = asyncio.run(runner.run(request, profile.tools()))
+
+    assert response.final_text == "The follow-up has a durable receipt."
+    assert len(response.tool_calls) == 1
+    result = response.tool_calls[0].result
+    assert result["ok"] is True, result
+    receipt = result["data"]
+    assert receipt["followup_id"].startswith("followup-")
+    assert receipt["continuation_run_id"].startswith("subagent-")
+    assert receipt["status"] == "continuation_started"
+    assert Path(receipt["evidence_path"]).is_file()
+    assert Path(receipt["continuation_manifest_path"]).is_file()
+
+
+def test_registered_followup_tool_returns_explicit_failure_without_receipt(
+    tmp_path: Path, caller_provenance: dict
+) -> None:
+    store = FileStore(tmp_path / "store")
+    config = ResidentConfig()
+    profile = MegaplanResidentProfile(
+        store=store,
+        authorizer=ResidentAuthorizer(config),
+        config=config,
+    )
+    runner = FakeAgentRunner(
+        [
+            FakeAgentStep.call(
+                "follow_up_subagent",
+                {
+                    "run_id": TARGET_RUN_ID,
+                    "message": "This target does not exist.",
+                    "project_dir": str(tmp_path),
+                },
+            ),
+            FakeAgentStep.final("The follow-up was rejected explicitly."),
+        ]
+    )
+    request = AgentRequest(
+        conversation_id="rconv_followuptest",
+        messages=({"role": "user", "content": "attach this"},),
+        system_prompt="test",
+        launch_origin={**caller_provenance, "resident_turn_id": "turn_123456789abc"},
+    )
+
+    response = asyncio.run(runner.run(request, profile.tools()))
+
+    result = response.tool_calls[0].result
+    assert result["ok"] is False
+    assert result["data"]["error"] == "resident_followup_rejected"
+    assert result["data"]["target_run_id"] == TARGET_RUN_ID
+    assert "unknown resident-managed run_id" in result["message"]
+
+
+def test_internal_contributor_followup_preserves_single_delivery_owner(
+    tmp_path: Path, monkeypatch, caller_provenance: dict
+) -> None:
+    _write_run(tmp_path)
+    monkeypatch.setattr(subagent.subprocess, "Popen", lambda *a, **k: _Supervisor())
+
+    result = subagent.follow_up_managed_subagent(
+        run_id=TARGET_RUN_ID,
+        message="Add the hot-context regression without owning Discord delivery.",
+        project_dir=tmp_path,
+        workspace_root=None,
+        aggregation_role="internal_contributor",
+        synthesis_group="current-root-delivery",
+    )
+
+    record = json.loads(Path(result.evidence_path).read_text())
+    child = json.loads(Path(result.continuation_manifest_path).read_text())
+    assert record["aggregation_role"] == "internal_contributor"
+    assert record["synthesis_group"] == "current-root-delivery"
+    assert child["aggregation"]["role"] == "internal_contributor"
+    assert child["completion_delivery"]["status"] == "suppressed"
 
 
 def test_continuation_worker_resumes_exact_parent_session_and_records_acceptance(
