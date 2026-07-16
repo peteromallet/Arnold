@@ -322,15 +322,15 @@ def _fresh_progress(finding: Mapping[str, Any], policy: EscalationPolicy) -> dic
     if token_age is not None and token_age < threshold_min:
         liveness_sources.append("token_heartbeat")
     fresh_sources = ["acceptance_progress"] if semantic_advanced else []
-    age_candidates = [
-        value
-        for value in (
-            accepted_age,
-            _integer(_mapping(finding.get("repair_data_summary")).get("mtime_age_min")),
-        )
-        if value is not None
-    ]
+    age_candidates = [value for value in (accepted_age,) if value is not None]
     semantic_age = max(age_candidates) if age_candidates else None
+    deterministic_superfixer = _mapping(finding.get("deterministic_superfixer_evidence"))
+    terminal_repair_failure_without_progress = bool(
+        deterministic_superfixer.get("actionable") is True
+        and deterministic_superfixer.get("runner_dead") is True
+        and deterministic_superfixer.get("chain_incomplete") is True
+        and not semantic_advanced
+    )
     return {
         "fresh": bool(fresh_sources),
         "fresh_sources": fresh_sources,
@@ -343,9 +343,12 @@ def _fresh_progress(finding: Mapping[str, Any], policy: EscalationPolicy) -> dic
         "token_heartbeat_age_min": token_age,
         "old_enough": bool(
             not semantic_advanced
-            and semantic_age is not None
-            and semantic_age >= threshold_min
+            and (
+                terminal_repair_failure_without_progress
+                or (semantic_age is not None and semantic_age >= threshold_min)
+            )
         ),
+        "terminal_repair_failure_without_progress": terminal_repair_failure_without_progress,
     }
 
 
@@ -473,6 +476,7 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         str(investigation.get("failure_code") or "").startswith("investigator_")
         or any(code.startswith("investigator_") for code in failure_codes)
     )
+    ordinary_retrigger_failed = "ordinary_retrigger_failed" in failure_codes
     l1 = _l1_failure_fingerprint(finding)
     due = bool(
         meta.get("should_dispatch")
@@ -482,11 +486,18 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
     )
     failed = bool(
         due
-        and (failed_launch or missing or false_success or recursion_blocked or access_failure)
+        and (
+            failed_launch
+            or missing
+            or false_success
+            or recursion_blocked
+            or access_failure
+            or ordinary_retrigger_failed
+        )
     )
     axis = (
         "FIXED"
-        if false_success
+        if false_success or ordinary_retrigger_failed
         else "TRACKED"
         if failed_launch or recursion_blocked
         else "CONTEXT"
@@ -500,6 +511,7 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         "false_success": false_success,
         "recursion_guard_blocked": recursion_blocked,
         "investigator_access_failure": access_failure,
+        "ordinary_retrigger_failed": ordinary_retrigger_failed,
         "failure_codes": sorted(failure_codes),
         "trigger": _text(meta.get("trigger")),
     }
