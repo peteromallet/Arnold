@@ -452,8 +452,11 @@ def _run_gather_program(
     worklist_path = tmp_path / "worklist.jsonl"
     gather_dir = tmp_path / "gather"
     gather_dir.mkdir(parents=True, exist_ok=True)
+    normalized_entries = [
+        {"session_evidence_scope": True, **entry} for entry in worklist_entries
+    ]
     worklist_path.write_text(
-        "".join(json.dumps(entry, sort_keys=True) + "\n" for entry in worklist_entries),
+        "".join(json.dumps(entry, sort_keys=True) + "\n" for entry in normalized_entries),
         encoding="utf-8",
     )
 
@@ -667,6 +670,8 @@ def _run_dispatch_one(
             "AUDIT_CODEX_MODEL=gpt-5.6-sol",
             "SUBAGENT_PROFILE=partnered-5",
             "CODEX_TIMEOUT=30",
+            "AUDIT_REVIEW_EVIDENCE_MAX_BYTES=65536",
+            "AUDIT_REVIEW_BRIEF_MAX_BYTES=131072",
             'AUDIT_AUTOFIX_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_enabled)"',
             'AUDIT_MUTATION_AUTHORIZED_FLAG="$(audit_flag_enabled audit_autofix_mutation_authorized)"',
             'AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_commit_enabled)"',
@@ -852,6 +857,10 @@ def classify_runner_liveness(tmux, active_step, watchdog_statuses=()):
     dead = bool(not live and (active_step or {}).get("worker_pid_alive") is False)
     state = "alive" if live else ("dead" if dead else "unknown")
     return {"state": state, "live": live, "dead": dead, "known": state != "unknown", "source": "stub"}
+""",
+        "arnold_pipelines/megaplan/cloud/progress_auditor_escalation.py": """
+def bounded_auditor_projection(value, *, kind):
+    return dict(value) if isinstance(value, dict) else {}
 """,
         "arnold_pipelines/megaplan/cloud/current_target.py": (
             "from arnold_pipelines.megaplan.cloud._stub_capture import append_call\n\n\n"
@@ -1658,7 +1667,8 @@ class TestAuditorAutofixPromptGates:
 
         assert updated["_codex_argv"] == [
             "exec", "--sandbox", "read-only", "-c", "model=gpt-5.6-sol",
-            "-c", "model_reasoning_effort=high", "-"
+            "-c", "model_reasoning_effort=high", "--output-last-message",
+            str(tmp_path / "gather" / "model-response-audit-model-pin.txt"), "-"
         ]
         receipt_path = (
             Path(updated["dispatch_receipt_root"])
@@ -3274,7 +3284,10 @@ class TestLiveSignalFiltering:
                     "chain_complete": True,
                     "pr_state": "merged",
                     "milestones": [{"label": "m1"}, {"label": "m2"}],
-                    "completed": [{"label": "m1", "status": "done"}, {"label": "m2", "status": "done"}],
+                    "completed": [
+                        {"label": "m1", "status": "done"},
+                        {"label": "m2", "plan": "demo-plan", "status": "done"},
+                    ],
                 }
             ),
             encoding="utf-8",
@@ -3328,7 +3341,7 @@ class TestLiveSignalFiltering:
                     "chain_complete": True,
                     "pr_state": "merged",
                     "milestones": [{"label": "m1"}],
-                    "completed": [{"label": "m1", "status": "done"}],
+                    "completed": [{"label": "m1", "plan": "demo-plan", "status": "done"}],
                 }
             ),
             encoding="utf-8",
@@ -6211,7 +6224,15 @@ def test_gather_suppresses_completed_shadow_including_session_custody(
         ),
         encoding="utf-8",
     )
-    worklist = [{"workspace": str(workspace), "plan": shadow, "session": session, "kind": "chain"}]
+    worklist = [
+        {
+            "workspace": str(workspace),
+            "plan": shadow,
+            "session": session,
+            "kind": "chain",
+            "session_evidence_scope": False,
+        }
+    ]
 
     clean = _run_gather_program(worklist, tmp_path)
 

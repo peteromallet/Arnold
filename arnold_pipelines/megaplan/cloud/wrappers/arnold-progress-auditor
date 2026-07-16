@@ -505,6 +505,18 @@ def _authoritative_current_plan(workspace: pathlib.Path) -> str:
         current = str(payload.get("current_plan_name") or "").strip()
         if current:
             return current
+        last_state = str(payload.get("last_state") or "").strip().lower()
+        if payload.get("chain_complete") is True or last_state in {
+            "done", "complete", "completed",
+        }:
+            completed = payload.get("completed")
+            if isinstance(completed, list):
+                for item in reversed(completed):
+                    if not isinstance(item, dict):
+                        continue
+                    terminal_plan = str(item.get("plan") or "").strip()
+                    if terminal_plan:
+                        return terminal_plan
     return ""
 
 
