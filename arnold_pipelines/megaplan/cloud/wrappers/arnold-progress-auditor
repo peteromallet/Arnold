@@ -2062,6 +2062,26 @@ def _compact_backstop(backstop):
         "delta_computed": backstop.get("delta_computed"),
     }
 
+def _chain_milestone_total(data):
+    if not isinstance(data, dict):
+        return 0
+    milestones = data.get("milestones")
+    if isinstance(milestones, list):
+        return len(milestones)
+    metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+    binding = (
+        metadata.get("execution_binding")
+        if isinstance(metadata.get("execution_binding"), dict)
+        else {}
+    )
+    launched = (
+        binding.get("launched_identity")
+        if isinstance(binding.get("launched_identity"), dict)
+        else {}
+    )
+    sequence = launched.get("milestone_sequence")
+    return len(sequence) if isinstance(sequence, list) else 0
+
 def _chain_state_summary(workspace, plan):
     summaries = []
     for path in _chain_state_paths(workspace)[:4]:
@@ -2086,9 +2106,9 @@ def _chain_state_summary(workspace, plan):
             "events": data.get("events")[-8:] if isinstance(data.get("events"), list) else [],
             "completed": [],
         }
-        milestones = data.get("milestones")
-        if isinstance(milestones, list):
-            summary["total_milestones"] = len(milestones)
+        total_milestones = _chain_milestone_total(data)
+        if total_milestones:
+            summary["total_milestones"] = total_milestones
         for item in completed_items[-8:]:
             if not isinstance(item, dict):
                 continue
