@@ -11,7 +11,7 @@ milestones:
     robustness: full
     depth: high
     with_prep: true
-    prep_direction: Inventory current managed-session evidence, Store transaction, scheduler claim, and structured direct-Hermes seams before planning the smallest capture-to-accepted-checkpoint vertical slice.
+    prep_direction: Read decisions/managed-execution-observation-lineage.md, then re-inventory authoritative and corroborating seams across resident roots/nested agents, every Megaplan phase/step and implementation/review worker, retries/rework, repair/meta-repair/watchdog/auditor lifecycle, chain and higher-workflow transitions, Hermes/Codex/Claude/future backends, Store transactions, scheduler claims, and structured direct-Hermes extraction before planning the smallest envelope-to-accepted-checkpoint slice.
     deepseek_provider: direct
     notes: "~2 skilled-human weeks; estimate, not guarantee. Difficulty 5/5 because position, atomicity, evidence, and claim-kind mistakes can silently corrupt durable truth."
 
@@ -23,7 +23,7 @@ milestones:
     robustness: full
     depth: high
     with_prep: true
-    prep_direction: Verify the landed M1 accepted-checkpoint, evidence, authorization, and query primitives, then implement one append-only synthesis/correction/promotion lifecycle and one scoped query path.
+    prep_direction: Verify M1's accepted checkpoint, full workflow-to-agent lineage, causality, time semantics, authority/custody separation, evidence scopes, and query primitives, then implement correctable run/attempt/step/plan/milestone/epic/workflow projections plus reviewed cross-epic promotion on one append-only lifecycle and scoped query path.
     deepseek_provider: direct
     notes: "~2 skilled-human weeks; estimate, not guarantee. Difficulty 5/5 because correction, applicability, and contradiction errors can present derived or stale material as fact."
 
@@ -35,9 +35,9 @@ milestones:
     robustness: full
     depth: high
     with_prep: true
-    prep_direction: Verify M1-M2 end-to-end lineage and existing ticket, configuration, observability, privacy, Store, and representative managed-backend seams before consolidation and conformance closeout.
+    prep_direction: Verify M1-M2 end-to-end lineage, then complete the producer/backend matrix, schema/upcast and privacy controls, read-only reconciler, ticket adapter, and content-addressed non-mutating custody-control-plane replay; prove no compiler path changes execution authority, scheduling, acceptance, custody, repair, result, or delivery.
     deepseek_provider: direct
-    notes: "~2 skilled-human weeks; estimate, not guarantee. Difficulty 4/5 because the truth contracts are fixed, while cross-backend failure isolation and reversible rollout still require deep integration review."
+    notes: "~2 skilled-human weeks; estimate, not guarantee. Difficulty 4/5 because the truth contracts are fixed, while complete producer/backend coverage, reconciler non-mutation, cross-backend failure isolation, and reversible rollout still require deep integration review."
 
 on_failure:
   abort: stop_chain
