@@ -277,17 +277,19 @@ def _apply_adaptive_critique_routing(
                         f"route check '{_cid}'.",
                     )
             else:
-                _t_agent, _t_mode, _t_model = _resolve_tier_spec(
-                    args, _spec, phase="critique"
-                )
-                _complexity_cache[_cx] = _TierAgentMode(
-                    agent=_t_agent,
-                    mode=_t_mode,
-                    refreshed=False,
-                    model=_t_model,
-                    effort=None,
-                    resolved_model=_t_model,
-                )
+                _resolved_tier = _resolve_tier_spec(args, _spec, phase="critique")
+                if isinstance(_resolved_tier, _TierAgentMode):
+                    _complexity_cache[_cx] = _resolved_tier
+                else:  # compatibility for test and legacy resolver shims
+                    _t_agent, _t_mode, _t_model = _resolved_tier
+                    _complexity_cache[_cx] = _TierAgentMode(
+                        agent=_t_agent,
+                        mode=_t_mode,
+                        refreshed=False,
+                        model=_t_model,
+                        effort=None,
+                        resolved_model=_t_model,
+                    )
         _check["_resolved_agent_mode"] = _complexity_cache[_cx]
         _check["_routing_selected_spec"] = _tier_spec_for(_cx) or f"critic_model:{_pin}"
         _check["_routing_tier"] = _cx

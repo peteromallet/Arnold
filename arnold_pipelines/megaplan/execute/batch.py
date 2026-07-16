@@ -100,6 +100,7 @@ from arnold_pipelines.megaplan.resolution_contract import (
 )
 from arnold_pipelines.megaplan.resolutions import effective_user_action_resolutions
 from arnold_pipelines.megaplan.types import (
+    AgentMode,
     CliError,
     MOCK_ENV_VAR,
     PlanState,
@@ -411,8 +412,8 @@ def _resolve_tier_spec(
     tier_spec: str | list[str],
     *,
     phase: str = "execute",
-) -> tuple[str, str, str | None]:
-    """Resolve a tier spec string to (agent, mode, model) without mutating *args*.
+) -> AgentMode:
+    """Resolve a tier spec string without mutating *args*.
 
     Copies *args*, sets ``phase_model=["<phase>=<tier_spec>"]`` on the
     copy, and calls ``resolve_agent_mode``.  Does not prepend ahead of a
@@ -430,8 +431,16 @@ def _resolve_tier_spec(
     tier_args = copy.copy(args)
     tier_args.phase_model = [f"{phase}={selected_spec}"]
     resolved = worker_module.resolve_agent_mode(phase, tier_args)
+    if isinstance(resolved, AgentMode):
+        return resolved
     resolved_model = resolved.resolved_model if hasattr(resolved, "resolved_model") else None
-    return resolved.agent, resolved.mode, resolved_model if resolved_model is not None else resolved.model
+    return AgentMode(
+        agent=resolved.agent,
+        mode=resolved.mode,
+        refreshed=resolved.refreshed,
+        model=resolved.model,
+        resolved_model=resolved_model if resolved_model is not None else resolved.model,
+    )
 
 
 def _task_to_global_batch_number_map(
@@ -1451,11 +1460,16 @@ def handle_execute_one_batch(
         tier_low_confidence = resolution.low_confidence
         if resolution.spec:
             tier_spec_raw = resolution.spec
-            tier_agent, tier_mode, tier_model = _resolve_tier_spec(
-                args, resolution.spec
+            tier_resolution = _resolve_tier_spec(args, resolution.spec)
+            tier_agent, tier_mode, tier_model = (
+                tier_resolution.agent,
+                tier_resolution.mode,
+                tier_resolution.resolved_model or tier_resolution.model,
             )
             tier_resolved_model = tier_model
             agent, mode, model = tier_agent, tier_mode, tier_model
+            if tier_resolution.effort is not None:
+                effort = tier_resolution.effort
             # Force fresh session when the tier-selected model differs from
             # the fallback model.
             if tier_model != fallback_model:
@@ -3060,6 +3074,7 @@ def handle_execute_auto_loop(
         batch_agent, batch_mode, batch_refreshed, batch_model = (
             agent, mode, refreshed, model
         )
+        batch_effort = effort
         # Tier routing per-batch observability (only populated when active).
         batch_raw_complexity: int | None = None
         batch_tier_complexity: int | None = None
@@ -3086,11 +3101,19 @@ def handle_execute_auto_loop(
             batch_tier_low_confidence = resolution.low_confidence
             if resolution.spec:
                 batch_tier_spec = resolution.spec
-                tier_agent, tier_mode, tier_model = _resolve_tier_spec(
-                    args, resolution.spec
+                tier_resolution = _resolve_tier_spec(args, resolution.spec)
+                tier_agent, tier_mode, tier_model = (
+                    tier_resolution.agent,
+                    tier_resolution.mode,
+                    tier_resolution.resolved_model or tier_resolution.model,
                 )
                 batch_agent, batch_mode, batch_model = (
                     tier_agent, tier_mode, tier_model
+                )
+                batch_effort = (
+                    tier_resolution.effort
+                    if tier_resolution.effort is not None
+                    else effort
                 )
                 # Freshness: start a new session for every batch after the
                 # first. Persistent codex sessions accumulate context across
@@ -3145,7 +3168,7 @@ def handle_execute_auto_loop(
                 mode=batch_mode,
                 refreshed=batch_refreshed,
                 model=batch_model,
-                effort=effort,
+                effort=batch_effort,
                 resolved_model=batch_resolved_model,
                 prompt_override=batch_prompt,
                 batch_task_ids=batch_task_ids,
