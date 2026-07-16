@@ -137,6 +137,49 @@ def _git_head(workspace: Path) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+def _quality_resolution_commit_custody(
+    state: Mapping[str, Any], *, workspace: Path, workspace_head: str
+) -> dict[str, Any]:
+    """Verify that receipt-cited local repair commits survived target checkout."""
+
+    meta = state.get("meta") if isinstance(state.get("meta"), Mapping) else {}
+    resolutions = state.get("quality_gate_resolutions") or meta.get("quality_gate_resolutions")
+    resolutions = resolutions if isinstance(resolutions, list) else []
+    required: list[str] = []
+    for resolution in resolutions[-10:]:
+        if not isinstance(resolution, Mapping) or resolution.get("resolution") != "fixed":
+            continue
+        evidence = resolution.get("evidence")
+        evidence = evidence if isinstance(evidence, list) else []
+        for item in evidence[:10]:
+            match = re.search(
+                r"(?:^|\s)local dev fix commit:([0-9a-fA-F]{40})(?:\s|$)",
+                str(item or ""),
+            )
+            if match and match.group(1).lower() not in required:
+                required.append(match.group(1).lower())
+    missing: list[str] = []
+    for commit in required:
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(workspace), "merge-base", "--is-ancestor", commit, workspace_head],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+            )
+        except (OSError, subprocess.SubprocessError):
+            missing.append(commit)
+            continue
+        if result.returncode != 0:
+            missing.append(commit)
+    return {
+        "required_commits": required,
+        "missing_commits": missing,
+        "verified": not missing,
+    }
+
+
 def _atomic_write(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -495,6 +538,9 @@ def capture_checkpoint(
     )
     target_stage = _target_stage(state, chain)
     workspace_head = _git_head(root)
+    quality_resolution_commit_custody = _quality_resolution_commit_custody(
+        state, workspace=root, workspace_head=workspace_head
+    )
     session_identity = _session_identity_observation(
         marker_dir=marker_dir,
         session=session,
@@ -524,6 +570,7 @@ def capture_checkpoint(
         "runner_transition": runner_transition,
         "session_identity": session_identity,
         "workspace_head": workspace_head,
+        "quality_resolution_commit_custody": quality_resolution_commit_custody,
     }
     progress_facts = {
         "plan_name": checkpoint["plan_name"],
@@ -543,6 +590,7 @@ def capture_checkpoint(
         "runner_transition_pid": runner_transition.get("runner_pid"),
         "runner_transition_fresh": runner_transition.get("fresh", False),
         "session_identity_matches": session_identity.get("identity_matches"),
+        "quality_resolution_commits_verified": quality_resolution_commit_custody.get("verified"),
     }
     checkpoint["progress_token"] = _digest(progress_facts)
     # Productive source changes reset only the deterministic-owner breaker;
@@ -599,6 +647,27 @@ def evaluate_checkpoint(
             "replacement_session_evidence_rejected": True,
             "expected_session_identity": dict(frozen_identity),
             "observed_session_identity": dict(observed_identity),
+        }
+
+    quality_commit_custody = (
+        observation.get("quality_resolution_commit_custody")
+        if isinstance(observation.get("quality_resolution_commit_custody"), Mapping)
+        else {}
+    )
+    if quality_commit_custody.get("verified") is False:
+        return {
+            "status": GOAL_ACTIVE,
+            "reason": (
+                "quality repair evidence is not contained in the current target history; "
+                "publication or target-history reconciliation is required"
+            ),
+            "authoritative_progress": False,
+            "blocker_cleared": False,
+            "fresh_progress": False,
+            "stage_advanced": False,
+            "correct_worker_alive": None,
+            "control_action": "investigate",
+            "quality_resolution_commit_custody": dict(quality_commit_custody),
         }
 
     gate = _approval_gate(observation)
