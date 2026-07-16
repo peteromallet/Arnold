@@ -124,6 +124,23 @@ def test_l3_treats_recursion_and_investigator_access_failure_as_backstop_failure
     assert verdict["failed"] is True
     assert verdict["recursion_guard_blocked"] is True
 
+    no_fix = {
+        "repair_data_summary": {"outcome": "recovery_not_verified"},
+        "meta_repair_summary": {
+            "should_dispatch": True,
+            "meta_run_refs": [
+                {
+                    "current_episode": True,
+                    "failure_code": "meta_repair_authority_blocked",
+                }
+            ],
+        },
+    }
+    terminal = _l2_failure_fingerprint(no_fix)
+    assert terminal["failed"] is True
+    assert terminal["axis"] == "FIXED"
+    assert terminal["terminal_no_fix"] is True
+
 
 def test_meta_wrapper_uses_bounded_broker_without_tool_authority() -> None:
     wrapper = Path(

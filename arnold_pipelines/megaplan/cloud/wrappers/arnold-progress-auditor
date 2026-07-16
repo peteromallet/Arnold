@@ -1109,6 +1109,20 @@ def _collect_meta_run_refs(session):
         current_episode = index == 0
         ordinary_retrigger_failed = failure_code == "ordinary_retrigger_failed"
         trigger_rejected = failure_code == "meta_repair_trigger_rejected"
+        terminal_failure = bool(
+            current_episode
+            and failure_code in {
+                "investigator_read_sandbox_unavailable",
+                "investigator_envelope_overflow",
+                "investigator_invalid_or_missing_receipt",
+                "meta_repair_launch_failure",
+                "meta_repair_authority_blocked",
+                "meta_repair_commit_custody_failed",
+                "meta_repair_no_fix",
+                "ordinary_retrigger_failed",
+                "meta_repair_trigger_rejected",
+            }
+        )
         launch_failure = bool(
             current_episode
             and not ordinary_retrigger_failed
@@ -1129,6 +1143,7 @@ def _collect_meta_run_refs(session):
                 "mtime_age_min": int((now.timestamp() - mtime) // 60) if mtime else None,
                 "tail": _redact_scalar(tail),
                 "launch_failure": launch_failure,
+                "terminal_failure": terminal_failure,
                 "current_episode": current_episode,
                 "ordinary_retrigger_failed": bool(current_episode and ordinary_retrigger_failed),
                 "trigger_rejected": bool(current_episode and trigger_rejected),
@@ -1177,6 +1192,12 @@ def _meta_run_failure_code(path):
         or "l2 investigation failed or returned no valid receipt" in lowered
     ):
         return "investigator_invalid_or_missing_receipt"
+    if "l2 codex dispatch blocked by master-plus-path authorization gate" in lowered:
+        return "meta_repair_authority_blocked"
+    if "commit custody accepted=false" in lowered:
+        return "meta_repair_commit_custody_failed"
+    if "verdict=no_fix" in lowered:
+        return "meta_repair_no_fix"
     if _text_has_meta_launch_failure(text):
         return "meta_repair_launch_failure"
     return ""
@@ -1211,6 +1232,21 @@ def _meta_record_is_launch_failure(path):
     if isinstance(subagent_results, dict):
         haystacks.extend(str(value or "") for value in subagent_results.values())
     return _text_has_meta_launch_failure("\n".join(haystacks))
+
+def _meta_record_is_terminal_failure(path):
+    payload = _load_json(path)
+    if not isinstance(payload, dict):
+        return False
+    outcome = str(payload.get("outcome") or "").strip().lower()
+    diagnosis = str(payload.get("diagnosis") or "").strip().lower()
+    return bool(
+        outcome in {
+            "commit_custody_failed", "no_fix", "mutation_not_authorized",
+            "launch_failed", "investigation_failed",
+        }
+        or diagnosis.startswith("no_fix")
+        or _meta_record_is_launch_failure(path)
+    )
 
 def _repair_attempt_signals(repair_payload):
     attempts = repair_payload.get("attempts") if isinstance(repair_payload, dict) else []
@@ -1627,7 +1663,7 @@ def _meta_repair_summary(
             "repeated watchdog reports already classified this session as alive, so stale recurring "
             f"repair sidecars do not prove an unhandled meta-repair dispatch gap (alive_refs={len(watchdog_alive_refs)})"
         ]
-    failed_run_refs = [item for item in run_refs if item.get("launch_failure")]
+    failed_run_refs = [item for item in run_refs if item.get("terminal_failure")]
     ordinary_retrigger_failure_refs = [
         item for item in run_refs if item.get("ordinary_retrigger_failed")
     ]
@@ -1644,7 +1680,7 @@ def _meta_repair_summary(
             and "recursion" in str(record.get("reason") or "").lower()
         ):
             recursion_guard_blocked = True
-        if path and _meta_record_is_launch_failure(pathlib.Path(str(path))):
+        if path and _meta_record_is_terminal_failure(pathlib.Path(str(path))):
             failed_meta_records.append(item)
     return {
         "should_dispatch": should_dispatch,
@@ -4119,25 +4155,6 @@ def _superfixer_cycle_evidence(ev):
     tmux_process = target.get("tmux_process") if isinstance(target.get("tmux_process"), dict) else {}
     watchdog_refs = ev.get("prior_watchdog_report_refs") if isinstance(ev, dict) else []
     watchdog_refs = watchdog_refs if isinstance(watchdog_refs, list) else []
-    liveness = classify_runner_liveness(
-        tmux_process,
-        active,
-        [
-            str(item.get("matched_status") or "")
-            for item in watchdog_refs
-            if isinstance(item, dict)
-        ],
-    )
-    dead_active_step = active.get("present") is True and active.get("worker_pid_alive") is False
-    watchdog_stopped = any(
-        str(item.get("matched_status") or "").strip().lower()
-        in {"stopped", "dead", "progress_stall", "broken_superfixer", "canonical_launch_evidence_missing"}
-        for item in watchdog_refs
-        if isinstance(item, dict)
-    )
-    runner_dead = liveness["dead"]
-    incomplete_chain = _chain_state_looks_nonterminal(chain_current)
-
     meta_ages = [
         item.get("mtime_age_min")
         for item in (ev.get("meta_repair_refs") or [])
@@ -4154,6 +4171,28 @@ def _superfixer_cycle_evidence(ev):
         or meta.get("ordinary_retrigger_failure_count")
         or meta.get("trigger_rejection_count")
     )
+    watchdog_statuses = [
+        str(item.get("matched_status") or "")
+        for item in watchdog_refs
+        if isinstance(item, dict)
+    ]
+    if failed_l2:
+        watchdog_statuses.append("terminal_repair_failure")
+    liveness = classify_runner_liveness(
+        tmux_process,
+        active,
+        watchdog_statuses,
+    )
+    dead_active_step = active.get("present") is True and active.get("worker_pid_alive") is False
+    watchdog_stopped = any(
+        str(item.get("matched_status") or "").strip().lower()
+        in {"stopped", "dead", "progress_stall", "broken_superfixer", "canonical_launch_evidence_missing"}
+        for item in watchdog_refs
+        if isinstance(item, dict)
+    )
+    runner_dead = liveness["dead"]
+    incomplete_chain = _chain_state_looks_nonterminal(chain_current)
+
     current_l2 = bool(meta_ages and min(meta_ages) <= 60 and not failed_l2)
     absent_or_stale_l2 = not current_l2
 

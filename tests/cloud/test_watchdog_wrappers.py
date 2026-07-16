@@ -12915,6 +12915,14 @@ def test_auditor_gather_retains_recent_l2_sandbox_failure_after_later_runs(tmp_p
         )
         advanced_mtime = failed.stat().st_mtime + 10 + index
         os.utime(path, (advanced_mtime, advanced_mtime))
+    authority_blocked = meta_runs / "20260715T031000Z-demo-session-authority.log"
+    authority_blocked.write_text(
+        "[meta-repair 2026-07-15T03:10:00+00:00] observed: "
+        "L2 Codex dispatch blocked by master-plus-path authorization gate\n",
+        encoding="utf-8",
+    )
+    advanced_mtime = failed.stat().st_mtime + 20
+    os.utime(authority_blocked, (advanced_mtime, advanced_mtime))
 
     gather_dir = tmp_path / "gather"
     gather_dir.mkdir()
@@ -12955,10 +12963,11 @@ def test_auditor_gather_retains_recent_l2_sandbox_failure_after_later_runs(tmp_p
     assert {item["failure_code"] for item in failure_refs} == {
         "investigator_invalid_or_missing_receipt",
         "investigator_read_sandbox_unavailable",
+        "meta_repair_authority_blocked",
     }
     assert meta_summary["failed_meta_run_count"] == 1
     assert meta_summary["meta_run_refs"][0]["failure_code"] == (
-        "investigator_invalid_or_missing_receipt"
+        "meta_repair_authority_blocked"
     )
 
 
