@@ -1079,6 +1079,82 @@ def test_pathological_meta_context_stays_tiny_and_reference_only(tmp_path: Path)
         validate_meta_investigation_context(context)
 
 
+def test_meta_context_prefers_inherited_delegation_over_stale_repair_data(
+    tmp_path: Path,
+) -> None:
+    repair_dir = tmp_path / "repair-data"
+    marker_dir = tmp_path / "markers"
+    goal = marker_dir / "repair-goals" / "demo" / "goal.json"
+    stale = {
+        "schema_version": "arnold-resident-delegation-provenance-v1",
+        "applicability": "applicable",
+        "transport": "discord",
+        "correlation_id": "discord-corr-stale",
+        "custody_id": "discord-custody-stale",
+        "resident_conversation_id": "rconv_stale",
+        "source_record_id": "msg_stale",
+        "conversation_key": "discord:dm:123",
+        "discord_message_id": "111",
+        "reply_to_message_id": "111",
+        "dm_user_id": "123",
+        "root_run_id": "root-stale",
+    }
+    inherited = {
+        **stale,
+        "correlation_id": "discord-corr-current",
+        "custody_id": "discord-custody-current",
+        "resident_conversation_id": "rconv_current",
+        "source_record_id": "msg_current",
+        "discord_message_id": "222",
+        "reply_to_message_id": "222",
+        "root_run_id": "root-current",
+    }
+    _write(
+        goal,
+        {
+            "goal_id": "repair-goal-current",
+            "checkpoint_digest": "a" * 64,
+            "target": {"blocker_id": "blocker-current"},
+        },
+    )
+    _write(
+        repair_dir / "demo.repair-data.json",
+        {
+            "repair_goal": {
+                "goal_id": "repair-goal-current",
+                "checkpoint_digest": "a" * 64,
+                "goal_path": str(goal),
+            },
+            "blocker_id": "blocker-current",
+            "resident_delegation": stale,
+        },
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _write(marker_dir / "demo.json", {"workspace": str(workspace)})
+
+    context = build_meta_investigation_context(
+        session="demo",
+        trigger="post_fixer_recovery_gate_failed",
+        repair_data_dir=repair_dir,
+        marker_dir=marker_dir,
+        arnold_src=REPO_ROOT,
+        resident_delegation=inherited,
+    )
+
+    provenance_ref = context["provenance_ref"]
+    provenance_path = Path(provenance_ref["path"])
+    assert provenance_ref["json_pointer"] == ""
+    assert provenance_ref["source_record_id"] == "msg_current"
+    assert provenance_ref["root_run_id"] == "root-current"
+    assert "resident-delegation-" in provenance_path.name
+    assert json.loads(provenance_path.read_text(encoding="utf-8"))[
+        "custody_id"
+    ] == "discord-custody-current"
+    assert "msg_stale" not in provenance_path.read_text(encoding="utf-8")
+    validate_meta_investigation_context(context)
+
+
 def test_repair_loop_uses_bounded_context_pointer_from_sandbox_root() -> None:
     wrapper = (
         REPO_ROOT
