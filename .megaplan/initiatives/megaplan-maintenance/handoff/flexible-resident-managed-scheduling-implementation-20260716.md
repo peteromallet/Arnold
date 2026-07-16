@@ -45,4 +45,15 @@ Existing `ScheduledJob` records and handlers remain unchanged. With no active de
 
 ## Verification and deployment record
 
-The final implementation SHA, integrated target SHA, diff/check suite, installed editable source/revision, supported deployment receipt, service health, and disposable no-effect schedule probe are recorded in the delegation custody receipt and deployment evidence produced with this handoff.
+Base revision was `235472012dc3dcada37207b39e65f7fcc8675185`. The implementation was rebased over concurrent target work and committed as `c236b642dba787ea964574265cf062a9bb2cf65d`, then atomically fast-forwarded from target revision `69b11f4f8f950ea63b2e8df0a6a6d51e2fb68603`. The isolated worktree is `/workspace/.megaplan-worktrees/resident-scheduling-foundation`; the dirty launch checkouts were not edited.
+
+Reviewed verification:
+
+- `git diff --check` and changed-module compilation passed.
+- Focused schedule/managed-launch/restart/delivery suite: 80 passed.
+- Post-rebase schedule, VP reconciliation, managed queue/restart/delivery suite: 121 passed.
+- Full resident suite: 443 passed; one unrelated live-followup subprocess-count test failed only in the long aggregate and passed both isolated reruns. No scheduling assertion failed.
+
+The editable install was rebound to the clean integrated worktree and a fresh process from `/tmp` imported `arnold_pipelines` and `agentbox` from it. The first guarded restart receipt (`reset-fbeea38b0f8c4adbb3958d14dc264f86`) succeeded but the replacement process exposed a stale runtime source. A second receipt (`reset-107f9fff5ae1448f97576cfec490432a`) requested the correct source/revision and also succeeded, while `/proc` proved a later duplicate `MEGAPLAN_RUNTIME_SRC` export still won at process start. Both hot-environment assignments were reconciled to the integrated worktree; neither PID nor command acknowledgement was treated as deployment success.
+
+The final evidence-only commit containing this record is the exact deployment revision. Its fresh guarded restart receipt, replacement-process environment, service-ready log, installed import/revision probe, representative no-effect schedules, supported cancellations, final target ancestry, and custody JSON are recorded at `/workspace/arnold/.megaplan/plans/resident-subagents/subagent-20260716-182958-b17b2e69/git-custody-evidence.json` and adjacent deployment evidence. The runtime is accepted only if all of those sources agree.
