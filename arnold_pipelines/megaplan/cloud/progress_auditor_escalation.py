@@ -615,6 +615,7 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         or any(code.startswith("investigator_") for code in failure_codes)
     )
     ordinary_retrigger_failed = "ordinary_retrigger_failed" in failure_codes
+    trigger_rejected = "meta_repair_trigger_rejected" in failure_codes
     l1 = _l1_failure_fingerprint(finding)
     due = bool(
         meta.get("should_dispatch")
@@ -631,11 +632,12 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
             or recursion_blocked
             or access_failure
             or ordinary_retrigger_failed
+            or trigger_rejected
         )
     )
     axis = (
         "FIXED"
-        if false_success or ordinary_retrigger_failed
+        if false_success or ordinary_retrigger_failed or trigger_rejected
         else "TRACKED"
         if failed_launch or recursion_blocked
         else "CONTEXT"
@@ -650,6 +652,7 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         "recursion_guard_blocked": recursion_blocked,
         "investigator_access_failure": access_failure,
         "ordinary_retrigger_failed": ordinary_retrigger_failed,
+        "trigger_rejected": trigger_rejected,
         "failure_codes": sorted(failure_codes),
         "trigger": _text(meta.get("trigger")),
     }

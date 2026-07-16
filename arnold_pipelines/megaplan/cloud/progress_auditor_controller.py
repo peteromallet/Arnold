@@ -196,6 +196,55 @@ def _terminal_reverification(
     return updated, verification
 
 
+def _reconcile_terminal_states(
+    state_root: Path,
+    findings: Sequence[Mapping[str, Any]],
+    *,
+    now: datetime | None,
+    policy: EscalationPolicy,
+) -> None:
+    """Close terminal attempts even when fresh evidence changed the fingerprint.
+
+    Escalation identity deliberately includes the current failure fingerprint.
+    A failed worker can therefore expose a new failure class before the next
+    audit. Reconcile older same-target state first so durable custody never
+    leaves a terminal manifest labelled ``running`` merely because its newer
+    finding now hashes to a different escalation id.
+    """
+
+    by_target: dict[tuple[str, str], Mapping[str, Any]] = {}
+    current_escalation_ids: set[str] = set()
+    for finding in findings:
+        key = (
+            str(finding.get("session") or ""),
+            str(finding.get("plan") or ""),
+        )
+        if all(key):
+            by_target[key] = finding
+        current_escalation_ids.add(
+            str(classify_true_stall(finding, policy=policy).get("escalation_id") or "")
+        )
+    for path in state_root.glob("*/state.json"):
+        state = _load_json(path)
+        if str(state.get("escalation_id") or "") in current_escalation_ids:
+            # The main controller loop re-verifies this exact identity and
+            # carries the verification receipt into the current report.
+            continue
+        finding = by_target.get(
+            (str(state.get("session") or ""), str(state.get("plan") or ""))
+        )
+        if finding is None:
+            continue
+        updated, verification = _terminal_reverification(
+            state,
+            finding,
+            now=now,
+            policy=policy,
+        )
+        if verification is not None:
+            _atomic_json(path, updated)
+
+
 def _persist_pending_request(
     state: Mapping[str, Any],
     *,
@@ -301,6 +350,12 @@ def run_escalation_controller(
     lock_path = state_root / ".controller.lock"
     with lock_path.open("a+b") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        _reconcile_terminal_states(
+            state_root,
+            findings,
+            now=now,
+            policy=selected,
+        )
         active_global, active_by_session = _active_counts(state_root)
         seen_escalations: set[str] = set()
         for finding in findings:

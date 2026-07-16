@@ -1082,10 +1082,20 @@ def _collect_meta_run_refs(session):
         failure_code = _meta_run_failure_code(path)
         current_episode = index == 0
         ordinary_retrigger_failed = failure_code == "ordinary_retrigger_failed"
+        trigger_rejected = failure_code == "meta_repair_trigger_rejected"
         launch_failure = bool(
             current_episode
             and not ordinary_retrigger_failed
-            and (failure_code or _text_has_meta_launch_failure(tail))
+            and not trigger_rejected
+            and (
+                failure_code in {
+                    "investigator_read_sandbox_unavailable",
+                    "investigator_envelope_overflow",
+                    "investigator_invalid_or_missing_receipt",
+                    "meta_repair_launch_failure",
+                }
+                or _text_has_meta_launch_failure(tail)
+            )
         )
         refs.append(
             {
@@ -1095,6 +1105,7 @@ def _collect_meta_run_refs(session):
                 "launch_failure": launch_failure,
                 "current_episode": current_episode,
                 "ordinary_retrigger_failed": bool(current_episode and ordinary_retrigger_failed),
+                "trigger_rejected": bool(current_episode and trigger_rejected),
                 "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                 **({"failure_code": failure_code} if failure_code else {}),
             }
@@ -1121,6 +1132,8 @@ def _meta_run_failure_code(path):
     lowered = "\n".join(event_lines).lower()
     if re.search(r"l2 replan handoff ordinary repair completed .*returncode=[1-9][0-9]*", lowered):
         return "ordinary_retrigger_failed"
+    if "no meta-repair trigger matched; exiting" in lowered:
+        return "meta_repair_trigger_rejected"
     if (
         "investigator_read_sandbox_unavailable" in lowered
         or "bwrap: no permissions to create new namespace" in lowered
@@ -1584,6 +1597,9 @@ def _meta_repair_summary(
     ordinary_retrigger_failure_refs = [
         item for item in run_refs if item.get("ordinary_retrigger_failed")
     ]
+    trigger_rejection_refs = [
+        item for item in run_refs if item.get("trigger_rejected")
+    ]
     failed_meta_records = []
     recursion_guard_blocked = False
     for item in meta_refs or []:
@@ -1623,6 +1639,7 @@ def _meta_repair_summary(
         "meta_run_refs": run_refs,
         "failed_meta_run_count": len(failed_run_refs),
         "ordinary_retrigger_failure_count": len(ordinary_retrigger_failure_refs),
+        "trigger_rejection_count": len(trigger_rejection_refs),
         "failed_meta_record_count": len(failed_meta_records),
         **({"recursion_guard_blocked": True} if recursion_guard_blocked else {}),
         "missing_meta_run_evidence": bool(should_dispatch and not meta_refs and not run_refs),
@@ -4101,6 +4118,7 @@ def _superfixer_cycle_evidence(ev):
         meta.get("failed_meta_run_count")
         or meta.get("failed_meta_record_count")
         or meta.get("ordinary_retrigger_failure_count")
+        or meta.get("trigger_rejection_count")
     )
     current_l2 = bool(meta_ages and min(meta_ages) <= 60 and not failed_l2)
     absent_or_stale_l2 = not current_l2
