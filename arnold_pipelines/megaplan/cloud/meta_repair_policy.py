@@ -7,11 +7,10 @@ These guards enforce two key safety invariants:
    to a durable human escalation (``NEEDS_HUMAN``) instead of launching
    another meta-repair attempt.
 
-2. **Commit/push gating** — Commit and push paths through meta-repair
-   honor ``META_REPAIR_COMMIT_ENABLED``.  The gate defaults on for
-   autonomous cloud repair, but remains a separate explicit opt-out from
-   ``META_REPAIR_ENABLED`` so operators can disable persistence without
-   disabling diagnosis.
+2. **Commit/push gating** — Commit paths honor
+   ``META_REPAIR_COMMIT_ENABLED``. Push additionally requires the independent,
+   default-off ``META_REPAIR_PUSH_ENABLED`` authority so a local repair grant
+   never silently expands into an external effect.
 
 These guards are intentionally separate from the core ``meta_repair``
 module so they can be tested in isolation and invoked at every layer
@@ -272,31 +271,34 @@ def can_push_changes(
 ) -> CommitGateResult:
     """Check whether meta-repair is permitted to push changes.
 
-    Uses the same gate as :func:`can_commit_changes` — push is a strict
-    superset of commit and requires ``META_REPAIR_COMMIT_ENABLED``.
+    Push is a strict superset of commit. It requires the commit gate plus the
+    separate, default-off ``ARNOLD_META_REPAIR_PUSH_ENABLED`` gate.
 
     Args:
         session: Optional session for context (included in the reason string).
     """
     result = can_commit_changes(session=session)
+    push_enabled = feature_flags.meta_repair_push_enabled()
 
-    if result.allowed:
+    if result.allowed and push_enabled:
         return CommitGateResult(
             allowed=True,
             reason=(
-                "master, meta-repair, and commit gates are on; "
-                "push is permitted (same gate as commit)"
+                "master, meta-repair, commit, and explicit push gates are on; "
+                "push is permitted"
                 + (f" (session={session})" if session else "")
             ),
+            flag_name="ARNOLD_META_REPAIR_PUSH_ENABLED",
         )
     else:
         return CommitGateResult(
             allowed=False,
             reason=(
-                "master, meta-repair, or commit gate is off; "
-                "push is not permitted (same gate as commit)"
+                "master, meta-repair, commit, or explicit push gate is off; "
+                "push is not permitted"
                 + (f" (session={session})" if session else "")
             ),
+            flag_name="ARNOLD_META_REPAIR_PUSH_ENABLED",
         )
 
 

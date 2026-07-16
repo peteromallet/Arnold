@@ -910,10 +910,11 @@ ordinary repair can succeed.
   scope.
 
 ### Commit/push policy
-- You may commit and push fixes when ARNOLD_META_REPAIR_COMMIT_ENABLED is not
-  explicitly disabled.
-- Do not commit or push when ARNOLD_META_REPAIR_COMMIT_ENABLED=0/false/no/off.
-- Pushes require the same gate as commits.
+- You may commit fixes when ARNOLD_META_REPAIR_COMMIT_ENABLED is not explicitly
+  disabled.
+- Do not commit when ARNOLD_META_REPAIR_COMMIT_ENABLED=0/false/no/off.
+- Push only when the independent ARNOLD_META_REPAIR_PUSH_ENABLED gate is
+  explicitly on. Commit authority never implies push authority.
 
 ### Fix constraints
 - Fix only Arnold repair-system code (wrappers, Python modules under
@@ -1008,10 +1009,11 @@ ordinary repair can succeed.
   scope.
 
 ### Commit/push policy
-- You may commit and push fixes when ARNOLD_META_REPAIR_COMMIT_ENABLED is not
-  explicitly disabled.
-- Do not commit or push when ARNOLD_META_REPAIR_COMMIT_ENABLED=0/false/no/off.
-- Pushes require the same gate as commits.
+- You may commit fixes when ARNOLD_META_REPAIR_COMMIT_ENABLED is not explicitly
+  disabled.
+- Do not commit when ARNOLD_META_REPAIR_COMMIT_ENABLED=0/false/no/off.
+- Push only when the independent ARNOLD_META_REPAIR_PUSH_ENABLED gate is
+  explicitly on. Commit authority never implies push authority.
 
 ### Fix constraints
 - Fix only Arnold repair-system code (wrappers, Python modules under
