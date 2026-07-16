@@ -412,6 +412,47 @@ def test_phase_contract_failure_gets_claimable_phase_scoped_identity() -> None:
     assert blocker_id_for_fingerprint(fingerprint)
 
 
+def test_accepted_phase_contract_request_stays_claimable_after_phase_replay(
+    tmp_path: Path,
+) -> None:
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
+    queued = enqueue_repair_request(
+        queue_root=queue_root,
+        session="demo-session",
+        source="lifecycle_failure",
+        target={"plan_name": "m6-exact-contract"},
+        problem_signature={
+            "failure_kind": "deterministic_phase_failure",
+            "current_state": "blocked",
+            "phase_or_step": "critique",
+            "milestone_or_plan": "m6-exact-contract",
+            "blocked_task_id": "",
+        },
+        root_cause_hint="critique contract failed repeatedly",
+    )
+    state = {"name": "m6-exact-contract", "current_state": "critiqued"}
+    target = _current_target(
+        target_session="demo-session",
+        current_refs={
+            "current_plan_name": "m6-exact-contract",
+            "plan_current_state": "critiqued",
+        },
+        event_cursors={},
+        plan_state={"present": True, "fingerprint": "sha256:replayed-critique"},
+    )
+
+    projection = project_repair_custody(
+        plan_state=state,
+        current_target=target,
+        queue_root=queue_root,
+    )
+
+    assert projection["active_request_ids"] == [queued["request"]["request_id"]]
+    assert projection["blocker_id"]
+    assert projection["blocker_fingerprint"]["retry_strategy"] == "repair_phase_contract"
+    assert projection["blocker_fingerprint"]["blocked_task_id"] == "phase:critique"
+
+
 def test_classifier_gates_true_or_ambiguous_human_blockers(tmp_path: Path) -> None:
     projection = _projection(tmp_path)
 

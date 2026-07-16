@@ -583,6 +583,20 @@ def blocker_fingerprint_from_evidence(
     target_plan_state = _as_mapping(target_payload.get("plan_state"))
     target_current_refs = _as_mapping(target_payload.get("current_refs"))
     target_event_cursors = _as_mapping(target_payload.get("event_cursors"))
+    failure_kind = _first_non_empty(
+        _as_text(latest_failure.get("kind")),
+        _as_text(signature.get("failure_kind")),
+    )
+    retry_strategy = _first_non_empty(
+        _as_text(resume_cursor.get("retry_strategy")),
+        _as_text(target_event_cursors.get("resume_retry_strategy")),
+        _as_text(signature.get("retry_strategy")),
+    )
+    # Accepted deterministic phase failures must retain a claimable identity
+    # after a successful phase replay clears latest_failure/resume_cursor.  The
+    # immutable lifecycle request still carries the typed failure kind.
+    if not retry_strategy and failure_kind == "deterministic_phase_failure":
+        retry_strategy = "repair_phase_contract"
 
     phase_or_step = _first_non_empty(
         _as_text(latest_failure.get("phase")),
@@ -611,15 +625,8 @@ def blocker_fingerprint_from_evidence(
             _as_text(target_current_refs.get("plan_current_state")),
             _as_text(signature.get("current_state")),
         ),
-        "retry_strategy": _first_non_empty(
-            _as_text(resume_cursor.get("retry_strategy")),
-            _as_text(target_event_cursors.get("resume_retry_strategy")),
-            _as_text(signature.get("retry_strategy")),
-        ),
-        "failure_kind": _first_non_empty(
-            _as_text(latest_failure.get("kind")),
-            _as_text(signature.get("failure_kind")),
-        ),
+        "retry_strategy": retry_strategy,
+        "failure_kind": failure_kind,
         "phase_or_step": phase_or_step,
         "milestone_or_plan": _first_non_empty(
             _as_text(plan_payload.get("name")),
