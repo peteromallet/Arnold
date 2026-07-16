@@ -19,6 +19,7 @@ from arnold_pipelines.megaplan.cloud.repair_investigation import (
     build_meta_observation_bundle,
     build_investigation_context,
     build_repair_observation_bundle,
+    load_bounded_investigator_receipt,
     summarize_investigation_artifacts,
     validate_meta_investigation_context,
     validate_investigator_receipt,
@@ -773,6 +774,62 @@ def test_investigator_receipt_is_bound_to_context_and_requires_evidence() -> Non
     assert validated["actual_failure"]["classification"] == "custody_failure"
     with pytest.raises(ValueError, match="context digest disagrees"):
         validate_investigator_receipt(receipt, expected_context_digest="digest-2")
+
+
+def test_investigator_receipt_loader_accepts_only_exact_single_json_fence(
+    tmp_path: Path,
+) -> None:
+    receipt = _receipt()
+    fenced = tmp_path / "fenced.json"
+    fenced.write_text(
+        "```json\n" + json.dumps(receipt, indent=2) + "\n```\n",
+        encoding="utf-8",
+    )
+
+    assert load_bounded_investigator_receipt(fenced) == receipt
+
+    for index, candidate in enumerate(
+        (
+            "prose\n" + fenced.read_text(encoding="utf-8"),
+            fenced.read_text(encoding="utf-8") + "prose\n",
+            "```json\n{}\n```\n```json\n{}\n```\n",
+            "```python\n{}\n```\n",
+        )
+    ):
+        invalid = tmp_path / f"invalid-{index}.json"
+        invalid.write_text(candidate, encoding="utf-8")
+        with pytest.raises(ValueError, match="not valid UTF-8 JSON"):
+            load_bounded_investigator_receipt(invalid)
+
+
+def test_receipt_validator_cli_accepts_exact_single_json_fence(tmp_path: Path) -> None:
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text(
+        "```json\n" + json.dumps(_receipt(), indent=2) + "\n```\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-P",
+            "-m",
+            "arnold_pipelines.megaplan.cloud.repair_investigation",
+            "validate",
+            "--receipt",
+            str(receipt),
+            "--context-digest",
+            "digest-1",
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["receipt_digest"]
 
 
 def test_failing_external_guard_rejects_state_recovery_handoff() -> None:
@@ -1643,6 +1700,24 @@ def test_repair_loop_has_one_bounded_invalid_receipt_correction() -> None:
     assert '${validation_output:0:2000}' in function
     assert "invalid_receipt_bytes > 65536" in function
     assert "prompt_bytes > 65536" in function
+
+
+def test_l1_and_l2_consume_receipts_through_bounded_transport_loader() -> None:
+    l1 = (
+        REPO_ROOT
+        / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+    ).read_text(encoding="utf-8")
+    l2 = (
+        REPO_ROOT
+        / "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
+    ).read_text(encoding="utf-8")
+
+    assert l1.count("load_bounded_investigator_receipt") >= 4
+    assert l2.count("load_bounded_investigator_receipt") >= 5
+    assert 'receipt = json.loads(Path(receipt_path).read_text' not in l1
+    assert 'receipt = json.loads(receipt_path.read_text' not in l1
+    assert 'json.loads(Path(receipt_path).read_text' not in l2
+    assert 'json.loads(pathlib.Path(receipt_path).read_text' not in l2
 
 
 def test_receipt_validator_rejects_oversized_input_before_json_parse(tmp_path: Path) -> None:
