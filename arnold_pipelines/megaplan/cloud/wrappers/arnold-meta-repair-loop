@@ -15,8 +15,8 @@
 #      subagents (provider=deepseek, model=deepseek:deepseek-v4-pro,
 #      profile=partnered-5) for broad mapping, log/history review,
 #      independent root-cause probes, and bounded fix investigations.
-#   5. May commit and push by default where policy permits; operators can
-#      explicitly disable this with META_REPAIR_COMMIT_ENABLED=0.
+#   5. May commit where policy permits. Pushes require independent, explicit
+#      META_REPAIR_PUSH_ENABLED authority and default off.
 #   6. Retriggers the ordinary repair loop for the same session after
 #      applying any fix, then verifies terminal success.
 #   7. Persists a redacted meta-repair record under repair-data/meta/.
