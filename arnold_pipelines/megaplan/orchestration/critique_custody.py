@@ -32,7 +32,6 @@ from arnold_pipelines.megaplan.types import PlanState
 CUSTODY_SCHEMA_VERSION = "megaplan-critique-custody-v1"
 CLEARANCE_SCHEMA_VERSION = "megaplan-critique-clearance-v1"
 FINAL_BINDING_SCHEMA_VERSION = "megaplan-finalize-critique-binding-v1"
-_PLACEHOLDER_FLAG_IDS = {"", "FLAG-000", "UNKNOWN", "N/A"}
 _ALLOWED_FINDING_KEYS = {
     "detail",
     "flagged",
@@ -76,12 +75,17 @@ def _stable_finding_id(flag: Mapping[str, Any]) -> str:
     return "CF-" + hashlib.sha256(_canonical_bytes(identity)).hexdigest()[:20].upper()
 
 
+def canonical_critique_flag_id(flag: Mapping[str, Any]) -> str:
+    """Return the reducer-owned identity for a normalized critique finding."""
+    return _stable_finding_id(flag)
+
+
 def _normalize_flag_ids(payload: dict[str, Any]) -> None:
     flags = payload.get("flags")
     if not isinstance(flags, list):
         raise CritiqueCustodyError("critique_flags_malformed", ["flags must be an array"])
     seen: dict[str, int] = {}
-    remapped: dict[str, str] = {}
+    remapped: dict[str, set[str]] = {}
     issues: list[str] = []
     for index, raw_flag in enumerate(flags):
         if not isinstance(raw_flag, dict):
@@ -91,29 +95,37 @@ def _normalize_flag_ids(payload: dict[str, Any]) -> None:
         if not isinstance(producer_id, str):
             issues.append(f"flags[{index}].id is not a string")
             continue
-        canonical_id = producer_id.strip()
-        if canonical_id.upper() in _PLACEHOLDER_FLAG_IDS:
-            canonical_id = _stable_finding_id(raw_flag)
-            remapped[producer_id] = canonical_id
-            raw_flag["id"] = canonical_id
-        if not canonical_id:
-            issues.append(f"flags[{index}].id is empty")
-            continue
-        if canonical_id in seen:
-            issues.append(
-                f"duplicate flag id {canonical_id!r} at flags[{seen[canonical_id]}] and flags[{index}]"
-            )
-        seen[canonical_id] = index
         for field in ("concern", "category", "severity_hint", "evidence"):
             value = raw_flag.get(field)
             if not isinstance(value, str) or not value.strip():
                 issues.append(f"flags[{index}].{field} must be a non-empty string")
+        local_id = producer_id.strip()
+        canonical_id = canonical_critique_flag_id(raw_flag)
+        if local_id and local_id != canonical_id and "producer_flag_id" not in raw_flag:
+            raw_flag["producer_flag_id"] = local_id
+        raw_flag["id"] = canonical_id
+        remapped.setdefault(producer_id.strip(), set()).add(canonical_id)
+        if canonical_id in seen:
+            issues.append(
+                f"duplicate canonical flag id {canonical_id!r} at "
+                f"flags[{seen[canonical_id]}] and flags[{index}]"
+            )
+        seen[canonical_id] = index
     if issues:
         raise CritiqueCustodyError("critique_finding_identity_invalid", issues)
     for key in ("verified_flag_ids", "disputed_flag_ids"):
         values = payload.get(key)
         if isinstance(values, list):
-            payload[key] = [remapped.get(value, value) for value in values]
+            normalized_values: list[Any] = []
+            for value in values:
+                candidates = remapped.get(value, set())
+                if len(candidates) > 1:
+                    raise CritiqueCustodyError(
+                        "critique_finding_reference_ambiguous",
+                        [f"{key} local id {value!r} maps to {sorted(candidates)!r}"],
+                    )
+                normalized_values.append(next(iter(candidates)) if candidates else value)
+            payload[key] = normalized_values
 
 
 def prepare_critique_payload(
