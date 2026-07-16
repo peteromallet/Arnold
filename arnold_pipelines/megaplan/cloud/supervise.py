@@ -165,6 +165,63 @@ BLOCKED_REFUSAL_REASONS: dict[str, str] = {
 }
 
 
+def _supervisor_problem_signature(
+    *, reason: str, current_plan_name: str
+) -> dict[str, str]:
+    """Preserve a deterministic supervised failure as repair identity.
+
+    ``arnold-supervise`` stops retrying known deterministic failures.  Its
+    queue handoff must retain that exact failure instead of collapsing it to
+    the generic exhausted-process identity used for retry-budget exhaustion.
+    """
+
+    prefix = "deterministic supervised failure:"
+    normalized_reason = str(reason or "").strip()
+    signature = {
+        "failure_kind": "supervised_run_exhausted",
+        "current_state": "process_exited",
+        "phase_or_step": "arnold-supervise",
+        "milestone_or_plan": current_plan_name,
+        "gate_recommendation": "",
+        "blocked_task_id": "phase:arnold-supervise",
+        "event_signature": "",
+    }
+    if not normalized_reason.startswith(prefix):
+        return signature
+
+    detail = normalized_reason[len(prefix) :].strip()
+    failure_kind, separator, evidence = detail.partition(";")
+    failure_kind = failure_kind.strip()
+    if not failure_kind:
+        return signature
+
+    signature.update(
+        {
+            "failure_kind": failure_kind,
+            "phase_or_step": "chain_execution_binding"
+            if failure_kind == "chain_execution_binding_drift"
+            else "arnold-supervise",
+            "blocked_task_id": f"deterministic:{failure_kind}",
+            "event_signature": detail,
+        }
+    )
+    if failure_kind == "chain_execution_binding_drift":
+        active_errors = ""
+        if separator:
+            key, equals, value = evidence.strip().partition("=")
+            if equals and key.strip() == "active_errors":
+                active_errors = value.strip()
+        if active_errors:
+            signature["blocked_task_id"] = (
+                f"chain_execution_binding:{active_errors}"
+            )
+        signature["gate_recommendation"] = (
+            "Explicit operator-authorized content-addressed rebind is required; "
+            "do not retry the unchanged chain start."
+        )
+    return signature
+
+
 def enqueue_supervisor_repair_request(
     *,
     queue_root: str | Path,
@@ -215,6 +272,10 @@ def enqueue_supervisor_repair_request(
     if current_plan_name:
         target["plan_name"] = current_plan_name
 
+    problem_signature = _supervisor_problem_signature(
+        reason=reason,
+        current_plan_name=current_plan_name,
+    )
     return enqueue_repair_request(
         queue_root=queue_root,
         marker_dir=marker_dir,
@@ -223,14 +284,7 @@ def enqueue_supervisor_repair_request(
         workspace=workspace,
         run_kind=run_kind,
         target=target,
-        problem_signature={
-            "failure_kind": "supervised_run_exhausted",
-            "current_state": "process_exited",
-            "phase_or_step": "arnold-supervise",
-            "milestone_or_plan": current_plan_name,
-            "gate_recommendation": "",
-            "blocked_task_id": "",
-        },
+        problem_signature=problem_signature,
         root_cause_hint={"reason": reason, "supervise_log": log_path},
     )
 
