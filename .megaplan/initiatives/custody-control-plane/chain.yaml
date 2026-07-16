@@ -1,9 +1,9 @@
-base_branch: main
-merge_policy: review
+base_branch: consolidate/arnold-runtime-activation-20260714
+merge_policy: auto
 prerequisite_policy: required
 validation_policy: required
 review_policy:
-  clean_milestone_pr: manual
+  clean_milestone_pr: auto
 anchors:
   north_star: NORTHSTAR.md
 launch_preconditions:
@@ -105,8 +105,8 @@ milestones:
     inventory freeze. M6 must fail closed if the audited WBC merge is not an ancestor
     of the landed target/runtime vector, if M5 evidence is stale, if the old four-milestone
     session is presented as current six-milestone completion, if any boundary row
-    is unexplained, or if the approval record is absent or invalid; its manually reviewed
-    handoff gates every implementation milestone.
+    is unexplained, or if the machine-verifiable ownership-decision record is absent
+    or invalid; its accepted evidence handoff gates every implementation milestone.
 - label: m6a-wbc-transactional-ledger-foundation
   idea: .megaplan/initiatives/custody-control-plane/briefs/m6a-wbc-transactional-ledger-foundation.md
   branch: megaplan/custody-control-plane/m6a-wbc-transactional-ledger-foundation
@@ -117,7 +117,7 @@ milestones:
   with_prep: true
   prep_clarify: false
   prep_direction: 'Start only from M6''s exact final landed WBC revision/runtime vector,
-    generated zero-exemption boundary inventory, and accepted approval record. The
+    generated zero-exemption boundary inventory, and accepted ownership-decision record. The
     audited candidate ledger is schema-only: implement the WBC-owned transactional
     store/API, durable start-before-dispatch and exactly-one- terminal invariants,
     outbox/reconciliation semantics, process-safe adapters, enforced payload privacy/retention/encryption,
@@ -128,7 +128,8 @@ milestones:
   - m6-authority-contract-and-residual-inventory
   notes: Difficulty 5/5; partnered-5/thorough/high @codex +prep. This is the first
     implementation milestone and remains blocked until the exact landed WBC revision,
-    landed/source/editable/runtime proof, M6 inventory, and human approval are current.
+    landed/source/editable/runtime proof, M6 inventory, and machine-verifiable
+    ownership-decision evidence are current.
     Persistence ambiguity must be explicit and replayable; deployment, restart, and
     production effects remain disabled.
 - label: m7-controlled-authoritative-writers
@@ -139,8 +140,8 @@ milestones:
   robustness: thorough
   depth: high
   prep_clarify: false
-  prep_direction: Start only after M6's manually accepted ownership handoff, M6A's
-    proved WBC transactional ledger/API, and accepted approval record. Reuse the landed
+  prep_direction: Start only after M6's accepted ownership handoff, M6A's proved
+    WBC transactional ledger/API, and accepted ownership-decision record. Reuse the landed
     Run Authority decisions/fences and WBC-owned execution-attempt/ effect ledger.
     Define the custody-owned action-target, repair-occurrence, and renewable lease
     contract, including ownership transfer, expiry, reconciliation, and a monotonic
@@ -155,7 +156,7 @@ milestones:
   - m6a-wbc-transactional-ledger-foundation
   notes: Difficulty 5/5; partnered-5/thorough/high @codex. M7 is the first Custody
     implementation milestone and must fail closed unless M5/M6/M6A evidence and the
-    approval record remain current. Writer ordering, fencing, and partial persistence
+    ownership-decision record remain current. Writer ordering, fencing, and partial persistence
     can pass local tests while duplicating effects or advancing global authority.
 - label: m8-runtime-and-boundary-adoption
   idea: .megaplan/initiatives/custody-control-plane/briefs/m8-runtime-and-boundary-adoption.md
@@ -281,7 +282,7 @@ driver:
   initiative_path: .megaplan/initiatives/custody-control-plane
   require_editable_runtime_match: true
   phase_timeout: 10800
-  auto_approve: false
+  auto_approve: true
   require_clean_base: true
   on_escalate: abort
   max_iterations: 60

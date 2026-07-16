@@ -4,7 +4,7 @@ Covers:
 - Normal M5→M5A→M6 progression with acceptance receipts
 - Absent acceptance receipt blocks successor initialization
 - Rejected receipt (mismatched proof) blocks advancement
-- Stale acceptance (stale snapshot hash) blocks advancement  
+- Stale acceptance (stale snapshot hash) blocks advancement
 - Unknown acceptance state blocks advancement in fail-closed mode
 - Different-identity transaction (wrong source commit / runtime) blocks advancement
 - Shadow mode passes through regardless of acceptance state
