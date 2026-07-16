@@ -246,6 +246,41 @@ def test_external_snapshot_uses_authoritative_chain_pr_number(
     assert snapshot["query"].startswith("gh pr view 255")
 
 
+def test_open_green_pr_remains_pending_for_state_recovery() -> None:
+    observed = repair_investigation._bounded_observation(
+        "external_state",
+        json.dumps(
+            {
+                "available": True,
+                "pull_request": {
+                    "number": 255,
+                    "state": "OPEN",
+                    "isDraft": False,
+                    "mergeStateStatus": "CLEAN",
+                    "headRefOid": "b" * 40,
+                    "statusCheckRollup": [
+                        {
+                            "name": "test",
+                            "status": "COMPLETED",
+                            "conclusion": "SUCCESS",
+                        }
+                    ],
+                },
+            }
+        ).encode(),
+    )
+
+    assert observed["external_guard"] == {
+        "status": "pending",
+        "failing_checks": [],
+        "pending_checks": [],
+        "pr_state": "OPEN",
+        "is_draft": False,
+        "merge_state": "CLEAN",
+        "head_oid": "b" * 40,
+    }
+
+
 def test_context_normalizes_mapping_validation_from_real_repair_report(tmp_path: Path) -> None:
     workspace, spec, repair_data, request, goal = _fixture(tmp_path)
     payload = json.loads(repair_data.read_text(encoding="utf-8"))
@@ -1107,6 +1142,13 @@ def test_meta_context_uses_common_evidence_and_recovery_semantics(tmp_path: Path
             "goal_id": "repair-goal-1",
             "checkpoint_digest": "a" * 64,
             "target": {"blocker_id": "blocker-1"},
+            "last_evaluation": {
+                "quality_resolution_commit_custody": {
+                    "verified": False,
+                    "required_commits": ["0beb5e8d"],
+                    "missing_commits": ["0beb5e8d"],
+                }
+            },
         },
     )
     _write(
@@ -1168,6 +1210,13 @@ def test_meta_context_uses_common_evidence_and_recovery_semantics(tmp_path: Path
             "hand_advance_chain",
         ],
     }
+    assert observation["quality_resolution_commit_custody"]["verified"] is False
+    assert "0beb5e8d" in observation["quality_resolution_commit_custody"][
+        "missing_commits"
+    ]
+    assert "Missing durable quality-resolution commits" in observation[
+        "quality_commit_policy"
+    ]
 
 
 def test_pathological_meta_context_stays_tiny_and_reference_only(tmp_path: Path) -> None:

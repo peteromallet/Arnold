@@ -1406,18 +1406,22 @@ def _bounded_observation(kind: str, encoded: bytes) -> Any:
             if item["status"].upper() not in {"COMPLETED", "SUCCESS"}
             and not item["conclusion"]
         ]
+        pr_state = _text(pull.get("state"), 100).upper()
+        is_draft = pull.get("isDraft") is True
         selected["external_guard"] = {
             "status": (
                 "unknown"
                 if value.get("available") is not True
                 else "failed"
-                if failing
+                if failing or pr_state == "CLOSED"
                 else "pending"
-                if pending
+                if pending or is_draft or pr_state != "MERGED"
                 else "clear"
             ),
             "failing_checks": failing,
             "pending_checks": pending,
+            "pr_state": pr_state,
+            "is_draft": is_draft,
             "merge_state": _text(pull.get("mergeStateStatus"), 100),
             "head_oid": _text(pull.get("headRefOid"), 100),
         }
@@ -1492,18 +1496,33 @@ def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
         context.get("receipt_contract_ref"),
     ]
     observations: list[dict[str, Any]] = []
+    quality_resolution_commit_custody: dict[str, Any] = {}
     for ref in refs:
         if not isinstance(ref, Mapping):
             raise ValueError("observation reference is invalid")
         encoded = _verified_reference_bytes(ref)
         kind = str(ref.get("kind") or "")
+        observed = _bounded_observation(kind, encoded)
+        if kind == "repair_goal" and isinstance(observed, Mapping):
+            last_evaluation = observed.get("last_evaluation")
+            last_evaluation = (
+                last_evaluation if isinstance(last_evaluation, Mapping) else {}
+            )
+            commit_custody = last_evaluation.get(
+                "quality_resolution_commit_custody"
+            )
+            if isinstance(commit_custody, Mapping):
+                quality_resolution_commit_custody = {
+                    key: commit_custody.get(key)
+                    for key in ("verified", "required_commits", "missing_commits")
+                }
         observations.append(
             {
                 "kind": kind,
                 "path": str(ref.get("path") or ""),
                 "sha256": str(ref.get("sha256") or ""),
                 "size_bytes": int(ref.get("size_bytes") or 0),
-                "observed": _bounded_observation(kind, encoded),
+                "observed": observed,
             }
         )
     required_receipt = _common_required_output("l2_repair_system")
@@ -1521,7 +1540,10 @@ def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
             if isinstance(guard, Mapping):
                 external_guard_status = str(guard.get("status") or "unknown")
         break
-    if external_guard_status != "clear":
+    missing_quality_commits = quality_resolution_commit_custody.get(
+        "missing_commits"
+    ) not in (None, "", [], "[]")
+    if external_guard_status != "clear" or missing_quality_commits:
         required_receipt["recommended_action"] = "replan"
         required_receipt["safe_repair_target"]["kind"] = "repair_custody"
         required_receipt["handoff"] = {
@@ -1543,6 +1565,12 @@ def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
                 "A failed or pending PR/CI check forbids recover_state and chain-state "
                 "synchronization. Return replan targeting repair_custody so ordinary L1 "
                 "receives the fresh external failure; never hand-advance the chain."
+            ),
+            "quality_resolution_commit_custody": quality_resolution_commit_custody,
+            "quality_commit_policy": (
+                "Missing durable quality-resolution commits forbid recover_state and "
+                "chain-state synchronization. Replan to ordinary L1 so the bounded "
+                "target/source repair can be integrated; never discard commit custody."
             ),
             "observations": observations,
         }
@@ -1782,7 +1810,19 @@ def validate_investigator_receipt(
             raise ValueError("investigator observation bundle digest disagrees")
         external_guard = {}
         live_worker_observed = False
-        missing_quality_commits = False
+        bundle_commit_custody = observation_bundle.get(
+            "quality_resolution_commit_custody"
+        )
+        bundle_commit_custody = (
+            bundle_commit_custody
+            if isinstance(bundle_commit_custody, Mapping)
+            else {}
+        )
+        bundle_missing = bundle_commit_custody.get("missing_commits")
+        missing_quality_commits = (
+            bundle_commit_custody.get("verified") is not True
+            and bundle_missing not in (None, "", [], "[]")
+        )
         for item in observation_bundle.get("observations") or []:
             if not isinstance(item, Mapping):
                 continue
