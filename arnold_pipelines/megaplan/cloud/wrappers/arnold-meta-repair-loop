@@ -25,8 +25,15 @@ set -uo pipefail
 # Long L2 runs must not resume through a wrapper that activation rewrote while
 # Bash was waiting on a child.  Pin a syntax-checked per-invocation snapshot;
 # keep the original path only for repository and sibling discovery.
-ARNOLD_META_REPAIR_LOOP_ORIGIN="${ARNOLD_META_REPAIR_LOOP_ORIGIN:-${BASH_SOURCE[0]:-$0}}"
-if [[ "${ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
+meta_repair_loop_current="${BASH_SOURCE[0]:-$0}"
+if [[ "${ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" \
+  || -z "${ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH:-}" \
+  || "$meta_repair_loop_current" != "$ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH" ]]; then
+  if [[ "${ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" == "1" ]]; then
+    ARNOLD_META_REPAIR_LOOP_ORIGIN="$meta_repair_loop_current"
+  else
+    ARNOLD_META_REPAIR_LOOP_ORIGIN="${ARNOLD_META_REPAIR_LOOP_ORIGIN:-$meta_repair_loop_current}"
+  fi
   meta_repair_loop_snapshot="$(mktemp "${TMPDIR:-/tmp}/arnold-meta-repair-loop.XXXXXXXX")"
   if ! cp -- "$ARNOLD_META_REPAIR_LOOP_ORIGIN" "$meta_repair_loop_snapshot" \
     || ! bash -n "$meta_repair_loop_snapshot"; then
@@ -36,9 +43,9 @@ if [[ "${ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
   fi
   export ARNOLD_META_REPAIR_LOOP_ORIGIN
   export ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE=1
+  export ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH="$meta_repair_loop_snapshot"
   exec bash "$meta_repair_loop_snapshot" "$@"
 fi
-ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"
 trap 'rm -f -- "$ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH"' EXIT
 
 if [[ $# -lt 1 ]]; then

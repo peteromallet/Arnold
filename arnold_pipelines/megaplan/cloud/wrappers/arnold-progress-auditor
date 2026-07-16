@@ -71,8 +71,15 @@ fi
 # Audit reviews can run long enough to overlap hot activation.  Pin the final
 # selected in-container source before gathering so Bash cannot resume into a
 # different revision after an agentic child returns.
-ARNOLD_PROGRESS_AUDITOR_ORIGIN="${ARNOLD_PROGRESS_AUDITOR_ORIGIN:-${BASH_SOURCE[0]:-$0}}"
-if [[ "${ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
+progress_auditor_current="${BASH_SOURCE[0]:-$0}"
+if [[ "${ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_ACTIVE:-0}" != "1" \
+  || -z "${ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH:-}" \
+  || "$progress_auditor_current" != "$ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH" ]]; then
+  if [[ "${ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_ACTIVE:-0}" == "1" ]]; then
+    ARNOLD_PROGRESS_AUDITOR_ORIGIN="$progress_auditor_current"
+  else
+    ARNOLD_PROGRESS_AUDITOR_ORIGIN="${ARNOLD_PROGRESS_AUDITOR_ORIGIN:-$progress_auditor_current}"
+  fi
   progress_auditor_snapshot="$(mktemp "${TMPDIR:-/tmp}/arnold-progress-auditor.XXXXXXXX")"
   if ! cp -- "$ARNOLD_PROGRESS_AUDITOR_ORIGIN" "$progress_auditor_snapshot" \
     || ! bash -n "$progress_auditor_snapshot"; then
@@ -82,9 +89,9 @@ if [[ "${ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
   fi
   export ARNOLD_PROGRESS_AUDITOR_ORIGIN
   export ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_ACTIVE=1
+  export ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH="$progress_auditor_snapshot"
   exec bash "$progress_auditor_snapshot" "$@"
 fi
-ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"
 trap 'rm -f -- "$ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH"' EXIT
 
 WRAPPER_REPO_ROOT="$(cd "$(dirname "$ARNOLD_PROGRESS_AUDITOR_ORIGIN")/../../../.." && pwd)"

@@ -7,8 +7,15 @@ set -m
 # parser consume two revisions.  Execute one syntax-checked immutable snapshot
 # for the lifetime of this invocation while retaining the authoritative origin
 # for sibling/runtime discovery.
-ARNOLD_REPAIR_LOOP_ORIGIN="${ARNOLD_REPAIR_LOOP_ORIGIN:-${BASH_SOURCE[0]:-$0}}"
-if [[ "${ARNOLD_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
+repair_loop_current="${BASH_SOURCE[0]:-$0}"
+if [[ "${ARNOLD_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" \
+  || -z "${ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH:-}" \
+  || "$repair_loop_current" != "$ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH" ]]; then
+  if [[ "${ARNOLD_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" == "1" ]]; then
+    ARNOLD_REPAIR_LOOP_ORIGIN="$repair_loop_current"
+  else
+    ARNOLD_REPAIR_LOOP_ORIGIN="${ARNOLD_REPAIR_LOOP_ORIGIN:-$repair_loop_current}"
+  fi
   repair_loop_snapshot="$(mktemp "${TMPDIR:-/tmp}/arnold-repair-loop.XXXXXXXX")"
   if ! cp -- "$ARNOLD_REPAIR_LOOP_ORIGIN" "$repair_loop_snapshot" \
     || ! bash -n "$repair_loop_snapshot"; then
@@ -18,9 +25,9 @@ if [[ "${ARNOLD_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
   fi
   export ARNOLD_REPAIR_LOOP_ORIGIN
   export ARNOLD_REPAIR_LOOP_SNAPSHOT_ACTIVE=1
+  export ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH="$repair_loop_snapshot"
   exec bash "$repair_loop_snapshot" "$@"
 fi
-ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"
 trap 'rm -f -- "$ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH"' EXIT
 
 if [[ $# -lt 3 ]]; then
