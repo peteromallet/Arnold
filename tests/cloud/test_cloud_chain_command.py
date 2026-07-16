@@ -127,12 +127,15 @@ def test_cloud_status_and_chains_accept_compact_since_flags() -> None:
 
 
 def test_sync_megaplan_accepts_on_box_provider() -> None:
+    from arnold_pipelines.megaplan.cloud.providers.on_box import OnBoxProvider
+
     args = _cloud_parser().parse_args(
         ["cloud", "sync-megaplan", "initiative/chain.yaml", "--on-box"]
     )
 
     assert args.cloud_action == "sync-megaplan"
     assert args.on_box is True
+    assert isinstance(_provider_for_action(_cloud_spec(), args), OnBoxProvider)
 
 
 def test_cloud_chain_accepts_prepare_only() -> None:
