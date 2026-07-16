@@ -669,12 +669,15 @@ import json
 import pathlib
 import sys
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
-from arnold_pipelines.megaplan.cloud.repair_investigation import validate_investigator_receipt
+from arnold_pipelines.megaplan.cloud.repair_investigation import (
+    load_bounded_investigator_receipt,
+    validate_investigator_receipt,
+)
 
 data_path, context_path, receipt_path, digest, run_id, mode, observation_path = sys.argv[1:]
 payload = load_json(pathlib.Path(data_path), default={})
 validated = validate_investigator_receipt(
-    json.loads(pathlib.Path(receipt_path).read_text(encoding="utf-8")),
+    load_bounded_investigator_receipt(receipt_path),
     expected_context_digest=digest,
     observation_bundle=json.loads(
         pathlib.Path(observation_path).read_text(encoding="utf-8")
@@ -704,11 +707,14 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from arnold_pipelines.megaplan.cloud.repair_investigation import validate_investigator_receipt
+from arnold_pipelines.megaplan.cloud.repair_investigation import (
+    load_bounded_investigator_receipt,
+    validate_investigator_receipt,
+)
 context_path, receipt_path, digest = sys.argv[1:]
 context = json.loads(Path(context_path).read_text(encoding="utf-8"))
 validated = validate_investigator_receipt(
-    json.loads(Path(receipt_path).read_text(encoding="utf-8")), expected_context_digest=digest
+    load_bounded_investigator_receipt(receipt_path), expected_context_digest=digest
 )
 recomputed = hashlib.sha256(json.dumps(
     {key: value for key, value in context.items() if key != "context_digest"},
@@ -779,8 +785,9 @@ if ! run_meta_repair_investigation; then
   exit 1
 fi
 META_INVESTIGATION_ACTION="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - "$META_INVESTIGATION_RECEIPT_PATH" <<'PY'
-import json, sys
-print(str(json.load(open(sys.argv[1], encoding="utf-8")).get("recommended_action") or ""))
+import sys
+from arnold_pipelines.megaplan.cloud.repair_investigation import load_bounded_investigator_receipt
+print(str(load_bounded_investigator_receipt(sys.argv[1]).get("recommended_action") or ""))
 PY
 )"
 if [[ "$META_INVESTIGATION_ACTION" == "replan" ]]; then
@@ -791,10 +798,13 @@ if [[ "$META_INVESTIGATION_ACTION" == "replan" ]]; then
     "$META_INVESTIGATION_RECEIPT_PATH" "$META_INVESTIGATION_OBSERVATION_PATH" \
     "$META_INVESTIGATION_CONTEXT_DIGEST" <<'PY' >>"$RUN_LOG" 2>&1 || exit 1
 import json, sys
-from arnold_pipelines.megaplan.cloud.repair_investigation import validate_investigator_receipt
+from arnold_pipelines.megaplan.cloud.repair_investigation import (
+    load_bounded_investigator_receipt,
+    validate_investigator_receipt,
+)
 receipt_path, observation_path, digest = sys.argv[1:]
 validated = validate_investigator_receipt(
-    json.load(open(receipt_path, encoding="utf-8")),
+    load_bounded_investigator_receipt(receipt_path),
     expected_context_digest=digest,
     observation_bundle=json.load(open(observation_path, encoding="utf-8")),
 )
@@ -813,12 +823,13 @@ import json
 import sys
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json
 from arnold_pipelines.megaplan.cloud.repair_goal import reconcile_l2_replan
+from arnold_pipelines.megaplan.cloud.repair_investigation import load_bounded_investigator_receipt
 
 data_path, marker_path, session, context_digest, receipt_path = sys.argv[1:]
 data = load_json(data_path, default={})
 marker = load_json(marker_path, default={})
 goal = data.get("repair_goal") if isinstance(data.get("repair_goal"), dict) else {}
-receipt = load_json(receipt_path, default={})
+receipt = load_bounded_investigator_receipt(receipt_path)
 if not goal.get("goal_path"):
     raise SystemExit("L2 replan handoff lacks durable repair goal")
 result = reconcile_l2_replan(

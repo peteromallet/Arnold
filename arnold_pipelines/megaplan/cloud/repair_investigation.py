@@ -88,6 +88,43 @@ def _load_bounded_json(path: str | Path, *, max_bytes: int, label: str) -> dict[
     return value
 
 
+def load_bounded_investigator_receipt(path: str | Path) -> dict[str, Any]:
+    """Load one bounded receipt, accepting only an exact outer JSON fence.
+
+    Brokered models occasionally wrap an otherwise valid receipt in a single
+    Markdown ``json`` fence despite the output contract. Treat that fence as
+    transport framing only; prose, multiple fences, oversized input, non-JSON,
+    and non-object payloads still fail closed before receipt validation.
+    """
+
+    source = Path(path)
+    try:
+        encoded = source.open("rb").read(MAX_RECEIPT_BYTES + 1)
+    except OSError as exc:
+        raise ValueError(f"cannot read investigator receipt: {source}") from exc
+    if len(encoded) > MAX_RECEIPT_BYTES:
+        raise ValueError(
+            f"investigator receipt exceeds {MAX_RECEIPT_BYTES}-byte bound"
+        )
+    try:
+        text = encoded.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("investigator receipt is not valid UTF-8 JSON") from exc
+    fenced = re.fullmatch(
+        r"```json[ \t]*\r?\n(?P<body>[\s\S]*?)\r?\n```[ \t]*(?:\r?\n)?",
+        text,
+    )
+    if fenced is not None:
+        text = fenced.group("body")
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError("investigator receipt is not valid UTF-8 JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError("investigator receipt must be a JSON object")
+    return value
+
+
 def _digest(value: Mapping[str, Any]) -> str:
     return hashlib.sha256(
         json.dumps(dict(value), sort_keys=True, separators=(",", ":"), default=str).encode()
@@ -2290,11 +2327,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _atomic_write(Path(args.output), value)
     else:
         value = validate_investigator_receipt(
-            _load_bounded_json(
-                args.receipt,
-                max_bytes=MAX_RECEIPT_BYTES,
-                label="investigator receipt",
-            ),
+            load_bounded_investigator_receipt(args.receipt),
             expected_context_digest=args.context_digest,
             observation_bundle=(
                 _load_bounded_json(
@@ -2339,6 +2372,7 @@ __all__ = [
     "build_meta_observation_bundle",
     "build_repair_observation_bundle",
     "build_investigation_context",
+    "load_bounded_investigator_receipt",
     "summarize_investigation_artifacts",
     "validate_meta_investigation_context",
     "validate_investigator_receipt",

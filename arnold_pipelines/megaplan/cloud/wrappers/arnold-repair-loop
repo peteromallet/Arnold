@@ -6918,11 +6918,14 @@ import sys
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.repair_goal import capture_checkpoint
-from arnold_pipelines.megaplan.cloud.repair_investigation import validate_investigator_receipt
+from arnold_pipelines.megaplan.cloud.repair_investigation import (
+    load_bounded_investigator_receipt,
+    validate_investigator_receipt,
+)
 
 context_path, receipt_path, expected_digest, mutation_label = sys.argv[1:]
 context = json.loads(Path(context_path).read_text(encoding="utf-8"))
-receipt = json.loads(Path(receipt_path).read_text(encoding="utf-8"))
+receipt = load_bounded_investigator_receipt(receipt_path)
 validated = validate_investigator_receipt(
     receipt,
     expected_context_digest=expected_digest,
@@ -7360,8 +7363,11 @@ import sys
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
 data_path, context_path, observation_path, receipt_path, digest, run_id = sys.argv[1:]
 payload = load_json(pathlib.Path(data_path), default={})
-from arnold_pipelines.megaplan.cloud.repair_investigation import validate_investigator_receipt
-receipt = json.loads(pathlib.Path(receipt_path).read_text(encoding="utf-8"))
+from arnold_pipelines.megaplan.cloud.repair_investigation import (
+    load_bounded_investigator_receipt,
+    validate_investigator_receipt,
+)
+receipt = load_bounded_investigator_receipt(receipt_path)
 context = json.loads(pathlib.Path(context_path).read_text(encoding="utf-8"))
 observation = json.loads(pathlib.Path(observation_path).read_text(encoding="utf-8"))
 validated = validate_investigator_receipt(
@@ -7396,16 +7402,17 @@ payload["investigation"] = {
 save_repair_data(pathlib.Path(data_path), payload)
 PY
   export INVESTIGATION_CONTEXT_DIGEST="$context_digest"
-  recommended_action="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("recommended_action") or "")' "$INVESTIGATOR_RECEIPT_PATH")"
+  recommended_action="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P -c 'import sys; from arnold_pipelines.megaplan.cloud.repair_investigation import load_bounded_investigator_receipt; print(load_bounded_investigator_receipt(sys.argv[1]).get("recommended_action") or "")' "$INVESTIGATOR_RECEIPT_PATH")"
   export INVESTIGATOR_RECOMMENDED_ACTION="$recommended_action"
-  INVESTIGATOR_SUPPORTED_CLI="$(python3 -P - "$INVESTIGATION_CONTEXT_PATH" "$INVESTIGATOR_RECEIPT_PATH" <<'PY'
+  INVESTIGATOR_SUPPORTED_CLI="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$INVESTIGATION_CONTEXT_PATH" "$INVESTIGATOR_RECEIPT_PATH" <<'PY'
 import json
 import pathlib
 import sys
+from arnold_pipelines.megaplan.cloud.repair_investigation import load_bounded_investigator_receipt
 
 context_path, receipt_path = map(pathlib.Path, sys.argv[1:])
 context = json.loads(context_path.read_text(encoding="utf-8"))
-receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+receipt = load_bounded_investigator_receipt(receipt_path)
 if receipt.get("recommended_action") != "recover_state":
     print("")
     raise SystemExit(0)
