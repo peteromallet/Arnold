@@ -223,8 +223,9 @@ claiming the broader proposed `ActionableRecordV2` migration complete:
   before acceptance, and rejects direct identity-free `accepted` decisions;
 - lifecycle failure capture carries the persisted retry strategy into the
   immutable request target;
-- projection prefers the accepted record's persisted identity and fails closed
-  on conflicting active identities instead of manufacturing claim authority;
+- projection consumes only the accepted record's persisted identity and fails
+  closed on missing or conflicting active identities instead of manufacturing
+  claim authority from mutable current state;
 - identity-free legacy markers remain byte-preserved and non-authoritative for
   dedupe; replay creates a deterministic claimable successor rather than
   rewriting or coalescing onto the legacy marker;
@@ -241,3 +242,7 @@ cross-session non-coalescing, blocker-scoped claim, and end-to-end trigger
 launch. The broader review/semantic/ActionableRecordV2 gaps inventoried above
 remain sequenced work; this implementation neither reconstructs the historical
 M6 record nor treats it as newly claimable.
+
+The full L1/L2/L3 recurrence analysis, interrupted-run accounting, activation
+evidence, and original-session outcome probe are curated in
+`../notes/m6-fixer-backstop-custody-closure-20260716.md`.

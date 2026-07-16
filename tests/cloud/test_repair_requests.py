@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Barrier
 
+import pytest
+
 from arnold_pipelines.megaplan.cloud import repair_contract, repair_requests
 
 
@@ -543,6 +545,49 @@ def test_write_decision_rejects_identity_free_acceptance(tmp_path: Path) -> None
     assert not list(repair_requests.decisions_dir(queue_dir).glob("*.json"))
 
 
+def test_enqueue_rejects_missing_provenance_before_persistence(tmp_path: Path) -> None:
+    queue_dir = _queue_root(tmp_path)
+
+    with pytest.raises(ValueError, match="provenance source"):
+        repair_requests.enqueue_repair_request(
+            queue_root=queue_dir,
+            session="demo",
+            source="",
+            problem_signature=_signature(),
+            root_cause_hint="observed failure",
+        )
+
+    assert not list(repair_requests.requests_dir(queue_dir).glob("*.json"))
+    assert not list(repair_requests.decisions_dir(queue_dir).glob("*.json"))
+
+
+def test_acceptance_rejects_identity_with_missing_provenance_or_evidence(
+    tmp_path: Path,
+) -> None:
+    queue_dir = _queue_root(tmp_path)
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo",
+        source="watchdog",
+        problem_signature=_signature(),
+        root_cause_hint="observed failure",
+        stale_reason="fixture setup",
+    )
+    request_path = Path(queued["path"])
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    request.pop("provenance")
+    request.pop("evidence_refs")
+    repair_contract.atomic_write_json(request_path, request)
+
+    with pytest.raises(ValueError, match="persisted canonical blocker identity"):
+        repair_requests.write_decision(
+            queue_dir,
+            request_id=request["request_id"],
+            decision="accepted",
+            reason="queued",
+        )
+
+
 def test_phase_failure_persists_replay_stable_claim_identity(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
     signature = {
@@ -590,6 +635,16 @@ def test_phase_failure_persists_replay_stable_claim_identity(tmp_path: Path) -> 
     assert request["blocker_id"] == repair_contract.blocker_id_for_fingerprint(
         request["blocker_fingerprint"]
     )
+    assert request["provenance"] == {
+        "producer": "lifecycle_failure",
+        "session": "custody-control-plane-20260714",
+        "run_kind": "",
+    }
+    assert {ref["kind"] for ref in request["evidence_refs"]} == {
+        "problem_signature_digest",
+        "redacted_root_cause_hint_digest",
+    }
+    assert all(ref["sha256"] for ref in request["evidence_refs"])
     claim = repair_requests.claim_active_repair_request(
         queue_dir,
         blocker_id=request["blocker_id"],

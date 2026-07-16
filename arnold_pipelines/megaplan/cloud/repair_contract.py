@@ -481,6 +481,7 @@ class RepairCustodyRequestRecord(TypedDict):
     target: dict[str, Any]
     status: RepairRequestStatus | str
     active: bool
+    claimable: bool
     decision: RepairRequestDecisionRecord | None
     decision_history: list[RepairRequestDecisionRecord]
 
@@ -516,6 +517,8 @@ class RepairCustodyProjection(TypedDict):
     request_count: int
     claim_count: int
     attempt_count: int
+    lifecycle_counts: dict[str, int]
+    lifecycle_request_ids: dict[str, list[str]]
     retry_budget: dict[str, Any]
     evidence_cursor: dict[str, Any]
     terminal_outcomes: list[str]
@@ -782,11 +785,17 @@ def project_repair_custody(
             or normalize_blocker_fingerprint_v2(raw_stored_fingerprint)
         )
         stored_blocker_id = _as_text(record.get("blocker_id"))
-        if blocker_id_for_fingerprint(stored_fingerprint) != stored_blocker_id:
+        if (
+            blocker_id_for_fingerprint(stored_fingerprint) != stored_blocker_id
+            or not repair_requests.has_claimable_repair_request_contract(record)
+        ):
             stored_fingerprint = None
             stored_blocker_id = ""
-        request_fingerprint = stored_fingerprint or compatibility_fingerprint
-        request_blocker_id = stored_blocker_id or compatibility_blocker_id
+        # Compatibility reconstruction is freshness evidence only.  It may
+        # scope a legacy request to the current target, but it must never mint
+        # authority that was absent from the persisted request itself.
+        request_fingerprint = stored_fingerprint
+        request_blocker_id = stored_blocker_id
         if blocker_id is None and request_blocker_id:
             blocker_id = request_blocker_id
             fingerprint = request_fingerprint
@@ -809,11 +818,13 @@ def project_repair_custody(
                 "target": _stable_mapping(_as_mapping(record.get("target"))),
                 "status": status,
                 "active": status in {REQUEST_STATUS_ACCEPTED, REQUEST_STATUS_DISPATCHED},
+                "claimable": bool(request_blocker_id and request_fingerprint is not None),
                 "decision": latest_decision,
                 "decision_history": history,
             }
         )
 
+    active_requests = [request for request in requests if request["active"]]
     active_identities = {
         request["blocker_id"]: request["blocker_fingerprint"]
         for request in requests
@@ -821,24 +832,30 @@ def project_repair_custody(
         and request["blocker_id"]
         and request["blocker_fingerprint"] is not None
     }
-    if len(active_identities) == 1:
+    if active_requests and len(active_identities) == 1 and all(
+        request["claimable"] for request in active_requests
+    ):
         blocker_id, fingerprint = next(iter(active_identities.items()))
-    elif len(active_identities) > 1:
+    elif active_requests:
         blocker_id = None
         fingerprint = None
 
-    attempts = _collect_custody_attempts(
-        repair_data_dir=repair_data_dir,
-        sidecar_dir=sidecar_dir,
-        blocker_id=blocker_id or "",
-        fingerprint=fingerprint,
-        target_session=target_session,
+    attempts = (
+        _collect_custody_attempts(
+            repair_data_dir=repair_data_dir,
+            sidecar_dir=sidecar_dir,
+            blocker_id=blocker_id,
+            fingerprint=fingerprint,
+            target_session=target_session,
+        )
+        if blocker_id and fingerprint is not None
+        else []
     )
 
     active_request_ids = sorted(
         request["request_id"] for request in requests if request["active"] and request["request_id"]
     )
-    if validated_queue_root is not None:
+    if validated_queue_root is not None and blocker_id:
         for record in repair_requests.iter_repair_attempts(validated_queue_root):
             request_id = _as_text(record.get("request_id"))
             record_blocker_id = _as_text(record.get("blocker_id"))
@@ -884,6 +901,28 @@ def project_repair_custody(
     attempted_request_ids = {
         attempt["request_id"] for attempt in attempts if attempt["request_id"]
     }
+    persisted_request_ids = sorted(
+        request["request_id"] for request in requests if request["request_id"]
+    )
+    claimable_request_ids = sorted(
+        request["request_id"]
+        for request in requests
+        if request["request_id"] and request["claimable"]
+    )
+    launched_request_ids = sorted(
+        {
+            attempt["request_id"]
+            for attempt in attempts
+            if attempt["request_id"] and _attempt_authorizes_launched(attempt)
+        }
+    )
+    recovered_request_ids = sorted(
+        {
+            attempt["request_id"]
+            for attempt in attempts
+            if attempt["request_id"] and _attempt_authorizes_verified_recovered(attempt)
+        }
+    )
     accepted_unclaimed_request_ids = sorted(
         request_id
         for request_id in active_request_ids
@@ -963,6 +1002,24 @@ def project_repair_custody(
         "request_count": len(requests),
         "claim_count": len(active_claim_request_ids),
         "attempt_count": len(attempts),
+        "lifecycle_counts": {
+            "requested": len(persisted_request_ids),
+            "persisted": len(persisted_request_ids),
+            "claimable": len(claimable_request_ids),
+            "claimed": len(active_claim_request_ids),
+            "attempted": len(attempted_request_ids),
+            "launched": len(launched_request_ids),
+            "recovered": len(recovered_request_ids),
+        },
+        "lifecycle_request_ids": {
+            "requested": persisted_request_ids,
+            "persisted": persisted_request_ids,
+            "claimable": claimable_request_ids,
+            "claimed": sorted(active_claim_request_ids),
+            "attempted": sorted(attempted_request_ids),
+            "launched": launched_request_ids,
+            "recovered": recovered_request_ids,
+        },
         "retry_budget": {
             "max_attempts": max_attempts,
             "used_attempts": used_attempts,
@@ -3929,6 +3986,36 @@ def _build_attempt_record(
         "recorded_at": recorded_at,
         "raw": dict(raw),
     }
+
+
+def _attempt_authorizes_launched(attempt: Mapping[str, Any]) -> bool:
+    """Return true only for an immutable receipt or observed execution."""
+
+    if _as_text(attempt.get("source")) == "repair_queue_dispatch_attempt":
+        return True
+    if _as_text(attempt.get("source")) != "managed_agent_execution":
+        return False
+    raw = _as_mapping(attempt.get("raw"))
+    manifest = _as_mapping(raw.get("managed_agent_manifest"))
+    return _as_text(manifest.get("status")) in {"running", "adopting", "completed"}
+
+
+def _attempt_authorizes_verified_recovered(attempt: Mapping[str, Any]) -> bool:
+    """Return true only for blocker-specific independent recovery evidence."""
+
+    raw = _as_mapping(attempt.get("raw"))
+    candidates = [raw]
+    for key in ("managed_agent_manifest", "verification"):
+        candidate = _as_mapping(raw.get(key))
+        if candidate:
+            candidates.append(candidate)
+    for candidate in candidates:
+        if candidate.get("authorizes_verified_recovered") is True:
+            return True
+        verification = _as_mapping(candidate.get("recovery_verification"))
+        if verification.get("authorizes_verified_recovered") is True:
+            return True
+    return False
 
 
 def _queue_dispatch_attempt_observation(

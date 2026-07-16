@@ -362,6 +362,50 @@ def test_superfixer_cycle_detects_wbc_accepted_unclaimed_exhaustion() -> None:
     assert projected["absent_or_stale_l2"] is True
 
 
+def test_accepted_unclaimed_request_is_actionable_despite_unlinked_live_pid() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+    evidence["current_target"] = {"tmux_process": {"live_status": "running"}}
+    evidence["active_step_liveness"] = {
+        "present": True,
+        "worker_pid_alive": True,
+    }
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason.startswith("stale_l1_l2_cycle:")
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["runner_dead"] is False
+    assert projected["accepted_unclaimed_count"] == 1
+    assert projected["actionable"] is True
+
+
+def test_stale_progressed_metadata_is_not_verified_recovery() -> None:
+    namespace = _load_superfixer_cycle_functions()
+    evidence = _wbc_superfixer_cycle_evidence()
+    evidence["repair_custody_summary"]["accepted_unclaimed_request_ids"] = []
+    evidence["repair_data_summary"] = {
+        "exists": True,
+        "outcome": "progressed",
+        "mtime_age_min": 121,
+        "recovery_verified": False,
+        "authorizes_verified_recovered": False,
+    }
+
+    reason = namespace["_stale_l1_l2_cycle_reason"](evidence)
+
+    assert reason.startswith("stale_l1_l2_cycle:")
+    projected = evidence["deterministic_superfixer_evidence"]
+    assert projected["verified_recovery"] is False
+    assert projected["actionable"] is True
+
+    evidence["repair_data_summary"].update(
+        recovery_verified=True,
+        authorizes_verified_recovered=True,
+    )
+    assert namespace["_stale_l1_l2_cycle_reason"](evidence) == ""
+
+
 def test_superfixer_cycle_excludes_typed_human_gate() -> None:
     namespace = _load_superfixer_cycle_functions()
     evidence = _wbc_superfixer_cycle_evidence()
@@ -3786,7 +3830,15 @@ class TestLiveSignalFiltering:
             session=session,
             workspace=workspace,
             source="legacy_watchdog",
-            problem_signature={},
+            problem_signature={
+                "failure_kind": "blocked_recovery_not_resolved",
+                "current_state": "blocked",
+                "phase_or_step": "execute",
+                "milestone_or_plan": plan,
+                "gate_recommendation": "repair",
+                "blocked_task_id": "phase:execute",
+            },
+            root_cause_hint="machine repair exhausted without advancement",
             target={"plan_name": plan},
         )
         assert queued["status"] == "queued"
