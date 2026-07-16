@@ -8,7 +8,11 @@ from arnold_pipelines.megaplan.cloud.progress_auditor_controller import (
     TriggerResult,
     run_escalation_controller,
 )
-from tests.cloud.test_progress_auditor_escalation import _true_stall, _valid_manifest
+from tests.cloud.test_progress_auditor_escalation import (
+    _approval_gate_after_superfixer_repair,
+    _true_stall,
+    _valid_manifest,
+)
 
 
 def test_report_only_and_ordinary_findings_never_create_repair_custody(tmp_path: Path) -> None:
@@ -41,6 +45,30 @@ def test_report_only_and_ordinary_findings_never_create_repair_custody(tmp_path:
     ]
     assert not (queue / "requests").exists()
     assert not (tmp_path / "audit-escalations").exists()
+
+
+def test_retroactive_approval_path_never_dispatches_mutating_repair(tmp_path: Path) -> None:
+    queue = tmp_path / ".megaplan" / "repair-queue"
+
+    for authorized in (False, True):
+        result = run_escalation_controller(
+            {
+                "findings": [_approval_gate_after_superfixer_repair()],
+                "green_checks": [],
+            },
+            state_root=tmp_path / f"audit-escalations-{authorized}",
+            queue_root=queue,
+            authorized=authorized,
+            trigger_argv=["/usr/local/bin/arnold-repair-trigger"],
+        )
+
+        item = result["l3_escalation_summary"]["items"][0]
+        assert item["decision"] == "approval_required"
+        assert item["repair_dispatched"] is False
+        assert item["corrective_path"]["action"] == "await_human_pr_merge"
+        assert item["corrective_path"]["repair_dispatch_permitted"] is False
+
+    assert not (queue / "requests").exists()
 
 
 def test_launch_failure_is_truthful_without_a_manifest(tmp_path: Path) -> None:

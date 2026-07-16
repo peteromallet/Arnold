@@ -156,6 +156,47 @@ def _true_stall() -> dict:
     }
 
 
+def _approval_gate_after_superfixer_repair() -> dict:
+    finding = _true_stall()
+    finding["current_state"] = "done"
+    finding["resolver_state"] = {
+        "canonical_state": "COMPLETED",
+        "confidence": "high",
+    }
+    finding["chain_state_summary"]["current"].update(
+        {
+            "last_state": "awaiting_pr_merge",
+            "chain_complete": False,
+            "pr_number": 255,
+            "pr_state": "open",
+        }
+    )
+    finding["current_target"]["ci_health"] = {
+        "available": True,
+        "status": "green",
+        "pr_number": 255,
+    }
+    finding["repair_data_summary"].update(
+        {
+            "repair_goal_summary": {"status": "approval_required"},
+            "investigation_summary": {
+                "actual_failure": {
+                    "mechanism": "required quality commit was absent from target ancestry"
+                },
+                "safe_repair_target": {
+                    "kind": "target_workspace",
+                    "scope": "apply-required-quality-commit",
+                },
+            },
+        }
+    )
+    finding["meta_repair_summary"]["repair_goal"] = {
+        "status": "approval_required",
+        "control_action": "await_approval",
+    }
+    return finding
+
+
 def test_l3_dispatch_context_requires_coherent_bounded_request_custody(
     tmp_path: Path,
 ) -> None:
@@ -346,6 +387,38 @@ def test_terminal_repair_failure_is_not_semantic_progress() -> None:
 
     assert "no_progress_window_not_proven" not in gate["blocks"]
     assert gate["progress"]["terminal_repair_failure_without_progress"] is True
+
+
+def test_retroactive_superfixer_failure_routes_to_explicit_approval_gate() -> None:
+    gate = classify_true_stall(_approval_gate_after_superfixer_repair())
+
+    assert gate["eligible"] is False
+    assert gate["decision"] == "approval_required"
+    assert gate["corrective_path"] == {
+        "schema_version": "arnold-l3-corrective-path-v1",
+        "kind": "approval_gate",
+        "decision": "approval_required",
+        "action": "await_human_pr_merge",
+        "repair_dispatch_permitted": False,
+        "pr_number": 255,
+        "pr_state": "open",
+        "gate_state": "awaiting_pr_merge",
+        "root_cause": "required quality commit was absent from target ancestry",
+        "safe_repair_target": {
+            "kind": "target_workspace",
+            "scope": "apply-required-quality-commit",
+        },
+        "first_broken_layer": "L1",
+        "first_broken_axis": gate["custody_walk"]["first_broken_axis"],
+        "missed_by_layer": "L2",
+        "missed_by_axis": gate["custody_walk"]["missed_by_axis"],
+        "reason": (
+            "the historical L1/L2 failure is detected and repaired locally, but "
+            "the authoritative review policy requires remote PR merge approval"
+        ),
+    }
+    assert gate["custody_walk"]["first_broken_layer"] == "L1"
+    assert gate["custody_walk"]["missed_by_layer"] == "L2"
 
 
 def test_terminal_l2_receipt_completes_process_evidence_without_live_pid() -> None:
