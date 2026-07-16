@@ -427,6 +427,40 @@ def test_live_initialized_active_step_resolves_running() -> None:
     assert "active_step_heartbeat" in result.source_of_truth
 
 
+def test_live_nonterminal_plan_overrides_stale_terminal_chain_projection() -> None:
+    evidence = {
+        "active_step_heartbeat": {
+            "active": True,
+            "phase": "critique_evaluator",
+            "worker_pid": 2012436,
+            "pid_live": True,
+        },
+        "tmux_process": {"live_status": "alive"},
+        "plan_state": {
+            "current_state": "planned",
+            "fingerprint": "plan-live-successor",
+            "mtime": 2.0,
+        },
+        "chain_state": {
+            "last_state": "done",
+            "current_plan_name": "m6-exact-contract",
+            "fingerprint": "chain-stale-terminal",
+            "mtime": 1.0,
+        },
+        "stale_evidence": [
+            {"kind": "stale_terminal_chain_state_with_active_plan"}
+        ],
+    }
+
+    result = resolve_run_state(evidence)
+
+    assert_contract_invariants(result)
+    assert result.canonical_state is CanonicalState.RUNNING
+    assert result.running is True
+    assert result.next_action == "monitor_live_run"
+    assert "stale_terminal_chain_state_with_active_plan" in result.stale_sources
+
+
 # ---------------------------------------------------------------------------
 # Shape 8: cloud-worker impossible SSH prerequisite
 #           -> MECHANICAL_BLOCKER verdict -> RETRYABLE_EXECUTION_BLOCK (SD3)

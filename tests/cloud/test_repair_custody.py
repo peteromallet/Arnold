@@ -311,6 +311,12 @@ def test_live_execute_worker_is_not_a_finalized_state_contradiction() -> None:
         "authoritative_source": "chain_state",
         "current_refs": {"current_plan_name": "s3-boundary-coverage"},
         "plan_state": {"present": True, "fingerprint": "sha256:live-plan"},
+        "chain_state": {
+            "present": True,
+            "fingerprint": "sha256:stale-chain",
+            "milestone_total": 10,
+            "completed_count": 2,
+        },
         "active_step_heartbeat": {
             "active": True,
             "worker_pid": "1004788",

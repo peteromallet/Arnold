@@ -436,7 +436,16 @@ def classify_completed(ctx: ResolverContext) -> "CanonicalRunState | None":
         ctx.evidence.get("chain_state") if isinstance(ctx.evidence.get("chain_state"), Mapping) else {},
         "last_state",
     )
-    authority_done = ctx.is_terminal_success
+    plan_current = _safe_lower(
+        ctx.evidence.get("plan_state") if isinstance(ctx.evidence.get("plan_state"), Mapping) else {},
+        "current_state",
+    )
+    # A chain-level success projection cannot complete a named, nonterminal
+    # current plan.  Prefer the plan lifecycle when it exists; use chain
+    # completion only when no plan lifecycle is available.
+    authority_done = plan_current == "done" or (
+        not plan_current and chain_last == "done"
+    )
     # Secondary branch: real work completed (files changed) while a stale
     # chain layer still projects failed/no_next_step and the worker is not
     # live (i.e. the "deferred baseline with real tasks complete" shape).
