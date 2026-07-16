@@ -138,6 +138,38 @@ Path({str(log)!r}).write_text(json.dumps({{"argv": sys.argv[1:], **payload}}), e
     return stub
 
 
+def _failing_repair_stub(tmp_path: Path) -> Path:
+    stub = tmp_path / "failing-repair-loop"
+    attempts = tmp_path / "failing-repair-attempts.jsonl"
+    stub.write_text(
+        f"""#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+from arnold_pipelines.megaplan.cloud import repair_requests
+from arnold_pipelines.megaplan.cloud.repair_lock import inspect_repair_lock
+
+queue_dir = os.environ["ARNOLD_REPAIR_QUEUE_ROOT"]
+blocker_id = os.environ["CLOUD_WATCHDOG_REPAIR_BLOCKER_ID"]
+lock_dir = repair_requests.active_repair_claim_lock_dir(queue_dir, blocker_id)
+owner = inspect_repair_lock(lock_dir).owner
+with Path({str(attempts)!r}).open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps({{"request_id": os.environ["CLOUD_WATCHDOG_REPAIR_REQUEST_ID"]}}) + "\\n")
+if isinstance(owner, dict):
+    repair_requests.release_active_repair_request_claim(
+        queue_dir,
+        blocker_id=blocker_id,
+        owner=owner,
+        expected_pid=int(owner["pid"]),
+    )
+raise SystemExit(75)
+""",
+        encoding="utf-8",
+    )
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+    return stub
+
+
 def _run_trigger(
     marker_dir: Path,
     repair_bin: Path,
@@ -199,6 +231,19 @@ def _read_json_eventually(path: Path, *, timeout_s: float = 2.0) -> dict[str, An
             return json.loads(path.read_text(encoding="utf-8"))
         time.sleep(0.05)
     raise FileNotFoundError(path)
+
+
+def _read_terminal_manifest_eventually(
+    path: Path, *, timeout_s: float = 5.0
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if path.exists():
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if payload.get("status") in {"completed", "failed", "cancelled", "superseded"}:
+                return payload
+        time.sleep(0.05)
+    raise TimeoutError(path)
 
 
 def _project_request_custody(marker_dir: Path, request: dict[str, object]) -> dict[str, Any]:
@@ -319,6 +364,13 @@ def test_terminal_request_ids_preserve_self_coalesced_owner_and_skip_distinct_du
         related_request_id=queued["request"]["request_id"],
         created_at="2026-07-01T00:11:00Z",
     )
+    repair_requests.write_decision(
+        _queue_root(workspace),
+        request_id=queued["request"]["request_id"],
+        decision="dispatched",
+        reason="managed attempt launched",
+        created_at="2026-07-01T00:12:00Z",
+    )
 
     terminal_ids = namespace["_terminal_request_ids"](_queue_root(workspace))
 
@@ -326,6 +378,96 @@ def test_terminal_request_ids_preserve_self_coalesced_owner_and_skip_distinct_du
     assert replay["decision"]["related_request_id"] == queued["request"]["request_id"]
     assert queued["request"]["request_id"] not in terminal_ids
     assert "duplicate-request" in terminal_ids
+
+
+def test_failed_dispatched_attempt_relaunches_as_distinct_managed_retry(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    plan_name = "m6-exact-contract-and-20260716-1303"
+    spec = _write_marker(marker_dir, workspace, plan_name=plan_name)
+    _write_chain_state_for_spec(workspace, spec, current_plan_name=plan_name)
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan_name,
+                "current_state": "blocked",
+                "resume_cursor": {
+                    "phase": "finalize",
+                    "retry_strategy": "repair_phase_contract",
+                },
+                "latest_failure": {
+                    "kind": "deterministic_phase_failure",
+                    "phase": "finalize",
+                    "message": "critique_finding_identity_reused",
+                    "metadata": {"count": 3, "max_attempts": 3},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=_queue_root(workspace),
+        marker_dir=marker_dir,
+        session="demo",
+        source="lifecycle_failure",
+        workspace=workspace,
+        run_kind="chain",
+        target={
+            "plan_dir": str(plan_dir),
+            "plan_name": plan_name,
+            "workspace_path": str(workspace),
+            "retry_strategy": "repair_phase_contract",
+        },
+        problem_signature={
+            "failure_kind": "deterministic_phase_failure",
+            "current_state": "blocked",
+            "phase_or_step": "finalize",
+            "milestone_or_plan": plan_name,
+            "gate_recommendation": "repair the deterministic phase contract",
+            "blocked_task_id": "phase:finalize",
+        },
+        root_cause_hint="critique_finding_identity_reused",
+    )
+    repair_bin = _failing_repair_stub(tmp_path)
+
+    first_result = _run_trigger(marker_dir, repair_bin, enabled=True)
+    first_dispatch = next(
+        event
+        for event in _events(first_result)
+        if event["event"] == "repair_trigger_dispatch"
+    )
+    first_manifest = _read_terminal_manifest_eventually(
+        Path(first_dispatch["managed_manifest_path"])
+    )
+
+    second_result = _run_trigger(marker_dir, repair_bin, enabled=True)
+    second_dispatch = next(
+        event
+        for event in _events(second_result)
+        if event["event"] == "repair_trigger_dispatch"
+    )
+    second_manifest = _read_terminal_manifest_eventually(
+        Path(second_dispatch["managed_manifest_path"])
+    )
+
+    assert first_result.returncode == 0, first_result.stderr
+    assert second_result.returncode == 0, second_result.stderr
+    assert first_manifest["status"] == "failed"
+    assert second_manifest["status"] == "failed"
+    assert first_dispatch["attempt_ordinal"] == 1
+    assert second_dispatch["attempt_ordinal"] == 2
+    assert second_dispatch["managed_run_id"] != first_dispatch["managed_run_id"]
+    assert second_manifest["retry_of_run_id"] == first_dispatch["managed_run_id"]
+    assert second_dispatch["request_id"] == queued["request"]["request_id"]
+    attempts = repair_requests.iter_repair_attempts(_queue_root(workspace))
+    assert [attempt["managed_run_id"] for attempt in attempts] == [
+        first_dispatch["managed_run_id"],
+        second_dispatch["managed_run_id"],
+    ]
 
 
 def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) -> None:

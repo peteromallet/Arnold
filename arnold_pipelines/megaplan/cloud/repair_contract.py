@@ -3636,6 +3636,13 @@ def repair_request_decision_is_terminal(
     decision: str,
     related_request_id: str = "",
 ) -> bool:
+    """Return whether a queue decision permanently closes the request.
+
+    ``dispatched`` is an active lifecycle state, not a terminal outcome.  The
+    managed attempt can still fail (or finish without satisfying its durable
+    repair goal), in which case the same immutable request must remain visible
+    to the bounded retry classifier.
+    """
     return effective_repair_request_decision_status(
         request_id=request_id,
         decision=decision,
@@ -3644,7 +3651,6 @@ def repair_request_decision_is_terminal(
         REQUEST_STATUS_COALESCED,
         REQUEST_STATUS_STALE,
         REQUEST_STATUS_SUPERSEDED,
-        REQUEST_STATUS_DISPATCHED,
     }
 
 

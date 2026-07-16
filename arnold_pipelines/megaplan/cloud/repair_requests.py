@@ -1078,6 +1078,12 @@ def record_malformed_file(queue_dir: str | Path, path: str | Path, reason: str) 
 
 
 def _decided_request_ids(queue_dir: str | Path) -> set[str]:
+    """Return requests whose immutable identity is permanently closed.
+
+    A dispatch receipt proves launch custody, but does not prove recovery.  A
+    failed managed attempt must still coalesce new observations onto the same
+    request and remain eligible for the bounded retry path.
+    """
     decided: set[str] = set()
     for path in sorted(decisions_dir(queue_dir).glob("*.json"), key=lambda item: item.name):
         try:
@@ -1087,7 +1093,7 @@ def _decided_request_ids(queue_dir: str | Path) -> set[str]:
         if not isinstance(payload, dict):
             continue
         decision = payload.get("decision")
-        if decision in {"stale", "superseded", "dispatched"}:
+        if decision in {"stale", "superseded"}:
             request_id = payload.get("request_id")
             if isinstance(request_id, str) and request_id:
                 decided.add(request_id)

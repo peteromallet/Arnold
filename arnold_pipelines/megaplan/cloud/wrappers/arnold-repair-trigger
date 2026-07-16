@@ -99,7 +99,7 @@ except Exception:
     _runtime_failure("readiness_import_failed")
     raise SystemExit(78)
 
-TERMINAL_DECISIONS = {"coalesced", "stale", "superseded", "dispatched"}
+TERMINAL_DECISIONS = {"coalesced", "stale", "superseded"}
 STALE_EVIDENCE_KINDS = {
     "invalid_marker_json",
     "missing_marker_json",
@@ -623,7 +623,14 @@ def _dispatch(
     escalation_id = str(escalation_gate.get("escalation_id") or "")
     context_path = str(request_target.get("repair_context_path") or "")
     context_digest = str(request_target.get("repair_context_digest") or "")
-    retry_of_run_id = str(request_target.get("retry_of_run_id") or "")
+    recorded_retry_run_id, attempt_ordinal = _dispatch_retry_lineage(
+        queue_dir,
+        request_id=request_id,
+        repair_layer=repair_layer,
+    )
+    retry_of_run_id = str(
+        request_target.get("retry_of_run_id") or recorded_retry_run_id
+    )
     outcome_path = str(Path(context_path).with_name("repair-outcome.json")) if context_path else ""
     if deep_dispatch:
         env["ARNOLD_L3_DEEP_REPAIR"] = "1"
@@ -640,7 +647,12 @@ def _dispatch(
         if l2_dispatch
         else "automatic_repair"
     )
-    identity_key = f"repair-trigger:{request_id}:{repair_layer}"
+    identity_base = f"repair-trigger:{request_id}:{repair_layer}"
+    identity_key = (
+        identity_base
+        if attempt_ordinal == 1
+        else f"{identity_base}:attempt:{attempt_ordinal}"
+    )
     managed_run_id = stable_managed_run_id(run_kind, identity_key)
     managed_project = Path(workspace).resolve()
     managed_manifest = (
@@ -966,6 +978,8 @@ def _dispatch(
             "workspace": workspace,
             "remote_spec": remote_spec,
             "repair_layer": repair_layer,
+            "attempt_ordinal": attempt_ordinal,
+            "retry_of_run_id": retry_of_run_id,
             "attempt": attempt,
             "decision": decision,
         }
@@ -1187,6 +1201,25 @@ def _terminal_request_ids(queue_dir: Path) -> set[str]:
         if request_id:
             result.add(request_id)
     return result
+
+
+def _dispatch_retry_lineage(
+    queue_dir: Path,
+    *,
+    request_id: str,
+    repair_layer: str,
+) -> tuple[str, int]:
+    """Return the prior managed owner and next bounded attempt ordinal."""
+
+    attempts = [
+        record
+        for record in repair_requests.iter_repair_attempts(queue_dir)
+        if str(record.get("request_id") or "") == request_id
+        and str(record.get("repair_layer") or "") == repair_layer
+    ]
+    if not attempts:
+        return "", 1
+    return str(attempts[-1].get("managed_run_id") or ""), len(attempts) + 1
 
 
 def _target_summary(target: Mapping[str, Any]) -> dict[str, Any]:

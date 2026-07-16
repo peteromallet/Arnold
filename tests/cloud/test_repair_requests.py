@@ -768,6 +768,32 @@ def test_find_pending_by_signature_finds_queued_request(tmp_path: Path) -> None:
     assert found["request_id"] == enqueued["request"]["request_id"]
 
 
+def test_find_pending_by_signature_keeps_dispatched_request_open(tmp_path: Path) -> None:
+    queue_dir = _queue_root(tmp_path)
+    enqueued = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo",
+        source="test",
+        problem_signature=_signature(blocked_task_id="T1"),
+        root_cause_hint="find me after dispatch",
+    )
+    request_id = enqueued["request"]["request_id"]
+    repair_requests.write_decision(
+        queue_dir,
+        request_id=request_id,
+        decision="dispatched",
+        reason="managed repair launched",
+    )
+
+    found = repair_requests.find_pending_by_signature(
+        queue_dir,
+        _signature(blocked_task_id="T1"),
+    )
+
+    assert found is not None
+    assert found["request_id"] == request_id
+
+
 def test_find_pending_by_signature_excludes_stale_requests(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
     repair_requests.enqueue_repair_request(
