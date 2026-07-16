@@ -5241,6 +5241,62 @@ def test_supervise_deterministic_binding_failure_does_not_retry(tmp_path: Path) 
     assert "error retry" not in result.stdout
 
 
+def test_supervise_durable_review_quality_block_does_not_retry(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir = workspace / ".megaplan" / "plans" / "review-plan"
+    chain_dir.mkdir(parents=True)
+    plan_dir.mkdir(parents=True)
+    (chain_dir / "chain-demo.json").write_text(
+        json.dumps({"current_plan_name": "review-plan", "last_state": "blocked"}),
+        encoding="utf-8",
+    )
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "blocked",
+                "latest_failure": {
+                    "kind": "review_quality_blocked_unknown",
+                    "message": "review rework budget exhausted with unresolved quality blockers",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    command = tmp_path / "blocked-review"
+    command.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    command.chmod(command.stat().st_mode | stat.S_IXUSR)
+    env = dict(os.environ)
+    env.update(
+        {
+            "PYTHONPATH": f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}",
+            "ARNOLD_AUTONOMY": "1",
+            "ARNOLD_REPAIR_TRIGGER_ENABLED": "1",
+            "ARNOLD_SUPERVISE_LOG": str(tmp_path / "supervise.log"),
+            "ARNOLD_SUPERVISE_SESSION": "demo",
+            "ARNOLD_SUPERVISE_WORKSPACE": str(workspace),
+            "ARNOLD_SUPERVISE_REMOTE_SPEC": str(workspace / "chain.yaml"),
+            "ARNOLD_SUPERVISE_RUN_KIND": "chain",
+            "ARNOLD_REPAIR_QUEUE_ROOT": str(tmp_path / "repair-queue"),
+            "CLOUD_WATCHDOG_MARKER_DIR": str(tmp_path / "markers"),
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(WRAPPER_DIR / "arnold-supervise"), "quality", str(command)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 1
+    assert "durable_review_quality_block:review_quality_blocked_unknown" in result.stdout
+    assert "refusing retry spin" in result.stdout
+    assert "error retry" not in result.stdout
+
+
 def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     workspace_root = tmp_path / "workspace-root"
