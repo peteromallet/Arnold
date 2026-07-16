@@ -1131,7 +1131,7 @@ def _reconcile_retired_todo_targets(
         receipts.append(
             {
                 "todo_item_id": resolved["id"],
-                "transition": f"{vp_todo.PENDING}->{vp_todo.SUPERSEDED_BY_RECORD}",
+                "transition": f"{vp_todo.PENDING}->{vp_todo.SUPERSEDED}",
                 "canonical_record_id": canonical_record_id,
                 "evidence": evidence,
                 "completion_asserted": False,

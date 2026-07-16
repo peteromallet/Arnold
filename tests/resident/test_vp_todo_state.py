@@ -59,13 +59,47 @@ def test_supersede_by_canonical_record_retains_history_without_completion(tmp_pa
     )
 
     assert resolved is not None
-    assert resolved["status"] == vp_todo.SUPERSEDED_BY_RECORD
+    assert resolved["status"] == vp_todo.SUPERSEDED
     assert resolved["canonical_record_id"] == "initiative:replacement"
     assert resolved["canonical_record_evidence"].endswith("@abc123")
     assert resolved["transition_history"][-1]["from"] == vp_todo.PENDING
-    assert resolved["transition_history"][-1]["to"] == vp_todo.SUPERSEDED_BY_RECORD
+    assert resolved["transition_history"][-1]["to"] == vp_todo.SUPERSEDED
     assert vp_todo.pending_items(path) == []
     assert vp_todo.load_items(path)[0]["status"] != vp_todo.DONE
+
+
+def test_supersede_by_record_normalizes_unreleased_status_for_old_runtime_compatibility(
+    tmp_path,
+) -> None:
+    path = tmp_path / "todo.json"
+    item = vp_todo.add_item(path, "obsolete launch")
+    record_id = "initiative:replacement"
+    evidence = "retirement.json#sha256=abc"
+    vp_todo.save_items(
+        path,
+        [
+            {
+                **item,
+                "status": vp_todo.SUPERSEDED_BY_RECORD,
+                "canonical_record_id": record_id,
+                "canonical_record_evidence": evidence,
+                "resolution": "retired",
+            }
+        ],
+    )
+
+    normalized = vp_todo.supersede_by_record(
+        path,
+        item["id"],
+        canonical_record_id=record_id,
+        evidence=evidence,
+        resolution="retired",
+    )
+
+    assert normalized is not None
+    assert normalized["status"] == vp_todo.SUPERSEDED
+    assert normalized["transition_history"][-1]["from"] == vp_todo.SUPERSEDED_BY_RECORD
+    assert vp_todo.load_items(path)[0]["status"] == vp_todo.SUPERSEDED
 
 
 def test_pending_filters_terminal_states(tmp_path) -> None:
