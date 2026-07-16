@@ -1931,9 +1931,149 @@
             "reconciler_next_expected_event": "meta_repair.repair_attempt"
           },
           "seq": 583
+        },
+        {
+          "decision": {
+            "corroboration": [
+              "plan_v refreshed 4x in 6h (8285->32269 bytes)",
+              "between-milestone cycling 2 one-milestone stop cycles",
+              "chain log repeats status_stopped 19x L2624..L27129"
+            ],
+            "hypothesis": "REPAIR_REQUEST\n\nThe plan-level gate failure is stale, but the session-level condition is an Arnold repair-system defect requiring the central repair authority.\n\nPipeline friction map: watchdog repeatedly observes stops; repair-trigger accepts work into a nested, non-dispatcher queue; immediate repair has no claims or attempts; meta-repair records launch/no-output failures without verdict or retrigger evidence; the auditor correctly remains read-only.\n\nSpecific evidence:\n\n- Gate attempt 5 is live (`PID 2733453`), yet `acceptance_progress.advanced=false`; liveness does not prove custody progress.\n- The repeated gate failure was superseded by successful same-phase events at history indices 9, 12, and 15. Recounting it into `repeated_failure_signature` is stale historical-failure accounting.\n- Three canonical requests are accepted-unclaimed, with `claim_count=0`, `attempt_count=0`, two of three claim retries consumed, and one alert.\n- Five lifecycle requests were accepted in `.megaplan/repair-queue` without dispatcher attempts.\n- Two required meta-repair records contain neither an accepted verdict nor retrigger evidence.\n- Ownership is not canonical: `duplicate_exact_owners_detected`, two \u201chealthy aligned\u201d run IDs, and a dispatched claim lacking a linked queue attempt. Therefore `NO_NEW_LAUNCH` is unsafe.\n- The chain remains at milestone 2/10, `last_state=critiqued`; `status_stopped` repeats 19 times across log lines 2624\u201327129, with two one-milestone stop cycles.\n- `plan_v` expanded four times from 8,285 to 32,269 bytes without accepted progress.\n- Cached CI is green, but it is typed L2 evidence for another base context; the current target\u2019s CI is unavailable. It cannot override the non-terminal ledger.\n\nCanonical repair: fix repeated-failure occurrence tracking so later same-phase success retires prior failures; enforce one dispatcher-owned queue and atomic claim/attempt manifests; require meta-repair verdict plus ordinary-repair retrigger evidence; deduplicate owners",
+            "reconciler_findings": [
+              {
+                "code": "watchdog_observed",
+                "message": "Watchdog evidence is fresh enough for this audit cycle.",
+                "recommendation": "six_hour_auditor.diagnosis",
+                "status": "ok"
+              },
+              {
+                "code": "immediate_repair_observed",
+                "message": "immediate_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "six_hour_auditor.diagnosis",
+                "status": "ok"
+              },
+              {
+                "code": "meta_repair_observed",
+                "message": "meta_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "six_hour_auditor.diagnosis",
+                "status": "ok"
+              },
+              {
+                "code": "install_sync_observed",
+                "message": "Install-sync placeholders do not indicate a blocking mismatch.",
+                "recommendation": "six_hour_auditor.diagnosis",
+                "status": "ok"
+              },
+              {
+                "code": "github_sync_observed",
+                "message": "GitHub sync is not currently the blocking layer.",
+                "recommendation": "github_sync.publish",
+                "status": "ok"
+              },
+              {
+                "code": "live_process_observed",
+                "message": "Live-process corroboration is present or not required for this incident.",
+                "status": "ok"
+              },
+              {
+                "code": "claims_current",
+                "message": "Claim deadlines are not currently stale.",
+                "status": "ok"
+              },
+              {
+                "code": "evidence_present",
+                "message": "No missing evidence references were detected in the bounded brief.",
+                "status": "ok"
+              },
+              {
+                "code": "repeated_attempts_without_new_evidence",
+                "message": "Repair attempts are cycling without adding new evidence.",
+                "recommendation": "meta_repair.repair_attempt",
+                "status": "warn"
+              },
+              {
+                "code": "semantic_custody_clear",
+                "message": "Semantic-health and custody facts are consistent and clear.",
+                "status": "ok"
+              }
+            ],
+            "reconciler_next_expected_event": "meta_repair.repair_attempt"
+          },
+          "seq": 585
+        },
+        {
+          "decision": {
+            "corroboration": [
+              "plan_v refreshed 4x in 6h (8285->32269 bytes)",
+              "between-milestone cycling 2 one-milestone stop cycles",
+              "chain log repeats status_stopped 19x L2624..L27129"
+            ],
+            "hypothesis": "REPAIR_REQUEST\n\nThe plan-level gate failure is stale, but the session-level condition is an Arnold repair-system defect requiring the central repair authority.\n\nPipeline friction map: watchdog repeatedly observes stops; repair-trigger accepts work into a nested, non-dispatcher queue; immediate repair has no claims or attempts; meta-repair records launch/no-output failures without verdict or retrigger evidence; the auditor correctly remains read-only.\n\nSpecific evidence:\n\n- Gate attempt 5 is live (`PID 2733453`), yet `acceptance_progress.advanced=false`; liveness does not prove custody progress.\n- The repeated gate failure was superseded by successful same-phase events at history indices 9, 12, and 15. Recounting it into `repeated_failure_signature` is stale historical-failure accounting.\n- Three canonical requests are accepted-unclaimed, with `claim_count=0`, `attempt_count=0`, two of three claim retries consumed, and one alert.\n- Five lifecycle requests were accepted in `.megaplan/repair-queue` without dispatcher attempts.\n- Two required meta-repair records contain neither an accepted verdict nor retrigger evidence.\n- Ownership is not canonical: `duplicate_exact_owners_detected`, two \u201chealthy aligned\u201d run IDs, and a dispatched claim lacking a linked queue attempt. Therefore `NO_NEW_LAUNCH` is unsafe.\n- The chain remains at milestone 2/10, `last_state=critiqued`; `status_stopped` repeats 19 times across log lines 2624\u201327129, with two one-milestone stop cycles.\n- `plan_v` expanded four times from 8,285 to 32,269 bytes without accepted progress.\n- Cached CI is green, but it is typed L2 evidence for another base context; the current target\u2019s CI is unavailable. It cannot override the non-terminal ledger.\n\nCanonical repair: fix repeated-failure occurrence tracking so later same-phase success retires prior failures; enforce one dispatcher-owned queue and atomic claim/attempt manifests; require meta-repair verdict plus ordinary-repair retrigger evidence; deduplicate owners",
+            "reconciler_findings": [
+              {
+                "code": "watchdog_observed",
+                "message": "Watchdog evidence is fresh enough for this audit cycle.",
+                "recommendation": "six_hour_auditor.diagnosis",
+                "status": "ok"
+              },
+              {
+                "code": "immediate_repair_observed",
+                "message": "immediate_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "six_hour_auditor.diagnosis",
+                "status": "ok"
+              },
+              {
+                "code": "meta_repair_observed",
+                "message": "meta_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "six_hour_auditor.diagnosis",
+                "status": "ok"
+              },
+              {
+                "code": "install_sync_observed",
+                "message": "Install-sync placeholders do not indicate a blocking mismatch.",
+                "recommendation": "six_hour_auditor.diagnosis",
+                "status": "ok"
+              },
+              {
+                "code": "github_sync_observed",
+                "message": "GitHub sync is not currently the blocking layer.",
+                "recommendation": "github_sync.publish",
+                "status": "ok"
+              },
+              {
+                "code": "live_process_observed",
+                "message": "Live-process corroboration is present or not required for this incident.",
+                "status": "ok"
+              },
+              {
+                "code": "claims_current",
+                "message": "Claim deadlines are not currently stale.",
+                "status": "ok"
+              },
+              {
+                "code": "evidence_present",
+                "message": "No missing evidence references were detected in the bounded brief.",
+                "status": "ok"
+              },
+              {
+                "code": "repeated_attempts_without_new_evidence",
+                "message": "Repair attempts are cycling without adding new evidence.",
+                "recommendation": "meta_repair.repair_attempt",
+                "status": "warn"
+              },
+              {
+                "code": "semantic_custody_clear",
+                "message": "Semantic-health and custody facts are consistent and clear.",
+                "status": "ok"
+              }
+            ],
+            "reconciler_next_expected_event": "meta_repair.repair_attempt"
+          },
+          "seq": 586
         }
       ],
-      "event_count": 64,
+      "event_count": 67,
       "events": [
         {
           "actor": "immediate_repair",
@@ -5219,6 +5359,334 @@
           "timestamp": "2026-07-16T06:30:05.917356+00:00",
           "trigger": null,
           "type": "six_hour_auditor.audit_complete"
+        },
+        {
+          "actor": "github_sync",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "ghp-20db742d7e2a",
+          "evidence": [
+            {
+              "kind": "github_sync.problem_projection",
+              "occurrence_count": 20,
+              "problem_id": "problem-51b6859a7c76",
+              "recurred_after_fix": false,
+              "status": "open"
+            },
+            {
+              "body_bytes": 357,
+              "body_sha256": "sha256:d799cebd4b16f7e0043449b5b9d26021d923e3b32f1f40a65ed189bf1a71103d",
+              "kind": "github_sync.publication_payload"
+            },
+            {
+              "incident_id": "inc-custody-control-plane-20260714",
+              "kind": "github_sync.incident_projection",
+              "last_seq": 583,
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "action": "commented",
+              "kind": "github.issue",
+              "number": 252,
+              "repo": "peteromallet/Arnold",
+              "url": "https://github.com/peteromallet/Arnold/issues/252#issuecomment-4988890319"
+            }
+          ],
+          "kind": "incident.github_sync.issue_published",
+          "next_expected_event": "six_hour_auditor.diagnosis",
+          "outcome": "published",
+          "parent": [],
+          "problem_id": "problem-51b6859a7c76",
+          "seq": 584,
+          "session_id": null,
+          "summary": "Published persistent problem problem-51b6859a7c76 update to GitHub issue #252",
+          "timestamp": "2026-07-16T06:30:07.496080+00:00",
+          "trigger": null,
+          "type": "github_sync.issue_published"
+        },
+        {
+          "actor": "six_hour_auditor",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "corroboration": [
+              "plan_v refreshed 4x in 6h (8285->32269 bytes)",
+              "between-milestone cycling 2 one-milestone stop cycles",
+              "chain log repeats status_stopped 19x L2624..L27129"
+            ],
+            "hypothesis": "REPAIR_REQUEST\n\nThe plan-level gate failure is stale, but the session-level condition is an Arnold repair-system defect requiring the central repair authority.\n\nPipeline friction map: watchdog repeatedly observes stops; repair-trigger accepts work into a nested, non-dispatcher queue; immediate repair has no claims or attempts; meta-repair records launch/no-output failures without verdict or retrigger evidence; the auditor correctly remains read-only.\n\nSpecific evidence:\n\n- Gate attempt 5 is live (`PID 2733453`), yet `acceptance_progress.advanced=false`; liveness does not prove custody progress.\n- The repeated gate failure was superseded by successful same-phase events at history indices 9, 12, and 15. Recounting it into `repeated_failure_signature` is stale historical-failure accounting.\n- Three canonical requests are accepted-unclaimed, with `claim_count=0`, `attempt_count=0`, two of three claim retries consumed, and one alert.\n- Five lifecycle requests were accepted in `.megaplan/repair-queue` without dispatcher attempts.\n- Two required meta-repair records contain neither an accepted verdict nor retrigger evidence.\n- Ownership is not canonical: `duplicate_exact_owners_detected`, two \u201chealthy aligned\u201d run IDs, and a dispatched claim lacking a linked queue attempt. Therefore `NO_NEW_LAUNCH` is unsafe.\n- The chain remains at milestone 2/10, `last_state=critiqued`; `status_stopped` repeats 19 times across log lines 2624\u201327129, with two one-milestone stop cycles.\n- `plan_v` expanded four times from 8,285 to 32,269 bytes without accepted progress.\n- Cached CI is green, but it is typed L2 evidence for another base context; the current target\u2019s CI is unavailable. It cannot override the non-terminal ledger.\n\nCanonical repair: fix repeated-failure occurrence tracking so later same-phase success retires prior failures; enforce one dispatcher-owned queue and atomic claim/attempt manifests; require meta-repair verdict plus ordinary-repair retrigger evidence; deduplicate owners",
+            "reconciler_findings": [
+              {
+                "code": "watchdog_observed",
+                "message": "Watchdog evidence is fresh enough for this audit cycle.",
+                "recommendation": "six_hour_auditor.diagnosis",
+                "status": "ok"
+              },
+              {
+                "code": "immediate_repair_observed",
+                "message": "immediate_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "six_hour_auditor.diagnosis",
+                "status": "ok"
+              },
+              {
+                "code": "meta_repair_observed",
+                "message": "meta_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "six_hour_auditor.diagnosis",
+                "status": "ok"
+              },
+              {
+                "code": "install_sync_observed",
+                "message": "Install-sync placeholders do not indicate a blocking mismatch.",
+                "recommendation": "six_hour_auditor.diagnosis",
+                "status": "ok"
+              },
+              {
+                "code": "github_sync_observed",
+                "message": "GitHub sync is not currently the blocking layer.",
+                "recommendation": "github_sync.publish",
+                "status": "ok"
+              },
+              {
+                "code": "live_process_observed",
+                "message": "Live-process corroboration is present or not required for this incident.",
+                "status": "ok"
+              },
+              {
+                "code": "claims_current",
+                "message": "Claim deadlines are not currently stale.",
+                "status": "ok"
+              },
+              {
+                "code": "evidence_present",
+                "message": "No missing evidence references were detected in the bounded brief.",
+                "status": "ok"
+              },
+              {
+                "code": "repeated_attempts_without_new_evidence",
+                "message": "Repair attempts are cycling without adding new evidence.",
+                "recommendation": "meta_repair.repair_attempt",
+                "status": "warn"
+              },
+              {
+                "code": "semantic_custody_clear",
+                "message": "Semantic-health and custody facts are consistent and clear.",
+                "status": "ok"
+              }
+            ],
+            "reconciler_next_expected_event": "meta_repair.repair_attempt"
+          },
+          "event_id": "sha-615aead15e6f",
+          "evidence": [
+            {
+              "kind": "incident_summary",
+              "path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-custody-control-plane-20260714.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "problem_summary",
+              "path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/incident-ledger/summaries/problems/problem-51b6859a7c76.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260716T135924Z-audit.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260716T133516Z-audit.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-report.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-reports/20260716T193615Z.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-reports/20260716T193350Z.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "meta_record_path",
+              "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/needs-human-custody-control-plane-20260714.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "meta_record_path",
+              "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/meta_repair_verdict.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "meta_record_path",
+              "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/ecf80350-30fe-49a1-920a-a7991d91c949.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "incident_brief",
+              "session_id": "custody-control-plane-20260714",
+              "status": "2026-07-16T06:30:07.496080+00:00"
+            }
+          ],
+          "kind": "incident.six_hour_auditor.diagnosis",
+          "next_expected_event": "six_hour_auditor.audit_complete",
+          "outcome": "diagnosed",
+          "parent": [],
+          "problem_id": "problem-51b6859a7c76",
+          "seq": 585,
+          "session_id": "custody-control-plane-20260714",
+          "summary": "Audit found 1 blocking layer(s) for inc-custody-control-plane-20260714: recurrence:repeated_attempts_without_new_evidence.",
+          "timestamp": "2026-07-16T19:37:48.822746+00:00",
+          "trigger": null,
+          "type": "six_hour_auditor.diagnosis"
+        },
+        {
+          "actor": "six_hour_auditor",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "corroboration": [
+              "plan_v refreshed 4x in 6h (8285->32269 bytes)",
+              "between-milestone cycling 2 one-milestone stop cycles",
+              "chain log repeats status_stopped 19x L2624..L27129"
+            ],
+            "hypothesis": "REPAIR_REQUEST\n\nThe plan-level gate failure is stale, but the session-level condition is an Arnold repair-system defect requiring the central repair authority.\n\nPipeline friction map: watchdog repeatedly observes stops; repair-trigger accepts work into a nested, non-dispatcher queue; immediate repair has no claims or attempts; meta-repair records launch/no-output failures without verdict or retrigger evidence; the auditor correctly remains read-only.\n\nSpecific evidence:\n\n- Gate attempt 5 is live (`PID 2733453`), yet `acceptance_progress.advanced=false`; liveness does not prove custody progress.\n- The repeated gate failure was superseded by successful same-phase events at history indices 9, 12, and 15. Recounting it into `repeated_failure_signature` is stale historical-failure accounting.\n- Three canonical requests are accepted-unclaimed, with `claim_count=0`, `attempt_count=0`, two of three claim retries consumed, and one alert.\n- Five lifecycle requests were accepted in `.megaplan/repair-queue` without dispatcher attempts.\n- Two required meta-repair records contain neither an accepted verdict nor retrigger evidence.\n- Ownership is not canonical: `duplicate_exact_owners_detected`, two \u201chealthy aligned\u201d run IDs, and a dispatched claim lacking a linked queue attempt. Therefore `NO_NEW_LAUNCH` is unsafe.\n- The chain remains at milestone 2/10, `last_state=critiqued`; `status_stopped` repeats 19 times across log lines 2624\u201327129, with two one-milestone stop cycles.\n- `plan_v` expanded four times from 8,285 to 32,269 bytes without accepted progress.\n- Cached CI is green, but it is typed L2 evidence for another base context; the current target\u2019s CI is unavailable. It cannot override the non-terminal ledger.\n\nCanonical repair: fix repeated-failure occurrence tracking so later same-phase success retires prior failures; enforce one dispatcher-owned queue and atomic claim/attempt manifests; require meta-repair verdict plus ordinary-repair retrigger evidence; deduplicate owners",
+            "reconciler_findings": [
+              {
+                "code": "watchdog_observed",
+                "message": "Watchdog evidence is fresh enough for this audit cycle.",
+                "recommendation": "six_hour_auditor.diagnosis",
+                "status": "ok"
+              },
+              {
+                "code": "immediate_repair_observed",
+                "message": "immediate_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "six_hour_auditor.diagnosis",
+                "status": "ok"
+              },
+              {
+                "code": "meta_repair_observed",
+                "message": "meta_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "six_hour_auditor.diagnosis",
+                "status": "ok"
+              },
+              {
+                "code": "install_sync_observed",
+                "message": "Install-sync placeholders do not indicate a blocking mismatch.",
+                "recommendation": "six_hour_auditor.diagnosis",
+                "status": "ok"
+              },
+              {
+                "code": "github_sync_observed",
+                "message": "GitHub sync is not currently the blocking layer.",
+                "recommendation": "github_sync.publish",
+                "status": "ok"
+              },
+              {
+                "code": "live_process_observed",
+                "message": "Live-process corroboration is present or not required for this incident.",
+                "status": "ok"
+              },
+              {
+                "code": "claims_current",
+                "message": "Claim deadlines are not currently stale.",
+                "status": "ok"
+              },
+              {
+                "code": "evidence_present",
+                "message": "No missing evidence references were detected in the bounded brief.",
+                "status": "ok"
+              },
+              {
+                "code": "repeated_attempts_without_new_evidence",
+                "message": "Repair attempts are cycling without adding new evidence.",
+                "recommendation": "meta_repair.repair_attempt",
+                "status": "warn"
+              },
+              {
+                "code": "semantic_custody_clear",
+                "message": "Semantic-health and custody facts are consistent and clear.",
+                "status": "ok"
+              }
+            ],
+            "reconciler_next_expected_event": "meta_repair.repair_attempt"
+          },
+          "event_id": "shc-30fe68b40c60",
+          "evidence": [
+            {
+              "kind": "incident_summary",
+              "path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-custody-control-plane-20260714.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "problem_summary",
+              "path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/incident-ledger/summaries/problems/problem-51b6859a7c76.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260716T135924Z-audit.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260716T133516Z-audit.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-report.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-reports/20260716T193615Z.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-reports/20260716T193350Z.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "meta_record_path",
+              "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/needs-human-custody-control-plane-20260714.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "meta_record_path",
+              "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/meta_repair_verdict.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "meta_record_path",
+              "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/ecf80350-30fe-49a1-920a-a7991d91c949.json",
+              "session_id": "custody-control-plane-20260714"
+            },
+            {
+              "kind": "incident_brief",
+              "session_id": "custody-control-plane-20260714",
+              "status": "2026-07-16T06:30:07.496080+00:00"
+            }
+          ],
+          "kind": "incident.six_hour_auditor.audit_complete",
+          "next_expected_event": "meta_repair.repair_attempt",
+          "outcome": "escalated",
+          "parent": [
+            "sha-615aead15e6f"
+          ],
+          "problem_id": "problem-51b6859a7c76",
+          "seq": 586,
+          "session_id": "custody-control-plane-20260714",
+          "summary": "Audit found 1 blocking layer(s) for inc-custody-control-plane-20260714: recurrence:repeated_attempts_without_new_evidence.",
+          "timestamp": "2026-07-16T19:37:48.826642+00:00",
+          "trigger": null,
+          "type": "six_hour_auditor.audit_complete"
         }
       ],
       "evidence_refs": [
@@ -5256,6 +5724,13 @@
           "number": 252,
           "repo": "peteromallet/Arnold",
           "url": "https://github.com/peteromallet/Arnold/issues/252#issuecomment-4988802521"
+        },
+        {
+          "action": "commented",
+          "kind": "github.issue",
+          "number": 252,
+          "repo": "peteromallet/Arnold",
+          "url": "https://github.com/peteromallet/Arnold/issues/252#issuecomment-4988890319"
         },
         {
           "action": "commented",
@@ -5437,6 +5912,11 @@
           "kind": "github_sync.publication_payload"
         },
         {
+          "body_bytes": 357,
+          "body_sha256": "sha256:d799cebd4b16f7e0043449b5b9d26021d923e3b32f1f40a65ed189bf1a71103d",
+          "kind": "github_sync.publication_payload"
+        },
+        {
           "body_bytes": 666,
           "body_sha256": "sha256:1b8b88d29db9126761244b9b2c47f06b87413661364d898f29bd6a915d4a2246",
           "kind": "github_sync.publication_payload"
@@ -5577,6 +6057,12 @@
           "session_id": "custody-control-plane-20260714"
         },
         {
+          "incident_id": "inc-custody-control-plane-20260714",
+          "kind": "github_sync.incident_projection",
+          "last_seq": 583,
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
           "kind": "audit_report_path",
           "path": "/workspace/audit-reports/20260715T073509Z-audit.json",
           "session_id": "custody-control-plane-20260714"
@@ -5644,6 +6130,26 @@
         {
           "kind": "audit_report_path",
           "path": "/workspace/audit-reports/20260716T061332Z-audit.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260716T133516Z-audit.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260716T133516Z-audit.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260716T135924Z-audit.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260716T135924Z-audit.json",
           "session_id": "custody-control-plane-20260714"
         },
         {
@@ -5671,6 +6177,13 @@
           "kind": "github_sync.problem_projection",
           "occurrence_count": 2,
           "problem_id": "problem-bca9d501eede",
+          "recurred_after_fix": false,
+          "status": "open"
+        },
+        {
+          "kind": "github_sync.problem_projection",
+          "occurrence_count": 20,
+          "problem_id": "problem-51b6859a7c76",
           "recurred_after_fix": false,
           "status": "open"
         },
@@ -5774,6 +6287,26 @@
           "status": "2026-07-16T06:15:50.212044+00:00"
         },
         {
+          "kind": "incident_brief",
+          "session_id": "custody-control-plane-20260714",
+          "status": "2026-07-16T06:30:07.496080+00:00"
+        },
+        {
+          "kind": "incident_brief",
+          "session_id": "custody-control-plane-20260714",
+          "status": "2026-07-16T06:30:07.496080+00:00"
+        },
+        {
+          "kind": "incident_summary",
+          "path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-custody-control-plane-20260714.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "incident_summary",
+          "path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-custody-control-plane-20260714.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
           "kind": "incident_summary",
           "path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-custody-control-plane-20260714.json",
           "session_id": "custody-control-plane-20260714"
@@ -5891,6 +6424,26 @@
         {
           "kind": "meta_record_path",
           "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/ecf80350-30fe-49a1-920a-a7991d91c949.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "meta_record_path",
+          "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/ecf80350-30fe-49a1-920a-a7991d91c949.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "meta_record_path",
+          "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/ecf80350-30fe-49a1-920a-a7991d91c949.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "meta_record_path",
+          "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/meta_repair_verdict.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "meta_record_path",
+          "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/meta_repair_verdict.json",
           "session_id": "custody-control-plane-20260714"
         },
         {
@@ -5961,6 +6514,26 @@
         {
           "kind": "meta_record_path",
           "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/needs-human-custody-control-plane-20260714.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "meta_record_path",
+          "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/needs-human-custody-control-plane-20260714.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "meta_record_path",
+          "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/needs-human-custody-control-plane-20260714.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "problem_summary",
+          "path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/incident-ledger/summaries/problems/problem-51b6859a7c76.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "problem_summary",
+          "path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/incident-ledger/summaries/problems/problem-51b6859a7c76.json",
           "session_id": "custody-control-plane-20260714"
         },
         {
@@ -6219,6 +6792,16 @@
         },
         {
           "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-report.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-report.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "watchdog_report_path",
           "path": "/workspace/watchdog-reports/20260714T173242Z.json",
           "session_id": "custody-control-plane-20260714"
         },
@@ -6315,14 +6898,34 @@
         {
           "kind": "watchdog_report_path",
           "path": "/workspace/watchdog-reports/20260716T062820Z.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-reports/20260716T193350Z.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-reports/20260716T193350Z.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-reports/20260716T193615Z.json",
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-reports/20260716T193615Z.json",
           "session_id": "custody-control-plane-20260714"
         }
       ],
       "first_seq": 518,
       "first_timestamp": "2026-07-14T19:07:18.419410+00:00",
       "incident_id": "inc-custody-control-plane-20260714",
-      "last_seq": 583,
-      "last_timestamp": "2026-07-16T06:30:05.917356+00:00",
+      "last_seq": 586,
+      "last_timestamp": "2026-07-16T19:37:48.826642+00:00",
       "latest_actor": "six_hour_auditor",
       "latest_kind": "incident.six_hour_auditor.audit_complete",
       "next_expected_event": "meta_repair.repair_attempt",
@@ -28238,19 +28841,19 @@
   ],
   "integrity": [
     {
-      "actual": "sha256:98d84b9399e92a5cc5381521c76bcdf60cd58ce8839e58299a8b86906cf619b2",
+      "actual": "sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d",
       "code": "index_divergence",
-      "expected": "sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d",
-      "message": "incidents projection source metadata diverged for digest: 'sha256:98d84b9399e92a5cc5381521c76bcdf60cd58ce8839e58299a8b86906cf619b2' != 'sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d'",
+      "expected": "sha256:b9006d200fdc7eb4d0543b756e0576a041d2f22b3a67b6177cf32518e20f13a7",
+      "message": "incidents projection source metadata diverged for digest: 'sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d' != 'sha256:b9006d200fdc7eb4d0543b756e0576a041d2f22b3a67b6177cf32518e20f13a7'",
       "projection": "incidents",
       "recommendation": "system.integrity_repair",
       "severity": "error"
     },
     {
-      "actual": "sha256:98d84b9399e92a5cc5381521c76bcdf60cd58ce8839e58299a8b86906cf619b2",
+      "actual": "sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d",
       "code": "index_divergence",
-      "expected": "sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d",
-      "message": "problems projection source metadata diverged for digest: 'sha256:98d84b9399e92a5cc5381521c76bcdf60cd58ce8839e58299a8b86906cf619b2' != 'sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d'",
+      "expected": "sha256:b9006d200fdc7eb4d0543b756e0576a041d2f22b3a67b6177cf32518e20f13a7",
+      "message": "problems projection source metadata diverged for digest: 'sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d' != 'sha256:b9006d200fdc7eb4d0543b756e0576a041d2f22b3a67b6177cf32518e20f13a7'",
       "projection": "problems",
       "recommendation": "system.integrity_repair",
       "severity": "error"
@@ -28283,10 +28886,10 @@
   "projection": "incidents",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d",
-    "event_count": 583,
-    "journal_line_count": 583,
-    "last_seq": 583,
+    "digest": "sha256:b9006d200fdc7eb4d0543b756e0576a041d2f22b3a67b6177cf32518e20f13a7",
+    "event_count": 586,
+    "journal_line_count": 586,
+    "last_seq": 586,
     "malformed_line_count": 0
   }
 }

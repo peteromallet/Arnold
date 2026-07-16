@@ -1,19 +1,19 @@
 {
   "integrity": [
     {
-      "actual": "sha256:98d84b9399e92a5cc5381521c76bcdf60cd58ce8839e58299a8b86906cf619b2",
+      "actual": "sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d",
       "code": "index_divergence",
-      "expected": "sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d",
-      "message": "incidents projection source metadata diverged for digest: 'sha256:98d84b9399e92a5cc5381521c76bcdf60cd58ce8839e58299a8b86906cf619b2' != 'sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d'",
+      "expected": "sha256:b9006d200fdc7eb4d0543b756e0576a041d2f22b3a67b6177cf32518e20f13a7",
+      "message": "incidents projection source metadata diverged for digest: 'sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d' != 'sha256:b9006d200fdc7eb4d0543b756e0576a041d2f22b3a67b6177cf32518e20f13a7'",
       "projection": "incidents",
       "recommendation": "system.integrity_repair",
       "severity": "error"
     },
     {
-      "actual": "sha256:98d84b9399e92a5cc5381521c76bcdf60cd58ce8839e58299a8b86906cf619b2",
+      "actual": "sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d",
       "code": "index_divergence",
-      "expected": "sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d",
-      "message": "problems projection source metadata diverged for digest: 'sha256:98d84b9399e92a5cc5381521c76bcdf60cd58ce8839e58299a8b86906cf619b2' != 'sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d'",
+      "expected": "sha256:b9006d200fdc7eb4d0543b756e0576a041d2f22b3a67b6177cf32518e20f13a7",
+      "message": "problems projection source metadata diverged for digest: 'sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d' != 'sha256:b9006d200fdc7eb4d0543b756e0576a041d2f22b3a67b6177cf32518e20f13a7'",
       "projection": "problems",
       "recommendation": "system.integrity_repair",
       "severity": "error"
@@ -105,15 +105,15 @@
       "first_seen_seq": 487,
       "first_seen_ts": "2026-07-13T22:44:54.539079+00:00",
       "fix_commits": [],
-      "last_seen_seq": 583,
-      "last_seen_ts": "2026-07-16T06:30:05.917356+00:00",
+      "last_seen_seq": 586,
+      "last_seen_ts": "2026-07-16T19:37:48.826642+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714",
         "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "managed automatic repair accepted execution custody",
-      "occurrence_count": 20,
+      "occurrence_count": 23,
       "owner_actor": "six_hour_auditor",
       "problem_id": "problem-51b6859a7c76",
       "recurred_after_fix": false,
@@ -554,10 +554,10 @@
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:9b4cf4ff99e8acbc395ed5e8fdf019580b9849f16d72648c32e439f67f4eda7d",
-    "event_count": 583,
-    "journal_line_count": 583,
-    "last_seq": 583,
+    "digest": "sha256:b9006d200fdc7eb4d0543b756e0576a041d2f22b3a67b6177cf32518e20f13a7",
+    "event_count": 586,
+    "journal_line_count": 586,
+    "last_seq": 586,
     "malformed_line_count": 0
   }
 }
