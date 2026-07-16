@@ -501,6 +501,14 @@ class RepairCustodyAttemptRecord(TypedDict):
     raw: dict[str, Any]
 
 
+class CoalescedWithoutLiveOwnerRecord(TypedDict):
+    request_id: str
+    related_request_id: str
+    created_at: str
+    reason: str
+    self_coalesced: bool
+
+
 class RepairCustodyProjection(TypedDict):
     blocker_id: str
     blocker_fingerprint: BlockerFingerprintV1 | BlockerFingerprintV2 | None
@@ -514,6 +522,7 @@ class RepairCustodyProjection(TypedDict):
     active_request_ids: list[str]
     active_claim_request_ids: list[str]
     accepted_unclaimed_request_ids: list[str]
+    coalesced_without_live_owner: list[CoalescedWithoutLiveOwnerRecord]
     request_count: int
     claim_count: int
     attempt_count: int
@@ -929,6 +938,31 @@ def project_repair_custody(
         if request_id not in attempted_request_ids
         and request_id not in active_claim_request_ids
     )
+    active_request_id_set = set(active_request_ids)
+    active_claim_request_id_set = set(active_claim_request_ids)
+    coalesced_without_live_owner: list[CoalescedWithoutLiveOwnerRecord] = []
+    for record in queue_decisions:
+        if _as_text(record.get("decision")) != REQUEST_STATUS_COALESCED:
+            continue
+        owner_request_id = _as_text(record.get("related_request_id"))
+        if not owner_request_id or owner_request_id not in active_request_id_set:
+            continue
+        if _request_has_live_owner(
+            owner_request_id,
+            active_claim_request_ids=active_claim_request_id_set,
+            attempts=attempts,
+        ):
+            continue
+        request_id = _as_text(record.get("request_id"))
+        coalesced_without_live_owner.append(
+            {
+                "request_id": request_id,
+                "related_request_id": owner_request_id,
+                "created_at": _as_text(record.get("created_at")),
+                "reason": _as_text(record.get("reason")),
+                "self_coalesced": bool(request_id and request_id == owner_request_id),
+            }
+        )
     request_status_counts: dict[str, int] = {}
     for request in requests:
         status = str(request["status"])
@@ -999,6 +1033,7 @@ def project_repair_custody(
         "active_request_ids": active_request_ids,
         "active_claim_request_ids": active_claim_request_ids,
         "accepted_unclaimed_request_ids": accepted_unclaimed_request_ids,
+        "coalesced_without_live_owner": coalesced_without_live_owner,
         "request_count": len(requests),
         "claim_count": len(active_claim_request_ids),
         "attempt_count": len(attempts),
@@ -3579,6 +3614,40 @@ def _decision_history_by_request(
     return history
 
 
+def effective_repair_request_decision_status(
+    *,
+    request_id: str,
+    decision: str,
+    related_request_id: str = "",
+) -> RepairRequestStatus | str:
+    normalized_decision = _as_text(decision)
+    if (
+        normalized_decision == REQUEST_STATUS_COALESCED
+        and _as_text(request_id)
+        and _as_text(request_id) == _as_text(related_request_id)
+    ):
+        return REQUEST_STATUS_ACCEPTED
+    return normalized_decision
+
+
+def repair_request_decision_is_terminal(
+    *,
+    request_id: str,
+    decision: str,
+    related_request_id: str = "",
+) -> bool:
+    return effective_repair_request_decision_status(
+        request_id=request_id,
+        decision=decision,
+        related_request_id=related_request_id,
+    ) in {
+        REQUEST_STATUS_COALESCED,
+        REQUEST_STATUS_STALE,
+        REQUEST_STATUS_SUPERSEDED,
+        REQUEST_STATUS_DISPATCHED,
+    }
+
+
 def _effective_request_decision(
     history: list[RepairRequestDecisionRecord],
 ) -> RepairRequestDecisionRecord | None:
@@ -3591,14 +3660,61 @@ def _effective_request_decision(
         REQUEST_STATUS_COALESCED: 2,
         REQUEST_STATUS_ACCEPTED: 1,
     }
-    return max(
+    effective = max(
         history,
         key=lambda item: (
-            int(priority.get(str(item["decision"]), 0)),
+            int(
+                priority.get(
+                    effective_repair_request_decision_status(
+                        request_id=str(item["request_id"]),
+                        decision=str(item["decision"]),
+                        related_request_id=str(item["related_request_id"]),
+                    ),
+                    0,
+                )
+            ),
             str(item["created_at"]),
             str(item["decision_id"]),
         ),
     )
+    effective_status = effective_repair_request_decision_status(
+        request_id=str(effective["request_id"]),
+        decision=str(effective["decision"]),
+        related_request_id=str(effective["related_request_id"]),
+    )
+    if effective_status == effective["decision"]:
+        return effective
+    return {
+        **effective,
+        "decision": effective_status,
+    }
+
+
+def _request_has_live_owner(
+    request_id: str,
+    *,
+    active_claim_request_ids: set[str],
+    attempts: list[RepairCustodyAttemptRecord],
+) -> bool:
+    if request_id in active_claim_request_ids:
+        return True
+    latest_terminal = datetime.min.replace(tzinfo=timezone.utc)
+    for attempt in attempts:
+        if attempt.get("request_id") != request_id or attempt.get("terminal") is not True:
+            continue
+        recorded_at = _verification_timestamp(attempt.get("recorded_at"))
+        if recorded_at is not None and recorded_at > latest_terminal:
+            latest_terminal = recorded_at
+    for attempt in attempts:
+        if attempt.get("request_id") != request_id or attempt.get("terminal") is not False:
+            continue
+        if not _as_text(attempt.get("attempt_id")) or not _as_text(attempt.get("path")):
+            continue
+        recorded_at = _verification_timestamp(attempt.get("recorded_at"))
+        if recorded_at is not None and latest_terminal >= recorded_at:
+            continue
+        return True
+    return False
 
 
 def _collect_custody_attempts(
@@ -5306,6 +5422,7 @@ __all__ = [
     "classify_repair_dispatch",
     "classify_recovery_verification",
     "durable_repair_active",
+    "effective_repair_request_decision_status",
     "classify_verification_outcome",
     "cleanup_repair_data_retention",
     "compute_deadline",
@@ -5319,6 +5436,7 @@ __all__ = [
     "normalize_blocker_fingerprint_v1",
     "normalize_blocker_fingerprint_v2",
     "project_repair_custody",
+    "repair_request_decision_is_terminal",
     "RepairDispatchDecision",
     "RepairDispatchDecisionKind",
     "read_repair_index",

@@ -2602,6 +2602,7 @@ def _repair_custody_summary(session, plan_state, current_target):
         "blocker_id": projection.get("blocker_id") or "",
         "active_request_ids": projection.get("active_request_ids") or [],
         "accepted_unclaimed_request_ids": projection.get("accepted_unclaimed_request_ids") or [],
+        "coalesced_without_live_owner": projection.get("coalesced_without_live_owner") or [],
         "request_status_counts": projection.get("request_status_counts") or {},
         "claim_count": projection.get("claim_count") or 0,
         "attempt_count": projection.get("attempt_count") or 0,

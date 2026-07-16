@@ -192,6 +192,83 @@ def test_custody_projection_reads_plan_state_and_accepted_request_without_migrat
     }
 
 
+def test_self_coalesced_request_remains_claimable_and_accepted_unclaimed(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    queue_root = _queue_root(tmp_path)
+
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "",
+            "blocked_task_id": "T1",
+        },
+        target={"plan_dir": "/tmp/plan"},
+        root_cause_hint="repairable blocker",
+        created_at="2026-07-04T01:00:00Z",
+    )
+    replay = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "",
+            "blocked_task_id": "T1",
+        },
+        target={"plan_dir": "/tmp/plan"},
+        root_cause_hint="repairable blocker",
+        created_at="2026-07-04T01:10:00Z",
+    )
+
+    projection = project_repair_custody(
+        plan_state=_plan_state(),
+        current_target=_current_target(),
+        queue_root=queue_root,
+        repair_data_dir=repair_data_dir,
+    )
+
+    request_id = queued["request"]["request_id"]
+    assert replay["status"] == "coalesced"
+    assert replay["decision"]["related_request_id"] == request_id
+    assert projection["active_request_ids"] == [request_id]
+    assert projection["accepted_unclaimed_request_ids"] == [request_id]
+    assert projection["request_status_counts"] == {"accepted": 1}
+    assert projection["requests"][0]["status"] == "accepted"
+    assert projection["requests"][0]["claimable"] is True
+    assert len(projection["coalesced_without_live_owner"]) == 1
+    assert projection["coalesced_without_live_owner"][0]["request_id"] == request_id
+    assert projection["coalesced_without_live_owner"][0]["related_request_id"] == request_id
+    assert projection["coalesced_without_live_owner"][0]["reason"] == "request marker already exists"
+    assert projection["coalesced_without_live_owner"][0]["self_coalesced"] is True
+
+    claim = repair_requests.claim_active_repair_request(
+        queue_root,
+        blocker_id=queued["request"]["blocker_id"],
+        request_id=request_id,
+        actor="repair-trigger",
+        session="demo-session",
+        pid=4242,
+        is_pid_live=lambda _pid: True,
+    )
+    assert claim.claimed is True
+
+
 def test_identity_free_legacy_request_remains_unclaimable_after_projection(
     tmp_path: Path,
 ) -> None:

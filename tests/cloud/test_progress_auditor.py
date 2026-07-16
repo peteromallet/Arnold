@@ -119,6 +119,40 @@ def test_nested_repair_queue_drift_is_a_deterministic_finding() -> None:
     assert "request-1" in reason
 
 
+def test_queue_coalesced_without_live_owner_reason_uses_projected_custody_records() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _queue_coalesced_without_live_owner_reason(ev):")
+    end = text.index("\ndef _deterministic_failure_exhaustion_reason", start)
+    namespace = {
+        "_chain_state_looks_nonterminal": lambda chain: bool(chain),
+        "dt": __import__("datetime"),
+        "now": datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc),
+    }
+    exec(text[start:end], namespace)
+
+    reason = namespace["_queue_coalesced_without_live_owner_reason"](
+        {
+            "repair_custody_summary": {
+                "coalesced_without_live_owner": [
+                    {
+                        "request_id": "7473fa42",
+                        "related_request_id": "7473fa42",
+                        "created_at": "2026-07-16T11:50:00Z",
+                        "reason": "request marker already exists",
+                        "self_coalesced": True,
+                    }
+                ],
+                "retry_budget": {"alert_required": False},
+                "claim_alert_request_ids": [],
+            },
+            "chain_state_summary": {"current": {"last_state": "blocked"}},
+        }
+    )
+
+    assert reason.startswith("queue_coalesced_without_live_owner:")
+    assert "owner_request_id=7473fa42" in reason
+
+
 def test_l3_carries_repair_root_cause_into_terminal_owner_finding() -> None:
     text = _wrapper("arnold-progress-auditor")
     start = text.index("def _repair_owner_terminal_failure_reason(ev):")
@@ -362,6 +396,54 @@ def test_repair_custody_gather_correlates_nested_and_central_queues(
     assert summary["queue_root"] == str(central)
     assert summary["nested_queue_root"] == str(nested)
     assert summary["nested_accepted_unclaimed_request_ids"] == ["nested-request"]
+
+
+def test_repair_custody_summary_threads_coalesced_without_live_owner_projection(
+    tmp_path: Path,
+) -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _repair_custody_summary(session, plan_state, current_target):")
+    end = text.index("\ndef _load_events", start)
+    central = tmp_path / ".megaplan" / "repair-queue"
+    records = [
+        {
+            "request_id": "req-self",
+            "related_request_id": "req-self",
+            "created_at": "2026-07-16T11:50:00Z",
+            "reason": "request marker already exists",
+            "self_coalesced": True,
+        }
+    ]
+
+    def project_repair_custody(**_kwargs):
+        return {
+            "active_request_ids": ["req-self"],
+            "accepted_unclaimed_request_ids": ["req-self"],
+            "coalesced_without_live_owner": records,
+            "claim_count": 0,
+            "attempt_count": 0,
+        }
+
+    namespace: dict[str, object] = {
+        "os": os,
+        "pathlib": __import__("pathlib"),
+        "REPAIR_QUEUE_ROOT": central,
+        "iter_repair_requests": lambda *_args, **_kwargs: [],
+        "iter_repair_decisions": lambda *_args, **_kwargs: [],
+        "iter_repair_attempts": lambda *_args, **_kwargs: [],
+        "project_repair_custody": project_repair_custody,
+        "repair_request_runtime_available": True,
+        "_redact_scalar": str,
+    }
+    exec(text[start:end], namespace)
+
+    summary = namespace["_repair_custody_summary"](
+        "demo",
+        {"current_state": "blocked"},
+        {"current_refs": {"workspace": str(tmp_path / "workspace")}},
+    )
+
+    assert summary["coalesced_without_live_owner"] == records
 
 
 def _wbc_superfixer_cycle_evidence() -> dict[str, object]:
