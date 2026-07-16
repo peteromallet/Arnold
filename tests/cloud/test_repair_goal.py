@@ -372,12 +372,46 @@ def test_bounded_terminal_failure_records_exact_unresolved_checkpoint(tmp_path: 
     assert failure["owner_terminal"] is True
     assert failure["escalation_required"] is True
     assert failure["checkpoint_digest"] == goal["checkpoint_digest"]
+    assert failure["replan_epoch"] == 0
     assert failure["unresolved_checkpoint"]["digest"] == goal["checkpoint_digest"]
     assert failure["unresolved_checkpoint"]["latest_failure"] == (
         goal["frozen_checkpoint"]["latest_failure"]
     )
     persisted = json.loads(path.read_text(encoding="utf-8"))
     assert persisted["last_terminal_failure"] == failure
+
+
+def test_current_epoch_investigator_replan_routes_to_l2_once(tmp_path: Path) -> None:
+    path, goal = _goal(tmp_path)
+    target = goal["target"]
+    failure = record_terminal_failure(
+        path,
+        outcome="replan_required",
+        phase="investigator-replan-required",
+        reason="validated investigator requires L2 replan before target mutation",
+        owner_run_id="repair-owner-1",
+    )
+
+    routed = evaluate_repair_goal(path, action="watchdog_authority_check")
+
+    assert failure["terminal_failure"]["replan_epoch"] == 0
+    assert routed["status"] == GOAL_ACTIVE
+    assert routed["evaluation"]["control_action"] == "meta_repair"
+    assert routed["evaluation"]["failed_fixer_evidence"]["phase"] == (
+        "investigator-replan-required"
+    )
+
+    reconcile_l2_replan(
+        path,
+        session="demo-session",
+        workspace=target["workspace"],
+        remote_spec=target["remote_spec"],
+        blocker_id=target["blocker_id"],
+        context_digest="accepted-l2-context",
+    )
+    after_reconcile = evaluate_repair_goal(path, action="watchdog_authority_check")
+
+    assert after_reconcile["evaluation"]["control_action"] != "meta_repair"
 
 
 def test_productive_target_commit_resets_breaker_without_completing_goal(tmp_path: Path) -> None:
@@ -610,6 +644,8 @@ def test_repair_loop_fences_mechanical_relaunch_and_uses_two_stage_owner() -> No
     assert "kill_matching_runner_processes" not in mechanical
     assert "tmux kill-session" not in mechanical
     assert "run_repair_investigator_turn()" in wrapper
+    assert '"investigator-replan-required"' in wrapper
+    assert '"validated investigator requires L2 replan before any target mutation"' in wrapper
     assert "automatic_research_subagent" in wrapper
     assert "--sandbox read-only" in wrapper
     assert 'REPAIR_OWNER_MODEL="${CLOUD_WATCHDOG_REPAIR_OWNER_MODEL:-gpt-5.6-sol}"' in wrapper
