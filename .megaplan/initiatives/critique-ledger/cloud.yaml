@@ -22,7 +22,7 @@ megaplan:
   ref: resident-scheduling/deployed-20260716
   codex_auth: chatgpt
   repo: /workspace/arnold-runtime-resident-scheduling-1e76dbe
-  src_path: /workspace/critique-ledger-bigbang-20260716/Arnold
+  src_path: /workspace/arnold-critique-ledger-cloud-engine
 
 resources:
   volume: agent-volume
