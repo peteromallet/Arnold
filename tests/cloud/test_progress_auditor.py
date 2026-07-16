@@ -153,6 +153,37 @@ def test_l3_carries_repair_root_cause_into_terminal_owner_finding() -> None:
     assert "receipt-bound quality recovery" in reason
 
 
+def test_l3_derives_bounded_root_cause_when_active_retry_replaces_investigation() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _repair_owner_terminal_failure_reason(ev):")
+    end = text.index("\ndef _canonical_launch_disagreement_reason", start)
+    namespace: dict[str, object] = {
+        "_chain_state_looks_terminal": lambda _chain: False,
+    }
+    exec(text[start:end], namespace)
+    evidence = {
+        "chain_state_summary": {"current": {"last_state": "executed"}},
+        "repair_data_summary": {
+            "investigation_summary": {"status": "missing"},
+            "repair_goal_summary": {
+                "terminal_failures": [
+                    {
+                        "phase": "authorized-recovery-no-progress",
+                        "outcome": "recovery_not_verified",
+                        "reason": "the exact investigator-authorized recovery command remained live",
+                    }
+                ]
+            },
+        },
+    }
+
+    reason = namespace["_repair_owner_terminal_failure_reason"](evidence)
+
+    assert "class=owner_terminalized_before_outcome" in reason
+    assert "owner terminalized while its exact supported recovery command remained live" in reason
+    assert "unavailable" not in reason
+
+
 def test_repair_custody_gather_correlates_nested_and_central_queues(
     tmp_path: Path,
 ) -> None:

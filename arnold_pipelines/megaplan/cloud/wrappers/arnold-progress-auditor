@@ -3828,11 +3828,24 @@ def _repair_owner_terminal_failure_reason(ev):
     actual = investigation.get("actual_failure")
     actual = actual if isinstance(actual, dict) else {}
     mechanism = str(actual.get("mechanism") or "")[:700]
+    if not mechanism:
+        mechanism = {
+            "receipt_bound_quality_recovery_transport": (
+                "validated receipt-bound quality recovery could not be constructed or launched"
+            ),
+            "supported_recovery_command_failed": (
+                "supported recovery command terminalized before proving target advancement"
+            ),
+            "owner_terminalized_before_outcome": (
+                "owner terminalized while its exact supported recovery command remained live "
+                "without accepted progress"
+            ),
+        }.get(failure_class, "terminal repair owner failed before semantic recovery")
     return (
         "repair_owner_terminal_failure: "
         f"class={failure_class} phase={phase or 'unknown'} "
         f"outcome={latest.get('outcome') or 'unknown'} reason={reason[:700] or 'missing'} "
-        f"investigated_root_cause={mechanism or 'unavailable'}"
+        f"investigated_root_cause={mechanism}"
     )
 
 def _canonical_launch_disagreement_reason(ev):

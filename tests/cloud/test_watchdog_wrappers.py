@@ -14389,6 +14389,73 @@ repair_unintended_stop() { printf 'dispatch\n' >> "$DISPATCH_PATH"; }
     assert "observing without repair launch" in log_path.read_text(encoding="utf-8")
 
 
+def test_watchdog_suppresses_unowned_goal_redispatch_for_authoritative_live_worker(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    report_path = tmp_path / "report.tsv"
+    dispatch_path = tmp_path / "dispatch.log"
+    log_path = tmp_path / "watchdog.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"MEGAPLAN_SUPERVISOR_PYTHON={sys.executable!r}",
+            f"LOG={str(log_path)!r}",
+            f"DISPATCH_PATH={str(dispatch_path)!r}",
+            """
+log() { printf '%s\n' "$*" >> "$LOG"; }
+report_item() { printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"; }
+repair_goal_watchdog_status() { printf 'active_unowned\tgoal-live\towner terminalized before review finished\tinvestigate\n'; }
+current_target_has_live_worker() { return 0; }
+dispatch_meta_repair() { printf 'l2\n' >> "$DISPATCH_PATH"; }
+repair_unintended_stop() { printf 'l1\n' >> "$DISPATCH_PATH"; }
+""".strip(),
+            f"launch_chain_tick custody-control-plane {str(tmp_path / 'workspace')!r} {str(tmp_path / 'chain.yaml')!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert not dispatch_path.exists()
+    assert "preserve authoritative live target worker" in report_path.read_text(encoding="utf-8")
+    assert "suppressing replacement-owner dispatch" in log_path.read_text(encoding="utf-8")
+
+
+def test_current_target_live_worker_requires_active_pid_bound_heartbeat() -> None:
+    function = _extract_wrapper_function("current_target_has_live_worker")
+    live = json.dumps(
+        {
+            "active_step_heartbeat": {
+                "active": True,
+                "pid_live": True,
+                "worker_pid": "1179344",
+            }
+        }
+    )
+    stale = json.dumps(
+        {
+            "active_step_heartbeat": {
+                "active": True,
+                "pid_live": False,
+                "worker_pid": "1179344",
+            }
+        }
+    )
+
+    accepted = _run_watchdog_shell(f"{function}\ncurrent_target_has_live_worker {shlex.quote(live)}")
+    rejected = _run_watchdog_shell(f"{function}\ncurrent_target_has_live_worker {shlex.quote(stale)}")
+
+    assert accepted.returncode == 0, accepted.stderr
+    assert rejected.returncode == 1, rejected.stderr
+
+
 def test_watchdog_unowned_genuinely_stuck_goal_still_dispatches_one_l1_owner(
     tmp_path: Path,
 ) -> None:

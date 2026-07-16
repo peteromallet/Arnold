@@ -7680,6 +7680,30 @@ print("none\t\t\t")
 PY
 }
 
+current_target_has_live_worker() {
+  local observation="${1:-}"
+  [[ -n "$observation" ]] || return 1
+  python3 - "$observation" <<'PY'
+import json
+import sys
+
+try:
+    record = json.loads(sys.argv[1])
+except (IndexError, json.JSONDecodeError, TypeError):
+    raise SystemExit(1)
+heartbeat = record.get("active_step_heartbeat") if isinstance(record, dict) else {}
+if not isinstance(heartbeat, dict):
+    raise SystemExit(1)
+raise SystemExit(
+    0
+    if heartbeat.get("active") is True
+    and heartbeat.get("pid_live") is True
+    and str(heartbeat.get("worker_pid") or "").strip()
+    else 1
+)
+PY
+}
+
 launch_chain_tick() {
   local session="$1"
   local workspace="$2"
@@ -7756,6 +7780,11 @@ PY
       return 0
       ;;
     active_unowned)
+      if current_target_has_live_worker "$current_target_observation"; then
+        log "durable repair goal is unowned while authoritative target worker remains live; suppressing replacement-owner dispatch session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
+        report_item "$report_items" "$session" "observe" "recovery_observation" "preserve authoritative live target worker while durable goal remains open: $repair_goal_reason" "$workspace" "$remote_spec"
+        return 0
+      fi
       if [[ "$repair_goal_control_action" == "meta_repair" ]]; then
         log "post-fixer recovery gate failed after owner terminalization; dispatching transcript-aware L2 meta-repair session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
         if dispatch_meta_repair \
