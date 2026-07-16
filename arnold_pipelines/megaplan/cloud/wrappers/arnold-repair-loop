@@ -5745,8 +5745,6 @@ for blocker_id in blocker_ids:
             + [
                 "quality-gate",
                 "resolve",
-                "--project-dir",
-                str(workspace),
                 "--plan",
                 plan_name,
                 "--blocker-id",
