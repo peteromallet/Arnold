@@ -17,7 +17,8 @@ if [[ "${ARNOLD_WATCHDOG_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
   export ARNOLD_WATCHDOG_SNAPSHOT_ACTIVE=1
   exec bash "$watchdog_snapshot" "$@"
 fi
-trap 'rm -f -- "${BASH_SOURCE[0]:-$0}"' EXIT
+ARNOLD_WATCHDOG_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"
+trap 'rm -f -- "$ARNOLD_WATCHDOG_SNAPSHOT_PATH"' EXIT
 
 # Caller-provided supervisor runtime controls are an explicit invocation
 # contract (and are used by readiness probes).  The shared hot-env supplies

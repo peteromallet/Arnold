@@ -38,7 +38,8 @@ if [[ "${ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
   export ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE=1
   exec bash "$meta_repair_loop_snapshot" "$@"
 fi
-trap 'rm -f -- "${BASH_SOURCE[0]:-$0}"' EXIT
+ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"
+trap 'rm -f -- "$ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH"' EXIT
 
 if [[ $# -lt 1 ]]; then
   echo "usage: arnold-meta-repair-loop <session> [trigger]" >&2
