@@ -128,6 +128,25 @@ def test_parallel_critique_unverifiable_payload_carries_retryable_cause() -> Non
     assert payload["unverifiable_error_kind"] == "rate_limit"
 
 
+def test_synthetic_verifiability_flags_are_evidence_complete() -> None:
+    from arnold_pipelines.megaplan.handlers.plan import _build_verifiability_flags
+
+    flags = _build_verifiability_flags(
+        [
+            {
+                "criterion": "Prove the contract.",
+                "priority": "must",
+                "requires": ["not_a_registered_capability"],
+            }
+        ],
+        {},
+    )
+
+    assert len(flags) == 2
+    assert all(flag["evidence"] == flag["concern"] for flag in flags)
+    assert all(flag["evidence"].strip() for flag in flags)
+
+
 def test_historical_provider_capacity_downgrade_is_recoverable_from_blocked_state() -> None:
     from arnold_pipelines.megaplan.handlers.override import (
         _last_gate_is_operational_unverifiable_block,

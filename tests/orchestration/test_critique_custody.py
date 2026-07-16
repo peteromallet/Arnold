@@ -216,6 +216,55 @@ def test_malformed_duplicated_unmapped_or_lossy_findings_fail_closed(
     assert caught.value.code == code
 
 
+def test_reducer_reassigns_duplicate_worker_local_ids_deterministically() -> None:
+    payload = {
+        "checks": [
+            {
+                "id": "correctness",
+                "question": "Is it correct?",
+                "findings": [{"detail": "Correctness evidence.", "flagged": True}],
+            },
+            {
+                "id": "scope",
+                "question": "Is it bounded?",
+                "findings": [{"detail": "Scope evidence.", "flagged": True}],
+            },
+        ],
+        "flags": [
+            {
+                "id": "FLAG-001",
+                "concern": "Correctness concern.",
+                "category": "correctness",
+                "severity_hint": "likely-significant",
+                "evidence": "Correctness evidence.",
+                "source_check_id": "correctness",
+            },
+            {
+                "id": "FLAG-001",
+                "concern": "Scope concern.",
+                "category": "completeness",
+                "severity_hint": "likely-significant",
+                "evidence": "Scope evidence.",
+                "source_check_id": "scope",
+            },
+        ],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    replay = deepcopy(payload)
+
+    prepare_critique_payload(payload, expected_check_ids=["correctness", "scope"])
+    prepare_critique_payload(replay, expected_check_ids=["correctness", "scope"])
+
+    assert payload == replay
+    assert len({flag["id"] for flag in payload["flags"]}) == 2
+    assert all(flag["id"].startswith("CF-") for flag in payload["flags"])
+    assert [flag["producer_flag_id"] for flag in payload["flags"]] == [
+        "FLAG-001",
+        "FLAG-001",
+    ]
+
+
 def test_clearance_binds_exact_final_graph_and_execute_rejects_missing_or_mutated_custody(
     tmp_path: Path,
 ) -> None:
