@@ -137,7 +137,10 @@ exit_with_repair_request() {
 # still emit an observation but do not start or describe work as dispatched.
 if ! l1_mutation_authorized; then
   log "observed: L1 supervisor mutation blocked (requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED)"
-  exit 0
+  # Refusing the effect is not a successful launch.  A zero exit code is
+  # consumed by repair-loop as a durable mechanical-launch receipt and can
+  # falsely describe a command that never started as successful.
+  exit 77
 fi
 
 log "starting cmd: ${CMD[*]}"
