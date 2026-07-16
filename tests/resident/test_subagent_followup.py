@@ -238,6 +238,46 @@ def test_registered_followup_tool_returns_explicit_failure_without_receipt(
     assert "unknown resident-managed run_id" in result["message"]
 
 
+def test_local_followup_cli_honors_explicit_project_scope(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    captured: dict = {}
+
+    def fake_followup(**kwargs):
+        captured.update(kwargs)
+        return subagent.SubagentFollowupResult(
+            ok=True,
+            followup_id="followup-cli-scope",
+            target_run_id=TARGET_RUN_ID,
+            parent_run_id=TARGET_RUN_ID,
+            lineage_root_run_id=TARGET_RUN_ID,
+            continuation_run_id="subagent-20260716-140000-aaaaaaaa",
+            status="continuation_started",
+            evidence_path=str(tmp_path / "receipt.json"),
+            message_path=str(tmp_path / "message.md"),
+            continuation_manifest_path=str(tmp_path / "manifest.json"),
+        )
+
+    monkeypatch.setattr(subagent, "follow_up_managed_subagent", fake_followup)
+
+    result = subagent._main(
+        [
+            "follow-up",
+            "--run-id",
+            TARGET_RUN_ID,
+            "--message",
+            "Use exact project custody.",
+            "--project-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert result == 0
+    assert captured["project_dir"] == str(tmp_path)
+    assert captured["workspace_root"] is None
+    assert json.loads(capsys.readouterr().out)["followup_id"] == "followup-cli-scope"
+
+
 def test_internal_contributor_followup_preserves_single_delivery_owner(
     tmp_path: Path, monkeypatch, caller_provenance: dict
 ) -> None:

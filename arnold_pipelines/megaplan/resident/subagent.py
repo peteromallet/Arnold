@@ -5683,6 +5683,7 @@ def _main(argv: list[str] | None = None) -> int:
                 run_id=args.run_id,
                 message=message,
                 project_dir=args.project_dir,
+                workspace_root=None,
                 idempotency_key=args.idempotency_key,
                 aggregation_role=args.aggregation_role,
                 synthesis_group=args.synthesis_group,
