@@ -3005,8 +3005,8 @@ def update_session_state(
 
 
 _VALID_CLAUDE_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
-_VALID_CODEX_EFFORTS = ("minimal", "low", "medium", "high")
-_CODEX_EFFORT_ALIASES = {"xhigh": "high", "max": "high"}
+_VALID_CODEX_EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max")
+_CODEX_EFFORT_ALIASES: dict[str, str] = {}
 
 
 def _normalize_codex_effort(effort: str | None) -> str | None:
