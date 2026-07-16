@@ -30,6 +30,8 @@ DEEP_REPAIR_DIFFICULTY = 9
 DEEP_REPAIR_REASONING = "high"
 L3_REPAIR_CONTEXT_MAX_BYTES = 64 * 1024
 L3_REPAIR_REQUEST_MAX_BYTES = 256 * 1024
+AUDIT_REVIEW_EVIDENCE_MAX_BYTES = 64 * 1024
+AUDIT_REVIEW_RESPONSE_MAX_BYTES = 32 * 1024
 
 _MACHINE_ACTION_STATES = frozenset(
     {
@@ -234,6 +236,188 @@ def validate_l3_repair_dispatch_context(
             "missed_by_axis": _text(custody.get("missed_by_axis")),
         },
     }
+
+
+def _bounded_review_value(
+    value: object,
+    *,
+    depth: int,
+    max_depth: int,
+    max_string: int,
+    max_items: int,
+) -> object:
+    if depth >= max_depth:
+        if isinstance(value, (Mapping, list, tuple)):
+            return {"omitted": True, "kind": type(value).__name__}
+        return value
+    if isinstance(value, str):
+        encoded = value.encode("utf-8")
+        if len(encoded) <= max_string:
+            return value
+        clipped = encoded[:max_string].decode("utf-8", errors="ignore")
+        return f"{clipped}\n[omitted {len(encoded) - len(clipped.encode('utf-8'))} bytes]"
+    if isinstance(value, Mapping):
+        result: dict[str, object] = {}
+        items = sorted(value.items(), key=lambda item: str(item[0]))[:max_items]
+        for raw_key, item_value in items:
+            key = str(raw_key)
+            result[key] = _bounded_review_value(
+                item_value,
+                depth=depth + 1,
+                max_depth=max_depth,
+                max_string=max_string,
+                max_items=max_items,
+            )
+        omitted = len(value) - len(items)
+        if omitted > 0:
+            result["_omitted_fields"] = omitted
+        return result
+    if isinstance(value, (list, tuple)):
+        selected = list(value)[-max_items:]
+        result = [
+            _bounded_review_value(
+                item,
+                depth=depth + 1,
+                max_depth=max_depth,
+                max_string=max_string,
+                max_items=max_items,
+            )
+            for item in selected
+        ]
+        if len(value) > len(selected):
+            result.insert(0, {"omitted_items": len(value) - len(selected)})
+        return result
+    return value
+
+
+def bounded_auditor_projection(
+    value: Mapping[str, Any] | None,
+    *,
+    kind: str,
+) -> dict[str, Any]:
+    """Return a non-recursive bounded projection for L3 evidence transport."""
+
+    fields = {
+        "brief": (
+            "found", "incident_id", "problem_id", "session_id", "state",
+            "outcome", "summary", "next_expected_event", "deadline_ts",
+            "first_timestamp", "last_timestamp", "claims", "evidence_refs",
+        ),
+        "incident": (
+            "incident_id", "problem_ids", "session_ids", "state", "outcome",
+            "summary", "next_expected_event", "deadline_ts", "event_count",
+            "first_seq", "last_seq", "first_timestamp", "last_timestamp",
+            "latest_actor", "latest_kind", "claims", "evidence_refs",
+        ),
+        "problem": (
+            "problem_id", "status", "summary", "owner_actor",
+            "linked_incident_ids", "fix_commits", "recurred_after_fix",
+        ),
+        "audit": (
+            "incident_id", "problem_id", "session_id", "outcome", "summary",
+            "next_expected_event", "findings", "diagnosis", "audit_complete",
+        ),
+    }
+    source = value if isinstance(value, Mapping) else {}
+    selected = {key: source.get(key) for key in fields.get(kind, ()) if key in source}
+    bounded = _bounded_review_value(
+        selected,
+        depth=0,
+        max_depth=6,
+        max_string=2048,
+        max_items=12,
+    )
+    result = dict(bounded) if isinstance(bounded, Mapping) else {}
+    result["projection_custody"] = {
+        "schema_version": "arnold-auditor-bounded-projection-v1",
+        "kind": kind,
+        "source_field_count": len(source),
+        "omitted_fields": sorted(str(key) for key in source if key not in selected),
+    }
+    encoded = _canonical_json(result).encode("utf-8")
+    if len(encoded) > AUDIT_REVIEW_EVIDENCE_MAX_BYTES:
+        raise ValueError(f"bounded {kind} projection exceeds 64 KiB")
+    result["projection_custody"]["digest"] = evidence_digest(result)
+    if len(_canonical_json(result).encode("utf-8")) > AUDIT_REVIEW_EVIDENCE_MAX_BYTES:
+        raise ValueError(f"bounded {kind} projection exceeds 64 KiB after custody")
+    return result
+
+
+def bounded_audit_review_pointer(
+    finding: Mapping[str, Any],
+    *,
+    evidence_path: str | Path,
+) -> dict[str, Any]:
+    """Build the only evidence envelope permitted in an L3 reviewer prompt."""
+
+    path = Path(evidence_path).resolve(strict=True)
+    digest = sha256()
+    size = 0
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            size += len(chunk)
+            digest.update(chunk)
+    selected_keys = (
+        "session", "plan", "workspace", "reasons", "current_state", "iteration",
+        "active_step_liveness", "acceptance_progress", "plan_latest_failure",
+        "current_target", "chain_state_summary", "repair_data_summary",
+        "repair_custody_summary", "meta_repair_summary",
+        "deterministic_superfixer_evidence", "resolver_state", "ci_health",
+        "engine_tree", "incident_brief", "incident_projection",
+        "problem_projection", "incident_audit", "existing_agent_ownership",
+        "prior_watchdog_report_refs", "source_refs", "auditor_wrapper_runtime",
+    )
+    selected = {key: finding.get(key) for key in selected_keys if key in finding}
+    pointer: dict[str, Any] = {
+        "schema_version": "arnold-progress-auditor-review-pointer-v1",
+        "objective": "Classify the current bounded L1/L2/L3 custody failure and recommend the canonical repair route.",
+        "authoritative_evidence": {
+            "path": str(path),
+            "bytes": size,
+            "sha256": digest.hexdigest(),
+        },
+        "evidence": _bounded_review_value(
+            selected,
+            depth=0,
+            max_depth=6,
+            max_string=2048,
+            max_items=10,
+        ),
+    }
+    encoded = _canonical_json(pointer).encode("utf-8")
+    if len(encoded) > AUDIT_REVIEW_EVIDENCE_MAX_BYTES:
+        pointer["evidence"] = _bounded_review_value(
+            selected,
+            depth=0,
+            max_depth=4,
+            max_string=512,
+            max_items=5,
+        )
+        encoded = _canonical_json(pointer).encode("utf-8")
+    if len(encoded) > AUDIT_REVIEW_EVIDENCE_MAX_BYTES:
+        raise ValueError("L3 review pointer exceeds 64 KiB")
+    pointer["pointer_digest"] = evidence_digest(pointer)
+    if len(_canonical_json(pointer).encode("utf-8")) > AUDIT_REVIEW_EVIDENCE_MAX_BYTES:
+        raise ValueError("L3 review pointer exceeds 64 KiB after custody")
+    return pointer
+
+
+def normalize_audit_review_response(value: str) -> str:
+    """Accept only a bounded typed L3 review response; fail closed otherwise."""
+
+    text = str(value or "").strip()
+    encoded = text.encode("utf-8")
+    failure = "REPAIR_REQUEST\nL3 reviewer returned no bounded typed verdict; inspect its managed manifest and stderr."
+    if not text or len(encoded) > AUDIT_REVIEW_RESPONSE_MAX_BYTES:
+        return failure
+    lowered = text.lower()
+    if "input exceeds the maximum length" in lowered or "input_too_large" in lowered:
+        return "REPAIR_REQUEST\nL3 reviewer input overflowed; the evidence transport boundary must be repaired before retry."
+    allowed = {"NO_NEW_LAUNCH", "REPAIR_REQUEST", "ESCALATE", "STALE", "INEFFICIENT", "PASSIVE"}
+    first = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    if first not in allowed:
+        return failure
+    return text
 
 
 def semantic_cursor(finding: Mapping[str, Any]) -> dict[str, Any]:
@@ -1231,14 +1415,19 @@ __all__ = [
     "DEEP_REPAIR_RUN_KIND",
     "ESCALATION_SCHEMA",
     "EscalationPolicy",
+    "AUDIT_REVIEW_EVIDENCE_MAX_BYTES",
+    "AUDIT_REVIEW_RESPONSE_MAX_BYTES",
     "L3_REPAIR_CONTEXT_MAX_BYTES",
     "L3_REPAIR_REQUEST_MAX_BYTES",
     "POLICY_VERSION",
     "bounded_repair_context",
+    "bounded_audit_review_pointer",
+    "bounded_auditor_projection",
     "classify_true_stall",
     "escalation_identity",
     "evidence_digest",
     "next_attempt_state",
+    "normalize_audit_review_response",
     "plan_dispatch",
     "record_reverification",
     "semantic_cursor",

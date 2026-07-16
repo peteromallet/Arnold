@@ -8,13 +8,17 @@ from pathlib import Path
 import pytest
 
 from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
+    AUDIT_REVIEW_EVIDENCE_MAX_BYTES,
     DEEP_REPAIR_DIFFICULTY,
     DEEP_REPAIR_MODEL,
     DEEP_REPAIR_RUN_KIND,
     EscalationPolicy,
     bounded_repair_context,
+    bounded_audit_review_pointer,
+    bounded_auditor_projection,
     classify_true_stall,
     next_attempt_state,
+    normalize_audit_review_response,
     plan_dispatch,
     record_reverification,
     validate_l3_repair_dispatch_context,
@@ -224,6 +228,41 @@ def test_l3_dispatch_context_fails_closed_above_64_kib(tmp_path: Path) -> None:
             expected_escalation_id="l3-escalation:test",
             expected_request_id=request_id,
         )
+
+
+def test_l3_review_pointer_does_not_inline_recursive_projection(
+    tmp_path: Path,
+) -> None:
+    recursive = {
+        "incident_id": "inc-1",
+        "summary": "current incident",
+        "decision": {"prior_audit_response": "x" * (23 * 1024 * 1024)},
+    }
+    bounded_projection = bounded_auditor_projection(recursive, kind="incident")
+    assert "decision" not in bounded_projection
+    assert len(json.dumps(bounded_projection).encode("utf-8")) < 8192
+
+    finding = _true_stall()
+    finding["incident_projection"] = recursive
+    evidence_path = tmp_path / "finding.json"
+    evidence_path.write_text(json.dumps(finding), encoding="utf-8")
+    pointer = bounded_audit_review_pointer(finding, evidence_path=evidence_path)
+    encoded = json.dumps(pointer, sort_keys=True).encode("utf-8")
+
+    assert len(encoded) <= AUDIT_REVIEW_EVIDENCE_MAX_BYTES
+    assert pointer["authoritative_evidence"]["bytes"] > 23 * 1024 * 1024
+    assert "x" * 4096 not in encoded.decode("utf-8")
+
+
+def test_l3_review_response_fails_closed_on_overflow_and_cli_error() -> None:
+    overflow = normalize_audit_review_response("x" * (33 * 1024))
+    cli_error = normalize_audit_review_response(
+        "OpenAI Codex\nError: turn/start failed: Input exceeds the maximum length; input_too_large"
+    )
+
+    assert overflow.startswith("REPAIR_REQUEST\n")
+    assert cli_error.startswith("REPAIR_REQUEST\n")
+    assert normalize_audit_review_response("PASSIVE\nNo issue.") == "PASSIVE\nNo issue."
 
 
 def test_true_stall_gate_requires_all_six_sources_and_walks_l1_l2_l3() -> None:

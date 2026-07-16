@@ -67,6 +67,19 @@ def test_auditor_classifies_meta_trigger_rejection_as_current_failure(
     assert 'or meta.get("trigger_rejection_count")' in text
 
 
+def test_progress_auditor_review_uses_bounded_pointer_and_typed_response() -> None:
+    text = _wrapper("arnold-progress-auditor")
+
+    assert "bounded_audit_review_pointer" in text
+    assert 'cat "$review_evidence"' in text
+    assert 'cat "$gather_file"' not in text
+    assert "AUDIT_REVIEW_EVIDENCE_MAX_BYTES=65536" in text
+    assert "AUDIT_REVIEW_BRIEF_MAX_BYTES=131072" in text
+    assert '--output-last-message "$model_resp_path"' in text
+    assert "normalize_audit_review_response" in text
+    assert 'data["hypothesis"] = text[:2000]' in text
+
+
 def test_relaunch_scripts_preserve_managed_repair_route_context() -> None:
     watchdog = _wrapper("arnold-watchdog")
     repair_loop = _repair_wrapper()
