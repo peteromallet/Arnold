@@ -10,6 +10,7 @@ from arnold_pipelines.megaplan.cloud.repair_goal import (
     GOAL_ACTIVE,
     GOAL_APPROVAL_REQUIRED,
     GOAL_PROGRESSED,
+    _quality_resolution_commit_custody,
     ensure_repair_goal,
     evaluate_checkpoint,
     evaluate_repair_goal,
@@ -502,6 +503,74 @@ def test_blocker_cleared_live_runner_transition_is_preserved_not_accepted() -> N
     assert result["control_action"] == "preserve_live"
     assert result["authoritative_progress"] is False
     assert "step-transition" in result["reason"]
+
+
+def test_missing_quality_repair_commit_overrides_false_stage_advancement() -> None:
+    result = evaluate_checkpoint(
+        {
+            "target_stage": "review",
+            "target_stage_rank": 7,
+            "chain_current_plan_name": "m5a",
+            "chain_current_milestone_index": 1,
+            "chain_completed_count": 1,
+        },
+        {
+            "target_stage": "done",
+            "target_stage_rank": 11,
+            "plan_state": "done",
+            "latest_failure_cleared": True,
+            "chain_current_plan_name": "m5a",
+            "chain_current_milestone_index": 1,
+            "chain_completed_count": 1,
+            "quality_resolution_commit_custody": {
+                "required_commits": ["a" * 40],
+                "missing_commits": ["a" * 40],
+                "verified": False,
+            },
+        },
+    )
+
+    assert result["status"] == "active"
+    assert result["control_action"] == "investigate"
+    assert result["blocker_cleared"] is False
+    assert "not contained" in result["reason"]
+
+
+def test_quality_repair_commit_custody_reads_nested_state_metadata(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    subprocess.run(["git", "-C", str(workspace), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "config", "user.name", "Test"], check=True)
+    (workspace / "tracked.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(workspace), "add", "tracked.txt"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "commit", "-qm", "base"], check=True)
+    head = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    missing = "f" * 40
+    result = _quality_resolution_commit_custody(
+        {
+            "meta": {
+                "quality_gate_resolutions": [
+                    {
+                        "resolution": "fixed",
+                        "evidence": [f"local dev fix commit:{missing}"],
+                    }
+                ]
+            }
+        },
+        workspace=workspace,
+        workspace_head=head,
+    )
+
+    assert result == {
+        "required_commits": [missing],
+        "missing_commits": [missing],
+        "verified": False,
+    }
 
 
 def test_repair_loop_refuses_goal_custody_without_request_and_blocker_links() -> None:
