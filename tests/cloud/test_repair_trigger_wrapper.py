@@ -696,6 +696,45 @@ def test_trigger_coalesces_pending_duplicate_files_under_lock(tmp_path: Path) ->
     assert any(item["request_id"] == "duplicate-request" for item in coalesced)
 
 
+def test_trigger_prefers_typed_actionable_l3_evidence_over_earlier_duplicate(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    _write_marker(marker_dir, workspace)
+    first = _enqueue(marker_dir, workspace)
+    queue_dir = _queue_root(workspace)
+    first_path = Path(first["path"])
+    upgraded = json.loads(first_path.read_text(encoding="utf-8"))
+    upgraded["request_id"] = "typed-l3-upgrade"
+    upgraded["created_at"] = "2026-07-01T00:01:00Z"
+    upgraded["source"] = "six_hour_auditor"
+    upgraded["target"] = {
+        **dict(upgraded.get("target") or {}),
+        "deterministic_superfixer_evidence": {"actionable": True},
+    }
+    repair_requests.requests_dir(queue_dir).joinpath("typed-l3-upgrade.json").write_text(
+        json.dumps(upgraded, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    result = _run_trigger(
+        marker_dir,
+        _repair_stub(tmp_path),
+        enabled=False,
+        autonomy=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    observations = [
+        item for item in _events(result) if item["event"] == "repair_trigger_observe"
+    ]
+    assert observations[0]["request_id"] == "typed-l3-upgrade"
+    duplicate = next(item for item in observations if item.get("observation") == "duplicate_signature")
+    assert duplicate["request_id"] == first["request"]["request_id"]
+    assert duplicate["related_request_id"] == "typed-l3-upgrade"
+
+
 def test_trigger_rejects_stale_marker_plan_reference(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     workspace = tmp_path / "workspace"

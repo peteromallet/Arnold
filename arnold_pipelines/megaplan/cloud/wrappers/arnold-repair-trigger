@@ -157,18 +157,17 @@ def main(argv: list[str] | None = None) -> int:
             for record in request_records
             if str(record.get("request_id") or "") == requested_request_id
         ]
-    requested_deep = any(
-        isinstance(record.get("target"), Mapping)
-        and str(record["target"].get("dispatch_intent") or "")
-        == "deep_superfixer_repair"
-        for record in request_records
+    # Queue scanning can contain L1, L2, and L3 candidates together. Acquire
+    # the shared claim lock when any path is authorized; _dispatch revalidates
+    # the exact selected layer immediately before its claim/subprocess effect.
+    authorized = any(
+        feature_flags.mutation_authorized(path)
+        for path in (
+            feature_flags.MUTATION_PATH_L1,
+            feature_flags.MUTATION_PATH_L2,
+            feature_flags.MUTATION_PATH_L3,
+        )
     )
-    authorization_path = (
-        feature_flags.MUTATION_PATH_L3
-        if requested_deep
-        else feature_flags.MUTATION_PATH_L1
-    )
-    authorized = feature_flags.mutation_authorized(authorization_path)
     if not request_records:
         _emit(
             {
@@ -248,9 +247,20 @@ def _scan_under_lock(
     dispatch_candidate: dict[str, Any] | None = None
 
     records = list(repair_requests.iter_repair_requests(queue_dir, include_malformed=True))
-    # Preserve the earliest accepted request as the canonical duplicate owner;
-    # file-name ordering is unrelated to custody chronology.
-    records.sort(key=lambda item: str(item.get("created_at") or ""))
+    def evidence_rank(item: Mapping[str, Any]) -> int:
+        target = item.get("target") if isinstance(item.get("target"), Mapping) else {}
+        deterministic = (
+            target.get("deterministic_superfixer_evidence")
+            if isinstance(target.get("deterministic_superfixer_evidence"), Mapping)
+            else {}
+        )
+        # A later L3 request can be a strict evidence upgrade of an earlier
+        # same-signature observation. Prefer the actionable typed receipt so
+        # an evidence-poor sibling cannot permanently shadow its corrective
+        # path; chronology remains the tie-breaker within the same rank.
+        return 0 if deterministic.get("actionable") is True else 1
+
+    records.sort(key=lambda item: (evidence_rank(item), str(item.get("created_at") or "")))
     for record in records:
         if requested_request_id and str(record.get("request_id") or "") != requested_request_id:
             continue
