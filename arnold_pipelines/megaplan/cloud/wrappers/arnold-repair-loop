@@ -6950,7 +6950,7 @@ run_repair_investigator_turn() {
     )
   fi
   if ! PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
-    "${context_build_cmd[@]}" >"$INVESTIGATION_BUILD_ERROR_PATH" 2>&1; then
+    "${context_build_cmd[@]}" >/dev/null 2>"$INVESTIGATION_BUILD_ERROR_PATH"; then
     redact_file_in_place "$INVESTIGATION_BUILD_ERROR_PATH"
     cat "$INVESTIGATION_BUILD_ERROR_PATH" >>"$LOG"
     repair_data_set_outcome "fixer_infrastructure_failure"
@@ -6968,7 +6968,7 @@ run_repair_investigator_turn() {
     "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
     arnold_pipelines.megaplan.cloud.repair_investigation observe \
     --context "$INVESTIGATION_CONTEXT_PATH" \
-    --output "$INVESTIGATION_OBSERVATION_PATH" >>"$LOG" 2>&1; then
+    --output "$INVESTIGATION_OBSERVATION_PATH" >/dev/null 2>>"$LOG"; then
     repair_data_set_outcome "fixer_infrastructure_failure"
     persist_repair_investigation_failure \
       "context_construction" \
