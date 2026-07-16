@@ -304,6 +304,14 @@ def _canonical_request_blocker_identity(
     return dict(fingerprint), blocker_id
 
 
+def _has_canonical_blocker_identity(request: Mapping[str, Any]) -> bool:
+    fingerprint = repair_contract.normalize_blocker_fingerprint_v2(
+        request.get("blocker_fingerprint")
+    )
+    blocker_id = repair_contract.blocker_id_for_fingerprint(fingerprint)
+    return bool(blocker_id and request.get("blocker_id") == blocker_id)
+
+
 def enqueue_repair_request(
     *,
     queue_root: str | Path,
@@ -393,6 +401,24 @@ def enqueue_repair_request(
         extra_signature_fields=extra_fields,
     )
     request_path = requests_dir(queue_root) / f"{request_id}.json"
+    predecessor_request_id = ""
+    if request_path.exists():
+        try:
+            existing_request = json.loads(request_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            existing_request = {}
+        if not isinstance(existing_request, Mapping) or not _has_canonical_blocker_identity(
+            existing_request
+        ):
+            predecessor_request_id = request_id
+            request_id = _sha256_json(
+                {
+                    "schema_version": "claimable-repair-request-successor-v1",
+                    "predecessor_request_id": predecessor_request_id,
+                    "blocker_id": blocker_id,
+                }
+            )
+            request_path = requests_dir(queue_root) / f"{request_id}.json"
     record = {
         "schema_version": CURRENT_SCHEMA_VERSION,
         "kind": "repair_request",
@@ -409,6 +435,7 @@ def enqueue_repair_request(
         "problem_signature_key": signature_key,
         "blocker_fingerprint": blocker_fingerprint,
         "blocker_id": blocker_id,
+        "predecessor_request_id": predecessor_request_id,
         "root_cause_hint_hash": hint_hash,
         "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
     }
@@ -626,6 +653,8 @@ def find_pending_by_signature(
     for record in iter_repair_requests(queue_dir):
         if record.get("request_id") in decided:
             continue
+        if not _has_canonical_blocker_identity(record):
+            continue
         if record.get("problem_signature_key") == key:
             return record
     return None
@@ -650,15 +679,7 @@ def write_decision(
             raise ValueError(
                 "accepted repair request requires a persisted canonical blocker identity"
             ) from exc
-        fingerprint = repair_contract.normalize_blocker_fingerprint_v2(
-            request.get("blocker_fingerprint") if isinstance(request, dict) else None
-        )
-        expected_blocker_id = repair_contract.blocker_id_for_fingerprint(fingerprint)
-        if (
-            not isinstance(request, dict)
-            or not expected_blocker_id
-            or request.get("blocker_id") != expected_blocker_id
-        ):
+        if not isinstance(request, dict) or not _has_canonical_blocker_identity(request):
             raise ValueError(
                 "accepted repair request requires a persisted canonical blocker identity"
             )

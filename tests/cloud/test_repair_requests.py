@@ -577,6 +577,52 @@ def test_phase_failure_persists_replay_stable_claim_identity(tmp_path: Path) -> 
     assert claim.owner["blocker_id"] == request["blocker_id"]
 
 
+def test_replay_mints_claimable_successor_for_identity_free_legacy_request(
+    tmp_path: Path,
+) -> None:
+    queue_dir = _queue_root(tmp_path)
+    signature = _signature()
+    legacy_request_id = repair_requests.request_id_for(
+        session="demo",
+        problem_signature=signature,
+        root_cause_hint="same failure",
+    )
+    legacy_path = repair_requests.requests_dir(queue_dir) / f"{legacy_request_id}.json"
+    legacy_record = {
+        "schema_version": 1,
+        "kind": "repair_request",
+        "request_id": legacy_request_id,
+        "created_at": "2026-07-01T00:00:00Z",
+        "session": "demo",
+        "problem_signature": repair_requests.normalize_problem_signature(signature),
+        "problem_signature_key": repair_requests.problem_signature_key(signature),
+    }
+    repair_contract.atomic_write_json(legacy_path, legacy_record)
+    legacy_bytes = legacy_path.read_bytes()
+
+    replay = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo",
+        source="lifecycle_failure",
+        problem_signature=signature,
+        root_cause_hint="same failure",
+        created_at="2026-07-01T00:01:00Z",
+    )
+
+    assert replay["status"] == "queued"
+    assert replay["request"]["request_id"] != legacy_request_id
+    assert replay["request"]["predecessor_request_id"] == legacy_request_id
+    assert replay["request"]["blocker_id"] == repair_contract.blocker_id_for_fingerprint(
+        replay["request"]["blocker_fingerprint"]
+    )
+    assert legacy_path.read_bytes() == legacy_bytes
+    reloaded = repair_requests.iter_repair_requests(queue_dir)
+    assert {record["request_id"] for record in reloaded} == {
+        legacy_request_id,
+        replay["request"]["request_id"],
+    }
+
+
 def test_write_decision_idempotency_via_claim(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
     first = repair_requests.write_decision(
