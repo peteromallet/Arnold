@@ -2902,6 +2902,13 @@ class TestLiveSignalFiltering:
             "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents).\n",
             encoding="utf-8",
         )
+        terminal_log = meta_runs / "20260703T211455Z-demo-session.log"
+        terminal_log.write_text(
+            "[meta-repair 2026-07-03T21:15:55+00:00] direct Hermes fallback produced no recordable verdict\n"
+            "[meta-repair 2026-07-03T21:15:56+00:00] all meta-repair launch paths failed; negative evidence persisted\n",
+            encoding="utf-8",
+        )
+        os.utime(terminal_log, (2_000_000_000, 2_000_000_000))
 
         findings = _run_gather_program(
             [
@@ -2927,7 +2934,12 @@ class TestLiveSignalFiltering:
         assert meta["failed_meta_run_evidence"] is True
         assert meta["failed_meta_record_count"] == 1
         assert meta["failed_meta_run_count"] >= 1
-        assert any("failed launch/no-output evidence" in reason for reason in finding["reasons"])
+        current_run = next(
+            ref for ref in meta["meta_run_refs"] if ref.get("current_episode")
+        )
+        assert current_run["failure_code"] == "meta_repair_launch_failure"
+        assert current_run["launch_failure"] is True
+        assert current_run["terminal_failure"] is True
 
     def test_meta_repair_summary_ignores_partial_liveness_for_complete_chain_without_repair_context(
         self, tmp_path: Path

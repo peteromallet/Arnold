@@ -1208,6 +1208,8 @@ def _text_has_meta_launch_failure(text):
     needles = (
         "Codex meta-repair orchestrator returned no output",
         "Codex meta-repair prompt exceeded input limit",
+        "all meta-repair launch paths failed",
+        "direct Hermes fallback produced no recordable verdict",
         "Not inside a trusted directory",
         "--skip-git-repo-check was not specified",
         "codex CLI missing; no automated meta-repair",
