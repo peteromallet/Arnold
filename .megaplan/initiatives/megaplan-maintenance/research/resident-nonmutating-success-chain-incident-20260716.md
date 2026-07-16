@@ -106,12 +106,61 @@ delivery text cannot invent git requirements for a non-mutating result.
 Focused verification:
 
 - `python -m pytest -q tests/resident/test_git_custody.py tests/resident/test_subagent_queue.py tests/resident/test_delegation_delivery_instruction.py tests/resident/test_task_routing.py`
-  — 67 passed.
+  — 68 passed after the final safety regression.
+- The same focused set plus the two compatibility cases surfaced by the wider
+  run — 70 passed.
+- `python -m pytest -q tests/resident/test_megaplan_initiatives.py` — 21 passed.
+- A full `tests/resident` run reached 432 passed and two failures. One was a
+  legacy-manifest compatibility gap introduced by the first draft and was fixed
+  with explicit `legacy_lifecycle_success`; the other was a suite-order
+  `tmux has-session` capture in a follow-up test. Both exact failures passed in
+  the subsequent 70-test isolated run. The full suite was not rerun after that
+  eight-minute pass; this distinction is intentional.
 - Regressions prove: zero-exit non-mutating mechanical success without git
   custody; predecessor success launches its successor; a four-deep chain reaches
   exactly one final delivery owner; explicit git-backed mechanical mutation
   fails without custody; and predecessor failure propagates through every
   successor without execution.
 
-Commit, target integration, custody receipt, broader resident-suite result, and
-fresh durable-chain run IDs are appended after final verification.
+The target advanced concurrently from the launch base to
+`97cc9171f35f66b0d83bd40a0f0029106e321189` through four unrelated commits. A
+first shell revalidation command lacked `set -e` and briefly moved the target ref
+to the pre-rebase feature commit after a failed assertion. No checkout files
+changed. The ref was immediately restored by compare-and-swap to `97cc9171f...`,
+the feature was rebased, 70 focused tests were rerun, and guarded integration
+then advanced the target to `31d72c3a85e20c0a76a1d5d96df2d7ce84d77ecb`.
+Ancestry proves the launch base, the concurrent target revision, and the fix are
+all retained.
+
+## Fresh durable non-mocked chain
+
+The integrated source was exercised through four real Codex workers in the
+isolated durable proof project
+`.megaplan/proofs/nonmutating-chain-31d72c3a85/.megaplan/plans/resident-subagents/`:
+
+1. `subagent-20260716-185232-0ada2fe4` completed zero-exit with
+   `WORD_1: lantern`.
+2. `subagent-20260716-185232-bd11d7f0` launched only after validated predecessor
+   success and completed with `lantern, meadow`.
+3. `subagent-20260716-185232-22726cfd` launched only after validated predecessor
+   success and completed with `lantern, meadow, pebble`.
+4. `subagent-20260716-185232-e15c7338` launched only after validated predecessor
+   success and completed with
+   `WORDS_IN_ORDER: lantern, meadow, pebble, river`.
+
+Every manifest records `status=completed`, `returncode=0`, and
+`completion_verification.classification=applicable_non_mutating_success` with
+`git_custody=not_applicable`. The first three are internal contributors with
+`completion_delivery.status=suppressed`; only the fourth is the synthesis owner,
+with delivery pending.
+
+This is durable behavioral proof of the integrated source, but not a production
+Discord delivery claim. The live Discord resident PID `2307050` was started with
+`python -P` and resolves the installed editable module to
+`/workspace/arnold-consolidation-20260714`, whose loaded source predates the fix
+and lacks `COMPLETION_VERIFICATION_SCHEMA`. It also does not scan the isolated
+proof project. Exercising the integrated target through the installed resident
+therefore requires `agentbox services restart agentbox-discord-resident` (and
+installed-source reconciliation). Restart/deployment was explicitly outside
+this request, so it was not performed; final-owner user-facing delivery remains
+the exact operational gate.
