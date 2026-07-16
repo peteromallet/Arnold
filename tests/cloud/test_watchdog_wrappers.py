@@ -88,6 +88,8 @@ def test_relaunch_scripts_preserve_managed_repair_route_context() -> None:
         assert "export ARNOLD_REPAIR_MARKER_DIR=" in text
         assert "export ARNOLD_REPAIR_SESSION=" in text
         assert "export ARNOLD_REPAIR_RUN_KIND=" in text
+    assert "operator-managed runtime environment inside the new child" in repair_loop
+    assert ". /workspace/.cloud-hot-env" in repair_loop
 
 
 def test_superfixer_wrappers_prefer_pinned_runtime_source() -> None:
