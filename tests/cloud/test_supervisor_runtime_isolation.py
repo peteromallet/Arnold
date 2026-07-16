@@ -8,6 +8,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+from arnold_pipelines.megaplan.cloud import current_target
+from arnold_pipelines.megaplan.cloud.supervise import enqueue_supervisor_repair_request
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPERS = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
@@ -230,6 +235,69 @@ def test_dependency_independent_gap_scan_flags_stopped_marker_without_custody(
     (chain_dir / "chain.json").write_text("{}\n", encoding="utf-8")
     subprocess.run(command, check=True, text=True, capture_output=True)
     assert json.loads(output.read_text())["status"] == "healthy"
+
+
+def test_supervisor_queue_binds_current_plan_not_chain_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker_dir = tmp_path / "markers"
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
+    workspace = tmp_path / "workspace"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    marker_dir.mkdir()
+    chain_dir.mkdir(parents=True)
+    spec = workspace / "chain.yaml"
+    spec.write_text("milestones: []\n", encoding="utf-8")
+    (marker_dir / "demo.json").write_text(
+        json.dumps(
+            {
+                "session": "demo",
+                "workspace": str(workspace),
+                "remote_spec": str(spec),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (chain_dir / "chain.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": "current-quality-plan",
+                "last_state": "blocked",
+                "metadata": {"chain_spec_path": str(spec)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_dir = workspace / ".megaplan" / "plans" / "current-quality-plan"
+    state_dir.mkdir(parents=True)
+    (state_dir / "state.json").write_text(
+        json.dumps({"name": "current-quality-plan", "current_state": "blocked"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        current_target,
+        "resolve_current_target",
+        lambda *args, **kwargs: {
+            "current_refs": {"current_plan_name": "current-quality-plan"}
+        },
+    )
+
+    result = enqueue_supervisor_repair_request(
+        queue_root=queue_root,
+        marker_dir=marker_dir,
+        session="demo",
+        workspace=workspace,
+        remote_spec=str(spec),
+        run_kind="chain",
+        reason="durable_review_quality_block:review_quality_blocked_unknown",
+        log_path=str(tmp_path / "supervise.log"),
+    )
+
+    request = result["request"]
+    assert request["target"]["plan_name"] == "current-quality-plan"
+    assert request["problem_signature"]["milestone_or_plan"] == "current-quality-plan"
+    assert request["problem_signature"]["milestone_or_plan"] != str(spec)
 
 
 def test_dependency_independent_gap_scan_flags_execution_binding_drift(
