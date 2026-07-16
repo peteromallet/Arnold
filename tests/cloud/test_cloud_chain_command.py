@@ -135,6 +135,15 @@ def test_sync_megaplan_accepts_on_box_provider() -> None:
     assert args.on_box is True
 
 
+def test_cloud_chain_accepts_prepare_only() -> None:
+    args = _cloud_parser().parse_args(
+        ["cloud", "chain", "initiative/chain.yaml", "--prepare-only"]
+    )
+
+    assert args.cloud_action == "chain"
+    assert args.prepare_only is True
+
+
 def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     command = _chain_start_command(
         "/workspace/project/.megaplan/initiatives/demo/chain.yaml",

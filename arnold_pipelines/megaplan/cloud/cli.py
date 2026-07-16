@@ -185,6 +185,11 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         ),
     )
     chain_parser.add_argument(
+        "--prepare-only",
+        action="store_true",
+        help="Upload and normalize canonical chain inputs without starting a runner.",
+    )
+    chain_parser.add_argument(
         "--force-clean-editable-install",
         action="store_true",
         help=(
@@ -4286,6 +4291,19 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     finally:
         if upload_spec_path != local_spec_path:
             upload_spec_path.unlink(missing_ok=True)
+    if bool(getattr(args, "prepare_only", False)):
+        payload = {
+            "success": True,
+            "event": "cloud_chain_prepared",
+            "remote_spec": remote_spec_path,
+            "chain_session": launch_ctx.session_name,
+            "workspace": launch_ctx.workspace,
+            "repo_head": repo_head,
+            "uploaded_idea_count": len(uploads),
+            "runner_started": False,
+        }
+        sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+        return 0
     launch_session = launch_ctx.session_name
     session_name = launch_ctx.session_name
     launch_started_at = datetime.now(timezone.utc).isoformat()
