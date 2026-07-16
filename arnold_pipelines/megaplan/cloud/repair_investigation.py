@@ -1463,6 +1463,8 @@ def _bound_observation_value(value: Any, *, depth: int = 0) -> Any:
     """Deterministically cap nested derived observations, never source evidence."""
 
     if depth >= 3:
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
         return _text(value, 300)
     if isinstance(value, str):
         return value[:600]
@@ -1763,11 +1765,24 @@ def validate_investigator_receipt(
                     "state recovery cannot replay a durable review-quality block before its "
                     "bounded rework target is repaired"
                 )
+        current = investigation_context.get("current")
+        current = current if isinstance(current, Mapping) else {}
+        commit_custody = current.get("quality_resolution_commit_custody")
+        commit_custody = commit_custody if isinstance(commit_custody, Mapping) else {}
+        if (
+            action == "recover_state"
+            and commit_custody.get("verified") is not True
+            and commit_custody.get("missing_commits")
+        ):
+            raise ValueError(
+                "state recovery cannot discard missing durable quality-resolution commits"
+            )
     if isinstance(observation_bundle, Mapping):
         if observation_bundle.get("context_digest") != expected_context_digest:
             raise ValueError("investigator observation bundle digest disagrees")
         external_guard = {}
         live_worker_observed = False
+        missing_quality_commits = False
         for item in observation_bundle.get("observations") or []:
             if not isinstance(item, Mapping):
                 continue
@@ -1809,9 +1824,30 @@ def validate_investigator_receipt(
                     )
                 ):
                     live_worker_observed = True
+            if item.get("kind") == "repair_goal":
+                last_evaluation = observed.get("last_evaluation")
+                last_evaluation = (
+                    last_evaluation if isinstance(last_evaluation, Mapping) else {}
+                )
+                commit_custody = last_evaluation.get(
+                    "quality_resolution_commit_custody"
+                )
+                commit_custody = (
+                    commit_custody if isinstance(commit_custody, Mapping) else {}
+                )
+                missing = commit_custody.get("missing_commits")
+                if (
+                    commit_custody.get("verified") is not True
+                    and missing not in (None, "", [], "[]")
+                ):
+                    missing_quality_commits = True
         if external_guard.get("status") != "clear" and action == "recover_state":
             raise ValueError(
                 "state recovery cannot bypass a failing or pending external PR/CI guard"
+            )
+        if missing_quality_commits and action == "recover_state":
+            raise ValueError(
+                "state recovery cannot discard missing durable quality-resolution commits"
             )
         if action == "preserve_live" and not live_worker_observed:
             raise ValueError(

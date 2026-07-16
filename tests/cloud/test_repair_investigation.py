@@ -700,6 +700,62 @@ def test_failing_external_guard_rejects_state_recovery_handoff() -> None:
         )
 
 
+def test_missing_quality_commit_custody_rejects_state_recovery_handoff() -> None:
+    receipt = _receipt(target_kind="l2_repair_system")
+    receipt["recommended_action"] = "recover_state"
+    receipt["handoff"] = {
+        "action": "recover_state",
+        "allowed_mutations": ["supported recovery CLI"],
+        "forbidden_mutations": ["direct state edit"],
+    }
+    receipt["safe_repair_target"] = {
+        "kind": "repair_custody",
+        "scope": "repair custody",
+        "rationale": "reconcile stale state",
+    }
+    observation = {
+        "context_digest": "digest-1",
+        "observations": [
+            {
+                "kind": "external_state",
+                "observed": {"external_guard": {"status": "clear"}},
+            },
+            {
+                "kind": "repair_goal",
+                "observed": {
+                    "last_evaluation": {
+                        "quality_resolution_commit_custody": {
+                            "verified": False,
+                            "missing_commits": ["0beb5e8d"],
+                        }
+                    }
+                },
+            },
+        ],
+    }
+    with pytest.raises(ValueError, match="missing durable quality-resolution commits"):
+        validate_investigator_receipt(
+            receipt,
+            expected_context_digest="digest-1",
+            observation_bundle=observation,
+        )
+
+    with pytest.raises(ValueError, match="missing durable quality-resolution commits"):
+        validate_investigator_receipt(
+            receipt,
+            expected_context_digest="digest-1",
+            investigation_context={
+                "context_digest": "digest-1",
+                "current": {
+                    "quality_resolution_commit_custody": {
+                        "verified": False,
+                        "missing_commits": ["0beb5e8d"],
+                    }
+                },
+            },
+        )
+
+
 def test_preserve_live_requires_verified_live_worker_evidence() -> None:
     receipt = _receipt()
     receipt["recommended_action"] = "preserve_live"
