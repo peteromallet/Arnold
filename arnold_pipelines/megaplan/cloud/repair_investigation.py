@@ -1764,6 +1764,8 @@ def summarize_investigation_artifacts(
             "receipt_path": str(receipt_path),
             "context_digest": digest,
         }
+    actual_failure = validated.get("actual_failure")
+    actual_failure = actual_failure if isinstance(actual_failure, Mapping) else {}
     return {
         "required": True,
         "status": "accepted",
@@ -1772,7 +1774,12 @@ def summarize_investigation_artifacts(
         "receipt_path": str(receipt_path),
         "context_digest": digest,
         "receipt_digest": validated.get("receipt_digest"),
-        "actual_failure_classification": (validated.get("actual_failure") or {}).get("classification"),
+        "actual_failure_classification": actual_failure.get("classification"),
+        "actual_failure": {
+            "classification": _text(actual_failure.get("classification"), 100),
+            "error": _text(actual_failure.get("error"), 1000),
+            "mechanism": _text(actual_failure.get("mechanism"), 2000),
+        },
         "evidence_source_kinds": sorted(
             {str(item.get("kind")) for item in validated.get("evidence_sources") or [] if isinstance(item, Mapping)}
         ),

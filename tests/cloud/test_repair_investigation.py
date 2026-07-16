@@ -924,6 +924,8 @@ def test_shared_summary_distinguishes_missing_invalid_and_accepted(tmp_path: Pat
     assert summary["status"] == "accepted"
     assert summary["evidence_source_kinds"] == ["plan_state"]
     assert summary["recommended_action"] == "repair_target"
+    assert summary["actual_failure"]["classification"] == "custody_failure"
+    assert summary["actual_failure"]["mechanism"]
 
 
 def test_meta_context_uses_common_evidence_and_recovery_semantics(tmp_path: Path) -> None:

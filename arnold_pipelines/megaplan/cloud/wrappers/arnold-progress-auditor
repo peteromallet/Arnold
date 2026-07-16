@@ -2365,6 +2365,30 @@ def _repair_data_summary(session):
     ]
     investigation_summary = summarize_investigation_artifacts(payload, field="investigation")
     meta_investigation_summary = summarize_investigation_artifacts(payload, field="meta_investigation")
+    repair_goal_summary = {}
+    repair_goal_ref = payload.get("repair_goal") if isinstance(payload, dict) else {}
+    repair_goal_ref = repair_goal_ref if isinstance(repair_goal_ref, dict) else {}
+    repair_goal_path = pathlib.Path(str(repair_goal_ref.get("goal_path") or ""))
+    repair_goal = _load_json(repair_goal_path) if repair_goal_path.is_file() else {}
+    terminal_failures = repair_goal.get("terminal_failures") if isinstance(repair_goal, dict) else []
+    terminal_failures = terminal_failures if isinstance(terminal_failures, list) else []
+    if repair_goal:
+        repair_goal_summary = {
+            "goal_id": str(repair_goal.get("goal_id") or "")[:200],
+            "path": str(repair_goal_path),
+            "status": str(repair_goal.get("status") or "")[:100],
+            "terminal_failures": [
+                {
+                    "recorded_at": str(item.get("recorded_at") or "")[:100],
+                    "phase": str(item.get("phase") or "")[:300],
+                    "outcome": str(item.get("outcome") or "")[:300],
+                    "reason": str(item.get("reason") or "")[:1200],
+                    "owner_run_id": str(item.get("owner_run_id") or "")[:300],
+                }
+                for item in terminal_failures[-5:]
+                if isinstance(item, dict)
+            ],
+        }
     return {
         "path": str(path),
         "exists": True,
@@ -2412,6 +2436,7 @@ def _repair_data_summary(session):
         "managed_agent_runs": payload.get("managed_agent_runs") if isinstance(payload, dict) and isinstance(payload.get("managed_agent_runs"), list) else [],
         "investigation_summary": investigation_summary,
         "meta_investigation_summary": meta_investigation_summary,
+        "repair_goal_summary": repair_goal_summary,
         "iteration_count": len(iterations),
         "iterations": summarized_iterations,
         "repeated_failure_signatures": repeated[:6],
@@ -3772,6 +3797,44 @@ def _investigation_handoff_reason(ev):
         )
     return ""
 
+def _repair_owner_terminal_failure_reason(ev):
+    chain_current = (
+        (ev.get("chain_state_summary") or {}).get("current")
+        if isinstance(ev.get("chain_state_summary"), dict)
+        else {}
+    )
+    if _chain_state_looks_terminal(chain_current):
+        return ""
+    repair = ev.get("repair_data_summary") if isinstance(ev, dict) else {}
+    repair = repair if isinstance(repair, dict) else {}
+    goal = repair.get("repair_goal_summary")
+    goal = goal if isinstance(goal, dict) else {}
+    failures = goal.get("terminal_failures")
+    failures = failures if isinstance(failures, list) else []
+    if not failures:
+        return ""
+    latest = failures[-1] if isinstance(failures[-1], dict) else {}
+    reason = str(latest.get("reason") or "")
+    phase = str(latest.get("phase") or "")
+    failure_class = "repair_owner_terminal_failure"
+    if "quality_recovery_command_invalid" in reason:
+        failure_class = "receipt_bound_quality_recovery_transport"
+    elif "failed:stopped:rc=" in reason:
+        failure_class = "supported_recovery_command_failed"
+    elif phase == "authorized-recovery-no-progress":
+        failure_class = "owner_terminalized_before_outcome"
+    investigation = repair.get("investigation_summary")
+    investigation = investigation if isinstance(investigation, dict) else {}
+    actual = investigation.get("actual_failure")
+    actual = actual if isinstance(actual, dict) else {}
+    mechanism = str(actual.get("mechanism") or "")[:700]
+    return (
+        "repair_owner_terminal_failure: "
+        f"class={failure_class} phase={phase or 'unknown'} "
+        f"outcome={latest.get('outcome') or 'unknown'} reason={reason[:700] or 'missing'} "
+        f"investigated_root_cause={mechanism or 'unavailable'}"
+    )
+
 def _canonical_launch_disagreement_reason(ev):
     repair = ev.get("repair_data_summary") if isinstance(ev, dict) else {}
     custody = ev.get("repair_custody_summary") if isinstance(ev, dict) else {}
@@ -5105,6 +5168,7 @@ for entry in plans:
         _watchdog_chain_health_disagreement_reason(ev),
         _repair_data_ghost_running_reason(ev),
         _investigation_handoff_reason(ev),
+        _repair_owner_terminal_failure_reason(ev),
         _canonical_launch_disagreement_reason(ev),
         _repair_complete_incomplete_chain_reason(ev),
         _green_with_recent_repair_churn_reason(ev),
