@@ -1,16 +1,10 @@
 # Epic-wide managed-agent capture architecture
 
-Status: archived speculative research; superseded as current scheduling truth
+Status: recommended architecture; speculative research only
 
 Date: 2026-07-16
 
 Initiative: `session-knowledge-compiler`
-
-> Archival note (2026-07-16): this evidence was written against the superseded
-> three-sprint tightening. The current eight-sprint chain and neutral-lifecycle
-> decision at the initiative root are authoritative. Links below to the former
-> M1-M3 inputs point to their archive; recommendations remain comparative
-> evidence and are not implementation or current scheduling claims.
 
 ## Decision
 
@@ -41,8 +35,8 @@ The boundary is strict:
   checkpoints, summaries, corrections, contradictions, and promotion
   candidates derived from references to those source records.
 
-This recommendation extended [the archived three-sprint initiative](../archive/20260716-three-sprint-tightening/README.md),
-while preserving the [North Star](../NORTHSTAR.md), and consumes rather than duplicates
+This decision extends [the current three-sprint initiative](../README.md),
+preserves the [North Star](../NORTHSTAR.md), and consumes rather than duplicates
 the ownership decisions in the
 [WBC execution-attempt ledger](../../workflow-boundary-contracts/decisions/2026-07-11-kernel-execution-attempt-ledger.md)
 and the
@@ -66,11 +60,11 @@ The following labels are used throughout:
 | `/workspace/arnold-consolidation-20260714` | initiative pinned at `a3b2dffbb5d3be412ec82d749f079ebb886d450d`; clean checkout inspected at `d747fd7d43fdfa4ee7a87a1db3add62871cf44e3` | canonical tightened initiative and resident runtime |
 
 The pinned revision is the commit titled `plan: tighten session knowledge
-compiler to three sprints`. Its initiative inputs, now archived, are
-[M1](../archive/20260716-three-sprint-tightening/briefs/m1-compiler-core.md),
-[M2](../archive/20260716-three-sprint-tightening/briefs/m2-knowledge-use-governance.md), and
-[M3](../archive/20260716-three-sprint-tightening/briefs/m3-consolidation-operational-proof.md).
-They are historical evidence, not current scheduling inputs.
+compiler to three sprints`. The current initiative inputs are
+[M1](../briefs/m1-compiler-core.md),
+[M2](../briefs/m2-knowledge-use-governance.md), and
+[M3](../briefs/m3-consolidation-operational-proof.md). The older five- and
+eleven-sprint plans are historical evidence, not current scheduling inputs.
 
 ### Current source and lifecycle observations
 
@@ -378,9 +372,9 @@ archived eleven-sprint decomposition.
 
 | Current sprint | Epic-wide addition | Acceptance handoff |
 | --- | --- | --- |
-| [M1 — compiler core](../archive/20260716-three-sprint-tightening/briefs/m1-compiler-core.md) | Add the generalized envelope and source-range contract; make epic/milestone/plan/phase/agent/task/authority fields additive; implement generic Store append/idempotency plus initial native-plan and managed-agent adapter families; keep threshold/terminal extraction and four-record acceptance unchanged | one accepted checkpoint can cite an exact agent/phase attempt inside an exact epic run, including child/retry lineage, without another store or cursor |
-| [M2 — knowledge use](../archive/20260716-three-sprint-tightening/briefs/m2-knowledge-use-governance.md) | Add step, milestone, and epic synthesis projections to the same append-only correction/contradiction/query lifecycle; apply acceptance/applicability filters; keep cross-epic reuse behind the existing reviewed promotion path | a corrected/reworked milestone rebuilds a new epic synthesis while preserving old versions and every source/decision ref |
-| [M3 — operational proof](../archive/20260716-three-sprint-tightening/briefs/m3-consolidation-operational-proof.md) | Complete chain/epic, resident, repair, nested, retry/rework, and late-event adapter conformance; add observer reconciliation, privacy/rollout diagnostics, and a real-epic replay/canary fixture; preserve harmless async behavior | coverage matrix and proving fixture demonstrate all required producer classes, failure isolation, disable/rollback, and no primary-result/delivery change |
+| [M1 — compiler core](../briefs/m1-compiler-core.md) | Add the generalized envelope and source-range contract; make epic/milestone/plan/phase/agent/task/authority fields additive; implement generic Store append/idempotency plus initial native-plan and managed-agent adapter families; keep threshold/terminal extraction and four-record acceptance unchanged | one accepted checkpoint can cite an exact agent/phase attempt inside an exact epic run, including child/retry lineage, without another store or cursor |
+| [M2 — knowledge use](../briefs/m2-knowledge-use-governance.md) | Add step, milestone, and epic synthesis projections to the same append-only correction/contradiction/query lifecycle; apply acceptance/applicability filters; keep cross-epic reuse behind the existing reviewed promotion path | a corrected/reworked milestone rebuilds a new epic synthesis while preserving old versions and every source/decision ref |
+| [M3 — operational proof](../briefs/m3-consolidation-operational-proof.md) | Complete chain/epic, resident, repair, nested, retry/rework, and late-event adapter conformance; add observer reconciliation, privacy/rollout diagnostics, and a real-epic replay/canary fixture; preserve harmless async behavior | coverage matrix and proving fixture demonstrate all required producer classes, failure isolation, disable/rollback, and no primary-result/delivery change |
 
 ### Explicit deferrals
 
