@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import shlex
 import subprocess
@@ -36,6 +37,33 @@ MALFORMED = "malformed"
 _BEFORE_EXECUTE_GATE_PREFIX = "Read user_actions.md."
 
 
+def compact_failure_identity(value: object) -> dict[str, Any]:
+    """Return the canonical bounded failure identity used by repair custody."""
+
+    if not isinstance(value, Mapping):
+        return {}
+    compact = {
+        key: value.get(key)
+        for key in (
+            "failure_kind",
+            "kind",
+            "phase",
+            "step",
+            "task_id",
+            "blocked_task_id",
+            "message",
+            "error",
+            "timestamp",
+        )
+        if value.get(key) not in (None, "", [], {})
+    }
+    if compact:
+        compact["fingerprint"] = hashlib.sha256(
+            json.dumps(compact, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+    return compact
+
+
 def validated_deterministic_phase_repair(
     project_dir: Path,
     state: dict[str, Any],
@@ -66,7 +94,9 @@ def validated_deterministic_phase_repair(
             "deterministic phase repair must match the current failure and resume phase",
             extra={"failure_phase": failure_phase, "resume_phase": cursor_phase},
         )
-    current_fingerprint = str(latest_failure.get("fingerprint") or "").strip()
+    current_fingerprint = str(
+        compact_failure_identity(latest_failure).get("fingerprint") or ""
+    ).strip()
     expected_fingerprint = str(failure_fingerprint or "").strip()
     if not current_fingerprint or expected_fingerprint != current_fingerprint:
         raise CliError(

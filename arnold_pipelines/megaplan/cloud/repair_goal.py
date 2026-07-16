@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from arnold_pipelines.megaplan.blocker_recovery import compact_failure_identity
+
 
 REPAIR_GOAL_SCHEMA = "arnold-repair-goal-v1"
 GOAL_ACTIVE = "active"
@@ -299,25 +301,7 @@ def _parse_time(value: object) -> datetime | None:
 
 
 def _compact_failure(value: object) -> dict[str, Any]:
-    if not isinstance(value, Mapping):
-        return {}
-    compact = {
-        key: value.get(key)
-        for key in (
-            "failure_kind",
-            "kind",
-            "phase",
-            "step",
-            "task_id",
-            "blocked_task_id",
-            "message",
-            "error",
-            "timestamp",
-        )
-        if value.get(key) not in (None, "", [], {})
-    }
-    compact["fingerprint"] = _digest(compact) if compact else ""
-    return compact
+    return compact_failure_identity(value)
 
 
 def _target_stage(state: Mapping[str, Any], chain: Mapping[str, Any]) -> str:
