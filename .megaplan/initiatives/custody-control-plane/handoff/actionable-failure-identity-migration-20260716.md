@@ -146,3 +146,10 @@ A direct temporary behavioral probe, rerun after that target rebase, enqueued th
 different sessions. It confirmed distinct computed request IDs, cross-session
 coalescing to one persisted marker, and an accepted surviving projection with
 an empty `blocker_id`.
+
+Final-target caveat: the new phase-scope, phase-replay, and watchdog-fence
+regressions pass (`3 passed`). Running the whole repair-dispatch classifier file
+also exposed 12 pre-existing/stale fixtures that omit the now-required central
+`queue_root`; those fail with `TypeError`. They remain an explicit conformance
+gap and must not be counted as a runtime-fix regression or a green class-wide
+gate.
