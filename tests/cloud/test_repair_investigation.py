@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from arnold_pipelines.megaplan.cloud import repair_investigation
 from arnold_pipelines.megaplan.cloud.repair_investigation import (
     EVIDENCE_SOURCE_KINDS,
     MAX_CONTEXT_BYTES,
@@ -195,6 +196,54 @@ def test_l1_broker_observation_fails_closed_above_48_kib(tmp_path: Path) -> None
 
     with pytest.raises(ValueError, match="brokered repair observations exceed 48 KiB"):
         build_repair_observation_bundle(context_path)
+
+
+def test_external_snapshot_uses_authoritative_chain_pr_number(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "number": 255,
+                    "state": "OPEN",
+                    "headRefName": "different-from-local-branch",
+                    "statusCheckRollup": [],
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(repair_investigation.subprocess, "run", fake_run)
+    snapshot_path = repair_investigation._external_pr_snapshot(
+        session="demo",
+        workspace=workspace,
+        repair_root=tmp_path / "repair-data",
+        pull_request_number=255,
+    )
+
+    assert commands == [
+        [
+            "gh",
+            "pr",
+            "view",
+            "255",
+            "--json",
+            "number,url,state,isDraft,mergeStateStatus,headRefName,headRefOid,"
+            "baseRefName,baseRefOid,updatedAt,statusCheckRollup",
+        ]
+    ]
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert snapshot["available"] is True
+    assert snapshot["pull_request"]["number"] == 255
+    assert snapshot["query"].startswith("gh pr view 255")
 
 
 def test_context_normalizes_mapping_validation_from_real_repair_report(tmp_path: Path) -> None:
@@ -1234,6 +1283,14 @@ def test_repair_loop_uses_bounded_context_pointer_from_sandbox_root() -> None:
     assert '--toolsets ""' in wrapper
     assert "repair_investigation observe" in wrapper
     assert '--context "$INVESTIGATION_CONTEXT_PATH"' in wrapper
+    assert '"${context_build_cmd[@]}" >/dev/null 2>"$INVESTIGATION_BUILD_ERROR_PATH"' in wrapper
+    assert '--output "$INVESTIGATION_OBSERVATION_PATH" >/dev/null 2>>"$LOG"' in wrapper
+    meta_wrapper = (
+        REPO_ROOT
+        / "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
+    ).read_text(encoding="utf-8")
+    assert '--output "$META_INVESTIGATION_CONTEXT_PATH" >/dev/null 2>>"$RUN_LOG"' in meta_wrapper
+    assert '--output "$META_INVESTIGATION_OBSERVATION_PATH" >/dev/null 2>>"$RUN_LOG"' in meta_wrapper
     assert "<investigation_handoff>" in wrapper
 
 

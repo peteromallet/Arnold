@@ -976,7 +976,11 @@ def _git_observation(root: Path) -> dict[str, Any]:
 
 
 def _external_pr_snapshot(
-    *, session: str, workspace: Path, repair_root: Path
+    *,
+    session: str,
+    workspace: Path,
+    repair_root: Path,
+    pull_request_number: int | None = None,
 ) -> Path:
     """Persist a fresh, bounded read-only PR/CI observation for custody review."""
 
@@ -986,16 +990,21 @@ def _external_pr_snapshot(
         "number,url,state,isDraft,mergeStateStatus,headRefName,headRefOid,"
         "baseRefName,baseRefOid,updatedAt,statusCheckRollup"
     )
+    selector = str(pull_request_number) if pull_request_number else "current_branch"
     snapshot: dict[str, Any] = {
         "schema_version": "arnold-external-pr-ci-observation-v1",
         "captured_at": utc_now(),
         "workspace": str(workspace),
-        "query": "gh pr view --json <bounded fields>",
+        "query": f"gh pr view {selector} --json <bounded fields>",
         "available": False,
     }
     try:
+        command = ["gh", "pr", "view"]
+        if pull_request_number:
+            command.append(str(pull_request_number))
+        command.extend(["--json", fields])
         proc = subprocess.run(
-            ["gh", "pr", "view", "--json", fields],
+            command,
             cwd=workspace,
             check=False,
             capture_output=True,
@@ -1095,8 +1104,18 @@ def build_meta_investigation_context(
     target_workspace = Path(str(marker.get("workspace") or ""))
     if not str(marker.get("workspace") or "").strip():
         raise ValueError("session marker does not identify a target workspace")
+    chain_state_ref = current_target.get("chain_state")
+    chain_state_ref = chain_state_ref if isinstance(chain_state_ref, Mapping) else {}
+    chain_state = _load(str(chain_state_ref.get("path") or ""))
+    try:
+        pull_request_number = int(chain_state.get("pr_number") or 0)
+    except (TypeError, ValueError):
+        pull_request_number = 0
     external_path = _external_pr_snapshot(
-        session=session, workspace=target_workspace, repair_root=repair_root
+        session=session,
+        workspace=target_workspace,
+        repair_root=repair_root,
+        pull_request_number=pull_request_number if pull_request_number > 0 else None,
     )
     evidence_refs.append(_file_reference("external_state", external_path))
     current_paths = (

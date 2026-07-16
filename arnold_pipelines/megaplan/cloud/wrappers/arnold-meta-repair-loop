@@ -497,11 +497,11 @@ run_meta_repair_investigation() {
     --arnold-src "$ARNOLD_SRC" \
     --request-id "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" \
     --blocker-id "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" \
-    --output "$META_INVESTIGATION_CONTEXT_PATH" >>"$RUN_LOG" 2>&1 || return 1
+    --output "$META_INVESTIGATION_CONTEXT_PATH" >/dev/null 2>>"$RUN_LOG" || return 1
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
     arnold_pipelines.megaplan.cloud.repair_investigation observe-meta \
     --context "$META_INVESTIGATION_CONTEXT_PATH" \
-    --output "$META_INVESTIGATION_OBSERVATION_PATH" >>"$RUN_LOG" 2>&1 || return 1
+    --output "$META_INVESTIGATION_OBSERVATION_PATH" >/dev/null 2>>"$RUN_LOG" || return 1
   META_INVESTIGATION_CONTEXT_DIGEST="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["context_digest"])' "$META_INVESTIGATION_CONTEXT_PATH")"
   {
     cat <<EOF
