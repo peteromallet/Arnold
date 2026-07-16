@@ -383,6 +383,35 @@ def test_execution_blocked_fingerprint_extracts_blocked_task_from_reason() -> No
     assert blocker_id_for_fingerprint(fingerprint)
 
 
+def test_phase_contract_failure_gets_claimable_phase_scoped_identity() -> None:
+    state = _plan_state(
+        name="m6-exact-contract",
+        resume_cursor={"phase": "critique", "retry_strategy": "repair_phase_contract"},
+        latest_failure={
+            "kind": "deterministic_phase_failure",
+            "phase": "critique",
+            "metadata": {"count": 3, "max_attempts": 3},
+        },
+    )
+    target = _current_target(
+        current_refs={
+            "current_plan_name": "m6-exact-contract",
+            "plan_current_state": "blocked",
+        },
+        event_cursors={"resume_retry_strategy": "repair_phase_contract"},
+    )
+
+    fingerprint = blocker_fingerprint_from_evidence(
+        plan_state=state,
+        current_target=target,
+    )
+
+    assert fingerprint is not None
+    assert fingerprint["blocked_task_id"] == "phase:critique"
+    assert fingerprint["retry_strategy"] == "repair_phase_contract"
+    assert blocker_id_for_fingerprint(fingerprint)
+
+
 def test_classifier_gates_true_or_ambiguous_human_blockers(tmp_path: Path) -> None:
     projection = _projection(tmp_path)
 

@@ -4133,7 +4133,13 @@ def _stale_unclaimed_repair_custody_reason(ev):
     chain_current = (ev.get("chain_state_summary") or {}).get("current") if isinstance(ev.get("chain_state_summary"), dict) else {}
     unclaimed = custody.get("accepted_unclaimed_request_ids") or []
     budget = custody.get("retry_budget") if isinstance(custody.get("retry_budget"), dict) else {}
-    exhausted = budget.get("alert_required") is True or bool(custody.get("claim_alert_request_ids"))
+    alert_ids = {
+        str(item)
+        for item in (custody.get("claim_alert_request_ids") or [])
+        if str(item)
+    }
+    unclaimed_ids = {str(item) for item in unclaimed if str(item)}
+    exhausted = budget.get("alert_required") is True or bool(alert_ids & unclaimed_ids)
     if unclaimed and exhausted and _chain_state_looks_nonterminal(chain_current):
         return (
             "stale_unclaimed_repair_custody: accepted repair requests have no claim or attempt "

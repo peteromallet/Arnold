@@ -584,6 +584,26 @@ def blocker_fingerprint_from_evidence(
     target_current_refs = _as_mapping(target_payload.get("current_refs"))
     target_event_cursors = _as_mapping(target_payload.get("event_cursors"))
 
+    phase_or_step = _first_non_empty(
+        _as_text(latest_failure.get("phase")),
+        _as_text(plan_payload.get("phase")),
+        _as_text(signature.get("phase_or_step")),
+    )
+    blocked_task_id = _first_non_empty(
+        _as_text(latest_failure.get("blocked_task_id")),
+        _as_text(latest_failure.get("task_id")),
+        _as_text(latest_failure_meta.get("blocked_task_id")),
+        _as_text(latest_failure_meta.get("task_id")),
+        _blocked_task_id_from_failure(latest_failure, latest_failure_meta),
+        _as_text(signature.get("blocked_task_id")),
+    )
+    # Phase-level deterministic failures have no task by construction.  They
+    # still need a stable blocker-scoped claim identity; otherwise an accepted
+    # lifecycle request can never be claimed.  Keep the distinction explicit
+    # instead of inventing a task number.
+    if not blocked_task_id and phase_or_step:
+        blocked_task_id = f"phase:{phase_or_step}"
+
     payload: dict[str, Any] = {
         "schema_version": BLOCKER_FINGERPRINT_VERSION,
         "current_state": _first_non_empty(
@@ -600,25 +620,14 @@ def blocker_fingerprint_from_evidence(
             _as_text(latest_failure.get("kind")),
             _as_text(signature.get("failure_kind")),
         ),
-        "phase_or_step": _first_non_empty(
-            _as_text(latest_failure.get("phase")),
-            _as_text(plan_payload.get("phase")),
-            _as_text(signature.get("phase_or_step")),
-        ),
+        "phase_or_step": phase_or_step,
         "milestone_or_plan": _first_non_empty(
             _as_text(plan_payload.get("name")),
             _as_text(target_current_refs.get("current_plan_name")),
             _as_text(target_current_refs.get("chain_current_plan_name")),
             _as_text(signature.get("milestone_or_plan")),
         ),
-        "blocked_task_id": _first_non_empty(
-            _as_text(latest_failure.get("blocked_task_id")),
-            _as_text(latest_failure.get("task_id")),
-            _as_text(latest_failure_meta.get("blocked_task_id")),
-            _as_text(latest_failure_meta.get("task_id")),
-            _blocked_task_id_from_failure(latest_failure, latest_failure_meta),
-            _as_text(signature.get("blocked_task_id")),
-        ),
+        "blocked_task_id": blocked_task_id,
         "target_fingerprint": _first_non_empty(
             _as_text(target_plan_state.get("fingerprint")),
             _as_text(_as_mapping(target_payload.get("chain_state")).get("fingerprint")),

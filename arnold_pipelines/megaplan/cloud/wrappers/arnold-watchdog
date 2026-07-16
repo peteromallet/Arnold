@@ -8452,6 +8452,18 @@ PY
     return 0
   fi
 
+  # A deterministic phase-contract failure cannot improve by rerunning the
+  # same phase bytes.  The lifecycle request must first acquire blocker-scoped
+  # repair custody; otherwise mechanical-first relaunch creates a brief PID,
+  # reports false recovery, and deterministically returns to the same blocker.
+  if [[ "$health" == "stopped" \
+        && "${PLAN_STATUS_RETRY_STRATEGY:-}" == "repair_phase_contract" \
+        && "${PLAN_STATUS_FAILURE_KIND:-}" == "deterministic_phase_failure" ]]; then
+    log "mechanical relaunch fenced pending phase-contract repair custody session=$session plan=${PLAN_STATUS_PLAN_NAME:-unknown} phase=${PLAN_STATUS_FAILURE_PHASE:-unknown}"
+    report_item "$report_items" "$session" "repair" "repair_unavailable" "deterministic phase-contract failure requires a claimed repair request before relaunch" "$workspace" "$remote_spec"
+    return 0
+  fi
+
   # Repair + relaunch. The primary repair operator is BACKGROUND-DISPATCHED so
   # it never blocks the tick (it can run up to its 60-min timeout and relaunches
   # the run itself on success). The watchdog's direct tmux relaunch runs only as
