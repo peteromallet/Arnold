@@ -230,19 +230,46 @@ def _common_required_output(target_kind: str) -> dict[str, Any]:
             "forbidden_mutations": ["<unsafe mutation>"],
         },
         "action_specific_handoff_examples": {
-            "preserve_live": {"action": "preserve_live", "allowed_mutations": ["none"]},
-            "replan": {"action": "replan", "allowed_mutations": ["none"]},
+            "preserve_live": {
+                "action": "preserve_live",
+                "allowed_mutations": ["none"],
+                "forbidden_mutations": ["all_mutations"],
+            },
+            "replan": {
+                "action": "replan",
+                "allowed_mutations": ["none"],
+                "forbidden_mutations": [
+                    "direct_chain_state_edit",
+                    "recover_state",
+                    "hand_advance_chain",
+                ],
+            },
             "repair_source": {
                 "action": "repair_source",
                 "allowed_mutations": ["arnold_source:<bounded component>"],
+                "forbidden_mutations": [
+                    "audited_workspace",
+                    "direct_chain_state_edit",
+                    "guard_weakening",
+                ],
             },
             "repair_target": {
                 "action": "repair_target",
                 "allowed_mutations": ["target_workspace:<bounded component>"],
+                "forbidden_mutations": [
+                    "arnold_source",
+                    "direct_chain_state_edit",
+                    "guard_weakening",
+                ],
             },
             "recover_state": {
                 "action": "recover_state",
                 "allowed_mutations": ["supported_cli:<exact command>"],
+                "forbidden_mutations": [
+                    "direct_chain_state_edit",
+                    "hand_advance_chain",
+                    "guard_weakening",
+                ],
             },
         },
         "mutation_contract": (
