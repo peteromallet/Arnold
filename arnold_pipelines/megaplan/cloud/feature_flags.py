@@ -209,6 +209,15 @@ def meta_repair_commit_enabled() -> bool:
     return _is_enabled("ARNOLD_META_REPAIR_COMMIT_ENABLED", True)
 
 
+def meta_repair_push_enabled() -> bool:
+    """Return ``True`` only when meta-repair may perform an external push.
+
+    ``ARNOLD_META_REPAIR_PUSH_ENABLED`` defaults off. A local commit grant must
+    never silently authorize a remote effect.
+    """
+    return _is_enabled("ARNOLD_META_REPAIR_PUSH_ENABLED", False)
+
+
 def audit_autofix_commit_enabled() -> bool:
     """Return ``True`` when auditor autofix commits are permitted.
 
@@ -310,6 +319,11 @@ def meta_repair_commit_on() -> bool:
     return meta_repair_commit_enabled()
 
 
+def meta_repair_push_on() -> bool:
+    """Alias for :func:`meta_repair_push_enabled`."""
+    return meta_repair_push_enabled()
+
+
 def audit_autofix_commit_on() -> bool:
     """Alias for :func:`audit_autofix_commit_enabled`."""
     return audit_autofix_commit_enabled()
@@ -327,6 +341,8 @@ __all__ = [
     "escalation_ledger_on",
     "meta_repair_commit_enabled",
     "meta_repair_commit_on",
+    "meta_repair_push_enabled",
+    "meta_repair_push_on",
     "meta_repair_enabled",
     "meta_repair_mutation_authorized",
     "meta_repair_on",
