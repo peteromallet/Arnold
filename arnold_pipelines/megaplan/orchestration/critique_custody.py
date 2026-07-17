@@ -429,7 +429,9 @@ def _resolution_for_finding(
     *,
     current_plan_name: str,
     current_plan_sha256: str,
+    source_plan_name: str,
     source_plan_sha256: str,
+    plan_version_order: Mapping[str, int],
     gate_expected: bool,
 ) -> dict[str, Any]:
     flag_id = str(finding.get("flag_id"))
@@ -439,13 +441,23 @@ def _resolution_for_finding(
         flag.get("gate_resolution") if isinstance(flag.get("gate_resolution"), dict) else {}
     )
     plan_mutated = current_plan_sha256 != source_plan_sha256
+    addressed_in = str(flag.get("addressed_in") or "")
+    source_version = plan_version_order.get(source_plan_name)
+    addressed_version = plan_version_order.get(addressed_in)
+    current_version = plan_version_order.get(current_plan_name)
+    resolution_targets_admitted_descendant = bool(
+        source_version is not None
+        and addressed_version is not None
+        and current_version is not None
+        and source_version < addressed_version <= current_version
+    )
     fixed_claim = (
         resolution.get("kind") == "fixed"
         and isinstance(resolution.get("claim"), str)
         and bool(resolution["claim"].strip())
         and isinstance(resolution.get("where"), str)
         and bool(resolution["where"].strip())
-        and flag.get("addressed_in") == current_plan_name
+        and resolution_targets_admitted_descendant
         and plan_mutated
     )
     if status == "verified" and fixed_claim:
@@ -466,7 +478,11 @@ def _resolution_for_finding(
                 "disposition": "invalidated_with_evidence",
                 "evidence": evidence,
             }
-    if status == "accepted_tradeoff" and finding.get("blocking") is False:
+    if (
+        status == "accepted_tradeoff"
+        and gate_expected
+        and gate_resolution.get("action") == "accept_tradeoff"
+    ):
         rationale = gate_resolution.get("rationale")
         if isinstance(rationale, str) and rationale.strip():
             return {
@@ -475,6 +491,24 @@ def _resolution_for_finding(
                 "disposition": "minor_tradeoff",
                 "evidence": rationale,
             }
+    if (
+        status in {"open", "verified"}
+        and finding.get("blocking") is False
+        and flag.get("severity") == "minor"
+        and str(flag.get("concern") or "").strip()
+        == str(finding.get("concern") or "").strip()
+        and str(flag.get("evidence") or "").strip()
+        == str(finding.get("evidence") or "").strip()
+    ):
+        resolution_record = {
+            "finding_id": finding["finding_id"],
+            "flag_id": flag_id,
+            "disposition": "tracked_nonblocking_observation",
+            "evidence": flag.get("evidence") or flag.get("concern"),
+        }
+        if isinstance(flag.get("verified_in"), str) and flag["verified_in"].strip():
+            resolution_record["verified_in"] = flag["verified_in"]
+        return resolution_record
     if status == "addressed" and not gate_expected and fixed_claim:
         return {
             "finding_id": finding["finding_id"],
@@ -506,13 +540,19 @@ def write_critique_clearance(plan_dir: Path, state: PlanState) -> dict[str, Any]
         )
     current_plan = latest_plan_path(plan_dir, state)
     current_plan_sha = sha256_file(current_plan)
+    plan_version_order = {
+        str(version.get("file")): int(version.get("version"))
+        for version in state.get("plan_versions", [])
+        if isinstance(version, Mapping)
+        and isinstance(version.get("file"), str)
+        and isinstance(version.get("version"), int)
+    }
     registry = load_flag_registry(plan_dir)
     by_id = {
         str(flag.get("id")): flag
         for flag in registry.get("flags", [])
         if isinstance(flag, dict) and flag.get("id")
     }
-    identities: dict[str, str] = {}
     resolutions: list[dict[str, Any]] = []
     source_receipts: list[dict[str, Any]] = []
     latest_occurrences: dict[str, tuple[Mapping[str, Any], Mapping[str, Any]]] = {}
@@ -523,17 +563,35 @@ def write_critique_clearance(plan_dir: Path, state: PlanState) -> dict[str, Any]
         for finding in receipt.get("findings", []):
             flag_id = str(finding.get("flag_id"))
             finding_id = str(finding.get("finding_id"))
-            prior_identity = identities.get(flag_id)
-            if prior_identity is not None and prior_identity != finding_id:
-                raise CritiqueCustodyError(
-                    "critique_finding_identity_reused",
-                    [f"flag {flag_id!r} changed identity from {prior_identity} to {finding_id}"],
-                )
-            identities[flag_id] = finding_id
+            occurrence_key = f"finding:{finding_id}"
+            if flag_id != finding_id:
+                # Receipts created before reducer-owned canonical IDs can carry
+                # a worker-local ordinal (for example ``verifiability-0``).
+                # Such an ordinal is not identity authority.  A later
+                # non-blocking observation in the same producer slot may
+                # supersede it, but a significant occurrence remains strict so
+                # migration can never hide a blocking finding.
+                occurrence_key = f"legacy-producer-slot:{flag_id}"
+                prior_occurrence = latest_occurrences.get(occurrence_key)
+                if prior_occurrence is not None:
+                    prior_finding = prior_occurrence[0]
+                    prior_identity = str(prior_finding.get("finding_id"))
+                    if prior_identity != finding_id and (
+                        prior_finding.get("blocking") is not False
+                        or finding.get("blocking") is not False
+                    ):
+                        raise CritiqueCustodyError(
+                            "critique_finding_identity_reused",
+                            [
+                                f"legacy producer slot {flag_id!r} changed identity "
+                                f"from {prior_identity} to {finding_id} across a "
+                                "blocking occurrence"
+                            ],
+                        )
             # Later critique rounds supersede the occurrence context for the
             # same stable finding. A finding that recurs on the current plan
             # cannot be cleared using an older plan mutation receipt.
-            latest_occurrences[finding_id] = (finding, receipt)
+            latest_occurrences[occurrence_key] = (finding, receipt)
     for finding, receipt in latest_occurrences.values():
         finding_id = str(finding.get("finding_id"))
         flag_id = str(finding.get("flag_id"))
@@ -549,7 +607,9 @@ def write_critique_clearance(plan_dir: Path, state: PlanState) -> dict[str, Any]
                 finding,
                 current_plan_name=current_plan.name,
                 current_plan_sha256=current_plan_sha,
+                source_plan_name=str(receipt.get("plan_artifact") or ""),
                 source_plan_sha256=str(receipt.get("plan_sha256")),
+                plan_version_order=plan_version_order,
                 gate_expected=gate_expected,
             )
         )

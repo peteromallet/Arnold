@@ -12,6 +12,7 @@ from arnold_pipelines.megaplan.flags import (
     update_flags_after_gate,
     update_flags_after_revise,
 )
+from arnold_pipelines.megaplan.orchestration import critique_custody
 from arnold_pipelines.megaplan.orchestration.critique_custody import (
     CritiqueCustodyError,
     assert_finalize_custody,
@@ -307,6 +308,187 @@ def test_reducer_reassigns_unique_local_id_reused_for_different_findings() -> No
     assert second["flags"][0]["producer_flag_id"] == "verifiability-0"
     assert first["verified_flag_ids"] == [first_id]
     assert second["verified_flag_ids"] == [second_id]
+
+
+def test_clearance_migrates_reused_legacy_nonblocking_producer_slot(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+
+    def payload(detail: str) -> dict[str, Any]:
+        return {
+            "checks": [
+                {
+                    "id": "scope",
+                    "question": "Is the criterion verifiable?",
+                    "findings": [{"detail": detail, "flagged": True}],
+                }
+            ],
+            "flags": [
+                {
+                    "id": "verifiability-0",
+                    "concern": detail,
+                    "category": "verifiability",
+                    "severity_hint": "likely-minor",
+                    "evidence": detail,
+                    "source_check_id": "scope",
+                }
+            ],
+            "verified_flag_ids": ["verifiability-0"],
+            "disputed_flag_ids": [],
+        }
+
+    canonical_ids: list[str] = []
+    for iteration, detail in enumerate(
+        (
+            "Criterion 11 requires human verification.",
+            "Criterion 12 requires human verification.",
+        ),
+        start=1,
+    ):
+        state["iteration"] = iteration
+        if iteration > 1:
+            state["plan_versions"].append(
+                {"version": iteration, "file": f"plan_v{iteration}.md"}
+            )
+        current = payload(detail)
+        receipt = _persist_critique(plan_dir, state, current)
+        canonical_id = str(receipt["findings"][0]["finding_id"])
+        canonical_ids.append(canonical_id)
+
+        critique_path = plan_dir / f"critique_v{iteration}.json"
+        persisted = critique_custody.read_json(critique_path)
+        persisted["flags"][0]["id"] = "verifiability-0"
+        persisted["flags"][0].pop("producer_flag_id", None)
+        persisted["verified_flag_ids"] = ["verifiability-0"]
+        atomic_write_json(critique_path, persisted)
+
+        receipt_path = plan_dir / f"critique_custody_v{iteration}.json"
+        legacy_receipt = critique_custody.read_json(receipt_path)
+        legacy_receipt["critique_sha256"] = critique_custody.sha256_file(critique_path)
+        legacy_receipt["critique_payload_digest"] = critique_custody._digest(persisted)
+        legacy_receipt["flag_ids"] = ["verifiability-0"]
+        legacy_receipt["findings"][0]["flag_id"] = "verifiability-0"
+        legacy_receipt.pop("receipt_digest", None)
+        legacy_receipt["receipt_digest"] = critique_custody._digest(legacy_receipt)
+        atomic_write_json(receipt_path, legacy_receipt)
+
+    atomic_write_json(
+        plan_dir / "faults.json",
+        {
+            "flags": [
+                {
+                    "id": "verifiability-0",
+                    "concern": "Criterion 12 requires human verification.",
+                    "category": "verifiability",
+                    "severity_hint": "likely-minor",
+                    "evidence": "Criterion 12 requires human verification.",
+                    "raised_in": "critique_v2.json",
+                    "status": "open",
+                    "severity": "minor",
+                    "verified": True,
+                    "verified_in": "critique_v2.json",
+                }
+            ]
+        },
+    )
+
+    clearance = write_critique_clearance(plan_dir, state)
+
+    assert clearance["finding_ids"] == [canonical_ids[1]]
+    assert clearance["resolutions"] == [
+        {
+            "finding_id": canonical_ids[1],
+            "flag_id": "verifiability-0",
+            "disposition": "tracked_nonblocking_observation",
+            "evidence": "Criterion 12 requires human verification.",
+            "verified_in": "critique_v2.json",
+        }
+    ]
+
+
+def test_clearance_accepts_explicit_gate_tradeoff_for_significant_finding(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    _persist_critique(plan_dir, state, payload)
+    finding_id = payload["flags"][0]["id"]
+    update_flags_after_gate(
+        plan_dir,
+        [
+            {
+                "flag_id": finding_id,
+                "action": "accept_tradeoff",
+                "evidence": "The bounded gate reviewed the exact remaining concern.",
+                "rationale": "The risk is explicit, bounded, and accepted by the gate.",
+            }
+        ],
+    )
+
+    clearance = write_critique_clearance(plan_dir, state)
+
+    assert clearance["resolutions"] == [
+        {
+            "finding_id": finding_id,
+            "flag_id": finding_id,
+            "disposition": "minor_tradeoff",
+            "evidence": "The risk is explicit, bounded, and accepted by the gate.",
+        }
+    ]
+
+
+def test_clearance_rejects_reused_legacy_slot_with_blocking_occurrence(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    first = _oversized_payload()
+    first_receipt = _persist_critique(plan_dir, state, first)
+    first_receipt["findings"][0]["flag_id"] = "worker-slot-0"
+    first_receipt["flag_ids"] = ["worker-slot-0"]
+    first_receipt.pop("receipt_digest", None)
+    first_receipt["receipt_digest"] = critique_custody._digest(first_receipt)
+    atomic_write_json(plan_dir / "critique_custody_v1.json", first_receipt)
+    first_payload = critique_custody.read_json(plan_dir / "critique_v1.json")
+    first_payload["flags"][0]["id"] = "worker-slot-0"
+    first_payload["flags"][0].pop("producer_flag_id", None)
+    atomic_write_json(plan_dir / "critique_v1.json", first_payload)
+    first_receipt["critique_sha256"] = critique_custody.sha256_file(
+        plan_dir / "critique_v1.json"
+    )
+    first_receipt["critique_payload_digest"] = critique_custody._digest(first_payload)
+    first_receipt.pop("receipt_digest", None)
+    first_receipt["receipt_digest"] = critique_custody._digest(first_receipt)
+    atomic_write_json(plan_dir / "critique_custody_v1.json", first_receipt)
+
+    state["iteration"] = 2
+    state["plan_versions"].append({"version": 2, "file": "plan_v2.md"})
+    second = _oversized_payload()
+    second["flags"][0]["concern"] = "A different blocking concern."
+    second["flags"][0]["evidence"] = second["checks"][0]["findings"][0]["detail"]
+    second_receipt = _persist_critique(plan_dir, state, second)
+    second_receipt["findings"][0]["flag_id"] = "worker-slot-0"
+    second_receipt["flag_ids"] = ["worker-slot-0"]
+    second_payload = critique_custody.read_json(plan_dir / "critique_v2.json")
+    second_payload["flags"][0]["id"] = "worker-slot-0"
+    second_payload["flags"][0].pop("producer_flag_id", None)
+    atomic_write_json(plan_dir / "critique_v2.json", second_payload)
+    second_receipt["critique_sha256"] = critique_custody.sha256_file(
+        plan_dir / "critique_v2.json"
+    )
+    second_receipt["critique_payload_digest"] = critique_custody._digest(second_payload)
+    second_receipt.pop("receipt_digest", None)
+    second_receipt["receipt_digest"] = critique_custody._digest(second_receipt)
+    atomic_write_json(plan_dir / "critique_custody_v2.json", second_receipt)
+
+    with pytest.raises(CritiqueCustodyError, match="blocking occurrence"):
+        write_critique_clearance(plan_dir, state)
 
 
 def test_clearance_binds_exact_final_graph_and_execute_rejects_missing_or_mutated_custody(
