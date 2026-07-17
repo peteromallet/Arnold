@@ -712,6 +712,88 @@ def test_l3_actionable_finding_reaches_claim_attempt_and_terminal_decision(
     assert request["target"]["retry_budget"]["remaining_attempts"] == 2
 
 
+def test_typed_l3_request_is_not_downgraded_when_target_also_looks_l1_repairable(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    spec = _write_marker(marker_dir, workspace)
+    queued = enqueue_audit_repair_request(
+        {
+            "plan": "m3",
+            "session": "demo",
+            "workspace": str(workspace),
+            "current_state": "blocked",
+            "session_header": {"kind": "chain"},
+            "deterministic_superfixer_evidence": {
+                "actionable": True,
+                "accepted_unclaimed_request_ids": ["legacy-request"],
+                "retry_budget": {"remaining_attempts": 3},
+            },
+            "l3_escalation_gate": {
+                "eligible": True,
+                "decision": "true_stall",
+                "escalation_id": "l3-escalation-l1-shaped-target",
+                "evidence_digest": "b" * 64,
+            },
+        },
+        queue_root=_queue_root(workspace),
+    )
+    assert queued is not None and queued["status"] == "queued"
+    request = queued["request"]
+    plan_dir = workspace / ".megaplan" / "plans" / "m3"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "m3",
+                "current_state": "blocked",
+                "resume_cursor": {"retry_strategy": "repair_phase_contract"},
+                "latest_failure": {
+                    "kind": "deterministic_phase_failure",
+                    "phase": "finalize",
+                    "metadata": {"blocked_task_id": "phase:finalize"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha1(str(spec.resolve()).encode("utf-8")).hexdigest()[:12]
+    (chain_dir / f"chain-{digest}.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": "m3",
+                "last_state": "blocked",
+                "milestones": [{"label": "m3"}, {"label": "m4"}],
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_trigger(
+        marker_dir,
+        _custody_attempt_repair_stub(tmp_path),
+        enabled=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    dispatch = next(
+        event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
+    )
+    attempt = _read_json_eventually(tmp_path / "repair-args.json")
+    manifest = _read_json_eventually(Path(dispatch["managed_manifest_path"]))
+    assert dispatch["request_id"] == request["request_id"]
+    assert dispatch["repair_layer"] == "l3"
+    assert attempt["argv"] == ["demo", "l3_progress_auditor"]
+    assert manifest["run_kind"] == "automatic_root_cause_repair"
+    assert manifest["model"] == "gpt-5.6-sol"
+    assert manifest["reasoning_effort"] == "high"
+    assert manifest["difficulty"] == 9
+
+
 def test_trigger_consumes_human_gate_request_from_explicit_central_queue(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     workspace = tmp_path / "workspace"

@@ -1204,11 +1204,6 @@ def _classify_request(
         and request_target["deterministic_superfixer_evidence"].get("actionable") is True
     )
     typed_supervisor_binding_drift = _is_typed_supervisor_binding_drift(record)
-    l2_actionable = (
-        decision.decision == "broken_superfixer"
-        and (deterministic_l3 or typed_supervisor_binding_drift)
-        and bool(scoped_projection.get("blocker_id"))
-    )
     requested_deep = bool(
         deterministic_l3
         and request_target.get("dispatch_intent") == "deep_superfixer_repair"
@@ -1217,11 +1212,26 @@ def _classify_request(
         and request_target["l3_escalation_gate"].get("eligible") is True
         and request_target["l3_escalation_gate"].get("decision") == "true_stall"
     )
-    deep_actionable = bool(requested_deep and l2_actionable)
+    # A typed, eligible L3 request is already the backstop's exact effect
+    # contract.  A session that independently looks L1-repairable must not
+    # downgrade that request to an ordinary repair manifest; that loses the
+    # requested model/difficulty/reasoning custody and makes launch validation
+    # fail after the subprocess starts.  Human/terminal/repairing decisions
+    # remain ineligible, and exact blocker identity is still mandatory.
+    deep_actionable = bool(
+        requested_deep
+        and bool(scoped_projection.get("blocker_id"))
+        and decision.decision in {"broken_superfixer", "dispatch_l1_repair"}
+    )
+    l2_actionable = (
+        decision.decision == "broken_superfixer"
+        and (deterministic_l3 or typed_supervisor_binding_drift)
+        and bool(scoped_projection.get("blocker_id"))
+    )
     return {
         "decision": (
             "actionable"
-            if decision.decision == "dispatch_l1_repair" or l2_actionable
+            if decision.decision == "dispatch_l1_repair" or l2_actionable or deep_actionable
             else "non_actionable"
         ),
         "reason": "; ".join(decision.rationale) or "shared custody classifier did not allow dispatch",
