@@ -781,6 +781,7 @@ class ResidentRuntime:
             conversation_id=conversation.id,
             messages=messages,
             system_prompt=system_prompt,
+            turn_id=turn_id,
             hot_context=hot_context,
             model_seam_metadata=self._model_seam_metadata(
                 conversation_id=conversation.id,
@@ -1016,6 +1017,7 @@ class ResidentRuntime:
             conversation_id=conversation.id,
             messages=request_messages,
             system_prompt=system_prompt,
+            turn_id=turn.id,
             hot_context=hot_context,
             model_seam_metadata=model_seam_metadata,
             subject=items[-1].event.subject,
