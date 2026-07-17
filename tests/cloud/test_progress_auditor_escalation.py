@@ -596,6 +596,118 @@ def test_zero_retry_accepted_unclaimed_gather_verdict_reaches_l3_effect_gate() -
     assert "l1_failure_not_proven" not in gate["blocks"]
 
 
+def test_real_20260717_report_shape_routes_unknown_liveness_backstop_stall() -> None:
+    """Regression for critique-ledger-bigbang in 20260717T073544Z-audit.json."""
+
+    finding = _true_stall()
+    finding.update(
+        {
+            "session": "critique-ledger-bigbang-20260716",
+            "plan": "cl1-contract-ownership-and-m6-20260716-2157",
+            "current_state": "blocked",
+            "events_mtime_age_min": 23,
+            "acceptance_progress": {
+                "advanced": False,
+                "accepted_event_age_min": None,
+            },
+            "active_step_liveness": {"present": False},
+            "resolver_state": {
+                "canonical_state": "UNKNOWN",
+                "confidence": "low",
+            },
+        }
+    )
+    finding["current_target"]["tmux_process"] = {
+        "session": "critique-ledger-bigbang-20260716",
+        "pid": None,
+        "pid_live": None,
+        "session_live": None,
+        "live_status": "unknown",
+    }
+    finding["session_header"]["session"] = "critique-ledger-bigbang-20260716"
+    finding["chain_log"]["mtime_age_min"] = 455
+    finding["repair_data_summary"] = {"exists": False}
+    finding["repair_custody_summary"].update(
+        {
+            "accepted_unclaimed_request_ids": ["69893f-real-report-request"],
+            "claim_count": 0,
+            "attempt_count": 0,
+            "retry_budget": {
+                "claim_retries_used": 0,
+                "remaining_attempts": 3,
+            },
+        }
+    )
+    finding["meta_repair_summary"] = {
+        "should_dispatch": True,
+        "trigger": "partial_liveness_recurrence",
+        "missing_meta_run_evidence": True,
+        "meta_record_count": 0,
+        "meta_run_log_count": 0,
+    }
+    finding["deterministic_superfixer_evidence"] = {
+        "actionable": True,
+        "chain_incomplete": True,
+        "absent_or_stale_l2": True,
+        "accepted_unclaimed_request_ids": ["69893f-real-report-request"],
+        "unknown_evidence": False,
+        "runner_dead": False,
+        "failed_l2_evidence": False,
+    }
+    finding["deterministic_retry_evidence"] = {"count": 0}
+
+    gate = classify_true_stall(finding)
+
+    assert gate["eligible"] is True
+    assert gate["decision"] == "true_stall"
+    assert gate["blocks"] == []
+    assert gate["missing_sources"] == []
+    assert gate["progress"]["accepted_unclaimed_backstop_stall"] is True
+    assert gate["evidence_sources"]["live_process"]["state"] == "unknown"
+    assert "live_process" in gate["source_substitutions"]
+    assert gate["custody_walk"]["L1"]["failure"][
+        "actionable_accepted_unclaimed"
+    ] is True
+    assert gate["custody_walk"]["L2"]["failure"]["failed"] is True
+    assert gate["gather_reason"].startswith("l3_actionable_repair:")
+
+
+def test_unknown_liveness_backstop_shape_requires_stale_duration_proof() -> None:
+    finding = _true_stall()
+    finding["current_target"]["tmux_process"] = {"live_status": "unknown"}
+    finding["active_step_liveness"] = {"present": False}
+    finding["resolver_state"] = {"canonical_state": "UNKNOWN", "confidence": "low"}
+    finding["acceptance_progress"] = {
+        "advanced": False,
+        "accepted_event_age_min": None,
+    }
+    finding["events_mtime_age_min"] = 23
+    finding["chain_log"]["mtime_age_min"] = 23
+    finding["deterministic_superfixer_evidence"].update(
+        {
+            "actionable": True,
+            "chain_incomplete": True,
+            "absent_or_stale_l2": True,
+            "unknown_evidence": False,
+            "runner_dead": False,
+            "failed_l2_evidence": False,
+        }
+    )
+
+    gate = classify_true_stall(finding)
+
+    assert gate["eligible"] is False
+    assert "live_process" in gate["missing_sources"]
+    assert "incomplete_or_incoherent_evidence" in gate["blocks"]
+    assert "no_progress_window_not_proven" in gate["blocks"]
+    assert "resolver_did_not_authorize_machine_action" in gate["blocks"]
+    assert gate["gather_reason"] == (
+        "l3_repair_gate_blocked: "
+        "blocks=incomplete_or_incoherent_evidence,no_progress_window_not_proven,"
+        "resolver_did_not_authorize_machine_action missing_sources=live_process"
+    )
+
+
 def test_zero_retry_unclaimed_without_typed_gather_verdict_stays_report_only() -> None:
     finding = _true_stall()
     finding["repair_data_summary"].update(

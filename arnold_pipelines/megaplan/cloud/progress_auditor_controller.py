@@ -364,7 +364,7 @@ def run_escalation_controller(
                     if existing_owner
                     else "L3 master-plus-path mutation authority is absent"
                     if gate.get("eligible")
-                    else "true-stall gate did not pass"
+                    else str(gate.get("gather_reason") or "true-stall gate did not pass")
                 ),
                 "repair_dispatched": False,
                 "corrective_path": dict(_mapping(gate.get("corrective_path"))),
@@ -489,6 +489,8 @@ def run_escalation_controller(
                 "managed_run_id": "",
                 "managed_manifest_path": "",
             }
+            if gate.get("gather_reason"):
+                record["gather_reason"] = gate["gather_reason"]
             if verification is not None:
                 record["reverification"] = verification
             if not dispatch["dispatch"]:

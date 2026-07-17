@@ -645,6 +645,16 @@ def _fresh_progress(finding: Mapping[str, Any], policy: EscalationPolicy) -> dic
     age_candidates = [value for value in (accepted_age,) if value is not None]
     semantic_age = max(age_candidates) if age_candidates else None
     deterministic_superfixer = _mapping(finding.get("deterministic_superfixer_evidence"))
+    accepted_unclaimed_backstop_stall = bool(
+        deterministic_superfixer.get("actionable") is True
+        and deterministic_superfixer.get("chain_incomplete") is True
+        and deterministic_superfixer.get("absent_or_stale_l2") is True
+        and _list(deterministic_superfixer.get("accepted_unclaimed_request_ids"))
+        and deterministic_superfixer.get("unknown_evidence") is not True
+        and log_age is not None
+        and log_age >= threshold_min
+        and not semantic_advanced
+    )
     terminal_repair_failure_without_progress = bool(
         deterministic_superfixer.get("actionable") is True
         and deterministic_superfixer.get("chain_incomplete") is True
@@ -668,9 +678,11 @@ def _fresh_progress(finding: Mapping[str, Any], policy: EscalationPolicy) -> dic
             not semantic_advanced
             and (
                 terminal_repair_failure_without_progress
+                or accepted_unclaimed_backstop_stall
                 or (semantic_age is not None and semantic_age >= threshold_min)
             )
         ),
+        "accepted_unclaimed_backstop_stall": accepted_unclaimed_backstop_stall,
         "terminal_repair_failure_without_progress": terminal_repair_failure_without_progress,
     }
 
@@ -915,7 +927,16 @@ def classify_true_stall(
         or chain_state in {"awaiting_human", "awaiting_human_verify"}
     )
     goal_actionable = bool(l1.get("active_unowned_goal"))
-    intent_allowed = resolver_state in _MACHINE_ACTION_STATES or goal_actionable
+    typed_backstop_stall = bool(
+        progress.get("accepted_unclaimed_backstop_stall")
+        and l1.get("actionable_accepted_unclaimed")
+        and l2.get("failed")
+    )
+    intent_allowed = bool(
+        resolver_state in _MACHINE_ACTION_STATES
+        or goal_actionable
+        or typed_backstop_stall
+    )
     repair_goal = _mapping(
         _mapping(finding.get("meta_repair_summary")).get("repair_goal")
     )
@@ -976,10 +997,21 @@ def classify_true_stall(
         "logs": log,
         "external_state": external,
     }
+    source_substitutions = (
+        {
+            "live_process": (
+                "typed accepted-unclaimed L1 custody plus failed/missing L2 and "
+                "a stale nonterminal chain log prove a repair-system stall without "
+                "claiming that the runner is dead"
+            )
+        }
+        if typed_backstop_stall and process.get("present") is not True
+        else {}
+    )
     missing_sources = [
         name
         for name, evidence in evidence_sources.items()
-        if evidence.get("present") is not True
+        if evidence.get("present") is not True and name not in source_substitutions
     ]
     if marker.get("present") and not marker.get("consistent"):
         missing_sources.append("session_marker_consistency")
@@ -1063,6 +1095,7 @@ def classify_true_stall(
         "escalation_id": escalation_identity(finding),
         "blocks": sorted(set(blocks)),
         "missing_sources": sorted(set(missing_sources)),
+        "source_substitutions": source_substitutions,
         "evidence_sources": evidence_sources,
         "progress": progress,
         "custody_walk": custody_walk,
@@ -1093,6 +1126,15 @@ def classify_true_stall(
             "custody_walk": custody_walk,
             "cursor": gate["baseline_cursor"],
         }
+    )
+    gate["gather_reason"] = (
+        "l3_actionable_repair: typed accepted-unclaimed L1 custody, failed or "
+        "missing L2 custody, and a stale nonterminal chain passed every "
+        "fail-closed authorization guard"
+        if eligible
+        else "l3_repair_gate_blocked: "
+        f"blocks={','.join(gate['blocks']) or 'none'} "
+        f"missing_sources={','.join(gate['missing_sources']) or 'none'}"
     )
     return gate
 
@@ -1134,7 +1176,7 @@ def plan_dispatch(
     reason = "all escalation predicates and bounded policy controls passed"
     if gate.get("eligible") is not True:
         decision = "report_only"
-        reason = "true-stall gate did not pass"
+        reason = _text(gate.get("gather_reason")) or "true-stall gate did not pass"
     elif not authorized:
         decision = "blocked_authority"
         reason = "L3 master-plus-path mutation authority is absent"
