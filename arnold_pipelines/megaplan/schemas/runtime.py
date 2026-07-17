@@ -1204,6 +1204,33 @@ SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 
+def _build_finalize_capture_schema() -> dict[str, Any]:
+    """Project the model-owned finalize fields from the persisted artifact.
+
+    ``finalize.json`` also contains fields authored by the harness after model
+    capture.  Sending that persisted schema to a structured-output worker makes
+    the model fabricate custody and baseline evidence and can produce an invalid
+    OpenAI schema for opaque harness objects.  Keep the transport boundary
+    explicit while retaining the legacy task shape accepted by finalize.
+    """
+
+    schema = deepcopy(SCHEMAS["finalize.json"])
+    for field in (
+        "critique_custody",
+        "validation",
+        "baseline_test_failures",
+        "baseline_test_command",
+        "baseline_test_note",
+        "suite_runs_ndjson_path",
+    ):
+        schema["properties"].pop(field, None)
+    schema["required"] = list(schema["properties"])
+    return schema
+
+
+SCHEMAS["finalize_capture.json"] = _build_finalize_capture_schema()
+
+
 def _build_execution_doc_schema() -> dict[str, Any]:
     schema = deepcopy(SCHEMAS["execution.json"])
     schema["properties"]["sections_written"] = schema["properties"].pop("files_changed")

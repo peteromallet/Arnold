@@ -98,8 +98,8 @@ STEP_CONTRACTS: dict[str, StepContract] = {
     ),
     "finalize": StepContract(
         phase_identity="finalize",
-        schema_key="finalize.json",
-        capture_schema_key="finalize.json",
+        schema_key="finalize_capture.json",
+        capture_schema_key="finalize_capture.json",
         output_kind="produce",
         compatibility_mode=CompatibilityMode.NATIVE,
         default_routing=PREMIUM_AGENT,

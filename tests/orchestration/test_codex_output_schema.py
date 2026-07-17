@@ -8,6 +8,7 @@ from arnold.pipeline import validate_payload_against_schema
 from arnold_pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
 from arnold_pipelines.megaplan.schemas import SCHEMAS, strict_schema
 from arnold_pipelines.megaplan.schemas.runtime import CRITIQUE_EVALUATOR_CHECK_IDS
+from arnold_pipelines.megaplan.step_contracts import STEP_CONTRACTS
 
 
 def _assert_required_keys_have_properties(schema: Any) -> None:
@@ -63,6 +64,27 @@ def test_all_codex_output_schemas_have_strict_required_properties() -> None:
         strict = _enforce_openai_strict_mode(strict_schema(deepcopy(schema)))
         _assert_required_keys_have_properties(strict)
         _assert_array_schemas_have_items(strict)
+
+
+def test_finalize_codex_schema_excludes_harness_owned_evidence() -> None:
+    contract = STEP_CONTRACTS["finalize"]
+    assert contract.schema_key == "finalize_capture.json"
+    assert contract.capture_schema_key == "finalize_capture.json"
+
+    schema = _enforce_openai_strict_mode(
+        strict_schema(deepcopy(SCHEMAS[contract.schema_key]))
+    )
+    properties = schema["properties"]
+    assert set(schema["required"]) == set(properties)
+    assert {
+        "critique_custody",
+        "validation",
+        "baseline_test_failures",
+        "baseline_test_command",
+        "baseline_test_note",
+        "suite_runs_ndjson_path",
+    }.isdisjoint(properties)
+    assert "critique_resolution_coverage" in properties
 
 
 def test_critique_evaluator_schema_rejects_invented_catalog_lens_ids() -> None:
