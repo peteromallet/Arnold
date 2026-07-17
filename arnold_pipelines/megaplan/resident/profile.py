@@ -14,7 +14,7 @@ import time
 from typing import Any, Literal, Mapping, Sequence
 from urllib.parse import urlparse
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from agentbox.redaction import redact_text
 from agentbox.reset_notifications import list_reset_notifications
@@ -53,6 +53,11 @@ from arnold_pipelines.megaplan.layout import (
 
 from .auth import ActionKind, AuthorizationSubject, ConfirmationManager, ResidentAuthorizer, StoreBackedConfirmationManager
 from .agent_loop import current_tool_runtime_context
+from .fix_the_fixer import (
+    FIX_THE_FIXER_TOOL,
+    render_fix_the_fixer_goal,
+    validate_fix_the_fixer_target,
+)
 from .cloud import (
     CloudCliBackend,
     CloudOperation,
@@ -789,6 +794,15 @@ class SetTimezonePreferenceInput(ToolInput):
     timezone_name: str
 
 
+class FixTheFixerInput(ToolInput):
+    target: str
+
+    @field_validator("target")
+    @classmethod
+    def _non_empty_exact_target(cls, value: str) -> str:
+        return validate_fix_the_fixer_target(value)
+
+
 class LaunchSubagentInput(ToolInput):
     task: str
     description: str | None = Field(
@@ -1474,6 +1488,7 @@ class MegaplanResidentProfile:
             ToolRegistration("fail_todo_item", "Mark a to-do item failed (retained for retry); pass the reason.", "write", FailTodoItemInput, ToolResult, self._fail_todo_item),
             ToolRegistration("reconcile_todo_item", "Resolve a pending launch intent as superseded by an already-existing canonical run. Requires the stable run id, durable evidence location, and reconciliation reason; never use task-text overlap alone.", "write", ReconcileTodoItemInput, ToolResult, self._reconcile_todo_item),
             ToolRegistration("add_todo_item", "Append a new pending item to the VP to-do list. Optional `when` is a natural-language condition the agent checks before executing (e.g. 'once epic <id> is done').", "write", AddTodoItemInput, ToolResult, self._add_todo_item),
+            ToolRegistration(FIX_THE_FIXER_TOOL, "Launch exactly one durable D10/high mutation-authorized meta-fixer for one non-empty epic/session target. The rendered goal composes superfixer-debug internally and inherits the active Discord provenance and authorization envelope.", "write", FixTheFixerInput, ToolResult, self._fix_the_fixer),
             ToolRegistration("launch_subagent", "Launch a resident-managed Codex agent with a durable manifest, concise one-line description, full log, and result path. Multiple launches for one logical query have one newest synthesis/delivery owner; prior runs become internal contributors. Legacy synchronous Hermes requires an explicit backend override.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
         )
         for registration in registrations:
@@ -2886,6 +2901,57 @@ class MegaplanResidentProfile:
                 "todo_resolution": (
                     vp_todo.public_item(todo_resolution) if todo_resolution is not None else None
                 ),
+            },
+        )
+
+    async def _fix_the_fixer(self, payload: FixTheFixerInput) -> ToolResult:
+        runtime_context = current_tool_runtime_context()
+        launch_origin = (
+            runtime_context.launch_origin if runtime_context is not None else None
+        )
+        if (
+            runtime_context is None
+            or not isinstance(runtime_context.subject, AuthorizationSubject)
+            or not isinstance(launch_origin, Mapping)
+            or launch_origin.get("applicability") != "applicable"
+            or launch_origin.get("source_kind") != "discord_inbound_message"
+        ):
+            return _fail(
+                "fix-the-fixer requires one current authorized Discord invocation; "
+                "internal, scheduled, completion, and recursively executing goal contexts cannot relaunch it",
+                recursion_guard=True,
+                delegation_allowed=False,
+            )
+        result = await self._launch_subagent(
+            LaunchSubagentInput(
+                task=render_fix_the_fixer_goal(payload.target),
+                description="Repair the failed fixer and its missed backstop",
+                aggregation_role="synthesis_delivery_owner",
+                task_kind="root_cause",
+                difficulty=10,
+                backend="codex",
+                background=True,
+            )
+        )
+        return ToolResult(
+            ok=result.ok,
+            message=(
+                "fix-the-fixer meta-fixer launched"
+                if result.ok
+                else result.message or "fix-the-fixer launch failed"
+            ),
+            data={
+                **result.data,
+                "command": FIX_THE_FIXER_TOOL,
+                "target": payload.target,
+                "composes": "superfixer-debug",
+                "requested_route": {
+                    "task_kind": "root_cause",
+                    "difficulty": 10,
+                    "reasoning_effort": "high",
+                    "work_intent": "execution",
+                    "mutation_claim": "git_backed",
+                },
             },
         )
 
