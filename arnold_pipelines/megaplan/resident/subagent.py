@@ -1,9 +1,4 @@
-"""Resident-owned delegated-agent dispatch and durable lifecycle tracking.
-
-Normal resident delegation uses a detached Codex supervisor with a canonical
-manifest, streaming log, and final-result file.  The older synchronous Hermes
-launcher remains available only when callers explicitly select it.
-"""
+"""Resident-owned provider-neutral delegated-agent lifecycle tracking."""
 
 from __future__ import annotations
 
@@ -56,6 +51,23 @@ from .provenance import (
     normalize_delegation_provenance,
     provenance_from_environment,
     stable_identity,
+)
+from .provider_runtime import (
+    PROVIDER_TELEMETRY_SCHEMA,
+    claude_tools_for,
+    collect_provider_evidence,
+    normalize_toolsets,
+    provider_execution_contract,
+    reserve_session_id,
+    valid_session_id,
+    write_normalized_events,
+)
+from .request_summary import (
+    REQUEST_DESCRIPTION_MAX_CHARS,
+    canonical_request_description,
+    content_with_request_summary,
+    current_request_summary_line,
+    source_request_fallback_line,
 )
 from .query_relationship import relationship_from_environment_or_project
 
@@ -1134,14 +1146,17 @@ def _manifest_session_ids(
     allow_multiple: bool = False,
 ) -> set[str]:
     found: set[str] = set()
+    backend = str(manifest.get("backend") or "codex")
     model_session = manifest.get("model_session")
     if isinstance(model_session, Mapping):
         session_id = str(model_session.get("session_id") or "").strip().lower()
         if session_id:
-            if not re.fullmatch(
-                r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-                session_id,
-            ):
+            session_provider = str(model_session.get("provider") or backend)
+            if session_provider != backend:
+                raise SubagentFollowupError(
+                    "managed run model session provider conflicts with its backend"
+                )
+            if not valid_session_id(backend, session_id):
                 raise SubagentFollowupError("managed run has a malformed model session id")
             found.add(session_id)
     log_path = Path(str(manifest.get("log_path") or manifest_path.parent / "run.log"))
@@ -1149,14 +1164,22 @@ def _manifest_session_ids(
         log_text = log_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         log_text = ""
-    # Only the first CLI header/event owns this run. Later tool output may quote
-    # another run's log verbatim and must not become session-ownership evidence.
-    text_matches = _CODEX_SESSION_RE.findall(log_text)
-    json_matches = _CODEX_JSON_SESSION_RE.findall(log_text)
-    if text_matches:
-        found.add(text_matches[0].lower())
-    elif json_matches:
-        found.add(json_matches[0].lower())
+    if backend == "codex":
+        raw_path = Path(
+            str(manifest.get("provider_raw_output_path") or manifest_path.parent / "provider.raw.jsonl")
+        )
+        try:
+            log_text += "\n" + raw_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            pass
+        # Only the first CLI header/event owns this run. Later tool output may
+        # quote another run's log and must not become ownership evidence.
+        text_matches = _CODEX_SESSION_RE.findall(log_text)
+        json_matches = _CODEX_JSON_SESSION_RE.findall(log_text)
+        if text_matches:
+            found.add(text_matches[0].lower())
+        elif json_matches:
+            found.add(json_matches[0].lower())
     if len(found) > 1 and not allow_multiple:
         raise SubagentFollowupError("managed run exposes multiple model session ids")
     return found
@@ -1225,6 +1248,7 @@ def _compatible_followup_provenance(
 
 
 def _session_owner_lineage(
+    provider: str,
     session_id: str,
     *,
     roots: tuple[Path, ...],
@@ -1254,7 +1278,7 @@ def _session_owner_lineage(
                         "model session id has ambiguous malformed ownership evidence"
                     )
                 continue
-            if session_id in ids:
+            if session_id in ids and str(payload.get("backend") or "codex") == provider:
                 if len(ids) > 1:
                     raise SubagentFollowupError(
                         "model session id appears in a multi-session managed run"
@@ -1737,6 +1761,14 @@ def follow_up_managed_subagent(
                     "managed model session lineage contains an orphaned continuation"
                 )
 
+        lineage_backends = {
+            str(payload.get("backend") or "codex") for _, payload in rows.values()
+        }
+        if len(lineage_backends) != 1:
+            raise SubagentFollowupError(
+                "managed model session lineage crosses provider boundaries"
+            )
+
         synthesis_owner = _existing_synthesis_owner(
             run_id=run_id,
             target=target,
@@ -1793,6 +1825,18 @@ def follow_up_managed_subagent(
                 f"target lineage tip has unsafe non-continuable status: {parent_status}"
             )
 
+        parent_model_session = tip.get("model_session")
+        if (
+            not parent_live
+            and isinstance(parent_model_session, Mapping)
+            and str(parent_model_session.get("state") or "")
+            in {"reserved_unconfirmed", "unavailable"}
+        ):
+            raise SubagentFollowupError(
+                "terminal target provider session persistence is unconfirmed; "
+                "exact continuation is unavailable"
+            )
+
         parent_session_ids = _manifest_session_ids(tip_path, tip)
         model_session_id = next(iter(parent_session_ids), None)
         if model_session_id is None:
@@ -1801,7 +1845,8 @@ def follow_up_managed_subagent(
                 "recoverable persistent model session"
             )
         if model_session_id is not None:
-            owner = _session_owner_lineage(model_session_id, roots=roots)
+            provider = str(tip.get("backend") or target.get("backend") or "codex")
+            owner = _session_owner_lineage(provider, model_session_id, roots=roots)
             if owner is not None and owner != lineage_root_run_id:
                 raise SubagentFollowupError("model session is owned by another managed-run lineage")
 
@@ -1841,8 +1886,12 @@ def follow_up_managed_subagent(
         else:
             record = existing
 
+        provider = str(tip.get("backend") or target.get("backend") or "codex")
+        provider_options = dict(
+            tip.get("provider_options") or target.get("provider_options") or {}
+        )
         try:
-            continuation = launch_codex_subagent_detached(
+            continuation = launch_managed_subagent_detached(
                 task=message,
                 description=(
                     f"Follow up on {str(tip.get('description') or target.get('description')).rstrip('.')}"
@@ -1855,9 +1904,18 @@ def follow_up_managed_subagent(
                     or project_root
                 ),
                 model=str(tip.get("model") or target.get("model") or "gpt-5.6-terra"),
+                model_spec=str(
+                    tip.get("model_spec")
+                    or target.get("model_spec")
+                    or f"{provider}:{tip.get('model') or target.get('model')}"
+                ),
+                backend=provider,
                 reasoning_effort=str(
                     tip.get("reasoning_effort") or target.get("reasoning_effort") or "medium"
                 ),
+                toolsets=str(provider_options.get("toolsets") or "file,web,terminal"),
+                max_tokens=int(provider_options.get("max_tokens") or 65_536),
+                provider_timeout_s=float(provider_options.get("timeout_s") or 600.0),
                 task_kind=str(tip.get("task_kind") or target.get("task_kind") or "routine"),
                 difficulty=int(tip.get("difficulty") or target.get("difficulty") or 4),
                 route_class="resident_followup_continuation",
@@ -1952,10 +2010,17 @@ def launch_managed_subagent_detached(
     """
     if backend not in {"hermes", "codex", "claude"}:
         raise ValueError(f"unsupported durable managed-agent backend: {backend}")
-    if max_tokens <= 0:
-        raise ValueError("max_tokens must be positive")
-    if provider_timeout_s <= 0:
-        raise ValueError("provider_timeout_s must be positive")
+    provider_contract = provider_execution_contract(
+        backend=backend,
+        toolsets=toolsets,
+        max_tokens=max_tokens,
+        timeout_s=provider_timeout_s,
+    )
+    normalized_toolsets = tuple(provider_contract["controls"]["toolsets"])
+    toolsets = ",".join(normalized_toolsets)
+    provider_session_id = continued_session_id or reserve_session_id(backend)
+    if provider_session_id and not valid_session_id(backend, provider_session_id):
+        raise ValueError(f"invalid {backend} managed-agent session id")
     if len(task) > MAX_DELEGATED_TASK_CHARS:
         raise ValueError(
             f"delegated task exceeds {MAX_DELEGATED_TASK_CHARS} characters; "
@@ -2067,6 +2132,12 @@ def launch_managed_subagent_detached(
         normalized_outcome_key or "",
         str(delivery_suppression_override_reason or "").strip(),
         relationship_digest,
+        backend,
+        model_spec or f"{backend}:{model}",
+        reasoning_effort,
+        toolsets,
+        str(max_tokens),
+        str(provider_timeout_s),
         retry_of_run_id or "",
         parent_run_id or "",
         lineage_root_run_id or "",
@@ -2114,6 +2185,9 @@ def launch_managed_subagent_detached(
     manifest_path = run_dir / "manifest.json"
     log_path = run_dir / "run.log"
     result_path = run_dir / "result.md"
+    provider_raw_output_path = run_dir / "provider.raw"
+    provider_metadata_path = run_dir / "provider-metadata.json"
+    provider_events_path = run_dir / "events.jsonl"
     context_directory = _delegated_context_directory(
         project_root=project_root,
         provenance=provenance,
@@ -2127,6 +2201,9 @@ def launch_managed_subagent_detached(
     )
     prompt_path.write_text(prompt, encoding="utf-8")
     result_path.touch()
+    log_path.touch()
+    provider_raw_output_path.touch()
+    provider_events_path.touch()
     if aggregation_role == "synthesis_delivery_owner":
         _transfer_aggregation_delivery_ownership(
             root,
@@ -2153,6 +2230,7 @@ def launch_managed_subagent_detached(
             "max_tokens": max_tokens,
             "timeout_s": provider_timeout_s,
         },
+        "provider_contract": provider_contract,
         "task_kind": task_kind,
         "description": agent_description,
         "difficulty": difficulty,
@@ -2170,6 +2248,17 @@ def launch_managed_subagent_detached(
         "log_path": str(log_path),
         "full_log_path": str(log_path),
         "result_path": str(result_path),
+        "provider_raw_output_path": str(provider_raw_output_path),
+        "provider_metadata_path": str(provider_metadata_path),
+        "provider_events_path": str(provider_events_path),
+        "telemetry": {
+            "schema_version": PROVIDER_TELEMETRY_SCHEMA,
+            "status": "pending",
+            "normalized_events_path": str(provider_events_path),
+            "raw_output_path": str(provider_raw_output_path),
+            "raw_stream_contract": provider_contract["capabilities"]["raw_stream"],
+            "raw_streams_are_provider_specific": True,
+        },
         "task_sha256": task_digest,
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         "context_directory": context_directory,
@@ -2234,6 +2323,17 @@ def launch_managed_subagent_detached(
         manifest["run_mode"] = "session_continuation"
     if continued_session_id:
         manifest["continued_session_id"] = continued_session_id
+    if provider_session_id:
+        manifest["model_session"] = {
+            "provider": backend,
+            "session_id": provider_session_id,
+            "lineage_root_run_id": lineage_root_run_id or run_id,
+            "state": "continuing" if continued_session_id else "reserved",
+            "persistence": "durable",
+            "resume_semantics": "exact_session",
+            "evidence": "resident_reserved_before_provider_process_start",
+            "recorded_at": created_at,
+        }
     if parent_manifest_path:
         manifest["parent_manifest_path"] = str(Path(parent_manifest_path).resolve())
         manifest["continuation_wait"] = {
@@ -2472,6 +2572,7 @@ def _await_continuation_parent(
 ) -> tuple[dict[str, Any], str]:
     parent_path = Path(str(manifest.get("parent_manifest_path") or ""))
     parent_run_id = str(manifest.get("parent_run_id") or "")
+    backend = str(manifest.get("backend") or "codex")
     if not parent_path.is_absolute() or parent_path.name != "manifest.json":
         raise SubagentFollowupError("continuation parent manifest path is malformed")
     interrupt_requested = False
@@ -2495,7 +2596,7 @@ def _await_continuation_parent(
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             manifest["continued_session_id"] = session_id
             manifest["model_session"] = {
-                "provider": "codex",
+                "provider": backend,
                 "session_id": session_id,
                 "lineage_root_run_id": manifest.get("lineage_root_run_id"),
                 "evidence": "validated_from_terminal_parent",
@@ -2560,12 +2661,40 @@ def _run_managed_manifest(manifest_path: Path) -> int:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     prompt = Path(str(manifest["prompt_path"])).read_text(encoding="utf-8")
     result_path = Path(str(manifest["result_path"]))
+    raw_output_path = Path(
+        str(manifest.get("provider_raw_output_path") or manifest_path.parent / "provider.raw")
+    )
+    metadata_path = Path(
+        str(manifest.get("provider_metadata_path") or manifest_path.parent / "provider-metadata.json")
+    )
+    events_path = Path(
+        str(manifest.get("provider_events_path") or manifest_path.parent / "events.jsonl")
+    )
+    raw_output_path.touch(exist_ok=True)
+    events_path.touch(exist_ok=True)
+    manifest.setdefault("log_path", str(manifest_path.parent / "run.log"))
+    manifest.setdefault("provider_raw_output_path", str(raw_output_path))
+    manifest.setdefault("provider_metadata_path", str(metadata_path))
+    manifest.setdefault("provider_events_path", str(events_path))
+    manifest.setdefault(
+        "telemetry",
+        {
+            "schema_version": PROVIDER_TELEMETRY_SCHEMA,
+            "status": "pending",
+            "normalized_events_path": str(events_path),
+            "raw_output_path": str(raw_output_path),
+            "raw_streams_are_provider_specific": True,
+        },
+    )
+    _atomic_json(manifest_path, manifest)
     worker: subprocess.Popen[bytes] | None = None
-    result_handle: Any = None
+    raw_handle: Any = None
     session_id: str | None = None
     interrupted_signal: int | None = None
     backend = str(manifest.get("backend") or "codex")
     provider_permission_mode: str | None = None
+    provider_options = dict(manifest.get("provider_options") or {})
+    timeout_s = float(provider_options.get("timeout_s") or 600.0)
 
     def _interrupt(signum: int, _frame: object) -> None:
         nonlocal interrupted_signal
@@ -2578,15 +2707,36 @@ def _run_managed_manifest(manifest_path: Path) -> int:
     }
     try:
         if manifest.get("run_mode") == "session_continuation":
-            if backend != "codex":
-                raise SubagentFollowupError(
-                    "managed session continuation is currently supported only for Codex"
-                )
             manifest, session_id = _await_continuation_parent(manifest_path, manifest)
+        else:
+            model_session = manifest.get("model_session")
+            if isinstance(model_session, Mapping):
+                session_id = str(model_session.get("session_id") or "") or None
+            if session_id is None:
+                session_id = reserve_session_id(backend)
+                if session_id:
+                    manifest["model_session"] = {
+                        "provider": backend,
+                        "session_id": session_id,
+                        "lineage_root_run_id": manifest.get("lineage_root_run_id")
+                        or manifest.get("run_id")
+                        or manifest_path.parent.name,
+                        "state": "reserved",
+                        "persistence": "durable",
+                        "resume_semantics": "exact_session",
+                        "evidence": "legacy_manifest_session_reserved_by_worker",
+                        "recorded_at": _utc_now(),
+                    }
+                    _atomic_json(manifest_path, manifest)
+
+        if backend == "codex" and manifest.get("run_mode") == "session_continuation":
             argv = [
                 "codex",
                 "exec",
                 "resume",
+                "--json",
+                "--skip-git-repo-check",
+                "--dangerously-bypass-approvals-and-sandbox",
                 "-m",
                 str(manifest["model"]),
                 "-c",
@@ -2600,6 +2750,8 @@ def _run_managed_manifest(manifest_path: Path) -> int:
             argv = [
                 "codex",
                 "exec",
+                "--json",
+                "--skip-git-repo-check",
                 "--sandbox",
                 "danger-full-access",
                 "-m",
@@ -2613,7 +2765,6 @@ def _run_managed_manifest(manifest_path: Path) -> int:
         elif backend == "hermes":
             if not LAUNCHER_PATH.exists():
                 raise FileNotFoundError(f"hermes launcher not found: {LAUNCHER_PATH}")
-            provider_options = dict(manifest.get("provider_options") or {})
             argv = [
                 sys.executable,
                 str(LAUNCHER_PATH),
@@ -2627,12 +2778,17 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                 str(manifest["project_dir"]),
                 "--query-file",
                 str(manifest["prompt_path"]),
+                "--session-id",
+                str(session_id),
+                "--metadata-file",
+                str(metadata_path),
             ]
-            result_handle = result_path.open("wb")
+            if manifest.get("run_mode") == "session_continuation":
+                argv.append("--resume-session")
         elif backend == "claude":
             if not CLAUDE_LAUNCHER_PATH.exists():
                 raise FileNotFoundError(f"Claude launcher not found: {CLAUDE_LAUNCHER_PATH}")
-            provider_options = dict(manifest.get("provider_options") or {})
+            toolsets = normalize_toolsets(str(provider_options.get("toolsets") or ""))
             argv = [
                 sys.executable,
                 str(CLAUDE_LAUNCHER_PATH),
@@ -2643,8 +2799,17 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                 "--query-file",
                 str(manifest["prompt_path"]),
                 "--timeout",
-                str(float(provider_options.get("timeout_s") or 600.0)),
+                str(timeout_s),
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--tools",
+                claude_tools_for(toolsets),
             ]
+            if manifest.get("run_mode") == "session_continuation":
+                argv += ["--resume", str(session_id)]
+            else:
+                argv += ["--session-id", str(session_id)]
             if hasattr(os, "geteuid") and os.geteuid() == 0:
                 provider_permission_mode = "auto"
                 argv += ["--permission-mode", provider_permission_mode]
@@ -2654,7 +2819,6 @@ def _run_managed_manifest(manifest_path: Path) -> int:
             effort = str(manifest.get("reasoning_effort") or "")
             if effort in {"low", "medium", "high", "xhigh", "max"}:
                 argv += ["--effort", effort]
-            result_handle = result_path.open("wb")
         else:
             raise ValueError(f"unsupported managed-agent backend in manifest: {backend}")
         launch_provenance = manifest.get("launch_provenance")
@@ -2666,11 +2830,18 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                     manifest.get("run_id") or manifest_path.parent.name
                 )
             worker_env = environment_with_provenance(worker_provenance)
+        if worker_env is None:
+            worker_env = os.environ.copy()
+        if backend == "claude":
+            worker_env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(
+                int(provider_options.get("max_tokens") or 65_536)
+            )
+        raw_handle = raw_output_path.open("wb")
         worker = subprocess.Popen(
             argv,
             cwd=str(manifest["project_dir"]),
             stdin=subprocess.DEVNULL,
-            stdout=result_handle,
+            stdout=raw_handle,
             env=worker_env,
         )
         # Reload before updating so the supervisor PID written by the launch
@@ -2680,44 +2851,111 @@ def _run_managed_manifest(manifest_path: Path) -> int:
         manifest.update({"worker_started_at": worker_started_at, "worker_pid": worker.pid})
         manifest["session_dispatch"] = {
             "status": "accepted",
-            "mode": "resume" if session_id else "new",
+            "mode": (
+                "resume" if manifest.get("run_mode") == "session_continuation" else "new"
+            ),
             "session_id": session_id,
             "accepted_at": worker_started_at,
             "evidence": (
-                "codex_resume_process_started"
-                if session_id
-                else f"{backend}_process_started"
+                f"{backend}_resume_process_started"
+                if manifest.get("run_mode") == "session_continuation"
+                else f"{backend}_session_process_started"
             ),
         }
         if provider_permission_mode is not None:
             manifest["session_dispatch"]["permission_mode"] = provider_permission_mode
         _atomic_json(manifest_path, manifest)
-        returncode = worker.wait()
-        # Codex writes its final response through --output-last-message;
-        # Hermes and Claude stdout are already directed to the same result.
-        result_path.touch(exist_ok=True)
-        if backend in {"hermes", "claude"} and returncode == 0:
+        try:
+            returncode = worker.wait(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            worker.terminate()
             try:
-                has_final_output = bool(result_path.read_text(encoding="utf-8").strip())
-            except (OSError, UnicodeError):
-                has_final_output = False
-            if not has_final_output:
-                returncode = 1
+                worker.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                worker.kill()
+                worker.wait()
+            returncode = 124
+        raw_handle.close()
+        raw_handle = None
+
+        # Preserve the byte-exact provider stdout separately, then copy it into
+        # run.log with an explicit provider-specific envelope. Stderr already
+        # streams directly to run.log through the resident supervisor.
+        print(f"\n[managed-provider-raw begin backend={backend} path={raw_output_path}]", flush=True)
+        try:
+            with raw_output_path.open("rb") as source:
+                while chunk := source.read(1024 * 1024):
+                    binary_stdout = getattr(sys.stdout, "buffer", None)
+                    if binary_stdout is not None:
+                        binary_stdout.write(chunk)
+                    else:
+                        sys.stdout.write(chunk.decode("utf-8", errors="replace"))
+            sys.stdout.flush()
+        except OSError as exc:
+            print(f"[managed-provider-raw unavailable: {exc.__class__.__name__}]", flush=True)
+        print(f"\n[managed-provider-raw end backend={backend}]", flush=True)
+
+        evidence = collect_provider_evidence(
+            backend=backend,
+            raw_output_path=raw_output_path,
+            metadata_path=metadata_path,
+            expected_session_id=session_id,
+            returncode=returncode,
+            diagnostics_path=Path(
+                str(manifest.get("log_path") or manifest_path.parent / "run.log")
+            ),
+        )
+        write_normalized_events(events_path, evidence.events)
+        if backend in {"hermes", "claude"} and evidence.final_text:
+            _atomic_text(result_path, evidence.final_text.rstrip() + "\n")
+        result_path.touch(exist_ok=True)
+        if evidence.failure_category and returncode == 0:
+            returncode = 1
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        observed_session_ids = _manifest_session_ids(manifest_path, manifest)
-        if session_id:
-            observed_session_ids.add(session_id)
-        if len(observed_session_ids) == 1:
-            resolved_session_id = next(iter(observed_session_ids))
+        resolved_session_id = evidence.session_id
+        if returncode == 0 and not resolved_session_id:
+            if manifest.get("schema_version") == MANAGED_RUN_SCHEMA:
+                returncode = 1
+                evidence = evidence.__class__(
+                    session_id=None,
+                    final_text=evidence.final_text,
+                    events=evidence.events,
+                    usage=evidence.usage,
+                    failure_category="session_identity_missing",
+                    failure_message="provider completed without a recoverable session identity",
+                )
+            else:
+                manifest["model_session"] = {
+                    "provider": backend,
+                    "state": "unavailable",
+                    "persistence": "unknown_legacy_record",
+                    "resume_semantics": "unavailable",
+                    "evidence": "legacy_manifest_did_not_capture_session_identity",
+                    "recorded_at": _utc_now(),
+                }
+        if resolved_session_id:
             manifest["model_session"] = {
                 "provider": backend,
                 "session_id": resolved_session_id,
                 "lineage_root_run_id": manifest.get("lineage_root_run_id")
                 or manifest.get("run_id")
                 or manifest_path.parent.name,
-                "evidence": f"managed_{backend}_worker_log_and_dispatch",
+                "state": "persisted" if returncode == 0 else "reserved_unconfirmed",
+                "persistence": "durable" if returncode == 0 else "requested_unconfirmed",
+                "resume_semantics": "exact_session",
+                "evidence": f"managed_{backend}_raw_stream_and_dispatch",
                 "recorded_at": _utc_now(),
             }
+        telemetry = dict(manifest.get("telemetry") or {})
+        telemetry.update(
+            {
+                "status": "captured",
+                "normalized_event_count": len(evidence.events),
+                "usage": dict(evidence.usage),
+                "updated_at": _utc_now(),
+            }
+        )
+        manifest["telemetry"] = telemetry
         manifest.update(
             {
                 "status": "completed" if returncode == 0 else "failed",
@@ -2726,11 +2964,18 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                 "terminal_outcome": "completed" if returncode == 0 else "failed",
             }
         )
-        if backend in {"hermes", "claude"} and returncode != 0:
-            manifest.setdefault(
-                "error",
-                f"managed {backend} worker failed or returned no final response",
-            )
+        if returncode != 0:
+            category = evidence.failure_category or "provider_error"
+            message = evidence.failure_message or f"provider exited with status {returncode}"
+            manifest["error"] = f"managed {backend} worker failed: {category}"
+            manifest["failure"] = {
+                "category": category,
+                "message": message,
+                "returncode": returncode,
+                "raw_output_path": str(raw_output_path),
+                "log_path": str(manifest["log_path"]),
+                "captured_at": manifest["finished_at"],
+            }
         manifest["updated_at"] = manifest["finished_at"]
         history = list(manifest.get("status_history") or [])
         history.append(
@@ -2778,6 +3023,7 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                 "status": status,
                 "error": f"managed {backend} worker failed",
                 "error_class": exc.__class__.__name__,
+                "error_message": str(exc),
                 "finished_at": _utc_now(),
                 "terminal_outcome": status,
             }
@@ -2815,6 +3061,15 @@ def _run_managed_manifest(manifest_path: Path) -> int:
             }
         )
         manifest["lifecycle"] = lifecycle
+        telemetry = dict(manifest.get("telemetry") or {})
+        telemetry.update(
+            {
+                "status": "failed",
+                "error_class": exc.__class__.__name__,
+                "updated_at": manifest["finished_at"],
+            }
+        )
+        manifest["telemetry"] = telemetry
         manifest["status_history"] = history[-100:]
         if interrupted_signal is not None:
             manifest["signal"] = interrupted_signal
@@ -2824,8 +3079,8 @@ def _run_managed_manifest(manifest_path: Path) -> int:
             return 128 + interrupted_signal
         return 1
     finally:
-        if result_handle is not None:
-            result_handle.close()
+        if raw_handle is not None:
+            raw_handle.close()
         for signum, handler in prior_handlers.items():
             signal.signal(signum, handler)
 

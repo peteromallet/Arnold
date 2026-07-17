@@ -62,6 +62,53 @@ class ManagedAgentRoute:
     backend_source: str
 
 
+@dataclass(frozen=True, slots=True)
+class ManagedAgentCapabilities:
+    """Truthful upstream capabilities used by the durable launch contract."""
+
+    persistent_session: bool
+    exact_session_resume: bool
+    generic_tool_policy: str
+    max_output_tokens: str
+    provider_timeout: str
+    raw_stream: str
+
+
+MANAGED_AGENT_CAPABILITIES = {
+    "codex": ManagedAgentCapabilities(
+        persistent_session=True,
+        exact_session_resume=True,
+        generic_tool_policy="full_toolset_only",
+        max_output_tokens="upstream_model_managed",
+        provider_timeout="supervisor_enforced",
+        raw_stream="codex_cli_jsonl",
+    ),
+    "hermes": ManagedAgentCapabilities(
+        persistent_session=True,
+        exact_session_resume=True,
+        generic_tool_policy="native_toolset_filter",
+        max_output_tokens="native_request_cap",
+        provider_timeout="supervisor_enforced",
+        raw_stream="hermes_launcher_stdout_and_stderr",
+    ),
+    "claude": ManagedAgentCapabilities(
+        persistent_session=True,
+        exact_session_resume=True,
+        generic_tool_policy="claude_builtin_tools_filter",
+        max_output_tokens="claude_code_environment_cap",
+        provider_timeout="launcher_and_supervisor_enforced",
+        raw_stream="claude_cli_stream_json",
+    ),
+}
+
+
+def managed_agent_capabilities(backend: str) -> ManagedAgentCapabilities:
+    canonical = _canonical_backend(backend)
+    if canonical == "auto":
+        raise ValueError("managed-agent capabilities require a concrete backend")
+    return MANAGED_AGENT_CAPABILITIES[canonical]
+
+
 def _canonical_backend(value: str) -> str:
     normalized = str(value or "auto").strip().lower()
     if normalized == "auto":
@@ -194,7 +241,10 @@ def resolve_managed_agent_route(
 __all__ = [
     "DEFAULT_MANAGED_AGENT_MODELS",
     "MANAGED_AGENT_BACKENDS",
+    "MANAGED_AGENT_CAPABILITIES",
+    "ManagedAgentCapabilities",
     "ManagedAgentRoute",
     "infer_managed_agent_backend",
+    "managed_agent_capabilities",
     "resolve_managed_agent_route",
 ]
