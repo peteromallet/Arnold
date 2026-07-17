@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 from pathlib import Path
 import threading
@@ -17,6 +18,8 @@ from arnold_pipelines.megaplan.resident.provenance import (
 
 SESSION_ID = "019f5d2e-d5da-75f3-a617-4712a1c57cc4"
 TARGET_RUN_ID = "subagent-20260713-203257-59552356"
+QUEUED_OWNER_RUN_ID = "subagent-20260713-203300-aaaaaaaa"
+SECOND_PREDECESSOR_RUN_ID = "subagent-20260713-203258-bbbbbbbb"
 
 
 def _provenance(*, source: str, message: str, conversation: str = "rconv_followuptest") -> dict:
@@ -78,6 +81,75 @@ def _write_run(
     return path
 
 
+def _write_queued_synthesis_owner(root: Path) -> tuple[Path, Path]:
+    target_path = _write_run(root, status="running", session_id=None, pid=111)
+    second_path = _write_run(
+        root,
+        run_id=SECOND_PREDECESSOR_RUN_ID,
+        status="completed",
+        session_id=None,
+    )
+    aggregation_key = "resident-synthesis-group-test"
+    synthesis_group = "queued-owner-test"
+    for path in (target_path, second_path):
+        manifest = json.loads(path.read_text())
+        manifest["aggregation"] = {
+            "schema_version": "arnold-resident-agent-aggregation-v1",
+            "key": aggregation_key,
+            "synthesis_group": synthesis_group,
+            "role": "internal_contributor",
+            "delivery_owner_run_id": QUEUED_OWNER_RUN_ID,
+        }
+        manifest["completion_delivery"] = {"status": "suppressed"}
+        path.write_text(json.dumps(manifest))
+
+    owner_dir = root / ".megaplan/plans/resident-subagents" / QUEUED_OWNER_RUN_ID
+    owner_dir.mkdir(parents=True)
+    prompt_path = owner_dir / "prompt.md"
+    prompt = "Synthesize both successful recovery runs and deliver once.\n"
+    prompt_path.write_text(prompt)
+    owner_path = owner_dir / "manifest.json"
+    owner = {
+        "schema_version": "arnold-managed-agent-run-v2",
+        "run_kind": "resident_delegated_agent",
+        "custodian": "arnold.megaplan.managed_agent",
+        "run_id": QUEUED_OWNER_RUN_ID,
+        "status": "queued",
+        "project_dir": str(root),
+        "prompt_path": str(prompt_path),
+        "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+        "launch_provenance": _provenance(
+            source="msg_originalsource", message="1001"
+        ),
+        "parent_run_id": TARGET_RUN_ID,
+        "lineage_root_run_id": TARGET_RUN_ID,
+        "aggregation": {
+            "schema_version": "arnold-resident-agent-aggregation-v1",
+            "key": aggregation_key,
+            "synthesis_group": synthesis_group,
+            "role": "synthesis_delivery_owner",
+            "delivery_owner_run_id": QUEUED_OWNER_RUN_ID,
+            "contributors": [
+                {"run_id": TARGET_RUN_ID},
+                {"run_id": SECOND_PREDECESSOR_RUN_ID},
+            ],
+        },
+        "completion_delivery": {"status": "pending"},
+        "queue": {
+            "schema_version": "arnold-resident-subagent-queue-v1",
+            "state": "waiting_predecessors",
+            "predecessor_run_ids": [TARGET_RUN_ID, SECOND_PREDECESSOR_RUN_ID],
+            "predecessor_states": [
+                {"run_id": TARGET_RUN_ID, "status": "running"},
+                {"run_id": SECOND_PREDECESSOR_RUN_ID, "status": "completed"},
+            ],
+        },
+        "created_at": "2026-07-13T20:33:00+00:00",
+    }
+    owner_path.write_text(json.dumps(owner))
+    return target_path, owner_path
+
+
 class _Supervisor:
     pid = 4321
 
@@ -134,6 +206,108 @@ def test_terminal_followup_creates_auditable_session_continuation(
     assert child["discord_origin"]["reply_target_source_record_id"] == (
         "msg_newfollowupsrc"
     )
+
+
+def test_contributor_followup_attaches_to_existing_queued_synthesis_owner(
+    tmp_path: Path, monkeypatch, caller_provenance: dict
+) -> None:
+    target_path, owner_path = _write_queued_synthesis_owner(tmp_path)
+    monkeypatch.setattr(
+        subagent.subprocess,
+        "Popen",
+        lambda *args, **kwargs: pytest.fail("queued owner attachment launched a worker"),
+    )
+    message = (
+        "Use exact epic revision 28d54763 and change only upcoming M6A-M11; "
+        "completed M5/M5A and current M6 are immutable."
+    )
+
+    result = subagent.follow_up_managed_subagent(
+        run_id=TARGET_RUN_ID,
+        message=message,
+        project_dir=tmp_path,
+        workspace_root=None,
+        idempotency_key="custody-revision-28d54763",
+    )
+
+    assert result.ok is True
+    assert result.route == "queued_synthesis_owner"
+    assert result.delivery_owner_run_id == QUEUED_OWNER_RUN_ID
+    assert result.continuation_run_id is None
+    assert result.continuation_manifest_path is None
+    assert result.status == "accepted"
+    receipt = json.loads(Path(result.evidence_path).read_text())
+    owner = json.loads(owner_path.read_text())
+    target = json.loads(target_path.read_text())
+    prompt = Path(owner["prompt_path"]).read_text()
+    assert message in prompt
+    assert receipt["state_history"][-1]["evidence"] == (
+        "material_bound_to_existing_queued_synthesis_owner_prompt"
+    )
+    assert owner["prompt_sha256"] == hashlib.sha256(prompt.encode()).hexdigest()
+    assert owner["queue"]["predecessor_run_ids"] == [
+        TARGET_RUN_ID,
+        SECOND_PREDECESSOR_RUN_ID,
+    ]
+    assert owner["queue"]["predecessor_states"] == [
+        {"run_id": TARGET_RUN_ID, "status": "running"},
+        {"run_id": SECOND_PREDECESSOR_RUN_ID, "status": "completed"},
+    ]
+    assert owner["queue"]["inbound_material"] == [
+        {
+            "schema_version": subagent.QUEUED_OWNER_MATERIAL_SCHEMA,
+            "followup_id": result.followup_id,
+            "target_run_id": TARGET_RUN_ID,
+            "message_path": result.message_path,
+            "message_sha256": hashlib.sha256(message.encode()).hexdigest(),
+            "evidence_path": result.evidence_path,
+            "accepted_at": receipt["accepted_at"],
+        }
+    ]
+    assert owner["status"] == "queued"
+    assert owner["completion_delivery"]["status"] == "pending"
+    assert target["status"] == "running"
+    assert target["completion_delivery"]["status"] == "suppressed"
+
+
+def test_queued_synthesis_owner_attachment_is_idempotent_and_directly_addressable(
+    tmp_path: Path, caller_provenance: dict
+) -> None:
+    _, owner_path = _write_queued_synthesis_owner(tmp_path)
+    kwargs = {
+        "run_id": QUEUED_OWNER_RUN_ID,
+        "message": "Reconcile the active worktree before consuming upcoming milestones.",
+        "project_dir": tmp_path,
+        "workspace_root": None,
+        "idempotency_key": "queued-owner-material-1",
+    }
+
+    first = subagent.follow_up_managed_subagent(**kwargs)
+    second = subagent.follow_up_managed_subagent(**kwargs)
+
+    assert first.followup_id == second.followup_id
+    assert second.idempotent_replay is True
+    owner = json.loads(owner_path.read_text())
+    prompt = Path(owner["prompt_path"]).read_text()
+    assert prompt.count("Reconcile the active worktree") == 1
+    assert len(owner["queue"]["inbound_material"]) == 1
+
+
+def test_queued_synthesis_owner_attachment_rejects_conflicting_custody(
+    tmp_path: Path, caller_provenance: dict
+) -> None:
+    _, owner_path = _write_queued_synthesis_owner(tmp_path)
+    owner = json.loads(owner_path.read_text())
+    owner["aggregation"]["key"] = "different-aggregation"
+    owner_path.write_text(json.dumps(owner))
+
+    with pytest.raises(subagent.SubagentFollowupError, match="aggregation custody"):
+        subagent.follow_up_managed_subagent(
+            run_id=TARGET_RUN_ID,
+            message="Do not bypass ownership.",
+            project_dir=tmp_path,
+            workspace_root=None,
+        )
 
 
 def test_continuation_worker_resumes_exact_parent_session_and_records_acceptance(
