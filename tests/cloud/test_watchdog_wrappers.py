@@ -4921,15 +4921,66 @@ verify_relaunch_health demo /workspace/demo /workspace/demo/chain.yaml chain '' 
 
 def test_supervise_exhaustion_queues_repair_request() -> None:
     text = _wrapper("arnold-supervise")
+    helper = (REPO_ROOT / "arnold_pipelines/megaplan/cloud/supervise.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "queue_repair_request()" in text
-    assert 'source="arnold_supervise_exit"' in text
-    assert '"failure_kind": "supervised_run_exhausted"' in text
+    assert "enqueue_supervisor_repair_request" in text
+    assert 'source="arnold_supervise_exit"' in helper
+    assert '"failure_kind": "supervised_run_exhausted"' in helper
     assert "non-quota retries exhausted" in text
     assert "exit_with_repair_request" in text
     assert "SUPERVISE_SESSION" in text
     assert "SUPERVISE_WORKSPACE" in text
     assert "SUPERVISE_REMOTE_SPEC" in text
+
+
+def test_supervise_deterministic_binding_failure_does_not_retry(tmp_path: Path) -> None:
+    command = tmp_path / "binding-drift"
+    command.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"{\\\"success\\\":false,\\\"error\\\":\\\"chain_execution_binding_drift\\\",\\\"message\\\":\\\"active_errors=['editable_runtime_import_root_mismatch']\\\"}\"\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    command.chmod(command.stat().st_mode | stat.S_IXUSR)
+    env = dict(os.environ)
+    env.update(
+        {
+            "PYTHONPATH": f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}",
+            "MEGAPLAN_SUPERVISOR_SOURCE": str(REPO_ROOT),
+            "ARNOLD_AUTONOMY": "1",
+            "ARNOLD_REPAIR_TRIGGER_ENABLED": "1",
+            "ARNOLD_SUPERVISE_LOG": str(tmp_path / "supervise.log"),
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(WRAPPER_DIR / "arnold-supervise"), "binding", str(command)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 1
+    assert "refusing retry spin" in result.stdout
+    assert (
+        "chain_execution_binding_drift;"
+        "active_errors=editable_runtime_import_root_mismatch"
+    ) in result.stdout
+    assert "error retry" not in result.stdout
+
+
+def test_repair_loop_accepts_explicit_scoped_attested_runtime() -> None:
+    text = _wrapper("arnold-repair-loop")
+
+    assert (
+        'ARNOLD_SRC="${ARNOLD_REPAIR_RUNTIME_SRC:-'
+        '${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"'
+    ) in text
 
 
 def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:

@@ -28,7 +28,9 @@ STATUS_DIR="${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}"
 SNAPSHOT_PATH="${CLOUD_WATCHDOG_SNAPSHOT_PATH:-$STATUS_DIR/cloud-status.json}"
 FINDINGS_DIR="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DIR:-/workspace/repair-findings}"
 FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-problems.md}"
-ARNOLD_SRC="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
+# A repair trigger may select an isolated, pre-attested runtime for one repair
+# child without changing the global editable install or the watchdog runtime.
+ARNOLD_SRC="${ARNOLD_REPAIR_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
 SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
 if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
   SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
