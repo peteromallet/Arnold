@@ -64,6 +64,21 @@ def test_auto_route_creates_one_durable_provider_manifest(
         "runtime_model": runtime_model,
         "model_spec": manifest["model_spec"],
     }
+    assert manifest["provider_contract"]["capabilities"]["persistent_session"] is True
+    assert manifest["provider_contract"]["capabilities"]["exact_session_resume"] is True
+    for field in (
+        "prompt_path",
+        "result_path",
+        "log_path",
+        "manifest_path",
+        "provider_raw_output_path",
+        "provider_events_path",
+    ):
+        assert Path(manifest[field]).exists()
+    assert manifest["telemetry"]["raw_streams_are_provider_specific"] is True
+    if backend in {"hermes", "claude"}:
+        assert manifest["model_session"]["provider"] == backend
+        assert manifest["model_session"]["state"] == "reserved"
     assert launches and "--run-managed" in launches[0]
 
 
@@ -88,6 +103,34 @@ def test_explicit_mismatch_fails_before_manifest_creation(
         )
 
     assert not (tmp_path / ".megaplan/plans/resident-subagents").exists()
+
+
+def test_provider_and_control_changes_are_part_of_launch_idempotency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        subagent.subprocess, "Popen", lambda *args, **kwargs: _DetachedProcess()
+    )
+
+    hermes = asyncio.run(
+        subagent.launch_subagent_task(
+            ResidentConfig(),
+            task="same bounded task",
+            project_dir=str(tmp_path),
+            model="hermes:glm-5.2",
+        )
+    )
+    claude = asyncio.run(
+        subagent.launch_subagent_task(
+            ResidentConfig(),
+            task="same bounded task",
+            project_dir=str(tmp_path),
+            model="claude:opus",
+        )
+    )
+
+    assert hermes.run_id != claude.run_id
+    assert hermes.manifest_path != claude.manifest_path
 
 
 def test_hermes_auto_route_preserves_discord_custody_and_delivery(
@@ -134,6 +177,11 @@ def _worker_manifest(tmp_path: Path, *, backend: str, model: str) -> Path:
     result_path = run_dir / "result.md"
     log_path = run_dir / "run.log"
     log_path.touch()
+    raw_output_path = run_dir / "provider.raw"
+    raw_output_path.touch()
+    metadata_path = run_dir / "provider-metadata.json"
+    events_path = run_dir / "events.jsonl"
+    events_path.touch()
     manifest_path = run_dir / "manifest.json"
     manifest_path.write_text(
         json.dumps(
@@ -146,6 +194,9 @@ def _worker_manifest(tmp_path: Path, *, backend: str, model: str) -> Path:
                 "prompt_path": str(prompt_path),
                 "result_path": str(result_path),
                 "log_path": str(log_path),
+                "provider_raw_output_path": str(raw_output_path),
+                "provider_metadata_path": str(metadata_path),
+                "provider_events_path": str(events_path),
                 "project_dir": str(tmp_path),
                 "backend": backend,
                 "model": model,
@@ -201,9 +252,51 @@ def test_managed_worker_dispatches_non_codex_provider_and_captures_result(
 
     def fake_popen(argv, **kwargs):
         captured["argv"] = list(argv)
+        captured["env"] = kwargs.get("env")
         output = kwargs.get("stdout")
         assert output is not None
-        output.write(b"READY\n")
+        if backend == "claude":
+            session_id = argv[argv.index("--session-id") + 1]
+            output.write(
+                (
+                    json.dumps(
+                        {
+                            "type": "system",
+                            "subtype": "init",
+                            "session_id": session_id,
+                            "model": model,
+                            "tools": ["Read"],
+                        }
+                    )
+                    + "\n"
+                    + json.dumps(
+                        {
+                            "type": "result",
+                            "subtype": "success",
+                            "session_id": session_id,
+                            "is_error": False,
+                            "result": "READY",
+                            "usage": {"output_tokens": 1},
+                        }
+                    )
+                    + "\n"
+                ).encode()
+            )
+        else:
+            output.write(b"READY\n")
+            session_id = argv[argv.index("--session-id") + 1]
+            Path(argv[argv.index("--metadata-file") + 1]).write_text(
+                json.dumps(
+                    {
+                        "session_id": session_id,
+                        "resolved_model": model,
+                        "toolsets": ["file"],
+                        "usage": {"output_tokens": 1},
+                        "events": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
         output.flush()
         return _Worker()
 
@@ -223,6 +316,14 @@ def test_managed_worker_dispatches_non_codex_provider_and_captures_result(
         assert "--dangerously-skip-permissions" not in argv
     assert manifest["status"] == "completed"
     assert Path(manifest["result_path"]).read_text(encoding="utf-8").strip() == "READY"
+    assert manifest["model_session"]["provider"] == backend
+    assert manifest["model_session"]["state"] == "persisted"
+    assert Path(manifest["provider_events_path"]).read_text(encoding="utf-8").strip()
+    assert manifest["telemetry"]["status"] == "captured"
+    if backend == "claude":
+        assert "--no-session-persistence" not in argv
+        assert argv[argv.index("--tools") + 1] == "Read,Edit,Write,Glob,Grep"
+        assert captured["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "128"
 
 
 def test_managed_non_codex_worker_rejects_empty_success(
@@ -248,4 +349,68 @@ def test_managed_non_codex_worker_rejects_empty_success(
     assert subagent._run_managed_manifest(manifest_path) == 1
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["status"] == "failed"
-    assert "no final response" in manifest["error"]
+    assert manifest["failure"]["category"] == "empty_result"
+    assert "without a final response" in manifest["failure"]["message"]
+
+
+def test_provider_timeout_is_enforced_and_captured_durably(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = _worker_manifest(tmp_path, backend="hermes", model="zhipu:glm-5.2")
+
+    class _TimedOutWorker:
+        pid = 223
+        terminated = False
+
+        def wait(self, timeout=None):
+            if not self.terminated:
+                raise subagent.subprocess.TimeoutExpired(cmd="hermes", timeout=timeout)
+            return -15
+
+        def poll(self):
+            return None if not self.terminated else -15
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.terminated = True
+
+    monkeypatch.setattr(
+        subagent.subprocess, "Popen", lambda *args, **kwargs: _TimedOutWorker()
+    )
+
+    assert subagent._run_managed_manifest(manifest_path) == 124
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["status"] == "failed"
+    assert manifest["returncode"] == 124
+    assert manifest["failure"]["category"] == "timeout"
+    assert manifest["lifecycle"]["work"]["status"] == "worker_failed"
+    assert Path(manifest["provider_events_path"]).is_file()
+
+
+def test_claude_auth_failure_remains_terminal_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = _worker_manifest(tmp_path, backend="claude", model="opus")
+    manifest = json.loads(manifest_path.read_text())
+    Path(manifest["log_path"]).write_text("Not logged in · Please run /login\n")
+
+    class _Unauthenticated:
+        pid = 224
+
+        def wait(self, timeout=None):
+            return 1
+
+        def poll(self):
+            return 1
+
+    monkeypatch.setattr(
+        subagent.subprocess, "Popen", lambda *args, **kwargs: _Unauthenticated()
+    )
+
+    assert subagent._run_managed_manifest(manifest_path) == 1
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["status"] == "failed"
+    assert manifest["failure"]["category"] == "authentication_failed"
+    assert Path(manifest["failure"]["log_path"]).read_text().startswith("Not logged in")
