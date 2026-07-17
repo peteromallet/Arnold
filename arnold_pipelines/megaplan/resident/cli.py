@@ -12,7 +12,10 @@ from typing import Any
 from arnold_pipelines.megaplan.store import DBStore, FileStore, Store
 from arnold_pipelines.megaplan.types import CliError
 
-from .agent_loop import CodexCliAgentRunner, OpenAICompatibleAgentRunner
+from .agent_loop import (
+    ManagedProviderCliAgentRunner,
+    OpenAICompatibleAgentRunner,
+)
 from .auth import StoreBackedConfirmationManager, ResidentAuthorizer
 from .cloud import CloudCliBackend
 from .config import ResidentConfig
@@ -536,6 +539,10 @@ def _resident_discord(root: Path, store: Store, config: ResidentConfig, *, dry_r
             "dry_run": True,
             "token_configured": bool(token),
             "profile": config.profile,
+            "model_provider": config.model_provider,
+            "model": config.model_name,
+            "model_toolsets": config.model_toolsets,
+            "model_max_tokens": config.model_max_tokens,
             "conversation_count": len(store.list_resident_conversations(transport="discord", limit=100)),
         }
     if token is None:
@@ -562,7 +569,7 @@ def _resident_discord(root: Path, store: Store, config: ResidentConfig, *, dry_r
             config=config,
             confirmation_manager=confirmation_manager,
         ),
-        runner=_resident_runner(config, root),
+        runner=_resident_runner(config, root, store=store),
         outbound=outbound,
     )
     scheduler = make_store_scheduler(
@@ -584,9 +591,16 @@ def _resident_discord(root: Path, store: Store, config: ResidentConfig, *, dry_r
     return {"success": True, "step": "resident", "action": "discord", "stopped": True, "project_root": str(root)}
 
 
-def _resident_runner(config: ResidentConfig, root: Path):
-    if config.model_provider == "codex":
-        return CodexCliAgentRunner(config, cwd=root)
+def _resident_runner(config: ResidentConfig, root: Path, *, store: Store | None = None):
+    if config.model_provider in {"codex", "hermes", "claude"}:
+        state_root = Path(
+            getattr(store, "root", None) or root / ".megaplan" / "resident"
+        )
+        return ManagedProviderCliAgentRunner(
+            config,
+            cwd=root,
+            state_root=state_root,
+        )
     return OpenAICompatibleAgentRunner(config)
 
 
