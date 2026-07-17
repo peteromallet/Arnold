@@ -30,3 +30,21 @@ This initiative owns transport-neutral profile/fallback/brief/nested-agent contr
 - Deployment-specific dollar/token/time ceilings and the final provider/model catalog are operator-owned configuration, but every resolved value and policy revision must be recorded.
 
 See `NORTHSTAR.md`, `decisions/managed-agent-contract-boundaries.md`, `research/prep-source-and-sizing-audit-20260713.md`, and the two sprint briefs for authoritative requirements and handoffs.
+
+## Current provider-routing truth (2026-07-17)
+
+The resident-managed launch seam now resolves a model/agent spec before it
+creates a manifest: Hermes specs dispatch through Hermes, Codex specs through
+Codex, and Claude specs through Claude. The default backend is `auto`;
+compatible explicit overrides remain available and conflicting backend/model
+pairs fail before launch. Provider selection is recorded in the existing
+`arnold-managed-agent-run-v2` manifest without changing Discord provenance,
+aggregation ownership, or completion delivery.
+
+Raw execution evidence is source record `msg_f65cd1476f49`, synthesis-owner run
+`subagent-20260717-172149-30a07f47`, and bounded live launches
+`subagent-20260717-175239-7ef4a1d7` (Hermes GLM 5.2, completed) and
+`subagent-20260717-175239-8c8d9599` (Codex, completed). Claude dispatch reached
+its durable provider worker in `subagent-20260717-175512-cb98141a` but the
+installed Claude CLI had no authenticated session, so Claude remains code- and
+dispatch-verified rather than live-provider-verified in this environment.
