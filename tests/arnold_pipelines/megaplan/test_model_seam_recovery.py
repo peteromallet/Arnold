@@ -12,6 +12,7 @@ from arnold_pipelines.megaplan.model_seam import (
 from arnold_pipelines.megaplan.orchestration.plan_structure import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.workers import WorkerResult
+from arnold_pipelines.megaplan.workers.hermes import _reconstruct_gate_payload
 
 
 def _gate_capture_invocation() -> StepInvocation:
@@ -38,6 +39,53 @@ def _schema_valid_north_star_action() -> dict[str, object]:
         "plan_refs": ["Phase 2 - Step 1"],
         "required_change": "Collapse route authority to the canonical path.",
     }
+
+
+def test_gate_reconstruction_conservatively_recovers_unknown_north_star_severity(
+    tmp_path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    action = _schema_valid_north_star_action()
+    action["category"] = "correctness"
+    action["severity"] = "significant"
+    action["severity_source"] = "worker"
+
+    reconstructed = _reconstruct_gate_payload(
+        plan_dir,
+        {
+            "recommendation": "ITERATE",
+            "rationale": "The plan needs another revision.",
+            "signals_assessment": "Significant concerns remain.",
+            "north_star_actions": [action],
+        },
+    )
+
+    assert reconstructed is not None
+    recovered = reconstructed["north_star_actions"][0]
+    assert recovered["severity"] == "blocking"
+    assert recovered["severity_source"] == "explicit"
+    assert recovered["concern"] == action["concern"]
+    assert recovered["evidence"] == action["evidence"]
+
+
+def test_gate_reconstruction_preserves_valid_north_star_severity(tmp_path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    action = _schema_valid_north_star_action()
+
+    reconstructed = _reconstruct_gate_payload(
+        plan_dir,
+        {
+            "recommendation": "ITERATE",
+            "rationale": "The plan needs another revision.",
+            "signals_assessment": "Blocking concerns remain.",
+            "north_star_actions": [action],
+        },
+    )
+
+    assert reconstructed is not None
+    assert reconstructed["north_star_actions"] == [action]
 
 
 def test_plan_recovery_prefers_later_structured_plan_over_summary_payload(

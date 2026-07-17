@@ -23,6 +23,8 @@ from arnold_pipelines.megaplan.north_star_actions import (
     NORTH_STAR_ACTION_CATEGORIES,
     NORTH_STAR_DANGEROUS_CATEGORIES,
     NORTH_STAR_ACTION_TYPES,
+    NORTH_STAR_SEVERITIES,
+    NORTH_STAR_SEVERITY_SOURCES,
 )
 from arnold_pipelines.megaplan.types import FlagRegistry, PlanState
 
@@ -179,6 +181,8 @@ def _gate_prompt(
         - `north_star_actions[]`: list of structured actions, each with `id`, `concern`, `category`, `action_type`, `severity`, `evidence`, and optional `plan_refs`.
         - Categories: {json_dump(list(NORTH_STAR_ACTION_CATEGORIES)).strip()} (all) — the dangerous set {json_dump(list(NORTH_STAR_DANGEROUS_CATEGORIES)).strip()} is always `severity: "blocking"` by schema rule.
         - Action types: {json_dump(list(NORTH_STAR_ACTION_TYPES)).strip()}.
+        - Severities: {json_dump(list(NORTH_STAR_SEVERITIES)).strip()} only. These are North Star action labels, not critique flag severities; never use `significant`, `likely-significant`, `minor`, or similar values here.
+        - Severity sources: {json_dump(list(NORTH_STAR_SEVERITY_SOURCES)).strip()} only.
         - Return `[]` when there are no North Star concerns for this pass.
 
         Flags come in three gate states:
