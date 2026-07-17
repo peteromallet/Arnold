@@ -736,12 +736,30 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         or retry_used >= 2
         or repeated >= 3
     )
-    failed = bool(active_unowned_goal or false_success or missing_manifest or liveness_without_custody or (accepted and exhausted) or outcome in {
-        "repair_timeout",
-        "repair_exhausted",
-        "failed",
-        "failure",
-    })
+    # Gather has already proved this exact accepted-unclaimed episode is an
+    # actionable superfixer cycle using current chain, runner, human-gate, L2,
+    # and evidence-integrity guards.  Requiring bounded handoff exhaustion here
+    # made a request with zero claims/attempts report-only precisely when L1 had
+    # failed to begin.  Consume the typed gather verdict instead of imposing a
+    # divergent retry threshold at the effect gate.
+    actionable_accepted_unclaimed = bool(
+        accepted and superfixer.get("actionable") is True
+    )
+    failed = bool(
+        active_unowned_goal
+        or false_success
+        or missing_manifest
+        or liveness_without_custody
+        or actionable_accepted_unclaimed
+        or (accepted and exhausted)
+        or outcome
+        in {
+            "repair_timeout",
+            "repair_exhausted",
+            "failed",
+            "failure",
+        }
+    )
     axis = (
         "FIXED"
         if false_success
@@ -756,6 +774,7 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         "axis": axis if failed else "",
         "outcome": outcome,
         "accepted_unclaimed_count": len(accepted),
+        "actionable_accepted_unclaimed": actionable_accepted_unclaimed,
         "retry_used": retry_used,
         "retry_remaining": retry_remaining,
         "repeated_deterministic_failures": repeated,
