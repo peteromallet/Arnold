@@ -19,6 +19,7 @@ from agentbox.redaction import redact_text
 from arnold_pipelines.megaplan.store import ScheduledJobInput, deterministic_idempotency_key
 
 from .auth import AuthorizationSubject
+from .fix_the_fixer import parse_fix_the_fixer_command, resident_command_catalog
 from .discord_reactions import DiscordReactionEffectLedger, ReactionEffectSweepResult
 from .runtime import InboundEvent, OutboundMessage, OutboundSink, ResidentRuntime
 from .reply_chain import (
@@ -1144,6 +1145,10 @@ class ResidentDiscordService:
 
         await client.start(self.token)
 
+    @staticmethod
+    def command_catalog() -> tuple[dict[str, str], ...]:
+        return resident_command_catalog()
+
     async def handle_message(self, message: Any) -> None:
         """Convert one Discord message into a resident event, transcribing audio first."""
 
@@ -1161,6 +1166,25 @@ class ResidentDiscordService:
                 inbound.to_inbound_event(),
                 authorization_decision=authorization_decision,
             )
+            return
+        command = parse_fix_the_fixer_command(inbound.content)
+        if command is not None:
+            inbound = replace(
+                inbound,
+                reply_chain=await _capture_discord_reply_chain(message),
+            )
+            event = inbound.to_inbound_event()
+            event = replace(
+                event,
+                raw={**event.raw, "resident_command": command.resident_payload()},
+            )
+            if authorization_decision is None:
+                await self.runtime.receive(event)
+            else:
+                await self.runtime.receive(
+                    event,
+                    authorization_decision=authorization_decision,
+                )
             return
         if await self._handle_timezone_command(message, inbound):
             return

@@ -41,6 +41,7 @@ _ALLOWED_FIELDS = (
     "source_record_id",
     "conversation_key",
     "discord_message_id",
+    "discord_interaction_id",
     "reply_to_message_id",
     "guild_id",
     "channel_id",
@@ -218,6 +219,13 @@ def normalize_delegation_provenance(
         "thread_id": routing["thread_id"],
         "dm_user_id": routing["dm_user_id"],
     }
+    discord_interaction_id = _snowflake(
+        value.get("discord_interaction_id"),
+        field="discord_interaction_id",
+        required=False,
+    )
+    if discord_interaction_id is not None:
+        normalized["discord_interaction_id"] = discord_interaction_id
     for field in ("delegation_id", "resident_turn_id", "root_run_id", "source_kind"):
         item = _safe_id(value.get(field), field=field)
         if item is not None:
@@ -304,6 +312,7 @@ def discord_origin_projection(value: Mapping[str, Any]) -> dict[str, Any]:
         "conversation_id": normalized["resident_conversation_id"],
         "conversation_key": normalized["conversation_key"],
         "message_id": normalized["discord_message_id"],
+        "discord_interaction_id": normalized.get("discord_interaction_id"),
         "reply_to_message_id": normalized["reply_to_message_id"],
         "guild_id": normalized.get("guild_id"),
         "channel_id": normalized.get("channel_id"),

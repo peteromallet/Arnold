@@ -282,7 +282,7 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
             current_audits: list[ToolCallAuditRecord] = []
             for tool_call in tool_calls:
                 arguments = _tool_call_arguments(tool_call)
-                audit = await _execute_registered_tool(
+                audit = await execute_registered_tool(
                     tools=tools,
                     tool_name=tool_call.function.name,
                     arguments=arguments,
@@ -515,7 +515,7 @@ def _request_model_name(request: AgentRequest, default: str) -> str:
     return str(model_name) if model_name else default
 
 
-async def _execute_registered_tool(
+async def execute_registered_tool(
     *,
     tools: ToolRegistry,
     tool_name: str,
@@ -558,6 +558,9 @@ async def _execute_registered_tool(
         result=result_payload,
         duration_ms=duration_ms,
     )
+
+
+_execute_registered_tool = execute_registered_tool
 
 
 def openai_client_from_config(config: ResidentConfig) -> Any:
@@ -671,7 +674,7 @@ _DURABLE_LAUNCH_STATUSES = frozenset({"launching", "running", "completed"})
 
 
 def _durable_launch_run_id(record: ToolCallAuditRecord) -> str | None:
-    if record.tool_name != "launch_subagent":
+    if record.tool_name not in {"launch_subagent", "fix_the_fixer"}:
         return None
     result = record.result if isinstance(record.result, dict) else {}
     data = result.get("data") if isinstance(result.get("data"), dict) else {}
@@ -715,7 +718,8 @@ def _durable_launch_handoff_response(
     if not isinstance(origin, Mapping) or origin.get("applicability") != "applicable":
         return None
     if not current_tool_calls or any(
-        record.tool_name != "launch_subagent" for record in current_tool_calls
+        record.tool_name not in {"launch_subagent", "fix_the_fixer"}
+        for record in current_tool_calls
     ):
         return None
     if any(bool(record.arguments.get("continue_turn")) for record in current_tool_calls):
