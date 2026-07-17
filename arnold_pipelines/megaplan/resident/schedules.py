@@ -1088,7 +1088,7 @@ class ScheduleService:
             result = await launch_subagent_task(
                 ResidentConfig.from_env(), task=task, description=target.description,
                 project_dir=target.project_dir or str(self.project_root), model=target.model,
-                task_kind=target.task_kind, work_intent=target.work_intent,
+                task_kind=target.task_kind,
                 request_id=occurrence.occurrence_id, launch_origin=authorization.launch_origin,
                 schedule_context=schedule_context,
             )
