@@ -40,6 +40,13 @@ from arnold_pipelines.megaplan.managed_agent import (
 )
 
 from .config import ResidentConfig
+from .delivery_status import (
+    DELIVERY_STATUS_SCHEMA,
+    build_delivery_attention,
+    build_delivery_projection,
+    delivery_policy_for_launch,
+    infer_outcome_contract,
+)
 from .provenance import (
     DelegationProvenanceError,
     discord_origin_projection,
@@ -897,6 +904,11 @@ def _transfer_aggregation_delivery_ownership(
         )
         payload["aggregation"] = aggregation
         delivery = payload.get("completion_delivery")
+        execution_contract = payload.get("execution_contract")
+        delivers_independently = (
+            isinstance(execution_contract, Mapping)
+            and execution_contract.get("delivery_policy") == "deliver_independently"
+        )
         if isinstance(delivery, dict) and delivery.get("status") not in {
             "delivered",
             "failed",
@@ -904,7 +916,7 @@ def _transfer_aggregation_delivery_ownership(
             "superseded",
             "suppressed",
             "unknown",
-        }:
+        } and not delivers_independently:
             delivery.update(
                 {
                     "status": "superseded",
@@ -1571,6 +1583,9 @@ def launch_codex_subagent_detached(
     query_relationship: Mapping[str, Any] | None = None,
     aggregation_role: str = "synthesis_delivery_owner",
     synthesis_group: str | None = None,
+    outcome_contract: str | None = None,
+    outcome_key: str | None = None,
+    delivery_suppression_override_reason: str | None = None,
 ) -> SubagentResult:
     """Launch a durable, fully-permissioned Codex worker managed by Arnold.
 
@@ -1599,6 +1614,21 @@ def launch_codex_subagent_detached(
         raise ValueError("synthesis_group must be a stable 1..80 character identifier")
     if aggregation_role == "internal_contributor" and synthesis_group is None:
         raise ValueError("internal_contributor launches require an explicit synthesis_group")
+    resolved_outcome_contract, outcome_contract_authority = infer_outcome_contract(
+        task=task,
+        description=agent_description,
+        task_kind=task_kind,
+        aggregation_role=aggregation_role,
+        explicit=outcome_contract,
+    )
+    delivery_policy = delivery_policy_for_launch(
+        aggregation_role=aggregation_role,
+        outcome_contract=resolved_outcome_contract,
+        suppression_override_reason=delivery_suppression_override_reason,
+    )
+    normalized_outcome_key = str(outcome_key or "").strip() or None
+    if normalized_outcome_key is not None and len(normalized_outcome_key) > 160:
+        raise ValueError("outcome_key exceeds 160 characters")
     if query_relationship is None and is_discord:
         query_relationship = relationship_from_environment_or_project(
             str(provenance.get("source_record_id") or "") or None,
@@ -1645,6 +1675,9 @@ def launch_codex_subagent_detached(
         agent_description,
         aggregation_role,
         synthesis_group or "",
+        resolved_outcome_contract,
+        normalized_outcome_key or "",
+        str(delivery_suppression_override_reason or "").strip(),
         relationship_digest,
         retry_of_run_id or "",
         parent_run_id or "",
@@ -1750,6 +1783,25 @@ def launch_codex_subagent_detached(
             "delivery_target_source_record_id": provenance.get("source_record_id"),
             "contributors": contributors,
         },
+        "execution_contract": {
+            "schema_version": DELIVERY_STATUS_SCHEMA,
+            "outcome_contract": resolved_outcome_contract,
+            "outcome_contract_authority": outcome_contract_authority,
+            "outcome_key": normalized_outcome_key or task_digest,
+            "delivery_policy": delivery_policy,
+            "delivery_suppression_override_reason": (
+                str(delivery_suppression_override_reason or "").strip() or None
+            ),
+        },
+        "lifecycle": {
+            "schema_version": DELIVERY_STATUS_SCHEMA,
+            "work": {"status": "launching", "worker_completed": False},
+            "delivery": {
+                "status": "pending" if delivery_policy.startswith("deliver_") else "suppressed",
+                "policy": delivery_policy,
+            },
+            "request": {"status": "in_progress", "request_delivered": False},
+        },
         "status": "launching",
         "created_at": created_at,
         "updated_at": created_at,
@@ -1799,7 +1851,7 @@ def launch_codex_subagent_detached(
             "transport": "discord",
             "status": (
                 "pending"
-                if aggregation_role == "synthesis_delivery_owner"
+                if delivery_policy.startswith("deliver_")
                 else "suppressed"
             ),
             "attempt_count": 0,
@@ -1817,14 +1869,14 @@ def launch_codex_subagent_detached(
                 {
                     "status": (
                         "pending"
-                        if aggregation_role == "synthesis_delivery_owner"
+                        if delivery_policy.startswith("deliver_")
                         else "suppressed"
                     ),
                     "at": manifest["created_at"],
                     "evidence": (
                         "outbox_committed_before_launch"
-                        if aggregation_role == "synthesis_delivery_owner"
-                        else "internal_contributor_reports_to_synthesis_owner"
+                        if delivery_policy.startswith("deliver_")
+                        else "intentional_delivery_suppression_recorded"
                     ),
                 }
             ],
@@ -1837,6 +1889,9 @@ def launch_codex_subagent_detached(
             "custody_id": manifest["custody_id"],
             "evidence": "launch_provenance_explicitly_non_discord",
         }
+    manifest["lifecycle"]["delivery"]["status"] = str(
+        dict(manifest["completion_delivery"]).get("status") or "not_applicable"
+    )
     _atomic_json(manifest_path, manifest)
     # Once the manifest exists, concurrent/restarted callers can return its
     # durable identity without creating a second worker.  Process start is a
@@ -2201,6 +2256,25 @@ def _run_codex_manifest(manifest_path: Path) -> int:
             }
         )
         manifest["status_history"] = history[-100:]
+        lifecycle = dict(manifest.get("lifecycle") or {})
+        lifecycle.update(
+            {
+                "schema_version": DELIVERY_STATUS_SCHEMA,
+                "work": {
+                    "status": "worker_completed" if returncode == 0 else "worker_failed",
+                    "worker_completed": returncode == 0,
+                },
+                "delivery": {
+                    "status": str(dict(manifest.get("completion_delivery") or {}).get("status") or "not_applicable"),
+                    "policy": dict(manifest.get("execution_contract") or {}).get("delivery_policy"),
+                },
+                "request": {
+                    "status": "awaiting_delivery" if returncode == 0 else "request_blocked",
+                    "request_delivered": False,
+                },
+            }
+        )
+        manifest["lifecycle"] = lifecycle
         _atomic_json(manifest_path, manifest)
         return returncode
     except BaseException as exc:
@@ -2242,6 +2316,19 @@ def _run_codex_manifest(manifest_path: Path) -> int:
                 "evidence": "managed_codex_supervisor_exception",
             }
         )
+        lifecycle = dict(manifest.get("lifecycle") or {})
+        lifecycle.update(
+            {
+                "schema_version": DELIVERY_STATUS_SCHEMA,
+                "work": {"status": f"worker_{status}", "worker_completed": False},
+                "delivery": {
+                    "status": str(dict(manifest.get("completion_delivery") or {}).get("status") or "not_applicable"),
+                    "policy": dict(manifest.get("execution_contract") or {}).get("delivery_policy"),
+                },
+                "request": {"status": "request_blocked", "request_delivered": False},
+            }
+        )
+        manifest["lifecycle"] = lifecycle
         manifest["status_history"] = history[-100:]
         if interrupted_signal is not None:
             manifest["signal"] = interrupted_signal
@@ -2593,6 +2680,15 @@ def _repair_manifest_delivery_provenance(manifest: dict[str, Any]) -> bool:
 
 
 def _delivery_request_identity(manifest: Mapping[str, Any]) -> tuple[str, ...] | None:
+    execution_contract = manifest.get("execution_contract")
+    if (
+        isinstance(execution_contract, Mapping)
+        and execution_contract.get("delivery_policy") == "deliver_independently"
+    ):
+        return (
+            "independent_result",
+            str(manifest.get("run_id") or manifest.get("launch_idempotency_key") or "unknown"),
+        )
     aggregation = manifest.get("aggregation")
     if isinstance(aggregation, Mapping) and aggregation.get("key"):
         return "aggregation_key", str(aggregation["key"])
@@ -3118,6 +3214,32 @@ def _finish_delivery(
         )
         delivery.pop("claim_state", None)
         manifest["completion_delivery"] = delivery
+        aggregation = manifest.get("aggregation")
+        role = (
+            str(aggregation.get("role") or "synthesis_delivery_owner")
+            if isinstance(aggregation, Mapping)
+            else "synthesis_delivery_owner"
+        )
+        lifecycle = dict(manifest.get("lifecycle") or {})
+        lifecycle.update(
+            {
+                "schema_version": DELIVERY_STATUS_SCHEMA,
+                "work": {"status": "worker_completed", "worker_completed": True},
+                "delivery": {
+                    "status": "delivered",
+                    "policy": dict(manifest.get("execution_contract") or {}).get("delivery_policy"),
+                },
+                "request": {
+                    "status": (
+                        "request_delivered"
+                        if role == "synthesis_delivery_owner"
+                        else "independent_result_delivered_request_open"
+                    ),
+                    "request_delivered": role == "synthesis_delivery_owner",
+                },
+            }
+        )
+        manifest["lifecycle"] = lifecycle
         _atomic_json(manifest_path, manifest)
 
 
@@ -3506,6 +3628,7 @@ def list_managed_resident_agents(
     project_root: str | Path = ".",
     workspace_root: str | Path | None = "/workspace",
     recent_limit: int = 10,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Build the unified managed-agent view used by resident hot context.
 
@@ -3514,6 +3637,25 @@ def list_managed_resident_agents(
     repairs are intentionally not manufactured into this view.
     """
     roots = _managed_run_roots(project_root=project_root, workspace_root=workspace_root)
+
+    manifest_index: dict[str, tuple[Path, Mapping[str, Any]]] = {}
+    for root in sorted(roots):
+        if not root.is_dir():
+            continue
+        for manifest_path in sorted(root.glob("*/manifest.json")):
+            try:
+                candidate = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                continue
+            if not isinstance(candidate, dict):
+                continue
+            schema = candidate.get("schema_version")
+            if schema != LEGACY_MANAGED_RUN_SCHEMA and not is_managed_manifest(candidate):
+                continue
+            if schema != LEGACY_MANAGED_RUN_SCHEMA and candidate.get("run_kind") != MANAGED_RUN_KIND:
+                continue
+            run_id = str(candidate.get("run_id") or manifest_path.parent.name)
+            manifest_index.setdefault(run_id, (manifest_path, candidate))
 
     rows: list[dict[str, Any]] = []
     for root in sorted(roots):
@@ -3551,6 +3693,13 @@ def list_managed_resident_agents(
                 observed_status = persisted_status
                 if persisted_status in _ACTIVE_STATUSES and not process_matches:
                     observed_status = "interrupted"
+
+            projection = build_delivery_projection(
+                manifest=payload,
+                manifest_path=manifest_path,
+                observed_status=observed_status,
+                manifest_index=manifest_index,
+            )
 
             def artifact_path(field: str, fallback: str) -> str:
                 raw = payload.get(field) or fallback
@@ -3606,6 +3755,8 @@ def list_managed_resident_agents(
                     "links": payload.get("links"),
                     "query_relationship": payload.get("query_relationship"),
                     "aggregation": payload.get("aggregation"),
+                    "execution_contract": projection["execution_contract"],
+                    "status_projection": projection,
                 }
             )
     rows.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
@@ -3613,6 +3764,9 @@ def list_managed_resident_agents(
     recent = [row for row in rows if not row["live"]][:max(0, recent_limit)]
     delivery_status_counts: dict[str, int] = {}
     terminal_delivery_status_counts: dict[str, int] = {}
+    work_status_counts: dict[str, int] = {}
+    request_status_counts: dict[str, int] = {}
+    projections: dict[str, Mapping[str, Any]] = {}
     for row in rows:
         delivery = row.get("completion_delivery")
         status = (
@@ -3621,10 +3775,26 @@ def list_managed_resident_agents(
             else "not_applicable"
         )
         delivery_status_counts[status] = delivery_status_counts.get(status, 0) + 1
+        projection = dict(row.get("status_projection") or {})
+        projections[str(row["run_id"])] = projection
+        work_status = str(dict(projection.get("work") or {}).get("status") or "unknown")
+        request_status = str(dict(projection.get("request") or {}).get("status") or "unknown")
+        work_status_counts[work_status] = work_status_counts.get(work_status, 0) + 1
+        request_status_counts[request_status] = request_status_counts.get(request_status, 0) + 1
         if row["status"] in _TERMINAL_STATUSES:
             terminal_delivery_status_counts[status] = (
                 terminal_delivery_status_counts.get(status, 0) + 1
             )
+    attention = build_delivery_attention(
+        manifest_index=manifest_index,
+        projections=projections,
+        now=now or datetime.now(timezone.utc),
+    )
+    legacy_delivery_attention_count = sum(
+        count
+        for status, count in terminal_delivery_status_counts.items()
+        if status in {"pending", "retry_pending", "failed", "unknown"}
+    )
     return {
         "schema_version": MANAGED_RUN_SCHEMA,
         "scope": "unified resident and automatic-repair managed agents",
@@ -3635,11 +3805,10 @@ def list_managed_resident_agents(
         "recent_count": len(recent),
         "delivery_status_counts": delivery_status_counts,
         "terminal_delivery_status_counts": terminal_delivery_status_counts,
-        "delivery_attention_count": sum(
-            count
-            for status, count in terminal_delivery_status_counts.items()
-            if status in {"pending", "retry_pending", "failed", "unknown"}
-        ),
+        "work_status_counts": work_status_counts,
+        "request_status_counts": request_status_counts,
+        "attention": attention,
+        "delivery_attention_count": legacy_delivery_attention_count + len(attention),
     }
 
 
@@ -3650,6 +3819,9 @@ async def launch_subagent_task(
     description: str | None = None,
     aggregation_role: str = "synthesis_delivery_owner",
     synthesis_group: str | None = None,
+    outcome_contract: str | None = None,
+    outcome_key: str | None = None,
+    delivery_suppression_override_reason: str | None = None,
     toolsets: str | None = None,
     project_dir: str | None = None,
     backend: str = "codex",
@@ -3691,6 +3863,9 @@ async def launch_subagent_task(
             description=description,
             aggregation_role=aggregation_role,
             synthesis_group=synthesis_group,
+            outcome_contract=outcome_contract,
+            outcome_key=outcome_key,
+            delivery_suppression_override_reason=delivery_suppression_override_reason,
             project_dir=project_dir,
             model=model or route.model,
             reasoning_effort=selected_effort,
