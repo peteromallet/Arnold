@@ -368,6 +368,77 @@ class TestGateOutcomeSemantics:
         assert outcome["route_signal"] == "retry_gate"
         assert outcome["blocking_unresolved_ids"]
 
+    def test_build_gate_route_signal_verifies_open_blocker_with_concrete_evidence(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+        from arnold_pipelines.megaplan.planning.state import STATE_GATED
+
+        (tmp_path / "faults.json").write_text(
+            json.dumps(
+                {
+                    "flags": [
+                        {
+                            "id": "f1",
+                            "severity": "significant",
+                            "status": "open",
+                            "concern": "The dependency ordering is broken.",
+                            "category": "correctness",
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        state: dict[str, Any] = {
+            "name": "p",
+            "iteration": 1,
+            "config": {},
+            "meta": {},
+            "current_state": "critiqued",
+        }
+        summary = {
+            "recommendation": "PROCEED",
+            "passed": True,
+            "rationale": "The blocker is fixed.",
+            "signals_assessment": "ok",
+            "warnings": [],
+            "criteria_check": {},
+            "preflight_results": {},
+            "unresolved_flags": [
+                {
+                    "id": "f1",
+                    "severity": "significant",
+                    "status": "open",
+                    "concern": "The dependency ordering is broken.",
+                }
+            ],
+            "addressed_flags": [],
+            "flag_resolutions": [
+                {
+                    "flag_id": "f1",
+                    "action": "verify_fixed",
+                    "evidence": (
+                        "plan_v2.md Step 4 now consumes evidence/prerequisites.json "
+                        "from Step 3 before generating the handoff."
+                    ),
+                    "rationale": "The dependency edge is now explicit.",
+                }
+            ],
+            "orchestrator_guidance": "",
+        }
+
+        outcome = _build_gate_route_signal(
+            state, summary, robustness="standard", plan_dir=tmp_path
+        )
+
+        assert outcome["result"] == "success"
+        assert outcome["route_signal"] == "proceed"
+        assert state["current_state"] == STATE_GATED
+        registry = json.loads((tmp_path / "faults.json").read_text(encoding="utf-8"))
+        assert registry["flags"][0]["status"] == "verified"
+        assert registry["flags"][0]["verified"] is True
+
 
 class TestTiebreakerOutcomeSemantics:
     def test_pick_promotes_proceed_signal(self) -> None:
