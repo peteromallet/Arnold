@@ -49,6 +49,8 @@ def _write_run(
     pid: int | None = None,
     lineage_root_run_id: str | None = None,
     parent_run_id: str | None = None,
+    backend: str = "codex",
+    model: str = "gpt-5.6-sol",
 ) -> Path:
     run_dir = root / ".megaplan/plans/resident-subagents" / run_id
     run_dir.mkdir(parents=True)
@@ -59,10 +61,17 @@ def _write_run(
         "run_kind": "resident_delegated_agent",
         "custodian": "arnold.megaplan.managed_agent",
         "run_id": run_id,
+        "backend": backend,
         "status": status,
         "pid": pid,
         "project_dir": str(root),
-        "model": "gpt-5.6-sol",
+        "model": model,
+        "model_spec": f"{backend}:{model}",
+        "provider_options": {
+            "toolsets": "file,web,terminal",
+            "max_tokens": 32768,
+            "timeout_s": 321,
+        },
         "reasoning_effort": "high",
         "task_kind": "architecture",
         "difficulty": 8,
@@ -76,6 +85,12 @@ def _write_run(
         manifest["lineage_root_run_id"] = lineage_root_run_id
     if parent_run_id:
         manifest["parent_run_id"] = parent_run_id
+    if session_id:
+        manifest["model_session"] = {
+            "provider": backend,
+            "session_id": session_id,
+            "state": "persisted",
+        }
     path = run_dir / "manifest.json"
     path.write_text(json.dumps(manifest))
     return path
@@ -206,6 +221,187 @@ def test_terminal_followup_creates_auditable_session_continuation(
     assert child["discord_origin"]["reply_target_source_record_id"] == (
         "msg_newfollowupsrc"
     )
+
+
+@pytest.mark.parametrize(
+    ("backend", "model", "session_id"),
+    [
+        ("hermes", "zhipu:glm-5.2", "resident_0123456789abcdef0123456789abcdef"),
+        ("claude", "opus", "019f5d2e-d5da-75f3-a617-4712a1c57cc5"),
+    ],
+)
+def test_non_codex_followup_preserves_provider_session_and_controls(
+    tmp_path: Path,
+    monkeypatch,
+    caller_provenance: dict,
+    backend: str,
+    model: str,
+    session_id: str,
+) -> None:
+    _write_run(
+        tmp_path,
+        backend=backend,
+        model=model,
+        session_id=session_id,
+    )
+    monkeypatch.setattr(subagent.subprocess, "Popen", lambda *a, **k: _Supervisor())
+
+    result = subagent.follow_up_managed_subagent(
+        run_id=TARGET_RUN_ID,
+        message=f"Continue the exact {backend} session.",
+        project_dir=tmp_path,
+        workspace_root=None,
+    )
+    child = json.loads(Path(result.continuation_manifest_path).read_text())
+
+    assert child["backend"] == backend
+    assert child["continued_session_id"] == session_id
+    assert child["provider_options"] == {
+        "toolsets": "file,web,terminal",
+        "max_tokens": 32768,
+        "timeout_s": 321.0,
+    }
+    assert child["model_session"]["provider"] == backend
+    assert child["model_session"]["session_id"] == session_id
+
+
+def test_terminal_followup_rejects_unconfirmed_provider_persistence(
+    tmp_path: Path, caller_provenance: dict
+) -> None:
+    target_path = _write_run(
+        tmp_path,
+        status="failed",
+        backend="claude",
+        model="opus",
+        session_id="019f5d2e-d5da-75f3-a617-4712a1c57cc5",
+    )
+    manifest = json.loads(target_path.read_text())
+    manifest["model_session"]["state"] = "reserved_unconfirmed"
+    target_path.write_text(json.dumps(manifest))
+
+    with pytest.raises(
+        subagent.SubagentFollowupError,
+        match="session persistence is unconfirmed",
+    ):
+        subagent.follow_up_managed_subagent(
+            run_id=TARGET_RUN_ID,
+            message="Do not pretend this session can resume.",
+            project_dir=tmp_path,
+            workspace_root=None,
+        )
+
+
+@pytest.mark.parametrize(
+    ("backend", "model", "session_id", "resume_flag"),
+    [
+        (
+            "hermes",
+            "zhipu:glm-5.2",
+            "resident_0123456789abcdef0123456789abcdef",
+            "--resume-session",
+        ),
+        (
+            "claude",
+            "opus",
+            "019f5d2e-d5da-75f3-a617-4712a1c57cc5",
+            "--resume",
+        ),
+    ],
+)
+def test_non_codex_continuation_worker_resumes_exact_session(
+    tmp_path: Path,
+    monkeypatch,
+    caller_provenance: dict,
+    backend: str,
+    model: str,
+    session_id: str,
+    resume_flag: str,
+) -> None:
+    _write_run(
+        tmp_path,
+        backend=backend,
+        model=model,
+        session_id=session_id,
+    )
+    monkeypatch.setattr(subagent.subprocess, "Popen", lambda *a, **k: _Supervisor())
+    result = subagent.follow_up_managed_subagent(
+        run_id=TARGET_RUN_ID,
+        message=f"Resume {backend} now.",
+        project_dir=tmp_path,
+        workspace_root=None,
+    )
+    captured: dict[str, object] = {}
+
+    class _Provider:
+        pid = 9877
+
+        def wait(self, timeout=None):
+            captured["timeout"] = timeout
+            return 0
+
+        def poll(self):
+            return 0
+
+    def fake_provider(argv, **kwargs):
+        captured["argv"] = list(argv)
+        captured["env"] = kwargs["env"]
+        output = kwargs["stdout"]
+        if backend == "hermes":
+            output.write(b"CONTINUED\n")
+            Path(argv[argv.index("--metadata-file") + 1]).write_text(
+                json.dumps(
+                    {
+                        "session_id": session_id,
+                        "resolved_model": model,
+                        "toolsets": ["file", "web", "terminal"],
+                        "usage": {"output_tokens": 2},
+                        "events": [],
+                    }
+                )
+            )
+        else:
+            output.write(
+                (
+                    json.dumps(
+                        {
+                            "type": "system",
+                            "subtype": "init",
+                            "session_id": session_id,
+                            "model": model,
+                            "tools": ["Read", "Bash"],
+                        }
+                    )
+                    + "\n"
+                    + json.dumps(
+                        {
+                            "type": "result",
+                            "subtype": "success",
+                            "session_id": session_id,
+                            "is_error": False,
+                            "result": "CONTINUED",
+                            "usage": {"output_tokens": 2},
+                        }
+                    )
+                    + "\n"
+                ).encode()
+            )
+        output.flush()
+        return _Provider()
+
+    monkeypatch.setattr(subagent.subprocess, "Popen", fake_provider)
+    child_path = Path(result.continuation_manifest_path)
+    assert subagent._run_managed_manifest(child_path) == 0
+
+    child = json.loads(child_path.read_text())
+    argv = captured["argv"]
+    assert resume_flag in argv
+    assert session_id in argv
+    assert captured["timeout"] == 321.0
+    assert child["model_session"]["session_id"] == session_id
+    assert child["session_dispatch"]["mode"] == "resume"
+    assert Path(child["result_path"]).read_text().strip() == "CONTINUED"
+    if backend == "claude":
+        assert captured["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "32768"
 
 
 def test_contributor_followup_attaches_to_existing_queued_synthesis_owner(
