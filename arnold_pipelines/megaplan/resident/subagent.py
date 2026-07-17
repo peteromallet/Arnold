@@ -111,6 +111,7 @@ MAX_DELEGATED_PROMPT_CHARS = 40_000
 MAX_FOLLOWUP_MESSAGE_CHARS = 32_000
 MAX_AGENT_DESCRIPTION_CHARS = 180
 FOLLOWUP_SCHEMA = "arnold-resident-agent-followup-v1"
+QUEUED_OWNER_MATERIAL_SCHEMA = "arnold-resident-queued-owner-material-v1"
 AGGREGATION_SCHEMA = "arnold-resident-agent-aggregation-v1"
 AGGREGATION_ROLES = frozenset({"synthesis_delivery_owner", "internal_contributor"})
 DISCORD_FOLLOWUP_WINDOW = timedelta(minutes=15)
@@ -165,13 +166,15 @@ class SubagentFollowupResult:
     target_run_id: str
     parent_run_id: str
     lineage_root_run_id: str
-    continuation_run_id: str
+    continuation_run_id: str | None
     status: str
     evidence_path: str
     message_path: str
-    continuation_manifest_path: str
+    continuation_manifest_path: str | None
     model_session_id: str | None = None
     idempotent_replay: bool = False
+    route: str = "session_continuation"
+    delivery_owner_run_id: str | None = None
 
 
 class SubagentFollowupError(ValueError):
@@ -362,6 +365,13 @@ def _atomic_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _atomic_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(content, encoding="utf-8")
     os.replace(temporary, path)
 
 
@@ -1259,18 +1269,305 @@ def _followup_result(
         target_run_id=str(record["target_run_id"]),
         parent_run_id=str(record["parent_run_id"]),
         lineage_root_run_id=str(record["lineage_root_run_id"]),
-        continuation_run_id=str(record["continuation_run_id"]),
+        continuation_run_id=(
+            str(record["continuation_run_id"])
+            if record.get("continuation_run_id")
+            else None
+        ),
         status=str(record.get("status") or "continuation_started"),
         evidence_path=str(record["evidence_path"]),
         message_path=str(record["message_path"]),
-        continuation_manifest_path=str(record["continuation_manifest_path"]),
+        continuation_manifest_path=(
+            str(record["continuation_manifest_path"])
+            if record.get("continuation_manifest_path")
+            else None
+        ),
         model_session_id=(
             str(record["model_session_id"])
             if record.get("model_session_id")
             else None
         ),
         idempotent_replay=idempotent_replay,
+        route=str(record.get("route") or "session_continuation"),
+        delivery_owner_run_id=(
+            str(record["delivery_owner_run_id"])
+            if record.get("delivery_owner_run_id")
+            else None
+        ),
     )
+
+
+def _queued_synthesis_owner(
+    *,
+    run_id: str,
+    target: Mapping[str, Any],
+    rows: Mapping[str, tuple[Path, dict[str, Any]]],
+    target_provenance: Mapping[str, Any],
+) -> tuple[Path, dict[str, Any]] | None:
+    """Resolve one already-queued synthesis owner without changing ownership.
+
+    A queued all-success successor is a control-plane owner, not a resumable
+    model-session tip.  Follow-up material may be attached only when the target
+    and owner mutually prove the same aggregation key, synthesis group,
+    contributor edge, lineage, and immutable Discord custody.
+    """
+
+    target_aggregation = target.get("aggregation")
+    if not isinstance(target_aggregation, Mapping):
+        return None
+    target_role = str(target_aggregation.get("role") or "")
+    owner_run_id = str(target_aggregation.get("delivery_owner_run_id") or "")
+    if target_role == "synthesis_delivery_owner":
+        owner_run_id = run_id
+    elif target_role != "internal_contributor":
+        return None
+    if not _RUN_ID_RE.fullmatch(owner_run_id) or owner_run_id not in rows:
+        return None
+
+    owner_path, owner = rows[owner_run_id]
+    if str(owner.get("status") or "") != "queued":
+        return None
+    owner_aggregation = owner.get("aggregation")
+    queue = owner.get("queue")
+    if not isinstance(owner_aggregation, Mapping) or not isinstance(queue, Mapping):
+        return None
+    if (
+        owner_aggregation.get("role") != "synthesis_delivery_owner"
+        or str(owner_aggregation.get("delivery_owner_run_id") or "") != owner_run_id
+        or owner_aggregation.get("key") != target_aggregation.get("key")
+        or owner_aggregation.get("synthesis_group")
+        != target_aggregation.get("synthesis_group")
+    ):
+        raise SubagentFollowupError(
+            "queued synthesis owner aggregation custody conflicts with target lineage"
+        )
+    predecessor_ids = queue.get("predecessor_run_ids")
+    if not isinstance(predecessor_ids, list):
+        predecessor_id = str(queue.get("predecessor_run_id") or "")
+        predecessor_ids = [predecessor_id] if predecessor_id else []
+    if run_id != owner_run_id and run_id not in predecessor_ids:
+        raise SubagentFollowupError(
+            "queued synthesis owner does not depend on the targeted contributor"
+        )
+    contributors = owner_aggregation.get("contributors")
+    contributor_ids = {
+        str(item.get("run_id") or "")
+        for item in contributors
+        if isinstance(item, Mapping)
+    } if isinstance(contributors, list) else set()
+    if run_id != owner_run_id and run_id not in contributor_ids:
+        raise SubagentFollowupError(
+            "queued synthesis owner lacks the targeted contributor receipt"
+        )
+    owner_provenance = owner.get("launch_provenance")
+    if not isinstance(owner_provenance, Mapping):
+        raise SubagentFollowupError("queued synthesis owner has no canonical provenance")
+    _compatible_followup_provenance(target_provenance, owner_provenance)
+    delivery = owner.get("completion_delivery")
+    if isinstance(delivery, Mapping) and str(delivery.get("status") or "") in {
+        "delivered",
+        "failed",
+        "superseded",
+        "suppressed",
+    }:
+        raise SubagentFollowupError(
+            "queued synthesis owner no longer has pending delivery custody"
+        )
+    return owner_path, owner
+
+
+def _attach_queued_synthesis_owner_material(
+    *,
+    target_run_id: str,
+    lineage_root_run_id: str,
+    owner_path: Path,
+    owner: Mapping[str, Any],
+    message: str,
+    message_path: Path,
+    evidence_path: Path,
+    followup_id: str,
+    selector: str,
+    message_sha256: str,
+    caller_provenance: Mapping[str, Any],
+    caller_sha256: str,
+    query_relationship: Mapping[str, Any] | None,
+    existing: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Atomically bind new material to the existing queued delivery owner."""
+
+    owner_run_id = str(owner.get("run_id") or owner_path.parent.name)
+    lock_path = owner_path.parent / ".queue-transition.lock"
+    with lock_path.open("a+b") as queue_handle:
+        fcntl.flock(queue_handle.fileno(), fcntl.LOCK_EX)
+        current = _read_managed_resident_manifest(owner_path)
+        if str(current.get("status") or "") != "queued":
+            raise SubagentFollowupError(
+                "synthesis owner left the queued state before material was committed"
+            )
+        aggregation = current.get("aggregation")
+        queue = current.get("queue")
+        if (
+            not isinstance(aggregation, Mapping)
+            or aggregation.get("role") != "synthesis_delivery_owner"
+            or str(aggregation.get("delivery_owner_run_id") or "") != owner_run_id
+            or not isinstance(queue, dict)
+        ):
+            raise SubagentFollowupError(
+                "queued synthesis owner custody changed before material was committed"
+            )
+
+        if existing is not None:
+            if (
+                existing.get("route") != "queued_synthesis_owner"
+                or existing.get("delivery_owner_run_id") != owner_run_id
+            ):
+                raise SubagentFollowupError(
+                    "existing follow-up receipt is not bound to this synthesis owner"
+                )
+            if existing.get("status") == "accepted":
+                return dict(existing)
+
+        prompt_path = Path(str(current.get("prompt_path") or "prompt.md"))
+        if not prompt_path.is_absolute():
+            prompt_path = owner_path.parent / prompt_path
+        prompt_path = prompt_path.resolve()
+        try:
+            prompt_path.relative_to(owner_path.parent.resolve())
+        except ValueError as exc:
+            raise SubagentFollowupError(
+                "queued synthesis owner prompt escapes its managed run directory"
+            ) from exc
+        try:
+            prompt = prompt_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise SubagentFollowupError(
+                "queued synthesis owner prompt is unavailable"
+            ) from exc
+        prompt_sha256_before = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        recorded_prompt_sha256 = str(current.get("prompt_sha256") or "")
+        recovering_prepared = bool(
+            existing is not None
+            and existing.get("route") == "queued_synthesis_owner"
+            and existing.get("status") == "prepared"
+            and existing.get("prompt_sha256_after") == prompt_sha256_before
+        )
+        if (
+            recorded_prompt_sha256
+            and recorded_prompt_sha256 != prompt_sha256_before
+            and not recovering_prepared
+        ):
+            raise SubagentFollowupError(
+                "queued synthesis owner prompt checksum changed before attachment"
+            )
+
+        material_header = (
+            "[Queued synthesis-owner material — canonical follow-up]\n"
+            f"- schema: {QUEUED_OWNER_MATERIAL_SCHEMA}\n"
+            f"- receipt_id: {followup_id}\n"
+            f"- source_target_run_id: {target_run_id}\n"
+            f"- delivery_owner_run_id: {owner_run_id}\n"
+            f"- message_sha256: {message_sha256}\n"
+            "- instruction: consume this material during synthesis; preserve existing "
+            "single-delivery ownership and predecessor gates\n\n"
+        )
+        material_block = material_header + message.rstrip() + "\n"
+        if material_block not in prompt:
+            updated_prompt = prompt.rstrip() + "\n\n" + material_block
+        else:
+            updated_prompt = prompt
+        if len(updated_prompt) > MAX_DELEGATED_PROMPT_CHARS:
+            raise SubagentFollowupError(
+                "queued synthesis owner prompt would exceed the managed prompt limit"
+            )
+        prompt_sha256_after = hashlib.sha256(
+            updated_prompt.encode("utf-8")
+        ).hexdigest()
+        accepted_at = str(
+            (existing or {}).get("accepted_at") or _utc_now()
+        )
+        original_prompt_sha256 = str(
+            (existing or {}).get("prompt_sha256_before") or prompt_sha256_before
+        )
+        record: dict[str, Any] = {
+            "schema_version": FOLLOWUP_SCHEMA,
+            "followup_id": followup_id,
+            "target_run_id": target_run_id,
+            "parent_run_id": owner_run_id,
+            "lineage_root_run_id": lineage_root_run_id,
+            "delivery_owner_run_id": owner_run_id,
+            "route": "queued_synthesis_owner",
+            "message_path": str(message_path),
+            "message_sha256": message_sha256,
+            "idempotency_key": selector,
+            "requester_provenance": dict(caller_provenance),
+            "requester_provenance_sha256": caller_sha256,
+            "query_relationship": (
+                dict(query_relationship)
+                if isinstance(query_relationship, Mapping)
+                else None
+            ),
+            "parent_status_at_acceptance": "queued",
+            "status": "prepared",
+            "accepted_at": accepted_at,
+            "updated_at": accepted_at,
+            "evidence_path": str(evidence_path),
+            "continuation_run_id": None,
+            "continuation_manifest_path": None,
+            "prompt_path": str(prompt_path),
+            "prompt_sha256_before": original_prompt_sha256,
+            "prompt_sha256_after": prompt_sha256_after,
+            "state_history": [
+                {
+                    "status": "prepared",
+                    "at": accepted_at,
+                    "evidence": "queued_owner_material_prepared_under_queue_lock",
+                }
+            ],
+        }
+        _atomic_text(message_path, message.rstrip() + "\n")
+        _atomic_json(evidence_path, record)
+        if updated_prompt != prompt:
+            _atomic_text(prompt_path, updated_prompt)
+
+        inbound_material = list(queue.get("inbound_material") or [])
+        receipt_ref = {
+            "schema_version": QUEUED_OWNER_MATERIAL_SCHEMA,
+            "followup_id": followup_id,
+            "target_run_id": target_run_id,
+            "message_path": str(message_path),
+            "message_sha256": message_sha256,
+            "evidence_path": str(evidence_path),
+            "accepted_at": accepted_at,
+        }
+        matching = [
+            item
+            for item in inbound_material
+            if isinstance(item, Mapping) and item.get("followup_id") == followup_id
+        ]
+        if matching and dict(matching[0]) != receipt_ref:
+            raise SubagentFollowupError(
+                "queued synthesis owner already has conflicting material receipt"
+            )
+        if not matching:
+            inbound_material.append(receipt_ref)
+        queue["inbound_material"] = inbound_material[-20:]
+        queue["updated_at"] = accepted_at
+        current["queue"] = queue
+        current["prompt_sha256"] = prompt_sha256_after
+        current["updated_at"] = accepted_at
+        _atomic_json(owner_path, current)
+
+        record["status"] = "accepted"
+        record["state_history"] = list(record["state_history"]) + [
+            {
+                "status": "accepted",
+                "at": accepted_at,
+                "evidence": "material_bound_to_existing_queued_synthesis_owner_prompt",
+                "delivery_owner_run_id": owner_run_id,
+            }
+        ]
+        _atomic_json(evidence_path, record)
+        return record
 
 
 def follow_up_managed_subagent(
@@ -1383,7 +1680,11 @@ def follow_up_managed_subagent(
                     "idempotency key is already bound to different follow-up content or custody"
                 )
             existing = loaded
-            if existing.get("continuation_run_id"):
+            if existing.get("continuation_run_id") or (
+                existing.get("route") == "queued_synthesis_owner"
+                and existing.get("status") == "accepted"
+                and existing.get("delivery_owner_run_id")
+            ):
                 return _followup_result(existing, idempotent_replay=True)
 
         rows = _lineage_manifests(root, lineage_root_run_id)
@@ -1411,6 +1712,33 @@ def follow_up_managed_subagent(
                 raise SubagentFollowupError(
                     "managed model session lineage contains an orphaned continuation"
                 )
+
+        queued_owner = _queued_synthesis_owner(
+            run_id=run_id,
+            target=target,
+            rows=rows,
+            target_provenance=target_provenance,
+        )
+        if queued_owner is not None:
+            owner_path, owner = queued_owner
+            record = _attach_queued_synthesis_owner_material(
+                target_run_id=run_id,
+                lineage_root_run_id=lineage_root_run_id,
+                owner_path=owner_path,
+                owner=owner,
+                message=message,
+                message_path=message_path,
+                evidence_path=evidence_path,
+                followup_id=followup_id,
+                selector=selector,
+                message_sha256=message_sha256,
+                caller_provenance=caller_provenance,
+                caller_sha256=caller_sha256,
+                query_relationship=query_relationship,
+                existing=existing,
+            )
+            return _followup_result(record, idempotent_replay=False)
+
         tip_path, tip = _lineage_tip(rows)
         parent_run_id = str(
             (existing or {}).get("parent_run_id")

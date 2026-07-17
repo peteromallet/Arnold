@@ -442,6 +442,7 @@ class ResidentRuntime:
                     "parent_source_record_id": parent.id,
                     "target_run_id": target.run_id,
                     "error_class": exc.__class__.__name__,
+                    "rejection_reason": " ".join(redact_text(str(exc)).split())[:240],
                 },
                 idempotency_key=deterministic_idempotency_key(
                     "resident-subagent-followup-fallback", persisted.message.id
@@ -458,13 +459,15 @@ class ResidentRuntime:
             level="info",
             category="system",
             event_type="resident_subagent_followup_routed",
-            message="Discord reply queued into its exact resident-managed model session",
+            message="Discord reply durably routed to its canonical managed owner",
             details={
                 "source_record_id": persisted.message.id,
                 "parent_source_record_id": parent.id,
                 "target_run_id": target.run_id,
                 "lineage_root_run_id": target.lineage_root_run_id,
                 "continuation_run_id": result.continuation_run_id,
+                "route": result.route,
+                "delivery_owner_run_id": result.delivery_owner_run_id,
                 "launch_anchor": target.launch_anchor,
                 "launch_anchor_field": target.launch_anchor_field,
                 "window_seconds": 900,
