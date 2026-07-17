@@ -324,6 +324,51 @@ def test_managed_launch_copies_occurrence_context_and_reconciles_terminal(
     assert projection.delivery_state == "delivered"
 
 
+def test_managed_schedule_infers_hermes_provider_from_model_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ScheduleService(tmp_path, project_root=tmp_path)
+    row = definition(
+        operation="managed_launch",
+        kind="resident_managed_agent",
+        bounds={"max_occurrences": 1},
+    )
+    row = row.model_copy(
+        update={
+            "target": row.target.model_copy(
+                update={"model": "hermes:glm-5.2", "task_kind": "autonomous"}
+            )
+        }
+    )
+    service.create(row, idempotency_key="hermes-route")
+    captured: dict = {}
+    manifest = tmp_path / "hermes-managed-manifest.json"
+
+    def fake_launch(**kwargs):
+        captured.update(kwargs)
+        manifest.write_text(
+            json.dumps({"status": "launching", "delivery": {"status": "pending"}}),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(
+            run_id="subagent-hermes-test",
+            manifest_path=str(manifest),
+            status="launching",
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.resident.subagent.launch_managed_subagent_detached",
+        fake_launch,
+    )
+    receipt = asyncio.run(service.run_due_once(now=NOW, worker_id="hermes-launcher"))
+
+    assert receipt.launched == 1
+    assert captured["backend"] == "hermes"
+    assert captured["model"] == "zhipu:glm-5.2"
+    assert captured["model_spec"] == "hermes:zhipu:glm-5.2"
+    assert captured["schedule_context"]["schedule_id"] == row.schedule_id
+
+
 def test_orchestrator_occurrence_commits_one_schedule_owned_legacy_job(tmp_path: Path) -> None:
     service = ScheduleService(tmp_path)
     row = definition(operation="vp_todo_sweep", kind="resident_orchestrator_turn")
