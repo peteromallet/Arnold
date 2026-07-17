@@ -25,6 +25,7 @@ from arnold_pipelines.megaplan.handlers.structured_output import (
     classify_scratch,
     promote_scratch,
 )
+from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.workers import WorkerResult
 
 
@@ -1102,6 +1103,57 @@ class TestTiebreakerScenarioOutcomes:
 
 
 class TestOverrideReplanBehavior:
+    def test_override_replan_accepts_blocked_gate_that_requested_iteration(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plan_file = tmp_path / "plan_v1.md"
+        plan_file.write_text("# repaired plan\n", encoding="utf-8")
+        state = {
+            "name": "demo",
+            "current_state": "blocked",
+            "iteration": 1,
+            "plan_versions": [{"version": 1, "file": plan_file.name}],
+            "meta": {},
+            "last_gate": {"recommendation": "ITERATE", "passed": False},
+        }
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.save_state_merge_meta",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.latest_plan_path",
+            lambda *args, **kwargs: plan_file,
+        )
+
+        response = _override_replan(
+            tmp_path,
+            tmp_path,
+            state,
+            argparse.Namespace(reason="repair gate findings", note=None),
+        )
+
+        assert response["state"] == "planned"
+        assert state["meta"]["overrides"][-1]["from_state"] == "blocked"
+
+    def test_override_replan_rejects_blocked_gate_without_iterate(
+        self, tmp_path: Path
+    ) -> None:
+        state = {
+            "name": "demo",
+            "current_state": "blocked",
+            "iteration": 1,
+            "meta": {},
+            "last_gate": {"recommendation": "ESCALATE", "passed": False},
+        }
+
+        with pytest.raises(CliError, match="replan requires state"):
+            _override_replan(
+                tmp_path,
+                tmp_path,
+                state,
+                argparse.Namespace(reason="unsafe bypass", note=None),
+            )
+
     def test_override_replan_clears_stale_loop_state_and_records_plan_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -290,3 +290,32 @@ def test_replan_transition_clears_stale_loop_state_and_records_latest_plan(monke
     assert meta_delta.value["notes"][-1]["note"] == "preserve current plan"
     assert "tiebreaker_count" not in meta_delta.value
     assert "user_approved_gate" not in meta_delta.value
+
+
+def test_replan_transition_accepts_blocked_gate_that_requested_iteration(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.planning.control_binding.latest_plan_path",
+        lambda plan_dir, state: plan_dir / "plan_v7.md",
+    )
+    state = {
+        "name": "demo",
+        "current_state": "blocked",
+        "config": {},
+        "iteration": 7,
+        "plan_versions": [{"version": 7, "file": "plan_v7.md"}],
+        "meta": {},
+        "last_gate": {"recommendation": "ITERATE", "passed": False},
+    }
+
+    result = planning_control_binding().apply_transition(
+        planning_run_state_view(state),
+        ControlTransition(
+            op="override",
+            target_id="replan",
+            payload={"plan_dir": str(Path.cwd()), "reason": "repair gate findings"},
+        ),
+    )
+
+    assert result.accepted is True
+    state_delta = next(delta for delta in result.state_deltas if delta.key == "current_state")
+    assert state_delta.value == "planned"

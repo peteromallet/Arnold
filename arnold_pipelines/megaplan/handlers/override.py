@@ -82,7 +82,10 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
     atomic_write_phase_result,
     read_phase_result,
 )
-from arnold_pipelines.megaplan.replan_state import reset_replan_loop_state
+from arnold_pipelines.megaplan.replan_state import (
+    blocked_gate_requests_replan,
+    reset_replan_loop_state,
+)
 from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effort_emit_failure, _write_gate_json
 
 
@@ -1116,7 +1119,10 @@ def _override_replan(
 ) -> StepResponse:
     allowed = {STATE_GATED, STATE_FINALIZED, STATE_CRITIQUED, STATE_FAILED}
     previous_state = state["current_state"]
-    if previous_state not in allowed:
+    if previous_state not in allowed and not blocked_gate_requests_replan(
+        state,
+        blocked_state=STATE_BLOCKED,
+    ):
         raise CliError(
             "invalid_transition",
             f"replan requires state {', '.join(sorted(allowed))}, got '{previous_state}'",
