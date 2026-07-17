@@ -381,6 +381,60 @@ class TestLifecycleFailureEnqueue:
             for decision in _read_decisions(queue_root)
         )
 
+    def test_supervisor_preserves_execution_binding_drift_identity(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.cloud.supervise import (
+            enqueue_supervisor_repair_request,
+        )
+
+        workspace = tmp_path / "workspace"
+        marker_dir = workspace / ".megaplan" / "cloud-sessions"
+        marker_dir.mkdir(parents=True)
+        queue_root = _queue_root(workspace)
+
+        with patch(
+            "arnold_pipelines.megaplan.cloud.current_target.resolve_current_target",
+            return_value={"current_refs": {"current_plan_name": "m6-plan"}},
+        ):
+            result = enqueue_supervisor_repair_request(
+                queue_root=queue_root,
+                marker_dir=marker_dir,
+                session="custody-chain",
+                workspace=workspace,
+                remote_spec=".megaplan/initiatives/custody/chain.yaml",
+                run_kind="chain",
+                reason=(
+                    "deterministic supervised failure: "
+                    "chain_execution_binding_drift;"
+                    "active_errors=editable_runtime_import_root_mismatch"
+                ),
+                log_path="/tmp/supervise.log",
+            )
+
+        request = result["request"]
+        signature = request["problem_signature"]
+        assert result["status"] == "queued"
+        assert signature["failure_kind"] == "chain_execution_binding_drift"
+        assert signature["phase_or_step"] == "chain_execution_binding"
+        assert signature["blocked_task_id"] == (
+            "chain_execution_binding:editable_runtime_import_root_mismatch"
+        )
+        assert signature["event_signature"] == (
+            "chain_execution_binding_drift;"
+            "active_errors=editable_runtime_import_root_mismatch"
+        )
+        assert "content-addressed rebind" in signature["gate_recommendation"]
+        assert request["problem_signature"] != {
+            "failure_kind": "supervised_run_exhausted",
+            "current_state": "process_exited",
+            "phase_or_step": "arnold-supervise",
+            "milestone_or_plan": "m6-plan",
+            "gate_recommendation": "",
+            "blocked_task_id": "phase:arnold-supervise",
+            "event_signature": "",
+        }
+
 
 # ---------------------------------------------------------------------------
 # HumanGateStep producer-hook tests
