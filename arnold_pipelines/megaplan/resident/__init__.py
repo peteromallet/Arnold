@@ -15,6 +15,7 @@ from .agent_loop import (
     FakeAgentRunner,
     FakeAgentStep,
     FakeToolCall,
+    ManagedProviderCliAgentRunner,
     OpenAICompatibleAgentRunner,
 )
 from .auth import (
@@ -63,6 +64,7 @@ __all__ = [
     "FakeAgentRunner",
     "FakeAgentStep",
     "FakeToolCall",
+    "ManagedProviderCliAgentRunner",
     "OpenAICompatibleAgentRunner",
     "MegaplanResidentProfile",
     "InboundEvent",

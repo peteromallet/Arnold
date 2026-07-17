@@ -1089,12 +1089,24 @@ class MegaplanResidentProfile:
             "resident_runtime": {
                 "model_provider": self.config.model_provider,
                 "model": self.config.model_name,
+                "managed_provider_controls": {
+                    "toolsets": self.config.model_toolsets,
+                    "max_tokens": self.config.model_max_tokens,
+                    "timeout_s": self.config.model_timeout_s,
+                    "session_scope": "durable resident conversation",
+                    "evidence": (
+                        "prompt.md/result.md/run.log/provider.raw/events.jsonl/manifest.json"
+                    ),
+                },
                 "codex_reasoning_effort": self.config.codex_reasoning_effort,
                 "codex_sandbox": self.config.codex_sandbox,
                 "codex_machine_access": (
                     "full machine access; Codex CLI is launched with danger-full-access"
-                    if self.config.codex_sandbox == "danger-full-access"
+                    if self.config.model_provider == "codex"
+                    and self.config.codex_sandbox == "danger-full-access"
                     else f"Codex CLI sandbox: {self.config.codex_sandbox}"
+                    if self.config.model_provider == "codex"
+                    else "not applicable to the selected resident provider"
                 ),
                 # P0 visibility: surface the build-vs-read decision so a resident
                 # that silently fell to cache mode (lost MEGAPLAN_TRUSTED_CONTAINER

@@ -41,3 +41,37 @@ The executable characterization is in
 when credentials exist. An installed but unauthenticated Claude CLI must produce
 an `authentication_failed` terminal receipt and must not be reported as a
 successful Claude end-to-end run.
+
+## Resident root-agent parity
+
+The resident root uses the same three provider adapters. Its durable resident
+conversation, inbound messages, bot turn, tool audit, and outbound record remain
+the control plane; provider sessions and invocation evidence are additive. The
+default route is Hermes with `zhipu:glm-5.2`. Environment overrides remain
+available, so changing the source default does not silently activate or restart
+an already-running resident. The AgentBox resident unit template pins the same
+provider/model for the next separately authorized install/restart.
+
+| Resident feature | Codex | Hermes / GLM 5.2 | Claude | Resident evidence / semantics |
+|---|---|---|---|---|
+| Provider/model routing | Managed CLI adapter | Managed CLI adapter (default) | Managed CLI adapter | The shared resolver rejects incompatible pairs before provider launch. |
+| Durable request custody | Shared | Shared | Shared | Existing inbound message, conversation, prompt snapshot, and bot-turn records are written before invocation. |
+| Provider invocation artifacts | Shared | Shared | Shared | Every invocation writes `prompt.md`, `result.md`, `run.log`, `provider.raw`, `events.jsonl`, provider metadata, and `manifest.json`. |
+| Session identity | Codex-emitted UUID | Pre-reserved Hermes ID | Pre-reserved Claude UUID | One atomic conversation-to-provider session record; failed reservations remain `reserved_unconfirmed`. |
+| Follow-up/continuation | `codex exec resume` | `--resume-session` with hydrated Hermes history | `--resume <uuid>` | Only a prior `persisted` session for the same conversation/provider/model is resumed. Provider/model changes start a new lineage. |
+| Concurrent same-conversation turns | Serialized | Serialized | Serialized | An in-process conversation lock prevents two turns racing one upstream session; durable resident ingress remains the restart boundary. |
+| Tool policy | Full generic set only | Native subset | Built-in Claude tool map | Same validated generic policy and truthful Codex narrowing failure as managed children. The compact resident tool catalog documents equivalent CLI operations. |
+| Max output tokens | Recorded as upstream-managed | Native request cap | `CLAUDE_CODE_MAX_OUTPUT_TOKENS` | Same capability contract and configured value. |
+| Provider timeout | Supervisor | Supervisor | Launcher plus supervisor | Timeout terminates the provider process group and records terminal status 124. |
+| Raw and normalized telemetry | Codex JSONL | Hermes stdout/metadata | Claude stream-JSON | Raw output is preserved; normalized events use the provider-neutral schema and explicitly do not claim byte identity. |
+| Usage | When emitted | Launcher metadata | Result event | Stored in the invocation manifest and normalized events without fabricating absent fields. |
+| Empty success | Fails | Fails | Fails | Exit zero still requires a final result and confirmed session identity. |
+| Auth/CLI/process failure | Durable | Durable | Durable | Category/message/return code/log/raw/event paths and `reserved_unconfirmed` session state are retained. |
+| Lifecycle and diagnostics | Shared | Shared | Shared | `launching` → `running` → terminal history supplements the resident bot-turn lifecycle. |
+| Queue/custody | Resident ingress queue | Resident ingress queue | Resident ingress queue | Provider execution does not replace message coalescing, scheduled-job custody, or abandoned-turn recovery. |
+| Completion delivery | Resident outbox | Resident outbox | Resident outbox | Exactly one resident reply is created and delivered through the existing transport boundary. Provider adapters never deliver independently. |
+| Managed-child launch/follow-up | Shared CLI seam | Shared CLI seam | Shared CLI seam | Immutable delegation provenance is injected into every provider process, and child work continues through the provider-neutral managed lifecycle above. |
+
+Root-adapter regression coverage is in
+`tests/resident/test_managed_provider_agent_runner.py` and the existing resident
+runtime/outbound suites.
