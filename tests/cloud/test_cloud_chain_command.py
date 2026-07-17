@@ -138,6 +138,18 @@ def test_sync_megaplan_accepts_on_box_provider() -> None:
     assert isinstance(_provider_for_action(_cloud_spec(), args), OnBoxProvider)
 
 
+def test_cloud_exec_accepts_on_box_provider() -> None:
+    from arnold_pipelines.megaplan.cloud.providers.on_box import OnBoxProvider
+
+    args = _cloud_parser().parse_args(
+        ["cloud", "exec", "printf on-box", "--on-box"]
+    )
+
+    assert args.cloud_action == "exec"
+    assert args.on_box is True
+    assert isinstance(_provider_for_action(_cloud_spec(), args), OnBoxProvider)
+
+
 def test_cloud_chain_accepts_prepare_only() -> None:
     args = _cloud_parser().parse_args(
         ["cloud", "chain", "initiative/chain.yaml", "--prepare-only"]
