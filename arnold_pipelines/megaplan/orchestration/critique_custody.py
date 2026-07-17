@@ -437,13 +437,58 @@ def _receipt_paths(plan_dir: Path) -> list[Path]:
     return sorted(plan_dir.glob("critique_custody_v*.json"), key=iteration)
 
 
+def _validated_plan_lineage(
+    plan_dir: Path,
+    state: PlanState,
+) -> dict[str, tuple[int, str]]:
+    """Return the exact, ordered plan lineage or fail closed on drift."""
+    records = state.get("plan_versions")
+    if not isinstance(records, list) or not records:
+        raise CritiqueCustodyError(
+            "critique_plan_lineage_invalid",
+            ["plan_versions must be a non-empty array"],
+        )
+    lineage: dict[str, tuple[int, str]] = {}
+    issues: list[str] = []
+    previous_version = -1
+    for index, record in enumerate(records):
+        if not isinstance(record, Mapping):
+            issues.append(f"plan version row {index} is not an object")
+            continue
+        name = record.get("file")
+        version = record.get("version")
+        declared_sha = record.get("hash")
+        if not isinstance(name, str) or not name or Path(name).name != name:
+            issues.append(f"plan version row {index} has an unsafe artifact reference")
+            continue
+        if name in lineage:
+            issues.append(f"plan lineage repeats artifact {name}")
+            continue
+        if not isinstance(version, int) or version <= previous_version:
+            issues.append(f"plan lineage version is not strictly increasing at {name}")
+        else:
+            previous_version = version
+        path = plan_dir / name
+        if not path.exists():
+            issues.append(f"plan lineage artifact is missing: {name}")
+            continue
+        actual_sha = sha256_file(path)
+        if not isinstance(declared_sha, str) or declared_sha != actual_sha:
+            issues.append(f"plan lineage hash mismatch for {name}")
+            continue
+        lineage[name] = (index, actual_sha)
+    if issues:
+        raise CritiqueCustodyError("critique_plan_lineage_invalid", issues)
+    return lineage
+
+
 def _resolution_for_finding(
     flag: Mapping[str, Any],
     finding: Mapping[str, Any],
     *,
     current_plan_name: str,
-    current_plan_sha256: str,
-    source_plan_sha256: str,
+    source_plan_name: str,
+    plan_lineage: Mapping[str, tuple[int, str]],
     gate_expected: bool,
 ) -> dict[str, Any]:
     flag_id = str(finding.get("flag_id"))
@@ -452,23 +497,36 @@ def _resolution_for_finding(
     gate_resolution = (
         flag.get("gate_resolution") if isinstance(flag.get("gate_resolution"), dict) else {}
     )
-    plan_mutated = current_plan_sha256 != source_plan_sha256
+    addressed_plan_name = flag.get("addressed_in")
+    source_plan = plan_lineage.get(source_plan_name)
+    addressed_plan = (
+        plan_lineage.get(addressed_plan_name)
+        if isinstance(addressed_plan_name, str)
+        else None
+    )
+    current_plan = plan_lineage.get(current_plan_name)
+    plan_mutated_on_current_lineage = bool(
+        source_plan is not None
+        and addressed_plan is not None
+        and current_plan is not None
+        and source_plan[0] < addressed_plan[0] <= current_plan[0]
+    )
     fixed_claim = (
         resolution.get("kind") == "fixed"
         and isinstance(resolution.get("claim"), str)
         and bool(resolution["claim"].strip())
         and isinstance(resolution.get("where"), str)
         and bool(resolution["where"].strip())
-        and flag.get("addressed_in") == current_plan_name
-        and plan_mutated
+        and plan_mutated_on_current_lineage
     )
     if status == "verified" and fixed_claim:
+        assert addressed_plan is not None
         return {
             "finding_id": finding["finding_id"],
             "flag_id": flag_id,
             "disposition": "verified_plan_mutation",
-            "plan_artifact": current_plan_name,
-            "plan_sha256": current_plan_sha256,
+            "plan_artifact": addressed_plan_name,
+            "plan_sha256": addressed_plan[1],
             "evidence": gate_resolution.get("evidence") or flag.get("verify_rationale") or resolution.get("claim"),
         }
     if status == "gate_disputed" and gate_expected:
@@ -490,12 +548,13 @@ def _resolution_for_finding(
                 "evidence": rationale,
             }
     if status == "addressed" and not gate_expected and fixed_claim:
+        assert addressed_plan is not None
         return {
             "finding_id": finding["finding_id"],
             "flag_id": flag_id,
             "disposition": "plan_mutation_light_workflow",
-            "plan_artifact": current_plan_name,
-            "plan_sha256": current_plan_sha256,
+            "plan_artifact": addressed_plan_name,
+            "plan_sha256": addressed_plan[1],
             "evidence": resolution.get("claim"),
         }
     raise CritiqueCustodyError(
@@ -519,7 +578,8 @@ def write_critique_clearance(plan_dir: Path, state: PlanState) -> dict[str, Any]
             ["workflow includes critique but has no production receipt"],
         )
     current_plan = latest_plan_path(plan_dir, state)
-    current_plan_sha = sha256_file(current_plan)
+    plan_lineage = _validated_plan_lineage(plan_dir, state)
+    current_plan_sha = plan_lineage[current_plan.name][1]
     registry = load_flag_registry(plan_dir)
     by_id = {
         str(flag.get("id")): flag
@@ -562,8 +622,8 @@ def write_critique_clearance(plan_dir: Path, state: PlanState) -> dict[str, Any]
                 flag,
                 finding,
                 current_plan_name=current_plan.name,
-                current_plan_sha256=current_plan_sha,
-                source_plan_sha256=str(receipt.get("plan_sha256")),
+                source_plan_name=str(receipt.get("plan_artifact")),
+                plan_lineage=plan_lineage,
                 gate_expected=gate_expected,
             )
         )
@@ -726,6 +786,27 @@ def assert_finalize_custody(
             ]
             if resolution_ids != clearance.get("finding_ids"):
                 issues.append("clearance resolution rows differ from finding ids")
+            for resolution in clearance.get("resolutions", []):
+                if not isinstance(resolution, Mapping):
+                    issues.append("clearance resolution row is malformed")
+                    continue
+                plan_artifact = resolution.get("plan_artifact")
+                if plan_artifact is None:
+                    continue
+                if (
+                    not isinstance(plan_artifact, str)
+                    or Path(plan_artifact).name != plan_artifact
+                ):
+                    issues.append("clearance resolution plan artifact is unsafe")
+                    continue
+                resolution_plan = plan_dir / plan_artifact
+                if (
+                    not resolution_plan.exists()
+                    or resolution.get("plan_sha256") != sha256_file(resolution_plan)
+                ):
+                    issues.append(
+                        f"clearance resolution plan hash mismatch for {plan_artifact}"
+                    )
             for source in clearance.get("source_receipts", []):
                 if not isinstance(source, Mapping):
                     issues.append("clearance source receipt row is malformed")

@@ -6,7 +6,11 @@ from typing import Any
 
 import pytest
 
-from arnold_pipelines.megaplan._core import atomic_write_json, atomic_write_text
+from arnold_pipelines.megaplan._core import (
+    atomic_write_json,
+    atomic_write_text,
+    sha256_file,
+)
 from arnold_pipelines.megaplan.flags import (
     update_flags_after_critique,
     update_flags_after_gate,
@@ -92,7 +96,11 @@ def _persist_critique(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     iteration = state["iteration"]
-    atomic_write_text(plan_dir / f"plan_v{iteration}.md", f"# Plan v{iteration}\n\nOversized work.\n")
+    atomic_write_text(
+        plan_dir / f"plan_v{iteration}.md",
+        f"# Plan v{iteration}\n\nOversized work.\n",
+    )
+    state["plan_versions"][-1]["hash"] = sha256_file(plan_dir / f"plan_v{iteration}.md")
     atomic_write_text(plan_dir / f"critique_raw_v{iteration}.txt", "raw producer critique")
     prepare_critique_payload(payload, expected_check_ids=["scope"])
     atomic_write_json(plan_dir / f"critique_v{iteration}.json", payload)
@@ -104,6 +112,21 @@ def _persist_critique(
     )
     update_flags_after_critique(plan_dir, payload, iteration=iteration)
     return receipt
+
+
+def _append_plan_version(
+    plan_dir: Path,
+    state: dict[str, Any],
+    *,
+    version: int,
+    text: str,
+) -> None:
+    name = f"plan_v{version}.md"
+    atomic_write_text(plan_dir / name, text)
+    state["iteration"] = version
+    state["plan_versions"].append(
+        {"version": version, "file": name, "hash": sha256_file(plan_dir / name)}
+    )
 
 
 def _admitted_graph() -> dict[str, Any]:
@@ -174,9 +197,12 @@ def test_partial_mapping_remains_blocking_at_finalize(tmp_path: Path) -> None:
     payload = _oversized_payload(two_findings=True)
     _persist_critique(plan_dir, state, payload)
 
-    atomic_write_text(plan_dir / "plan_v2.md", "# Plan v2\n\nStep 2 is split; Step 8 is not.\n")
-    state["iteration"] = 2
-    state["plan_versions"].append({"version": 2, "file": "plan_v2.md"})
+    _append_plan_version(
+        plan_dir,
+        state,
+        version=2,
+        text="# Plan v2\n\nStep 2 is split; Step 8 is not.\n",
+    )
     update_flags_after_revise(
         plan_dir,
         [{"id": "scope-god-task-2", "resolution": "addressed", "reason": "Split into T2a/T2b.", "where": "Step 2"}],
@@ -189,6 +215,202 @@ def test_partial_mapping_remains_blocking_at_finalize(tmp_path: Path) -> None:
     )
 
     with pytest.raises(CritiqueCustodyError, match="scope-god-task-8"):
+        write_critique_clearance(plan_dir, state)
+
+
+def test_verified_plan_mutation_survives_unrelated_later_plan_versions(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    receipt = _persist_critique(plan_dir, state, payload)
+    flag_id = receipt["flag_ids"][0]
+
+    _append_plan_version(
+        plan_dir,
+        state,
+        version=2,
+        text="# Plan v2\n\nSplit the oversized task into bounded work.\n",
+    )
+    update_flags_after_revise(
+        plan_dir,
+        [{"id": flag_id, "resolution": "addressed", "reason": "Split it.", "where": "Step 2"}],
+        plan_file="plan_v2.md",
+        summary="Split the task.",
+    )
+    update_flags_after_gate(
+        plan_dir,
+        [
+            {
+                "flag_id": flag_id,
+                "action": "verify_fixed",
+                "evidence": "plan_v2.md Step 2",
+                "rationale": "",
+            }
+        ],
+    )
+    _append_plan_version(
+        plan_dir,
+        state,
+        version=3,
+        text="# Plan v3\n\nAdd unrelated deployment details without changing Step 2.\n",
+    )
+
+    clearance = write_critique_clearance(plan_dir, state)
+
+    assert clearance["resolutions"] == [
+        {
+            "finding_id": receipt["finding_ids"][0],
+            "flag_id": flag_id,
+            "disposition": "verified_plan_mutation",
+            "plan_artifact": "plan_v2.md",
+            "plan_sha256": sha256_file(plan_dir / "plan_v2.md"),
+            "evidence": "plan_v2.md Step 2",
+        }
+    ]
+    assert clearance["plan_artifact"] == "plan_v3.md"
+    graph = _admitted_graph()
+    graph["critique_resolution_coverage"] = [
+        {
+            "finding_id": receipt["finding_ids"][0],
+            "task_ids": ["T1"],
+            "resolution_evidence": "T1 implements the verified plan_v2 split.",
+        }
+    ]
+    bind_finalize_custody(plan_dir, graph, clearance)
+    assert_finalize_custody(plan_dir, graph)
+    atomic_write_text(plan_dir / "plan_v2.md", "# Tampered addressed plan\n")
+    with pytest.raises(CritiqueCustodyError, match="resolution plan hash mismatch"):
+        assert_finalize_custody(plan_dir, graph)
+
+
+def test_recurrent_finding_cannot_reuse_an_older_verified_plan_mutation(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    first_receipt = _persist_critique(plan_dir, state, _oversized_payload())
+    flag_id = first_receipt["flag_ids"][0]
+    _append_plan_version(
+        plan_dir,
+        state,
+        version=2,
+        text="# Plan v2\n\nSplit the oversized task into bounded work.\n",
+    )
+    update_flags_after_revise(
+        plan_dir,
+        [{"id": flag_id, "resolution": "addressed", "reason": "Split it.", "where": "Step 2"}],
+        plan_file="plan_v2.md",
+        summary="Split the task.",
+    )
+    update_flags_after_gate(
+        plan_dir,
+        [
+            {
+                "flag_id": flag_id,
+                "action": "verify_fixed",
+                "evidence": "plan_v2.md Step 2",
+                "rationale": "",
+            }
+        ],
+    )
+    state["iteration"] = 3
+    state["plan_versions"].append({"version": 3, "file": "plan_v3.md"})
+    recurrent_receipt = _persist_critique(plan_dir, state, _oversized_payload())
+    assert recurrent_receipt["finding_ids"] == first_receipt["finding_ids"]
+    update_flags_after_gate(
+        plan_dir,
+        [
+            {
+                "flag_id": flag_id,
+                "action": "verify_fixed",
+                "evidence": "stale v2 evidence",
+                "rationale": "",
+            }
+        ],
+    )
+
+    with pytest.raises(CritiqueCustodyError, match=flag_id):
+        write_critique_clearance(plan_dir, state)
+
+
+@pytest.mark.parametrize("corruption", ["missing", "mismatched"])
+def test_addressed_plan_lineage_hash_must_remain_exact(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    receipt = _persist_critique(plan_dir, state, _oversized_payload())
+    flag_id = receipt["flag_ids"][0]
+    _append_plan_version(
+        plan_dir,
+        state,
+        version=2,
+        text="# Plan v2\n\nSplit the oversized task into bounded work.\n",
+    )
+    update_flags_after_revise(
+        plan_dir,
+        [{"id": flag_id, "resolution": "addressed", "reason": "Split it.", "where": "Step 2"}],
+        plan_file="plan_v2.md",
+        summary="Split the task.",
+    )
+    update_flags_after_gate(
+        plan_dir,
+        [
+            {
+                "flag_id": flag_id,
+                "action": "verify_fixed",
+                "evidence": "plan_v2.md Step 2",
+                "rationale": "",
+            }
+        ],
+    )
+    if corruption == "missing":
+        state["plan_versions"][-1].pop("hash")
+    else:
+        atomic_write_text(plan_dir / "plan_v2.md", "# Tampered plan\n")
+
+    with pytest.raises(CritiqueCustodyError, match="plan lineage hash mismatch"):
+        write_critique_clearance(plan_dir, state)
+
+
+def test_blocking_finding_cannot_be_accepted_as_minor_tradeoff(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    receipt = _persist_critique(plan_dir, state, _oversized_payload())
+    flag_id = receipt["flag_ids"][0]
+    update_flags_after_gate(
+        plan_dir,
+        [
+            {
+                "flag_id": flag_id,
+                "action": "accept_tradeoff",
+                "evidence": "",
+                "rationale": "Attempted tradeoff for a blocking finding.",
+            }
+        ],
+    )
+
+    with pytest.raises(CritiqueCustodyError, match=flag_id):
+        write_critique_clearance(plan_dir, state)
+
+
+def test_open_nonblocking_finding_still_requires_a_disposition(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    payload["flags"][0]["severity_hint"] = "likely-minor"
+    receipt = _persist_critique(plan_dir, state, payload)
+    assert receipt["findings"][0]["blocking"] is False
+
+    with pytest.raises(CritiqueCustodyError, match=receipt["flag_ids"][0]):
         write_critique_clearance(plan_dir, state)
 
 
@@ -273,9 +495,12 @@ def test_clearance_binds_exact_final_graph_and_execute_rejects_missing_or_mutate
     state = _state(tmp_path)
     payload = _oversized_payload()
     _persist_critique(plan_dir, state, payload)
-    atomic_write_text(plan_dir / "plan_v2.md", "# Plan v2\n\nSplit Step 2 into bounded tasks.\n")
-    state["iteration"] = 2
-    state["plan_versions"].append({"version": 2, "file": "plan_v2.md"})
+    _append_plan_version(
+        plan_dir,
+        state,
+        version=2,
+        text="# Plan v2\n\nSplit Step 2 into bounded tasks.\n",
+    )
     update_flags_after_revise(
         plan_dir,
         [
