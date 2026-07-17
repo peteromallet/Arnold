@@ -24,6 +24,20 @@ def _assert_required_keys_have_properties(schema: Any) -> None:
             _assert_required_keys_have_properties(value)
 
 
+def _assert_array_schemas_have_items(schema: Any, path: tuple[str, ...] = ()) -> None:
+    if isinstance(schema, dict):
+        schema_type = schema.get("type")
+        if schema_type == "array" or (
+            isinstance(schema_type, list) and "array" in schema_type
+        ):
+            assert "items" in schema, f"array schema missing items at {'/'.join(path)}"
+        for key, value in schema.items():
+            _assert_array_schemas_have_items(value, path + (str(key),))
+    elif isinstance(schema, list):
+        for index, value in enumerate(schema):
+            _assert_array_schemas_have_items(value, path + (str(index),))
+
+
 def test_plan_and_revise_codex_output_schemas_keep_test_blast_radius_declared() -> None:
     for schema_name in ("plan.json", "revise.json"):
         schema = _enforce_openai_strict_mode(strict_schema(deepcopy(SCHEMAS[schema_name])))
@@ -48,6 +62,7 @@ def test_all_codex_output_schemas_have_strict_required_properties() -> None:
     for schema in SCHEMAS.values():
         strict = _enforce_openai_strict_mode(strict_schema(deepcopy(schema)))
         _assert_required_keys_have_properties(strict)
+        _assert_array_schemas_have_items(strict)
 
 
 def test_critique_evaluator_schema_rejects_invented_catalog_lens_ids() -> None:

@@ -733,7 +733,18 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "meta_commentary": {"type": "string"},
             "critique_custody": {"type": "object"},
-            "critique_resolution_coverage": {"type": "array"},
+            "critique_resolution_coverage": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "finding_id": {"type": "string"},
+                        "task_ids": {"type": "array", "items": {"type": "string"}},
+                        "resolution_evidence": {"type": "string"},
+                    },
+                    "required": ["finding_id", "task_ids", "resolution_evidence"],
+                },
+            },
             "validation": {
                 "type": "object",
                 "properties": {
