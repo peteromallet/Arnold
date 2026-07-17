@@ -43,6 +43,9 @@ def test_report_only_and_ordinary_findings_never_create_repair_custody(tmp_path:
         "blocked_authority",
         "report_only",
     ]
+    report_only = result["l3_escalation_summary"]["items"][1]
+    assert report_only["reason"].startswith("l3_repair_gate_blocked:")
+    assert "healthy_live_process" in report_only["reason"]
     assert not (queue / "requests").exists()
     assert not (tmp_path / "audit-escalations").exists()
 
