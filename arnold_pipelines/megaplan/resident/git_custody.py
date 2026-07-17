@@ -186,8 +186,9 @@ def render_git_custody_contract(custody: Mapping[str, Any]) -> str:
             f"in {resolution.get('target_path')}"
         )
         integration = (
-            "The target is unambiguous. Revalidate that ref immediately before integration, "
-            "rebase the feature branch if it advanced, and integrate locally with fast-forward-only "
+            "The target is unambiguous. Record integration.before_revision immediately before "
+            "integration, rebase the feature branch if the target advanced, and integrate locally "
+            "with fast-forward-only "
             "or the repository's documented non-destructive method. A dirty/divergent launch checkout "
             "is not an ambiguity and must remain untouched. Only a missing target ref or a target that "
             "moved off the recorded launch base may become blocked_ambiguity after launch. Use the exact "
@@ -211,7 +212,12 @@ def render_git_custody_contract(custody: Mapping[str, Any]) -> str:
         "and concurrent work. "
         f"{integration} Before finishing, write JSON to the evidence path with schema_version "
         f"{GIT_CUSTODY_EVIDENCE_SCHEMA}; launch_target (target_ref, base_revision); implementation "
-        "(worktree_path, branch_ref, base_revision, commit_revision); verification (diff_reviewed=true, "
+        "(worktree_path, branch_ref, base_revision, commit_revision), where implementation.base_revision "
+        "is the actual feature base after any rebase/replay and may differ from launch_target.base_revision "
+        "only when Git proves it is a descendant on the same repository lineage; revalidation records "
+        "the final observed target revision before completion and may be later than "
+        "integration.before_revision only with strict containment proof; verification "
+        "(diff_reviewed=true, "
         "git_diff_check=passed, tests=[{command,status=passed}, ...]); preservation "
         "(launch_checkout_untouched=true); revalidation (target_ref, observed_revision); and integration "
         "(status, target_ref, before_revision, after_revision, gate when blocked). The resident supervisor "
@@ -292,11 +298,6 @@ def validate_git_custody_evidence(custody: Mapping[str, Any]) -> dict[str, Any]:
     _require_equal(launch_target.get("target_ref"), target_ref, "launch_target.target_ref")
     _require_equal(launch_target.get("base_revision"), base_revision, "launch_target.base_revision")
     _require_equal(
-        implementation.get("base_revision"),
-        base_revision,
-        "implementation.base_revision",
-    )
-    _require_equal(
         preservation.get("launch_checkout_untouched"),
         True,
         "preservation.launch_checkout_untouched",
@@ -338,6 +339,50 @@ def validate_git_custody_evidence(custody: Mapping[str, Any]) -> dict[str, Any]:
         != 0
     ):
         raise GitCustodyError("implementation commit does not exist in the target repository")
+    implementation_base = str(implementation.get("base_revision") or "")
+    if not implementation_base:
+        raise GitCustodyError("implementation.base_revision is required")
+    if (
+        _git(
+            target_path,
+            "cat-file",
+            "-e",
+            f"{implementation_base}^{{commit}}",
+            check=False,
+        ).returncode
+        != 0
+    ):
+        raise GitCustodyError(
+            "implementation base does not exist in the target repository"
+        )
+    if (
+        _git(
+            target_path,
+            "merge-base",
+            "--is-ancestor",
+            base_revision,
+            implementation_base,
+            check=False,
+        ).returncode
+        != 0
+    ):
+        raise GitCustodyError(
+            "implementation base is not a descendant of the recorded launch base"
+        )
+    if (
+        _git(
+            target_path,
+            "merge-base",
+            "--is-ancestor",
+            implementation_base,
+            commit,
+            check=False,
+        ).returncode
+        != 0
+    ):
+        raise GitCustodyError(
+            "implementation base is not an ancestor of the implementation commit"
+        )
     if (
         _git(
             target_path,
@@ -351,18 +396,48 @@ def validate_git_custody_evidence(custody: Mapping[str, Any]) -> dict[str, Any]:
     ):
         raise GitCustodyError("launch base is not an ancestor of the implementation commit")
     if (
-        _git(target_path, "diff", "--check", base_revision, commit, check=False).returncode
+        _git(
+            target_path,
+            "diff",
+            "--check",
+            implementation_base,
+            commit,
+            check=False,
+        ).returncode
         != 0
     ):
         raise GitCustodyError("git diff --check failed for the implemented range")
 
     _require_equal(integration.get("target_ref"), target_ref, "integration.target_ref")
     _require_equal(revalidation.get("target_ref"), target_ref, "revalidation.target_ref")
-    _require_equal(
-        revalidation.get("observed_revision"),
-        integration.get("before_revision"),
-        "revalidation.observed_revision",
-    )
+    before_revision = str(integration.get("before_revision") or "")
+    if not before_revision:
+        raise GitCustodyError("integration.before_revision is required")
+    if (
+        _git(
+            target_path,
+            "cat-file",
+            "-e",
+            f"{before_revision}^{{commit}}",
+            check=False,
+        ).returncode
+        != 0
+    ):
+        raise GitCustodyError("integration base does not exist in the target repository")
+    if (
+        _git(
+            target_path,
+            "merge-base",
+            "--is-ancestor",
+            base_revision,
+            before_revision,
+            check=False,
+        ).returncode
+        != 0
+    ):
+        raise GitCustodyError(
+            "integration base is not a descendant of the recorded launch base"
+        )
     if blocked_after_launch:
         current = _git(target_path, "rev-parse", "--verify", target_ref, check=False)
         if current.returncode != 0:
@@ -408,6 +483,110 @@ def validate_git_custody_evidence(custody: Mapping[str, Any]) -> dict[str, Any]:
     if (
         _git(
             target_path,
+            "cat-file",
+            "-e",
+            f"{after_revision}^{{commit}}",
+            check=False,
+        ).returncode
+        != 0
+    ):
+        raise GitCustodyError("integration result does not exist in the target repository")
+    if (
+        _git(
+            target_path,
+            "merge-base",
+            "--is-ancestor",
+            before_revision,
+            after_revision,
+            check=False,
+        ).returncode
+        != 0
+    ):
+        raise GitCustodyError("integration result does not descend from the revalidated target")
+    if (
+        _git(
+            target_path,
+            "merge-base",
+            "--is-ancestor",
+            commit,
+            after_revision,
+            check=False,
+        ).returncode
+        != 0
+    ):
+        raise GitCustodyError("integration result does not contain the implementation commit")
+    observed_revision = str(revalidation.get("observed_revision") or "")
+    if not observed_revision:
+        raise GitCustodyError("revalidation.observed_revision is required")
+    if (
+        _git(
+            target_path,
+            "cat-file",
+            "-e",
+            f"{observed_revision}^{{commit}}",
+            check=False,
+        ).returncode
+        != 0
+    ):
+        raise GitCustodyError("revalidated target does not exist in the target repository")
+    if observed_revision != before_revision:
+        if (
+            _git(
+                target_path,
+                "merge-base",
+                "--is-ancestor",
+                before_revision,
+                observed_revision,
+                check=False,
+            ).returncode
+            != 0
+        ):
+            raise GitCustodyError(
+                "revalidated target does not descend from the integration base"
+            )
+        if (
+            _git(
+                target_path,
+                "merge-base",
+                "--is-ancestor",
+                commit,
+                observed_revision,
+                check=False,
+            ).returncode
+            != 0
+        ):
+            raise GitCustodyError(
+                "later revalidated target does not contain the implementation commit"
+            )
+    observed_before_after = (
+        _git(
+            target_path,
+            "merge-base",
+            "--is-ancestor",
+            observed_revision,
+            after_revision,
+            check=False,
+        ).returncode
+        == 0
+    )
+    after_before_observed = (
+        _git(
+            target_path,
+            "merge-base",
+            "--is-ancestor",
+            after_revision,
+            observed_revision,
+            check=False,
+        ).returncode
+        == 0
+    )
+    if not (observed_before_after or after_before_observed):
+        raise GitCustodyError(
+            "revalidated target and integration result are on incomparable lineage"
+        )
+    if (
+        _git(
+            target_path,
             "merge-base",
             "--is-ancestor",
             commit,
@@ -429,11 +608,24 @@ def validate_git_custody_evidence(custody: Mapping[str, Any]) -> dict[str, Any]:
         != 0
     ):
         raise GitCustodyError("recorded integration result is not contained in the target ref")
+    if (
+        _git(
+            target_path,
+            "merge-base",
+            "--is-ancestor",
+            observed_revision,
+            target_ref,
+            check=False,
+        ).returncode
+        != 0
+    ):
+        raise GitCustodyError("revalidated target revision is not contained in the target ref")
     return {
         "status": "verified_integrated",
         "evidence_path": str(evidence_path),
         "target_ref": target_ref,
         "base_revision": base_revision,
+        "implementation_base_revision": implementation_base,
         "commit_revision": commit,
         "target_revision": _git(target_path, "rev-parse", target_ref).stdout.strip(),
         "worktree_path": str(worktree_path),
