@@ -74,6 +74,7 @@ try:
     from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
     from arnold_pipelines.megaplan.cloud.redact import redact_payload
     from arnold_pipelines.megaplan.cloud.repair_contract import classify_repair_dispatch, project_repair_custody
+    from arnold_pipelines.megaplan.cloud.repair_escalation import evaluate_checkpoint_escalation
     from arnold_pipelines.megaplan.cloud.repair_lock import (
         acquire_repair_lock,
         inspect_repair_lock,
@@ -976,8 +977,21 @@ def _classify_request(
         and isinstance(request_target.get("deterministic_superfixer_evidence"), Mapping)
         and request_target["deterministic_superfixer_evidence"].get("actionable") is True
     )
-    l2_actionable = decision.decision == "broken_superfixer" and deterministic_l3 and bool(
-        projection.get("blocker_id")
+    canonical_blocker_id = str(projection.get("blocker_id") or "").strip()
+    goal_escalation = evaluate_checkpoint_escalation(
+        marker_dir=marker_dir,
+        session=session,
+        plan_name=current_plan_name,
+        blocker_id=canonical_blocker_id,
+    )
+    goal_l2_actionable = bool(
+        goal_escalation.get("actionable") is True
+        and canonical_blocker_id
+        and decision.decision in {"broken_superfixer", "dispatch_l1_repair"}
+    )
+    l2_actionable = bool(
+        (decision.decision == "broken_superfixer" and deterministic_l3 and canonical_blocker_id)
+        or goal_l2_actionable
     )
     requested_deep = bool(
         deterministic_l3
@@ -994,10 +1008,19 @@ def _classify_request(
             if decision.decision == "dispatch_l1_repair" or l2_actionable
             else "non_actionable"
         ),
-        "reason": "; ".join(decision.rationale) or "shared custody classifier did not allow dispatch",
+        "reason": (
+            str(goal_escalation.get("reason") or "")
+            if goal_l2_actionable
+            else "; ".join(decision.rationale)
+            or "shared custody classifier did not allow dispatch"
+        ),
         "dispatch_decision": decision.decision,
         "dispatch_intent": (
-            "deep_superfixer_repair" if deep_actionable else decision.dispatch_intent
+            "deep_superfixer_repair"
+            if deep_actionable
+            else "broken_superfixer"
+            if goal_l2_actionable
+            else decision.dispatch_intent
         ),
         "custody_bucket": decision.custody_bucket,
         "blocker_id": projection.get("blocker_id", ""),

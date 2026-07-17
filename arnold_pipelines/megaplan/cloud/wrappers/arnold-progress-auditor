@@ -646,6 +646,7 @@ from arnold_pipelines.megaplan.cloud.auditor_external_evidence import (
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
 from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records
+from arnold_pipelines.megaplan.cloud.repair_escalation import stranded_replan_reason
 try:
     from arnold_pipelines.megaplan.managed_agent import (
         is_managed_manifest,
@@ -718,6 +719,9 @@ META_RUN_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_META_RUN_DIR", "/work
 COMMIT_SOURCE_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_COMMIT_SOURCE_DIR", arnold_src))
 REPAIR_QUEUE_ROOT = validate_queue_root(
     os.environ.get("ARNOLD_REPAIR_QUEUE_ROOT", "/workspace/.megaplan/repair-queue")
+)
+REPAIR_GOAL_MARKER_DIR = pathlib.Path(
+    os.environ.get("CLOUD_WATCHDOG_MARKER_DIR", "/workspace/.megaplan/cloud-sessions")
 )
 COMMIT_SOURCE_PATHS = (
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog",
@@ -4092,6 +4096,12 @@ for entry in plans:
         _stale_l1_l2_cycle_reason(ev),
         _marker_present_stopped_without_chain_state_reason(ev),
         _dependency_independent_launch_gap_reason(ev),
+        stranded_replan_reason(
+            marker_dir=REPAIR_GOAL_MARKER_DIR,
+            session=str(ev.get("session") or ""),
+            plan_name=str(ev.get("plan") or ""),
+            blocker_id=str((ev.get("repair_custody_summary") or {}).get("blocker_id") or ""),
+        ),
     ):
         if deterministic_reason:
             reasons.append(deterministic_reason)
