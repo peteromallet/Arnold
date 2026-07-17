@@ -193,7 +193,12 @@ def _import_runtime():
         from megaplan.runtime.key_pool import resolve_model
         return AIAgent, SessionDB, resolve_model
     except ModuleNotFoundError as legacy_exc:
-        if legacy_exc.name not in {"megaplan", "run_agent", "hermes_state"}:
+        if legacy_exc.name not in {
+            "megaplan",
+            "megaplan.agent",
+            "run_agent",
+            "hermes_state",
+        }:
             raise
     # Try 2: current Arnold editable-install layout.
     try:
