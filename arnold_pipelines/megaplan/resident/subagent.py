@@ -29,6 +29,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from agentbox.redaction import redact_text
+from arnold.agent.contracts import AgentSpec, format_agent_spec
+from arnold.agent.routing import ManagedAgentRoute, resolve_managed_agent_route
 from arnold_pipelines.megaplan.managed_agent import (
     ACTIVE_STATUSES as SHARED_ACTIVE_STATUSES,
     MANAGED_AGENT_CUSTODIAN,
@@ -135,9 +137,12 @@ FINAL_SUMMARY_INSTRUCTION = (
     "task-specific instructions above."
 )
 
-# resident/ -> megaplan/ -> skills/subagent-launcher/launch_hermes_agent.py
+# resident/ -> megaplan/ -> skills/subagent-launcher/
 LAUNCHER_PATH = (
     Path(__file__).resolve().parent.parent / "skills" / "subagent-launcher" / "launch_hermes_agent.py"
+)
+CLAUDE_LAUNCHER_PATH = (
+    Path(__file__).resolve().parent.parent / "skills" / "subagent-launcher" / "launch_claude_agent.py"
 )
 
 
@@ -1907,13 +1912,18 @@ def follow_up_managed_subagent(
         return _followup_result(record, idempotent_replay=False)
 
 
-def launch_codex_subagent_detached(
+def launch_managed_subagent_detached(
     *,
     task: str,
     description: str | None = None,
     project_dir: str | None = None,
     model: str = "gpt-5.6-terra",
+    model_spec: str | None = None,
+    backend: str = "codex",
     reasoning_effort: str = "medium",
+    toolsets: str = "file,web,terminal",
+    max_tokens: int = 65_536,
+    provider_timeout_s: float = 600.0,
     task_kind: DelegatedTaskKind = DEFAULT_DELEGATED_TASK_KIND,
     difficulty: int = DEFAULT_DELEGATED_DIFFICULTY,
     route_class: str = "routine",
@@ -1934,11 +1944,17 @@ def launch_codex_subagent_detached(
     outcome_key: str | None = None,
     delivery_suppression_override_reason: str | None = None,
 ) -> SubagentResult:
-    """Launch a durable, fully-permissioned Codex worker managed by Arnold.
+    """Launch a durable, fully-permissioned provider worker managed by Arnold.
 
     The supervisor process owns the manifest transitions and durable output, so
     the Discord resident can return immediately without losing lifecycle state.
     """
+    if backend not in {"hermes", "codex", "claude"}:
+        raise ValueError(f"unsupported durable managed-agent backend: {backend}")
+    if max_tokens <= 0:
+        raise ValueError("max_tokens must be positive")
+    if provider_timeout_s <= 0:
+        raise ValueError("provider_timeout_s must be positive")
     if len(task) > MAX_DELEGATED_TASK_CHARS:
         raise ValueError(
             f"delegated task exceeds {MAX_DELEGATED_TASK_CHARS} characters; "
@@ -2097,14 +2113,31 @@ def launch_codex_subagent_detached(
         "run_kind": MANAGED_RUN_KIND,
         "custodian": MANAGED_RUN_CUSTODIAN,
         "run_id": run_id,
-        "backend": "codex",
+        "backend": backend,
         "model": model,
+        "model_spec": model_spec or f"{backend}:{model}",
+        "provider_route": {
+            "backend": backend,
+            "runtime_model": model,
+            "model_spec": model_spec or f"{backend}:{model}",
+        },
         "reasoning_effort": reasoning_effort,
+        "provider_options": {
+            "toolsets": toolsets,
+            "max_tokens": max_tokens,
+            "timeout_s": provider_timeout_s,
+        },
         "task_kind": task_kind,
         "description": agent_description,
         "difficulty": difficulty,
         "route_class": route_class,
-        "sandbox": "danger-full-access",
+        "sandbox": (
+            "danger-full-access"
+            if backend == "codex"
+            else "provider-permission-policy"
+            if backend == "claude"
+            else "inherited-full-machine-access"
+        ),
         "project_dir": str(project_root),
         "manifest_path": str(manifest_path),
         "prompt_path": str(prompt_path),
@@ -2249,7 +2282,7 @@ def launch_codex_subagent_detached(
         sys.executable,
         "-m",
         "arnold_pipelines.megaplan.resident.subagent_worker",
-        "--run-codex",
+        "--run-managed",
         str(manifest_path),
     ]
     worker_provenance = {**provenance, "root_run_id": run_id} if is_discord else provenance
@@ -2299,6 +2332,16 @@ def launch_codex_subagent_detached(
         pid=process.pid,
         description=agent_description,
     )
+
+
+def launch_codex_subagent_detached(**kwargs: Any) -> SubagentResult:
+    """Compatibility wrapper for existing Codex-only callers and continuations."""
+
+    requested_backend = str(kwargs.pop("backend", "codex"))
+    if requested_backend != "codex":
+        raise ValueError("launch_codex_subagent_detached only accepts backend='codex'")
+    kwargs.setdefault("model_spec", f"codex:{kwargs.get('model', 'gpt-5.6-terra')}")
+    return launch_managed_subagent_detached(backend="codex", **kwargs)
 
 
 def _interrupt_parent_for_followup(
@@ -2486,13 +2529,16 @@ def _await_continuation_parent(
         time.sleep(1)
 
 
-def _run_codex_manifest(manifest_path: Path) -> int:
+def _run_managed_manifest(manifest_path: Path) -> int:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     prompt = Path(str(manifest["prompt_path"])).read_text(encoding="utf-8")
     result_path = Path(str(manifest["result_path"]))
     worker: subprocess.Popen[bytes] | None = None
+    result_handle: Any = None
     session_id: str | None = None
     interrupted_signal: int | None = None
+    backend = str(manifest.get("backend") or "codex")
+    provider_permission_mode: str | None = None
 
     def _interrupt(signum: int, _frame: object) -> None:
         nonlocal interrupted_signal
@@ -2505,6 +2551,10 @@ def _run_codex_manifest(manifest_path: Path) -> int:
     }
     try:
         if manifest.get("run_mode") == "session_continuation":
+            if backend != "codex":
+                raise SubagentFollowupError(
+                    "managed session continuation is currently supported only for Codex"
+                )
             manifest, session_id = _await_continuation_parent(manifest_path, manifest)
             argv = [
                 "codex",
@@ -2519,7 +2569,7 @@ def _run_codex_manifest(manifest_path: Path) -> int:
                 session_id,
                 prompt,
             ]
-        else:
+        elif backend == "codex":
             argv = [
                 "codex",
                 "exec",
@@ -2533,6 +2583,53 @@ def _run_codex_manifest(manifest_path: Path) -> int:
                 str(result_path),
                 prompt,
             ]
+        elif backend == "hermes":
+            if not LAUNCHER_PATH.exists():
+                raise FileNotFoundError(f"hermes launcher not found: {LAUNCHER_PATH}")
+            provider_options = dict(manifest.get("provider_options") or {})
+            argv = [
+                sys.executable,
+                str(LAUNCHER_PATH),
+                "--model",
+                str(manifest["model"]),
+                "--toolsets",
+                str(provider_options.get("toolsets") or "file,web,terminal"),
+                "--max-tokens",
+                str(int(provider_options.get("max_tokens") or 65_536)),
+                "--project-dir",
+                str(manifest["project_dir"]),
+                "--query-file",
+                str(manifest["prompt_path"]),
+            ]
+            result_handle = result_path.open("wb")
+        elif backend == "claude":
+            if not CLAUDE_LAUNCHER_PATH.exists():
+                raise FileNotFoundError(f"Claude launcher not found: {CLAUDE_LAUNCHER_PATH}")
+            provider_options = dict(manifest.get("provider_options") or {})
+            argv = [
+                sys.executable,
+                str(CLAUDE_LAUNCHER_PATH),
+                "--model",
+                str(manifest["model"]),
+                "--project-dir",
+                str(manifest["project_dir"]),
+                "--query-file",
+                str(manifest["prompt_path"]),
+                "--timeout",
+                str(float(provider_options.get("timeout_s") or 600.0)),
+            ]
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                provider_permission_mode = "auto"
+                argv += ["--permission-mode", provider_permission_mode]
+            else:
+                provider_permission_mode = "bypassPermissions"
+                argv.append("--dangerously-skip-permissions")
+            effort = str(manifest.get("reasoning_effort") or "")
+            if effort in {"low", "medium", "high", "xhigh", "max"}:
+                argv += ["--effort", effort]
+            result_handle = result_path.open("wb")
+        else:
+            raise ValueError(f"unsupported managed-agent backend in manifest: {backend}")
         launch_provenance = manifest.get("launch_provenance")
         worker_env = None
         if isinstance(launch_provenance, Mapping):
@@ -2546,6 +2643,7 @@ def _run_codex_manifest(manifest_path: Path) -> int:
             argv,
             cwd=str(manifest["project_dir"]),
             stdin=subprocess.DEVNULL,
+            stdout=result_handle,
             env=worker_env,
         )
         # Reload before updating so the supervisor PID written by the launch
@@ -2561,14 +2659,23 @@ def _run_codex_manifest(manifest_path: Path) -> int:
             "evidence": (
                 "codex_resume_process_started"
                 if session_id
-                else "codex_session_process_started"
+                else f"{backend}_process_started"
             ),
         }
+        if provider_permission_mode is not None:
+            manifest["session_dispatch"]["permission_mode"] = provider_permission_mode
         _atomic_json(manifest_path, manifest)
         returncode = worker.wait()
-        # Codex writes the final response to result_path while its complete
-        # stream is inherited by the supervisor and appended to run.log.
+        # Codex writes its final response through --output-last-message;
+        # Hermes and Claude stdout are already directed to the same result.
         result_path.touch(exist_ok=True)
+        if backend in {"hermes", "claude"} and returncode == 0:
+            try:
+                has_final_output = bool(result_path.read_text(encoding="utf-8").strip())
+            except (OSError, UnicodeError):
+                has_final_output = False
+            if not has_final_output:
+                returncode = 1
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         observed_session_ids = _manifest_session_ids(manifest_path, manifest)
         if session_id:
@@ -2576,12 +2683,12 @@ def _run_codex_manifest(manifest_path: Path) -> int:
         if len(observed_session_ids) == 1:
             resolved_session_id = next(iter(observed_session_ids))
             manifest["model_session"] = {
-                "provider": "codex",
+                "provider": backend,
                 "session_id": resolved_session_id,
                 "lineage_root_run_id": manifest.get("lineage_root_run_id")
                 or manifest.get("run_id")
                 or manifest_path.parent.name,
-                "evidence": "managed_codex_worker_log_and_dispatch",
+                "evidence": f"managed_{backend}_worker_log_and_dispatch",
                 "recorded_at": _utc_now(),
             }
         manifest.update(
@@ -2592,13 +2699,18 @@ def _run_codex_manifest(manifest_path: Path) -> int:
                 "terminal_outcome": "completed" if returncode == 0 else "failed",
             }
         )
+        if backend in {"hermes", "claude"} and returncode != 0:
+            manifest.setdefault(
+                "error",
+                f"managed {backend} worker failed or returned no final response",
+            )
         manifest["updated_at"] = manifest["finished_at"]
         history = list(manifest.get("status_history") or [])
         history.append(
             {
                 "status": manifest["status"],
                 "at": manifest["finished_at"],
-                "evidence": "managed_codex_worker_waited",
+                "evidence": f"managed_{backend}_worker_waited",
                 "returncode": returncode,
             }
         )
@@ -2637,7 +2749,7 @@ def _run_codex_manifest(manifest_path: Path) -> int:
         manifest.update(
             {
                 "status": status,
-                "error": "managed Codex worker failed",
+                "error": f"managed {backend} worker failed",
                 "error_class": exc.__class__.__name__,
                 "finished_at": _utc_now(),
                 "terminal_outcome": status,
@@ -2650,7 +2762,7 @@ def _run_codex_manifest(manifest_path: Path) -> int:
                 {
                     "status": "failed",
                     "failed_at": manifest["finished_at"],
-                    "evidence": "codex_session_process_not_accepted",
+                    "evidence": f"{backend}_process_not_accepted",
                     "error_class": exc.__class__.__name__,
                 }
             )
@@ -2660,7 +2772,7 @@ def _run_codex_manifest(manifest_path: Path) -> int:
             {
                 "status": status,
                 "at": manifest["finished_at"],
-                "evidence": "managed_codex_supervisor_exception",
+                "evidence": f"managed_{backend}_supervisor_exception",
             }
         )
         lifecycle = dict(manifest.get("lifecycle") or {})
@@ -2685,8 +2797,16 @@ def _run_codex_manifest(manifest_path: Path) -> int:
             return 128 + interrupted_signal
         return 1
     finally:
+        if result_handle is not None:
+            result_handle.close()
         for signum, handler in prior_handlers.items():
             signal.signal(signum, handler)
+
+
+def _run_codex_manifest(manifest_path: Path) -> int:
+    """Compatibility entry point for historical Codex worker invocations."""
+
+    return _run_managed_manifest(manifest_path)
 
 
 def _pid_matches_manifest(pid: int, manifest_path: Path) -> bool:
@@ -4171,7 +4291,7 @@ async def launch_subagent_task(
     delivery_suppression_override_reason: str | None = None,
     toolsets: str | None = None,
     project_dir: str | None = None,
-    backend: str = "codex",
+    backend: str = "auto",
     background: bool = True,
     model: str | None = None,
     reasoning_effort: str | None = None,
@@ -4184,28 +4304,47 @@ async def launch_subagent_task(
 ) -> SubagentResult:
     """Dispatch ``task`` through the resident-owned delegated-agent seam.
 
-    Managed Codex is the canonical resident path.  ``backend="hermes"`` is an
-    explicit compatibility mode for old synchronous callers; its stdout carries
-    the final response and it does not claim the managed lifecycle schema.
+    The model/agent spec selects Hermes, Codex, or Claude when ``backend`` is
+    ``"auto"``.  Explicit compatible overrides remain supported.  All three
+    providers use the same durable background manifest and delivery lifecycle;
+    old non-Discord callers may still request synchronous Hermes explicitly.
     """
     if len(task) > MAX_DELEGATED_TASK_CHARS:
         raise ValueError(
             f"delegated task exceeds {MAX_DELEGATED_TASK_CHARS} characters; "
             "store large evidence durably and pass paths/routes"
         )
-    if backend == "codex":
-        if not background:
-            raise ValueError(
-                "Codex resident subagents must use background=True for durable lifecycle tracking"
+    route = route_delegated_task(task_kind=task_kind, difficulty=difficulty)
+    provider_route: ManagedAgentRoute = resolve_managed_agent_route(
+        backend=backend,
+        model=model,
+        default_backend="codex",
+        default_models={
+            "codex": route.model,
+            "hermes": config.subagent_model_name,
+            "claude": "opus",
+        },
+    )
+    selected_effort = reasoning_effort or provider_route.effort or route.reasoning_effort
+    if selected_effort not in _VALID_DELEGATED_EFFORTS:
+        raise ValueError(
+            "reasoning_effort must be one of "
+            f"{', '.join(sorted(_VALID_DELEGATED_EFFORTS))}; got {selected_effort!r}"
+        )
+    resolved_model_spec = provider_route.model_spec
+    if provider_route.backend in {"codex", "claude"} and (
+        provider_route.effort is not None or reasoning_effort is not None
+    ):
+        resolved_model_spec = format_agent_spec(
+            AgentSpec(
+                agent=provider_route.backend,
+                model=provider_route.model,
+                effort=selected_effort,
             )
-        route = route_delegated_task(task_kind=task_kind, difficulty=difficulty)
-        selected_effort = reasoning_effort or route.reasoning_effort
-        if selected_effort not in _VALID_DELEGATED_EFFORTS:
-            raise ValueError(
-                "reasoning_effort must be one of "
-                f"{', '.join(sorted(_VALID_DELEGATED_EFFORTS))}; got {selected_effort!r}"
-            )
-        return launch_codex_subagent_detached(
+        )
+
+    if background:
+        launch_kwargs = dict(
             task=task,
             description=description,
             aggregation_role=aggregation_role,
@@ -4214,13 +4353,17 @@ async def launch_subagent_task(
             outcome_key=outcome_key,
             delivery_suppression_override_reason=delivery_suppression_override_reason,
             project_dir=project_dir,
-            model=model or route.model,
+            model=provider_route.model,
+            model_spec=resolved_model_spec,
             reasoning_effort=selected_effort,
+            toolsets=toolsets or config.special_requests_subagent_toolsets,
+            max_tokens=config.special_requests_subagent_max_tokens,
+            provider_timeout_s=config.special_requests_subagent_timeout_s,
             task_kind=route.task_kind,
             difficulty=route.difficulty,
             route_class=(
                 "explicit_override"
-                if model is not None or reasoning_effort is not None
+                if model is not None or reasoning_effort is not None or backend != "auto"
                 else route.route_class
             ),
             request_id=request_id,
@@ -4228,8 +4371,18 @@ async def launch_subagent_task(
             retry_of_run_id=retry_of_run_id,
             query_relationship=query_relationship,
         )
-    if backend != "hermes":
-        raise ValueError(f"unsupported subagent backend: {backend}")
+        if provider_route.backend == "codex":
+            return launch_codex_subagent_detached(**launch_kwargs)
+        return launch_managed_subagent_detached(
+            backend=provider_route.backend,
+            **launch_kwargs,
+        )
+
+    if provider_route.backend != "hermes" or backend == "auto":
+        raise ValueError(
+            "non-Hermes resident subagents and inferred provider routes require "
+            "background=True for durable lifecycle tracking"
+        )
     compatibility_provenance = _canonical_launch_provenance(
         launch_origin,
         project_root=Path(project_dir or Path.cwd()).resolve(),
@@ -4246,7 +4399,7 @@ async def launch_subagent_task(
         sys.executable,
         str(LAUNCHER_PATH),
         "--model",
-        config.subagent_model_name,
+        provider_route.model,
         "--toolsets",
         toolsets or config.special_requests_subagent_toolsets,
         "--max-tokens",
@@ -4292,7 +4445,7 @@ def _build_local_seam_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="action", required=True)
     launch = sub.add_parser(
         "launch",
-        help="Launch a durable Codex agent, inheriting resident delegation provenance",
+        help="Launch a durable provider-aware agent, inheriting resident delegation provenance",
     )
     task_source = launch.add_mutually_exclusive_group(required=True)
     task_source.add_argument("--task")
@@ -4308,6 +4461,12 @@ def _build_local_seam_parser() -> argparse.ArgumentParser:
     )
     launch.add_argument("--synthesis-group")
     launch.add_argument("--project-dir")
+    launch.add_argument(
+        "--backend",
+        default="auto",
+        choices=("auto", "hermes", "codex", "claude", "chatgpt", "shannon"),
+        help="Provider override; auto infers from --model and is the default",
+    )
     launch.add_argument("--model")
     launch.add_argument(
         "--reasoning-effort", choices=sorted(_VALID_DELEGATED_EFFORTS)
@@ -4357,6 +4516,8 @@ def _local_followup_message(args: argparse.Namespace) -> str:
 def _main(argv: list[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     # Private worker compatibility; deliberately absent from the public parser.
+    if len(raw) == 2 and raw[0] == "--run-managed":
+        return _run_managed_manifest(Path(raw[1]))
     if len(raw) == 2 and raw[0] == "--run-codex":
         return _run_codex_manifest(Path(raw[1]))
     args = _build_local_seam_parser().parse_args(raw)
@@ -4372,6 +4533,7 @@ def _main(argv: list[str] | None = None) -> int:
                 aggregation_role=args.aggregation_role,
                 synthesis_group=args.synthesis_group,
                 project_dir=args.project_dir,
+                backend=args.backend,
                 model=args.model,
                 reasoning_effort=args.reasoning_effort,
                 task_kind=args.task_kind,

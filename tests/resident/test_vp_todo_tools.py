@@ -166,7 +166,7 @@ def test_launch_subagent_tool_wraps_dispatcher(tmp_path, monkeypatch) -> None:
     assert captured["task"] == "summarize readme"
     assert captured["toolsets"] == "file,web"
     assert captured["project_dir"] == "/repo"
-    assert captured["backend"] == "codex"
+    assert captured["backend"] == "auto"
     assert captured["background"] is True
 
 
