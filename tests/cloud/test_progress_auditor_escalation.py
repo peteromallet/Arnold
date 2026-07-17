@@ -569,6 +569,55 @@ def test_partial_liveness_with_unclaimed_request_is_l1_context_failure() -> None
     assert gate["custody_walk"]["missed_by_layer"] == "L2"
 
 
+def test_zero_retry_accepted_unclaimed_gather_verdict_reaches_l3_effect_gate() -> None:
+    finding = _true_stall()
+    finding["repair_data_summary"].update(
+        {"outcome": "running", "mtime_age_min": 180}
+    )
+    finding["repair_custody_summary"]["retry_budget"] = {
+        "claim_retries_used": 0,
+        "remaining_attempts": 3,
+    }
+    finding["deterministic_retry_evidence"]["count"] = 0
+    finding["reasons"] = [
+        "stale_l1_l2_cycle: incomplete chain has accepted-unclaimed custody"
+    ]
+
+    gate = classify_true_stall(finding)
+
+    assert gate["eligible"] is True
+    l1 = gate["custody_walk"]["L1"]["failure"]
+    assert l1["failed"] is True
+    assert l1["axis"] == "CONTEXT"
+    assert l1["accepted_unclaimed_count"] == 1
+    assert l1["retry_used"] == 0
+    assert l1["retry_remaining"] == 3
+    assert l1["actionable_accepted_unclaimed"] is True
+    assert "l1_failure_not_proven" not in gate["blocks"]
+
+
+def test_zero_retry_unclaimed_without_typed_gather_verdict_stays_report_only() -> None:
+    finding = _true_stall()
+    finding["repair_data_summary"].update(
+        {"outcome": "running", "mtime_age_min": 180}
+    )
+    finding["repair_custody_summary"]["retry_budget"] = {
+        "claim_retries_used": 0,
+        "remaining_attempts": 3,
+    }
+    finding["deterministic_retry_evidence"]["count"] = 0
+    finding["deterministic_superfixer_evidence"]["actionable"] = False
+    finding["reasons"] = []
+
+    gate = classify_true_stall(finding)
+
+    assert gate["eligible"] is False
+    l1 = gate["custody_walk"]["L1"]["failure"]
+    assert l1["failed"] is False
+    assert l1["actionable_accepted_unclaimed"] is False
+    assert "l1_failure_not_proven" in gate["blocks"]
+
+
 def test_partial_liveness_with_empty_custody_links_is_l1_context_failure() -> None:
     finding = _true_stall()
     finding["repair_data_summary"]["outcome"] = "partial_liveness"

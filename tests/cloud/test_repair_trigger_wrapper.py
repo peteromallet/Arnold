@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -885,6 +886,138 @@ def test_trigger_skips_actionable_head_without_blocker_id_and_dispatches_next(
         and event.get("status") == "missing_blocker_id"
         for event in emitted
     )
+
+
+def test_classify_request_binds_identity_to_exact_request_among_legacy_siblings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    namespace = runpy.run_path(str(TRIGGER))
+    classify = namespace["_classify_request"]
+    trigger_globals = classify.__globals__
+    captured: list[dict[str, Any]] = []
+    current_request_id = "current-gate-request"
+    legacy_request_id = "legacy-identity-free-request"
+    fingerprint = {
+        "schema_version": "arnold-repair-blocker-fingerprint-v2",
+        "target_fingerprint": "target-fingerprint",
+        "failure_kind": "phase_failed",
+        "phase_or_step": "gate",
+        "blocked_task_id": "phase:gate",
+    }
+    projection = {
+        "requests": [
+            {
+                "request_id": legacy_request_id,
+                "active": True,
+                "claimable": False,
+                "blocker_id": "",
+                "blocker_fingerprint": None,
+            },
+            {
+                "request_id": current_request_id,
+                "active": True,
+                "claimable": True,
+                "blocker_id": "blocker:v2:current",
+                "blocker_fingerprint": fingerprint,
+            },
+        ],
+        "active_request_ids": [legacy_request_id, current_request_id],
+        "claimable_request_ids": [current_request_id],
+        "accepted_unclaimed_request_ids": [legacy_request_id, current_request_id],
+        # The session-wide projection is intentionally ambiguous.
+        "blocker_id": "",
+        "blocker_fingerprint": None,
+        "custody_bucket": "repairable_not_repairing",
+        "terminal_outcomes": [],
+    }
+
+    monkeypatch.setitem(trigger_globals, "resolve_run_state", lambda _target: None)
+    monkeypatch.setitem(
+        trigger_globals,
+        "project_repair_custody",
+        lambda **_kwargs: projection,
+    )
+
+    def fake_dispatch(**kwargs: Any) -> SimpleNamespace:
+        custody = dict(kwargs["custody_projection"])
+        captured.append(custody)
+        actionable = bool(custody.get("blocker_id"))
+        return SimpleNamespace(
+            decision="dispatch_l1_repair" if actionable else "broken_superfixer",
+            rationale=("exact request custody",),
+            dispatch_intent="dispatch_l1" if actionable else "broken_superfixer",
+            custody_bucket="repairable_not_repairing",
+        )
+
+    monkeypatch.setitem(trigger_globals, "classify_repair_dispatch", fake_dispatch)
+    monkeypatch.setitem(
+        trigger_globals,
+        "inspect_repair_lock",
+        lambda _path: {"status": "free"},
+    )
+    queue_dir = tmp_path / ".megaplan" / "repair-queue"
+    target = {
+        "target_session": "demo",
+        "authoritative_source": "chain_state",
+        "current_refs": {
+            "current_plan_name": "m6-plan",
+            "plan_current_state": "gated",
+            "workspace": str(tmp_path),
+        },
+        "plan_state": {
+            "name": "m6-plan",
+            "current_state": "gated",
+            "resume_cursor": {"retry_strategy": "repair_phase_contract"},
+        },
+        "needs_human": {"present": False},
+    }
+
+    current = classify(
+        {
+            "request_id": current_request_id,
+            "session": "demo",
+            "problem_signature": {
+                "failure_kind": "phase_failed",
+                "current_state": "critiqued",
+                "phase_or_step": "gate",
+                "milestone_or_plan": "m6-plan",
+                "blocked_task_id": "phase:gate",
+            },
+        },
+        target,
+        queue_dir=queue_dir,
+        marker_dir=tmp_path / "markers",
+        repair_data_dir=None,
+    )
+    legacy = classify(
+        {
+            "request_id": legacy_request_id,
+            "session": "demo",
+            "problem_signature": {
+                "failure_kind": "phase_failed",
+                "current_state": "planned",
+                "phase_or_step": "critique",
+                "milestone_or_plan": "m6-plan",
+                "blocked_task_id": "",
+            },
+        },
+        target,
+        queue_dir=queue_dir,
+        marker_dir=tmp_path / "markers",
+        repair_data_dir=None,
+    )
+
+    assert current["decision"] == "actionable"
+    assert current["blocker_id"] == "blocker:v2:current"
+    assert current["blocker_fingerprint"] == fingerprint
+    assert captured[0]["active_request_ids"] == [current_request_id]
+    assert captured[0]["claimable_request_ids"] == [current_request_id]
+    assert captured[0]["accepted_unclaimed_request_ids"] == [current_request_id]
+    assert legacy["decision"] == "non_actionable"
+    assert legacy["blocker_id"] == ""
+    assert captured[1]["active_request_ids"] == [legacy_request_id]
+    assert captured[1]["claimable_request_ids"] == []
 
 
 def test_trigger_keeps_accepted_request_visible_until_dispatchable(tmp_path: Path) -> None:

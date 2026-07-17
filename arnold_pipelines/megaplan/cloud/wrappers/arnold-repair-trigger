@@ -1126,6 +1126,53 @@ def _classify_request(
         queue_root=queue_dir,
         repair_data_dir=repair_data_dir,
     )
+    # The queue projection is session-wide, while this classifier is deciding
+    # custody for one immutable request.  Legacy identity-free siblings must
+    # not erase a newer request's valid blocker identity, and a valid sibling
+    # identity must never be borrowed by the request currently being scanned.
+    # Scope the authority-bearing fields to the exact request before asking the
+    # shared dispatch classifier for an effect decision.
+    request_id = str(record.get("request_id") or "").strip()
+    projected_request = next(
+        (
+            item
+            for item in (projection.get("requests") or [])
+            if isinstance(item, Mapping)
+            and str(item.get("request_id") or "").strip() == request_id
+        ),
+        None,
+    )
+    scoped_projection = dict(projection)
+    if isinstance(projected_request, Mapping):
+        request_active = projected_request.get("active") is True
+        request_claimable = projected_request.get("claimable") is True
+        scoped_projection["active_request_ids"] = [request_id] if request_active else []
+        scoped_projection["claimable_request_ids"] = (
+            [request_id] if request_active and request_claimable else []
+        )
+        scoped_projection["accepted_unclaimed_request_ids"] = [
+            item
+            for item in (projection.get("accepted_unclaimed_request_ids") or [])
+            if str(item or "").strip() == request_id
+        ]
+        scoped_projection["blocker_id"] = (
+            str(projected_request.get("blocker_id") or "").strip()
+            if request_claimable
+            else ""
+        )
+        scoped_projection["blocker_fingerprint"] = (
+            projected_request.get("blocker_fingerprint") or {}
+            if request_claimable
+            else {}
+        )
+    else:
+        # Missing exact projection evidence is not authority to borrow a
+        # session-level identity.  Keep the request visible but unclaimable.
+        scoped_projection["active_request_ids"] = []
+        scoped_projection["claimable_request_ids"] = []
+        scoped_projection["accepted_unclaimed_request_ids"] = []
+        scoped_projection["blocker_id"] = ""
+        scoped_projection["blocker_fingerprint"] = {}
     human_blocker = None
     needs_human = target.get("needs_human") if isinstance(target.get("needs_human"), Mapping) else {}
     if bool(needs_human.get("present")):
@@ -1137,7 +1184,7 @@ def _classify_request(
             resolver_record=normalized_target,
         )
     lock_evidence = None
-    blocker_id = str(projection.get("blocker_id") or "").strip()
+    blocker_id = str(scoped_projection.get("blocker_id") or "").strip()
     if blocker_id:
         lock_evidence = inspect_repair_lock(
             repair_requests.active_repair_claim_lock_dir(queue_dir, blocker_id)
@@ -1149,7 +1196,7 @@ def _classify_request(
         current_target=normalized_target,
         human_blocker_classification=human_blocker,
         lock_evidence=lock_evidence,
-        custody_projection=projection,
+        custody_projection=scoped_projection,
     )
     deterministic_l3 = (
         record.get("source") == "six_hour_auditor"
@@ -1160,7 +1207,7 @@ def _classify_request(
     l2_actionable = (
         decision.decision == "broken_superfixer"
         and (deterministic_l3 or typed_supervisor_binding_drift)
-        and bool(projection.get("blocker_id"))
+        and bool(scoped_projection.get("blocker_id"))
     )
     requested_deep = bool(
         deterministic_l3
@@ -1183,8 +1230,8 @@ def _classify_request(
             "deep_superfixer_repair" if deep_actionable else decision.dispatch_intent
         ),
         "custody_bucket": decision.custody_bucket,
-        "blocker_id": projection.get("blocker_id", ""),
-        "blocker_fingerprint": projection.get("blocker_fingerprint") or {},
+        "blocker_id": scoped_projection.get("blocker_id", ""),
+        "blocker_fingerprint": scoped_projection.get("blocker_fingerprint") or {},
     }
 
 
