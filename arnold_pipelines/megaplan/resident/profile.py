@@ -869,7 +869,7 @@ class LaunchSubagentInput(ToolInput):
     difficulty: int = Field(default=4, ge=1, le=10)
     toolsets: str | None = None
     project_dir: str | None = None
-    backend: str = "codex"
+    backend: str = "auto"
     background: bool = True
     model: str | None = None
     reasoning_effort: Literal["minimal", "low", "medium", "high", "xhigh", "max"] | None = None
@@ -973,12 +973,12 @@ class MegaplanResidentProfile:
             "`add_todo_item` (optionally a `when` condition, e.g. 'once epic <id> is done'); use "
             "`read_todo_list` to show what's queued. In conversation you add and read items — a "
             "scheduled sweep picks up pending items and executes them with the resident-owned "
-            "`launch_subagent` managed Codex lifecycle. Hot context's `vp_special_requests_todos` "
+            "`launch_subagent` provider-aware managed lifecycle. Hot context's `vp_special_requests_todos` "
             "is only a bounded pending-item orientation summary: a pending item with a `when` "
             "condition is not known to be due until you verify that condition. Use its stable item "
             "IDs when referring to previewed work, and call `read_todo_list` with no arguments "
             "whenever you need the full list (including retained failed items). For normal "
-            "delegated work, keep its defaults (`backend=codex`, `background=true`) and report "
+            "delegated work, keep its defaults (`backend=auto`, `background=true`) and report "
             "the returned durable paths. "
             "Always classify delegated work with `task_kind` and D1-D10 `difficulty`. Use Luna/low "
             "only for bounded lookup, extraction, or mechanical D1-D3 work; routine coding, "
@@ -1176,6 +1176,9 @@ class MegaplanResidentProfile:
                 "subagent_launch": {
                     "standard": MANAGED_RUN_SCHEMA,
                     "delegation_policy": delegation_policy_hot_context(),
+                    "backend": "auto",
+                    "providers": ["hermes", "codex", "claude"],
+                    "provider_routing": "model spec inferred; explicit compatible override allowed",
                     "codex_sandbox": "danger-full-access",
                     "stdin": "sealed",
                     "lifecycle": "detached with durable manifest, log, and result",
@@ -1516,7 +1519,7 @@ class MegaplanResidentProfile:
             ToolRegistration("reconcile_todo_item", "Resolve a pending launch intent as superseded by an already-existing canonical run. Requires the stable run id, durable evidence location, and reconciliation reason; never use task-text overlap alone.", "write", ReconcileTodoItemInput, ToolResult, self._reconcile_todo_item),
             ToolRegistration("add_todo_item", "Append a new pending item to the VP to-do list. Optional `when` is a natural-language condition the agent checks before executing (e.g. 'once epic <id> is done').", "write", AddTodoItemInput, ToolResult, self._add_todo_item),
             ToolRegistration(FIX_THE_FIXER_TOOL, "Launch exactly one durable D10/high mutation-authorized meta-fixer for one non-empty epic/session target. The rendered goal composes superfixer-debug internally and inherits the active Discord provenance and authorization envelope.", "write", FixTheFixerInput, ToolResult, self._fix_the_fixer),
-            ToolRegistration("launch_subagent", "Launch a resident-managed Codex agent with a durable manifest, concise one-line description, full log, and result path. Multiple launches for one logical query have one newest synthesis/delivery owner; prior runs become internal contributors. Legacy synchronous Hermes requires an explicit backend override.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
+            ToolRegistration("launch_subagent", "Launch a provider-aware resident-managed agent through Hermes, Codex, or Claude with one durable manifest, concise one-line description, full log, and result path. The model spec selects its compatible provider when backend=auto; explicit mismatches fail before launch. Multiple launches for one logical query have one newest synthesis/delivery owner; prior runs become internal contributors.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
         )
         for registration in registrations:
             self.tool_registry.register(registration)

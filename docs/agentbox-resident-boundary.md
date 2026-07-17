@@ -59,8 +59,9 @@ Discord conversation turns remain on the single Arnold path:
 authorizes the turn, and the configured resident runner executes it. There is no
 second Discord bot loop for special requests.
 
-The resident `launch_subagent` tool defaults to a detached Codex agent managed
-by `arnold_pipelines.megaplan.resident`. Each launch creates this durable set:
+The resident `launch_subagent` tool defaults to provider-aware routing and a
+detached agent managed by `arnold_pipelines.megaplan.resident`. Each launch
+creates this durable set:
 
 - `.megaplan/plans/resident-subagents/<run-id>/manifest.json`
 - `.megaplan/plans/resident-subagents/<run-id>/prompt.md`
@@ -70,12 +71,16 @@ by `arnold_pipelines.megaplan.resident`. Each launch creates this durable set:
 The manifest schema is `arnold-managed-agent-run-v2`, with
 `run_kind: resident_delegated_agent` and
 `custodian: arnold.megaplan.managed_agent`. Those identity fields distinguish this
-surface from workflow-internal subagents. The supervisor seals stdin, starts
-Codex with `danger-full-access`, streams the complete output to `run.log`,
-captures the last response in `result.md`, and finalizes the manifest as
-`completed`, `failed`, or `interrupted`. An explicitly selected Hermes backend
-is retained only for legacy synchronous compatibility and must not be described
-as a managed resident-agent run.
+surface from workflow-internal subagents. The supervisor selects Hermes,
+Codex, or Claude from the model spec, records the resolved provider route,
+starts that provider with the configured agent permissions, captures
+diagnostics in `run.log` and the final response in `result.md`, and finalizes
+the manifest as `completed`, `failed`, or `interrupted`. Explicit compatible
+backend overrides remain supported; conflicting backend/model pairs fail before
+a manifest is created. Claude uses its provider-managed automatic permission
+mode under root because its CLI correctly rejects unsafe permission bypass in
+that environment. An explicitly selected, non-background Hermes launch is
+retained only for legacy synchronous compatibility.
 
 Discord-origin launches additionally commit immutable routing custody before
 the worker starts. `launch_provenance`, top-level `correlation_id` / `custody_id`
