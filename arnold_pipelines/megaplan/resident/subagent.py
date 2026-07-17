@@ -1300,19 +1300,20 @@ def _followup_result(
     )
 
 
-def _queued_synthesis_owner(
+def _existing_synthesis_owner(
     *,
     run_id: str,
     target: Mapping[str, Any],
     rows: Mapping[str, tuple[Path, dict[str, Any]]],
     target_provenance: Mapping[str, Any],
 ) -> tuple[Path, dict[str, Any]] | None:
-    """Resolve one already-queued synthesis owner without changing ownership.
+    """Resolve the existing synthesis owner without changing ownership.
 
     A queued all-success successor is a control-plane owner, not a resumable
-    model-session tip.  Follow-up material may be attached only when the target
-    and owner mutually prove the same aggregation key, synthesis group,
-    contributor edge, lineage, and immutable Discord custody.
+    model-session tip.  Once it is running, material may still be preserved in
+    that same owner's durable inbox without interrupting it or launching a
+    continuation.  Both routes require mutual proof of aggregation key,
+    synthesis group, contributor edge, lineage, and immutable Discord custody.
     """
 
     target_aggregation = target.get("aggregation")
@@ -1328,7 +1329,7 @@ def _queued_synthesis_owner(
         return None
 
     owner_path, owner = rows[owner_run_id]
-    if str(owner.get("status") or "") != "queued":
+    if str(owner.get("status") or "") not in {"queued", "running"}:
         return None
     owner_aggregation = owner.get("aggregation")
     queue = owner.get("queue")
@@ -1379,7 +1380,7 @@ def _queued_synthesis_owner(
     return owner_path, owner
 
 
-def _attach_queued_synthesis_owner_material(
+def _attach_synthesis_owner_material(
     *,
     target_run_id: str,
     lineage_root_run_id: str,
@@ -1396,17 +1397,23 @@ def _attach_queued_synthesis_owner_material(
     query_relationship: Mapping[str, Any] | None,
     existing: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    """Atomically bind new material to the existing queued delivery owner."""
+    """Atomically bind new material to the existing delivery owner's inbox."""
 
     owner_run_id = str(owner.get("run_id") or owner_path.parent.name)
     lock_path = owner_path.parent / ".queue-transition.lock"
     with lock_path.open("a+b") as queue_handle:
         fcntl.flock(queue_handle.fileno(), fcntl.LOCK_EX)
         current = _read_managed_resident_manifest(owner_path)
-        if str(current.get("status") or "") != "queued":
+        owner_status = str(current.get("status") or "")
+        if owner_status not in {"queued", "running"}:
             raise SubagentFollowupError(
-                "synthesis owner left the queued state before material was committed"
+                "synthesis owner left the attachable state before material was committed"
             )
+        route = (
+            "queued_synthesis_owner"
+            if owner_status == "queued"
+            else "running_synthesis_owner_inbox"
+        )
         aggregation = current.get("aggregation")
         queue = current.get("queue")
         if (
@@ -1421,7 +1428,7 @@ def _attach_queued_synthesis_owner_material(
 
         if existing is not None:
             if (
-                existing.get("route") != "queued_synthesis_owner"
+                existing.get("route") != route
                 or existing.get("delivery_owner_run_id") != owner_run_id
             ):
                 raise SubagentFollowupError(
@@ -1450,7 +1457,7 @@ def _attach_queued_synthesis_owner_material(
         recorded_prompt_sha256 = str(current.get("prompt_sha256") or "")
         recovering_prepared = bool(
             existing is not None
-            and existing.get("route") == "queued_synthesis_owner"
+            and existing.get("route") == route
             and existing.get("status") == "prepared"
             and existing.get("prompt_sha256_after") == prompt_sha256_before
         )
@@ -1464,7 +1471,7 @@ def _attach_queued_synthesis_owner_material(
             )
 
         material_header = (
-            "[Queued synthesis-owner material — canonical follow-up]\n"
+            "[Synthesis-owner material — canonical follow-up]\n"
             f"- schema: {QUEUED_OWNER_MATERIAL_SCHEMA}\n"
             f"- receipt_id: {followup_id}\n"
             f"- source_target_run_id: {target_run_id}\n"
@@ -1498,7 +1505,7 @@ def _attach_queued_synthesis_owner_material(
             "parent_run_id": owner_run_id,
             "lineage_root_run_id": lineage_root_run_id,
             "delivery_owner_run_id": owner_run_id,
-            "route": "queued_synthesis_owner",
+            "route": route,
             "message_path": str(message_path),
             "message_sha256": message_sha256,
             "idempotency_key": selector,
@@ -1509,7 +1516,12 @@ def _attach_queued_synthesis_owner_material(
                 if isinstance(query_relationship, Mapping)
                 else None
             ),
-            "parent_status_at_acceptance": "queued",
+            "parent_status_at_acceptance": owner_status,
+            "launch_visibility": (
+                "included_before_worker_launch"
+                if owner_status == "queued"
+                else "durable_owner_inbox_requires_process_observation"
+            ),
             "status": "prepared",
             "accepted_at": accepted_at,
             "updated_at": accepted_at,
@@ -1523,7 +1535,7 @@ def _attach_queued_synthesis_owner_material(
                 {
                     "status": "prepared",
                     "at": accepted_at,
-                    "evidence": "queued_owner_material_prepared_under_queue_lock",
+                    "evidence": "synthesis_owner_material_prepared_under_queue_lock",
                 }
             ],
         }
@@ -1565,7 +1577,11 @@ def _attach_queued_synthesis_owner_material(
             {
                 "status": "accepted",
                 "at": accepted_at,
-                "evidence": "material_bound_to_existing_queued_synthesis_owner_prompt",
+                "evidence": (
+                    "material_bound_to_existing_queued_synthesis_owner_prompt"
+                    if owner_status == "queued"
+                    else "material_bound_to_existing_running_synthesis_owner_inbox"
+                ),
                 "delivery_owner_run_id": owner_run_id,
             }
         ]
@@ -1684,7 +1700,10 @@ def follow_up_managed_subagent(
                 )
             existing = loaded
             if existing.get("continuation_run_id") or (
-                existing.get("route") == "queued_synthesis_owner"
+                existing.get("route") in {
+                    "queued_synthesis_owner",
+                    "running_synthesis_owner_inbox",
+                }
                 and existing.get("status") == "accepted"
                 and existing.get("delivery_owner_run_id")
             ):
@@ -1716,15 +1735,15 @@ def follow_up_managed_subagent(
                     "managed model session lineage contains an orphaned continuation"
                 )
 
-        queued_owner = _queued_synthesis_owner(
+        synthesis_owner = _existing_synthesis_owner(
             run_id=run_id,
             target=target,
             rows=rows,
             target_provenance=target_provenance,
         )
-        if queued_owner is not None:
-            owner_path, owner = queued_owner
-            record = _attach_queued_synthesis_owner_material(
+        if synthesis_owner is not None:
+            owner_path, owner = synthesis_owner
+            record = _attach_synthesis_owner_material(
                 target_run_id=run_id,
                 lineage_root_run_id=lineage_root_run_id,
                 owner_path=owner_path,
