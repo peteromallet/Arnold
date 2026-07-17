@@ -185,6 +185,11 @@ def build_context_root(
             ],
             "running_agent_count": (agents or {}).get("running_count", 0),
             "agent_delivery_attention_count": (agents or {}).get("delivery_attention_count", 0),
+            "agent_delivery": [
+                _safe(row, depth=2)
+                for row in list((agents or {}).get("attention") or [])[:6]
+                if isinstance(row, Mapping)
+            ],
             "pending_todo_count": (todos or {}).get("pending_count", 0),
         },
         "routes": [

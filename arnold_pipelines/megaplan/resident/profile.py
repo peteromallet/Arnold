@@ -283,6 +283,8 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
                 "parent_run_id",
                 "query_relationship",
                 "aggregation",
+                "execution_contract",
+                "status_projection",
             )
             if row.get(key) is not None
         } | {
@@ -316,6 +318,9 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
         "recent_preview_limit": _RESIDENT_AGENT_RECENT_LIMIT,
         "delivery_status_counts": value.get("delivery_status_counts", {}),
         "terminal_delivery_status_counts": value.get("terminal_delivery_status_counts", {}),
+        "work_status_counts": value.get("work_status_counts", {}),
+        "request_status_counts": value.get("request_status_counts", {}),
+        "attention": list(value.get("attention") or [])[:8],
         "delivery_attention_count": value.get("delivery_attention_count", 0),
     }
 
@@ -770,8 +775,8 @@ class LaunchSubagentInput(ToolInput):
     ] = Field(
         default="synthesis_delivery_owner",
         description=(
-            "Use internal_contributor for reviewer/worker runs that must never reply to Discord; "
-            "launch exactly one synthesis_delivery_owner last to consolidate their durable results."
+            "Aggregation role only. Use internal_contributor for work consumed by a later owner; "
+            "delivery is resolved separately from the outcome contract."
         ),
     )
     synthesis_group: str | None = Field(
@@ -780,6 +785,28 @@ class LaunchSubagentInput(ToolInput):
         description=(
             "Stable explicit batch id shared by internal contributors and their one synthesis "
             "owner. Omit for an independently deliverable launch."
+        ),
+    )
+    outcome_contract: Literal[
+        "analytical_fragment", "independently_meaningful_execution", "synthesis_result"
+    ] | None = Field(
+        default=None,
+        description=(
+            "Explicit result contract. Independently meaningful execution contributors retain "
+            "truthful terminal delivery even when they also feed a synthesis owner."
+        ),
+    )
+    outcome_key: str | None = Field(
+        default=None,
+        max_length=160,
+        description="Stable subject key used to detect unrelated all-success fan-in.",
+    )
+    delivery_suppression_override_reason: str | None = Field(
+        default=None,
+        max_length=500,
+        description=(
+            "Explicit durable reason nondelivery is intended for an independently meaningful "
+            "internal contributor. Omit to preserve truthful independent delivery."
         ),
     )
     follow_up_to_source_record_id: str | None = Field(
@@ -2728,6 +2755,11 @@ class MegaplanResidentProfile:
             description=payload.description,
             aggregation_role=payload.aggregation_role,
             synthesis_group=payload.synthesis_group,
+            outcome_contract=payload.outcome_contract,
+            outcome_key=payload.outcome_key,
+            delivery_suppression_override_reason=(
+                payload.delivery_suppression_override_reason
+            ),
             toolsets=payload.toolsets,
             project_dir=payload.project_dir,
             backend=payload.backend,

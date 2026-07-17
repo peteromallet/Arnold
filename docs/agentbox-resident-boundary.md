@@ -146,9 +146,21 @@ Independent launches have independent delivery identities. A multi-agent batch
 must instead declare one explicit `synthesis_group`: contributors use
 `internal_contributor`, exactly one later run uses
 `synthesis_delivery_owner`, and that owner receives the contributors' manifest
-and result paths. A delivered group cannot acquire a second owner, while a
-newer follow-up has a new current request/delivery target even when it shares a
-relationship root.
+and result paths. `internal_contributor` is only an aggregation role. Each
+launch also records an `execution_contract.outcome_contract` and independent
+delivery policy. Analytical fragments may remain suppressed. A repair, deploy,
+integration, activation, proof, or other independently meaningful execution
+result remains independently deliverable unless the launch records an explicit
+`delivery_suppression_override_reason`. A delivered group cannot acquire a
+second owner, while a newer follow-up has a new current request/delivery target
+even when it shares a relationship root.
+
+New manifests and resident projections expose three authoritative dimensions:
+`lifecycle.work.status` (including `worker_completed`),
+`lifecycle.delivery.status`, and `lifecycle.request.status` (including the
+separate `request_delivered` boolean). Worker completion never validates whole
+request delivery. A contributor can issue a truthful bounded terminal update
+while its synthesis owner remains open for a later combined conclusion.
 
 ### Resident-managed follow-up and continuation
 
@@ -213,4 +225,11 @@ it is not evidence that a workflow-internal subagent is active.
 For delivery incidents, inspect `completion_delivery.status`, `state_history`,
 `error_history`, `last_error_category`, `last_http_status`, and persisted
 Discord message IDs. `resident_agents.delivery_status_counts` and
-`delivery_attention_count` provide the bounded operational roll-up.
+`delivery_attention_count` provide the bounded operational roll-up. Queue
+dependency state is projected from current predecessor manifests, never from
+embedded predecessor snapshots. `resident_agents.attention` and
+`context_root.attention.agent_delivery` surface deterministic actions for
+completed suppressed execution results, hidden all-success outcomes, unrelated
+execution fan-in, failed predecessors that mask success, and abnormally waiting
+delivery owners. Legacy manifests remain readable and receive an explicitly
+labeled compatibility projection.
