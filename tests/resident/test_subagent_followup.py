@@ -293,6 +293,49 @@ def test_queued_synthesis_owner_attachment_is_idempotent_and_directly_addressabl
     assert len(owner["queue"]["inbound_material"]) == 1
 
 
+def test_running_synthesis_owner_attachment_preserves_material_without_launch(
+    tmp_path: Path, monkeypatch, caller_provenance: dict
+) -> None:
+    target_path, owner_path = _write_queued_synthesis_owner(tmp_path)
+    target = json.loads(target_path.read_text())
+    target["status"] = "completed"
+    target_path.write_text(json.dumps(target))
+    owner = json.loads(owner_path.read_text())
+    owner["status"] = "running"
+    owner["queue"]["state"] = "running"
+    owner["queue"]["predecessor_states"][0]["status"] = "completed"
+    owner_path.write_text(json.dumps(owner))
+    monkeypatch.setattr(
+        subagent.subprocess,
+        "Popen",
+        lambda *args, **kwargs: pytest.fail("running owner inbox launched a worker"),
+    )
+
+    result = subagent.follow_up_managed_subagent(
+        run_id=TARGET_RUN_ID,
+        message="Preserve the exact upcoming-milestone revision for synthesis.",
+        project_dir=tmp_path,
+        workspace_root=None,
+        idempotency_key="running-owner-material-1",
+    )
+
+    assert result.route == "running_synthesis_owner_inbox"
+    assert result.delivery_owner_run_id == QUEUED_OWNER_RUN_ID
+    assert result.continuation_run_id is None
+    receipt = json.loads(Path(result.evidence_path).read_text())
+    owner = json.loads(owner_path.read_text())
+    assert receipt["parent_status_at_acceptance"] == "running"
+    assert receipt["launch_visibility"] == (
+        "durable_owner_inbox_requires_process_observation"
+    )
+    assert receipt["state_history"][-1]["evidence"] == (
+        "material_bound_to_existing_running_synthesis_owner_inbox"
+    )
+    assert len(owner["queue"]["inbound_material"]) == 1
+    assert owner["status"] == "running"
+    assert owner["completion_delivery"]["status"] == "pending"
+
+
 def test_queued_synthesis_owner_attachment_rejects_conflicting_custody(
     tmp_path: Path, caller_provenance: dict
 ) -> None:
