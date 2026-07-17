@@ -42,6 +42,34 @@ def test_subagent_launcher_is_synced_to_agent_skill_dirs() -> None:
     assert (skill_dir / "launch_hermes_agent.py").is_file()
 
 
+def test_fix_the_fixer_skill_bundle_is_portable() -> None:
+    skill_dir = _resolve_bundle_path("skills/fix-the-fixer")
+
+    assert skill_dir.is_dir()
+    assert (skill_dir / "SKILL.md").is_file()
+    assert (skill_dir / "agents/openai.yaml").is_file()
+    assert (skill_dir / "scripts/render_goal.py").is_file()
+    assert (skill_dir / "references/historical-runs.md").is_file()
+
+
+def test_fix_the_fixer_is_synced_to_agent_skill_dirs() -> None:
+    targets = [
+        target
+        for target in _GLOBAL_TARGETS
+        if target.get("data") == "skills/fix-the-fixer"
+    ]
+
+    assert {
+        (target["agent"], target["path"], target["install"])
+        for target in targets
+    } == {
+        ("claude", ".claude/skills/fix-the-fixer", "symlink"),
+        ("codex", ".codex/skills/fix-the-fixer", "symlink"),
+        ("hermes", ".hermes/skills/fix-the-fixer", "symlink"),
+        ("agents", ".agents/skills/fix-the-fixer", "symlink"),
+    }
+
+
 def test_all_generated_codex_skill_targets_have_generator_entries() -> None:
     generated_targets = {
         target["data"].removeprefix("_codex_skills/")

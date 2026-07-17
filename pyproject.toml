@@ -91,6 +91,8 @@ artifacts = [
     "arnold_pipelines/**/SKILL.md",
     "arnold_pipelines/**/*.pypeline",
     "arnold_pipelines/megaplan/skills/**/*.py",
+    "arnold_pipelines/megaplan/skills/fix-the-fixer/references/*.md",
+    "arnold_pipelines/megaplan/skills/fix-the-fixer/agents/*.yaml",
     "agentbox/systemd/*.service",
 ]
 exclude = [
