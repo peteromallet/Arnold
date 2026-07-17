@@ -9,17 +9,17 @@ residual migration design.
 
 ## Current audited status
 
-At the bounded read-only snapshot generated
-`2026-07-17T13:42:46.341461Z`, the Custody chain was launched but not complete.
+At the authoritative live-state reread at `2026-07-17T14:08:58Z`, the Custody
+chain was launched but not complete.
 Its raw chain cursor is at milestone index 2 after two completed entries out of
 ten, with current plan `m6-exact-contract-and-20260716-1303`. That plan is
-`gated` at iteration 5, inactive with no in-flight LLM call, has a passing
-`PROCEED` gate, and points next to `finalize`; introspection classifies liveness
-as `stalled`, while the chain still records `last_state: blocked`. A later plan
-event at `2026-07-17T13:32:54.255746Z` records canonical repair state `UNKNOWN`
-and intent `broken_superfixer` versus legacy/actual `queue_only`/`no_action`.
-These are distinct evidence dimensions, not proof that M6 executed, that later
-code is wired into the current runtime, or that the chain is complete.
+`blocked` at iteration 5 and points next to `finalize`; its latest history entry
+at `2026-07-17T14:03:57Z` records another rejected finalize request caused by an
+invalid JSON schema, while the chain also records `last_state: blocked`. Earlier drift
+evidence records canonical repair state `UNKNOWN` and intent
+`broken_superfixer` versus legacy/actual `queue_only`/`no_action`. These are
+distinct evidence dimensions, not proof that M6 executed, that later code is
+wired into the current runtime, or that the chain is complete.
 
 The full current-epoch implementation/adoption audit, including every F01–F17
 row, the preceding 15-item crosswalk, checkout/runtime divergence, existing
@@ -30,6 +30,32 @@ enter this exact ten-milestone run, including prerequisites, first safe action,
 acceptance evidence and custody/replay/revision risks, is the **Current-run
 implementation crosswalk** in
 `research/unified-authority-efficiency-prevention-20260714.md`.
+
+Those raw reports entered repository history at
+`44441636f125ad490dd12adba8254462c15ea48f` and
+`b363d7d8ad9c02a04f369dd62074206fa1d6cf4d`. Their execution-ready planning
+amendment is indexed by
+`decisions/f01-f17-upcoming-milestone-amendment-20260717.md`. That decision is
+the unique F01–F17/R1–R3 allocation table; the M6A–M11 briefs own execution and
+acceptance details. It explicitly distinguishes component presence from runtime
+wiring and prevents one recommendation from being lost or implemented twice.
+
+## Protected boundary and amendment status
+
+M5 and M5A are complete, and M6 is current. Their milestone labels, branches,
+configuration, dependencies, prep direction, notes, and brief bytes are
+immutable. The canonical chain imports those live definitions unchanged; the
+M5, M5A, and M6 brief SHA-256 values are respectively `2e8f3f96…`,
+`9a337ca4…`, and `3fea24d7…`. The finalized M6 plan artifacts remain solely in
+live run state and are not modified here.
+
+Only M6A, M7, M8, M8A, M9, M10, and M11 are amended. Stable labels and serial
+ordering remain unchanged. Each pending brief now names its recommendation
+ownership, predecessor evidence, first safe action, output bundle, runtime
+acceptance, and version/custody/replay stop conditions. The amendment does not
+rebind, resume, restart, finalize, deploy, promote, delete, or otherwise mutate
+the live chain; any future adoption by that run must occur through its supported
+between-milestone binding workflow after M6 becomes accepted.
 
 ## What already exists
 
@@ -76,10 +102,10 @@ full terminology, schema/event disposition, invariants, and code seams are in
 
 ## Unified residual prevention epic
 
-The canonical residual design lists nine ordered milestones below. The launched
-runtime currently reports ten because M5A atomic fail-closed completion was
-inserted between M5 and M6. The current chain artifact records M5 and M5A as its
-two-entry completed prefix, with M5A publication evidence
+The canonical chain contains ten stable milestone identities. The residual
+design below groups nine post-foundation outcomes because M5A atomic fail-closed
+completion was inserted between M5 and M6. The current chain artifact records
+M5 and M5A as its two-entry completed prefix, with M5A publication evidence
 `local_no_push_reconciliation`; that cursor does not prove M6 or universal
 runtime adoption, so neither numbering scheme is completion evidence.
 
