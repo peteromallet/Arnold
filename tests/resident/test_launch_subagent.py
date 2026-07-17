@@ -273,6 +273,8 @@ def test_codex_background_launch_writes_durable_manifest(tmp_path, monkeypatch) 
     assert manifest["git_custody"]["schema_version"] == "arnold-resident-git-custody-v1"
     assert manifest["git_custody"]["evidence_path"].endswith("git-custody-evidence.json")
     assert "[Git implementation custody contract — deterministic v1]" in prompt
+    assert "implementation.base_revision is the actual feature base" in prompt
+    assert "only with strict containment proof" in prompt
     assert "Missing or inconsistent evidence fails the delegated run" in prompt
     assert FINAL_SUMMARY_INSTRUCTION in prompt
     assert manifest["discord_origin"]["conversation_key"] == "discord:guild:12:channel:34:thread:56"
