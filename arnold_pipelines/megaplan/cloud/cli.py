@@ -437,6 +437,11 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         help="Run an arbitrary remote command",
     )
     exec_parser.add_argument("command", help="Command string to execute remotely")
+    exec_parser.add_argument(
+        "--on-box",
+        action="store_true",
+        help="Run inside the current agentbox without bouncing through SSH.",
+    )
 
     resume_parser = cloud_sub.add_parser(
         "resume",
@@ -822,10 +827,10 @@ def _status_should_use_chain(root: Path, args: argparse.Namespace, spec: CloudSp
 def _provider_for_action(spec: CloudSpec, args: argparse.Namespace):
     if bool(getattr(args, "on_box", False)):
         action = getattr(args, "cloud_action", None)
-        if action not in {"chain", "launch-epic", "sync-megaplan"}:
+        if action not in {"chain", "exec", "launch-epic", "sync-megaplan"}:
             raise CliError(
                 "invalid_args",
-                "--on-box is supported only for cloud chain, launch-epic, and sync-megaplan",
+                "--on-box is supported only for cloud chain, exec, launch-epic, and sync-megaplan",
             )
         from arnold_pipelines.megaplan.cloud.providers.on_box import OnBoxProvider
 
