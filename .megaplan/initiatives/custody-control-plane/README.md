@@ -9,18 +9,27 @@ residual migration design.
 
 ## Current audited status
 
-At the bounded resident snapshot generated
-`2026-07-17T12:44:05.058821Z`, the Custody chain was launched but not complete:
-it reported `status=attention`, 20% chain progress, a `done` M5A plan, no live
-runner, and missing terminal chain reconciliation. M5 has accepted reconciliation
-evidence; M5A is git-landed but its current completion verdict is rejected.
-Critique Ledger CL1 was separately `blocked` before execution. These labels are
-not interchangeable with accepted milestone or runtime-adoption proof.
+At the bounded read-only snapshot generated
+`2026-07-17T13:42:46.341461Z`, the Custody chain was launched but not complete.
+Its raw chain cursor is at milestone index 2 after two completed entries out of
+ten, with current plan `m6-exact-contract-and-20260716-1303`. That plan is
+`gated` at iteration 5, inactive with no in-flight LLM call, has a passing
+`PROCEED` gate, and points next to `finalize`; introspection classifies liveness
+as `stalled`, while the chain still records `last_state: blocked`. A later plan
+event at `2026-07-17T13:32:54.255746Z` records canonical repair state `UNKNOWN`
+and intent `broken_superfixer` versus legacy/actual `queue_only`/`no_action`.
+These are distinct evidence dimensions, not proof that M6 executed, that later
+code is wired into the current runtime, or that the chain is complete.
 
 The full current-epoch implementation/adoption audit, including every F01–F17
 row, the preceding 15-item crosswalk, checkout/runtime divergence, existing
 solutions to reuse, telemetry unknowns, and the three ranked priorities, is in
 `research/f01-f17-current-epoch-adoption-audit-20260717.md`.
+The durable answer for whether and how each F01-F17 item and ranked priority can
+enter this exact ten-milestone run, including prerequisites, first safe action,
+acceptance evidence and custody/replay/revision risks, is the **Current-run
+implementation crosswalk** in
+`research/unified-authority-efficiency-prevention-20260714.md`.
 
 ## What already exists
 
@@ -69,8 +78,10 @@ full terminology, schema/event disposition, invariants, and code seams are in
 
 The canonical residual design lists nine ordered milestones below. The launched
 runtime currently reports ten because M5A atomic fail-closed completion was
-inserted between M5 and M6; M5A is git-landed but its current acceptance verdict
-is rejected, so neither numbering scheme is completion evidence.
+inserted between M5 and M6. The current chain artifact records M5 and M5A as its
+two-entry completed prefix, with M5A publication evidence
+`local_no_push_reconciliation`; that cursor does not prove M6 or universal
+runtime adoption, so neither numbering scheme is completion evidence.
 
 1. M5 reconciles all three Run Authority receipts, proves zero divergence, then
    writes and attests the metadata-only retirement marker for the exact
@@ -140,10 +151,11 @@ provenance, and milestone gap assessment are curated in
 ## Launch and recovery posture
 
 The earlier unlaunched posture has been superseded by the launched session
-described above, but the chain remains fail-closed at its unresolved terminal
-reconciliation and successor gates. This status note does not authorize relaunch,
-resume, merge, deployment, restart, or successor execution. Generic chain control
-binds the chain bytes, ordered milestone
+described above. The chain is positioned at M6, whose plan is gated but inactive;
+chain status and the later repair-drift event remain fail-closed evidence rather
+than authority to proceed. This status note does not authorize finalize, relaunch,
+resume, replan, merge, deployment, restart, or successor execution. Generic
+chain control binds the chain bytes, ordered milestone
 sequence, briefs, North Star, intended initiative revision, and resolved
 source/editable runtime into immutable chain-state metadata before the first
 milestone. Load/resume and reconciliation stop before normalization on drift,
@@ -153,11 +165,11 @@ input. M5 does not require already-accepted Run
 Authority receipts or the later migration approval: producing genuine Run
 Authority completion/retirement evidence is its purpose. The Run Authority
 entry checks preserve source lineage and a manifest claim as inputs to
-reconcile; they do not assert acceptance. The
-serial predecessor and acceptance gates block M6 until M5 has
-three accepted receipts, zero canonical verification divergences, a regenerated
-manifest, the canonical `runauthority-epic/.retired` marker, and its
-content-addressed retirement attestation. M6 must then prove the audited WBC
+reconcile; they do not assert acceptance. The serial predecessor and acceptance
+gates required M5 to produce three accepted receipts, zero canonical verification
+divergences, a regenerated manifest, the canonical
+`runauthority-epic/.retired` marker, and its content-addressed retirement
+attestation before the cursor could reach M6. M6 must now prove the audited WBC
 merge is contained by the exact landed/runtime vector and reconcile its
 support/runtime evidence honestly. M6A and every later implementation milestone remain blocked until
 M6's ownership handoff and the approval record are accepted. Planning completion grants no authority to start,

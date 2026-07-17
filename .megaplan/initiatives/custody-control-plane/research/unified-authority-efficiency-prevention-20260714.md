@@ -3,6 +3,9 @@ type: research
 date: 2026-07-14
 status: canonical-planning-input
 source_snapshot: '2026-07-14T10:35:52+00:00'
+current_run_snapshot: '2026-07-17T13:42:46.341461+00:00'
+current_run: custody-control-plane-20260714
+current_plan: m6-exact-contract-and-20260716-1303
 ---
 
 # Unified Run Authority and Megaplan efficiency prevention synthesis
@@ -61,6 +64,44 @@ The isolated projection commits `3221870c965f086691610321b41b126f4aff3266`
 and `0a31d539caae5edb1623266d0150ab8a7d272c28` are candidate implementation
 evidence only. They are not merged, installed, deployed, or accepted by this
 planning update.
+
+## Current-run implementation answer and evidence boundary
+
+At the bounded read-only observation generated
+`2026-07-17T13:42:46.341461Z`, the current Custody run had completed the first
+two entries of its ten-entry execution binding and was positioned at M6:
+
+- raw chain state
+  `/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/.chains/chain-1e998199f544.json`
+  (observed mtime `2026-07-17T13:42:26.080658899Z`) records
+  `current_milestone_index: 2`, current plan
+  `m6-exact-contract-and-20260716-1303`, two `completed` entries (M5 and M5A),
+  `last_state: blocked`, `sync_state: clean`, and branch/PR head
+  `5ece35918c2f0fcbdebb744c5060b4236657f43a`;
+- raw plan state
+  `/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m6-exact-contract-and-20260716-1303/state.json`
+  records `current_state: gated`, `iteration: 5`, a passing `PROCEED` gate, and
+  `resume_cursor.phase: finalize`; the read-only `introspect` payload at the
+  snapshot time reported `display_state: gated`, `execution_state: inactive`,
+  no in-flight LLM call, `active_phase.liveness: stalled` because the last event
+  was 592 seconds old, and `block_details.is_blocked: true`;
+- the same plan's `events.ndjson` last observed event was sequence 2582 at
+  `2026-07-17T13:32:54.255746Z`, a `drift_detected` event where the canonical
+  repair dispatch intent was `broken_superfixer` with canonical state
+  `UNKNOWN`, while the legacy/actual result was `queue_only`/`no_action`;
+- the chain's immutable execution binding names intended initiative revision
+  `0f28081c0fed61faaa8f1a2b1ac5861de11dfddf`, the exact ten-milestone
+  sequence, and content hashes for M6 through M11. The M6 plan's canonical
+  source binding independently pins its brief to Git revision
+  `5ece35918c2f0fcbdebb744c5060b4236657f43a`, blob
+  `9717a811eb1d4cb9cae877a00d1912220671b419`, and file SHA-256
+  `3fea24d7120fb6dd97a0a876caff200bd9d2847d6fcae37dcb69a63b1b8ec66e`.
+
+The chain-level `blocked` label, plan-level `gated` label, and later repair
+drift event are separate evidence dimensions; none is normalized into a claim
+that M6 executed or that any later control is runtime-active. This report is a
+documentation update only. It does not finalize, resume, replan, restart,
+deploy, or otherwise mutate that run.
 
 ## Durable North Star
 
@@ -338,6 +379,287 @@ deletion gate.
 - Fail closed/retirement: mismatch stops launch/promotion and preserves read-only
   historical adapters. Delete compatibility writers only after mixed-version
   replay and forced rollback pass.
+
+## Current-run implementation crosswalk
+
+### Classification result
+
+All F01-F17 controls and all three ranked recommendations are **already in
+current-run scope** at their named M6-M11 integration points. The
+`adoptable in a later unexecuted milestone without invalidating accepted work`
+class is empty because those later briefs already contain the work; the
+`post-run/follow-on only` class is also empty. No chain amendment is required if
+each control stays in its assigned milestone. Pulling implementation or
+enforcement forward into the current observe-only M6 plan would instead
+**require amendment/replan/revision-boundary** and is not authorized by this
+report.
+
+The preceding 15-item user-visible summary is fully covered without separate
+scope: item 1 maps to F05/F16; 2 to F01/F04/F15; 3 to F02; 4 to F03; 5 to F04;
+6 to F06; 7 to F07; 8 to F08/F12; 9 to F09; 10 to F10/F11; 11 to F13; 12 to
+F14; 13 to F15; 14 to F16; and 15 to F17/F10. The reusable components audited
+for those items are named below so component existence is never confused with
+current-executor wiring.
+
+### F01-F17
+
+**F01 — exact repair occurrence identity — already in current-run scope
+(M6, M7, M10).** Integration: M6 freezes the exact tuple and inventories every
+enqueue/claim/execute/receipt/decision/terminal join; M7 makes it the custody
+writer key; M10 enforces dispatch and closure. Existing
+`cloud/repair_requests.py`, `repair_contract.py`, recurrence logic, grants and
+fences are partial components, not one key wired across the current executor.
+Prerequisites are M6's accepted version/owner bundle and M6A's durable WBC store.
+The first safe action is M6's observe-only occurrence-field/conformance matrix.
+Acceptance is captured T7/T12 cross-binding rejection plus terminal evidence for
+every request/claim/attempt/decision/index. The integrity risk is attaching a
+valid receipt to the wrong revision or replay attempt.
+
+**F02 — durable event-driven recovery — already in current-run scope (M6A, M8,
+M10).** Integration: M6A persists block/exit facts, M8 wires every producer, and
+M10 consumes deduplicated triggers while scans remain reconciliation backstops.
+Enqueue hooks, request storage, watchdog and repair-trigger code exist and have
+run, but the audit did not prove accepted recovery or the five-minute SLO.
+Prerequisites are F01 identity, terminal storage and eligibility semantics. The
+first safe action is to add the exact event/request/claim/terminal timestamp
+fields to M6's inventory and baseline, without dispatch. Acceptance requires a
+denominated genuine-blocker p50/p95/p99, p95 below five minutes, miss/duplicate
+counts, and six-hour missed-event recovery. The risk is duplicate launch or
+false liveness after ambiguous delivery.
+
+**F03 — verify-only repair adoption — already in current-run scope (M6A, M7,
+M8A).** Integration: M6A stores immutable receipts, M7 binds grant/tree/test/
+fence identity, and M8A adds the executor's verify-only branch. Existing
+same-lineage validators, adopt-execution authority receipts and completed-task
+projections are reusable precursors; none is a repair-receipt consumer wired to
+the current executor. Prerequisites are F01/F04/F15 and an accepted WBC API. The
+first safe action is a non-dispatching receipt schema/negative-fixture contract;
+the adapter waits for M8A. Acceptance proves same-revision adoption skips replay
+while any code, contract, tree, test-set or fence drift selects normal execution.
+The risk is silently trusting stale or incomplete work.
+
+**F04 — append-only attempt/effect history — already in current-run scope (M6,
+M6A, M8, M10).** Integration: M6 inventories aliases and producers; M6A turns
+WBC's `ExecutionAttemptLedger` schema into transactional storage/query; M8
+migrates producers; M10 proves replay. The schema exists, but its own audited
+contract is schema-only and is not current-runtime storage. Prerequisites are
+the exact WBC revision/vector and migration/data-policy decisions. The first
+safe action is to retain every schema-only row as residual in M6 rather than
+credit it as implementation. Acceptance requires durable start-before-dispatch,
+exactly one terminal or explicit indeterminate result, byte-stable attempt
+history and deterministic alias projections. The risk is overwriting custody or
+replay evidence while presenting a mutable alias as history.
+
+**F05 — one attempt-aware reducer and cursor vector — already in current-run
+scope (M6, M9, M11).** Integration: M6 inventories authority-increasing readers;
+M9 moves all status/liveness/repair/operator consumers to the Run Authority
+reducer and coherent owner-source cursor vector; M11 retires fallbacks.
+`arnold_pipelines/run_authority/reducer.py`, `authority/views.py` and shadow
+comparators exist, but current chain/plan/repair labels still disagree and the
+legacy readers remain wired. Prerequisites are F04 history and M8 producer
+coverage. The first safe action is M6's reader registry and report-only
+same-input comparison. Acceptance is 100% cursor/hash agreement with torn input
+reported `UNKNOWN`/`INCOHERENT` and proven rollback. The risk is two authorities
+selecting different attempts or allowing replay from a stale view.
+
+**F06 — append-safe heartbeat projection — already in current-run scope (M6,
+M7, M9, M11).** Integration: M6 records the implementation/runtime provenance
+gap; M7 adopts the cursor-checked writer boundary; M9 proves rebuild and readers;
+M11 retires full-file writers. `observability/events_projection.py` and commits
+`3221870c…`/`0a31d539…` exist, and advancing cursor artifacts were observed, but
+their exact producer SHA and current-executor adoption were not proven.
+Prerequisites are a pinned version vector and F04 source history. The first safe
+action is a read-only writer/reader/provenance inventory, not another projection
+implementation. Acceptance is the 10,000-heartbeat/concurrent-reader stress,
+sequences 0..9999, atomic rebuild digest parity, byte/time telemetry and zero
+false stalls. The risk is journal loss, torn reads or liveness fabricated by
+projection I/O.
+
+**F07 — DAG feasibility — already in current-run scope (M6, M8A).** Integration:
+M6 captures the Transaction/Strategy corpus; M8A uses and extends
+`orchestration/task_feasibility.py` at finalization for width, critical path,
+seriality, routing groups and turn demand. The v2 compiler exists and has focused
+tests, but no captured-corpus report or current new-plan canary proves it is the
+governing runtime gate. Prerequisites are immutable corpus hashes and F17
+provenance. The first safe action is captured replay in report-only mode.
+Acceptance rejects unexplained full seriality for eight or more tasks while
+preserving real semantic dependencies. The risk is either rewriting an accepted
+plan or rejecting legitimate serial work; enforcement therefore applies only to
+newly finalized canary plans.
+
+**F08 — split complex implementation/proof work — already in current-run scope
+(M6, M8A).** Integration: M6 captures oversized-task evidence; M8A extends the
+existing feasibility result with split-or-signed-budget authority and residual
+checkpoints. Prompt/compiler checks exist only partially and are not universally
+enforced by the executor. Prerequisites are F07 feasibility, exact attempt
+identity and a versioned budget grant. The first safe action is replaying known
+complexity-7/8/9 fixtures without changing live plans. Acceptance proves each
+fixture splits or fails admission and preserves productive checkpoints when
+proof budget ends. The risk is discarding partial work or silently widening the
+budget/revision contract.
+
+**F09 — deterministic harness validation — already in current-run scope (M6,
+M8A).** Integration: M6 records the unconsumed declaration; M8A wires the
+existing `finalize_contract.validation_jobs` schema to the existing suite
+runner/backstop/acceptance transaction. The declaration and adjacent harness
+exist, but no current runtime consumer was found. Prerequisites are F07
+classification and a reviewed allowlist for non-mutating checks. The first safe
+action is an M6 producer/consumer row showing the missing edge; the wiring waits
+for M8A. Acceptance gives T10/T12/T15-equivalent jobs reproducible environment,
+output and hashes with exactly zero model calls. The risk is either continuing
+to spend model calls or letting a misclassified validation job perform effects.
+
+**F10 — exact source/ref admission and bounded startup — already in current-run
+scope (M6, M8A, M11).** Integration: M6 freezes every source/install/runtime
+boundary; M8A applies existing execution binding/source admission to every
+launcher and relauncher; M11 proves mixed-version behavior. Those guards exist
+and protect some boundaries, but the audit found divergent relaunch paths and no
+universal current-runtime gate. Prerequisites are the F17 vector and full Git
+history for ancestry proof. The first safe action is M6's zero-exemption launcher
+registry and one-read validation contract. Acceptance proves invalid refs stop
+within the configured attempts before provider/model dispatch and emit a typed
+reason. The risk is executing or accepting evidence from the wrong tree.
+
+**F11 — typed provider/model/import/compaction circuits — already in current-run
+scope (M6, M8A).** Integration: M6 inventories each failure class separately;
+M8A adds distinct counters and terminal outcomes to the existing circuit
+framework. The context compressor and completed-receipt replay bounds exist and
+are tested; provider timeout, model resolution and import-isolation coverage are
+not jointly wired or canary-proven. Prerequisites are F01 attempt identity and
+F17 provenance. The first safe action is a report-only per-class circuit matrix,
+not one combined counter. Acceptance fixtures cover empty/invalid model,
+divergent imports, repeated 300-second timeout, repeat compaction and replay with
+one typed terminal outcome and no duplicate effect. The risk is hiding repeated
+work or colliding unrelated failures.
+
+**F12 — bounded review-rework waves — already in current-run scope (M6, M8A).**
+Integration: M6 identifies the review bypass; M8A routes review rework through
+existing `_core.io.split_oversized_batches` and enforces the grant ceiling. The
+splitter is wired for ordinary batches, not the audited review-rework path.
+Prerequisites are finalized task identity and unchanged max-wave policy. The
+first safe action is the six-task regression fixture; production wiring waits
+for M8A. Acceptance observes a 5+1 dispatch and rejects an oversized grant before
+worker launch with identical accepted output. The risk is unbounded fanout or a
+wave split that changes dependency/revision semantics.
+
+**F13 — normalized budget-failure circuit — already in current-run scope (M6,
+M8A).** Integration: M6 freezes the normalized reason and collision corpus;
+M8A adds `worker_budget_exhausted` to the existing hinge/phase/recurrence
+framework. Adjacent circuits exist, but the named two-strike plan breaker is not
+wired. Prerequisites are F01 exact occurrence identity and F08 split/budget
+transitions. The first safe action is report-only normalization and collision
+fixtures. Acceptance proves two equivalent failures block a third launch while
+unrelated tasks/providers do not collide. The risk is either another blind retry
+or a false circuit that blocks valid work and loses replay custody.
+
+**F14 — joined productive/replayed telemetry — already in current-run scope
+(M6, M8A, M9, M11).** Integration: M6 freezes vocabulary, explicit unknowns and
+denominators; M8A emits executor work-class fields; M9 joins the WBC/event stream;
+M11 makes coverage a promotion gate. Event kinds, cost projection and timing
+fragments exist, but no authoritative task/attempt/repair/accepted-output join is
+wired. Prerequisites are F01/F04 keys and accepted work-class rules. The first
+safe action is the current M6 unknown-preserving schema/baseline. Acceptance
+reconciles queue, inference, tool, validation, retry, compaction, Git, repair,
+tokens, dollars and accepted-output totals without converting missing to zero.
+The risk is false efficiency claims that misclassify productive review or drive
+authority-changing policy from incomplete telemetry.
+
+**F15 — atomic custody terminalization — already in current-run scope (M6, M7,
+M10).** Integration: M6 inventories all writer/terminal joins; M7 implements one
+fenced occurrence lease/epoch transaction or reconciled outbox; M10 runs the
+fault/overlap matrix. Repair claims, attempts, custody events and Run Authority
+grants are actively used precursors, but coherent terminal closure is not
+current-runtime proven. Prerequisites are F01 identity and M6A transactional
+storage. The first safe action is M6's writer/outbox/terminal conformance map.
+Acceptance closes exactly one chain for success/failure/cancel/supersede/timeout/
+escalate and accepts only one actor under stale-fence/cross-host overlap. The
+risk is simultaneous authoritative actors, double effects or ambiguous open
+custody that later replay treats as available.
+
+**F16 — deterministic exact-evidence auditing — already in current-run scope
+(M6, M9, M10, M11).** Integration: M6 inventories exact evidence consumers; M9
+makes gather reasons pure over occurrence/cursor/version; M10/M11 prove recovery
+reporting and retire heuristic joins. Typed reasons, exact references and the
+progress-auditor controller exist and run, but the current plan's sequence-2582
+drift event still records canonical `UNKNOWN` versus legacy `no_action`.
+Prerequisites are F05 cursor truth and F01/F17 identity. The first safe action is
+replaying known false same-basename/cross-session joins in report-only mode.
+Acceptance emits each reason once with exact IDs, never matches the unrelated
+session, and takes no action on ambiguity. The risk is an observer becoming a
+second authority or repairing the wrong run.
+
+**F17 — one time-scoped version vector — already in current-run scope (M6, M8,
+M11).** Integration: M6 freezes source, install, wrapper, config, worker and
+process identities; M8 carries them through every producer; M11 gates promotion
+and compatibility retirement. Execution binding, source admission and restart
+receipts exist, but they are selective: the live M6 canonical source binding is
+to `5ece3591…`, the observed project head was `47fc7a62…` and dirty, while this
+read-only introspection used pinned resident runtime `6788980d…`; that is
+evidence of separate code locations, not proof of one loaded runtime vector.
+Prerequisites are exact ownership and immutable runtime directories. The first
+safe action is M6's attested vector and mismatch inventory. Acceptance requires
+source/install/wrapper/config/process/import equality at launch, relaunch and
+promotion plus mixed-version and forced-rollback canaries. The risk is that
+every other test, receipt and replay proves behavior of different code.
+
+### Ranked recommendations
+
+**R1 — enforce the existing authority/custody/WBC/version foundation everywhere
+— already in current-run scope (M6-M8, M10-M11).** Integration combines F01,
+F04, F05, F10, F15, F16 and F17 without creating another reducer, queue, ledger
+or provenance manifest. The components exist only in partial/selective wiring.
+Prerequisites are the M5/M5A completed-prefix evidence, accepted M6 owner/vector
+bundle and M6A/M7 storage/custody contracts. The first safe action is the current
+M6 zero-exemption producer/consumer/boundary matrix in report-only mode.
+Acceptance is exact vector equality, complete owned rows, zero accepted-but-
+unclaimed repair, one terminal actor and no same-cursor projection disagreement.
+The risk is invalidating accepted history through competing authority or
+cross-revision adoption.
+
+**R2 — wire existing Megaplan efficiency controls into the compiler/executor —
+already in current-run scope (M8A).** Integration composes F03 and F07-F13 at the
+existing feasibility, validation, batch-splitting and circuit seams. Those
+primitives range from tested-but-unproved to entirely unwired in the current
+executor. Prerequisites are R1's exact identity/storage/vector and the immutable
+Transaction/Strategy/rework corpus. The first safe action now is only M6 corpus
+capture; M8A begins with report-only replay. Acceptance requires feasible DAGs,
+zero-model deterministic validation, 5+1 rework, no third equivalent budget
+launch and drift-sensitive verify-only adoption. The risk is applying new policy
+to an accepted live plan or widening budgets/effects outside its revision.
+
+**R3 — make joined telemetry and canaries the completion authority — already in
+current-run scope (M6, M9-M11).** Integration combines F02, F06 and F14 with the
+M9 projection/ledger, M10 genuine recovery and M11 promotion/retirement gates.
+Telemetry and projection components exist, but joined denominators and exact-
+runtime canaries do not. Prerequisites are R1-R2, accepted WBC storage/identity
+and explicit missing-data semantics. The first safe action is M6's schema and
+unknown baseline; mutation-capable canaries wait for their named milestones.
+Acceptance requires sub-five-minute denominated recovery, 10,000-heartbeat
+concurrency proof, 100% cursor/hash agreement, productive/replayed totals, one
+genuine recovery, no duplicate effect and mixed-version rollback evidence. The
+risk is treating commits, tests, PIDs or labels as runtime completion and then
+retiring custody/replay compatibility too early.
+
+## Recommended sequencing for this run
+
+1. **Can be incorporated at M6 without changing its accepted intent:** finish
+   only the already-planned observe-only exact vector/owner validation,
+   zero-exemption writer/reader/producer/consumer inventories, F01-F17 mapping,
+   captured-corpus hashes, reusable-component-versus-runtime-wiring status, and
+   explicit unknown baselines. The current gated plan already contains these;
+   this report does not authorize its finalize or execution transition.
+2. **Must wait for the existing unexecuted milestones:** M6A owns the operational
+   WBC store; M7 owns occurrence/lease/epoch and append-safe writer adoption; M8
+   owns universal runtime/boundary producers; M8A owns compiler/executor controls;
+   M9 owns reducer consumers, projections and joined telemetry; M10 owns safe
+   retry/event recovery/effects; M11 owns conformance, controlled runtime proof
+   and evidence-gated retirement.
+3. **Cannot be pulled forward without a revision boundary:** any M6 runtime
+   writer change, enforcement, repair dispatch, active-plan rewrite, deployment,
+   restart, bypass deletion or canary with real effects. If a later milestone's
+   accepted brief proves insufficient, amend/replan that milestone before its
+   execution; do not smuggle the change into M6 or reinterpret existing code as
+   current-run adoption.
 
 ## Dependency-ordered milestone sequence
 
