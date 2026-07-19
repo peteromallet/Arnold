@@ -22,7 +22,7 @@ nominal manifests cannot substitute. Scope is no more than two weeks.
 ## In scope
 
 - Close every residual migration-matrix row with exact prerequisite and M6-M10
-  proof, owner sign-off, source/runtime/contract hashes, rollback result, and
+  proof, machine-verifiable owner contract, source/runtime/contract hashes, rollback result, and
   retirement evidence.
 - Close every generated WBC boundary-inventory row with the named producer and
   consumer owner, implementation commit, start/phase/terminal writers,
@@ -60,18 +60,32 @@ nominal manifests cannot substitute. Scope is no more than two weeks.
   supported schema, interrupted upgrade/resume, legacy explicit-unknown reads,
   retention/legal hold/tombstone, cross-tenant access, encryption-required and
   missing-key cases.
-- Execute the staged rollout record in order: shadow evidence/telemetry;
+- Exercise the staged rollout record in isolated/non-production scope in order:
+  shadow evidence/telemetry;
   deterministic Transaction Spine and Strategy Roadmap replay; idle projection
-  canary; planner/executor canary; repair/worker canary; controlled installed-
-  runtime deployment; then one genuine supported blocked-run recovery.
+  canary; planner/executor canary; repair/worker canary; exact installed-runtime
+  reconciliation; then one genuine supported blocked-run recovery. Produce
+  deployment/deletion eligibility evidence without performing unauthorized
+  production deployment, promotion, or destructive removal.
+- Include the captured M5 quality-block chain-of-custody as a named regression:
+  structured `failed: <detail>` evidence, canonical classification, eligible
+  trigger, managed-worker provenance, dispatch/launch failure, bounded
+  meta-repair, six-hour reconciliation, and final independent outcome must all
+  remain joinable under one exact occurrence.
 - For the genuine block, prove durable eligible blocker event, exact signature,
   current Run Authority fence, current Custody lease/epoch, one managed repair,
   accepted repair or typed escalation within
   the p95 SLO, authoritative resumed progress, independent 5m/1h/6h checks,
   projection agreement, and no duplicate/replayed effect.
-- Remove approved raw-state/status/process/marker/sidecar/wrapper/compatibility
-  authority bypasses only after their gates pass; preserve required read-only
-  historical adapters with explicit expiry.
+- Prove both outcomes for that regression: a repairable deterministic block
+  reaches one accepted repair, while an unapproved or genuinely incoherent case
+  reaches one typed human gate. Neither may stall as unknown due to prefix
+  parsing, disappear because L1 was never launched, or count as recovered
+  without authoritative progress and independent verification.
+- Mark raw-state/status/process/marker/sidecar/wrapper/compatibility authority
+  bypasses eligible for removal only after their gates pass; preserve required
+  read-only historical adapters with explicit expiry. Actual destructive removal
+  remains a separately authorized operational effect.
 - Create a deliberate proof map and generate the initiative completion manifest
   through the chain lifecycle.
 
@@ -85,8 +99,8 @@ or deleting a path because grep or status prose merely suggests it is unused.
 
 Retirement requires current Run Authority/WBC manifests, exact-version parity,
 zero authority readers/writers, adversarial and projection-rebuild proof,
-mixed-version/replay compatibility, canary and forced rollback evidence, and an
-explicit approved deletion list. Completion is the generated content-addressed
+mixed-version/replay compatibility, canary and forced rollback evidence, and a
+machine-generated deletion-eligibility list. Completion is the generated content-addressed
 manifest, not a status label, green subset, or hand-authored JSON.
 
 The user phrase "port excipation suit" is interpreted as this comprehensive
@@ -97,8 +111,8 @@ acceptance-suite and conformance-suite terminology but no separate
 ## Open questions
 
 - Are there any supported-surface exceptions? The target is zero; each proposed
-  exception requires explicit owner, reason, expiry, non-authoritative behavior,
-  and separate approval, otherwise retirement/conformance fails.
+  exception requires an explicit machine-verifiable owner, reason, expiry, and
+  proven non-authoritative behavior, otherwise retirement/conformance fails.
 - Which historical adapters remain necessary and how is their zero-authority
   property continuously tested until expiry?
 - Which production promotion/deployment/deletion actions require operational
@@ -118,7 +132,7 @@ and may not restore legacy write authority.
 
 - Every residual matrix row is canonical or retired with proof; zero unowned,
   unexplained, warn-only, or authority-increasing compatibility exemption remains.
-- Every WBC row is `conformant` or an approved read-only `retired` adapter with
+- Every WBC row is `conformant` or a validated read-only `retired` adapter with
   expiry. Schema existence, generated support declarations, unit/fixture-only
   emitters, manual assertions, and best-effort receipts are explicitly
   insufficient; the suite fails if any required implementation/static/runtime/
@@ -144,8 +158,8 @@ and may not restore legacy write authority.
 - Canary and forced rollback preserve authority/evidence and do not restore dual
   authority; installed/editable/cloud/resident source identity is verified.
 - Captured-plan replay covers every F01-F17 traceability row, the idle and
-  worker/repair canaries are content-addressed, and controlled deployment proves
-  exact source/package/wrapper/config/contract/running-process provenance.
+  worker/repair canaries are content-addressed, and installed-runtime
+  reconciliation proves exact source/package/wrapper/config/contract provenance.
 - One genuine blocked-run acceptance—not a fixture, mocked status, nominal
   manifest, fresh PID, or local repair commit—meets recovery, custody, resumed-
   progress, delayed-verification, and projection-agreement gates.
@@ -183,11 +197,11 @@ their separately approved restoration proof preserves single authority.
 
 Dependencies: M10 evidence bundle, unchanged M5-M11 plus M6A chain/briefs/North Star,
 current Run Authority evidence, the exact audited WBC merge commit and matching
-ancestry/support/runtime evidence, approved deletion/promotion record,
+ancestry/support/runtime evidence, machine-generated deletion/promotion eligibility record,
 and clean pinned runtime identity. Handoff: chain-generated completion
 manifest and proof map, final support/ownership matrix, compatibility expiry
-register, canary/controlled-deployment/genuine-block receipts, conformance and
-rollback reports, legacy deletion/retirement receipts, and operational runbook.
+register, canary/runtime-reconciliation/genuine-block receipts, conformance and
+rollback reports, legacy deletion/retirement eligibility receipts, and operational runbook.
 Any hashed input change invalidates this handoff.
 
 ## Profile rationale

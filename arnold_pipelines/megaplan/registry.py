@@ -423,7 +423,11 @@ def _ensure_builtin_pipelines_registered() -> None:
         description=description,
         metadata=metadata,
     )
-    _GLOBAL_REGISTRY._module_files[CANONICAL_BUILTIN_PIPELINE] = module_file
+    # The built-in is a package pipeline: resource lookup must start at the
+    # package manifest so ``read_skill_md`` resolves ``megaplan/SKILL.md``.
+    # Keeping ``pipeline.py`` here makes the generic sibling-module rule probe
+    # the nonexistent ``megaplan/megaplan/SKILL.md`` path.
+    _GLOBAL_REGISTRY._module_files[CANONICAL_BUILTIN_PIPELINE] = manifest_file
 
 
 def register_pipeline(

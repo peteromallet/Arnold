@@ -1,0 +1,64 @@
+{
+  "schema": "arnold.megaplan.runtime_promotion_receipt.v1",
+  "created_at": "2026-07-14T20:08:38Z",
+  "promoted_at": "2026-07-14T20:07:45Z",
+  "source": {
+    "branch": "editible-install",
+    "revision": "e910b289f3df4e78bd080bafa20f07a544e169ce",
+    "approved_stack_base": "10bf2bf5ce5b3c50e3bf428df64a44dd9173e66c",
+    "commits": [
+      "98c56727ceab37d92343f928c7f0ba2b167365af",
+      "e910b289f3df4e78bd080bafa20f07a544e169ce",
+      "88a7d331f589d0c3b4c2bdcde0a6b2d25c2ab796",
+      "e1d086bfbf4d38bdf037b7372e8a2099670737d3",
+      "8f8733deaca15359c2bf98e26b032485a95b37ea"
+    ]
+  },
+  "target": {
+    "branch": "editible-install",
+    "revision": "8f8733deaca15359c2bf98e26b032485a95b37ea",
+    "remote_ref": "refs/heads/editible-install",
+    "integration_method": "non-force merge of current main, promoted repair stack, and concurrent completion guard"
+  },
+  "runtime": {
+    "expected_root": "/workspace/arnold-custody-runtime",
+    "import_root": "/workspace/arnold-custody-runtime",
+    "source_revision": "8f8733deaca15359c2bf98e26b032485a95b37ea",
+    "attested_at": "2026-07-14T20:08:38Z",
+    "launch_runtime_source": "/workspace/arnold-custody-runtime",
+    "provenance_ok": true,
+    "imports": {
+      "arnold": "/workspace/arnold-custody-runtime/arnold/__init__.py",
+      "arnold_pipelines": "/workspace/arnold-custody-runtime/arnold_pipelines/__init__.py",
+      "megaplan": "/workspace/arnold-custody-runtime/arnold_pipelines/megaplan/__init__.py"
+    }
+  },
+  "tests": {
+    "command": "env -u ARNOLD_RESIDENT_DELEGATION_CONTEXT PYTHONPATH=/workspace/arnold-custody-runtime python -P -m pytest -q tests/test_chain_completion_guard.py plus focused repair-quality, managed-provenance, and chain-binding tests",
+    "result": "passed",
+    "exit_code": 0,
+    "summary": "59 passed in 7.55s; 7 focused quality/provenance tests passed in 0.49s; bash -n and py_compile passed",
+    "completed_at": "2026-07-14T20:07:45Z",
+    "negative_case": {
+      "command": "PYTHONPATH=/workspace/arnold-custody-runtime /root/.pyenv/versions/3.11.11/bin/python -P -m pytest -vv tests/arnold_pipelines/megaplan/test_canonical_source_admission.py::test_future_milestone_receipt_requirement_fails_closed_and_revalidates",
+      "result": "passed",
+      "summary": "1 passed in 0.42s",
+      "completed_at": "2026-07-14T17:27:24Z",
+      "proves": [
+        "missing required promotion receipt is rejected",
+        "tampered receipt content hash is rejected before milestone materialization"
+      ]
+    },
+    "source_files_sha256": {
+      "arnold_pipelines/megaplan/chain/source_admission.py": "0bb3142f8a6acf3a4331ccc1791d35c9fe938c35ed4c163557d6dcd49c0a0658",
+      "arnold_pipelines/megaplan/chain/promotion_receipt.py": "47517afe6854b27e07a9032cc58e50657ba8c4ac371e68ff1c4d5dd6e7edb70f",
+      "tests/arnold_pipelines/megaplan/test_canonical_source_admission.py": "86563ab4a9baa070bec09d1efbf63c7f5db0c1302d7a7391f5986e59f2bbe525"
+    }
+  },
+  "milestone": {
+    "label": "m9-rebuildable-projections-and-liveness",
+    "semantic_sha256": "ba2095d4d28777abd9b1ef01a13cd84ade52aa5df4f32cfd779049625dd3eb7e",
+    "file_sha256": "4515f65bdf820a558968bcb4da8ec0e2ef7458d50464e6f27d6d1a1701fb2a00"
+  },
+  "content_sha256": "d96cb2510bd5c10a5e1753a2f2c07cf1bf4ca5f1856dcec8136bbd875e6ee046"
+}

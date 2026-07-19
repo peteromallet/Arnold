@@ -219,3 +219,233 @@ def test_chain_done_gate_full_mode_still_validates_chain_state(tmp_path: Path) -
         )
         == 1
     )
+
+
+# ---------------------------------------------------------------------------
+# T33: Chain-done gate — atomic mode, acceptance receipts, normalization
+# ---------------------------------------------------------------------------
+
+
+def test_chain_done_gate_atomic_mode_passes(tmp_path: Path) -> None:
+    """Atomic mode (synonym for enforce) must pass chain-done gate."""
+    spec_path, state_path, plans_root = _write_chain(
+        tmp_path, mode="atomic", backstop="atomic"
+    )
+
+    assert (
+        check_chain_done(
+            spec_path=spec_path,
+            state_path=state_path,
+            plans_root=plans_root,
+        )
+        == []
+    )
+
+
+def test_chain_done_gate_atomic_completion_mode_fails_if_backstop_shadow(
+    tmp_path: Path,
+) -> None:
+    """Atomic completion mode with shadow backstop must still fail chain-done."""
+    spec_path, state_path, plans_root = _write_chain(
+        tmp_path, mode="atomic", backstop="shadow"
+    )
+
+    errors = check_chain_done(
+        spec_path=spec_path,
+        state_path=state_path,
+        plans_root=plans_root,
+    )
+
+    assert any("full_suite_backstop_mode" in error for error in errors)
+
+
+def test_chain_done_gate_atomic_backstop_fails_if_completion_shadow(
+    tmp_path: Path,
+) -> None:
+    """Atomic backstop with shadow completion mode must still fail chain-done."""
+    spec_path, state_path, plans_root = _write_chain(
+        tmp_path, mode="shadow", backstop="atomic"
+    )
+
+    errors = check_chain_done(
+        spec_path=spec_path,
+        state_path=state_path,
+        plans_root=plans_root,
+    )
+
+    assert any("completion_contract_mode" in error for error in errors)
+
+
+def test_chain_done_gate_enforce_mode_passes(tmp_path: Path) -> None:
+    """Enforce mode (original blocking-mode name) must pass chain-done gate."""
+    spec_path, state_path, plans_root = _write_chain(
+        tmp_path, mode="enforce", backstop="enforce"
+    )
+
+    assert (
+        check_chain_done(
+            spec_path=spec_path,
+            state_path=state_path,
+            plans_root=plans_root,
+        )
+        == []
+    )
+
+
+def test_chain_done_gate_accepts_atomic_with_acceptance_receipts(
+    tmp_path: Path,
+) -> None:
+    """Chain-done gate must accept atomic mode with acceptance receipts present."""
+    spec_path, state_path, plans_root = _write_chain(
+        tmp_path, mode="atomic", backstop="enforce"
+    )
+    # Add acceptance receipts to completed records
+    state_path.write_text(
+        json.dumps(
+            {
+                "completion_contract_mode": "atomic",
+                "full_suite_backstop_mode": "enforce",
+                "completed": [
+                    {
+                        "label": "m1",
+                        "plan": "plan-m1",
+                        "status": "done",
+                        "acceptance_receipt": {
+                            "transaction_id": "tx-001",
+                            "snapshot_hash": "sha256:abc123",
+                            "milestone_label": "m1",
+                            "plan_name": "plan-m1",
+                            "milestone_index": 0,
+                        },
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        check_chain_done(
+            spec_path=spec_path,
+            state_path=state_path,
+            plans_root=plans_root,
+        )
+        == []
+    )
+
+
+def test_chain_done_gate_missing_milestone_in_atomic_mode(tmp_path: Path) -> None:
+    """Chain-done gate in atomic mode must catch missing milestone records."""
+    spec_path, state_path, plans_root = _write_chain(
+        tmp_path, mode="atomic", backstop="enforce"
+    )
+    # Remove completed record
+    state_path.write_text(
+        json.dumps(
+            {
+                "completion_contract_mode": "atomic",
+                "full_suite_backstop_mode": "enforce",
+                "completed": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = check_chain_done(
+        spec_path=spec_path,
+        state_path=state_path,
+        plans_root=plans_root,
+    )
+
+    assert any("is not recorded in chain_state.completed" in error for error in errors)
+
+
+def test_chain_done_gate_atomic_without_acceptance_receipt_passes_if_plan_done(
+    tmp_path: Path,
+) -> None:
+    """Chain-done gate does NOT require acceptance receipts to pass;
+    it only checks contract mode, backstop mode, plan state, and blockers.
+    Acceptance receipts are checked at completion time, not gate time."""
+    spec_path, state_path, plans_root = _write_chain(
+        tmp_path, mode="atomic", backstop="enforce"
+    )
+    # Completed record without acceptance receipt — still valid for chain-done gate
+    state_path.write_text(
+        json.dumps(
+            {
+                "completion_contract_mode": "atomic",
+                "full_suite_backstop_mode": "enforce",
+                "completed": [
+                    {"label": "m1", "plan": "plan-m1", "status": "done"}
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        check_chain_done(
+            spec_path=spec_path,
+            state_path=state_path,
+            plans_root=plans_root,
+        )
+        == []
+    )
+
+
+def test_chain_done_gate_normalized_atomic_passes(tmp_path: Path) -> None:
+    """Chain-done gate normalizes 'atomic' to 'enforce' and passes."""
+    spec_path, state_path, plans_root = _write_chain(
+        tmp_path, mode="atomic", backstop="atomic"
+    )
+
+    assert (
+        main(
+            [
+                "--spec",
+                str(spec_path),
+                "--state",
+                str(state_path),
+                "--plans-root",
+                str(plans_root),
+            ]
+        )
+        == 0
+    )
+
+
+def test_chain_done_gate_fails_warn_even_with_atomic_backstop(
+    tmp_path: Path,
+) -> None:
+    """Warn completion mode must fail chain-done even with atomic backstop."""
+    spec_path, state_path, plans_root = _write_chain(
+        tmp_path, mode="warn", backstop="atomic"
+    )
+
+    errors = check_chain_done(
+        spec_path=spec_path,
+        state_path=state_path,
+        plans_root=plans_root,
+    )
+
+    assert any("completion_contract_mode" in error for error in errors)
+
+
+def test_chain_done_gate_fails_off_mode_even_with_enforce_backstop(
+    tmp_path: Path,
+) -> None:
+    """Off completion mode must fail chain-done even with enforce backstop."""
+    spec_path, state_path, plans_root = _write_chain(
+        tmp_path, mode="off", backstop="enforce"
+    )
+
+    errors = check_chain_done(
+        spec_path=spec_path,
+        state_path=state_path,
+        plans_root=plans_root,
+    )
+
+    assert any("completion_contract_mode" in error for error in errors)

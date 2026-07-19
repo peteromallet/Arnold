@@ -1,1 +1,1 @@
-/workspace/arnold/arnold_pipelines/megaplan/data/superfixer_debug_skill.md
+../../data/superfixer_debug_skill.md

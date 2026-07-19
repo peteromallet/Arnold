@@ -1388,6 +1388,39 @@ true; } >> %q 2>&1 && if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /wor
     "$ARNOLD_SRC" "$repo" "$SYNC_BRANCH" "$runtime_src" "$workspace/$log_relative" "$workspace" "$remote_spec" "$workspace" "$workspace/$log_relative"
 }
 
+_repair_loop_acceptance_gate() {
+  local session="$1" workspace="$2" remote_spec="$3" gate_json gate_open reason blocker_event
+  gate_json="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$remote_spec" "$workspace" "repair_loop" <<'PY'
+import json, sys
+from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import check_wrapper_acceptance_gate
+spec_path, workspace, caller = sys.argv[1:4]
+result = check_wrapper_acceptance_gate(spec_path, workspace=workspace, caller_kind=caller)
+print(json.dumps(result, sort_keys=True))
+PY
+)" || true
+  if [[ -z "$gate_json" ]]; then
+    return 0
+  fi
+  gate_open="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('gate_open',True))" <<<"$gate_json" 2>/dev/null || echo True)"
+  if [[ "$gate_open" == "True" || "$gate_open" == "true" ]]; then
+    return 0
+  fi
+  reason="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('reason','unknown'))" <<<"$gate_json" 2>/dev/null || echo "acceptance gate closed")"
+  blocker_event="$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d.get('blocker_event',{})))" <<<"$gate_json" 2>/dev/null || true)"
+  log "[repair-loop] acceptance gate closed session=$session: $reason"
+  if [[ -n "$blocker_event" && "$blocker_event" != "{}" ]]; then
+    local blocker_file="$REPAIR_DATA_DIR/${session}.blocker-acceptance-gate.json"
+    python3 -c "
+import json, pathlib, sys
+pathlib.Path(sys.argv[1]).parent.mkdir(parents=True, exist_ok=True)
+pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
+" "$blocker_file" "$blocker_event" 2>/dev/null || true
+    report_item "$REPORT_PATH" "$session" "repair_loop" "blocked" "acceptance gate closed: $reason" "$workspace" "$remote_spec"
+    log "[repair-loop] blocker event persisted: $blocker_file"
+  fi
+  return 1
+}
+
 resolve_relaunch_command() {
   local session="$1"
   local workspace="$2"
@@ -1395,6 +1428,18 @@ resolve_relaunch_command() {
   local run_kind="${4:-chain}"
   local plan_name="${5:-}"
   local relaunch_command="${6:-}"
+
+  # ── acceptance gate before relaunch ─────────────────────────────────
+  # In atomic/enforce mode a completed chain with successors requiring
+  # acceptance must carry a validated acceptance receipt before the
+  # repair loop is allowed to restart / relaunch the chain.
+  if [[ "$run_kind" != "plan" && -n "$remote_spec" && -f "$remote_spec" ]]; then
+    _repair_loop_acceptance_gate "$session" "$workspace" "$remote_spec" || {
+      echo "failed:acceptance_gate_closed"
+      return 1
+    }
+  fi
+
   # A chain marker commonly preserves its original `chain start` command and
   # omits plan_name. Once the active plan records explicit resume authority,
   # that current state must outrank the stale launch-time marker command.

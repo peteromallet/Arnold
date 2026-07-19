@@ -57,6 +57,7 @@ cloud.*.yaml
 chain.yaml
 !.megaplan/initiatives/**/chain.yaml
 plan.md
+!tests/fixtures/m5a_six_review_regression/04_stale_metadata/plan.md
 /plan_v*.md
 /.plan_v*.md
 planning-bot-spec.md

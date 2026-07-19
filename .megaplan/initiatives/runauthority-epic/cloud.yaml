@@ -11,7 +11,7 @@ codex:
   model: gpt-5.5
   reasoning: high
 
-chain_session: runauthority-epic-all-codex
+chain_session: runauthority-epic-cloud
 mode: idle
 
 megaplan:

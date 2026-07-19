@@ -5,15 +5,27 @@ watchdog reconciliation, schedulers, status consumers, and compatibility
 supervisors must agree on whether a cursor may move without a person.  The
 decision never performs the action; the owning path still runs its existing
 validation, publication, and completion guards.
+
+Successor gate
+--------------
+When a chain declares ``successors`` in its spec the completion of the final
+milestone does not automatically open the gate for the successor to initialise.
+In fail-closed (atomic/enforce) mode the completed chain must carry a validated
+acceptance receipt for the final milestone before the successor may proceed.
+
+The gate is generic — it reads the ``require_accepted_transaction`` flag from
+each ``SuccessorSpec`` and only blocks when at least one successor requires it
+AND the chain is in fail-closed mode.  The first consumer relationship is
+M5 → M5A → M6, declared as YAML configuration rather than hardcoded policy.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
-from .spec import ChainSpec, effective_chain_policy, load_runtime_policy, load_spec
+from .spec import ChainSpec, SuccessorSpec, effective_chain_policy, load_runtime_policy, load_spec
 
 
 HUMAN_ONLY_STATES = frozenset(
@@ -82,6 +94,75 @@ def policy_for_spec_path(spec_path: Path | str) -> AdvancementPolicy:
     return policy_for_spec(spec, runtime_overrides=load_runtime_policy(path))
 
 
+def check_successor_gate(
+    policy: AdvancementPolicy,
+    *,
+    successors: Sequence[SuccessorSpec] | None = None,
+    completion_contract_mode: str = "shadow",
+    completed_count: int = 0,
+    has_final_acceptance_receipt: bool = False,
+    final_milestone_label: str | None = None,
+) -> AdvancementDecision | None:
+    """Check whether a completed chain's declared successors may be initialised.
+
+    Returns ``None`` when the gate is not applicable (no successors, or the
+    chain is not in fail-closed mode).  Returns an ``AdvancementDecision``
+    when the gate applies — either ``successor_ready`` (gate open) or
+    ``successor_gate_closed`` (blocked until acceptance evidence is present).
+
+    The gate is generic: it reads ``require_accepted_transaction`` from each
+    successor declaration.  Hardcoding initiative names (M5, M5A, M6) is NOT
+    done here — those relationships are declared in the YAML spec metadata.
+    """
+    if not successors:
+        return None
+
+    # Determine whether ANY declared successor requires an accepted transaction.
+    any_require_acceptance = any(
+        s.require_accepted_transaction for s in successors
+    )
+    if not any_require_acceptance:
+        return None  # No acceptance requirement — gate is open.
+
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        is_fail_closed_mode,
+    )
+
+    if not is_fail_closed_mode(completion_contract_mode):
+        # Shadow / warn / off — legacy behaviour, gate is always open.
+        return None
+
+    # ── fail-closed mode with successors requiring acceptance ──────────
+    if completed_count == 0:
+        return _decision(
+            policy,
+            "successor_gate_closed",
+            False,
+            "chain is complete but successor gate requires acceptance evidence; "
+            "no completed milestones found",
+            gate="successor_acceptance",
+        )
+
+    if not has_final_acceptance_receipt:
+        label_hint = f" ({final_milestone_label!r})" if final_milestone_label else ""
+        return _decision(
+            policy,
+            "successor_gate_closed",
+            False,
+            f"chain is complete but successor gate requires a validated acceptance "
+            f"receipt for the final milestone{label_hint}; gate is closed",
+            gate="successor_acceptance",
+        )
+
+    # Valid evidence present — gate is open.
+    return _decision(
+        policy,
+        "successor_ready",
+        True,
+        "chain is complete and successor gate is satisfied with acceptance evidence",
+    )
+
+
 def assess_advancement(
     policy: AdvancementPolicy,
     *,
@@ -92,6 +173,12 @@ def assess_advancement(
     active_step: bool = False,
     explicit_human_gate: str | None = None,
     failure_kind: str | None = None,
+    # ── successor gate parameters (backward-compatible) ──────────────
+    successors: Sequence[SuccessorSpec] | None = None,
+    completion_contract_mode: str = "shadow",
+    completed_count: int = 0,
+    has_final_acceptance_receipt: bool = False,
+    final_milestone_label: str | None = None,
 ) -> AdvancementDecision:
     """Classify the next safe owner action without executing it.
 
@@ -106,6 +193,17 @@ def assess_advancement(
     failure = str(failure_kind or "").strip().lower()
 
     if chain_complete:
+        # ── successor gate ──────────────────────────────────────────
+        successor_decision = check_successor_gate(
+            policy,
+            successors=successors,
+            completion_contract_mode=completion_contract_mode,
+            completed_count=completed_count,
+            has_final_acceptance_receipt=has_final_acceptance_receipt,
+            final_milestone_label=final_milestone_label,
+        )
+        if successor_decision is not None:
+            return successor_decision
         return _decision(policy, "none", False, "chain is complete")
     if explicit_human_gate:
         return _decision(

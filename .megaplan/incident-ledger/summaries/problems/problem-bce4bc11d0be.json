@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-15T19:36:39.278064+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-custody-control-plane-20260714"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 5,
+  "owner_actor": "github_sync",
+  "problem_id": "problem-bce4bc11d0be",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:f157c9e3f52ea716b8833a0bc24a32a7ec6870346cea863b6e5cb2504dbaea98",
+    "last_seq": 620,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-bce4bc11d0be: repair loop canonical launch evidence unavailable"
+}

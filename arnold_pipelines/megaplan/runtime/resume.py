@@ -15,11 +15,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, TYPE_CHECKING
 
 from arnold.pipeline.types import HumanSuspension
 from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.step_types import Pipeline
+
+if TYPE_CHECKING:
+    from arnold_pipelines.megaplan.chain.spec import ChainState
 
 COMPOSITE_SUSPENSION_KIND = "composite_suspension"
 COMPOSITE_SUSPENSION_CURSOR_VERSION = 1
@@ -57,13 +60,79 @@ def load_composite_resume_cursor(plan_dir: Path) -> dict[str, Any] | None:
     return read_composite_resume_cursor(plan_dir)
 
 
+def _check_acceptance_gate_for_resume_write(
+    plan_dir: Path,
+    *,
+    chain_state: "ChainState | None" = None,
+    milestone_label: str | None = None,
+) -> None:
+    """Block resume cursor writes in fail-closed (atomic/enforce) mode unless
+    the completed record for *milestone_label* carries an accepted acceptance
+    transaction receipt.
+
+    In shadow / warn / off modes, or when *chain_state* is ``None``, this
+    gate is always open (legacy behaviour unchanged).  In atomic/enforce mode
+    the gate is closed unless the completed record for *milestone_label*
+    carries an ``acceptance_receipt`` dict.
+
+    Raises :class:`ValueError` when the gate is closed.
+    """
+    if chain_state is None:
+        return  # legacy caller — no gate
+
+    from arnold_pipelines.megaplan.orchestration.completion_contract import (
+        is_fail_closed_mode,
+        normalize_contract_mode,
+    )
+
+    mode = normalize_contract_mode(chain_state.completion_contract_mode)
+    if not is_fail_closed_mode(mode):
+        return  # shadow / warn / off — always open
+
+    # Resolve milestone_label from plan metadata when not explicitly provided.
+    if milestone_label is None:
+        plan_state_path = Path(plan_dir) / "state.json"
+        try:
+            plan_state = json.loads(plan_state_path.read_text())
+        except (json.JSONDecodeError, FileNotFoundError, OSError):
+            plan_state = {}
+        if isinstance(plan_state, dict):
+            meta = plan_state.get("meta")
+            if isinstance(meta, dict):
+                chain_completion = meta.get("chain_completion")
+                if isinstance(chain_completion, dict):
+                    milestone_label = chain_completion.get("milestone_label")
+
+    if milestone_label is None:
+        # Cannot determine which milestone this plan belongs to — fail closed.
+        raise ValueError(
+            "Cannot write resume cursor in fail-closed mode: "
+            "no milestone_label available and plan metadata does not "
+            "contain a chain_completion.milestone_label reference"
+        )
+
+    if not chain_state.has_acceptance_receipt(milestone_label):
+        raise ValueError(
+            f"Cannot write resume cursor in fail-closed mode: "
+            f"milestone {milestone_label!r} has no accepted acceptance "
+            f"transaction receipt"
+        )
+
+
 def save_composite_resume_cursor(
     plan_dir: Path,
     *,
     children: Mapping[str, Any],
     version: int = COMPOSITE_SUSPENSION_CURSOR_VERSION,
+    chain_state: "ChainState | None" = None,
+    milestone_label: str | None = None,
     **extra: Any,
 ) -> Path:
+    _check_acceptance_gate_for_resume_write(
+        plan_dir,
+        chain_state=chain_state,
+        milestone_label=milestone_label,
+    )
     resolved_plan_dir = Path(plan_dir)
     payload: dict[str, Any] = {
         "kind": COMPOSITE_SUSPENSION_KIND,
@@ -206,7 +275,19 @@ class ResumeCursor:
         payload = {k: v for k, v in cursor.items() if k not in {"phase", "stage"}}
         return cls(stage=stage, payload=payload)
 
-    def save(self, plan_dir: Path, *, overwrite_composite: bool = False) -> Path:
+    def save(
+        self,
+        plan_dir: Path,
+        *,
+        overwrite_composite: bool = False,
+        chain_state: "ChainState | None" = None,
+        milestone_label: str | None = None,
+    ) -> Path:
+        _check_acceptance_gate_for_resume_write(
+            plan_dir,
+            chain_state=chain_state,
+            milestone_label=milestone_label,
+        )
         resolved_plan_dir = Path(plan_dir)
         path = resolved_plan_dir / "state.json"
         existing_cursor = load_resume_cursor_payload(resolved_plan_dir)

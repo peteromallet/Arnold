@@ -65,6 +65,11 @@ from arnold_pipelines.megaplan.runtime.execution_environment import (
     merge_isolation_evidence,
     resolve_execution_environment,
 )
+from arnold_pipelines.megaplan.orchestration.completion_contract import (
+    PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+    is_fail_closed_mode,
+    normalize_contract_mode,
+)
 
 SUPERVISOR_DRIVER_ESCALATE_ACTION = "fail"
 
@@ -219,6 +224,25 @@ def run_chain(
         milestone = spec.milestones[index]
         node = supervisor_state.run_nodes[index]
         _assert_dependencies_completed(node, supervisor_state)
+        # ── acceptance gate for dependency completion ─────────────────
+        dep_blocker = _check_dependency_acceptance_gate(
+            chain_state, spec, node, supervisor_state, writer=writer
+        )
+        if dep_blocker is not None:
+            events.append(dep_blocker)
+            chain_spec.save_chain_state(spec_path, chain_state)
+            return _result(
+                "blocked",
+                chain_state,
+                supervisor_state,
+                milestone_results,
+                events,
+                spec=spec,
+                reason=(
+                    f"dependency acceptance gate closed for milestone "
+                    f"{milestone.label!r}"
+                ),
+            )
         supervisor_state.current_node_id = node.node_id
         chain_state.current_milestone_index = index
         chain_spec.save_chain_state(spec_path, chain_state)
@@ -404,6 +428,25 @@ def run_chain(
                     ],
                 )
                 if pr_resolution.advanced:
+                    # ── acceptance gate before supervisor advance ──────
+                    blocker = _check_supervisor_advance_acceptance_gate(
+                        chain_state, spec, milestone, writer=writer
+                    )
+                    if blocker is not None:
+                        events.append(blocker)
+                        chain_spec.save_chain_state(spec_path, chain_state)
+                        return _result(
+                            "blocked",
+                            chain_state,
+                            supervisor_state,
+                            milestone_results,
+                            events,
+                            spec=spec,
+                            reason=(
+                                f"supervisor advance blocked for milestone "
+                                f"{milestone.label!r}: acceptance gate closed"
+                            ),
+                        )
                     if node.node_id not in supervisor_state.completed_node_ids:
                         supervisor_state.completed_node_ids.append(node.node_id)
                     save_supervisor_state(root, state_id, supervisor_state)
@@ -536,6 +579,25 @@ def run_chain(
             )
 
             if decision.action == LadderAction.ADVANCE:
+                # ── acceptance gate before supervisor advance ──────────
+                blocker = _check_supervisor_advance_acceptance_gate(
+                    chain_state, spec, milestone, writer=writer
+                )
+                if blocker is not None:
+                    events.append(blocker)
+                    chain_spec.save_chain_state(spec_path, chain_state)
+                    return _result(
+                        "blocked",
+                        chain_state,
+                        supervisor_state,
+                        milestone_results,
+                        events,
+                        spec=spec,
+                        reason=(
+                            f"supervisor advance blocked for milestone "
+                            f"{milestone.label!r}: acceptance gate closed"
+                        ),
+                    )
                 authority_shadow = _derive_milestone_authority_shadow(
                     root,
                     plan_name,
@@ -613,6 +675,123 @@ def run_chain(
         evidence=[{"total_milestones": len(spec.milestones), "completed": len(milestone_results)}],
     )
     return _result("done", chain_state, supervisor_state, milestone_results, events, spec=spec)
+
+
+def _check_dependency_acceptance_gate(
+    chain_state: chain_spec.ChainState,
+    spec: chain_spec.ChainSpec,
+    node: RunNode,
+    supervisor_state: SupervisorState,
+    *,
+    writer,
+) -> dict[str, Any] | None:
+    """Check that all completed dependency milestones carry acceptance receipts.
+
+    In fail-closed (atomic/enforce) mode a milestone that depends on another
+    completed milestone must verify that the predecessor has a validated
+    acceptance receipt before the successor is allowed to start.
+    """
+    mode = normalize_contract_mode(chain_state.completion_contract_mode)
+    if not is_fail_closed_mode(mode):
+        return None
+
+    successors = getattr(spec, "successors", None) or []
+    if not successors:
+        return None
+
+    any_require = any(
+        getattr(s, "require_accepted_transaction", True) for s in successors
+    )
+    if not any_require:
+        return None
+
+    completed_ids = set(supervisor_state.completed_node_ids)
+    for assertion in supervisor_state.dependency_assertions:
+        if assertion.node_id != node.node_id:
+            continue
+        for dep_id in assertion.depends_on:
+            if dep_id not in completed_ids:
+                continue  # handled by _assert_dependencies_completed
+            if not chain_state.has_acceptance_receipt(dep_id):
+                blocker_event: dict[str, Any] = {
+                    "kind": "supervisor_dependency_acceptance_gate_closed",
+                    "predicate_kind": PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+                    "evidence_kind": "dependency_acceptance",
+                    "summary": (
+                        f"dependency {dep_id!r} is marked completed but has no "
+                        f"validated acceptance receipt; successor milestone "
+                        f"{node.node_id!r} is blocked"
+                    ),
+                    "details": {
+                        "node_id": node.node_id,
+                        "dependency_id": dep_id,
+                        "completion_contract_mode": mode,
+                    },
+                }
+                writer(
+                    f"[supervisor-chain] dependency acceptance gate closed: "
+                    f"dependency {dep_id!r} has no acceptance receipt; "
+                    f"milestone {node.node_id!r} blocked\n"
+                )
+                return blocker_event
+    return None
+
+
+def _check_supervisor_advance_acceptance_gate(
+    chain_state: chain_spec.ChainState,
+    spec: chain_spec.ChainSpec,
+    milestone: chain_spec.MilestoneSpec,
+    *,
+    writer,
+) -> dict[str, Any] | None:
+    """Check the acceptance gate before the supervisor advances a milestone.
+
+    In fail-closed (atomic/enforce) mode a completed milestone that declares
+    successors requiring acceptance MUST carry a validated acceptance receipt
+    before the supervisor is allowed to advance the chain cursor.
+
+    Returns a typed blocker-event dict when the gate is closed, or ``None``
+    when the gate is open / not applicable / not in fail-closed mode.
+    """
+    mode = normalize_contract_mode(chain_state.completion_contract_mode)
+    if not is_fail_closed_mode(mode):
+        return None  # shadow / warn / off — gate is always open
+
+    successors = getattr(spec, "successors", None) or []
+    if not successors:
+        return None  # no declared successors — no gate to check
+
+    any_require = any(
+        getattr(s, "require_accepted_transaction", True) for s in successors
+    )
+    if not any_require:
+        return None  # no successor requires acceptance
+
+    has_receipt = chain_state.has_acceptance_receipt(milestone.label)
+    if has_receipt:
+        return None  # gate is open
+
+    # ── Gate is closed — emit typed blocker event ────────────────────
+    blocker_event: dict[str, Any] = {
+        "kind": "supervisor_advance_acceptance_gate_closed",
+        "predicate_kind": PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+        "evidence_kind": "supervisor_advance",
+        "summary": (
+            f"supervisor advance blocked for milestone {milestone.label!r}: "
+            f"no validated acceptance receipt; declared successors require "
+            f"acceptance evidence before advancement"
+        ),
+        "details": {
+            "milestone_label": milestone.label,
+            "completion_contract_mode": mode,
+            "successor_count": len(successors),
+        },
+    }
+    writer(
+        f"[supervisor-chain] acceptance gate closed for milestone "
+        f"{milestone.label!r}: no acceptance receipt; advancement blocked\n"
+    )
+    return blocker_event
 
 
 def _load_or_create_supervisor_state(

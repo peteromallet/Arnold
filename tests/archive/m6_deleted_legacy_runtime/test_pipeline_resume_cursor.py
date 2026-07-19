@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.skip("archived deleted pipeline resume cursor runtime", allow_module_level=True)
+
 import arnold_pipelines.megaplan.cli as megaplan_cli
 from arnold_pipelines.megaplan._core.workflow import resume_plan
 from arnold_pipelines.megaplan._pipeline.resume import (

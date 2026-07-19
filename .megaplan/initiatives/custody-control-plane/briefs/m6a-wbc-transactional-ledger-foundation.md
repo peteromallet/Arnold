@@ -105,7 +105,8 @@ matrix, and M11 owns integrated conformance and retirement.
 
 Start only after M6 has bound the exact final landed WBC revision, proven the
 landed/source/editable/runtime identity current, generated the zero-exemption
-inventory, and recorded accepted human approval. Do not infer that revision
+inventory, and recorded an accepted machine-verifiable ownership-decision record.
+Do not infer that revision
 from the topic-branch candidate alone: verify audited merge `24afce00…`, current
 main containment, and the separately recorded runtime vector. Production
 enforcement, deployment, restart, and external effects remain disabled.
@@ -167,7 +168,7 @@ writer or erase an ambiguous attempt.
 ## Handoff and dependencies
 
 Dependencies: M6 exact landed WBC revision/runtime proof, generated boundary
-inventory, accepted approval record, and unchanged ownership decision. Handoff
+inventory, accepted ownership-decision record, and unchanged ownership decision. Handoff
 to M7/M8: explicit WBC-owner substrate handoff, versioned store/API and migrations, payload-policy implementation,
 transaction/outbox contract, exact query semantics, process-safe adapters,
 fault/replay evidence, runtime trace format, and an empty substrate-blocker list.
