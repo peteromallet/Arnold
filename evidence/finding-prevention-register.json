@@ -1,6 +1,6 @@
 {
   "schema": "m6.finding-prevention-register.v1",
-  "generated_at": "2026-07-19T19:52:32.060584+00:00",
+  "generated_at": "2026-07-19T20:22:52.031020+00:00",
   "generator": "tools/generate_m6_finding_register.py",
   "source_document": ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md",
   "finding_count": 17,

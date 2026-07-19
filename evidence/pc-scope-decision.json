@@ -1,6 +1,6 @@
 {
   "schema": "m6.pc-scope-decision.v1",
-  "generated_at": "2026-07-19T19:52:30.955527+00:00",
+  "generated_at": "2026-07-19T20:22:50.934061+00:00",
   "generator": "tools/generate_m6_ownership_decision.py",
   "source_evidence": {
     "prerequisite_verification": "/workspace/custody-control-plane-20260714/Arnold/evidence/m6-prerequisite-verification.json",

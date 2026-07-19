@@ -3,7 +3,7 @@
     "schema": "m6.wbc-boundary-inventory.v1",
     "description": "Deterministic inventory joining boundary contracts, contract-to-producer matrix, and support manifest, extended with static discovery over handler, runtime, kernel, supervisor, execution, and orchestration source trees. Support labels are recorded but non-authoritative \u2014 only landed producer paths constitute adoption evidence. Projections are explicitly tagged as non-authority.",
     "generated_by": "M6 Steps 4-7 (T4+T5+T6+T7) \u2014 generate_wbc_boundary_inventory.py",
-    "timestamp_utc": "2026-07-19T19:52:31.998116+00:00",
+    "timestamp_utc": "2026-07-19T20:22:51.960403+00:00",
     "input_sources": {
       "boundary_contracts": "arnold_pipelines/megaplan/workflows/boundary_contracts.py",
       "contract_matrix": "arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json",
