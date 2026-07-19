@@ -51,7 +51,9 @@ def test_registered_megaplan_chain_operations_are_agentbox_managed(tmp_path: Pat
 
 
 def test_adapter_registry_source_has_no_eager_megaplan_import() -> None:
-    source = Path("agentbox/adapters.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[2] / "agentbox/adapters.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "import arnold_pipelines" not in source
     assert "from arnold_pipelines" not in source
