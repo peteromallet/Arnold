@@ -31,7 +31,7 @@ Design invariants
 
 Usage::
 
-    python tools/validate_m6_evidence.py [--output PATH] [--strict]
+    python tools/validate_m6_evidence.py [--output PATH] [--strict] [--check]
 """
 
 from __future__ import annotations
@@ -705,6 +705,16 @@ def main() -> None:
         action="store_true",
         help="Exit non-zero if validation fails (stale hashes, unexplained rows, etc.)",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        dest="check_mode",
+        help=(
+            "Approved acceptance entrypoint: run aggregate validation, "
+            "emit the proof index, and exit according to prerequisite/blocker "
+            "semantics.  Equivalent to default mode with validation output."
+        ),
+    )
     args = parser.parse_args()
 
     output_path: Path = args.output
@@ -737,7 +747,7 @@ def main() -> None:
         for warn in proof_index["validation_warnings"]:
             print(f"  - {warn}")
 
-    if args.strict and not proof_index["validation_passed"]:
+    if (args.strict or args.check_mode) and not proof_index["validation_passed"]:
         sys.exit(1)
 
 

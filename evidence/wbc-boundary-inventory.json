@@ -3,7 +3,7 @@
     "schema": "m6.wbc-boundary-inventory.v1",
     "description": "Deterministic inventory joining boundary contracts, contract-to-producer matrix, and support manifest, extended with static discovery over handler, runtime, kernel, supervisor, execution, and orchestration source trees. Support labels are recorded but non-authoritative \u2014 only landed producer paths constitute adoption evidence. Projections are explicitly tagged as non-authority.",
     "generated_by": "M6 Steps 4-7 (T4+T5+T6+T7) \u2014 generate_wbc_boundary_inventory.py",
-    "timestamp_utc": "2026-07-19T19:28:05.429151+00:00",
+    "timestamp_utc": "2026-07-19T19:52:31.998116+00:00",
     "input_sources": {
       "boundary_contracts": "arnold_pipelines/megaplan/workflows/boundary_contracts.py",
       "contract_matrix": "arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json",
@@ -21,11 +21,11 @@
     "content_hash": "6789743a9a33cb971227ebe1dd17be850271ae9d2c49e7291b1f71fcd498fc52",
     "wrapper_shell_count": 3,
     "default_deny_count": 161,
-    "unmatched_total_count": 111,
+    "unmatched_total_count": 112,
     "unmatched_category_counts": {
       "unmatched_declared": 15,
       "unmatched_static": 96,
-      "unmatched_runtime": 0,
+      "unmatched_runtime": 1,
       "unmatched_wrapper": 0,
       "unmatched_consumer": 0,
       "unmatched_producer": 0,
@@ -13110,7 +13110,22 @@
         "detail": "Module 'arnold_pipelines/megaplan/orchestration/verifiability.py' could not be classified into a known surface type. Surface types found: ['unknown']"
       }
     ],
-    "unmatched_runtime": [],
+    "unmatched_runtime": [
+      {
+        "row_kind": "default_deny",
+        "target_path": "runtime_trace",
+        "target_type": "runtime_trace",
+        "surface_types_found": [
+          "unknown"
+        ],
+        "access": "denied",
+        "status": "UNKNOWN",
+        "reason": "Runtime traces are not yet captured \u2014 M6A scope. Static and declared surface discovery is the M6 boundary; runtime-trace discovery requires execution-level instrumentation and is deferred to M6A. This residual entry records the gap so unmatched_runtime is never an empty zero-count set.",
+        "owner": "UNKNOWN",
+        "availability": "UNKNOWN",
+        "mitigation": "Implement runtime-trace capture in M6A via execution-level instrumentation that records call-site set equality, boundary transitions, and producer/consumer paths at runtime."
+      }
+    ],
     "unmatched_wrapper": [],
     "unmatched_consumer": [],
     "unmatched_producer": [],

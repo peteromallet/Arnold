@@ -1454,6 +1454,33 @@ def _categorize_unmatched(
             )
         )
 
+    # T7 rework: unmatched_runtime must record unavailable traces as
+    # UNKNOWN/residual/default-deny evidence, not as an empty zero-count set.
+    # Runtime traces are M6A scope; for M6 they are unavailable.
+    if not categories["unmatched_runtime"]:
+        categories["unmatched_runtime"].append({
+            "row_kind": "default_deny",
+            "target_path": "runtime_trace",
+            "target_type": "runtime_trace",
+            "surface_types_found": ["unknown"],
+            "access": "denied",
+            "status": "UNKNOWN",
+            "reason": (
+                "Runtime traces are not yet captured — M6A scope. "
+                "Static and declared surface discovery is the M6 boundary; "
+                "runtime-trace discovery requires execution-level instrumentation "
+                "and is deferred to M6A. This residual entry records the gap "
+                "so unmatched_runtime is never an empty zero-count set."
+            ),
+            "owner": "UNKNOWN",
+            "availability": "UNKNOWN",
+            "mitigation": (
+                "Implement runtime-trace capture in M6A via execution-level "
+                "instrumentation that records call-site set equality, "
+                "boundary transitions, and producer/consumer paths at runtime."
+            ),
+        })
+
     return categories
 
 
@@ -1775,7 +1802,9 @@ def generate(output_path: Path | None = None) -> dict[str, Any]:
     # Update meta with T6+T7 counts
     inventory["meta"]["wrapper_shell_count"] = len(wrapper_shells)
     inventory["meta"]["default_deny_count"] = len(default_deny_rows)
-    inventory["meta"]["unmatched_total_count"] = len(raw_unmatched)
+    inventory["meta"]["unmatched_total_count"] = sum(
+        len(v) for v in unmatched_categories.values()
+    )
     inventory["meta"]["unmatched_category_counts"] = {
         k: len(v) for k, v in unmatched_categories.items()
     }

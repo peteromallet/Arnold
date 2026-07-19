@@ -108,6 +108,18 @@ roots:
     required: false
     description: "Shell wrappers and top-level megaplan scripts. Optional — may not exist in all checkouts."
 
+  - path: "evidence/replay"
+    category: "runtime_trace"
+    file_patterns:
+      - "*.json"
+      - "*.trace"
+    required: false
+    description: >-
+      Runtime trace evidence captured during execution (M6A scope).
+      For M6, runtime traces are not yet captured; unmatched_runtime
+      records a default-deny residual entry documenting this gap rather
+      than an empty zero-count set that would imply no traces exist.
+
   - path: "docs/arnold"
     category: "documentation"
     file_patterns:

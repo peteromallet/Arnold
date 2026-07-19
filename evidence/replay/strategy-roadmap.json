@@ -1,6 +1,6 @@
 {
   "composite_hash": "3c8f5a359af90a930c2ac228ea78d9d88d39cfce5d0e15f0eb046759b7795bef",
-  "generated_at": "2026-07-19T19:28:04.272153+00:00",
+  "generated_at": "2026-07-19T19:52:30.834038+00:00",
   "generator": "tools/generate_m6_replay_fixtures.py",
   "limitations": {
     "compaction_and_productive_baselines_unknown": {

@@ -1,6 +1,6 @@
 {
   "schema": "m6.rollout-deletion-register.v1",
-  "generated_at": "2026-07-19T19:28:04.447747+00:00",
+  "generated_at": "2026-07-19T19:52:31.001916+00:00",
   "generator": "tools/generate_m6_rollout_register.py",
   "source_evidence": {
     "finding_prevention_register": "/workspace/custody-control-plane-20260714/Arnold/evidence/finding-prevention-register.json",

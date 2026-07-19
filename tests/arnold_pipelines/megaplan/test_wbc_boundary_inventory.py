@@ -924,12 +924,31 @@ class TestUnmatchedCategories:
             assert "reason_unmatched" in entry
             assert entry.get("reason_unmatched") == "unclassifiable_surface"
 
-    def test_unmatched_runtime_is_empty(self) -> None:
-        """Runtime traces not yet captured — unmatched_runtime must be empty."""
+    def test_unmatched_runtime_has_residual_entry(self) -> None:
+        """Runtime traces not yet captured — unmatched_runtime must record
+        a residual default-deny entry (not an empty zero-count set)."""
         inv = self._load_inventory()
         uc = inv["unmatched_categories"]
-        assert uc["unmatched_runtime"] == [], (
-            "unmatched_runtime must be empty (runtime traces not yet captured)"
+        runtime_entries = uc["unmatched_runtime"]
+        assert len(runtime_entries) >= 1, (
+            f"unmatched_runtime must have >=1 residual entry documenting "
+            f"unavailable runtime traces, got {len(runtime_entries)}"
+        )
+        # The residual entry must be a default_deny with runtime_trace target
+        residual = runtime_entries[0]
+        assert residual.get("row_kind") == "default_deny", (
+            f"unmatched_runtime residual must be default_deny, "
+            f"got {residual.get('row_kind')}"
+        )
+        assert residual.get("target_type") == "runtime_trace", (
+            f"unmatched_runtime residual must target runtime_trace, "
+            f"got {residual.get('target_type')}"
+        )
+        assert residual.get("access") == "denied", (
+            "unmatched_runtime residual must have access=denied"
+        )
+        assert residual.get("status") == "UNKNOWN", (
+            "unmatched_runtime residual must have status=UNKNOWN"
         )
 
     def test_category_counts_match_meta(self) -> None:

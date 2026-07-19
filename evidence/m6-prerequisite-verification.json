@@ -2,7 +2,7 @@
   "checks": [
     {
       "check": "current_head",
-      "head": "ead13bdbd737e4ea7b9050541caede64992c461d",
+      "head": "3e22fc9ef7e992887d98aadcb6b4dacb18747f9d",
       "status": "PASS"
     },
     {
@@ -16,7 +16,7 @@
     },
     {
       "check": "m5_bound_head_vs_current_head",
-      "current_head": "ead13bdbd737e4ea7b9050541caede64992c461d",
+      "current_head": "3e22fc9ef7e992887d98aadcb6b4dacb18747f9d",
       "detail": "M5 bound head does not match current HEAD, but is an ancestor. HEAD has advanced past the M5 attestation point. Downstream M6 handoff must not be marked complete.",
       "exact_match": false,
       "m5_bound_head": "8bb779dcaa08edcc92736eb265689ad894d8d839",
@@ -58,7 +58,7 @@
     },
     {
       "check": "wbc_ancestry",
-      "current_head": "ead13bdbd737e4ea7b9050541caede64992c461d",
+      "current_head": "3e22fc9ef7e992887d98aadcb6b4dacb18747f9d",
       "first_parent_is_ancestor": true,
       "parents_from_evidence": {
         "first_parent": "7644f55dd9be75632670f990268e045d3ee1c2f7",
@@ -239,7 +239,7 @@
       "status": "UNKNOWN"
     }
   ],
-  "generated_at": "2026-07-19T19:28:04.687689+00:00",
+  "generated_at": "2026-07-19T19:52:31.253066+00:00",
   "notes": [
     "M6 is observe-only: this verifier reads git/files but writes only to the evidence artifact.",
     "INCOHERENT or BLOCKED overall status means downstream M6 handoff artifacts must not be marked complete.",

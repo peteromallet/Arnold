@@ -7,6 +7,6 @@
     "schema": "m6.wbc-historical-adapters.v1",
     "status": "default_empty",
     "status_detail": "No read-only adapters have been proven with the required evidence fields. Set to empty until proof is provided.",
-    "timestamp_utc": "2026-07-19T19:28:05.443042+00:00"
+    "timestamp_utc": "2026-07-19T19:52:32.009398+00:00"
   }
 }
