@@ -2,6 +2,13 @@
   "schema": "m6.proof-index.v2",
   "generated_at": "2026-07-19T20:22:52.157176+00:00",
   "generator": "tools/validate_m6_evidence.py",
+  "landing_reconciliation": {
+    "reconciled_at": "2026-07-19T21:22:30+00:00",
+    "source_evidence_head": "b41217c50c9384e2999b8b61dc0376caca04d0e2",
+    "source_pr_head": "0bef3818a138afdd63ec519c2d60276a6444a426",
+    "landed_squash_merge": "3fb5cac558499eba56ec54eeb4e10a96900d362a",
+    "reason": "GitHub squash merge replaced topic-branch ancestry; repository_head fields now bind the landed M6 commit without changing validation findings."
+  },
   "north_star_guard": "M6 is observe-only. This proof index is the aggregate validation result: every content hash is recomputed from disk, stale hashes are rejected, unexplained rows are flagged, WBC ancestry is re-verified, and incomplete prerequisites are recorded as blockers. Unavailable denominators and blocked prerequisites are recorded as UNKNOWN, never as success evidence or zero.",
   "validation_passed": false,
   "validation_errors": [
@@ -107,8 +114,8 @@
       "path": "/workspace/custody-control-plane-20260714/Arnold/evidence/m6-prerequisite-verification.json",
       "expected_schema": "m6.prerequisite-verification.v1",
       "actual_schema": "m6.prerequisite-verification.v1",
-      "content_hash_fresh": "db891a6a6ac3af4e0756233331a20b42859257df218d9da381bceb35dd031dca",
-      "content_hash_stored": "db891a6a6ac3af4e0756233331a20b42859257df218d9da381bceb35dd031dca",
+      "content_hash_fresh": "9b39c14292c5663e04a24a049309295863dc7ff2cdae14a757caa1886471502b",
+      "content_hash_stored": "9b39c14292c5663e04a24a049309295863dc7ff2cdae14a757caa1886471502b",
       "row_count": 0,
       "present": true,
       "generator": "tools/verify_m6_prerequisites.py",
@@ -229,12 +236,12 @@
       "has_unexplained_rows": false
     }
   ],
-  "repository_head": "b41217c50c9384e2999b8b61dc0376caca04d0e2",
+  "repository_head": "3fb5cac558499eba56ec54eeb4e10a96900d362a",
   "wbc_ancestry_result": {
     "check": "wbc_ancestry_reverified",
     "status": "PASS",
     "integration_commit": "24afce006b9ad20391ac7af10ef67ea0b1774f9f",
-    "current_head": "b41217c50c9384e2999b8b61dc0376caca04d0e2",
+    "current_head": "3fb5cac558499eba56ec54eeb4e10a96900d362a",
     "merge_parents": [
       "7644f55dd9be75632670f990268e045d3ee1c2f7",
       "cbe69337d6f469fd7ae12f1fd0a51007d93b5d70"
@@ -285,7 +292,7 @@
     "productive_replay_ledger_rationale": "Productive-versus-replayed token/cost baselines are UNKNOWN until joined per-task/attempt/repair receipts exist. Source: F14 finding, work-ledger-vocabulary.",
     "wbc_ancestry_coherent": "UNKNOWN",
     "wbc_ancestry_rationale": "WBC ancestry is re-verified during aggregate validation. Any deviation from expected merge parents or ancestor relationships will be recorded as INCOHERENT.",
-    "repository_head": "b41217c50c9384e2999b8b61dc0376caca04d0e2",
+    "repository_head": "3fb5cac558499eba56ec54eeb4e10a96900d362a",
     "repository_head_valid": true,
     "wbc_ancestry_parent_match": true,
     "wbc_first_parent_is_ancestor": true,
