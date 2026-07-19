@@ -255,7 +255,18 @@ def _normalize_hermes(
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (OSError, TypeError, ValueError):
         metadata = {}
-    session_id = str(metadata.get("session_id") or expected_session_id or "") or None
+    # Hermes reports two different identifiers after a resumed turn:
+    # ``resumed_session_id`` is the stable handle accepted by the next
+    # ``--resume-session`` invocation, while ``session_id`` may be an internal
+    # conversation identifier that SessionDB cannot resolve.  Keep the stable
+    # resume handle whenever it is available so one successful continuation
+    # cannot poison every later resident turn.
+    session_id = str(
+        metadata.get("resumed_session_id")
+        or metadata.get("session_id")
+        or expected_session_id
+        or ""
+    ) or None
     usage = dict(metadata.get("usage") or {})
     events = [
         _event(
