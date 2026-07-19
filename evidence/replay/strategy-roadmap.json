@@ -1,0 +1,183 @@
+{
+  "composite_hash": "3c8f5a359af90a930c2ac228ea78d9d88d39cfce5d0e15f0eb046759b7795bef",
+  "generated_at": "2026-07-19T20:22:50.809889+00:00",
+  "generator": "tools/generate_m6_replay_fixtures.py",
+  "limitations": {
+    "compaction_and_productive_baselines_unknown": {
+      "affected_fields": [
+        "compaction_baseline.compaction_baseline",
+        "compaction_baseline.productive_versus_replayed_baseline"
+      ],
+      "description": "Compaction and productive-versus-replayed baselines are preserved as UNKNOWN because the original workspace is unavailable and the handoff document explicitly notes that these metrics were not separately timed.",
+      "severity": "limitation"
+    },
+    "missing_original_workspace": {
+      "description": "The original Strategy Roadmap workspace (/workspace/repository-strategy-roadmap/) is not available in this checkout. Preserved handoff context, incident summaries, repair data from the committed incident ledger, and committed initiative artifacts serve as the best available evidence. Live plan state, chain logs, and raw repair artifacts from the original workspace cannot be independently verified from this fixture.",
+      "mitigations": [
+        "Initiative artifacts are committed under .megaplan/initiatives/repository-strategy-roadmap/",
+        "Handoff context is extracted from committed active-epics-latency-synthesis",
+        "Incident summaries are regenerated from the committed ledger",
+        "Repair data redacts unstable workspace paths"
+      ],
+      "severity": "limitation"
+    },
+    "path_redaction": {
+      "applied_to": [
+        "initiative_artifacts",
+        "handoff_context",
+        "incident_data",
+        "repair_data"
+      ],
+      "description": "All absolute /workspace/ paths have been redacted with stable content-hash tokens to prevent leakage of unstable workspace layout while preserving structural comparison.",
+      "pattern": "/workspace/[REDACTED:<sha256-prefix>]"
+    }
+  },
+  "repository_root": "/workspace/[REDACTED:6899d7db6ccd]",
+  "schema": "m6.strategy-roadmap-replay-fixture.v1",
+  "section_hashes": {
+    "compaction_baseline": "008d97a300031265d1d40fc59d8fa69e46bbec71369461cab928a8986204491e",
+    "handoff_context": "e68f0fb995c8d3d16eec2ba278e8ed1d8db94bf2f5b2629095e8f56533507f48",
+    "incident_data": "e2f6a59d92bf02c880812c9a82bf07dfb99db6ff42d32ae16c4e0f33d2c14331",
+    "initiative_artifacts": "ac4270256654130f53405657304e0e4754767fe78d102694c38c513be0268a6f",
+    "repair_data": "68158895c9f31411cc22a4da403048366bf938cf3c425a9a3de9a805cfe823cd"
+  },
+  "sections": {
+    "compaction_baseline": {
+      "compaction_baseline": "UNKNOWN",
+      "evidence_reference": "See .megaplan/initiatives/megaplan-maintenance/handoff/active-epics-latency-synthesis-20260714.md, lines 78-80: 'Strategy compaction/import churn and the productive fraction of the 50-minute GLM turn are not separately timed.'",
+      "productive_versus_replayed_baseline": "UNKNOWN",
+      "reason": "The active-epics-latency-synthesis handoff explicitly states that Strategy compaction/import churn and the productive fraction of the 50-minute GLM turn are not separately timed. Per-task cost ledgers and the original workspace are unavailable, so compaction and productive-versus-replayed baselines cannot be measured.",
+      "schema": "m6.strategy-roadmap.compaction-baseline.v1",
+      "status": "UNKNOWN"
+    },
+    "handoff_context": {
+      "content_sha256": "ddd64f5de54c0d65d7f6aabc149ad859160eefdb2f7e20b28b283a528ecfc97b",
+      "full_char_count": 10356,
+      "full_line_count": 180,
+      "note": "Strategy Roadmap does not have a dedicated handoff document. Context is extracted from the joint active-epics-latency-synthesis which covers both Transaction Spine and Strategy Roadmap epics.",
+      "schema": "m6.strategy-roadmap.handoff-context.v1",
+      "source_path": ".megaplan/initiatives/megaplan-maintenance/handoff/active-epics-latency-synthesis-20260714.md",
+      "status": "present",
+      "strategy_excerpt_line_count": 173,
+      "strategy_excerpt_preview": "- Strategy Roadmap contributor: `subagent-20260714-101356-fc5f6cae`\n- Synthesis owner: `subagent-20260714-101421-463e5e9c`\n\n## Verified outcome\n\nBoth contributor manifests reached `completed`, and their durable results and\nevidence reports were consumed. At the snapshot, the canonical display state\nfor both active plans was `executing`; neither plan was restarted or killed.\n\nTransaction Spine attempt 4 had a fresh active-step start at 10:33:58 and\nactivity at 10:34:02. Strategy Roadmap attempt 2 had activity at 10:34:13 and\nintrospection reported a one-second-old event. Transaction introspection\nnevertheless reported `stalled` from a 990-second-old event. This contradicts\nthe active-step evidence and reproduces the non-atomic compatibility-journal\nrace found by the Transaction Spine investigation. An earlier Strategy read at\n10:28:07 produced the same false-stall shape while its journal, state, and token\nheartbeats were updating. Canonical `display_state` plus direct activity\nevidence therefore governs this snapshot; raw liveness is degraded until the\nprojection fix is deployed.\n\n## Consolidated causal model\n\n### Legitimate workload\n\n- Strategy M4 produced 8,327 additions and 41 deletions across 20 files. Its\n  2h03m17s first execute was 99.6% enclosed by 15 worker calls; this was mostly\n  real implementation rather than queue idle. The 7m56s review found five\n  deterministic defects missed by scoped passing tests and should remain.\n- Transaction Spine's stopped attempts also produced real implementation and\n  two useful repairs. The three stopped execute attempts consumed 3h27m40s,\n  $3.12684, and 40.7M input tokens, but that total must not be labelled waste.\n\n### Instance-specific avoidable latency\n\n- Transaction Spine admitted a 30-task, 29-edge serial chain. Complexity-7 T7\n  and T12 each exhausted the same 90-iteration ceiling after implementing the\n  core change but before required proof tests. Four later complexity-8/9 tasks\n  remain recurrence risks. Hourly "
+    },
+    "incident_data": {
+      "content_hash": "40be383f9dcca6a936405f399ad3116f1ffd4556faa11ed2c917ec3ee4b2f2b7",
+      "incident": {
+        "content_sha256": "95f60b995cb17a331059a66d75b4a90bbac57abf440c4e7fba791004a408a2b5",
+        "incident_id": "inc-repository-strategy-roadmap",
+        "latest_actor": "github_sync",
+        "outcome": "published",
+        "problem_ids": [
+          "problem-72f87afd3954"
+        ],
+        "schema_version": 1,
+        "state": "github_sync.issue_published",
+        "status": "present"
+      },
+      "problem": {
+        "fix_commits": [],
+        "linked_incident_ids": [
+          "inc-custody-control-plane-20260714",
+          "inc-megaplan-north-star-sense-checks-revise-design",
+          "inc-repository-strategy-roadmap",
+          "inc-runauthority-epic-cloud",
+          "inc-superfixer-alive-but-failed-recovery",
+          "inc-workflow-boundary-contracts-corrective-20260710"
+        ],
+        "occurrence_count": 19,
+        "owner_actor": "immediate_repair",
+        "problem_id": "problem-72f87afd3954",
+        "recurred_after_fix": false,
+        "status": "present",
+        "status_field": "open"
+      },
+      "schema": "m6.strategy-roadmap.incident-data.v1"
+    },
+    "initiative_artifacts": {
+      "artifacts": [
+        {
+          "char_count": 2355,
+          "content_sha256": "f23f84a666cf559e24a6c5a8110337aa988a3502cee5b50a347c1e50c136ed70",
+          "kind": "chain_yaml",
+          "line_count": 56,
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/chain.yaml",
+          "redacted_content_preview": "base_branch: main\nanchors:\n  north_star: NORTHSTAR.md\nmilestones:\n- label: m1-strategy-contract\n  idea: .megaplan/initiatives/repository-strategy-roadmap/briefs/m1-strategy-contract.md\n  branch: megaplan/repository-strategy-roadmap/m1-strategy-contract\n  profile: partnered-5\n  vendor: codex\n  robustness: full\n  notes: 'D8, difficulty 5/5: this freezes the authoritative grammar and projection\n    boundary; a locally plausible mistake could create a second source of truth.'\n- label: m2-lifecycle-integration\n  idea: .megaplan/initiatives/repository-strategy-roadmap/briefs/m2-lifecycle-integration.md\n  branch: megaplan/repository-strategy-roadmap/m2-lifecycle-integration\n  profile: partnered-5\n  vendor: codex\n  robustness: full\n  notes: 'D8, difficulty 5/5: identity, promotion, and completion relationships span\n    file and store backends and must preserve history without ID reuse.'\n- label: m3-operator-ergonomics\n  idea: .megaplan/initiatives/repository-strategy-roadmap/briefs/m3-operator-ergonomics.md\n  branch: megaplan/repository-strategy-roadmap/m3-operator-ergonomics\n  profile: partnered-5\n  vendor: codex\n  robustness: full\n  notes: D8, difficulty 4/5; partnered-5 retained by default because CLI mutations\n    must remain lossless and cannot quietly bypass the authority contract.\n- label: m4-migration-compatibility\n  idea: .megaplan/initiatives/repository-strategy-roadmap/briefs/m4-migration-compatibility.md\n  branch: megaplan/repository-strategy-roadmap/m4-migration-compatibility\n  profile: partnered-5\n  vendor: codex\n  robustness: full\n  notes: 'D8, difficulty 5/5: mixed-version and legacy identity handling can pass\n    green-path tests while corrupting references or breaking rebuildability.'\n- label: m5-adoption-conformance\n  idea: .megaplan/initiatives/repository-strategy-roadmap/briefs/m5-adoption-conformance.md\n  branch: megaplan/repository-strategy-roadmap/m5-adoption-conformance\n  profile: partnered-5\n  vendor: codex\n  robustness: full\n  notes: D8, difficult",
+          "status": "present"
+        },
+        {
+          "char_count": 3684,
+          "content_sha256": "ce2a810b80cb42fc465a92a8da47624fac25d584d4d4749ede04ec79f512edcc",
+          "kind": "northstar_md",
+          "line_count": 75,
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/NORTHSTAR.md",
+          "redacted_content_preview": "---\ntype: anchor\nanchor_type: north_star\nslug: repository-strategy-roadmap\ntitle: 'North Star: Repository Strategy Roadmap'\ncreated_at: '2026-07-13T21:35:51.653719+00:00'\n---\n\n# North Star: Repository Strategy Roadmap\n\n## End State\n\nEvery repository can carry a durable `.megaplan/STRATEGY.md` that is both a\npleasant human strategy document and the authoritative source for a typed\nNow / Next / Later portfolio. Stable direction and the living roadmap coexist\nwithout becoming competing authorities: roadmap entries point to real ticket\nor epic artifacts, while machine consumers rebuild any JSON view from the\nMarkdown and the referenced artifacts.\n\nOperators can capture a ticket, give it strategic visibility at any horizon,\npromote sufficiently planned work into a distinct epic, and follow both\nartifacts through completion with identity and relationship history intact.\nValidation and CLI workflows make broken references, duplicate identities,\ninvalid horizons, and authority drift obvious before automation acts.\n\n## Non-Negotiables\n\n- Typed Markdown is authoritative. JSON and other indexes are deterministic,\n  disposable projections and are never independently editable.\n- The executable roadmap vocabulary is exactly `ticket` and `epic`.\n- Horizon (`Now`, `Next`, `Later`) is independent of artifact type.\n- Roadmap identity is `type + ref`. Ticket refs are immutable ticket ULIDs;\n  epic refs are canonical initiative/epic identifiers, currently normally the\n  initiative slug. Titles are mutable display text, never identity.\n- Strategy entries reference artifacts and do not duplicate their full bodies,\n  lifecycle status, plans, or completion evidence.\n- Ticket-to-epic promotion retains both artifacts, creates a new epic identity,\n  and records an explicit supersedes/resolves relationship. A ticket ID is\n  never reused as an epic ID.\n- Roadmap membership means strategic visibility, not existence: ordinary small\n  tickets may remain outside the strategy.\n- Existing ticket and ",
+          "status": "present"
+        },
+        {
+          "char_count": 1880,
+          "content_sha256": "a7b9e6c9a8ceef3eccd0ef8b4ecfb67fab022b46a71c2a17f224bbe45a858a6c",
+          "kind": "readme_md",
+          "line_count": 27,
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/README.md",
+          "redacted_content_preview": "# Repository Strategy Roadmap\n\nEstablish an authoritative typed Markdown repository strategy with a validated Now/Next/Later roadmap whose actionable entries reference immutable tickets or canonical epics, with rebuildable projections and complete lifecycle, CLI, migration, test, documentation, and repository-adoption support.\n\n## Current truth and canonical index\n\nThis README is the initiative front door. The North Star remains the durable\nend-state constraint; `STRATEGY.md` is the authoritative repository roadmap;\nbriefs define the coordinated workstreams. The initiative is committed, but\nediting its documents does not launch or approve a chain.\n\n- [NORTHSTAR.md](NORTHSTAR.md) — durable end state, invariants, and drift signals.\n- [STRATEGY.md](STRATEGY.md) — authoritative typed Now/Next/Later roadmap.\n- [decisions/document-ticket-initiative-lifecycle-and-hot-context.md](decisions/document-ticket-initiative-lifecycle-and-hot-context.md) — canonical lifecycle, placement, promotion, recent-activity, and resident navigation contract.\n- [research/current-surfaces-20260713.md](research/current-surfaces-20260713.md) — pre-implementation surface audit.\n- `briefs/` — coordinated milestone briefs.\n- `research/` — evidence, audits, and synthesized alternatives.\n- `decisions/` — accepted durable contracts and their consequences.\n- `notes/` — retained working notes awaiting promotion.\n- `handoff/` — curated handoffs; raw agent/subagent output stays in its run store and is cited from a canonical synthesis.\n- `assets/` — supporting non-prose files.\n\n`NORTHSTAR.md` and `chain.yaml` are lifecycle/readiness artifacts, not required\nfor an exploratory initiative-shaped workspace. Search this initiative and its\nrelated tickets/documents before adding a new artifact; promote notes or\nresearch into a decision/brief and update this index when they become current\ntruth.\n",
+          "status": "present"
+        },
+        {
+          "char_count": 1793,
+          "content_sha256": "c227468ddfac7249a19da660995353af697f558643560ccea751dc27d849cd03",
+          "kind": "strategy_md",
+          "line_count": 47,
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md",
+          "redacted_content_preview": "---\nschema_version: megaplan-strategy-v1\n---\n\n# Repository Strategy\n\n## Mission\n\nArnold builds intelligent pipelines out of many coordinated models. Its first tool, Megaplan, is a planning and execution harness that makes LLM-driven software development systematically robust by decomposing work into independently checked phases, each running on the cheapest model that can do it well.\n\n## Principles\n\n- Structure makes LLMs robust — decompose, scope, and independently check every phase.\n- Use the cheapest capable model per component; reserve premium models for adjudication and genuinely hard work.\n- Typed Markdown is authoritative; generated JSON is a disposable projection.\n- Strategy entries point to artifacts, never copy bodies or lifecycle state.\n\n## Architecture Direction\n\n- Pipeline phases are explicit stages with typed I/O contracts.\n- Model routing is profile-driven and vendor-neutral at the agent-spec level.\n- Run state is durable and recoverable; custody and audit trails are first-class.\n- The strategy contract separates stable direction from the living roadmap.\n\n## Constraints\n\n- Must work in dirty worktrees without cloud state for local validation.\n- Ticket identity is a ULID; epic identity is a canonical initiative slug.\n- The executable roadmap vocabulary is exactly `ticket` and `epic`.\n\n## Non-Goals\n\n- Replacing existing ticket/epic artifact storage with strategy entries.\n- Making the generated projection JSON independently authoritative.\n- Including every open ticket in the roadmap.\n\n## Now\n\n- [epic:repository-strategy-roadmap] Repository Strategy Roadmap\n\n## Next\n\n- [ticket:01KTH21DTP1HR3ER5W7SRRJVV5] Prevent stale git pre-commit hook rot\n\n## Later\n\n- [ticket:01KTH21EC489596QWBC3419JC9] Add compact megaplan monitor command for plan and chain health\n",
+          "status": "present"
+        }
+      ],
+      "content_hash": "7a255605092b9824e82c2a480ca2d2cde413092c5bc14bf949368dbeea92eb8b",
+      "schema": "m6.strategy-roadmap.initiative-artifacts.v1",
+      "source_directory": ".megaplan/initiatives/repository-strategy-roadmap"
+    },
+    "repair_data": {
+      "content_hash": "03242b903e0a257f547ea6fbad95f3f091fea612eec7c8db04ec49518767752c",
+      "incident_summaries": [
+        {
+          "decision_count": 4,
+          "decisions": [
+            {
+              "hypothesis_class": "ESCALATE",
+              "hypothesis_preview": "ESCALATE\n\nPipeline friction map: watchdog sees a live worker; immediate repair left an unverified `partial_liveness` record; meta-repair correctly suppressed dispatch because execution resumed; the au",
+              "reconciler_finding_count": 10,
+              "seq": 494
+            },
+            {
+              "hypothesis_class": "ESCALATE",
+              "hypothesis_preview": "ESCALATE\n\nPipeline friction map: watchdog sees a live worker; immediate repair left an unverified `partial_liveness` record; meta-repair correctly suppressed dispatch because execution resumed; the au",
+              "reconciler_finding_count": 10,
+              "seq": 495
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog correctly observes a live session; repair-trigger/immediate-repair repeatedly records `partial_liveness` without completing verification; meta-repair co",
+              "reconciler_finding_count": 10,
+              "seq": 512
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog correctly observes a live session; repair-trigger/immediate-repair repeatedly records `partial_liveness` without completing verification; meta-repair co",
+              "reconciler_finding_count": 10,
+              "seq": 513
+            }
+          ],
+          "event_count": 10,
+          "session_id": "repository-strategy-roadmap"
+        }
+      ],
+      "redacted": true,
+      "schema": "m6.strategy-roadmap.repair-data.v1",
+      "source_path": ".megaplan/incident-ledger/incidents.json",
+      "status": "present",
+      "strategy_roadmap_incident_count": 1,
+      "total_incidents": 10
+    }
+  }
+}

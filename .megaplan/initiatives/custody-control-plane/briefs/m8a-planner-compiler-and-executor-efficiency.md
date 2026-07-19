@@ -153,6 +153,31 @@ do not increase a model/turn budget automatically to make a plan pass; do not
 convert review or high-volume productive code changes into avoidable cost; do
 not let a validation classifier execute arbitrary unreviewed effects.
 
+## F01–F17 amendment contract
+
+This milestone is the sole primary owner for F03 and F07–F13, emits F14 work
+events, and implements R2. It extends existing Megaplan seams; it does not create
+another compiler, validation declaration, splitter, retry framework, authority,
+or custody contract.
+
+- **Prerequisite:** accepted M8 adopter/runtime proof, M7 immutable receipt and
+  attempt identities, and content-addressed Transaction/Strategy/rework corpus.
+- **First safe action:** run one report-only suite over the captured corpus using
+  existing `task_feasibility.py`, `validation_jobs`, suite runner,
+  `split_oversized_batches`, source admission, and circuit primitives. Record
+  every missing consumer without rewriting a historical or live plan.
+- **Deliverables:** `evidence/m8a-f01-f17-executor-wiring.json`, deterministic
+  corpus reports, compiler/executor wiring, validation receipts, 5+1 rework
+  evidence, per-class circuit receipts, verify-only repair-adoption receipts,
+  and exact F14 work-class events.
+- **Acceptance evidence:** safe DAG admission, complexity split/budget proof,
+  zero-model deterministic validation, bounded invalid-ref/provider/import/
+  compaction/rework cases, no third equivalent budget launch, no circuit
+  collision, and drift-negative verify-only adoption at the pinned runtime.
+- **Component-versus-wiring safeguard:** focused tests or component presence are
+  not acceptance. Each F03/F07–F13 row must name the real compiler/executor call
+  site and captured runtime trace; enforcement starts only on new canary plans.
+
 ## Profile rationale
 
 Difficulty 5/5; `partnered-5/thorough/high @codex`. A bad feasibility or repair-
