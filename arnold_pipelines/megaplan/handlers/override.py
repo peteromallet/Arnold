@@ -66,7 +66,11 @@ from arnold_pipelines.megaplan.control_interface import (
     apply_transition,
     emit_override_authority_receipt,
 )
-from arnold_pipelines.megaplan.blocker_recovery import command_blocker_details, evaluate_blocker_recovery
+from arnold_pipelines.megaplan.blocker_recovery import (
+    command_blocker_details,
+    evaluate_blocker_recovery,
+    validated_deterministic_phase_repair,
+)
 from arnold_pipelines.megaplan.orchestration.gate_checks import (
     build_gate_artifact,
     failed_preflight_checks,
@@ -538,12 +542,26 @@ def _handle_routed_override(
     state: PlanState,
     args: argparse.Namespace,
 ) -> StepResponse:
+    if args.override_action == "replan":
+        from arnold_pipelines.megaplan.planning.source_binding import (
+            reconcile_canonical_source_for_replan,
+        )
+
+        reason = (
+            getattr(args, "reason", None)
+            or getattr(args, "note", None)
+            or "Re-entering planning loop"
+        )
+        reconcile_canonical_source_for_replan(plan_dir, state, reason=reason)
+        save_state_merge_meta(plan_dir, state)
     transition = ControlTransition(
         op="override",
         target_id=args.override_action,
         payload={
             "note": getattr(args, "note", None),
             "reason": getattr(args, "reason", None),
+            "repair_commit": getattr(args, "repair_commit", None),
+            "failure_fingerprint": getattr(args, "failure_fingerprint", None),
             "source": getattr(args, "source", None),
             "robustness": getattr(args, "robustness", None),
             "profile": getattr(args, "profile", None),
@@ -1142,6 +1160,15 @@ def _override_replan(
     )
     if args.note:
         _append_to_meta(state, "notes", {"timestamp": timestamp, "note": args.note})
+    from arnold_pipelines.megaplan.planning.source_binding import (
+        reconcile_canonical_source_for_replan,
+    )
+
+    source_reconciliation = reconcile_canonical_source_for_replan(
+        plan_dir,
+        state,
+        reason=reason,
+    )
     reset_replan_loop_state(state, target_state=STATE_PLANNED)
     save_state_merge_meta(plan_dir, state)
     try:
@@ -1162,6 +1189,8 @@ def _override_replan(
         "plan_file": str(plan_file),
         "message": f"Edit {plan_file.name} to incorporate your changes, then run the next step.",
     }
+    if source_reconciliation is not None:
+        response["canonical_source_binding"] = source_reconciliation
     return response
 
 
@@ -1335,21 +1364,34 @@ def _override_recover_blocked(
                 "suggested_recovery_commands": [resume_command],
             },
         )
+    phase_repair_evidence: dict[str, str] | None = None
     if phase_result is None:
-        raise CliError(
-            "missing_phase_result",
-            "recover-blocked requires phase_result.json with current blocker details",
-            extra={"resume_cursor": resume_cursor},
+        phase_repair_evidence = validated_deterministic_phase_repair(
+            root,
+            state,
+            resume_cursor,
+            getattr(args, "repair_commit", None),
+            getattr(args, "failure_fingerprint", None),
         )
-    evaluation = evaluate_blocker_recovery(
-        finalize_data,
-        state,
-        plan_dir=plan_dir,
-        blocked_tasks=phase_result.blocked_tasks,
-        deviations=phase_result.deviations,
-    )
-    blocker_details = command_blocker_details(evaluation)
-    if not evaluation.can_continue:
+        if phase_repair_evidence is None:
+            raise CliError(
+                "missing_phase_result",
+                "recover-blocked requires phase_result.json with current blocker details",
+                extra={"resume_cursor": resume_cursor},
+            )
+        blocker_details: list[dict[str, Any]] = []
+        blocker_ids: list[str] = []
+    else:
+        evaluation = evaluate_blocker_recovery(
+            finalize_data,
+            state,
+            plan_dir=plan_dir,
+            blocked_tasks=phase_result.blocked_tasks,
+            deviations=phase_result.deviations,
+        )
+        blocker_details = command_blocker_details(evaluation)
+        blocker_ids = [blocker.blocker_id for blocker in evaluation.blockers]
+    if phase_result is not None and not evaluation.can_continue:
         unresolved_blockers = [
             blocker
             for blocker in blocker_details
@@ -1386,8 +1428,13 @@ def _override_recover_blocked(
             "from_state": previous_state,
             "to_state": recovered_state,
             "resume_cursor": dict(resume_cursor),
-            "blocker_ids": [blocker.blocker_id for blocker in evaluation.blockers],
+            "blocker_ids": blocker_ids,
             "archived_phase_result": archived_phase_result,
+            **(
+                {"phase_contract_repair": phase_repair_evidence}
+                if phase_repair_evidence is not None
+                else {}
+            ),
         },
     )
     save_state_merge_meta(plan_dir, state)
@@ -1405,6 +1452,8 @@ def _override_recover_blocked(
         "resume_cursor": resume_cursor,
         "blockers": blocker_details,
     }
+    if phase_repair_evidence is not None:
+        response["phase_contract_repair"] = phase_repair_evidence
     if archived_phase_result is not None:
         response["archived_phase_result"] = archived_phase_result
     return response

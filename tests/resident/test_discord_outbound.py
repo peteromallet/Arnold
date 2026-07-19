@@ -5,6 +5,8 @@ import json
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 from arnold_pipelines.megaplan.resident.agent_loop import FakeAgentRunner, FakeAgentStep
 from arnold_pipelines.megaplan.resident.auth import AuthorizationSubject, ResidentAuthorizer
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
@@ -268,6 +270,11 @@ def test_discord_outbound_sink_replies_to_referenced_inbound_message() -> None:
 
         assert channel.sent == [("reply", {"reference": "partial:456", "mention_author": False})]
         assert metadata["discord_message_id"] == "discord-1"
+        evidence = metadata["discord_delivery_evidence"]
+        assert evidence["delivery_mode"] == "reply"
+        assert evidence["fallback_reason"] is None
+        assert evidence["provider_rejections"] == []
+        assert evidence["user_notification_visibility"] == "unknown"
 
     class FakeChannel:
         def __init__(self) -> None:
@@ -294,6 +301,240 @@ def test_discord_outbound_sink_replies_to_referenced_inbound_message() -> None:
         def get_user(self, user_id: int) -> FakeUser:
             assert user_id == 123
             return self.user
+
+    asyncio.run(run_case())
+
+
+def test_discord_outbound_sink_deleted_reply_target_falls_back_to_plain_message() -> None:
+    class UnknownMessage(RuntimeError):
+        status = 404
+        code = 10008
+        text = {"message": "Unknown Message"}
+
+    async def run_case() -> None:
+        channel = FakeChannel()
+        metadata: dict[str, object] = {"discord_reply_to_message_id": "456"}
+        await DiscordOutboundSink(FakeClient(channel)).send(
+            OutboundMessage(
+                conversation_key="discord:dm:123",
+                content="terminal result",
+                idempotency_key="completion:run-1",
+                metadata=metadata,
+            )
+        )
+
+        assert len(channel.attempts) == 2
+        assert channel.attempts[0][1]["reference"] == "partial:456"
+        assert "reference" not in channel.attempts[1][1]
+        assert channel.attempts[0][1]["nonce"] == channel.attempts[1][1]["nonce"]
+        assert metadata["discord_message_ids"] == ["fallback-accepted"]
+        evidence = metadata["discord_delivery_evidence"]
+        assert evidence["authoritative_conversation_key"] == "discord:dm:123"
+        assert evidence["delivery_mode"] == "fallback_plain"
+        assert evidence["fallback_reason"] == "reply_reference_rejected"
+        assert evidence["provider_rejections"] == [
+            {
+                "outcome": "rejected",
+                "scope": "reply_reference",
+                "error_class": "UnknownMessage",
+                "http_status": 404,
+                "discord_error_code": 10008,
+            }
+        ]
+
+    class FakeChannel:
+        def __init__(self) -> None:
+            self.attempts: list[tuple[str, dict[str, object]]] = []
+
+        def get_partial_message(self, message_id: int) -> str:
+            return f"partial:{message_id}"
+
+        async def send(self, content: str, **kwargs: object) -> SimpleNamespace:
+            self.attempts.append((content, kwargs))
+            if "reference" in kwargs:
+                raise UnknownMessage("Unknown Message")
+            return SimpleNamespace(id="fallback-accepted")
+
+    class FakeUser:
+        dm_channel = None
+
+        def __init__(self, channel: FakeChannel) -> None:
+            self.dm_channel = channel
+
+    class FakeClient:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.user = FakeUser(channel)
+
+        def get_user(self, user_id: int) -> FakeUser:
+            assert user_id == 123
+            return self.user
+
+    asyncio.run(run_case())
+
+
+def test_discord_outbound_sink_missing_local_reply_reference_falls_back_plain() -> None:
+    async def run_case() -> None:
+        channel = FakeChannel()
+        metadata: dict[str, object] = {"discord_reply_to_message_id": "456"}
+        await DiscordOutboundSink(FakeClient(channel)).send(
+            OutboundMessage(
+                conversation_key="discord:dm:123",
+                content="terminal result",
+                metadata=metadata,
+            )
+        )
+
+        assert channel.sent == [("terminal result", {})]
+        evidence = metadata["discord_delivery_evidence"]
+        assert evidence["delivery_mode"] == "fallback_plain"
+        assert evidence["fallback_reason"] == "reply_target_unavailable"
+        assert evidence["provider_rejections"] == []
+
+    class FakeChannel:
+        async def send(self, content: str, **kwargs: object) -> SimpleNamespace:
+            self.sent = getattr(self, "sent", [])
+            self.sent.append((content, kwargs))
+            return SimpleNamespace(id="plain-accepted")
+
+    class FakeUser:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.dm_channel = channel
+
+    class FakeClient:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.user = FakeUser(channel)
+
+        def get_user(self, user_id: int) -> FakeUser:
+            assert user_id == 123
+            return self.user
+
+    asyncio.run(run_case())
+
+
+def test_discord_outbound_sink_unavailable_thread_uses_immutable_parent_channel() -> None:
+    class UnknownChannel(RuntimeError):
+        status = 404
+        code = 10003
+        text = {"message": "Unknown Channel"}
+
+    async def run_case() -> None:
+        parent = ParentChannel()
+        client = FakeClient(parent)
+        metadata: dict[str, object] = {"discord_reply_to_message_id": "456"}
+        await DiscordOutboundSink(client).send(
+            OutboundMessage(
+                conversation_key="discord:guild:12:channel:34:thread:56",
+                content="terminal result",
+                metadata=metadata,
+            )
+        )
+
+        assert client.lookups[:3] == [("get", 56), ("fetch", 56), ("get", 34)]
+        assert {channel_id for _kind, channel_id in client.lookups} <= {34, 56}
+        assert parent.sent == [("terminal result", {})]
+        evidence = metadata["discord_delivery_evidence"]
+        assert evidence["authoritative_conversation_key"] == (
+            "discord:guild:12:channel:34:thread:56"
+        )
+        assert evidence["delivery_mode"] == "fallback_plain"
+        assert evidence["fallback_reason"] == "thread_unavailable"
+        assert evidence["resolved_channel_id"] == "34"
+        assert evidence["resolved_thread_id"] is None
+
+    class ParentChannel:
+        def __init__(self) -> None:
+            self.sent: list[tuple[str, dict[str, object]]] = []
+
+        async def send(self, content: str, **kwargs: object) -> SimpleNamespace:
+            self.sent.append((content, kwargs))
+            return SimpleNamespace(id="parent-accepted")
+
+    class FakeClient:
+        def __init__(self, parent: ParentChannel) -> None:
+            self.parent = parent
+            self.lookups: list[tuple[str, int]] = []
+
+        def get_channel(self, channel_id: int):
+            self.lookups.append(("get", channel_id))
+            return self.parent if channel_id == 34 else None
+
+        async def fetch_channel(self, channel_id: int):
+            self.lookups.append(("fetch", channel_id))
+            raise UnknownChannel("Unknown Channel")
+
+    asyncio.run(run_case())
+
+
+def test_discord_outbound_sink_unrelated_provider_error_never_falls_back() -> None:
+    class RateLimited(RuntimeError):
+        status = 429
+        code = 20028
+
+    async def run_case() -> None:
+        channel = FakeChannel()
+        with pytest.raises(RateLimited):
+            await DiscordOutboundSink(FakeClient(channel)).send(
+                OutboundMessage(
+                    conversation_key="discord:dm:123",
+                    content="terminal result",
+                    metadata={"discord_reply_to_message_id": "456"},
+                )
+            )
+        assert channel.calls == 1
+
+    class FakeChannel:
+        calls = 0
+
+        def get_partial_message(self, message_id: int) -> str:
+            return f"partial:{message_id}"
+
+        async def send(self, content: str, **kwargs: object) -> SimpleNamespace:
+            self.calls += 1
+            raise RateLimited("rate limited")
+
+    class FakeUser:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.dm_channel = channel
+
+    class FakeClient:
+        def __init__(self, channel: FakeChannel) -> None:
+            self.user = FakeUser(channel)
+
+        def get_user(self, user_id: int) -> FakeUser:
+            assert user_id == 123
+            return self.user
+
+    asyncio.run(run_case())
+
+
+def test_discord_outbound_sink_thread_permission_error_never_leaks_to_parent() -> None:
+    class MissingAccess(RuntimeError):
+        status = 403
+        code = 50001
+
+    async def run_case() -> None:
+        client = FakeClient()
+        with pytest.raises(MissingAccess):
+            await DiscordOutboundSink(client).send(
+                OutboundMessage(
+                    conversation_key="discord:guild:12:channel:34:thread:56",
+                    content="possibly private terminal result",
+                    metadata={"discord_reply_to_message_id": "456"},
+                )
+            )
+        assert client.lookups == [("get", 56), ("fetch", 56)]
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.lookups: list[tuple[str, int]] = []
+
+        def get_channel(self, channel_id: int):
+            self.lookups.append(("get", channel_id))
+            return None
+
+        async def fetch_channel(self, channel_id: int):
+            self.lookups.append(("fetch", channel_id))
+            raise MissingAccess("Missing Access")
 
     asyncio.run(run_case())
 

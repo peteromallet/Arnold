@@ -41,6 +41,21 @@ HUMAN_GATE_TOKENS: dict[str, TypedHumanGate] = {
     "user-action": TypedHumanGate.USER_ACTION,
 }
 
+# Concrete lifecycle/status tokens emitted by Megaplan producers.  Keep this
+# vocabulary beside the typed gate contract so watchdog, repair, resident
+# notification, and auditor consumers cannot silently grow different switch
+# statements.  ``awaiting_pr_merge`` is human-required only when the caller has
+# already established a manual/review merge policy; the token mapping supplies
+# its gate type, not that policy decision.
+HUMAN_REQUIRED_STATE_TOKENS: dict[str, TypedHumanGate] = {
+    "awaiting_human": TypedHumanGate.USER_ACTION,
+    "awaiting_human_verify": TypedHumanGate.VERIFICATION,
+    "human_prerequisite": TypedHumanGate.USER_ACTION,
+    "awaiting_pr_merge": TypedHumanGate.EXPLICIT_APPROVAL,
+    "manual_required": TypedHumanGate.USER_ACTION,
+    "human_required": TypedHumanGate.USER_ACTION,
+}
+
 MACHINE_REPAIRABLE_FAILURE_KINDS = frozenset(
     {
         "blocked_recovery_not_resolved",
@@ -69,6 +84,20 @@ def typed_human_gate(payload: Mapping[str, Any] | None) -> TypedHumanGate | None
     return None
 
 
+def typed_human_gate_for_state(state: object) -> TypedHumanGate | None:
+    """Return the canonical gate type for a concrete human-state token."""
+
+    if not isinstance(state, str):
+        return None
+    return HUMAN_REQUIRED_STATE_TOKENS.get(state.strip().lower())
+
+
+def is_human_required_state(state: object) -> bool:
+    """Whether *state* is an allowlisted concrete human-required token."""
+
+    return typed_human_gate_for_state(state) is not None
+
+
 def is_machine_repairable_failure_kind(kind: object) -> bool:
     return isinstance(kind, str) and kind.strip().lower() in MACHINE_REPAIRABLE_FAILURE_KINDS
 
@@ -76,7 +105,10 @@ def is_machine_repairable_failure_kind(kind: object) -> bool:
 __all__ = [
     "HUMAN_GATE_FIELDS",
     "HUMAN_GATE_TOKENS",
+    "HUMAN_REQUIRED_STATE_TOKENS",
     "MACHINE_REPAIRABLE_FAILURE_KINDS",
+    "is_human_required_state",
     "is_machine_repairable_failure_kind",
     "typed_human_gate",
+    "typed_human_gate_for_state",
 ]

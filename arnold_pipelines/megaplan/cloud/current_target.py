@@ -15,6 +15,7 @@ from arnold_pipelines.megaplan.cloud.session_markers import (
     canonical_sidecar_suffix,
     is_canonical_session_marker_path,
 )
+from arnold_pipelines.megaplan.types import CliError
 
 _FINGERPRINT_ALGORITHM = "sha256"
 _TERMINAL_PLAN_STATES = {"done", "aborted", "cancelled"}
@@ -67,6 +68,21 @@ def _mtime(path: Path) -> float:
 
 def _is_terminal_plan_state(value: Any) -> bool:
     return _safe_text(value).lower() in _TERMINAL_PLAN_STATES
+
+
+def _chain_milestone_total(
+    chain_state: Mapping[str, Any],
+    remote_spec: Path | None,
+) -> int:
+    milestones = chain_state.get("milestones")
+    if isinstance(milestones, list) and milestones:
+        return len(milestones)
+    if remote_spec is None:
+        return 0
+    try:
+        return len(chain_spec.load_spec(remote_spec).milestones)
+    except (CliError, OSError, TypeError, ValueError):
+        return 0
 
 
 def resolve_current_target(
@@ -143,6 +159,7 @@ def resolve_current_target(
     event_cursors = _collect_event_cursors(plan_state_path, plan_state)
     chain_log = _collect_chain_log_evidence(workspace, session, run_kind)
     active_step_heartbeat = _collect_active_step_heartbeat(plan_state, pid_is_live=pid_is_live)
+    current_phase = _resolve_current_phase(plan_state, active_step_heartbeat)
     resume_authority_failure = _collect_resume_authority_failure(
         plan_state_path,
         plan_state,
@@ -211,6 +228,24 @@ def resolve_current_target(
 
     plan_current_state = _safe_text(plan_state.get("current_state"))
     chain_last_state = _safe_text(chain_state.get("last_state"))
+
+    if (
+        run_kind == "chain"
+        and plan_name
+        and plan_current_state
+        and not _is_terminal_plan_state(plan_current_state)
+        and _is_terminal_plan_state(chain_last_state)
+    ):
+        stale_evidence.append(
+            _artifact(
+                kind="stale_terminal_chain_state_with_active_plan",
+                path=chain_state_path,
+                plan_name=plan_name,
+                plan_state=plan_current_state,
+                chain_last_state=chain_last_state,
+            )
+        )
+        rationale.append("nonterminal current plan supersedes terminal chain projection")
 
     plan_state_name = _safe_plan_name(plan_state.get("name"))
     if chain_current_plan and plan_state_name and chain_current_plan != plan_state_name:
@@ -309,6 +344,7 @@ def resolve_current_target(
             "chain_current_plan_name": chain_current_plan,
             "chain_last_state": chain_last_state,
             "plan_current_state": plan_current_state,
+            "plan_current_phase": current_phase,
         },
         "marker": {
             "path": str(marker_path),
@@ -324,6 +360,7 @@ def resolve_current_target(
             "present": bool(plan_state_path and plan_state_path.exists()),
             "name": plan_name,
             "current_state": _safe_text(plan_state.get("current_state")),
+            "current_phase": current_phase,
             "resume_cursor": _stable_mapping(plan_state.get("resume_cursor")),
             "mtime": _mtime(plan_state_path) if plan_state_path is not None else 0.0,
             "fingerprint": _fingerprint(plan_state_path) if plan_state_path is not None else "",
@@ -333,7 +370,7 @@ def resolve_current_target(
             "present": bool(chain_state_path and chain_state_path.exists()),
             "current_plan_name": chain_current_plan,
             "last_state": _safe_text(chain_state.get("last_state")),
-            "milestone_total": len(chain_state.get("milestones")) if isinstance(chain_state.get("milestones"), list) else 0,
+            "milestone_total": _chain_milestone_total(chain_state, remote_spec),
             "completed_count": len(chain_state.get("completed")) if isinstance(chain_state.get("completed"), list) else 0,
             "chain_complete": chain_state.get("chain_complete"),
             "mtime": _mtime(chain_state_path) if chain_state_path is not None else 0.0,
@@ -799,6 +836,29 @@ def _collect_active_step_heartbeat(
         "started_at": _safe_text(active_step.get("started_at")),
         "pid_live": pid_live,
     }
+
+
+def _resolve_current_phase(
+    plan_state: Mapping[str, Any],
+    active_step_heartbeat: Mapping[str, Any],
+) -> str:
+    """Preserve the workflow phase even when its recorded worker is stale.
+
+    Repair classification must not turn a known non-PR phase into an unknown
+    phase merely because the worker PID died.  The explicit plan field wins,
+    followed by the durable active-step phase and then a resume cursor.
+    """
+
+    explicit = _safe_text(plan_state.get("current_phase"))
+    if explicit:
+        return explicit
+    active_phase = _safe_text(active_step_heartbeat.get("phase"))
+    if active_phase:
+        return active_phase
+    resume_cursor = plan_state.get("resume_cursor")
+    if isinstance(resume_cursor, Mapping):
+        return _safe_text(resume_cursor.get("phase"))
+    return ""
 
 def _artifact_sort_key(item: Mapping[str, Any]) -> tuple[str, str, str]:
     return (

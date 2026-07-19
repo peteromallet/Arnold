@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import re
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Literal, Mapping
@@ -891,6 +893,155 @@ def _append_execute_reconciliation_advisories(
         )
 
 
+_TIMEOUT_PREFIX = re.compile(
+    r"(?:^|\s)timeout\s+(?:(?:--[^\s]+)\s+)*(?P<value>\d+)(?P<unit>[sm]?)\s+"
+)
+
+
+def _test_command_evidence(command: str) -> tuple[int | None, list[str]] | None:
+    """Return declared timeout seconds and path selectors for one test command."""
+
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return None
+    runner_index: int | None = None
+    for index, part in enumerate(parts):
+        if part == "pytest" or part.endswith("/pytest"):
+            runner_index = index
+            break
+        if part == "--test" and index > 0 and parts[index - 1] == "node":
+            runner_index = index
+            break
+    if runner_index is None:
+        return None
+    timeout_match = _TIMEOUT_PREFIX.search(command)
+    timeout_seconds: int | None = None
+    if timeout_match:
+        timeout_seconds = int(timeout_match.group("value"))
+        if timeout_match.group("unit") == "m":
+            timeout_seconds *= 60
+    selectors = [
+        part.lstrip("./")
+        for part in parts[runner_index + 1 :]
+        if part
+        and not part.startswith("-")
+        and (
+            "/" in part
+            or "::" in part
+            or part.endswith((".py", ".js", ".mjs", ".cjs"))
+        )
+    ]
+    return timeout_seconds, selectors
+
+
+def _enforce_task_test_budgets(
+    entries: Iterable[dict[str, Any]],
+    *,
+    targets_by_id: Mapping[str, dict[str, Any]],
+    issues: list[str],
+) -> None:
+    """Fail closed when v2 task evidence exceeds its admitted narrow-test budget."""
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        task_id = entry.get("task_id")
+        target = targets_by_id.get(task_id) if isinstance(task_id, str) else None
+        narrow = target.get("narrow_tests") if isinstance(target, dict) else None
+        if not isinstance(narrow, Mapping):
+            continue  # Stored v1 tasks retain their legacy execution behavior.
+        commands = entry.get("commands_run")
+        if not isinstance(commands, list):
+            continue
+        invocations = [
+            evidence
+            for command in commands
+            if isinstance(command, str)
+            for evidence in [_test_command_evidence(command)]
+            if evidence is not None
+        ]
+        allowed_selectors = {
+            selector.strip().lstrip("./")
+            for selector in narrow.get("selectors", [])
+            if isinstance(selector, str) and selector.strip()
+        }
+        max_runs = narrow.get("max_runs")
+        max_seconds = narrow.get("max_seconds")
+        violations: list[str] = []
+        if isinstance(max_runs, int) and len(invocations) > max_runs:
+            violations.append(f"{len(invocations)} test runs exceeds max_runs={max_runs}")
+        timeout_total = 0
+        for timeout_seconds, selectors in invocations:
+            if timeout_seconds is None:
+                violations.append("test command lacks an admitted timeout wrapper")
+            else:
+                timeout_total += timeout_seconds
+            if not selectors:
+                violations.append("test command has no bounded path selector")
+                continue
+            for selector in selectors:
+                selector_base = selector.split("::", 1)[0]
+                if not any(
+                    selector == allowed
+                    or selector_base == allowed.split("::", 1)[0]
+                    for allowed in allowed_selectors
+                ):
+                    violations.append(f"selector {selector!r} is outside narrow_tests.selectors")
+        if isinstance(max_seconds, int) and timeout_total > max_seconds:
+            violations.append(
+                f"declared test timeout total {timeout_total}s exceeds max_seconds={max_seconds}"
+            )
+        if not violations:
+            continue
+        reason = "task_test_budget_exhausted: " + "; ".join(dict.fromkeys(violations))
+        entry["status"] = "blocked"
+        notes = str(entry.get("executor_notes") or "").strip()
+        entry["executor_notes"] = f"{notes} [harness] {reason}".strip()
+        issues.append(f"Task {task_id} blocked by admitted test budget: {reason}")
+
+
+def _enforce_task_write_budgets(
+    entries: Iterable[dict[str, Any]],
+    *,
+    targets_by_id: Mapping[str, dict[str, Any]],
+    issues: list[str],
+) -> None:
+    """Block v2 task results that claim writes outside the admitted write set."""
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        task_id = entry.get("task_id")
+        target = targets_by_id.get(task_id) if isinstance(task_id, str) else None
+        write_set = target.get("write_set") if isinstance(target, dict) else None
+        if not isinstance(write_set, Mapping):
+            continue
+        declared = {
+            path.strip().replace("\\", "/").lstrip("./")
+            for path in write_set.get("paths", [])
+            if isinstance(path, str) and path.strip()
+        }
+        actual = [
+            path.strip().replace("\\", "/").lstrip("./")
+            for path in entry.get("files_changed", [])
+            if isinstance(path, str) and path.strip()
+        ]
+        escaped = sorted(set(actual) - declared)
+        if not escaped and len(set(actual)) <= 5:
+            continue
+        reasons: list[str] = []
+        if escaped:
+            reasons.append(f"undeclared paths {escaped!r}")
+        if len(set(actual)) > 5:
+            reasons.append(f"{len(set(actual))} actual paths exceeds the 5-path task budget")
+        reason = "task_write_set_violation: " + "; ".join(reasons)
+        entry["status"] = "blocked"
+        notes = str(entry.get("executor_notes") or "").strip()
+        entry["executor_notes"] = f"{notes} [harness] {reason}".strip()
+        issues.append(f"Task {task_id} blocked by admitted write set: {reason}")
+
+
 def _merge_batch_results(
     *,
     finalize_data: dict[str, Any],
@@ -966,6 +1117,16 @@ def _merge_batch_results(
         state=state,
         source_path=source_path,
         off_scope_outcome="quarantined" if creative_mode else "rejected",
+    )
+    _enforce_task_test_budgets(
+        task_authority.entries,
+        targets_by_id=merge_targets_by_id,
+        issues=issues,
+    )
+    _enforce_task_write_budgets(
+        task_authority.entries,
+        targets_by_id=merge_targets_by_id,
+        issues=issues,
     )
     merged_count, _ = _validate_and_merge_batch(
         task_authority.entries,

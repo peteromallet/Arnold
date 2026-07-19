@@ -607,6 +607,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                                 "properties": {
                                     "detail": {"type": "string"},
                                     "flagged": {"type": "boolean"},
+                                    "category": {"type": "string"},
+                                    "severity_hint": {"type": "string"},
+                                    "evidence": {"type": "string"},
+                                    "finding_id": {"type": "string"},
                                 },
                                 "required": ["detail", "flagged"],
                             },
@@ -640,6 +644,9 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                             "enum": ["likely-significant", "likely-minor", "uncertain"],
                         },
                         "evidence": {"type": "string"},
+                        "source_check_id": {"type": "string"},
+                        "producer_category": {"type": "string"},
+                        "producer_severity": {"type": "string"},
                     },
                     "required": ["id", "concern", "category", "severity_hint", "evidence"],
                 },
@@ -725,6 +732,8 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                 },
             },
             "meta_commentary": {"type": "string"},
+            "critique_custody": {"type": "object"},
+            "critique_resolution_coverage": {"type": "array"},
             "validation": {
                 "type": "object",
                 "properties": {

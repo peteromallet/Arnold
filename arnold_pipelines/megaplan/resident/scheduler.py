@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import hashlib
 import json
+from pathlib import Path
+import re
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -44,6 +46,7 @@ class SchedulerRunResult:
     fired: int = 0
     retried: int = 0
     cancelled: int = 0
+    schedules: dict[str, int] | None = None
 
 
 class ScheduledJobBackend(Protocol):
@@ -130,13 +133,16 @@ class ScheduledJobWorker:
         *,
         handlers: dict[str, JobHandler] | None = None,
         worker_id: str | None = None,
+        before_claim: Callable[[datetime], Awaitable[Mapping[str, int]]] | None = None,
     ) -> None:
         self.backend = backend
         self.worker_id = worker_id or f"resident-scheduler-{uuid4()}"
         self.handlers = handlers or {}
+        self.before_claim = before_claim
 
     async def run_due_once(self, *, now: datetime | None = None) -> SchedulerRunResult:
         now = now or utc_now()
+        schedule_receipt = dict(await self.before_claim(now)) if self.before_claim else None
         jobs = await self.backend.claim_due_jobs(worker_id=self.worker_id, now=now)
         fired = retried = cancelled = 0
         for job in jobs:
@@ -156,7 +162,13 @@ class ScheduledJobWorker:
             else:
                 await self.backend.mark_fired(str(job["id"]), now=now)
                 fired += 1
-        return SchedulerRunResult(claimed=len(jobs), fired=fired, retried=retried, cancelled=cancelled)
+        return SchedulerRunResult(
+            claimed=len(jobs),
+            fired=fired,
+            retried=retried,
+            cancelled=cancelled,
+            schedules=schedule_receipt,
+        )
 
 
 @dataclass
@@ -276,13 +288,39 @@ class ResidentJobHandlers:
             )
             self._reschedule_vp_todo_sweep(job, audit_context=None)
             return
+        retained, reconciliation_receipts = _reconcile_retired_todo_targets(
+            todo_path, retained
+        )
+        pending = [
+            item
+            for item in retained
+            if item["status"] == vp_todo.PENDING and item["task"]
+        ]
+        for receipt in reconciliation_receipts:
+            self._emit_sink().log_system_event(
+                level="info",
+                category="system",
+                event_type="resident_vp_todo_canonical_supersession",
+                message="VP todo intent superseded by canonical initiative retirement",
+                details={"job_id": job.id, **receipt},
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-vp-todo-canonical-supersession",
+                    receipt["todo_item_id"],
+                    receipt["canonical_record_id"],
+                    receipt["evidence"],
+                ),
+            )
         if not pending:
             self._emit_sink().log_system_event(
                 level="info",
                 category="system",
                 event_type="resident_vp_todo_sweep",
                 message="VP to-do sweep had no pending items",
-                details={"job_id": job.id, "pending": 0},
+                details={
+                    "job_id": job.id,
+                    "pending": 0,
+                    "todo_reconciliation_count": len(reconciliation_receipts),
+                },
                 idempotency_key=deterministic_idempotency_key(
                     "resident-vp-todo-sweep-empty", job.id, job.attempt_count
                 ),
@@ -295,6 +333,7 @@ class ResidentJobHandlers:
             todo_path=todo_path,
             retained=retained,
             job=job,
+            reconciliation_receipts=reconciliation_receipts,
         )
         unchanged_sweeps = audit_context["repeat_state"]["consecutive_unchanged_sweeps"]
         if unchanged_sweeps >= vp_todo.DEFAULT_UNCHANGED_CYCLE_ESCALATION_THRESHOLD:
@@ -368,6 +407,7 @@ class ResidentJobHandlers:
             raw={
                 "source_kind": "scheduled_turn",
                 "vp_todo_sweep": True,
+                "report_only": True,
                 "job_id": job.id,
                 "pending_count": len(pending),
                 "vp_todo_audit_context": audit_context,
@@ -415,6 +455,31 @@ class ResidentJobHandlers:
         *,
         audit_context: Mapping[str, Any] | None,
     ) -> None:
+        if bool(job.payload.get("schedule_owned")):
+            payload = dict(job.payload)
+            if audit_context is None:
+                payload.pop("last_retained_todo_digest", None)
+                payload.pop("last_audit_scope_digest", None)
+                payload.pop("consecutive_unchanged_sweeps", None)
+            else:
+                repeat_state = audit_context["repeat_state"]
+                payload["last_retained_todo_digest"] = repeat_state[
+                    "retained_todo_digest"
+                ]
+                payload["last_audit_scope_digest"] = repeat_state[
+                    "audit_scope_digest"
+                ]
+                payload["consecutive_unchanged_sweeps"] = repeat_state[
+                    "consecutive_unchanged_sweeps"
+                ]
+            self.store.update_scheduled_job(
+                job.id,
+                payload=payload,
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-vp-todo-schedule-state", job.id, job.attempt_count
+                ),
+            )
+            return
         pending = self.store.list_scheduled_jobs(job_type="vp_todo_sweep", status="pending", limit=1)
         if pending:
             return
@@ -424,11 +489,15 @@ class ResidentJobHandlers:
         payload = dict(job.payload)
         if audit_context is None:
             payload.pop("last_retained_todo_digest", None)
+            payload.pop("last_audit_scope_digest", None)
             payload.pop("consecutive_unchanged_sweeps", None)
         else:
             repeat_state = audit_context["repeat_state"]
             payload["last_retained_todo_digest"] = repeat_state[
                 "retained_todo_digest"
+            ]
+            payload["last_audit_scope_digest"] = repeat_state[
+                "audit_scope_digest"
             ]
             payload["consecutive_unchanged_sweeps"] = repeat_state[
                 "consecutive_unchanged_sweeps"
@@ -698,7 +767,44 @@ def make_store_scheduler(
         stale_after_seconds=int(config.stale_claim_timeout_s),
         batch_size=config.scheduler_batch_size,
     )
-    return ScheduledJobWorker(backend, handlers=handlers.handlers(), worker_id=worker_name)
+    before_claim = None
+    from .schedules import ScheduleService, schedule_store_root
+
+    schedule_root = schedule_store_root(store)
+    if schedule_root is not None:
+        schedule_service = ScheduleService(schedule_root)
+
+        async def _run_schedules(now: datetime) -> Mapping[str, int]:
+            try:
+                receipt = await schedule_service.run_due_once(
+                    worker_id=worker_name,
+                    now=now,
+                    limit=config.scheduler_batch_size,
+                )
+            except Exception as exc:
+                # Rich schedules are additive: a corrupt definition must not
+                # starve legacy confirmation, cloud-check, or VP jobs.
+                with schedule_service.repo.locked():
+                    schedule_service.repo._append(
+                        schedule_service.repo.root / "worker-errors.jsonl",
+                        {
+                            "schema_version": "arnold-resident-schedule-worker-error-v1",
+                            "at": now,
+                            "worker_id": worker_name,
+                            "error_type": type(exc).__name__,
+                            "error": str(exc)[:1000],
+                        },
+                    )
+                return {"worker_errors": 1}
+            return receipt.model_dump()
+
+        before_claim = _run_schedules
+    return ScheduledJobWorker(
+        backend,
+        handlers=handlers.handlers(),
+        worker_id=worker_name,
+        before_claim=before_claim,
+    )
 
 
 def _cloud_request_for_job(job: ScheduledJob, run: CloudRun) -> CloudToolRequest:
@@ -752,54 +858,44 @@ def _cloud_check_notification_text(
 def _vp_todo_sweep_prompt(audit_context: Mapping[str, Any]) -> str:
     rendered_context = json.dumps(audit_context, indent=2, sort_keys=True)
     return (
-        "The six-hour VP special-request auditor just fired. This is a bounded audit and "
-        "reconciliation turn, not fresh product authority. Read the structured snapshot below, "
+        "The scheduled six-hour VP special-request todo audit just fired. This is not a general "
+        "project status report and it grants no execution authority. Read the structured snapshot below, "
         "then call `read_todo_list` with no arguments before making any decision; that tool is "
         "the authoritative full retained todo set, including failed and conditional items.\n\n"
         "Bounded mandate:\n"
-        "1. Separate each item's authorized outcome from current runtime health. A launch-intent "
+        "1. Open the report with the exact scheduled scope label from `report_contract.scope_label`. "
+        "Use separate `Current blockers`, `Pending bookkeeping reconciliation`, and `Historical "
+        "bookkeeping` sections. Never phrase a historical or reconciliation-only item as current work.\n"
+        "2. Separate each item's authorized outcome from current runtime health. A launch-intent "
         "item is satisfied when canonical evidence proves the exact requested chain/run was "
         "successfully launched with the requested identity and configuration. A later blocked "
         "milestone does not make that launch intent pending again. Safely reconcile that stale "
         "bookkeeping with `reconcile_todo_item`, recording the canonical run ID, durable "
         "evidence location, and reconciliation reason.\n"
-        "2. A downstream item with a non-empty `when` remains genuinely conditional until the "
+        "3. A downstream item with a non-empty `when` remains genuinely conditional until the "
         "condition itself is canonically satisfied. Do not infer completion from an upstream "
         "launch, percent complete, a stale plan-local state, or overlapping work. Leave it pending "
         "and state the missing condition evidence.\n"
-        "3. Use `read_context_node` on `agents/running` and `agents/recent` (or "
+        "4. Use `read_context_node` on `agents/running` and `agents/recent` (or "
         "`search_context` scope `agents`) to reconcile stable todo/request IDs with canonical "
         "run IDs, status, lineage, manifest, full-log, result, and delivery evidence. Use the "
         "status route for canonical chain state and repair evidence; chain truth beats stale "
         "plan-local or prose summaries. Never claim success from a PID, acknowledgement, or "
         "artifact path alone.\n"
-        "4. Treat `consecutive_unchanged_sweeps` as a loop signal, not automatic failure. Explain "
+        "5. Treat `consecutive_unchanged_sweeps` as a loop signal, not automatic failure. Explain "
         "whether the unchanged state is an expected unsatisfied condition, an active canonical "
         "run, a stale bookkeeping mismatch, or genuinely blocked work. Diagnose the first "
         "canonical blocker and cite exact evidence.\n"
-        "5. You may repair only safe bookkeeping inconsistencies supported by canonical evidence. "
-        "Do not rewrite task intent or conditions, answer product/architecture questions, merge, "
-        "deploy, delete, reset, or expand the original request. Escalate any material ambiguity, "
-        "destructive action, new authorization, or missing approval instead.\n"
-        "6. For genuinely blocked authorized work, first avoid duplicate ownership by checking "
-        "canonical running/recent agents. When the original todo authority covers diagnosis, "
-        "repair, or relaunch and no equivalent owner is active, dispatch one tightly scoped durable "
-        "`launch_subagent` with `request_id` equal to the todo ID, `backend=codex`, "
-        "`background=true`, and `task` equal to the exact retained authoritative todo task (the "
-        "tool rejects rewritten intent). Use the purpose-built description, debugging/recovery "
-        "task kind, difficulty, delegated context routes, explicit non-goals, and verification to "
-        "scope the recovery without expanding the task. A relaunch is allowed only when the "
-        "original request or settled policy authorizes it; otherwise dispatch diagnosis only or "
-        "escalate. Never use Hermes for scheduled work.\n"
-        "7. If `authoritative_inbound.state` is not `verified`, delegation is forbidden. The "
+        "6. This audit is report-only. Do not launch or follow up agents, start/resume cloud work, "
+        "edit audited workspaces, commit, merge, deploy, delete, reset, or expand the original "
+        "request. Todo transitions happen only through the separately authorized reconciliation "
+        "mechanism after durable evidence is validated.\n"
+        "7. If `authoritative_inbound.state` is not `verified`, execution is forbidden. The "
         "scheduler already wrote an internal diagnostic event. Do not complete or fail the todo "
         "merely because custody is missing, and do not manufacture a user-facing completion; "
         "report an escalation with the diagnostic code.\n"
-        "8. A successful `launch_subagent` call transfers the todo to "
-        "`delegated_to_canonical_run` with manifest evidence, so it must not remain pending while "
-        "the durable agent runs. The audit reply is a progress/reconciliation report, not the "
-        "delegated agent's completion. For launches, report the returned run ID and "
-        "manifest/full-log/result paths exactly.\n\n"
+        "8. A canonical initiative-retirement record is proof of supersession only, not proof of "
+        "completion. Report `completion_asserted: false` explicitly and cite the exact missing proof.\n\n"
         "Structured audit context (redacted; UTC control-plane timestamps remain UTC):\n"
         f"```json\n{rendered_context}\n```"
     )
@@ -811,12 +907,20 @@ def _vp_todo_audit_context(
     todo_path: object,
     retained: list[dict[str, Any]],
     job: ScheduledJob,
+    reconciliation_receipts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     digest_items: list[dict[str, Any]] = []
     blocked = 0
     for item in retained:
         inbound = _todo_authoritative_inbound(store, item)
+        retirement_evidence = _todo_initiative_retirement_evidence(
+            todo_path, item
+        )
+        target_slugs = _todo_initiative_chain_slugs(item)
+        report_scope = _todo_report_scope(
+            item, retirement_evidence, target_slugs=target_slugs
+        )
         delegation_candidate = (
             item.get("status") == vp_todo.PENDING and bool(item.get("task"))
         )
@@ -836,6 +940,15 @@ def _vp_todo_audit_context(
                 "when_truncated": len(when) > 600,
                 "conditional": bool(when.strip()),
                 "delegation_candidate": delegation_candidate,
+                "report_scope": report_scope,
+                "current_blocker": report_scope == "current_blocker",
+                "historical_bookkeeping": report_scope == "historical_bookkeeping",
+                "gather_reasons": (
+                    ["canonical_target_initiative_retired"]
+                    if retirement_evidence else []
+                ),
+                "initiative_retirement_evidence": retirement_evidence,
+                "explicit_target_initiatives": target_slugs,
                 "authoritative_inbound": inbound,
             }
         )
@@ -850,22 +963,54 @@ def _vp_todo_audit_context(
                 "when": str(item.get("when") or ""),
                 "inbound_state": inbound["state"],
                 "inbound_diagnostic_code": inbound["diagnostic_code"],
+                "report_scope": report_scope,
+                "retirement_evidence_sha256": [
+                    row["source_sha256"] for row in retirement_evidence
+                ],
             }
         )
-    digest = hashlib.sha256(
+    retained_digest = hashlib.sha256(
         json.dumps(digest_items, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    previous_digest = str(job.payload.get("last_retained_todo_digest") or "")
+    audit_scope_digest = hashlib.sha256(
+        json.dumps(
+            [
+                item
+                for item in digest_items
+                if item["report_scope"] != "historical_bookkeeping"
+            ],
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    previous_digest = str(
+        job.payload.get("last_audit_scope_digest")
+        or job.payload.get("last_retained_todo_digest")
+        or ""
+    )
     previous_unchanged = _nonnegative_int(
         job.payload.get("consecutive_unchanged_sweeps")
     )
-    unchanged = previous_unchanged + 1 if previous_digest == digest else 0
+    unchanged = previous_unchanged + 1 if previous_digest == audit_scope_digest else 0
     audit_id = deterministic_idempotency_key(
-        "resident-vp-todo-audit", job.id, job.attempt_count, digest
+        "resident-vp-todo-audit", job.id, job.attempt_count, audit_scope_digest
     )
     pending_count = sum(1 for item in retained if item.get("status") == vp_todo.PENDING)
+    current_blocker_ids = [
+        item["id"] for item in items if item["report_scope"] == "current_blocker"
+    ]
+    pending_reconciliation_ids = [
+        item["id"]
+        for item in items
+        if item["report_scope"] == "pending_reconciliation"
+    ]
+    historical_ids = [
+        item["id"]
+        for item in items
+        if item["report_scope"] == "historical_bookkeeping"
+    ]
     return {
-        "schema_version": "resident-vp-special-request-audit-context-v1",
+        "schema_version": "resident-vp-special-request-audit-context-v2",
         "audit_id": audit_id,
         "job": {
             "job_id": job.id,
@@ -891,15 +1036,24 @@ def _vp_todo_audit_context(
                 and bool(str(item.get("when") or "").strip())
             ),
             "delegation_blocked_count": blocked,
+            "current_blocker_count": len(current_blocker_ids),
+            "pending_reconciliation_count": len(pending_reconciliation_ids),
+            "historical_bookkeeping_count": len(historical_ids),
+            "current_blocker_ids": current_blocker_ids,
+            "pending_reconciliation_ids": pending_reconciliation_ids,
+            "historical_bookkeeping_ids": historical_ids,
         },
         "repeat_state": {
-            "retained_todo_digest": digest,
+            "retained_todo_digest": retained_digest,
+            "audit_scope_digest": audit_scope_digest,
             "previous_retained_todo_digest": previous_digest or None,
-            "unchanged_from_previous_sweep": previous_digest == digest,
+            "unchanged_from_previous_sweep": previous_digest == audit_scope_digest,
             "consecutive_unchanged_sweeps": unchanged,
             "semantics": (
-                "Digest covers retained todo identity/status/condition/update and inbound-evidence "
-                "state only; canonical run/status evidence must still be read before classifying a loop."
+                "The audit-scope digest excludes historical bookkeeping and covers current/reconciliation "
+                "identity, status, condition, update, and inbound-evidence state. The retained digest "
+                "still accounts for every item. Canonical run/status evidence must still be read before "
+                "classifying a loop."
             ),
         },
         "evidence_routes": {
@@ -918,8 +1072,162 @@ def _vp_todo_audit_context(
                 "arguments": {"node_id": "status"},
             },
         },
+        "report_contract": {
+            "scope_label": "Scheduled VP special-request todo audit (not general project status)",
+            "sections": [
+                "Current blockers",
+                "Pending bookkeeping reconciliation",
+                "Historical bookkeeping",
+            ],
+            "current_claim_rule": (
+                "Only items with report_scope=current_blocker may be described as current blockers."
+            ),
+            "retirement_rule": (
+                "Canonical retirement proves supersession, never completion, unless the record "
+                "explicitly asserts completion with durable evidence."
+            ),
+        },
+        "dispatch_summary": {
+            "mode": "report_only",
+            "agent_launches": 0,
+            "cloud_starts_or_resumes": 0,
+            "audited_workspace_edits": 0,
+            "git_mutations": 0,
+            "allowed_mutation": "separately authorized todo reconciliation only",
+            "todo_reconciliations": list(reconciliation_receipts or []),
+        },
         "items": items,
     }
+
+
+_INITIATIVE_CHAIN_REF = re.compile(
+    r"(?:^|[\s`'\"])(?:\./)?\.megaplan/initiatives/"
+    r"(?P<slug>[a-z0-9][a-z0-9-]*)/chain\.yaml(?:$|[\s`'\",;)])"
+)
+
+
+def _todo_project_root(todo_path: object) -> Path:
+    resolved = Path(todo_path).expanduser().resolve()
+    megaplan_dir = next(
+        (parent for parent in resolved.parents if parent.name == ".megaplan"),
+        None,
+    )
+    return megaplan_dir.parent if megaplan_dir is not None else resolved.parent
+
+
+def _todo_initiative_retirement_evidence(
+    todo_path: object, item: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    """Gather exact initiative retirement markers referenced as launch targets."""
+
+    slugs = _todo_initiative_chain_slugs(item)
+    root = _todo_project_root(todo_path)
+    evidence: list[dict[str, Any]] = []
+    for slug in slugs:
+        marker = root / ".megaplan" / "initiatives" / slug / ".retired"
+        try:
+            raw = marker.read_bytes()
+            payload = json.loads(raw)
+        except (OSError, ValueError, TypeError):
+            continue
+        if not isinstance(payload, Mapping):
+            continue
+        if payload.get("status") != "retired" or payload.get("initiative") != slug:
+            continue
+        truthfulness = payload.get("truthfulness")
+        evidence.append(
+            {
+                "initiative": slug,
+                "state": "retired",
+                "retirement_id": str(payload.get("retirement_id") or ""),
+                "superseded_by": str(payload.get("superseded_by") or ""),
+                "completion_asserted": bool(
+                    isinstance(truthfulness, Mapping)
+                    and truthfulness.get("completion_asserted") is True
+                ),
+                "source_ref": str(marker),
+                "source_sha256": hashlib.sha256(raw).hexdigest(),
+                "gather_reason": "canonical_target_initiative_retired",
+            }
+        )
+    return evidence
+
+
+def _todo_initiative_chain_slugs(item: Mapping[str, Any]) -> list[str]:
+    text = "\n".join(str(item.get(key) or "") for key in ("task", "when"))
+    return sorted(
+        {match.group("slug") for match in _INITIATIVE_CHAIN_REF.finditer(text)}
+    )
+
+
+def _reconcile_retired_todo_targets(
+    todo_path: object, retained: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Apply only exact, evidence-backed initiative-retirement supersessions."""
+
+    receipts: list[dict[str, Any]] = []
+    for item in retained:
+        if item.get("status") != vp_todo.PENDING:
+            continue
+        target_slugs = _todo_initiative_chain_slugs(item)
+        retirement = _todo_initiative_retirement_evidence(todo_path, item)
+        if not target_slugs or len(retirement) != len(target_slugs):
+            continue
+        if any(
+            not row["retirement_id"] or not row["superseded_by"]
+            for row in retirement
+        ):
+            continue
+        canonical_record_id = "+".join(
+            f"initiative-retirement:{row['retirement_id']}->{row['superseded_by']}"
+            for row in retirement
+        )
+        evidence = ";".join(
+            f"{row['source_ref']}#sha256={row['source_sha256']}"
+            for row in retirement
+        )
+        resolution = (
+            "Every explicit target initiative has a canonical retirement record with a "
+            "replacement owner; this supersedes the retained launch intent without asserting "
+            "completion."
+        )
+        resolved = vp_todo.supersede_by_record(
+            Path(todo_path),
+            str(item.get("id") or ""),
+            canonical_record_id=canonical_record_id,
+            evidence=evidence,
+            resolution=resolution,
+        )
+        if resolved is None:
+            continue
+        receipts.append(
+            {
+                "todo_item_id": resolved["id"],
+                "transition": f"{vp_todo.PENDING}->{vp_todo.SUPERSEDED}",
+                "canonical_record_id": canonical_record_id,
+                "evidence": evidence,
+                "completion_asserted": False,
+            }
+        )
+    return vp_todo.load_items(Path(todo_path)), receipts
+
+
+def _todo_report_scope(
+    item: Mapping[str, Any],
+    retirement_evidence: list[dict[str, Any]],
+    *,
+    target_slugs: list[str],
+) -> str:
+    status = str(item.get("status") or "")
+    if status == vp_todo.PENDING:
+        if target_slugs and len(retirement_evidence) == len(target_slugs):
+            return "pending_reconciliation"
+        return "current_blocker"
+    if status == vp_todo.BLOCKED:
+        return "current_blocker"
+    if status == vp_todo.DELEGATED:
+        return "active_external_custody"
+    return "historical_bookkeeping"
 
 
 def _todo_authoritative_inbound(

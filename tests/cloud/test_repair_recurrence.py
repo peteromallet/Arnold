@@ -77,7 +77,7 @@ def test_problem_signature_is_stable_across_message_drift() -> None:
     )
 
 
-def test_problem_signature_is_blank_for_mechanical_redrive_only_context() -> None:
+def test_mechanical_redrive_has_a_stable_terminal_reconciliation_signature() -> None:
     context = {
         "failure_classification": "timeout_or_hang",
         "stale_state": {
@@ -91,14 +91,32 @@ def test_problem_signature_is_blank_for_mechanical_redrive_only_context() -> Non
         },
         "plan_runtime_state": {"current_state": "initialized"},
         "chain_state_summary": {
-            "current_plan_name": "demo-plan",
-            "last_state": "initialized",
+            "current_plan_name": "",
+            "current_milestone_index": 2,
+            "last_state": "pr_closed",
         },
     }
 
     assert repair_recurrence.build_problem_signature(context) == {
-        field: "" for field in repair_recurrence.PROBLEM_SIGNATURE_FIELDS
+        "failure_kind": "stale_state_mechanical_redrive",
+        "current_state": "pr_closed",
+        "phase_or_step": "terminal_reconciliation",
+        "milestone_or_plan": "chain-milestone-index:2",
+        "gate_recommendation": "mechanical_redrive_only",
+        "blocked_task_id": "",
+        "event_signature": "no_latest_failure/unchanged_chain_cursor",
     }
+
+    signature = repair_recurrence.build_problem_signature(context)
+    verdict = repair_recurrence.evaluate_recurrence(
+        signature,
+        [{"attempt_id": 54, "problem_signature": signature}],
+        {"no_advance_count": 1, "min_dispatches": 3, "window_seconds": 3600},
+    )
+    assert verdict["detected"] is True
+    assert verdict["layer1"]["detected"] is True
+    assert verdict["deterministic_failure_breaker"] is True
+    assert verdict["layer3"]["breaker_signature"] == signature
 
 
 def test_advancement_window_fires_only_when_repairs_repeat_without_progress() -> None:

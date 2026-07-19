@@ -5524,41 +5524,93 @@ class AIAgent:
         # Pre-compression memory flush: let the model save memories before they're lost
         self.flush_memories(messages, min_turns=0)
 
+        previous_summary = self.context_compressor._previous_summary
+        previous_compression_count = self.context_compressor.compression_count
+        previous_system_prompt = self._cached_system_prompt
+        previous_session_id = self.session_id
+        previous_db_cursor = self._last_flushed_db_idx
+        previous_pressure_flags = (
+            self._context_50_warned,
+            self._context_70_warned,
+        )
         compressed = self.context_compressor.compress(messages, current_tokens=approx_tokens)
 
-        todo_snapshot = self._todo_store.format_for_injection()
-        if todo_snapshot:
-            compressed.append({"role": "user", "content": todo_snapshot})
+        if not self.context_compressor.last_compaction_succeeded:
+            # Summary generation is a transaction boundary. Do not append
+            # snapshots, rebuild prompts, split persisted sessions, reset DB
+            # cursors, or clear pressure warnings unless compaction committed.
+            return messages, self._cached_system_prompt or system_message
 
-        self._invalidate_system_prompt()
-        new_system_prompt = self._build_system_prompt(system_message)
-        self._cached_system_prompt = new_system_prompt
+        try:
+            todo_snapshot = self._todo_store.format_for_injection()
+            if todo_snapshot:
+                compressed.append({"role": "user", "content": todo_snapshot})
 
-        if self._session_db:
-            try:
+            self._invalidate_system_prompt()
+            new_system_prompt = self._build_system_prompt(system_message)
+            self._cached_system_prompt = new_system_prompt
+
+            if self._session_db:
                 # Propagate title to the new session with auto-numbering
                 old_title = self._session_db.get_session_title(self.session_id)
-                self._session_db.end_session(self.session_id, "compression")
                 old_session_id = self.session_id
-                self.session_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
-                self._session_db.create_session(
-                    session_id=self.session_id,
-                    source=self.platform or "cli",
-                    model=self.model,
-                    parent_session_id=old_session_id,
-                )
+                new_session_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
                 # Auto-number the title for the continuation session
+                new_title = None
                 if old_title:
                     try:
                         new_title = self._session_db.get_next_title_in_lineage(old_title)
-                        self._session_db.set_session_title(self.session_id, new_title)
-                    except (ValueError, Exception) as e:
+                    except Exception as e:
                         logger.debug("Could not propagate title on compression: %s", e)
-                self._session_db.update_system_prompt(self.session_id, new_system_prompt)
+
+                atomic_split = getattr(
+                    self._session_db,
+                    "split_session_for_compression",
+                    None,
+                )
+                if callable(atomic_split):
+                    atomic_split(
+                        old_session_id=old_session_id,
+                        new_session_id=new_session_id,
+                        source=self.platform or "cli",
+                        model=self.model,
+                        system_prompt=new_system_prompt,
+                        title=new_title,
+                    )
+                else:
+                    # Compatibility path for external SessionStore adapters.
+                    # Create the child before ending the parent so a failure
+                    # leaves the original session authoritative.
+                    self._session_db.create_session(
+                        session_id=new_session_id,
+                        source=self.platform or "cli",
+                        model=self.model,
+                        system_prompt=new_system_prompt,
+                        parent_session_id=old_session_id,
+                    )
+                    if new_title:
+                        self._session_db.set_session_title(new_session_id, new_title)
+                    self._session_db.end_session(old_session_id, "compression")
+                self.session_id = new_session_id
                 # Reset flush cursor — new session starts with no messages written
                 self._last_flushed_db_idx = 0
-            except Exception as e:
-                logger.debug("Session DB compression split failed: %s", e)
+
+        except Exception as exc:
+            # Roll back all in-memory compaction state. The built-in SessionDB
+            # split is atomic; legacy stores keep the parent authoritative by
+            # creating the child before attempting to end it.
+            self.context_compressor._previous_summary = previous_summary
+            self.context_compressor.compression_count = previous_compression_count
+            self.context_compressor.last_compaction_succeeded = False
+            self._cached_system_prompt = previous_system_prompt
+            self.session_id = previous_session_id
+            self._last_flushed_db_idx = previous_db_cursor
+            self._context_50_warned, self._context_70_warned = previous_pressure_flags
+            logger.warning(
+                "Context compression state commit failed; preserving original messages: %s",
+                exc,
+            )
+            return messages, previous_system_prompt or system_message
 
         # Reset context pressure warnings — usage drops after compaction
         self._context_50_warned = False

@@ -29,6 +29,7 @@ from arnold_pipelines.megaplan.types import PlanState
 
 from ._projection import (
     PromptProjectionCapabilities,
+    project_completed_task_receipts,
     project_execute_context,
     project_rework_context,
 )
@@ -559,6 +560,32 @@ def _execute_prompt(
     return prompt
 
 
+def _completed_task_receipts_for_prompt(
+    finalize_data: dict[str, Any],
+    *,
+    plan_dir: Path,
+    batch_task_ids: list[str],
+    completed_task_ids: set[str],
+    projection_capabilities: PromptProjectionCapabilities | None,
+) -> dict[str, Any]:
+    caps = (
+        projection_capabilities
+        if projection_capabilities is not None
+        else PromptProjectionCapabilities.full()
+    )
+    source_ref = (
+        str(plan_dir / "finalize.json")
+        if caps.can_read_plan_dir
+        else "finalize.json (authoritative artifact unavailable to this worker)"
+    )
+    return project_completed_task_receipts(
+        finalize_data,
+        batch_task_ids=batch_task_ids,
+        completed_task_ids=completed_task_ids,
+        source_artifact_ref=source_ref,
+    )
+
+
 def _execute_batch_prompt(
     state: PlanState,
     plan_dir: Path,
@@ -577,11 +604,6 @@ def _execute_batch_prompt(
     )
     all_tasks = finalize_data.get("tasks", [])
     projected_tasks = projected_finalize.get("tasks", [])
-    tasks_by_id = {
-        task["id"]: task
-        for task in all_tasks
-        if isinstance(task, dict) and isinstance(task.get("id"), str)
-    }
     projected_tasks_by_id = {
         task["id"]: task
         for task in projected_tasks
@@ -592,11 +614,13 @@ def _execute_batch_prompt(
         for task_id in batch_task_ids
         if task_id in projected_tasks_by_id
     ]
-    completed_tasks = [
-        projected_tasks_by_id[task_id]
-        for task_id in completed
-        if task_id not in set(batch_task_ids) and task_id in projected_tasks_by_id
-    ]
+    completed_task_receipts = _completed_task_receipts_for_prompt(
+        finalize_data,
+        plan_dir=plan_dir,
+        batch_task_ids=batch_task_ids,
+        completed_task_ids=completed,
+        projection_capabilities=projection_capabilities,
+    )
     projected_sense_checks = projected_finalize.get("sense_checks", [])
     batch_sense_checks = [
         sense_check
@@ -704,13 +728,13 @@ def _execute_batch_prompt(
         Batch framing:
         - Execute batch {batch_number} of {batch_total}.
         - Actionable task IDs for this batch: {batch_task_ids}
-        - Already completed task IDs available as dependency context: {sorted(completed)}
+        - Completed task records are represented only by bounded dependency receipts below.
 
         Actionable tasks for this batch:
         {json_dump(batch_tasks).strip()}
 
-        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
-        {json_dump(completed_tasks).strip()}
+        Completed dependency receipts (already satisfied, do not re-execute):
+        {json_dump(completed_task_receipts).strip()}
 
         Prior batch deviations (address if applicable):
         {prior_batch_deviations}
@@ -731,6 +755,7 @@ def _execute_batch_prompt(
         Requirements:
         - Execute only the actionable tasks in this batch.
         - Treat completed tasks as dependency context, not new work.
+        - If dependency receipts report omitted evidence, inspect their `source_artifact`; if it is unavailable, mark the affected task blocked instead of guessing.
         - Return structured JSON only.
         - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
         - {template_reference}
@@ -743,6 +768,7 @@ def _execute_batch_prompt(
         - {_checkpoint_summary_requirement(checkpoint_path, projection_capabilities)}
         {_verification_cwd_requirement(Path(state["config"]["project_dir"]))}
         - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Each actionable task carries an admitted `write_set` and `narrow_tests` budget. Do not write outside its declared paths. Across the task, run at most the declared selectors, `max_runs`, and cumulative `max_seconds`. Wrap every test invocation with a foreground `timeout Ns` whose cumulative N stays within that budget so the harness can verify enforcement from `commands_run`; if the budget is exhausted, stop and return the task blocked with a residual checkpoint instead of widening or looping.
         - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
         - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
         - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.

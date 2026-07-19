@@ -175,7 +175,7 @@ def test_cloud_chain_start_requires_successful_editable_refresh() -> None:
     assert "} >> .megaplan/cloud-chain.log 2>&1 && " in command
     assert "} >> .megaplan/cloud-chain.log 2>&1 || true" not in command
     assert 'RUNTIME_SRC=/workspace/project/.megaplan/runtime/editable-engine' in command
-    assert 'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"' in command
+    assert 'ENGINE_DIR="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"' in command
     assert 'PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}"' in command
 
 

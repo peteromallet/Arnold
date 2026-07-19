@@ -222,6 +222,10 @@ _GLOBAL_TARGETS = [
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/cleanup-loose-branches", "data": "skills/cleanup-loose-branches", "install": "symlink"},
     {"agent": "hermes", "detect": ".hermes", "path": ".hermes/skills/cleanup-loose-branches", "data": "skills/cleanup-loose-branches", "install": "symlink"},
     {"agent": "agents", "detect": ".agents", "path": ".agents/skills/cleanup-loose-branches", "data": "skills/cleanup-loose-branches", "install": "symlink"},
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/fix-the-fixer", "data": "skills/fix-the-fixer", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/fix-the-fixer", "data": "skills/fix-the-fixer", "install": "symlink"},
+    {"agent": "hermes", "detect": ".hermes", "path": ".hermes/skills/fix-the-fixer", "data": "skills/fix-the-fixer", "install": "symlink"},
+    {"agent": "agents", "detect": ".agents", "path": ".agents/skills/fix-the-fixer", "data": "skills/fix-the-fixer", "install": "symlink"},
 ]
 
 

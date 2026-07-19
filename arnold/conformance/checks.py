@@ -39,6 +39,14 @@ _MEGAPLAN_INITIATIVE_SUBDIRS = frozenset(
         "decisions",
         "notes",
         "assets",
+        # Historical initiative plans remain durable context but are not active
+        # chain inputs.  Keep them under an explicit archive boundary instead
+        # of forcing preservation material back into executable root slots.
+        "archive",
+        # Supporting prose and milestone verification are initiative-owned
+        # artifacts with narrower semantics than general notes/evidence.
+        "annexes",
+        "validation",
         "handoff",
         # Chain completion and custody tooling writes plural handoffs and
         # machine-verifiable evidence under the initiative that owns them.

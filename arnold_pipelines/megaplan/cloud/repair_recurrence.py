@@ -417,7 +417,20 @@ def build_problem_signature(failure_context: Mapping[str, Any]) -> dict[str, str
 
     context = _as_dict(failure_context)
     if _mechanical_redrive_only_context(context):
-        return {field: "" for field in PROBLEM_SIGNATURE_FIELDS}
+        chain_state = _as_dict(context.get("chain_state_summary"))
+        milestone_index = _as_int(chain_state.get("current_milestone_index"))
+        plan_identity = _as_text(chain_state.get("current_plan_name"))
+        if not plan_identity and milestone_index is not None:
+            plan_identity = f"chain-milestone-index:{milestone_index}"
+        return {
+            "failure_kind": "stale_state_mechanical_redrive",
+            "current_state": _as_text(chain_state.get("last_state")) or "stale_state",
+            "phase_or_step": "terminal_reconciliation",
+            "milestone_or_plan": plan_identity,
+            "gate_recommendation": "mechanical_redrive_only",
+            "blocked_task_id": "",
+            "event_signature": "no_latest_failure/unchanged_chain_cursor",
+        }
     plan_failure = _as_dict(context.get("plan_latest_failure"))
     chain_state = _as_dict(context.get("chain_state_summary"))
     plan_runtime = _as_dict(context.get("plan_runtime_state"))

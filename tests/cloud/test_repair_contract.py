@@ -61,7 +61,11 @@ def _verified_recovery_evidence(*, blocker_id: str = "blocker-42") -> dict[str, 
             "blocker_cleared": True,
             "directly_observed": True,
             "independent": True,
-            "observed_at": "2026-07-09T07:54:00+00:00",
+            "canonical_runner_live": True,
+            "fresh_progress_beyond_checkpoint": True,
+            "continued_progress": True,
+            "first_progress_observed_at": "2026-07-09T07:54:00+00:00",
+            "observed_at": "2026-07-09T07:55:00+00:00",
         },
     }
 
@@ -1253,7 +1257,9 @@ def test_live_with_fresh_activity_constant_loadable_but_non_success() -> None:
 
 def test_is_terminal_outcome() -> None:
     assert repair_contract.is_terminal_outcome("complete")
-    assert repair_contract.is_terminal_outcome("partial_liveness")
+    assert not repair_contract.is_terminal_outcome("partial_liveness")
+    assert not repair_contract.is_terminal_outcome("live_with_fresh_activity")
+    assert not repair_contract.is_terminal_outcome("recurring_retry_pending")
     assert repair_contract.is_terminal_outcome("repair_timeout")
     assert repair_contract.is_terminal_outcome("repair_exhausted")
     assert repair_contract.is_terminal_outcome("true_human_blocker")
@@ -1556,7 +1562,7 @@ def test_build_verification_record_success() -> None:
 def test_build_verification_record_non_success() -> None:
     rec = repair_contract.build_verification_record("partial_liveness")
     assert rec["is_success"] is False
-    assert rec["is_terminal"] is True
+    assert rec["is_terminal"] is False
 
 
 def test_build_verification_record_non_terminal() -> None:
@@ -1643,6 +1649,76 @@ def test_recovery_view_dispatches_repairable_with_request() -> None:
     assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_L1
     assert decision.custody_bucket == "repairable"
     assert any("recovery view" in r for r in decision.rationale)
+
+
+def test_recovery_view_does_not_treat_bare_liveness_as_repair_custody() -> None:
+    recovery = _make_recovery_view_dict(custody_bucket="repairable")
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": ["req-1"],
+            "active_claim_request_ids": [],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "execution_blocked",
+            "terminal_outcomes": [],
+        },
+        process_evidence={"live": True, "status": "running"},
+        plan_state={
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+        },
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision == repair_contract.DISPATCH_DECISION_L1
+    assert decision.dispatch_intent == repair_contract.DISPATCH_INTENT_L1
+
+
+def test_recovery_view_accepts_liveness_only_with_durable_claim() -> None:
+    recovery = _make_recovery_view_dict(custody_bucket="repairable")
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": ["req-1"],
+            "active_claim_request_ids": ["req-1"],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "execution_blocked",
+            "terminal_outcomes": [],
+        },
+        process_evidence={"live": True, "status": "running"},
+        plan_state={
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+        },
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision == repair_contract.DISPATCH_DECISION_REPAIRING
+
+
+def test_recovery_view_lock_without_request_identity_is_not_custody() -> None:
+    recovery = _make_recovery_view_dict(custody_bucket="repairable")
+    decision = repair_contract.classify_repair_dispatch(
+        recovery_view=recovery,
+        custody_projection={
+            "custody_bucket": "repairable_not_repairing",
+            "active_request_ids": [],
+            "active_claim_request_ids": [],
+            "blocker_id": "blocker-42",
+            "current_state": "blocked",
+            "failure_kind": "execution_blocked",
+            "terminal_outcomes": [],
+        },
+        lock_evidence={"status": "busy"},
+        plan_state={
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+        },
+        current_target={"current_refs": {"current_plan_name": "test-plan"}},
+    )
+    assert decision.decision != repair_contract.DISPATCH_DECISION_REPAIRING
 
 
 def test_recovery_view_refuses_l1_when_legacy_request_has_no_blocker_identity() -> None:
@@ -2175,6 +2251,38 @@ def test_repair_success_not_trusted_without_explicit_escalation_no_fix_evidence(
     )
     assert verdict_nf.verdict_kind == repair_contract.REPAIR_VERDICT_NO_FIX
     assert verdict_nf.no_verdict_detected is False
+
+
+def test_repair_verdict_uses_matching_terminal_goal_evaluation_across_file_race(
+    tmp_path: Path,
+) -> None:
+    goal_path = tmp_path / "goal.json"
+    goal_path.write_text(json.dumps({"status": "active"}), encoding="utf-8")
+    payload = {
+        "outcome": "progressed",
+        "repair_goal": {"goal_path": str(goal_path)},
+    }
+
+    raced = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload=payload,
+        repair_goal_status_override="progressed",
+    )
+    mismatched = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload=payload,
+        repair_goal_status_override="approval_required",
+    )
+
+    assert raced.verdict_kind == repair_contract.REPAIR_VERDICT_CLEARED
+    assert raced.no_verdict_detected is False
+    assert mismatched.verdict_kind == repair_contract.REPAIR_VERDICT_NO_VERDICT
+    assert mismatched.no_verdict_detected is True
+
+    goal_path.write_text(json.dumps({"status": "progressed"}), encoding="utf-8")
+    recomputed = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload=payload,
+    )
+    assert recomputed.verdict_kind == repair_contract.REPAIR_VERDICT_CLEARED
+    assert recomputed.no_verdict_detected is False
 
 
 def test_validate_repair_verdict_payload_rejects_bad_inputs() -> None:
