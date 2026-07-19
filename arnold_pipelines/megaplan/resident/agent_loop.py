@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import signal
+import shutil
 import sys
 import tempfile
 import uuid
@@ -400,18 +401,27 @@ class CodexCliAgentRunner(DispatchProtocol):
                 str(self.cwd),
                 "-",
             ]
+            child_env = environment_with_provenance(request.launch_origin)
+            codex_executable = shutil.which("codex", path=child_env.get("PATH")) or "codex"
+            cmd[0] = codex_executable
             try:
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    env=environment_with_provenance(request.launch_origin),
+                    env=child_env,
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
                 raise AgentLoopError("codex CLI is required for resident model_provider=codex") from exc
             communication = asyncio.create_task(proc.communicate(prompt.encode("utf-8")))
+            # Process creation confirms the OS child, not that the CLI entrypoint
+            # has begun executing. Give the accepted process one short scheduling
+            # window before applying the model-response timeout; otherwise very
+            # small configured timeouts can kill it before any invocation evidence
+            # exists, making timeout recovery indistinguishable from no launch.
+            await asyncio.sleep(0.1)
             completed, _pending = await asyncio.wait(
                 {communication}, timeout=self.config.model_timeout_s
             )
