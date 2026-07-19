@@ -75,6 +75,18 @@ _RETENTION_WINDOWS_DAYS = {
 _SNAPSHOT_RETENTION_DAYS = 30
 _MIN_ATTEMPTS_PER_SESSION = 20
 
+REPAIR_EVIDENCE_REF_SCHEMA = "arnold-repair-evidence-ref-v1"
+REPAIR_EVIDENCE_COMPACTION_SCHEMA = "arnold-repair-evidence-compaction-v1"
+MAX_REPAIR_DATA_BYTES = 4 * 1024 * 1024
+_EVIDENCE_EXTERNALIZE_THRESHOLD_BYTES = 16 * 1024
+_CURRENT_FAILURE_CONTEXT_MAX_BYTES = 512 * 1024
+_ATTEMPT_EVIDENCE_FIELDS = (
+    "failure_context",
+    "post_launch_failure_context",
+    "post_kimi_failure_context",
+    "execute_attempt_context",
+)
+
 
 BLOCKER_FINGERPRINT_VERSION = 1
 BLOCKER_FINGERPRINT_V1_PREFIX = "repair-blocker-fingerprint/v1"
@@ -1631,7 +1643,11 @@ def _classify_from_recovery_view(
         # classified this as repairable; do not let a stale legacy custody bucket
         # override that classification.
         elif lock_evidence is not None or process_evidence is not None:
-            if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody={}):
+            if _has_active_repair(
+                lock_evidence=lock_evidence,
+                process_evidence=process_evidence,
+                custody=custody,
+            ):
                 decision = DISPATCH_DECISION_REPAIRING
                 dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
                 rationale.append("recovery view: repairable but active repair ownership exists")
@@ -1861,6 +1877,186 @@ def redact_repair_data(
     return _redact_value(validated, redactor)
 
 
+def _encoded_json(value: Any, *, pretty: bool = False) -> bytes:
+    if pretty:
+        return (json.dumps(value, indent=2, sort_keys=True, default=str) + "\n").encode(
+            "utf-8"
+        )
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), default=str
+    ).encode("utf-8")
+
+
+def _is_repair_evidence_ref(value: object) -> bool:
+    return bool(
+        isinstance(value, Mapping)
+        and value.get("schema_version") == REPAIR_EVIDENCE_REF_SCHEMA
+        and value.get("kind") == "content_addressed_repair_evidence"
+    )
+
+
+def _persist_repair_evidence(
+    target: Path,
+    value: Any,
+    *,
+    field: str,
+) -> dict[str, Any]:
+    """Persist expanding history once and return an immutable typed pointer."""
+
+    encoded = _encoded_json(value, pretty=True)
+    digest = sha256(encoded).hexdigest()
+    evidence_dir = target.parent / f"{target.stem}.evidence"
+    evidence_path = evidence_dir / f"sha256-{digest}.json"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    if evidence_path.exists():
+        observed = evidence_path.read_bytes()
+        if len(observed) != len(encoded) or sha256(observed).hexdigest() != digest:
+            raise ValueError(
+                f"content-addressed repair evidence disagrees: {evidence_path}"
+            )
+    else:
+        fd, temporary_raw = tempfile.mkstemp(
+            prefix=f".{evidence_path.name}.", suffix=".tmp", dir=evidence_dir
+        )
+        temporary = Path(temporary_raw)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, evidence_path)
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+    return {
+        "schema_version": REPAIR_EVIDENCE_REF_SCHEMA,
+        "kind": "content_addressed_repair_evidence",
+        "field": field,
+        "path": str(evidence_path.resolve()),
+        "sha256": digest,
+        "size_bytes": len(encoded),
+    }
+
+
+def load_repair_evidence_reference(value: Mapping[str, Any]) -> Any:
+    """Load a compacted evidence reference only after size and digest checks."""
+
+    if not _is_repair_evidence_ref(value):
+        raise ValueError("repair evidence reference schema is invalid")
+    path = Path(str(value.get("path") or ""))
+    expected_size = value.get("size_bytes")
+    expected_digest = str(value.get("sha256") or "")
+    if not path.is_absolute() or not isinstance(expected_size, int) or expected_size <= 0:
+        raise ValueError("repair evidence reference identity is incomplete")
+    encoded = path.read_bytes()
+    if len(encoded) != expected_size or sha256(encoded).hexdigest() != expected_digest:
+        raise ValueError("repair evidence reference content disagrees")
+    return json.loads(encoded)
+
+
+def _bounded_current_failure_context(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep the current decision fields inline while moving an oversized blob aside."""
+
+    allowed = (
+        "failure_classification",
+        "stale_state",
+        "state_mismatch",
+        "raw_failure_signals",
+        "plan_latest_failure",
+        "chain_state_summary",
+        "plan_runtime_state",
+        "last_gate",
+        "user_action_context",
+        "resolver_output",
+        "chain_log_path",
+        "run_log_path",
+        "plan_events_path",
+        "mechanical_log_path",
+    )
+    return {key: deepcopy(value[key]) for key in allowed if key in value}
+
+
+def compact_repair_data_evidence(
+    path: str | Path,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Externalize repeated expanding contexts without discarding their custody."""
+
+    target = Path(path)
+    compacted = deepcopy(dict(payload))
+    source_bytes = len(_encoded_json(compacted))
+    if source_bytes <= _EVIDENCE_EXTERNALIZE_THRESHOLD_BYTES:
+        return compacted
+    externalized = 0
+    unique_refs: set[str] = set()
+
+    def replace_large(container: dict[str, Any], field: str, *, force: bool = False) -> None:
+        nonlocal externalized
+        value = container.get(field)
+        if value in (None, "", [], {}) or _is_repair_evidence_ref(value):
+            return
+        if not force and len(_encoded_json(value)) <= _EVIDENCE_EXTERNALIZE_THRESHOLD_BYTES:
+            return
+        ref = _persist_repair_evidence(target, value, field=field)
+        container[field] = ref
+        externalized += 1
+        unique_refs.add(str(ref["sha256"]))
+
+    initial = compacted.get("initial_facts")
+    if isinstance(initial, dict):
+        for field in (
+            "failure_context",
+            "execute_attempt_context",
+            "semantic_health",
+            "semantic_context",
+            "custody_projection",
+        ):
+            replace_large(initial, field)
+
+    for collection_name in ("attempts", "iterations"):
+        collection = compacted.get(collection_name)
+        if not isinstance(collection, list):
+            continue
+        for item in collection:
+            if not isinstance(item, dict):
+                continue
+            for field in _ATTEMPT_EVIDENCE_FIELDS:
+                replace_large(item, field)
+
+    current = compacted.get("current_failure_context")
+    if (
+        isinstance(current, Mapping)
+        and len(_encoded_json(current)) > _CURRENT_FAILURE_CONTEXT_MAX_BYTES
+    ):
+        ref = _persist_repair_evidence(
+            target, current, field="current_failure_context"
+        )
+        summary = _bounded_current_failure_context(current)
+        summary["evidence_ref"] = ref
+        compacted["current_failure_context"] = summary
+        externalized += 1
+        unique_refs.add(str(ref["sha256"]))
+
+    compacted["evidence_compaction"] = {
+        "schema_version": REPAIR_EVIDENCE_COMPACTION_SCHEMA,
+        "source_size_bytes": source_bytes,
+        "externalized_field_count": externalized,
+        "unique_evidence_count": len(unique_refs),
+    }
+    persisted_bytes = 0
+    for _ in range(3):
+        persisted_bytes = len(_encoded_json(compacted))
+        compacted["evidence_compaction"]["persisted_size_bytes"] = persisted_bytes
+    if persisted_bytes > MAX_REPAIR_DATA_BYTES:
+        raise ValueError(
+            "repair-data remains above 4 MiB after evidence compaction; refusing expansion"
+        )
+    return compacted
+
+
 def save_repair_data(
     path: str | Path,
     payload: Mapping[str, Any],
@@ -1879,8 +2075,11 @@ def save_repair_data(
     incident-ledger root before falling back to the current working directory.
     """
 
-    prepared = redact_repair_data(payload, redactor=redactor)
     target = Path(path)
+    prepared = compact_repair_data_evidence(
+        target,
+        redact_repair_data(payload, redactor=redactor),
+    )
 
     # ------------------------------------------------------------------
     # Snapshot the previous payload *before* overwriting so we can
@@ -2134,6 +2333,7 @@ LIVE_WITH_FRESH_ACTIVITY = "live_with_fresh_activity"
 TRUE_HUMAN_BLOCKER = "true_human_blocker"
 PARTIAL_LIVENESS = "partial_liveness"
 REPAIRING = "repairing"
+RETRY_PENDING = "recurring_retry_pending"
 RECOVERY_VERIFIED = "verified_recovered"
 RECOVERY_PROVISIONAL = "provisional"
 RECOVERY_UNKNOWN = "unknown"
@@ -2155,6 +2355,7 @@ NON_SUCCESS_OUTCOMES: frozenset[str] = frozenset(
         LIVE_WITH_FRESH_ACTIVITY,
         PARTIAL_LIVENESS,
         REPAIRING,
+        RETRY_PENDING,
         REPAIR_TIMEOUT,
         REPAIR_EXHAUSTED,
         NEEDS_HUMAN,
@@ -2164,6 +2365,9 @@ NON_SUCCESS_OUTCOMES: frozenset[str] = frozenset(
 )
 
 ALL_OUTCOMES: frozenset[str] = SUCCESS_OUTCOMES | NON_SUCCESS_OUTCOMES
+NON_TERMINAL_OUTCOMES: frozenset[str] = frozenset(
+    {REPAIRING, RETRY_PENDING, PARTIAL_LIVENESS, LIVE_WITH_FRESH_ACTIVITY}
+)
 
 
 def is_success_outcome(outcome: str) -> bool:
@@ -2179,9 +2383,10 @@ def is_success_outcome(outcome: str) -> bool:
 def is_terminal_outcome(outcome: str) -> bool:
     """Return True when *outcome* is terminal (success or non-success).
 
-    ``repairing`` is the only non-terminal outcome; everything else is terminal.
+    Repairing, retry-pending, and liveness-only outcomes retain durable custody.
+    None may close the semantic repair goal.
     """
-    return outcome != REPAIRING
+    return outcome not in NON_TERMINAL_OUTCOMES
 
 
 # -- one-hour budget helpers ------------------------------------------------
@@ -2355,22 +2560,56 @@ def classify_recovery_verification(
         return unknown("partial", "blocker clearance was not directly observed")
     if observation.get("independent") is not True:
         return unknown("partial", "blocker clearance observation is not independent")
+    if observation.get("canonical_runner_live") is not True:
+        return unknown(
+            "contradictory"
+            if observation.get("canonical_runner_live") is False
+            else "partial",
+            "the exact canonical runner is not independently proven live",
+        )
+    if observation.get("fresh_progress_beyond_checkpoint") is not True:
+        return unknown(
+            "contradictory"
+            if observation.get("fresh_progress_beyond_checkpoint") is False
+            else "partial",
+            "fresh authoritative progress beyond the pre-repair checkpoint is not proven",
+        )
+    if observation.get("continued_progress") is not True:
+        return unknown(
+            "contradictory"
+            if observation.get("continued_progress") is False
+            else "partial",
+            "bounded follow-up observation did not prove continued progress",
+        )
 
     completed_at = _verification_timestamp(repair_completed_at)
+    first_progress_at = _verification_timestamp(
+        observation.get("first_progress_observed_at")
+    )
     observed_at = _verification_timestamp(observation.get("observed_at"))
-    if completed_at is None or observed_at is None:
+    if completed_at is None or first_progress_at is None or observed_at is None:
         return unknown("partial", "verification timestamps are incomplete")
-    if observed_at <= completed_at:
-        return unknown("stale", "verification observation is not later than repair completion")
+    if first_progress_at <= completed_at:
+        return unknown(
+            "stale", "initial recovery observation is not later than repair completion"
+        )
+    if observed_at <= first_progress_at:
+        return unknown(
+            "stale", "follow-up observation is not later than initial recovery progress"
+        )
 
     return {
         "status": RECOVERY_VERIFIED,
         "unknown_type": "",
         "recovery_verified": True,
         "authorizes_verified_recovered": True,
-        "reason": "later independent observation directly proves the original blocker cleared",
+        "reason": (
+            "two later independent observations prove blocker clearance, a live canonical "
+            "runner, beyond-checkpoint progress, and continued progress"
+        ),
         "blocker_identity": original_identity,
         "repair_completed_at": completed_at.isoformat(),
+        "first_progress_observed_at": first_progress_at.isoformat(),
         "observed_at": observed_at.isoformat(),
     }
 
@@ -3791,17 +4030,26 @@ def _has_active_repair(
     if durable_repair_active(custody):
         return True
 
+    # A compatibility lock can corroborate custody, but it cannot manufacture
+    # the request/blocker identity that custody requires.
+    blocker_id = _as_text(custody.get("blocker_id"))
+    active_request_ids = {
+        _as_text(value)
+        for value in _as_list(custody.get("active_request_ids"))
+        if _as_text(value)
+    }
+    if not blocker_id or not active_request_ids:
+        return False
+
     lock_status = _as_text(getattr(lock_evidence, "status", ""))
     if not lock_status and isinstance(lock_evidence, Mapping):
         lock_status = _as_text(lock_evidence.get("status"))
     if lock_status in {"acquired", "busy", "claimed", "already_claimed"}:
         return True
 
-    process_payload = _as_mapping(process_evidence)
-    process_status = _as_text(process_payload.get("status"))
-    if process_payload.get("active") is True or process_payload.get("live") is True:
-        return True
-    return process_status in {"active", "busy", "claimed", "repairing", "running"}
+    # Process liveness is provisional transport evidence.  Without a durable
+    # blocker-scoped claim or lock it must not suppress a fresh repair owner.
+    return False
 
 
 def _is_known_repairable_shape(
@@ -4028,6 +4276,7 @@ def build_ordinary_repair_verdict(
     before_evidence_refs: tuple[str, ...] | None = None,
     after_evidence_refs: tuple[str, ...] | None = None,
     durable_refs: tuple[str, ...] | None = None,
+    repair_goal_status_override: str = "",
     timestamp: str | None = None,
 ) -> RepairVerdict:
     """Build a structured ordinary repair completion verdict from available evidence.
@@ -4043,6 +4292,33 @@ def build_ordinary_repair_verdict(
     outcome = _as_text(payload.get("outcome"))
     verdict_kind = _OUTCOME_TO_VERDICT_KIND.get(outcome, REPAIR_VERDICT_NO_VERDICT)
 
+    # A repair process/result is not the semantic completion authority when a
+    # durable repair goal is linked.  Fail closed unless that goal itself has
+    # authoritative progress or an explicit approval gate.
+    repair_goal = _as_mapping(payload.get("repair_goal"))
+    repair_goal_path = _as_text(repair_goal.get("goal_path"))
+    repair_goal_status = ""
+    if repair_goal_path:
+        try:
+            goal_payload = json.loads(Path(repair_goal_path).read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            goal_payload = {}
+        if isinstance(goal_payload, Mapping):
+            repair_goal_status = _as_text(goal_payload.get("status"))
+        override = _as_text(repair_goal_status_override)
+        expected_override = {
+            "progressed": "progressed",
+            "true_human_blocker": "approval_required",
+        }.get(outcome, "")
+        if override and override == expected_override:
+            # The goal evaluator's returned terminal status is authoritative
+            # for this outcome.  Carry it across the verdict write so a
+            # concurrent stale goal-file writer cannot turn a verified
+            # terminal result back into no-verdict.
+            repair_goal_status = override
+        if repair_goal_status not in {"progressed", "approval_required"}:
+            verdict_kind = REPAIR_VERDICT_NO_VERDICT
+
     stale_detected = False
     stale_reason = ""
     if payload:
@@ -4052,6 +4328,11 @@ def build_ordinary_repair_verdict(
     no_verdict_reason = ""
     if verdict_kind == REPAIR_VERDICT_NO_VERDICT or not outcome:
         no_verdict_detected, no_verdict_reason = detect_no_verdict_artifact(payload)
+        if repair_goal_path and repair_goal_status not in {"progressed", "approval_required"}:
+            no_verdict_detected = True
+            no_verdict_reason = (
+                "durable repair goal remains active at the captured frozen checkpoint"
+            )
 
     evidence_ts = timestamp or _as_text(payload.get("evidence_timestamp") or payload.get("completed_at") or "")
     if not evidence_ts:
@@ -4796,12 +5077,14 @@ __all__ = [
     "ENVIRONMENT_GONE",
     "LIVE_WITH_FRESH_ACTIVITY",
     "NEEDS_HUMAN",
+    "NON_TERMINAL_OUTCOMES",
     "NON_SUCCESS_OUTCOMES",
     "PARTIAL_LIVENESS",
     "PROGRESSED",
     "REPAIR_EXHAUSTED",
     "REPAIR_TIMEOUT",
     "REPAIRING",
+    "RETRY_PENDING",
     "RECOVERY_PROVISIONAL",
     "RECOVERY_UNKNOWN",
     "RECOVERY_UNKNOWN_TYPES",

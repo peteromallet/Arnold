@@ -47,6 +47,43 @@ _CODEX_LAUNCH_FAILURE_NEEDLES = (
 _MAX_COMMIT_CUSTODY_FAILURE_RETRIES = 2
 
 
+def resolve_authoritative_blocker_id(
+    session: str, *, repair_data_dir: str | Path, supplied_blocker_id: str = ""
+) -> tuple[str, bool]:
+    """Resolve blocker identity from durable repair custody, exposing drift.
+
+    The repair goal is the frozen authority.  Repair-data must agree with it;
+    a caller-supplied dispatch token is observational and may be stale.
+    """
+
+    repair_path = Path(repair_data_dir) / f"{session}.repair-data.json"
+    if not repair_path.exists():
+        # A legacy/manual caller may have no repair episode.  Preserve its
+        # historical session-scoped guard; real queued repair custody must use
+        # the authoritative path below.
+        return str(supplied_blocker_id or "").strip(), False
+    repair_data = load_json(repair_path, default={})
+    if not isinstance(repair_data, dict):
+        raise ValueError("authoritative repair data is missing")
+    data_blocker = str(repair_data.get("blocker_id") or "").strip()
+    goal_ref = repair_data.get("repair_goal")
+    goal_path = str(goal_ref.get("goal_path") or "") if isinstance(goal_ref, dict) else ""
+    goal = load_json(Path(goal_path), default={}) if goal_path else {}
+    goal_target = goal.get("target") if isinstance(goal, dict) else {}
+    goal_blocker = (
+        str(goal_target.get("blocker_id") or "").strip()
+        if isinstance(goal_target, dict)
+        else ""
+    )
+    if data_blocker and goal_blocker and data_blocker != goal_blocker:
+        raise ValueError("repair data and repair goal blocker identities disagree")
+    authoritative = goal_blocker or data_blocker
+    if not authoritative:
+        raise ValueError("authoritative repair blocker identity is missing")
+    supplied = str(supplied_blocker_id or "").strip()
+    return authoritative, bool(supplied and supplied != authoritative)
+
+
 def _is_unrecordable_launch_failure(data: dict) -> bool:
     """Return True for historical records that never launched meta-repair.
 
@@ -78,6 +115,7 @@ class RecursionCheckResult:
 
     session: str
     recursing: bool
+    blocker_id: str = ""
     existing_meta_repair_ids: tuple[str, ...] = field(default_factory=tuple)
     recommendation: str = ""
 
@@ -92,11 +130,13 @@ def check_meta_repair_recursion(
     *,
     repair_data_dir: str | Path,
     max_meta_repair_attempts: int = 1,
+    blocker_id: str = "",
 ) -> RecursionCheckResult:
     """Check whether meta-repair would recurse for *session*.
 
     Scans ``repair-data/meta/`` for existing meta-repair records that
-    belong to *session*.  When the number of existing records is *>=*
+    belong to *session* and, when supplied, the same *blocker_id*.  When the
+    number of existing records is *>=*
     *max_meta_repair_attempts* the result flags recursion and recommends
     escalation to ``NEEDS_HUMAN``.
 
@@ -105,6 +145,9 @@ def check_meta_repair_recursion(
         repair_data_dir: Root of the repair-data tree.
         max_meta_repair_attempts: Maximum number of meta-repair attempts
             allowed before escalation (default ``1`` — no recursion at all).
+        blocker_id: Canonical blocker identity.  Supplying it prevents a prior
+            blocker episode in the same long-lived cloud session from poisoning
+            the recursion budget for the current blocker.
 
     Returns:
         A :class:`RecursionCheckResult` with the verdict.
@@ -116,6 +159,7 @@ def check_meta_repair_recursion(
         return RecursionCheckResult(
             session=session,
             recursing=False,
+            blocker_id=blocker_id,
             recommendation="no prior meta-repair records; safe to proceed",
         )
 
@@ -126,6 +170,8 @@ def check_meta_repair_recursion(
         try:
             data = load_json(record_file, default={})
             if isinstance(data, dict) and data.get("session") == session:
+                if blocker_id and str(data.get("blocker_id") or "") != blocker_id:
+                    continue
                 if _is_unrecordable_launch_failure(data):
                     continue
                 record_id = record_file.stem
@@ -148,7 +194,8 @@ def check_meta_repair_recursion(
 
     if recursing:
         recommendation = (
-            f"Meta-repair recursion detected for session {session!r}: "
+            f"Meta-repair recursion detected for session {session!r}"
+            f" blocker {blocker_id!r}: "
             f"found {len(matching_ids)} existing meta-repair record(s) "
             f"({', '.join(matching_ids)}), threshold={max_meta_repair_attempts}. "
             f"Escalate to {NEEDS_HUMAN!r} instead of launching another meta-repair."
@@ -156,13 +203,15 @@ def check_meta_repair_recursion(
     else:
         recommendation = (
             f"Found {len(matching_ids)} existing meta-repair record(s) "
-            f"for session {session!r}, below threshold {max_meta_repair_attempts}; "
+            f"for session {session!r} blocker {blocker_id!r}, "
+            f"below threshold {max_meta_repair_attempts}; "
             f"safe to proceed."
         )
 
     return RecursionCheckResult(
         session=session,
         recursing=recursing,
+        blocker_id=blocker_id,
         existing_meta_repair_ids=tuple(matching_ids),
         recommendation=recommendation,
     )
@@ -257,4 +306,5 @@ __all__ = [
     "can_commit_changes",
     "can_push_changes",
     "check_meta_repair_recursion",
+    "resolve_authoritative_blocker_id",
 ]

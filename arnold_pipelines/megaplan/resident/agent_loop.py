@@ -6,6 +6,7 @@ import asyncio
 import contextvars
 import json
 import os
+import signal
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -97,6 +98,10 @@ class FakeAgentStep:
 
 class AgentLoopError(RuntimeError):
     """Deterministic resident agent-loop failure."""
+
+
+class AgentTimeoutError(AgentLoopError):
+    """A resident model process exceeded both bounded execution windows."""
 
 
 class AgentPromptTooLargeError(AgentLoopError):
@@ -349,6 +354,8 @@ class CodexCliAgentRunner(DispatchProtocol):
     async def run(self, request: AgentRequest, tools: ToolRegistry) -> AgentResponse:
         model_name = _request_model_name(request, self.config.model_name)
         prompt = self._prompt(request, tools)
+        started_at = perf_counter()
+        timeout_recovered = False
         with tempfile.NamedTemporaryFile(prefix="resident-codex-", suffix=".txt") as output:
             cmd = [
                 "codex",
@@ -375,18 +382,42 @@ class CodexCliAgentRunner(DispatchProtocol):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     env=environment_with_provenance(request.launch_origin),
+                    start_new_session=True,
                 )
             except FileNotFoundError as exc:
                 raise AgentLoopError("codex CLI is required for resident model_provider=codex") from exc
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(prompt.encode("utf-8")),
-                    timeout=self.config.model_timeout_s,
+            communication = asyncio.create_task(proc.communicate(prompt.encode("utf-8")))
+            completed, _pending = await asyncio.wait(
+                {communication}, timeout=self.config.model_timeout_s
+            )
+            if not completed:
+                timeout_recovered = True
+                completed, _pending = await asyncio.wait(
+                    {communication}, timeout=self.config.model_timeout_recovery_grace_s
                 )
-            except asyncio.TimeoutError as exc:
-                proc.kill()
-                await proc.wait()
-                raise AgentLoopError(f"codex exec timed out after {self.config.model_timeout_s:g}s") from exc
+            if not completed:
+                await _kill_process_group(proc)
+                try:
+                    stdout, stderr = await asyncio.wait_for(
+                        asyncio.shield(communication), timeout=5.0
+                    )
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    communication.cancel()
+                    await asyncio.gather(communication, return_exceptions=True)
+                    stdout, stderr = b"", b""
+                elapsed_s = perf_counter() - started_at
+                stderr_tail = stderr.decode("utf-8", errors="replace").strip()[-800:]
+                detail = (
+                    f"codex exec exceeded {self.config.model_timeout_s:g}s and same-process "
+                    f"recovery exhausted after {self.config.model_timeout_recovery_grace_s:g}s "
+                    f"(continuations=1, elapsed={elapsed_s:.3f}s, pid={proc.pid}, "
+                    f"stdout_bytes={len(stdout)}, stderr_bytes={len(stderr)}); "
+                    "process group terminated; no invocation replayed"
+                )
+                if stderr_tail:
+                    detail += f"; stderr_tail={stderr_tail}"
+                raise AgentTimeoutError(detail)
+            stdout, stderr = communication.result()
             stdout_text = stdout.decode("utf-8", errors="replace")
             stderr_text = stderr.decode("utf-8", errors="replace")
             output.seek(0)
@@ -396,15 +427,28 @@ class CodexCliAgentRunner(DispatchProtocol):
             raise AgentLoopError(f"codex exec failed with exit {proc.returncode}: {detail[-2000:]}")
         if not final_text:
             final_text = _last_nonempty_line(stdout_text)
+        metadata: dict[str, Any] = {
+            "runner": "codex_cli",
+            "model": model_name,
+            "reasoning_effort": self.config.codex_reasoning_effort,
+            "sandbox": self.sandbox,
+        }
+        if timeout_recovered:
+            metadata["timeout_recovery"] = {
+                "mode": "same_process_grace",
+                "continuations": 1,
+                "invocation_replays": 0,
+                "initial_timeout_s": self.config.model_timeout_s,
+                "recovery_grace_s": self.config.model_timeout_recovery_grace_s,
+                "elapsed_s": round(perf_counter() - started_at, 3),
+                "process_pid": proc.pid,
+                "stdout_bytes": len(stdout),
+                "stderr_bytes": len(stderr),
+            }
         return AgentResponse(
             final_text=final_text,
             tool_calls=(),
-            metadata={
-                "runner": "codex_cli",
-                "model": model_name,
-                "reasoning_effort": self.config.codex_reasoning_effort,
-                "sandbox": self.sandbox,
-            },
+            metadata=metadata,
         )
 
     def _prompt(self, request: AgentRequest, tools: ToolRegistry) -> str:
@@ -427,7 +471,8 @@ class CodexCliAgentRunner(DispatchProtocol):
             "When native function exposure is absent and delegated work is required, use the supported "
             "local resident seam before replying: write the complete task to a file, then run "
             "`python -P -m arnold_pipelines.megaplan.resident.subagent launch --task-file <path> "
-            "--task-kind <kind> --difficulty <D1-D10>`. Do not call a generic subagent launcher in its place. "
+            "--task-kind <kind> --work-intent <execution|review|speculative> "
+            "--difficulty <D1-D10>`. Do not call a generic subagent launcher in its place. "
             "The `-P` isolation flag is mandatory: this resident may intentionally run from a pinned "
             "runtime source while its working directory contains another checkout, and importing from "
             "that checkout would split launch manifests from status and delivery. "
@@ -448,6 +493,22 @@ class CodexCliAgentRunner(DispatchProtocol):
                 f"{len(prompt)} > {self.config.max_prompt_chars} characters"
             )
         return prompt
+
+
+async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
+    """Kill the Codex wrapper and descendants created for one invocation."""
+
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        if proc.returncode is None:
+            proc.kill()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5.0)
+    except asyncio.TimeoutError:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
 
 
 async def _await_maybe(value: Any) -> Any:

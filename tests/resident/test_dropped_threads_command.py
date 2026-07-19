@@ -14,7 +14,10 @@ from arnold_pipelines.megaplan.resident.discord import (
 )
 from arnold_pipelines.megaplan.resident.dropped_threads import (
     DEFAULT_DROPPED_THREADS_LOOKBACK,
+    DROPPED_THREAD_CLASSIFICATIONS,
+    DROPPED_THREADS_OUTPUT_FIELDS,
     InvalidLookback,
+    STRATEGIC_ACTION_GAP_CATEGORIES,
     dropped_threads_prompt,
     parse_dropped_threads_lookback,
 )
@@ -55,6 +58,8 @@ def test_dropped_threads_registers_a_single_optional_lookback_command() -> None:
     assert command.handler_name == "handle_dropped_threads_interaction"
     assert command.has_lookback_option is True
     assert "dropped" in command.description
+    assert "strategic action gaps" in command.description
+    assert len(command.description) <= 100
 
     class Service:
         async def handle_currently_running_interaction(self, _interaction):
@@ -84,8 +89,86 @@ def test_default_lookback_is_six_hours_and_is_in_the_resident_prompt() -> None:
     assert "last 6h" in prompt
     assert "authoritative persisted conversation" in prompt
     assert "Do not rely only on hot-context excerpts" in prompt
+    assert "search_messages" in prompt
     assert "pending or conditional" in prompt
-    assert "timezone abbreviation, and UTC offset" in prompt
+    assert "timezone abbreviation, and numeric UTC offset" in prompt
+
+
+def test_taxonomy_and_output_contract_are_bounded_and_classified() -> None:
+    assert DROPPED_THREAD_CLASSIFICATIONS == (
+        "explicit_dropped_thread",
+        "strategic_action_gap",
+    )
+    assert STRATEGIC_ACTION_GAP_CATEGORIES == (
+        "identified_defect_or_risk",
+        "necessary_follow_up",
+        "actionable_evidence_or_recommendation",
+        "partial_fix_residual_risk",
+    )
+    assert DROPPED_THREADS_OUTPUT_FIELDS == (
+        "classification",
+        "category",
+        "thread",
+        "evidence",
+        "why_action_was_expected",
+        "missing_disposition_evidence",
+        "confidence",
+        "recommended_next_action",
+    )
+
+    prompt = dropped_threads_prompt(DEFAULT_DROPPED_THREADS_LOOKBACK)
+    for classification in DROPPED_THREAD_CLASSIFICATIONS:
+        assert classification in prompt
+    for category in STRATEGIC_ACTION_GAP_CATEGORIES:
+        assert category in prompt
+    for field in DROPPED_THREADS_OUTPUT_FIELDS:
+        assert field in prompt
+
+
+def test_prompt_covers_user_bug_and_necessary_follow_up_examples() -> None:
+    prompt = dropped_threads_prompt(DEFAULT_DROPPED_THREADS_LOOKBACK)
+
+    # User example 1: spotting a concrete bug does not count as closure when no
+    # investigation, fix, or explicit disposition follows.
+    assert "concrete bug, defect, failure, or material risk was identified" in prompt
+    assert "no investigation, fix, or explicit disposition followed" in prompt
+
+    # User example 2: completed work can make a follow-up necessary even when
+    # nobody made a separate explicit promise to do it.
+    assert "completed work created an obvious necessary follow-up" in prompt
+    assert "no action, owner, durable todo/ticket/plan" in prompt
+    assert "no explicit promise is required" in prompt
+
+
+def test_prompt_covers_action_only_reporting_and_partial_fix_residuals() -> None:
+    prompt = dropped_threads_prompt(DEFAULT_DROPPED_THREADS_LOOKBACK)
+
+    assert "evidence or a recommendation called for action" in prompt
+    assert "acknowledgement or reporting only" in prompt
+    assert "partial fix or workaround left a stated root cause or residual risk untreated" in prompt
+
+
+def test_prompt_requires_actionability_and_missing_disposition_evidence() -> None:
+    prompt = dropped_threads_prompt(DEFAULT_DROPPED_THREADS_LOOKBACK)
+
+    assert "evidence supports both" in prompt
+    assert "materially actionable implication" in prompt
+    assert "absence of a satisfactory disposition" in prompt
+    assert "what later scope was checked and any uncertainty" in prompt
+    assert "never turn uncertainty into an assertion" in prompt
+
+
+def test_prompt_rejects_speculation_optional_ideas_and_explicit_deferrals() -> None:
+    prompt = dropped_threads_prompt(DEFAULT_DROPPED_THREADS_LOOKBACK)
+
+    assert "do not flag a suggestion, hypothetical, optional enhancement, observation" in prompt
+    assert "pending or conditional work that is not due" in prompt
+    assert "reasoned deferral" in prompt
+    assert "explicit rejection" in prompt
+    assert "delegation to a durable owner" in prompt
+    assert "durable ticket/todo/initiative/plan" in prompt
+    assert "supersession is a disposition" in prompt
+    assert "Prefer omitting low-confidence candidates" in prompt
 
 
 def test_duration_parser_accepts_minutes_hours_days_and_caps_at_seven_days() -> None:

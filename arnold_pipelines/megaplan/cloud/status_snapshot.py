@@ -54,6 +54,7 @@ from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 from arnold_pipelines.megaplan.cloud.session_markers import (
     is_canonical_session_marker_path,
 )
+from arnold_pipelines.megaplan.cloud.status_retirement import status_retirement_matches
 from arnold_pipelines.megaplan.chain.spec import load_spec as load_chain_spec
 from arnold_pipelines.run_authority import canonical_json, reduce_run_authority
 from arnold_pipelines.megaplan.status_projection import plan_status_presentation
@@ -688,10 +689,11 @@ def _session_progress(
     ``completed_count`` milestones are done, the next is the in-flight sprint
     (carrying ``current_plan``), and the rest are pending.
 
-    For the in-flight sprint we additionally estimate a per-plan percent
-    (``plan_percent``) from ``plan_state`` via :func:`_plan_stage_percent`, plus
-    the raw ``plan_state`` label. Both are omitted when there is no in-flight
-    plan or no recorded state, so the progress block stays clean.
+    For the in-flight sprint we additionally calculate plan lifecycle/task-weight
+    bookkeeping (``plan_percent``) from ``plan_state`` via
+    :func:`_plan_stage_percent`, plus the raw ``plan_state`` label. This is not
+    implementation acceptance. Both are omitted when there is no in-flight plan
+    or no recorded state, so the progress block stays clean.
 
     The headline ``percent`` is the epic progress **with the in-flight plan's
     stage fraction folded in** — ``(completed + plan_percent/100) / total`` — so
@@ -774,6 +776,9 @@ def _session_progress(
         )
     if plan_percent is not None:
         progress["plan_percent"] = plan_percent
+        progress["plan_percent_basis"] = (
+            "plan lifecycle and recorded task-weight bookkeeping; not implementation acceptance"
+        )
     if has_in_flight and execution_progress is not None:
         completed_weight, total_weight, task_count = execution_progress
         progress["execution_tasks"] = {
@@ -976,6 +981,12 @@ def _build_session_entry(
     # that sits off the progression ladder and would under-report the plan's
     # position. Fall back to last_state when state.json is unavailable.
     plan_state_doc = _load_current_plan_state(workspace, str(current_plan or ""))
+    review_doc = _load_current_plan_review(workspace, str(current_plan or ""))
+    review_verdict = (
+        str(review_doc.get("review_verdict") or "").strip().lower()
+        if isinstance(review_doc, Mapping)
+        else ""
+    )
     completed_at = _terminal_completion_at(
         workspace,
         str(current_plan or ""),
@@ -1187,6 +1198,7 @@ def _build_session_entry(
     presentation = plan_status_presentation(
         plan_state_label,
         active_step=active_step,
+        review_verdict=review_verdict,
         completed=chain_complete or status == "complete",
     )
 
@@ -1245,6 +1257,7 @@ def _build_session_entry(
         # liveness signals.  Consumers read this to decide whether
         # progress is accepted or merely observed.
         "accepted_progress": accepted_progress,
+        "review_verdict": review_verdict or None,
         **presentation,
         "progress": _session_progress(
             completed_count=completed_count,
@@ -1972,6 +1985,13 @@ def _load_session_markers(marker_dir: Path) -> list[dict[str, Any]]:
         payload = _load_json(path)
         if not isinstance(payload, dict) or not payload.get("session"):
             continue
+        session = str(payload.get("session"))
+        if status_retirement_matches(
+            marker_dir=marker_dir,
+            marker_path=path,
+            session=session,
+        ):
+            continue
         payload["_marker_path"] = str(path)
         markers.append(payload)
     return markers
@@ -2216,6 +2236,14 @@ def _load_current_plan_state(workspace: Path | None, current_plan: str) -> dict[
     if workspace is None or not current_plan:
         return None
     path = workspace / ".megaplan" / "plans" / current_plan / "state.json"
+    loaded = _load_json(path)
+    return dict(loaded) if isinstance(loaded, Mapping) and loaded else None
+
+
+def _load_current_plan_review(workspace: Path | None, current_plan: str) -> dict[str, Any] | None:
+    if workspace is None or not current_plan:
+        return None
+    path = workspace / ".megaplan" / "plans" / current_plan / "review.json"
     loaded = _load_json(path)
     return dict(loaded) if isinstance(loaded, Mapping) and loaded else None
 

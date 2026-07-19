@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from arnold_pipelines.megaplan.resident.agent_loop import (
     AgentPromptTooLargeError,
     AgentRequest,
+    AgentTimeoutError,
     CodexCliAgentRunner,
 )
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
@@ -84,6 +86,104 @@ def test_codex_cli_runner_uses_configured_sandbox(tmp_path: Path) -> None:
     runner = CodexCliAgentRunner(config, cwd=tmp_path)
 
     assert runner.sandbox == "danger-full-access"
+
+
+def test_codex_cli_runner_recovers_same_invocation_after_initial_timeout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls.txt"
+    codex = bin_dir / "codex"
+    codex.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf x >> \"$CODEX_CALLS\"\n"
+        "output=\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  if [[ \"$1\" == \"--output-last-message\" ]]; then shift; output=$1; fi\n"
+        "  shift || true\n"
+        "done\n"
+        "cat >/dev/null\n"
+        "sleep 0.12\n"
+        "printf 'recovered resident reply\\n' > \"$output\"\n",
+        encoding="utf-8",
+    )
+    codex.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("CODEX_CALLS", str(calls))
+    runner = CodexCliAgentRunner(
+        ResidentConfig(
+            model_provider="codex",
+            model_timeout_s=0.05,
+            model_timeout_recovery_grace_s=0.5,
+        ),
+        cwd=tmp_path,
+    )
+
+    response = asyncio.run(
+        runner.run(
+            AgentRequest(
+                conversation_id="conversation-timeout-recovery",
+                messages=({"role": "user", "content": "read only"},),
+                system_prompt="system prompt",
+            ),
+            ToolRegistry(),
+        )
+    )
+
+    assert response.final_text == "recovered resident reply"
+    assert calls.read_text() == "x"  # same process continued; no replay
+    assert response.metadata["timeout_recovery"]["mode"] == "same_process_grace"
+    assert response.metadata["timeout_recovery"]["continuations"] == 1
+    assert response.metadata["timeout_recovery"]["invocation_replays"] == 0
+
+
+def test_codex_cli_runner_exhausts_recovery_and_kills_process_group(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls.txt"
+    orphan_marker = tmp_path / "orphaned.txt"
+    codex = bin_dir / "codex"
+    codex.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf x >> \"$CODEX_CALLS\"\n"
+        "cat >/dev/null\n"
+        "(sleep 0.25; printf orphaned > \"$ORPHAN_MARKER\") &\n"
+        "wait\n",
+        encoding="utf-8",
+    )
+    codex.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("CODEX_CALLS", str(calls))
+    monkeypatch.setenv("ORPHAN_MARKER", str(orphan_marker))
+    runner = CodexCliAgentRunner(
+        ResidentConfig(
+            model_provider="codex",
+            model_timeout_s=0.03,
+            model_timeout_recovery_grace_s=0.04,
+        ),
+        cwd=tmp_path,
+    )
+
+    with pytest.raises(AgentTimeoutError) as raised:
+        asyncio.run(
+            runner.run(
+                AgentRequest(
+                    conversation_id="conversation-timeout-exhausted",
+                    messages=({"role": "user", "content": "read only"},),
+                    system_prompt="system prompt",
+                ),
+                ToolRegistry(),
+            )
+        )
+
+    assert "continuations=1" in str(raised.value)
+    assert "process group terminated; no invocation replayed" in str(raised.value)
+    assert calls.read_text() == "x"
+    time.sleep(0.3)
+    assert not orphan_marker.exists()
 
 
 def test_codex_cli_prompt_requires_safe_path_for_resident_commands(tmp_path: Path) -> None:

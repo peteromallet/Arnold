@@ -28,6 +28,9 @@ from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
     validate_managed_launch,
     verify_recovery,
 )
+from arnold_pipelines.megaplan.cloud.progress_auditor_ownership import (
+    launch_suppressed_by_existing_owner,
+)
 from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
     enqueue_audit_repair_request,
 )
@@ -251,14 +254,23 @@ def run_escalation_controller(
         for finding in findings:
             gate = classify_true_stall(finding, policy=selected)
             finding["l3_escalation_gate"] = gate
+            existing_owner = launch_suppressed_by_existing_owner(finding)
             finding["l3_escalation"] = {
                 "escalation_id": gate["escalation_id"],
                 "session": gate.get("session"),
                 "plan": gate.get("plan"),
                 "gate": gate.get("decision"),
-                "decision": "blocked_authority" if gate.get("eligible") else "report_only",
+                "decision": (
+                    "existing_owner_no_new_launch"
+                    if existing_owner
+                    else "blocked_authority"
+                    if gate.get("eligible")
+                    else "report_only"
+                ),
                 "reason": (
-                    "L3 master-plus-path mutation authority is absent"
+                    "healthy canonical ownership already covers this repair objective"
+                    if existing_owner
+                    else "L3 master-plus-path mutation authority is absent"
                     if gate.get("eligible")
                     else "true-stall gate did not pass"
                 ),
@@ -290,10 +302,47 @@ def run_escalation_controller(
     with lock_path.open("a+b") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         active_global, active_by_session = _active_counts(state_root)
+        seen_escalations: set[str] = set()
         for finding in findings:
             gate = classify_true_stall(finding, policy=selected)
             finding["l3_escalation_gate"] = gate
-            path = _state_path(state_root, str(gate["escalation_id"]))
+            if launch_suppressed_by_existing_owner(finding):
+                ownership = finding.get("existing_agent_ownership") or {}
+                record = {
+                    "escalation_id": gate["escalation_id"],
+                    "session": gate.get("session"),
+                    "plan": gate.get("plan"),
+                    "gate": gate.get("decision"),
+                    "decision": "existing_owner_no_new_launch",
+                    "reason": "healthy canonical ownership already covers this repair objective",
+                    "repair_dispatched": False,
+                    "managed_run_id": "",
+                    "managed_manifest_path": "",
+                    "existing_owner_run_id": (
+                        ownership.get("healthy_aligned_run_ids") or [""]
+                    )[0],
+                }
+                finding["l3_escalation"] = record
+                summary.append(record)
+                continue
+            escalation_id = str(gate["escalation_id"])
+            if escalation_id in seen_escalations:
+                record = {
+                    "escalation_id": escalation_id,
+                    "session": gate.get("session"),
+                    "plan": gate.get("plan"),
+                    "gate": gate.get("decision"),
+                    "decision": "duplicate_target_observation",
+                    "reason": "another finding in this cycle already owns the authoritative target",
+                    "repair_dispatched": False,
+                    "managed_run_id": "",
+                    "managed_manifest_path": "",
+                }
+                finding["l3_escalation"] = record
+                summary.append(record)
+                continue
+            seen_escalations.add(escalation_id)
+            path = _state_path(state_root, escalation_id)
             state = _load_json(path)
             state, verification = _terminal_reverification(
                 state,

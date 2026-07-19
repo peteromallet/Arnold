@@ -282,11 +282,13 @@ def _external_evidence(finding: Mapping[str, Any], chain: Mapping[str, Any]) -> 
             and (expected_pr is None or observed_pr == expected_pr)
         )
     )
-    intentional_wait = bool(
-        pr_state in {"open", "draft", "pending", "queued"}
-        or _text(chain.get("last_state")).lower()
-        in {"awaiting_pr_merge", "awaiting_ci", "ci_pending"}
-    )
+    # An open PR is evidence, not an instruction to wait.  Only the durable
+    # chain state may declare that the chain is intentionally awaiting PR/CI.
+    intentional_wait = _text(chain.get("last_state")).lower() in {
+        "awaiting_pr_merge",
+        "awaiting_ci",
+        "ci_pending",
+    }
     return {
         "applicable": applicable,
         "present": coherent,
@@ -309,25 +311,42 @@ def _fresh_progress(finding: Mapping[str, Any], policy: EscalationPolicy) -> dic
         or active.get("heartbeat_age_min")
         or _mapping(finding.get("current_target")).get("token_heartbeat_age_min")
     )
-    fresh_sources = []
+    acceptance = _mapping(finding.get("acceptance_progress"))
+    accepted_age = _integer(acceptance.get("accepted_event_age_min"))
+    semantic_advanced = acceptance.get("advanced") is True
+    # Log writes and heartbeats prove liveness only.  They must not erase a
+    # semantic stall (the incident emitted hourly drift lines indefinitely).
+    liveness_sources = []
     if event_age is not None and event_age < threshold_min:
-        fresh_sources.append("events")
+        liveness_sources.append("events")
     if log_age is not None and log_age < threshold_min:
-        fresh_sources.append("chain_log")
+        liveness_sources.append("chain_log")
     if token_age is not None and token_age < threshold_min:
-        fresh_sources.append("token_heartbeat")
+        liveness_sources.append("token_heartbeat")
+    fresh_sources = ["acceptance_progress"] if semantic_advanced else []
+    age_candidates = [
+        value
+        for value in (
+            accepted_age,
+            _integer(_mapping(finding.get("repair_data_summary")).get("mtime_age_min")),
+        )
+        if value is not None
+    ]
+    semantic_age = max(age_candidates) if age_candidates else None
     return {
         "fresh": bool(fresh_sources),
         "fresh_sources": fresh_sources,
+        "liveness_sources": liveness_sources,
+        "semantic_advanced": semantic_advanced,
+        "semantic_age_min": semantic_age,
         "threshold_min": threshold_min,
         "events_mtime_age_min": event_age,
         "chain_log_mtime_age_min": log_age,
         "token_heartbeat_age_min": token_age,
         "old_enough": bool(
-            event_age is not None
-            and event_age >= threshold_min
-            and log_age is not None
-            and log_age >= threshold_min
+            not semantic_advanced
+            and semantic_age is not None
+            and semantic_age >= threshold_min
         ),
     }
 
@@ -338,6 +357,8 @@ def _reason_tokens(finding: Mapping[str, Any]) -> list[str]:
 
 def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
     repair = _mapping(finding.get("repair_data_summary"))
+    meta = _mapping(finding.get("meta_repair_summary"))
+    repair_goal = _mapping(meta.get("repair_goal"))
     custody = _mapping(finding.get("repair_custody_summary"))
     superfixer = _mapping(finding.get("deterministic_superfixer_evidence"))
     retry = _mapping(custody.get("retry_budget") or superfixer.get("retry_budget"))
@@ -349,7 +370,29 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
     if retry_remaining is None:
         retry_remaining = _integer(retry.get("claim_retries_remaining"))
     outcome = _text(repair.get("outcome")).lower()
-    false_success = bool(
+    provisional_liveness = outcome in {
+        "partial_liveness",
+        "live_with_fresh_activity",
+    }
+    blocker_id = _text(custody.get("blocker_id"))
+    active_requests = [
+        _text(item)
+        for item in _list(custody.get("active_request_ids"))
+        if _text(item)
+    ]
+    missing_custody_links = bool(
+        provisional_liveness and (not blocker_id or not active_requests)
+    )
+    liveness_without_custody = bool(
+        provisional_liveness and (accepted or missing_custody_links)
+    )
+    recovery_gate_failed = repair_goal.get("recovery_gate_failed") is True
+    active_unowned_goal = bool(
+        repair_goal.get("status") == "active"
+        and repair_goal.get("owner_live") is not True
+        and _text(repair_goal.get("control_action")).lower() != "preserve_live"
+    )
+    false_success = recovery_gate_failed or bool(
         outcome in {"complete", "completed", "progressed", "success", "fixed"}
         and _chain_evidence(finding).get("nonterminal")
     ) or any("repair_complete_incomplete_chain" in item for item in reasons)
@@ -369,7 +412,7 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         or retry_used >= 2
         or repeated >= 3
     )
-    failed = bool(false_success or missing_manifest or (accepted and exhausted) or outcome in {
+    failed = bool(active_unowned_goal or false_success or missing_manifest or liveness_without_custody or (accepted and exhausted) or outcome in {
         "repair_timeout",
         "repair_exhausted",
         "failed",
@@ -381,7 +424,7 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         else "TRACKED"
         if missing_manifest
         else "CONTEXT"
-        if accepted
+        if accepted or missing_custody_links
         else "FIXED"
     )
     return {
@@ -393,7 +436,12 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         "retry_remaining": retry_remaining,
         "repeated_deterministic_failures": repeated,
         "false_success": false_success,
+        "post_fixer_recovery_gate_failed": recovery_gate_failed,
         "missing_canonical_manifest": missing_manifest,
+        "missing_custody_links": missing_custody_links,
+        "provisional_liveness": provisional_liveness,
+        "liveness_without_custody": liveness_without_custody,
+        "active_unowned_goal": active_unowned_goal,
     }
 
 
@@ -412,6 +460,13 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         for item in reasons
         for token in ("false_fixed_l2", "l2 false success", "no ordinary repair retrigger")
     )
+    recursion_blocked = bool(meta.get("recursion_guard_blocked"))
+    investigation = _mapping(
+        _mapping(finding.get("repair_data_summary")).get("meta_investigation_summary")
+    )
+    access_failure = str(investigation.get("failure_code") or "").startswith(
+        "investigator_"
+    )
     l1 = _l1_failure_fingerprint(finding)
     due = bool(
         meta.get("should_dispatch")
@@ -419,8 +474,17 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         or superfixer.get("actionable")
         or l1.get("failed")
     )
-    failed = bool(due and (failed_launch or missing or false_success))
-    axis = "FIXED" if false_success else "TRACKED" if failed_launch else "CONTEXT"
+    failed = bool(
+        due
+        and (failed_launch or missing or false_success or recursion_blocked or access_failure)
+    )
+    axis = (
+        "FIXED"
+        if false_success
+        else "TRACKED"
+        if failed_launch or recursion_blocked
+        else "CONTEXT"
+    )
     return {
         "failed": failed,
         "axis": axis if failed else "",
@@ -428,6 +492,8 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         "failed_launch": failed_launch,
         "missing_or_stale": missing,
         "false_success": false_success,
+        "recursion_guard_blocked": recursion_blocked,
+        "investigator_access_failure": access_failure,
         "trigger": _text(meta.get("trigger")),
     }
 
@@ -467,7 +533,16 @@ def classify_true_stall(
         or unresolved_actions
         or chain_state in {"awaiting_human", "awaiting_human_verify"}
     )
-    intent_allowed = resolver_state in _MACHINE_ACTION_STATES
+    goal_actionable = bool(l1.get("active_unowned_goal"))
+    intent_allowed = resolver_state in _MACHINE_ACTION_STATES or goal_actionable
+    repair_goal = _mapping(
+        _mapping(finding.get("meta_repair_summary")).get("repair_goal")
+    )
+    preserve_live = bool(
+        repair_goal.get("status") == "active"
+        and _text(repair_goal.get("control_action")).lower() == "preserve_live"
+    )
+    healthy_live_process = process.get("live") is True
     intentional_wait = bool(explicit_pause or human_gate or external.get("intentional_wait"))
 
     evidence_sources = {
@@ -493,6 +568,10 @@ def classify_true_stall(
         blocks.append("incomplete_or_incoherent_evidence")
     if resolver_state in _INTENTIONAL_WAIT_STATES or intentional_wait:
         blocks.append("intentional_pause_or_human_gate")
+    if preserve_live:
+        blocks.append("preserve_live_repair_goal")
+    if healthy_live_process and not goal_actionable:
+        blocks.append("healthy_live_process")
     if not intent_allowed:
         blocks.append("resolver_did_not_authorize_machine_action")
     if chain.get("terminal") or plan.get("terminal"):
@@ -518,7 +597,11 @@ def classify_true_stall(
             "TRACKED": not bool(l1.get("missing_canonical_manifest")),
             "FIXED": not bool(l1.get("false_success")) and not bool(l1.get("failed")),
             "INTENT": not any("guard_weakening" in item for item in _reason_tokens(finding)),
-            "CONTEXT": not bool(l1.get("accepted_unclaimed_count")),
+            "CONTEXT": not bool(
+                l1.get("accepted_unclaimed_count")
+                or l1.get("missing_custody_links")
+                or l1.get("liveness_without_custody")
+            ),
             "failure": l1,
         },
         "L2": {
@@ -917,6 +1000,7 @@ def bounded_repair_context(finding: Mapping[str, Any]) -> dict[str, Any]:
     metadata = _mapping(latest.get("metadata") or finding.get("latest_failure_metadata"))
     repair = _mapping(finding.get("repair_data_summary"))
     meta = _mapping(finding.get("meta_repair_summary"))
+    repair_goal = _mapping(meta.get("repair_goal"))
     source_refs = _mapping(finding.get("source_refs"))
     mechanics = {
         key: metadata.get(key)
@@ -946,6 +1030,10 @@ def bounded_repair_context(finding: Mapping[str, Any]) -> dict[str, Any]:
         "repair_iterations": _list(repair.get("iterations"))[-5:],
         "repair_attempts": _list(repair.get("attempts"))[-5:],
         "meta_run_refs": _list(meta.get("meta_run_refs"))[-5:],
+        "post_fixer_recovery_gate": _mapping(repair_goal.get("recovery_gate")),
+        "failed_fixer_evidence": _list(
+            repair_goal.get("failed_fixer_evidence")
+        )[-15:],
         "artifact_refs": {
             key: _list(value)[-10:] if isinstance(value, list) else value
             for key, value in source_refs.items()

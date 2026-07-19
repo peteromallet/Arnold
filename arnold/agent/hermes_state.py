@@ -258,6 +258,42 @@ class SessionDB:
             )
             self._conn.commit()
 
+    def split_session_for_compression(
+        self,
+        *,
+        old_session_id: str,
+        new_session_id: str,
+        source: str,
+        model: str | None,
+        system_prompt: str,
+        title: str | None = None,
+    ) -> None:
+        """Atomically create a compression child and end its parent session."""
+        with self._lock:
+            try:
+                self._conn.execute(
+                    """INSERT INTO sessions (id, source, model, system_prompt,
+                       parent_session_id, started_at, title)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        new_session_id,
+                        source,
+                        model,
+                        system_prompt,
+                        old_session_id,
+                        time.time(),
+                        title,
+                    ),
+                )
+                self._conn.execute(
+                    "UPDATE sessions SET ended_at = ?, end_reason = ? WHERE id = ?",
+                    (time.time(), "compression", old_session_id),
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+
     def update_system_prompt(self, session_id: str, system_prompt: str) -> None:
         """Store the full assembled system prompt snapshot."""
         with self._lock:

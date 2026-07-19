@@ -107,7 +107,7 @@ REAP_STALL_GRACE_SECS="${CLOUD_WATCHDOG_REAP_STALL_GRACE_SECS:-900}"
 REAP_STALL_IDLE_SECS="${CLOUD_WATCHDOG_REAP_STALL_IDLE_SECS:-600}"
 REPAIR_DATA_RETENTION_INTERVAL_SECS="${CLOUD_WATCHDOG_REPAIR_DATA_RETENTION_INTERVAL_SECS:-21600}"
 ENV_GONE_STRIKES="${CLOUD_WATCHDOG_ENV_GONE_STRIKES:-3}"
-SRC_DIR="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
+SRC_DIR="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
 SYNC_ENABLED="${CLOUD_WATCHDOG_SYNC_ENABLED:-1}"
 SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
 SYNC_REPO="${CLOUD_WATCHDOG_SYNC_REPO:-${MEGAPLAN_REPO:-}}"
@@ -395,6 +395,7 @@ while time.monotonic() < deadline:
     started = any(item.get("status") == "running" for item in manifest.get("status_history") or [])
     request_matches = not request_id or links.get("repair_request_id") == request_id
     blocker_matches = not blocker_id or links.get("blocker_id") == blocker_id
+    terminal_failed = manifest.get("status") == "failed"
     if (
         is_managed_manifest(manifest)
         and manifest.get("run_id") == run_id
@@ -404,10 +405,11 @@ while time.monotonic() < deadline:
         and request_matches
         and blocker_matches
         and manifest.get("incident_attempt_event_id")
+        and not terminal_failed
     ):
         print(f"{run_id}\t{manifest_path}")
         raise SystemExit(0)
-    if manifest.get("status") == "failed" and not started:
+    if terminal_failed:
         break
     time.sleep(0.02)
 raise SystemExit(1)
@@ -1404,6 +1406,7 @@ manual_review_dispatch_status_env() {
   PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" "$MARKER_DIR" "$REPAIR_DATA_DIR" <<'PY'
 import hashlib
 import json
+import os
 import shlex
 import sys
 from pathlib import Path
@@ -1572,6 +1575,8 @@ if not projection.get("active_request_ids"):
             "remote_spec": remote_spec_raw,
             "run_kind": run_kind,
             "plan_name": resolved_plan_name,
+            "repair_goal_id": os.environ.get("ARNOLD_REPAIR_RETRY_GOAL_ID", ""),
+            "repair_goal_path": os.environ.get("ARNOLD_REPAIR_RETRY_GOAL_PATH", ""),
         },
         workspace=str(workspace),
         run_kind=run_kind,
@@ -4681,6 +4686,8 @@ dispatch_kimi_repair() {
   local remote_spec="$3"
   local pgid_path repair_busy claim_status request_id blocker_id managed_identity incident_id
   local run_id_file launch_evidence child_pid gate_json gate_open reason
+  local inherited_goal_id inherited_goal_path
+  local inherited_checkpoint_digest inherited_goal_blocker inherited_goal_request inherited_retry_sequence
   local -a managed_cmd
   REPAIR_DISPATCH_RESULT="unavailable"
   REPAIR_DISPATCH_RUN_ID=""
@@ -4728,6 +4735,38 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     fi
   fi
 
+  inherited_goal_id="${ARNOLD_REPAIR_RETRY_GOAL_ID:-}"
+  inherited_goal_path="${ARNOLD_REPAIR_RETRY_GOAL_PATH:-}"
+  inherited_checkpoint_digest=""
+  inherited_goal_blocker=""
+  inherited_goal_request=""
+  inherited_retry_sequence=""
+  if [[ -n "$inherited_goal_path" && -f "$inherited_goal_path" ]]; then
+    IFS=$'\t' read -r inherited_goal_id inherited_checkpoint_digest inherited_goal_blocker inherited_goal_request inherited_retry_sequence <<< "$(
+      PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - "$inherited_goal_path" <<'PY'
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_goal import next_repair_goal_retry_sequence
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+requests = payload.get("request_ids") if isinstance(payload.get("request_ids"), list) else []
+goal_id = str(payload.get("goal_id") or "")
+retry_sequence = next_repair_goal_retry_sequence(payload)
+print("\t".join((
+    goal_id,
+    str(payload.get("checkpoint_digest") or ""),
+    str(target.get("blocker_id") or ""),
+    str(requests[-1] if requests else ""),
+    str(retry_sequence),
+)))
+PY
+    )" || return 1
+    blocker_id="${inherited_goal_blocker:-$blocker_id}"
+    request_id="${inherited_goal_request:-$request_id}"
+  fi
   if [[ ! -x "$PRIMARY_REPAIR_BIN" ]]; then
     emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop binary unavailable" "unavailable" "immediate_repair"
     return 1
@@ -4740,7 +4779,7 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     return 0
   fi
   if declare -F claim_active_repair_launch >/dev/null 2>&1; then
-    claim_status="$(claim_active_repair_launch "$session" "$workspace" "$remote_spec")"
+    claim_status="$(claim_active_repair_launch "$session" "$workspace" "$remote_spec" "$blocker_id" "$request_id")"
   else
     claim_status=""
   fi
@@ -4766,6 +4805,9 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
   esac
   pgid_path="$(kimi_pgid_path "$session")"
   managed_identity="${request_id:-watchdog-${session}-$(date +%s%N)}"
+  if [[ -n "$inherited_goal_id" ]]; then
+    managed_identity="${managed_identity}:goal:${inherited_goal_id}:retry:${inherited_retry_sequence:-1}"
+  fi
   run_id_file="$MARKER_DIR/$(safe_name "$session").repair-managed-run-id"
   rm -f "$run_id_file"
   incident_id="$(json_field "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}/$session.repair-data.json" incident_id 2>/dev/null || true)"
@@ -4782,6 +4824,7 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     --route-class watchdog_authorized_l1
     --backend repair-loop
     --command-display "arnold-repair-loop $session"
+    --description "${ARNOLD_REPAIR_LAUNCH_DESCRIPTION:-Investigate then repair watchdog blocker for $session at ${PLAN_STATUS_PLAN_NAME:-current target}/${PLAN_STATUS_FAILURE_PHASE:-current stage}}"
     --origin-kind watchdog_repair
     --origin-id "$managed_identity"
     --origin-component arnold-watchdog
@@ -4796,6 +4839,9 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     --link "chain=$remote_spec"
     --link "plan=${PLAN_STATUS_PLAN_NAME:-}"
     --link "phase=watchdog_dispatch"
+    --link "repair_goal_id=$inherited_goal_id"
+    --link "repair_goal_path=$inherited_goal_path"
+    --link "repair_checkpoint_digest=$inherited_checkpoint_digest"
     --
     "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec"
   )
@@ -4805,6 +4851,9 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
     CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$$" \
+    ARNOLD_REPAIR_GOAL_ID="$inherited_goal_id" \
+    ARNOLD_REPAIR_GOAL_PATH="$inherited_goal_path" \
+    ARNOLD_REPAIR_CHECKPOINT_DIGEST="$inherited_checkpoint_digest" \
     setsid "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   else
@@ -4813,6 +4862,9 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
     CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$$" \
+    ARNOLD_REPAIR_GOAL_ID="$inherited_goal_id" \
+    ARNOLD_REPAIR_GOAL_PATH="$inherited_goal_path" \
+    ARNOLD_REPAIR_CHECKPOINT_DIGEST="$inherited_checkpoint_digest" \
     "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   fi
@@ -4909,15 +4961,15 @@ claim_active_repair_launch() {
   local workspace="$2"
   local remote_spec="$3"
   local blocker_id request_id
-  blocker_id=""
-  request_id=""
-  if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
+  blocker_id="${4:-}"
+  request_id="${5:-}"
+  if [[ -z "$blocker_id" && -z "$request_id" && "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
     blocker_id="${PLAN_STATUS_BLOCKER_ID:-}"
     request_id="${PLAN_STATUS_REQUEST_ID:-}"
   fi
   if [[ -z "$blocker_id" || -z "$request_id" ]]; then
-    printf '\n'
-    return 0
+    printf 'missing_identity\n'
+    return 1
   fi
   PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - \
     "$MARKER_DIR" \
@@ -4996,17 +5048,26 @@ PY
 
 check_meta_repair_recursion_guard() {
   local session="$1"
-  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$REPAIR_DATA_DIR" <<'PY'
+  local blocker_id="${2:-}"
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$REPAIR_DATA_DIR" "$blocker_id" <<'PY'
 import sys
 
-from arnold_pipelines.megaplan.cloud.meta_repair_policy import check_meta_repair_recursion
+from arnold_pipelines.megaplan.cloud.meta_repair_policy import (
+    check_meta_repair_recursion,
+    resolve_authoritative_blocker_id,
+)
 
-session, repair_data_dir = sys.argv[1:3]
-result = check_meta_repair_recursion(session, repair_data_dir=repair_data_dir)
+session, repair_data_dir, supplied = sys.argv[1:4]
+blocker_id, drift = resolve_authoritative_blocker_id(
+    session, repair_data_dir=repair_data_dir, supplied_blocker_id=supplied
+)
+result = check_meta_repair_recursion(
+    session, repair_data_dir=repair_data_dir, blocker_id=blocker_id
+)
 if result.recursing:
-    print(f"RECURSION:{result.recommendation}")
+    print(f"RECURSION:{blocker_id}:{result.recommendation}")
 else:
-    print(f"OK:{result.recommendation}")
+    print(f"OK:{blocker_id}:{'drift' if drift else 'matched'}:{result.recommendation}")
 PY
 }
 
@@ -5057,6 +5118,13 @@ if current_target_observation_raw:
         resolver_record = loaded_observation
 
 repair_outcome = str(payload.get("outcome") or "")
+investigation = payload.get("investigation")
+if not isinstance(investigation, dict):
+    investigation = {}
+has_l1_custody_failure = bool(
+    repair_outcome == "fixer_infrastructure_failure"
+    or investigation.get("status") in {"failed", "invalid"}
+)
 needs_human_present = needs_human_path.exists()
 terminal_repair_failures = {
     "discord_escalated",
@@ -5282,6 +5350,7 @@ classification, _ = evaluate_meta_repair_triggers(
     semantic_fingerprints=semantic_fingerprints,
     has_state_inspection_error=has_state_inspection_error,
     has_model_tool_launch_error=has_model_tool_launch_error,
+    has_l1_custody_failure=has_l1_custody_failure,
     discord_delivery_failed=discord_delivery_failed,
     discord_escalation_is_true_blocker=discord_escalation_is_true_blocker,
     repair_budget_exhausted=repair_outcome in {"repair_timeout", "repair_exhausted"},
@@ -5385,8 +5454,15 @@ dispatch_meta_repair() {
     return 0
   fi
 
-  # Recursion guard: must not launch meta-repair when one already exists
-  recursion_result="$(check_meta_repair_recursion_guard "$session" 2>&1)" || true
+  # Resolve durable custody before applying a blocker-scoped recursion budget.
+  request_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" request_id 2>/dev/null || true)"
+  blocker_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" blocker_id 2>/dev/null || true)"
+  # Recursion guard: must not launch meta-repair for the same blocker twice.
+  if ! recursion_result="$(check_meta_repair_recursion_guard "$session" "$blocker_id" 2>&1)"; then
+    log "meta-repair blocker custody unresolved; refusing dispatch session=$session detail=$(redact_inline_text "$recursion_result")"
+    REPAIR_DISPATCH_RESULT="unavailable"
+    return 1
+  fi
   if [[ "$recursion_result" == RECURSION:* ]]; then
     log "meta-repair recursion guard blocked dispatch session=$session detail=$(redact_inline_text "$recursion_result")"
     REPAIR_DISPATCH_RESULT="recursive"
@@ -5400,12 +5476,12 @@ dispatch_meta_repair() {
 
   # Marker and pgid tracking
   pgid_path="$(meta_pgid_path "$session")"
-  request_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" request_id 2>/dev/null || true)"
-  blocker_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" blocker_id 2>/dev/null || true)"
   incident_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" incident_id 2>/dev/null || true)"
   incident_id="${incident_id:-inc-$session}"
   parent_run_id="$(json_field "$REPAIR_DATA_DIR/$session.repair-data.json" managed_agent_run_id 2>/dev/null || true)"
-  managed_identity="meta-repair:${session}:${trigger_label}:${request_id:-$(date +%s%N)}"
+  # The per-dispatch generation keeps concurrent duplicates behind the busy
+  # guard while allowing a terminal-failed managed attempt to be retried.
+  managed_identity="meta-repair:${session}:${trigger_label}:${request_id:-none}:$(date +%s%N)"
   run_id_file="$MARKER_DIR/$(safe_name "$session").meta-managed-run-id"
   rm -f "$run_id_file"
   managed_cmd=(
@@ -7049,6 +7125,24 @@ repair_unhealthy_session() {
     log "session unhealthy; another repair loop already running so waiting turn session=$session reason=$reason"
     return 0
   fi
+  # A retained durable goal is retry authority for its exact frozen target.
+  # Do not let a terminal legacy dispatch marker suppress its next owner, and
+  # never tear down a live target session merely to attach that goal owner.
+  if [[ -n "${ARNOLD_REPAIR_RETRY_GOAL_ID:-}" ]]; then
+    if kimi_dispatch_failed_previously "$session"; then
+      kimi_dispatch_marker_clear "$session"
+    fi
+    if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+      if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+        log "retained repair goal retry is already owned; waiting session=$session goal_id=$ARNOLD_REPAIR_RETRY_GOAL_ID reason=$reason"
+      else
+        log "retained repair goal background-dispatched without touching target session=$session goal_id=$ARNOLD_REPAIR_RETRY_GOAL_ID reason=$reason"
+      fi
+      return 0
+    fi
+    log "retained repair goal owner dispatch unavailable; preserving target session=$session goal_id=$ARNOLD_REPAIR_RETRY_GOAL_ID reason=$reason"
+    return 1
+  fi
   if mechanical_relaunch_attempted_previously "$session"; then
     if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
       if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
@@ -7113,6 +7207,14 @@ repair_unintended_stop() {
     else
       report_item "$report_items" "$session" "repair" "repair_dispatched" "$reason" "$workspace" "$remote_spec"
     fi
+    return 0
+  fi
+
+  # A confirmed L1 launch failure is itself deterministic L2 evidence.  The
+  # retained-goal path used to return repair_unavailable here and strand the
+  # goal forever; transfer custody to the existing bounded meta-repair route.
+  if route_l1_launch_failure_to_meta_repair \
+    "$session" "$workspace" "$remote_spec" "$report_items"; then
     return 0
   fi
 
@@ -7538,6 +7640,58 @@ if data_path.exists():
 PY
 }
 
+repair_goal_watchdog_status() {
+  local session="$1"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - "$MARKER_DIR" "$session" <<'PY' 2>>"${LOG:-/dev/null}"
+import json
+import os
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_goal import evaluate_repair_goal
+
+marker_dir = pathlib.Path(sys.argv[1])
+session = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in sys.argv[2]) or "unknown"
+goal_dir = marker_dir / "repair-goals" / session
+goals = sorted(goal_dir.glob("goal-*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+for path in goals:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    if payload.get("status") != "active":
+        continue
+    result = evaluate_repair_goal(path, action="watchdog_authority_check")
+    status = str(result.get("status") or "active")
+    evaluation = result.get("evaluation") or {}
+    reason = str(evaluation.get("reason") or "")
+    control_action = str(evaluation.get("control_action") or "")
+    if status != "active":
+        print(f"{status}\t{result.get('goal_id') or ''}\t{reason}\t{control_action}")
+        raise SystemExit(0)
+    refreshed = json.loads(path.read_text(encoding="utf-8"))
+    owner_live = False
+    for owner in reversed(refreshed.get("owners") or []):
+        if not isinstance(owner, dict) or not owner.get("manifest_path"):
+            continue
+        try:
+            manifest = json.loads(pathlib.Path(owner["manifest_path"]).read_text(encoding="utf-8"))
+            pid = int(manifest.get("pid") or 0)
+            if manifest.get("status") in {"reserved", "launching", "running", "adopting"} and pid > 0:
+                os.kill(pid, 0)
+                owner_live = True
+                break
+        except Exception:
+            continue
+    print(
+        f"{'active_owner' if owner_live else 'active_unowned'}\t"
+        f"{result.get('goal_id') or ''}\t{reason}\t{control_action}"
+    )
+    raise SystemExit(0)
+print("none\t\t\t")
+PY
+}
+
 launch_chain_tick() {
   local session="$1"
   local workspace="$2"
@@ -7604,6 +7758,76 @@ PY
   if [[ -n "$current_target_observation" ]]; then
     log "current-target observe session=$session evidence=$current_target_observation"
   fi
+
+  local repair_goal_status repair_goal_id repair_goal_reason repair_goal_control_action
+  IFS=$'\t' read -r repair_goal_status repair_goal_id repair_goal_reason repair_goal_control_action <<< "$(repair_goal_watchdog_status "$session" || printf 'none\t\t\t')"
+  case "$repair_goal_status" in
+    active_owner)
+      log "durable repair goal still owns frozen target session=$session goal_id=$repair_goal_id; waiting for authoritative acceptance progress"
+      report_item "$report_items" "$session" "repair" "repair_running" "durable goal active; target has not moved beyond frozen checkpoint" "$workspace" "$remote_spec"
+      return 0
+      ;;
+    active_unowned)
+      if [[ "$repair_goal_control_action" == "meta_repair" ]]; then
+        log "post-fixer recovery gate failed after owner terminalization; dispatching transcript-aware L2 meta-repair session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
+        if dispatch_meta_repair \
+          "$session" "$workspace" "$remote_spec" "$report_items" \
+          "post_fixer_recovery_gate_failed"; then
+          report_item "$report_items" "$session" "meta_repair" "repair_dispatched" "L2 received the failed fixer's durable recovery receipt and transcript/artifact refs" "$workspace" "$remote_spec"
+        else
+          report_item "$report_items" "$session" "meta_repair" "repair_failed" "post-fixer recovery gate failed and L2 dispatch did not start" "$workspace" "$remote_spec"
+        fi
+        return 0
+      fi
+      if [[ "$repair_goal_control_action" == "preserve_live" ]]; then
+        log "durable repair goal is unowned while its fresh matching worker progresses; observing without repair launch session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
+        report_item "$report_items" "$session" "observe" "recovery_observation" "preserve fresh matching worker while durable goal remains open: $repair_goal_reason" "$workspace" "$remote_spec"
+        return 0
+      fi
+      local owner_gap_health owner_gap_meta_trigger owner_gap_meta_result
+      owner_gap_health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
+      owner_gap_meta_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation" "$owner_gap_health")"
+      if [[ "$owner_gap_meta_trigger" == TRIGGER:* ]]; then
+        if dispatch_meta_repair \
+          "$session" "$workspace" "$remote_spec" "$report_items" "${owner_gap_meta_trigger#TRIGGER:}"; then
+          owner_gap_meta_result="${REPAIR_DISPATCH_RESULT:-}"
+          if [[ "$owner_gap_meta_result" == "dispatched" || "$owner_gap_meta_result" == "busy" ]]; then
+            log "durable repair goal lost its L1 owner after a repair-system failure; L2 now has custody session=$session goal_id=$repair_goal_id trigger=${owner_gap_meta_trigger#TRIGGER:} result=$owner_gap_meta_result"
+            report_item "$report_items" "$session" "meta_repair" "$owner_gap_meta_result" \
+              "L2 took custody of unowned durable goal after L1 repair-system failure" "$workspace" "$remote_spec"
+            return 0
+          fi
+        fi
+        log "durable repair goal matched an L2 trigger but meta-repair could not take custody; falling back to bounded L1 redispatch session=$session goal_id=$repair_goal_id trigger=${owner_gap_meta_trigger#TRIGGER:} result=${REPAIR_DISPATCH_RESULT:-unavailable}"
+      fi
+      log "durable repair goal lost its process owner while target remained frozen; redispatching root repair session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
+      export ARNOLD_REPAIR_LAUNCH_DESCRIPTION="Investigate then repair unowned goal $repair_goal_id for $session; control_action=${repair_goal_control_action:-unknown}; $repair_goal_reason"
+      export ARNOLD_REPAIR_RETRY_GOAL_ID="$repair_goal_id"
+      export ARNOLD_REPAIR_RETRY_GOAL_PATH="$(python3 - "$MARKER_DIR" "$session" "$repair_goal_id" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1]) / "repair-goals" / ("".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in sys.argv[2]) or "unknown")
+for path in root.glob("goal-*.json"):
+    try:
+        if json.loads(path.read_text(encoding="utf-8")).get("goal_id") == sys.argv[3]:
+            print(path)
+            break
+    except Exception:
+        continue
+PY
+)"
+      repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "repair_goal_owner_missing: $repair_goal_id; $repair_goal_reason" || true
+      unset ARNOLD_REPAIR_RETRY_GOAL_ID ARNOLD_REPAIR_RETRY_GOAL_PATH ARNOLD_REPAIR_LAUNCH_DESCRIPTION
+      return 0
+      ;;
+    approval_required)
+      log "durable repair goal reached explicit approval gate session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
+      report_item "$report_items" "$session" "observe" "awaiting_human" "explicit approval/authorization gate: $repair_goal_reason" "$workspace" "$remote_spec"
+      return 0
+      ;;
+    progressed)
+      log "durable repair goal verified target progress session=$session goal_id=$repair_goal_id reason=$repair_goal_reason"
+      ;;
+  esac
 
   local resolver_human_verdict
   resolver_human_verdict="$(resolver_needs_human_verdict "$session" "$current_target_observation")"
@@ -8236,6 +8460,10 @@ export ARNOLD_SUPERVISE_SESSION=$(printf '%q' "$session")
 export ARNOLD_SUPERVISE_WORKSPACE=$(printf '%q' "$workspace")
 export ARNOLD_SUPERVISE_REMOTE_SPEC=$(printf '%q' "$remote_spec")
 export ARNOLD_SUPERVISE_RUN_KIND=$(printf '%q' "$run_kind")
+export ARNOLD_REPAIR_QUEUE_ROOT=$(printf '%q' "${ARNOLD_REPAIR_QUEUE_ROOT:-$(dirname "$MARKER_DIR")/repair-queue}")
+export ARNOLD_REPAIR_MARKER_DIR=$(printf '%q' "$MARKER_DIR")
+export ARNOLD_REPAIR_SESSION=$(printf '%q' "$session")
+export ARNOLD_REPAIR_RUN_KIND=$(printf '%q' "$run_kind")
 exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc $quoted_command_shell
 EOF
   chmod +x "$launch_script"

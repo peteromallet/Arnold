@@ -18,7 +18,13 @@ from arnold.execution.step_invocation import StepInvocation
 
 from agentbox.redaction import redact_text
 
-from .agent_loop import AgentRequest, AgentResponse, AgentRunner, durable_launch_run_ids
+from .agent_loop import (
+    AgentRequest,
+    AgentResponse,
+    AgentRunner,
+    AgentTimeoutError,
+    durable_launch_run_ids,
+)
 from .auth import AuthorizationDecision, AuthorizationSubject, ResidentAuthorizer
 from .cloud import CloudToolRequest
 from .coalescing import AsyncBurstCoalescer, BurstBatch
@@ -492,6 +498,7 @@ class ResidentRuntime:
                     claim.notification_id,
                     status="complete",
                     replacement_turn_id=turn.id,
+                    user_delivery_owned=True,
                 )
                 recovered += 1
                 continue
@@ -653,14 +660,21 @@ class ResidentRuntime:
                 redact_text(response.final_text).strip(), hot_context
             )
             classified_outcome = _classified_verification_outcome(safe_text)
-            outcome = classified_outcome or "unknown"
+            blocked_semantics = _completion_verification_is_semantically_blocked(
+                manifest, safe_text
+            )
+            if blocked_semantics:
+                outcome = "blocked"
+                safe_text = _blocked_completion_verification_text(safe_text)
+            else:
+                outcome = classified_outcome or "unknown"
             if not safe_text:
                 safe_text = (
                     "The verification outcome is unknown because the resident verification turn "
                     "returned no summary; the delegated result is not being treated as proof."
                 )
                 outcome = "unknown"
-            elif classified_outcome is None:
+            elif classified_outcome is None and not blocked_semantics:
                 safe_text = (
                     safe_text
                     + "\n\nThe verification outcome is unknown because the resident did not "
@@ -995,6 +1009,7 @@ class ResidentRuntime:
             status="completed",
             final_output_message_id=final_message_id,
             message_sent=bool(final_message_id),
+            warnings_issued=_response_diagnostic_warnings(response),
             idempotency_key=deterministic_idempotency_key("resident-turn-completed", turn.id),
         )
 
@@ -1386,6 +1401,13 @@ def _bounded_failure_warning(exc: Exception) -> str:
 
 
 def _resident_turn_failure_reply(exc: Exception) -> str:
+    if isinstance(exc, AgentTimeoutError):
+        return (
+            "I couldn't complete this resident turn because the model exceeded its execution "
+            "limit and did not finish during the single bounded same-process recovery window. "
+            "The process group was stopped, no second invocation was started, and specific "
+            "diagnostic evidence was recorded."
+        )
     detail = str(exc).lower()
     if "prompt exceeds" in detail or "input_too_large" in detail or "maximum length" in detail:
         return (
@@ -1396,6 +1418,23 @@ def _resident_turn_failure_reply(exc: Exception) -> str:
         "I couldn't complete this resident turn because the model invocation failed. "
         "The failure was recorded and no requested action was taken."
     )
+
+
+def _response_diagnostic_warnings(response: AgentResponse) -> list[str] | None:
+    recovery = response.metadata.get("timeout_recovery")
+    if not isinstance(recovery, Mapping):
+        return None
+    return [
+        "AgentTimeoutRecovery: same invocation completed during bounded grace; "
+        f"continuations={recovery.get('continuations', 1)}, "
+        f"invocation_replays={recovery.get('invocation_replays', 0)}, "
+        f"initial_timeout_s={recovery.get('initial_timeout_s')}, "
+        f"recovery_grace_s={recovery.get('recovery_grace_s')}, "
+        f"elapsed_s={recovery.get('elapsed_s')}, "
+        f"process_pid={recovery.get('process_pid')}, "
+        f"stdout_bytes={recovery.get('stdout_bytes')}, "
+        f"stderr_bytes={recovery.get('stderr_bytes')}",
+    ]
 
 
 def _timezone_instruction_from_hot_context(hot_context: Mapping[str, Any]) -> str:
@@ -1520,6 +1559,89 @@ def _classified_verification_outcome(text: str) -> str | None:
         ):
             return outcome
     return None
+
+
+def _completion_verification_is_semantically_blocked(
+    manifest: Mapping[str, Any], text: str
+) -> bool:
+    """Fail closed when lifecycle completion is not semantic recovery success.
+
+    Resident delivery and finite worker exit are transport/lifecycle facts.  A
+    linked repair goal or the verifier's own evidence can independently prove
+    that the underlying recovery is still blocked.  In that case the outbound
+    classification must remain blocked even if the verifier also used
+    success-led handoff wording.
+    """
+
+    semantic_completion = manifest.get("semantic_completion")
+    if isinstance(semantic_completion, Mapping):
+        authority = str(semantic_completion.get("authority") or "").strip()
+        status = str(semantic_completion.get("status") or "").strip().lower()
+        complete = semantic_completion.get("complete")
+        if authority == "repair_goal" and (
+            complete is False
+            or status
+            in {
+                "active",
+                "blocked",
+                "continuing",
+                "approval_required",
+                "retry_pending",
+                "unknown",
+            }
+        ):
+            return True
+
+    links = manifest.get("links")
+    goal_path = ""
+    if isinstance(links, Mapping):
+        goal_path = str(links.get("repair_goal_path") or "").strip()
+    if goal_path:
+        try:
+            goal = json.loads(Path(goal_path).read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            # Missing semantic authority cannot be converted into success.
+            return True
+        if isinstance(goal, Mapping):
+            goal_status = str(goal.get("status") or "unknown").strip().lower()
+            if goal_status != "progressed":
+                return True
+
+    normalized = " ".join(text.lower().split())
+    blocked_subjects = (
+        "underlying recovery",
+        "original recovery",
+        "original blocker",
+        "forward motion",
+        "target recovery",
+    )
+    blocked_states = (
+        "remains blocked",
+        "remain blocked",
+        "is blocked",
+        "remains unresolved",
+        "remain unresolved",
+        "has not resumed",
+        "stopped",
+    )
+    return any(subject in normalized for subject in blocked_subjects) and any(
+        state in normalized for state in blocked_states
+    )
+
+
+def _blocked_completion_verification_text(text: str) -> str:
+    """Lead blocked verification plainly and remove known success-led claims."""
+
+    cleaned = re.sub(
+        r"(?im)^.*(?:handoff|message delivery|message was durably sent).*(?:success(?:ful(?:ly)?)?|completed).*$",
+        "",
+        text,
+    ).strip()
+    prefix = (
+        "Forward motion remains blocked; completion or delivery of the finite delegated task "
+        "is not semantic recovery success. The verification outcome is blocked."
+    )
+    return prefix if not cleaned else f"{prefix}\n\n{cleaned}"
 
 
 def _verification_outcome(text: str) -> str:

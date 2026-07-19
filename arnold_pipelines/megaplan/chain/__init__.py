@@ -7922,6 +7922,18 @@ def run_chain_cli(
         return 64
     spec_path = Path(spec_arg).expanduser().resolve()
 
+    if action in {None, "start", "resume"}:
+        from arnold_pipelines.megaplan.layout import retired_chain_marker
+
+        retirement_marker = retired_chain_marker(spec_path, root)
+        if retirement_marker is not None:
+            return _emit_error(
+                CliError(
+                    "initiative_retired",
+                    f"Refusing to start or resume retired initiative chain: {retirement_marker}",
+                )
+            )
+
     if action in {"pause", "resume"}:
         from arnold_pipelines.megaplan.chain.operator_pause import pause_chain, resume_chain
 

@@ -43,10 +43,11 @@ from .restart_resident import (
     RESTART_RESIDENT_ACKNOWLEDGEMENT,
     RESTART_RESIDENT_COMMAND,
     RESTART_RESIDENT_DESCRIPTION,
+    RESET_DELIVERY_EPHEMERAL_INTERACTION,
     restart_discord_resident,
 )
 from .scheduler import ScheduledJobWorker
-from .subagent import sweep_managed_agent_deliveries
+from .subagent import reconcile_managed_subagent_queues, sweep_managed_agent_deliveries
 from .transcription import AudioTranscriptionError, OpenAICompatibleAudioTranscriber
 from .timezone import InvalidTimezone, TimezoneService
 
@@ -355,11 +356,55 @@ class DiscordOutboundSink(OutboundSink):
         if self.client is None:
             raise RuntimeError("Discord client is not bound")
         target = DiscordDeliveryTarget.from_conversation_key(message.conversation_key)
-        channel = await self._resolve_channel(target)
-        sent_messages = []
+        channel_target = target
+        fallback_reason: str | None = None
+        provider_rejections: list[dict[str, object]] = []
+
+        def record_delivery_evidence(*, provider_outcome: str) -> None:
+            if not isinstance(message.metadata, dict):
+                return
+            ids = [str(getattr(sent, "id", "")) for sent in sent_messages]
+            message.metadata["discord_delivery_evidence"] = {
+                "schema_version": "arnold-discord-delivery-evidence-v1",
+                "authoritative_conversation_key": message.conversation_key,
+                "delivery_mode": (
+                    "fallback_plain"
+                    if fallback_reason
+                    else "reply"
+                    if reply_to_message_id
+                    else "plain"
+                ),
+                "fallback_reason": fallback_reason,
+                "provider_outcome": provider_outcome,
+                "provider_message_ids": ids,
+                "provider_rejections": provider_rejections,
+                "resolved_channel_id": channel_target.channel_id,
+                "resolved_thread_id": channel_target.thread_id,
+                "user_notification_visibility": "unknown",
+            }
+
+        sent_messages: list[Any] = []
         reply_to_message_id = _optional_snowflake(
-            message.metadata.get("discord_reply_to_message_id") if isinstance(message.metadata, dict) else None
+            message.metadata.get("discord_reply_to_message_id")
+            if isinstance(message.metadata, dict)
+            else None
         )
+        try:
+            channel = await self._resolve_channel(target)
+        except Exception as exc:
+            if not target.thread_id or not _is_unavailable_thread_error(exc):
+                raise
+            # The immutable conversation key contains both the thread and its
+            # authoritative parent channel.  Falling back to that parent is
+            # therefore bounded to the original conversation; no recent-message
+            # or user lookup is involved.
+            provider_rejections.append(
+                _discord_rejection_evidence(exc, scope="thread_resolution")
+            )
+            channel_target = replace(target, thread_id=None)
+            fallback_reason = "thread_unavailable"
+            record_delivery_evidence(provider_outcome="fallback_pending")
+            channel = await self._resolve_channel(channel_target)
         nonce_base = (
             str(message.metadata.get("discord_nonce") or "").strip()
             if isinstance(message.metadata, dict)
@@ -376,19 +421,77 @@ class DiscordOutboundSink(OutboundSink):
                 # Keep each chunk stable across retries while staying below the
                 # Discord nonce length ceiling.
                 kwargs["nonce"] = f"{nonce_base[:20]}-{index}"
-            if index == 0 and reply_to_message_id:
+            if index == 0 and reply_to_message_id and fallback_reason is None:
                 reference = _partial_message_reference(channel, reply_to_message_id)
                 if reference is None:
-                    raise RuntimeError(
-                        f"Discord reply target {reply_to_message_id} is unavailable"
+                    fallback_reason = "reply_target_unavailable"
+                else:
+                    kwargs["reference"] = reference
+                    kwargs["mention_author"] = False
+            try:
+                sent = await channel.send(chunk, **kwargs)
+            except Exception as exc:
+                can_fallback_reply = (
+                    index == 0
+                    and reply_to_message_id
+                    and "reference" in kwargs
+                    and _is_invalid_reply_reference_error(exc)
+                )
+                can_fallback_thread = (
+                    index == 0
+                    and target.thread_id
+                    and channel_target.thread_id
+                    and _is_unavailable_thread_error(exc)
+                )
+                if not can_fallback_reply and not can_fallback_thread:
+                    raise
+                provider_rejections.append(
+                    _discord_rejection_evidence(
+                        exc,
+                        scope=(
+                            "reply_reference" if can_fallback_reply else "thread_send"
+                        ),
                     )
-                kwargs["reference"] = reference
-                kwargs["mention_author"] = False
-            sent_messages.append(await channel.send(chunk, **kwargs))
+                )
+                fallback_reason = (
+                    "reply_reference_rejected"
+                    if can_fallback_reply
+                    else "thread_unavailable"
+                )
+                record_delivery_evidence(provider_outcome="fallback_pending")
+                if can_fallback_thread:
+                    channel_target = replace(target, thread_id=None)
+                    channel = await self._resolve_channel(channel_target)
+                plain_kwargs = {
+                    key: value
+                    for key, value in kwargs.items()
+                    if key not in {"reference", "mention_author"}
+                }
+                try:
+                    sent = await channel.send(chunk, **plain_kwargs)
+                except Exception as fallback_exc:
+                    if not (
+                        target.thread_id
+                        and channel_target.thread_id
+                        and _is_unavailable_thread_error(fallback_exc)
+                    ):
+                        raise
+                    provider_rejections.append(
+                        _discord_rejection_evidence(
+                            fallback_exc, scope="thread_send"
+                        )
+                    )
+                    fallback_reason = "thread_unavailable"
+                    channel_target = replace(target, thread_id=None)
+                    record_delivery_evidence(provider_outcome="fallback_pending")
+                    channel = await self._resolve_channel(channel_target)
+                    sent = await channel.send(chunk, **plain_kwargs)
+            sent_messages.append(sent)
         if isinstance(message.metadata, dict):
             ids = [str(getattr(sent, "id", "")) for sent in sent_messages]
             message.metadata["discord_message_ids"] = ids
             message.metadata["discord_message_id"] = ids[0] if ids else ""
+            record_delivery_evidence(provider_outcome="accepted")
         if reply_to_message_id and not bool(message.metadata.get("discord_processing_continues")):
             # Reply acceptance is the terminal delivery boundary. Reaction
             # intents are committed only after it, and reaction failures are
@@ -868,6 +971,93 @@ def _partial_message_reference(channel: Any, message_id: str) -> Any | None:
         return None
 
 
+def _discord_error_code(exc: Exception) -> int | None:
+    try:
+        code = int(getattr(exc, "code", None))
+    except (TypeError, ValueError):
+        return None
+    return code if code > 0 else None
+
+
+def _discord_http_status(exc: Exception) -> int | None:
+    candidates = [getattr(exc, "status", None), getattr(exc, "status_code", None)]
+    response = getattr(exc, "response", None)
+    if response is not None:
+        candidates.extend(
+            [getattr(response, "status", None), getattr(response, "status_code", None)]
+        )
+    for candidate in candidates:
+        try:
+            status = int(candidate)
+        except (TypeError, ValueError):
+            continue
+        if 100 <= status <= 599:
+            return status
+    return None
+
+
+def _discord_error_body(exc: Exception) -> object:
+    structured = getattr(exc, "_errors", None)
+    if structured is not None:
+        return structured
+    body = getattr(exc, "text", None)
+    if body is not None:
+        return body
+    response = getattr(exc, "response", None)
+    return getattr(response, "text", None) if response is not None else None
+
+
+def _mapping_mentions_reply_reference(value: object) -> bool:
+    if isinstance(value, Mapping):
+        return any(
+            str(key).lower() in {"message_reference", "reference", "referenced_message"}
+            or _mapping_mentions_reply_reference(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(_mapping_mentions_reply_reference(item) for item in value)
+    if isinstance(value, str):
+        normalized = value.lower().replace("-", "_").replace(" ", "_")
+        return "message_reference" in normalized
+    return False
+
+
+def _is_invalid_reply_reference_error(exc: Exception) -> bool:
+    code = _discord_error_code(exc)
+    if code in {10008, 160002}:
+        # Unknown Message and Cannot Reply Without Read Message History are
+        # specific to the optional reply relationship.  Plain delivery to the
+        # already-resolved authoritative channel can still be valid.
+        return True
+    return code == 50035 and _mapping_mentions_reply_reference(
+        _discord_error_body(exc)
+    )
+
+
+def _is_unavailable_thread_error(exc: Exception) -> bool:
+    code = _discord_error_code(exc)
+    if code in {10003, 50083, 160005}:
+        return True
+    # Missing Access / Missing Permissions and bare 403 responses do not prove
+    # that the parent has the thread's audience.  Never leak a possibly-private
+    # thread result into a broader parent channel.
+    return _discord_http_status(exc) == 404 and code is None
+
+
+def _discord_rejection_evidence(
+    exc: Exception, *, scope: str
+) -> dict[str, object]:
+    """Return redaction-safe provider rejection evidence for durable custody."""
+
+    return {
+        "outcome": "rejected",
+        "scope": scope,
+        "error_class": exc.__class__.__name__,
+        "http_status": _discord_http_status(exc),
+        "discord_error_code": _discord_error_code(exc),
+    }
+
+
 def _reaction_message_ids(value: Any, *, fallback: str | None = None) -> list[str]:
     values = value if isinstance(value, (list, tuple, set)) else [value]
     result = [str(item).strip() for item in values if item is not None and str(item).strip()]
@@ -1159,6 +1349,14 @@ class ResidentDiscordService:
                     "in_progress": 0,
                 }
                 LOGGER.exception("Resident restart transaction reconciliation failed")
+            try:
+                queue_reconciliation = await asyncio.to_thread(
+                    reconcile_managed_subagent_queues,
+                    project_root=Path.cwd(),
+                )
+            except Exception:
+                queue_reconciliation = None
+                LOGGER.exception("Resident managed successor reconciliation failed")
             if self.runtime.config.allows_operational_discord_delivery:
                 completion_delivery = await sweep_managed_agent_deliveries(
                     outbound=self.runtime.outbound,
@@ -1202,6 +1400,7 @@ class ResidentDiscordService:
                 "restart_reconciled_failed=%s restart_reconcile_in_progress=%s "
                 "completion_delivery_scanned=%s completion_delivered=%s "
                 "completion_retry_pending=%s completion_failed=%s "
+                "queue_scanned=%s queue_launched=%s queue_failed_closed=%s "
                 "reset_delivery_scanned=%s reset_delivered=%s reset_retry_pending=%s "
                 "reset_waiting_for_target=%s reset_failed=%s "
                 "reaction_effects_scanned=%s reaction_effects_applied=%s "
@@ -1217,6 +1416,9 @@ class ResidentDiscordService:
                 completion_delivery.delivered if completion_delivery is not None else 0,
                 completion_delivery.retry_pending if completion_delivery is not None else 0,
                 completion_delivery.failed if completion_delivery is not None else 0,
+                queue_reconciliation.scanned if queue_reconciliation is not None else 0,
+                queue_reconciliation.launched if queue_reconciliation is not None else 0,
+                queue_reconciliation.failed_closed if queue_reconciliation is not None else 0,
                 reset_delivery.scanned if reset_delivery is not None else 0,
                 reset_delivery.delivered if reset_delivery is not None else 0,
                 reset_delivery.retry_pending if reset_delivery is not None else 0,
@@ -1243,7 +1445,7 @@ class ResidentDiscordService:
         await client.start(self.token)
 
     async def handle_currently_running_interaction(self, interaction: Any) -> None:
-        """Serve ``/currently-running`` without invoking the resident model."""
+        """Serve ``/whats-cooking`` without invoking the resident model."""
 
         user_id = _optional_snowflake(
             getattr(getattr(interaction, "user", None), "id", None)
@@ -1270,18 +1472,18 @@ class ResidentDiscordService:
             )
             return
 
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
         try:
             report = await collect_currently_running(self.runtime)
             rendered = render_currently_running(report)
         except Exception:
-            LOGGER.exception("Resident currently-running command failed")
+            LOGGER.exception("Resident whats-cooking command failed")
             rendered = (
                 "# Currently running\n"
                 "⚠️ Canonical status is temporarily unavailable; no running-state claims were made."
             )
         for chunk in split_discord_message(rendered):
-            await interaction.followup.send(chunk)
+            await interaction.followup.send(chunk, ephemeral=True)
 
     async def handle_restart_resident_interaction(self, interaction: Any) -> None:
         """Authorize and hand ``/restart-resident`` to the guarded lifecycle API."""
@@ -1321,9 +1523,15 @@ class ResidentDiscordService:
             RESTART_RESIDENT_ACKNOWLEDGEMENT,
             ephemeral=True,
         )
-        operation = getattr(self, "restart_operation", restart_discord_resident)
+        operation = getattr(self, "restart_operation", None)
         try:
-            result = await asyncio.to_thread(operation)
+            if operation is None:
+                result = await asyncio.to_thread(
+                    restart_discord_resident,
+                    delivery_ownership=RESET_DELIVERY_EPHEMERAL_INTERACTION,
+                )
+            else:
+                result = await asyncio.to_thread(operation)
         except Exception:
             LOGGER.exception("Guarded Discord resident restart invocation failed")
             await interaction.edit_original_response(

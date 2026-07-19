@@ -216,6 +216,10 @@ def test_root_does_not_infer_chain_completion_from_terminal_plan_progress() -> N
                 "progress": {
                     "percent": 100,
                     "plan_percent": 100,
+                    "plan_percent_basis": (
+                        "plan lifecycle and recorded task-weight bookkeeping; "
+                        "not implementation acceptance"
+                    ),
                     "display_state": "done",
                     "completed_count": 4,
                     "milestone_count": 5,
@@ -231,3 +235,6 @@ def test_root_does_not_infer_chain_completion_from_terminal_plan_progress() -> N
     assert root["completed_session_count"] == 0
     assert root["sessions"][0]["status"] == "attention"
     assert root["sessions"][0]["display_state"] == "done"
+    assert "not implementation acceptance" in (
+        root["sessions"][0]["progress"]["plan_percent_basis"]
+    )

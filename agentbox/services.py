@@ -112,6 +112,7 @@ def restart_service(
     service_name: str,
     *,
     notification_root: str | Path | None = None,
+    notification_delivery_ownership: str | None = None,
 ) -> dict[str, Any]:
     """Restart a named service through its active local supervisor.
 
@@ -133,6 +134,7 @@ def restart_service(
             service_name,
             unit,
             notification_root=notification_root,
+            notification_delivery_ownership=notification_delivery_ownership,
         )
 
     if not services_available():
@@ -164,6 +166,7 @@ def restart_service(
         try:
             reservation = prepare_reset_notification(
                 notification_root=notification_root,
+                delivery_ownership=notification_delivery_ownership,
                 restart_request={
                     "service": service_name,
                     "unit": unit,
@@ -217,6 +220,7 @@ def _restart_discord_resident_tmux(
     unit: str,
     *,
     notification_root: str | Path | None = None,
+    notification_delivery_ownership: str | None = None,
 ) -> dict[str, Any]:
     """Respawn only the canonical resident pane when systemd is unavailable."""
 
@@ -238,6 +242,7 @@ def _restart_discord_resident_tmux(
     try:
         reservation = prepare_reset_notification(
             notification_root=notification_root,
+            delivery_ownership=notification_delivery_ownership,
             restart_request={
                 "service": service_name,
                 "unit": unit,

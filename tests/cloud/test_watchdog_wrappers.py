@@ -18,6 +18,9 @@ from pathlib import Path
 import pytest
 
 from arnold_pipelines.megaplan.cloud import repair_lock, repair_requests
+from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import (
+    PROCESS_CUSTODY_FAIL_CLOSED_POLICY,
+)
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
 
 
@@ -40,6 +43,24 @@ def _discover_wrapper() -> str:
 
 def _repair_wrapper() -> str:
     return _wrapper("arnold-repair-loop")
+
+
+def test_relaunch_scripts_preserve_managed_repair_route_context() -> None:
+    watchdog = _wrapper("arnold-watchdog")
+    repair_loop = _repair_wrapper()
+    for text in (watchdog, repair_loop):
+        assert "export ARNOLD_REPAIR_QUEUE_ROOT=" in text
+        assert "export ARNOLD_REPAIR_MARKER_DIR=" in text
+        assert "export ARNOLD_REPAIR_SESSION=" in text
+        assert "export ARNOLD_REPAIR_RUN_KIND=" in text
+
+
+def test_superfixer_wrappers_prefer_pinned_runtime_source() -> None:
+    assert 'SRC_DIR="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"' in _wrapper("arnold-watchdog")
+    assert 'ARNOLD_SRC="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"' in _repair_wrapper()
+    assert 'ARNOLD_SRC="${MEGAPLAN_META_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"' in _wrapper("arnold-meta-repair-loop")
+    auditor = _wrapper("arnold-progress-auditor")
+    assert "${MEGAPLAN_AUDIT_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-" in auditor
 
 
 def _extract_repair_function(name: str) -> str:
@@ -472,6 +493,7 @@ def test_repair_loop_prompt_files_redact_secret_bearers_before_dispatch(tmp_path
         [
             _extract_repair_function("redact_inline_text"),
             _extract_repair_function("redact_file_in_place"),
+            _extract_repair_function("render_process_custody_policy"),
             _extract_repair_function("write_dev_prompt"),
             _extract_repair_function("write_kimi_prompt"),
             f"ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
@@ -507,6 +529,83 @@ def test_repair_loop_prompt_files_redact_secret_bearers_before_dispatch(tmp_path
     assert "supersecret" not in kimi_text
     assert REDACTION in dev_text
     assert REDACTION in kimi_text
+
+
+def test_repair_loop_effective_fixer_prompts_require_canonical_process_custody_policy(
+    tmp_path: Path,
+) -> None:
+    dev_prompt = tmp_path / "dev-prompt.md"
+    kimi_prompt = tmp_path / "kimi-prompt.md"
+    script = "\n\n".join(
+        [
+            _extract_repair_function("redact_inline_text"),
+            _extract_repair_function("redact_file_in_place"),
+            _extract_repair_function("render_process_custody_policy"),
+            _extract_repair_function("write_dev_prompt"),
+            _extract_repair_function("write_kimi_prompt"),
+            f"ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
+            f"WRAPPER_REPO_ROOT={shlex.quote(str(REPO_ROOT))}",
+            f"MEGAPLAN_SUPERVISOR_PYTHON={shlex.quote(sys.executable)}",
+            "SESSION=demo-session",
+            "WORKSPACE=/tmp/workspace",
+            "RUN_KIND=chain",
+            "REMOTE_SPEC=/tmp/workspace/.megaplan/initiatives/demo/chain.yaml",
+            "PLAN_NAME=demo-plan",
+            "SYNC_BRANCH=editible-install",
+            "DATA_FILE=/tmp/repair-data.json",
+            "FINDINGS_DOC=/tmp/findings.md",
+            "ARNOLD_REPAIR_GOAL_PATH=/tmp/goal.json",
+            "ARNOLD_REPAIR_GOAL_ID=goal-1",
+            "ARNOLD_REPAIR_CHECKPOINT_DIGEST=checkpoint-1",
+            "INVESTIGATION_CONTEXT_PATH=/tmp/investigation.json",
+            "INVESTIGATOR_RECEIPT_PATH=/tmp/investigator-receipt.json",
+            "INVESTIGATION_CONTEXT_DIGEST=context-1",
+            "render_failure_summary() { printf '%s\\n' 'incident'; }",
+            "render_chain_health_block() { :; }",
+            "render_recurrence_block() { :; }",
+            "render_canonical_block() { :; }",
+            (
+                f"write_dev_prompt {shlex.quote(str(dev_prompt))} requested-model dispatch-model "
+                f"{shlex.quote(str(tmp_path / 'report.json'))} 0"
+            ),
+            (
+                f"write_kimi_prompt {shlex.quote(str(kimi_prompt))} relaunch-command "
+                f"{shlex.quote(str(tmp_path / 'kimi-report.json'))}"
+            ),
+        ]
+    )
+
+    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    for prompt_path in (dev_prompt, kimi_prompt):
+        prompt = prompt_path.read_text(encoding="utf-8")
+        assert PROCESS_CUSTODY_FAIL_CLOSED_POLICY in prompt
+        assert "apparent duplication, or inference is never" in prompt
+        assert "process holding your durable goal" in prompt
+
+
+def test_repair_loop_fixer_prompt_composition_fails_closed_when_policy_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    prompt_path = tmp_path / "must-not-exist.md"
+    script = "\n\n".join(
+        [
+            _extract_repair_function("write_dev_prompt"),
+            "render_failure_summary() { :; }",
+            "render_chain_health_block() { :; }",
+            "render_recurrence_block() { :; }",
+            "render_canonical_block() { :; }",
+            "render_process_custody_policy() { return 1; }",
+            (
+                f"! write_dev_prompt {shlex.quote(str(prompt_path))} requested dispatch "
+                f"{shlex.quote(str(tmp_path / 'report.json'))} 0"
+            ),
+            f"test ! -e {shlex.quote(str(prompt_path))}",
+        ]
+    )
+
+    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
 
 
 def test_repair_prompt_ignores_stale_projected_blocked_chain_health(tmp_path: Path) -> None:
@@ -3289,6 +3388,8 @@ def test_watchdog_managed_repair_dispatches_pin_the_selected_runtime() -> None:
     assert text.count(
         'route_l1_launch_failure_to_meta_repair "$session" "$workspace" "$remote_spec" "$report_items"'
     ) == 2
+    repair_unintended = text[text.index("repair_unintended_stop() {"):text.index("compare_needs_human_to_resolver() {")]
+    assert "route_l1_launch_failure_to_meta_repair" in repair_unintended
     assert text.index("route_l1_launch_failure_to_meta_repair()") < text.index(
         'log "session requires human review session=$session'
     )
@@ -3373,6 +3474,32 @@ echo "status:$REPAIR_DISPATCH_RESULT"
     ]
     assert "META:l1_launch_failed" in result.stderr
     assert "L2 now has custody" in result.stderr
+
+
+def test_retained_goal_launch_failure_transfers_custody_to_l2() -> None:
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("route_l1_launch_failure_to_meta_repair"),
+            _extract_wrapper_function("repair_unintended_stop"),
+            """
+REPAIR_DISPATCH_RESULT=unavailable
+repair_loop_busy_state() { echo none; }
+repair_unhealthy_session() { REPAIR_DISPATCH_RESULT=launch_failed; return 1; }
+dispatch_meta_repair() { REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+log() { :; }
+report_item() { echo "$3:$4:$5"; }
+repair_unintended_stop /tmp/report demo-session /tmp/ws /tmp/spec retained_goal_owner_missing
+echo "status:$REPAIR_DISPATCH_RESULT"
+""".strip(),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines() == [
+        "meta_repair:dispatched:L2 took custody after confirmed L1 launch failure",
+        "status:dispatched",
+    ]
 
 
 def test_watchdog_repair_dispatch_is_scoped_per_session() -> None:
@@ -3737,6 +3864,53 @@ fi
             break
         time.sleep(0.02)
     assert launch_log.read_text(encoding="utf-8").strip().splitlines() == ["demo-a"]
+
+
+def test_watchdog_claim_refuses_dispatch_without_request_and_blocker_identity(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True)
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("claim_active_repair_launch"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            "PLAN_STATUS_DISPATCH_DECISION=",
+            "claim_active_repair_launch demo-session /tmp/workspace /tmp/spec",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 1
+    assert result.stdout.strip() == "missing_identity"
+
+
+def test_watchdog_claim_accepts_inherited_goal_request_and_blocker_identity(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    marker_dir.mkdir(parents=True)
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("claim_active_repair_launch"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            "PLAN_STATUS_DISPATCH_DECISION=",
+            (
+                "claim_active_repair_launch demo-session /tmp/workspace /tmp/spec "
+                "blocker:v1:goal-owner-missing request-current-plan"
+            ),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "claimed"
 
 
 def test_watchdog_kimi_dispatch_emits_incident_dispatch_statuses(tmp_path: Path) -> None:
@@ -9177,6 +9351,27 @@ def test_launch_chain_tick_dispatches_meta_repair_on_model_launch_trigger(tmp_pa
     assert "trigger=model_tool_launch_failure" in paths["log_path"].read_text(encoding="utf-8")
 
 
+def test_launch_chain_tick_dispatches_meta_repair_on_l1_context_custody_failure(
+    tmp_path: Path,
+) -> None:
+    paths = _prepare_meta_repair_launch_chain_tick_fixture(
+        tmp_path,
+        payload_overrides={
+            "outcome": "fixer_infrastructure_failure",
+            "investigation": {
+                "status": "failed",
+                "failure_phase": "context_construction",
+                "reason": "bounded repair investigation context construction failed",
+            },
+        },
+    )
+    result = _run_launch_chain_tick_meta_repair_script(paths)
+    assert result.returncode == 0, result.stderr
+    assert "META_DISPATCH" in result.stderr
+    assert "TMUX" not in result.stderr
+    assert "trigger=l1_custody_failure" in paths["log_path"].read_text(encoding="utf-8")
+
+
 def test_launch_chain_tick_does_not_treat_stopped_health_as_model_launch_failure(tmp_path: Path) -> None:
     paths = _prepare_meta_repair_launch_chain_tick_fixture(
         tmp_path,
@@ -11383,6 +11578,15 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
     assert "INEFFICIENT" in text
 
 
+def test_progress_auditor_rejects_degenerate_dispatch_windows() -> None:
+    text = _wrapper("arnold-progress-auditor")
+
+    assert "math.isfinite(hours) and hours > 0" in text
+    assert "a non-positive or non-finite window is a probe" in text
+    assert "cannot establish health or suppress active repair custody" in text
+    assert "exit 64" in text
+
+
 def test_watchdog_exposes_serialized_audit_recovery_and_paused_guard() -> None:
     text = _wrapper("arnold-watchdog")
 
@@ -13189,6 +13393,348 @@ def test_meta_repair_wrapper_has_codex_dispatch() -> None:
     assert 'codex CLI missing' in text
 
 
+def test_repair_loop_carries_terminal_goal_evaluation_into_verdict_write() -> None:
+    text = _wrapper("arnold-repair-loop")
+
+    assert 'repair_data_set_outcome "progressed" "$status"' in text
+    assert 'repair_data_set_outcome "true_human_blocker" "$status"' in text
+    assert 'repair_save_verdict_evidence "$repair_goal_status_override"' in text
+    assert "repair_goal_status_override=repair_goal_status_override" in text
+
+
+def test_watchdog_observes_unowned_preserve_live_goal_without_dispatch(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    report_path = tmp_path / "report.tsv"
+    dispatch_path = tmp_path / "dispatch.log"
+    log_path = tmp_path / "watchdog.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"MEGAPLAN_SUPERVISOR_PYTHON={sys.executable!r}",
+            f"LOG={str(log_path)!r}",
+            f"DISPATCH_PATH={str(dispatch_path)!r}",
+            """
+log() { printf '%s\n' "$*" >> "$LOG"; }
+report_item() { printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"; }
+repair_goal_watchdog_status() { printf 'active_unowned\tgoal-healthy\tfresh execute worker is still progressing\tpreserve_live\n'; }
+repair_unintended_stop() { printf 'dispatch\n' >> "$DISPATCH_PATH"; }
+""".strip(),
+            f"launch_chain_tick custody-control-plane {str(tmp_path / 'workspace')!r} {str(tmp_path / 'chain.yaml')!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert not dispatch_path.exists()
+    assert "\tobserve\trecovery_observation\tpreserve fresh matching worker" in report_path.read_text(encoding="utf-8")
+    assert "observing without repair launch" in log_path.read_text(encoding="utf-8")
+
+
+def test_watchdog_unowned_genuinely_stuck_goal_still_dispatches_one_l1_owner(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    goal_dir = marker_dir / "repair-goals" / "custody-control-plane"
+    goal_dir.mkdir(parents=True)
+    repair_data_dir.mkdir()
+    goal_path = goal_dir / "goal-stuck.json"
+    goal_path.write_text(json.dumps({"goal_id": "goal-stuck", "status": "active"}), encoding="utf-8")
+    report_path = tmp_path / "report.tsv"
+    dispatch_path = tmp_path / "dispatch.log"
+    log_path = tmp_path / "watchdog.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"MEGAPLAN_SUPERVISOR_PYTHON={sys.executable!r}",
+            f"LOG={str(log_path)!r}",
+            f"DISPATCH_PATH={str(dispatch_path)!r}",
+            """
+log() { printf '%s\n' "$*" >> "$LOG"; }
+report_item() { :; }
+repair_goal_watchdog_status() { printf 'active_unowned\tgoal-stuck\tworker is absent and checkpoint is frozen\tinvestigate\n'; }
+session_health_status() { printf 'stopped\n'; }
+compute_meta_repair_trigger() { printf 'NO_TRIGGER\n'; }
+repair_unintended_stop() {
+  printf '%s\t%s\t%s\n' "$ARNOLD_REPAIR_RETRY_GOAL_ID" "$ARNOLD_REPAIR_RETRY_GOAL_PATH" "$ARNOLD_REPAIR_LAUNCH_DESCRIPTION" >> "$DISPATCH_PATH"
+}
+""".strip(),
+            f"launch_chain_tick custody-control-plane {str(tmp_path / 'workspace')!r} {str(tmp_path / 'chain.yaml')!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    dispatches = dispatch_path.read_text(encoding="utf-8").splitlines()
+    assert len(dispatches) == 1
+    assert dispatches[0].startswith(f"goal-stuck\t{goal_path}\tInvestigate then repair unowned goal goal-stuck")
+
+
+def test_watchdog_routes_unowned_goal_with_l1_custody_failure_to_l2(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    report_path = tmp_path / "report.tsv"
+    dispatch_path = tmp_path / "dispatch.log"
+    log_path = tmp_path / "watchdog.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"MEGAPLAN_SUPERVISOR_PYTHON={sys.executable!r}",
+            f"LOG={str(log_path)!r}",
+            f"DISPATCH_PATH={str(dispatch_path)!r}",
+            """
+log() { printf '%s\n' "$*" >> "$LOG"; }
+report_item() { :; }
+repair_goal_watchdog_status() { printf 'active_unowned\tgoal-stuck\tcontext constructor failed\tinvestigate\n'; }
+session_health_status() { printf 'stopped\n'; }
+compute_meta_repair_trigger() { printf 'TRIGGER:l1_custody_failure\n'; }
+dispatch_meta_repair() { REPAIR_DISPATCH_RESULT=dispatched; printf 'l2\n' >> "$DISPATCH_PATH"; return 0; }
+repair_unintended_stop() { printf 'l1\n' >> "$DISPATCH_PATH"; }
+""".strip(),
+            f"launch_chain_tick custody-control-plane {str(tmp_path / 'workspace')!r} {str(tmp_path / 'chain.yaml')!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert dispatch_path.read_text(encoding="utf-8").splitlines() == ["l2"]
+    assert "L2 now has custody" in log_path.read_text(encoding="utf-8")
+
+
+def test_l2_pathological_evidence_builds_minimal_envelope_and_launches_investigator(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_dir = marker_dir / "repair-data"
+    goal_path = marker_dir / "repair-goals" / "demo" / "goal.json"
+    goal_path.parent.mkdir(parents=True)
+    repair_dir.mkdir(parents=True)
+    goal_path.write_text(
+        json.dumps(
+            {
+                "goal_id": "repair-goal-pathological",
+                "checkpoint_digest": "c" * 64,
+                "target": {"blocker_id": "blocker-pathological"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    huge = "status-history-log" * 150_000
+    repair_path = repair_dir / "demo.repair-data.json"
+    repair_path.write_text(
+        json.dumps(
+            {
+                "outcome": "deterministic_failure",
+                "attempts": [
+                    {
+                        "attempt_id": index,
+                        "failure_context": huge,
+                        "post_launch_failure_context": huge,
+                    }
+                    for index in range(4)
+                ],
+                "repair_goal": {
+                    "goal_id": "repair-goal-pathological",
+                    "goal_path": str(goal_path),
+                    "checkpoint_digest": "c" * 64,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (marker_dir / "demo.json").write_text(
+        json.dumps({"workspace": str(tmp_path), "history": huge}), encoding="utf-8"
+    )
+    receipt = {
+        "schema_version": "arnold-repair-investigator-receipt-v2",
+        "context_digest": "filled-by-launch-stub",
+        "target_kind": "l2_repair_system",
+        "actual_failure": {
+            "classification": "custody_failure",
+            "mechanism": "repair evidence and launch custody disagree",
+            "error": "pathological evidence remained reference-only",
+        },
+        "evidence_sources": [
+            {
+                "kind": "repair_data",
+                "path": str(repair_path),
+                "authority": 7,
+                "observed": "authoritative artifact was read by reference",
+            }
+        ],
+        "custody_status": "consistent",
+        "custody_contradictions": [],
+        "intended_recovery": {
+            "predicate": "repair ordinary custody and retrigger L1",
+            "blocker_cleared_required": True,
+            "fresh_progress_required": True,
+            "beyond_stage_required": True,
+        },
+        "safe_repair_target": {
+            "kind": "arnold_source",
+            "scope": str(REPO_ROOT),
+            "rationale": "failure is in the repair launch contract",
+        },
+        "handoff": {
+            "action": "repair_source",
+            "allowed_mutations": ["repair investigation source"],
+            "forbidden_mutations": ["audited workspace"],
+        },
+        "four_axis": {
+            "TRACKED": "pass",
+            "FIXED": "fail",
+            "INTENT": "pass",
+            "CONTEXT": "fail",
+        },
+        "prior_repairs_considered": ["pathological repair data"],
+        "preserve_live": False,
+        "recommended_action": "repair_source",
+        "guard_weakening_risk": "none",
+    }
+    receipt_template = tmp_path / "receipt-template.json"
+    receipt_template.write_text(json.dumps(receipt), encoding="utf-8")
+    context_path = tmp_path / "context.json"
+    prompt_path = tmp_path / "prompt.md"
+    receipt_path = tmp_path / "receipt.json"
+    observation_path = tmp_path / "observations.json"
+    run_id_path = tmp_path / "run-id"
+    launch_log = tmp_path / "launch.log"
+    run_log = tmp_path / "run.log"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_codex = fake_bin / "codex"
+    fake_codex.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_codex.chmod(0o755)
+    supervisor = tmp_path / "supervisor-python"
+    supervisor.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$*\" == *'arnold_pipelines.megaplan.cloud.repair_investigation'* ]]; then\n"
+        f"  exec {shlex.quote(sys.executable)} \"$@\"\n"
+        "fi\n"
+        "cat >/dev/null\n",
+        encoding="utf-8",
+    )
+    supervisor.chmod(0o755)
+    wrapper = _meta_repair_wrapper()
+    start = wrapper.index("run_meta_repair_investigation() {")
+    end = wrapper.index("\nrequire_meta_investigation_before_mutation()", start)
+    function = wrapper[start:end]
+    script = "\n\n".join(
+        [
+            function,
+            f"REAL_PYTHON={shlex.quote(sys.executable)}",
+            f"PATH={shlex.quote(str(fake_bin))}:$PATH",
+            f"WRAPPER_REPO_ROOT={shlex.quote(str(REPO_ROOT))}",
+            f"ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
+            f"MEGAPLAN_SUPERVISOR_PYTHON={shlex.quote(str(supervisor))}",
+            f"MARKER_DIR={shlex.quote(str(marker_dir))}",
+            f"REPAIR_DATA_DIR={shlex.quote(str(repair_dir))}",
+            f"REPAIR_DATA_PATH={shlex.quote(str(repair_path))}",
+            f"META_INVESTIGATION_CONTEXT_PATH={shlex.quote(str(context_path))}",
+            f"META_INVESTIGATION_PROMPT_PATH={shlex.quote(str(prompt_path))}",
+            f"META_INVESTIGATION_RECEIPT_PATH={shlex.quote(str(receipt_path))}",
+            f"META_INVESTIGATION_OBSERVATION_PATH={shlex.quote(str(observation_path))}",
+            f"META_INVESTIGATION_RUN_ID_PATH={shlex.quote(str(run_id_path))}",
+            f"RECEIPT_TEMPLATE={shlex.quote(str(receipt_template))}",
+            f"LAUNCH_LOG={shlex.quote(str(launch_log))}",
+            f"RUN_LOG={shlex.quote(str(run_log))}",
+            "SESSION=demo",
+            "TRIGGER_TYPE=l1_custody_failure",
+            "META_CODEX_MODEL=test-model",
+            "DEEPSEEK_MODEL=test-deepseek",
+            "MEGAPLAN_META_FORCE_INVESTIGATOR_MODE=codex_read_only",
+            "SUBAGENT_TIMEOUT=30",
+            "META_INVESTIGATION_MAX_BYTES=65536",
+            "META_INVESTIGATION_CONTEXT_DIGEST=",
+            "META_INVESTIGATION_RUN_ID=",
+            "CLOUD_WATCHDOG_REPAIR_REQUEST_ID=request-1",
+            "CLOUD_WATCHDOG_REPAIR_BLOCKER_ID=blocker-1",
+            "ARNOLD_MANAGED_AGENT_RUN_ID=parent-1",
+            "redact_file_in_place() { :; }",
+            "log() { :; }",
+            r'''python3() {
+  if [[ "$1" == "-m" && "$2" == "arnold_pipelines.megaplan.managed_agent" ]]; then
+    printf '%s\n' 'managed-investigator-pathological' > "$META_INVESTIGATION_RUN_ID_PATH"
+    printf '%s\n' "$*" > "$LAUNCH_LOG"
+    "$REAL_PYTHON" - "$META_INVESTIGATION_CONTEXT_PATH" "$RECEIPT_TEMPLATE" "$META_INVESTIGATION_RECEIPT_PATH" <<'PY'
+import json, sys
+context = json.load(open(sys.argv[1], encoding="utf-8"))
+receipt = json.load(open(sys.argv[2], encoding="utf-8"))
+receipt["context_digest"] = context["context_digest"]
+json.dump(receipt, open(sys.argv[3], "w", encoding="utf-8"))
+PY
+    return 0
+  fi
+  "$REAL_PYTHON" "$@"
+}''',
+            "run_meta_repair_investigation",
+        ]
+    )
+
+    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+    envelope = json.loads(context_path.read_text(encoding="utf-8"))
+    assert context_path.stat().st_size < 16 * 1024
+    assert prompt_path.stat().st_size <= 65536
+    assert envelope["identity"]["repair_request_id"] == "request-1"
+    assert envelope["identity"]["blocker_id"] == "blocker-pathological"
+    assert envelope["identity"]["dispatch_blocker_id"] == "blocker-1"
+    assert envelope["identity"]["blocker_identity_drift"] is True
+    assert set(envelope) == {
+        "schema_version",
+        "target_kind",
+        "generated_at",
+        "objective",
+        "identity",
+        "provenance_ref",
+        "source_custody",
+        "evidence_refs",
+        "authorization",
+        "receipt_contract_ref",
+        "context_digest",
+    }
+    assert run_id_path.read_text(encoding="utf-8").strip() == "managed-investigator-pathological"
+    assert "--route-class meta_repair_read_only_investigator" in launch_log.read_text(encoding="utf-8")
+    assert "status-history-log" not in prompt_path.read_text(encoding="utf-8")
+
+
+def test_two_stage_repair_fails_closed_before_mutating_fixer_and_is_described() -> None:
+    watchdog = _wrapper("arnold-watchdog")
+    repair = _wrapper("arnold-repair-loop")
+
+    assert '--description "${ARNOLD_REPAIR_LAUNCH_DESCRIPTION:-Investigate then repair watchdog blocker' in watchdog
+    assert '--description "Read-only investigation of ${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-repair blocker}' in repair
+    assert '--description "Mutating fixer for ${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-repair blocker}' in repair
+
+    investigator_call = repair.index("run_repair_investigator_turn || investigator_rc=$?")
+    mutating_loop = repair.index("for iteration in 1 2 3; do", investigator_call)
+    fail_closed = repair[investigator_call:mutating_loop]
+    assert 'if [[ "$investigator_rc" == "2" ]]' in fail_closed
+    assert 'elif [[ "$investigator_rc" != "0" ]]' in fail_closed
+    assert fail_closed.count("exit 1") >= 2
+    assert repair.index('run_dev_fix_turn "$iteration"', mutating_loop) > investigator_call
+
+
 def test_meta_repair_wrapper_has_deepseek_hermes_subagent_instructions() -> None:
     """Wrapper must instruct Codex to delegate to DeepSeek/Hermes subagents."""
     text = _meta_repair_wrapper()
@@ -13266,7 +13812,8 @@ def test_meta_repair_recursion_check_embedded_python_matches_contract(
 ) -> None:
     """The recursion_check embedded Python must match the meta_repair_policy API."""
     marker = (
-        'python3 - "$SESSION" "$REPAIR_DATA_DIR" <<'
+        'python3 - "$SESSION" "$REPAIR_DATA_DIR" '
+        '"${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'
     )
     text = _meta_repair_wrapper()
 
@@ -13288,7 +13835,7 @@ def test_meta_repair_recursion_check_embedded_python_matches_contract(
     env = dict(os.environ)
     env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
     result = subprocess.run(
-        [sys.executable, str(prog_path), "test-session", str(repair_data)],
+        [sys.executable, str(prog_path), "test-session", str(repair_data), "blocker-1"],
         capture_output=True,
         text=True,
         env=env,
@@ -13302,6 +13849,7 @@ def test_meta_repair_recursion_check_embedded_python_matches_contract(
     record = {
         "meta_repair_id": "existing-001",
         "session": "test-session",
+        "blocker_id": "blocker-1",
         "trigger": "repair_timeout",
         "outcome": "FIXED",
     }
@@ -13312,7 +13860,7 @@ def test_meta_repair_recursion_check_embedded_python_matches_contract(
     )
 
     result2 = subprocess.run(
-        [sys.executable, str(prog_path), "test-session", str(repair_data)],
+        [sys.executable, str(prog_path), "test-session", str(repair_data), "blocker-1"],
         capture_output=True,
         text=True,
         env=env,
@@ -13396,7 +13944,7 @@ def test_meta_repair_record_persistence_embedded_python_matches_contract(
     marker = (
         'python3 - "$SESSION" "$TRIGGER_TYPE" "$VERDICT" "$RESP_PATH" '
         '"$BRIEF_PATH" "$REPAIR_DATA_DIR" "$META_WORKER_RUN_ID" '
-        '"$META_WORKER_MANIFEST" <<'
+        '"$META_WORKER_MANIFEST" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'
     )
     text = _meta_repair_wrapper()
 

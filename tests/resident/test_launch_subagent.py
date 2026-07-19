@@ -17,6 +17,8 @@ from arnold_pipelines.megaplan.resident.profile import MegaplanResidentProfile
 from arnold_pipelines.megaplan.resident.runtime import InboundEvent, ResidentRuntime
 from arnold_pipelines.megaplan.resident.provenance import DELEGATION_CONTEXT_ENV
 from arnold_pipelines.megaplan.resident.subagent import (
+    DELEGATION_DELIVERY_INSTRUCTION_HEADER,
+    DELEGATION_DELIVERY_INSTRUCTION_SCHEMA,
     FINAL_SUMMARY_INSTRUCTION,
     ManagedCompletionTurnResult,
     SubagentResult,
@@ -63,10 +65,11 @@ def test_local_resident_launch_seam_uses_injected_provenance(tmp_path, monkeypat
     monkeypatch.setattr(module, "launch_codex_subagent_detached", fake_launch)
     rc = module._main([
         "launch", "--task-file", str(task_file), "--project-dir", str(tmp_path),
-        "--task-kind", "coding", "--difficulty", "7",
+        "--task-kind", "coding", "--work-intent", "speculative", "--difficulty", "7",
     ])
     assert rc == 0
     assert observed["task"] == "do durable work"
+    assert observed["work_intent"] == "speculative"
     assert observed["difficulty"] == 7
     assert json.loads(capsys.readouterr().out)["run_id"] == "run-1"
 class _Completed:
@@ -124,9 +127,10 @@ def test_builds_argv_and_reads_stdout(tmp_path, monkeypatch) -> None:
     assert "--max-tokens" in argv and "12345" in argv
     assert "--project-dir" in argv and str(tmp_path) in argv
     assert "--query-file" in argv
-    assert captured["query"].startswith(
-        "hello\nworld\n\n[Completion delivery contract]"
-    )
+    assert captured["query"].startswith("hello\nworld\n\n")
+    assert captured["query"].count(DELEGATION_DELIVERY_INSTRUCTION_HEADER) == 1
+    assert "- resolved work intent: execution" in captured["query"]
+    assert "does not authorize push, remote merge, deployment, restart" in captured["query"]
     assert FINAL_SUMMARY_INSTRUCTION in captured["query"]
     # query file cleaned up after the run
     qf = argv[argv.index("--query-file") + 1]
@@ -251,9 +255,14 @@ def test_codex_background_launch_writes_durable_manifest(tmp_path, monkeypatch) 
     assert manifest["full_log_path"] == result.log_path
     assert Path(manifest["result_path"]).is_file()
     prompt = Path(manifest["prompt_path"]).read_text()
-    assert prompt.startswith(
-        "do the work\n\n[Completion delivery contract]"
-    )
+    assert prompt.startswith("do the work\n\n")
+    assert prompt.count(DELEGATION_DELIVERY_INSTRUCTION_HEADER) == 1
+    assert "- resolved work intent: execution" in prompt
+    assert manifest["work_intent"] == "execution"
+    instruction = manifest["delegation_delivery_instruction"]
+    assert instruction["schema_version"] == DELEGATION_DELIVERY_INSTRUCTION_SCHEMA
+    assert instruction["resolved_work_intent"] == "execution"
+    assert len(instruction["sha256"]) == 64
     assert "[Delegated context directory]" in prompt
     assert "full resident/cloud/conversation state is deliberately not embedded" in prompt
     assert "resident context --node root" in prompt
@@ -261,6 +270,10 @@ def test_codex_background_launch_writes_durable_manifest(tmp_path, monkeypatch) 
     assert manifest["context_directory"]["project_worktree"] == str(tmp_path)
     assert manifest["context_directory"]["resident_conversation_id"] == "rconv_conversation1"
     assert "resident_runtime_source" in manifest["context_directory"]
+    assert manifest["git_custody"]["schema_version"] == "arnold-resident-git-custody-v1"
+    assert manifest["git_custody"]["evidence_path"].endswith("git-custody-evidence.json")
+    assert "[Git implementation custody contract — deterministic v1]" in prompt
+    assert "Missing or inconsistent evidence fails the delegated run" in prompt
     assert FINAL_SUMMARY_INSTRUCTION in prompt
     assert manifest["discord_origin"]["conversation_key"] == "discord:guild:12:channel:34:thread:56"
     assert manifest["discord_origin"]["reply_to_message_id"] == "987"
@@ -456,6 +469,63 @@ def test_codex_worker_finalizes_manifest_with_actual_worker_pid(tmp_path, monkey
     assert result_path.is_file()
 
 
+@pytest.mark.parametrize("control_status", ["cancelled", "superseded"])
+def test_codex_worker_preserves_manifest_bound_control_terminal_on_signal_race(
+    tmp_path, monkeypatch, control_status
+) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    prompt_path = run_dir / "prompt.md"
+    result_path = run_dir / "result.md"
+    manifest_path = run_dir / "manifest.json"
+    prompt_path.write_text("do it")
+    manifest_path.write_text(json.dumps({
+        "schema_version": "arnold-resident-agent-run-v1",
+        "run_kind": "resident_delegated_agent",
+        "custodian": "arnold.megaplan.resident",
+        "status": "running",
+        "pid": 111,
+        "prompt_path": str(prompt_path),
+        "result_path": str(result_path),
+        "project_dir": str(tmp_path),
+        "model": "gpt-test",
+        "reasoning_effort": "xhigh",
+    }))
+
+    class _Worker:
+        pid = 222
+
+        def wait(self, timeout=None):
+            manifest = json.loads(manifest_path.read_text())
+            manifest.update({
+                "status": control_status,
+                "terminal_outcome": control_status,
+                "finished_at": "2026-07-15T10:41:38+00:00",
+                "returncode": 143,
+                "status_history": [{
+                    "status": control_status,
+                    "at": "2026-07-15T10:41:38+00:00",
+                    "evidence": "managed_agent_explicit_transition",
+                }],
+            })
+            manifest_path.write_text(json.dumps(manifest))
+            raise KeyboardInterrupt
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(subagent_module.subprocess, "Popen", lambda *args, **kwargs: _Worker())
+
+    assert subagent_module._run_codex_manifest(manifest_path) == 143
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["status"] == control_status
+    assert manifest["terminal_outcome"] == control_status
+    assert manifest["finished_at"] == "2026-07-15T10:41:38+00:00"
+    assert manifest["status_history"][-1]["evidence"] == (
+        "managed_codex_supervisor_acknowledged_control_terminal"
+    )
+
+
 def test_managed_agent_hot_context_separates_running_and_recent(tmp_path, monkeypatch) -> None:
     run_root = tmp_path / ".megaplan/plans/resident-subagents"
     running = run_root / "running"
@@ -502,9 +572,42 @@ def test_managed_agent_hot_context_separates_running_and_recent(tmp_path, monkey
     assert status["running"][0]["full_log_path"] == "/logs/running.log"
     assert status["recent"][0]["run_id"] == "completed"
     assert status["recent"][0]["completion_delivery"]["status"] == "delivered"
+    assert status["recent_total_count"] == 1
+    assert status["recent_omitted_count"] == 0
     assert status["delivery_status_counts"] == {"not_applicable": 1, "delivered": 1}
     assert status["terminal_delivery_status_counts"] == {"delivered": 1}
     assert status["delivery_attention_count"] == 0
+
+
+def test_managed_agent_inventory_accounts_for_bounded_recent_rows(tmp_path) -> None:
+    run_root = tmp_path / ".megaplan/plans/resident-subagents"
+    for index in range(3):
+        run_dir = run_root / f"completed-{index}"
+        run_dir.mkdir(parents=True)
+        (run_dir / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "arnold-resident-agent-run-v1",
+                    "run_kind": "resident_delegated_agent",
+                    "custodian": "arnold.megaplan.resident",
+                    "run_id": f"completed-{index}",
+                    "status": "completed",
+                    "created_at": f"2026-07-10T0{index}:00:00Z",
+                }
+            )
+        )
+
+    status = list_managed_resident_agents(
+        project_root=tmp_path, workspace_root=None, recent_limit=2
+    )
+
+    assert [row["run_id"] for row in status["recent"]] == [
+        "completed-2",
+        "completed-1",
+    ]
+    assert status["recent_count"] == 2
+    assert status["recent_total_count"] == 3
+    assert status["recent_omitted_count"] == 1
 
 
 def test_hot_context_excludes_workflow_internal_manifest(tmp_path, monkeypatch) -> None:
@@ -1073,6 +1176,111 @@ def test_failed_resident_verifier_delivers_truthful_unknown_summary(tmp_path) ->
     assert persisted["resident_completion_turn"]["verification_outcome"] == "unknown"
 
 
+def test_terminal_verifier_cannot_lead_with_handoff_success_when_recovery_blocked(
+    tmp_path,
+) -> None:
+    manifest_path = _terminal_manifest(tmp_path)
+    store = FileStore(tmp_path / ".megaplan/resident")
+    config = ResidentConfig(allowed_user_ids=("42",))
+    authorizer = ResidentAuthorizer(config)
+
+    class _Runner:
+        async def run(self, _request, _tools):
+            return AgentResponse(
+                final_text=(
+                    "The message was durably sent, and the verification outcome for the handoff "
+                    "is successful.\n\n"
+                    "The underlying recovery remains blocked at a genuine authorization gate: "
+                    "human approval is required."
+                )
+            )
+
+    class _Outbound:
+        def __init__(self) -> None:
+            self.sent = []
+
+        async def send(self, message):
+            self.sent.append(message)
+            message.metadata["discord_message_ids"] = ["blocked-reply"]
+
+    outbound = _Outbound()
+    runtime = ResidentRuntime(
+        config=config,
+        authorizer=authorizer,
+        store=store,
+        profile=MegaplanResidentProfile(store=store, authorizer=authorizer, config=config),
+        runner=_Runner(),
+        outbound=outbound,
+    )
+    result = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound,
+            project_root=tmp_path,
+            workspace_root=None,
+            completion_turn_handler=runtime.run_managed_completion_turn,
+        )
+    )
+
+    persisted = json.loads(manifest_path.read_text())
+    delivered = outbound.sent[0].content
+    assert result.delivered == 1
+    assert delivered.startswith("Forward motion remains blocked")
+    assert "handoff is successful" not in delivered
+    assert "human approval is required" in delivered
+    assert persisted["resident_completion_turn"]["verification_outcome"] == "blocked"
+    assert persisted["completion_delivery"]["payload"]["verification_outcome"] == "blocked"
+
+
+def test_terminal_verifier_fails_closed_on_active_repair_goal(tmp_path) -> None:
+    manifest_path = _terminal_manifest(tmp_path)
+    goal_path = tmp_path / "repair-goal.json"
+    goal_path.write_text(
+        json.dumps({"status": "active", "goal_id": "goal-1"}), encoding="utf-8"
+    )
+    manifest = json.loads(manifest_path.read_text())
+    manifest["links"] = {"repair_goal_path": str(goal_path)}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    store = FileStore(tmp_path / ".megaplan/resident")
+    config = ResidentConfig(allowed_user_ids=("42",))
+    authorizer = ResidentAuthorizer(config)
+
+    class _Runner:
+        async def run(self, _request, _tools):
+            return AgentResponse(
+                final_text="Everything completed. The verification outcome is success."
+            )
+
+    class _Outbound:
+        def __init__(self) -> None:
+            self.sent = []
+
+        async def send(self, message):
+            self.sent.append(message)
+            message.metadata["discord_message_ids"] = ["goal-blocked-reply"]
+
+    outbound = _Outbound()
+    runtime = ResidentRuntime(
+        config=config,
+        authorizer=authorizer,
+        store=store,
+        profile=MegaplanResidentProfile(store=store, authorizer=authorizer, config=config),
+        runner=_Runner(),
+        outbound=outbound,
+    )
+    asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound,
+            project_root=tmp_path,
+            workspace_root=None,
+            completion_turn_handler=runtime.run_managed_completion_turn,
+        )
+    )
+
+    persisted = json.loads(manifest_path.read_text())
+    assert outbound.sent[0].content.startswith("Forward motion remains blocked")
+    assert persisted["resident_completion_turn"]["verification_outcome"] == "blocked"
+
+
 def test_production_completion_sweep_suppresses_pytest_fixture_manifest(tmp_path) -> None:
     manifest_path = _terminal_manifest(tmp_path)
 
@@ -1422,6 +1630,72 @@ def test_completion_sweep_retries_inflight_restart_with_stable_nonce(tmp_path) -
     )
 
 
+def test_completion_fallback_acceptance_is_durable_and_not_redriven(tmp_path) -> None:
+    manifest_path = _terminal_manifest(tmp_path)
+
+    class _Outbound:
+        def __init__(self) -> None:
+            self.sent = []
+
+        async def send(self, message):
+            self.sent.append(message)
+            message.metadata["discord_message_ids"] = ["fallback-reply-1"]
+            message.metadata["discord_delivery_evidence"] = {
+                "schema_version": "arnold-discord-delivery-evidence-v1",
+                "authoritative_conversation_key": message.conversation_key,
+                "delivery_mode": "fallback_plain",
+                "fallback_reason": "reply_reference_rejected",
+                "provider_outcome": "accepted",
+                "provider_message_ids": ["fallback-reply-1"],
+                "provider_rejections": [
+                    {
+                        "outcome": "rejected",
+                        "scope": "reply_reference",
+                        "error_class": "NotFound",
+                        "http_status": 404,
+                        "discord_error_code": 10008,
+                    }
+                ],
+                "resolved_channel_id": "301463647895683072",
+                "resolved_thread_id": None,
+                "user_notification_visibility": "unknown",
+            }
+
+    outbound = _Outbound()
+    first = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound, project_root=tmp_path, workspace_root=None
+        )
+    )
+    second = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=outbound, project_root=tmp_path, workspace_root=None
+        )
+    )
+
+    delivery = json.loads(manifest_path.read_text())["completion_delivery"]
+    assert first.delivered == 1
+    assert second.delivered == 0
+    assert len(outbound.sent) == 1
+    assert delivery["status"] == "delivered"
+    assert delivery["provider_outcome"] == "accepted"
+    assert delivery["user_notification_visibility"] == "unknown"
+    assert delivery["delivery_evidence"]["delivery_mode"] == "fallback_plain"
+    assert delivery["delivery_evidence"]["authoritative_conversation_key"] == (
+        outbound.sent[0].conversation_key
+    )
+    assert any(
+        item["status"] == "rejected"
+        and item["evidence"] == "provider_rejected_reply_or_thread_target"
+        for item in delivery["state_history"]
+    )
+    assert any(
+        item["status"] == "delivered"
+        and item["evidence"] == "provider_fallback_message_ids_persisted"
+        for item in delivery["state_history"]
+    )
+
+
 def test_completion_delivery_failure_is_persisted_and_retried(tmp_path) -> None:
     manifest_path = _terminal_manifest(tmp_path)
     first_now = datetime(2026, 7, 10, tzinfo=timezone.utc)
@@ -1473,6 +1747,34 @@ def test_completion_delivery_failure_is_persisted_and_retried(tmp_path) -> None:
     assert final_manifest["completion_delivery"]["attempt_count"] == 2
     assert len(final_manifest["completion_delivery"]["error_history"]) == 1
     assert final_manifest["completion_delivery"]["payload"]["content"] == "Done safely."
+
+
+def test_completion_timeout_records_unknown_provider_outcome(tmp_path) -> None:
+    manifest_path = _terminal_manifest(tmp_path)
+
+    class _Outbound:
+        async def send(self, message):
+            raise TimeoutError("provider response timed out")
+
+    result = asyncio.run(
+        sweep_managed_agent_deliveries(
+            outbound=_Outbound(),
+            project_root=tmp_path,
+            workspace_root=None,
+            now=datetime(2026, 7, 10, tzinfo=timezone.utc),
+        )
+    )
+
+    delivery = json.loads(manifest_path.read_text())["completion_delivery"]
+    assert result.retry_pending == 1
+    assert delivery["status"] == "retry_pending"
+    assert delivery["provider_outcome"] == "unknown"
+    assert delivery["user_notification_visibility"] == "unknown"
+    assert any(
+        item["status"] == "unknown"
+        and item["evidence"] == "provider_acceptance_outcome_unknown"
+        for item in delivery["state_history"]
+    )
 
 
 def test_completion_delivery_persists_redacted_discord_http_evidence(tmp_path) -> None:

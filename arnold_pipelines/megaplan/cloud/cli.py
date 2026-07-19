@@ -471,6 +471,24 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         help="Run against the local agentbox control plane instead of using SSH transport",
     )
 
+    retire_status_parser = cloud_sub.add_parser(
+        "retire-stale-status",
+        parents=[shared],
+        help="Tombstone one exact deleted-workspace marker in the status projection only",
+    )
+    retire_status_parser.add_argument("--session", required=True)
+    retire_status_parser.add_argument("--expect-marker-sha256", required=True)
+    retire_status_parser.add_argument("--reason", required=True)
+    retire_status_parser.add_argument("--actor", default="operator")
+    retire_status_parser.add_argument(
+        "--marker-dir", default="/workspace/.megaplan/cloud-sessions"
+    )
+    retire_status_parser.add_argument(
+        "--on-box",
+        action="store_true",
+        help="Run against the local agentbox control plane instead of using SSH transport",
+    )
+
     cloud_sub.add_parser("down", parents=[shared], help="Pause the deployment without deleting volume")
 
     supervise_parser = cloud_sub.add_parser(
@@ -525,6 +543,8 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
 
         if action == "retire-chain" and bool(getattr(args, "on_box", False)):
             return _run_session_retirement(args)
+        if action == "retire-stale-status" and bool(getattr(args, "on_box", False)):
+            return _run_status_retirement(args)
 
         spec = _load_cloud_spec(root, args)
         provider = _provider_for_action(spec, args)
@@ -664,6 +684,20 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             _relay_output(result, secret_names=spec.secrets, env=os.environ)
             return result.returncode
 
+        if action == "retire-stale-status":
+            command = shlex.join(
+                [
+                    "python3",
+                    "-P",
+                    "-m",
+                    "arnold_pipelines.megaplan.cloud.status_retirement",
+                    *_status_retirement_argv(args),
+                ]
+            )
+            result = provider.ssh_exec(command)
+            _relay_output(result, secret_names=spec.secrets, env=os.environ)
+            return result.returncode
+
         if action == "down":
             return provider.down()
 
@@ -721,6 +755,27 @@ def _run_session_retirement(args: argparse.Namespace) -> int:
     from arnold_pipelines.megaplan.cloud.session_retirement import main
 
     return main(_session_retirement_argv(args))
+
+
+def _status_retirement_argv(args: argparse.Namespace) -> list[str]:
+    return [
+        "--marker-dir",
+        str(args.marker_dir),
+        "--session",
+        str(args.session),
+        "--expect-marker-sha256",
+        str(args.expect_marker_sha256),
+        "--reason",
+        str(args.reason),
+        "--actor",
+        str(args.actor),
+    ]
+
+
+def _run_status_retirement(args: argparse.Namespace) -> int:
+    from arnold_pipelines.megaplan.cloud.status_retirement import main
+
+    return main(_status_retirement_argv(args))
 
 
 def _cloud_yaml_path(root: Path, args: argparse.Namespace) -> Path:
@@ -2846,6 +2901,9 @@ def _chain_start_command(
     one_shot: bool = False,
     no_git_refresh: bool = False,
     log_relative: str = _CHAIN_LOG_RELATIVE,
+    repair_session: str | None = None,
+    repair_run_kind: str = "chain",
+    repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
 ) -> str:
     """Construct the ``python -m arnold_pipelines.megaplan chain start`` command with canonical quoting.
 
@@ -2869,6 +2927,15 @@ def _chain_start_command(
         f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
         f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
     )
+    if repair_session:
+        prefix += (
+            "export ARNOLD_REPAIR_QUEUE_ROOT="
+            '"${ARNOLD_REPAIR_QUEUE_ROOT:-/workspace/.megaplan/repair-queue}"; '
+            "export ARNOLD_REPAIR_MARKER_DIR="
+            f"{shlex.quote(repair_marker_dir)}; "
+            f"export ARNOLD_REPAIR_SESSION={shlex.quote(repair_session)}; "
+            f"export ARNOLD_REPAIR_RUN_KIND={shlex.quote(repair_run_kind)}; "
+        )
     if engine_dir:
         cwd = shlex.quote(project_dir or engine_dir)
         engine_path = shlex.quote(engine_dir)
@@ -3014,6 +3081,9 @@ def _refresh_then_chain_start_command(
     no_git_refresh: bool = False,
     force_clean_editable_install: bool = False,
     log_relative: str = _CHAIN_LOG_RELATIVE,
+    repair_session: str | None = None,
+    repair_run_kind: str = "chain",
+    repair_marker_dir: str = _CHAIN_SESSION_MARKER_DIR,
 ) -> str:
     runtime_src_path = (
         str(PurePosixPath(project_dir) / ".megaplan" / "runtime" / "editable-engine")
@@ -3028,7 +3098,7 @@ def _refresh_then_chain_start_command(
     engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     return (
         f"{{ {refresh}; }} >> {shlex.quote(log_relative)} 2>&1 && "
-        f"{_chain_start_command(remote_spec_path, project_dir=project_dir, engine_dir=engine_dir, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative)}"
+        f"{_chain_start_command(remote_spec_path, project_dir=project_dir, engine_dir=engine_dir, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative, repair_session=repair_session, repair_run_kind=repair_run_kind, repair_marker_dir=repair_marker_dir)}"
     )
 
 
@@ -3057,6 +3127,7 @@ def _tmux_chain_launch_command(
     name = session_name or CHAIN_SESSION_NAME
     if log_relative == _CHAIN_LOG_RELATIVE and name != CHAIN_SESSION_NAME:
         log_relative = f".megaplan/cloud-chain-{name}.log"
+    marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
     chain_cmd = _refresh_then_chain_start_command(
         remote_spec_path,
         spec=spec,
@@ -3065,8 +3136,10 @@ def _tmux_chain_launch_command(
         no_git_refresh=no_git_refresh,
         force_clean_editable_install=force_clean_editable_install,
         log_relative=log_relative,
+        repair_session=name,
+        repair_run_kind="chain",
+        repair_marker_dir=str(PurePosixPath(marker).parent),
     )
-    marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
     digest = identity_digest or ""
     marker_payload = marker_payload or {
         "session": name,
@@ -3320,13 +3393,17 @@ def _tmux_chain_restart_command(
     name = session_name or CHAIN_SESSION_NAME
     if log_relative == _CHAIN_LOG_RELATIVE and name != CHAIN_SESSION_NAME:
         log_relative = f".megaplan/cloud-chain-{name}.log"
+    marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
     chain_cmd = _refresh_then_chain_start_command(
         remote_spec_path,
         spec=spec,
+        project_dir=workspace,
         one_shot=True,
         log_relative=log_relative,
+        repair_session=name,
+        repair_run_kind="chain",
+        repair_marker_dir=str(PurePosixPath(marker).parent),
     )
-    marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
     return (
         f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))}"
         " && "
@@ -4182,6 +4259,9 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             log_relative=launch_ctx.log_relative,
             no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
             force_clean_editable_install=bool(getattr(args, "force_clean_editable_install", False)),
+            repair_session=launch_session,
+            repair_run_kind="chain",
+            repair_marker_dir=str(PurePosixPath(launch_ctx.marker_path).parent),
         ),
         "editable_source_branch": launch_spec.megaplan.ref,
         "editable_source_head": (

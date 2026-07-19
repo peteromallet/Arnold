@@ -20,7 +20,7 @@ from .subagent import list_managed_resident_agents
 from .timezone import format_timestamp
 
 
-CURRENTLY_RUNNING_COMMAND = "currently-running"
+CURRENTLY_RUNNING_COMMAND = "whats-cooking"
 CURRENTLY_RUNNING_DESCRIPTION = "Show running Megaplan epics, chains, and resident subagents."
 _RUNNING_SESSION_STATUSES = frozenset({"running", "repairing"})
 _ATTENTION_SESSION_STATUS = "attention"
@@ -28,6 +28,7 @@ _ATTENTION_WINDOW = timedelta(hours=12)
 _TERMINAL_AGENT_STATUSES = frozenset(
     {"completed", "failed", "interrupted", "cancelled", "superseded", "unknown"}
 )
+_RECENT_AGENT_COMPLETION_WINDOW = timedelta(hours=1)
 _MAX_LABEL_CHARS = 140
 _MAX_RECENT_COMPLETED = 5
 _EPICS_SECTION_ICON = "⛓️"
@@ -55,6 +56,16 @@ class CurrentlyRunningReport:
     managed_agents: Mapping[str, Any] | None
     status_error: str | None = None
     managed_agents_error: str | None = None
+
+
+@dataclass
+class _ManagedAgentTree:
+    """One node in a bounded, presentation-only managed-run forest."""
+
+    row: Mapping[str, Any]
+    index: int
+    children: list["_ManagedAgentTree"]
+    provenance_note: str | None = None
 
 
 async def collect_currently_running(runtime: Any) -> CurrentlyRunningReport:
@@ -127,7 +138,7 @@ def discover_running_sessions(status_node: Mapping[str, Any] | None) -> list[Map
         if not isinstance(row, Mapping):
             continue
         status = str(row.get("status") or "").casefold()
-        if status in _RUNNING_SESSION_STATUSES:
+        if status in _RUNNING_SESSION_STATUSES or row.get("repairing") is True:
             discovered.append(row)
             continue
         # ``attention`` is an operator overlay, not an execution state.  Keep
@@ -193,7 +204,188 @@ def discover_live_managed_agents(
     rows = managed_agents.get("running")
     if not isinstance(rows, list):
         return []
-    return [row for row in rows if isinstance(row, Mapping) and row.get("live") is True]
+    return [
+        row
+        for row in rows
+        if isinstance(row, Mapping)
+        and row.get("live") is True
+        and str(row.get("status") or "").casefold() not in _TERMINAL_AGENT_STATUSES
+    ]
+
+
+def discover_recently_completed_managed_agents(
+    managed_agents: Mapping[str, Any] | None, *, snapshot_at: datetime
+) -> list[Mapping[str, Any]]:
+    """Return successful managed-agent completions from the preceding hour.
+
+    The inventory's bounded ``recent`` projection remains the truncation
+    boundary.  Only explicit successful completions are included; failed,
+    interrupted, cancelled, superseded, unknown, and future-dated rows are
+    excluded.  The exact one-hour boundary is inclusive.
+    """
+
+    if not isinstance(managed_agents, Mapping):
+        return []
+    rows = managed_agents.get("recent")
+    if not isinstance(rows, list):
+        return []
+    reference = snapshot_at.astimezone(UTC)
+    return [
+        row
+        for row in rows
+        if isinstance(row, Mapping)
+        and str(row.get("status") or "").casefold() == "completed"
+        and str(row.get("terminal_outcome") or "completed").casefold()
+        == "completed"
+        and (finished_at := _parse_utc_timestamp(row.get("finished_at"))) is not None
+        and timedelta()
+        <= reference - finished_at
+        <= _RECENT_AGENT_COMPLETION_WINDOW
+    ]
+
+
+def _project_managed_agent_forest(
+    rows: list[Mapping[str, Any]],
+    *,
+    parents_in_other_section: Mapping[str, str] | None = None,
+) -> list[_ManagedAgentTree]:
+    """Project bounded rows through durable ``run_id``/``parent_run_id`` edges.
+
+    Query aggregation and ``delivery_owner_run_id`` deliberately do not create
+    edges here: they govern synthesis/delivery cardinality, not process
+    ancestry.
+
+    Input order remains the sibling order.  Root groups are ordered by the
+    earliest input position of any member, so nesting a newer child never
+    silently moves the whole family behind an unrelated older run.  Missing or
+    ambiguous evidence never suppresses a row: that row remains a root with an
+    honest provenance note.
+    """
+
+    nodes = [
+        _ManagedAgentTree(row=row, index=index, children=[])
+        for index, row in enumerate(rows)
+    ]
+    indices_by_id: dict[str, list[int]] = {}
+    for node in nodes:
+        run_id = _managed_run_id(node.row.get("run_id"))
+        if run_id is not None:
+            indices_by_id.setdefault(run_id, []).append(node.index)
+
+    parent_indices: list[int | None] = [None] * len(nodes)
+    other_sections = parents_in_other_section or {}
+    for node in nodes:
+        run_id = _managed_run_id(node.row.get("run_id"))
+        if run_id is None:
+            node.provenance_note = "invalid or missing run ID; hierarchy unavailable"
+            continue
+        if len(indices_by_id[run_id]) != 1:
+            node.provenance_note = "duplicate run ID; hierarchy unavailable"
+            continue
+
+        raw_parent = node.row.get("parent_run_id")
+        if raw_parent is None or (
+            isinstance(raw_parent, str) and not raw_parent.strip()
+        ):
+            continue
+        parent_run_id = _managed_run_id(raw_parent)
+        if parent_run_id is None:
+            node.provenance_note = "invalid parent provenance"
+            continue
+        if parent_run_id == run_id:
+            node.provenance_note = "invalid self-parent provenance"
+            continue
+        parent_matches = indices_by_id.get(parent_run_id, [])
+        if len(parent_matches) == 1:
+            parent_indices[node.index] = parent_matches[0]
+        elif len(parent_matches) > 1:
+            node.provenance_note = f"parent `{parent_run_id}` is ambiguous"
+        elif parent_run_id in other_sections:
+            node.provenance_note = (
+                f"parent `{parent_run_id}` is in {other_sections[parent_run_id]}"
+            )
+        else:
+            node.provenance_note = f"parent `{parent_run_id}` is outside this status window"
+
+    # A parent relation is a functional graph.  Break every node participating
+    # in a cycle, while allowing non-cyclic descendants to remain beneath the
+    # now-rooted cycle members.
+    cycle_nodes: set[int] = set()
+    settled: set[int] = set()
+    for start in range(len(nodes)):
+        if start in settled:
+            continue
+        path: list[int] = []
+        position: dict[int, int] = {}
+        cursor: int | None = start
+        while cursor is not None and cursor not in settled:
+            if cursor in position:
+                cycle_nodes.update(path[position[cursor] :])
+                break
+            position[cursor] = len(path)
+            path.append(cursor)
+            cursor = parent_indices[cursor]
+        settled.update(path)
+    for index in cycle_nodes:
+        parent_indices[index] = None
+        nodes[index].provenance_note = "invalid parent cycle; shown as a root"
+
+    roots: list[_ManagedAgentTree] = []
+    for node, parent_index in zip(nodes, parent_indices, strict=True):
+        if parent_index is None:
+            roots.append(node)
+        else:
+            nodes[parent_index].children.append(node)
+
+    root_first_index: dict[int, int] = {node.index: node.index for node in roots}
+    for node in nodes:
+        cursor = node.index
+        while (parent_index := parent_indices[cursor]) is not None:
+            cursor = parent_index
+        root_first_index[cursor] = min(root_first_index[cursor], node.index)
+    roots.sort(key=lambda node: root_first_index[node.index])
+    return roots
+
+
+def _managed_run_id(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _managed_agent_section_ids(
+    rows: list[Mapping[str, Any]], section: str
+) -> dict[str, str]:
+    """Return only unambiguous durable IDs for cross-section orphan labels."""
+
+    counts: dict[str, int] = {}
+    for row in rows:
+        run_id = _managed_run_id(row.get("run_id"))
+        if run_id is not None:
+            counts[run_id] = counts.get(run_id, 0) + 1
+    return {run_id: section for run_id, count in counts.items() if count == 1}
+
+
+def _render_agent_forest(
+    roots: list[_ManagedAgentTree], *, now: datetime | None
+) -> list[str]:
+    rendered: list[str] = []
+    pending: list[tuple[_ManagedAgentTree, int]] = [
+        (node, 0) for node in reversed(roots)
+    ]
+    while pending:
+        node, depth = pending.pop()
+        rendered.append(
+            _render_agent(
+                node.row,
+                now=now,
+                depth=depth,
+                provenance_note=node.provenance_note,
+            )
+        )
+        pending.extend((child, depth + 1) for child in reversed(node.children))
+    return rendered
 
 
 def discover_recently_completed_sessions(
@@ -291,13 +483,50 @@ def render_currently_running(
         )
     else:
         agents = discover_live_managed_agents(report.managed_agents)
-        lines.append(_agents_heading(f"{len(agents)} live"))
+        snapshot_at = _managed_agent_snapshot_time(status_node, now=now)
+        completed_agents = discover_recently_completed_managed_agents(
+            report.managed_agents, snapshot_at=snapshot_at
+        )
+        running_ids = _managed_agent_section_ids(agents, "Running")
+        completed_ids = _managed_agent_section_ids(
+            completed_agents, "Recently completed"
+        )
+        running_forest = _project_managed_agent_forest(
+            agents, parents_in_other_section=completed_ids
+        )
+        completed_forest = _project_managed_agent_forest(
+            completed_agents, parents_in_other_section=running_ids
+        )
+        lines.append(
+            _agents_heading(
+                f"{len(agents)} live · {len(completed_agents)} recently completed"
+            )
+        )
+        lines.append(_subsection_heading("🟢", "Running", str(len(agents))))
         if agents:
             # Every live agent remains visible. Discord delivery chunks the
             # finished view safely instead of silently hiding active work.
-            lines.extend(_render_agent(row, now=now) for row in agents)
+            lines.extend(_render_agent_forest(running_forest, now=now))
         else:
             lines.append("_No live resident-managed agents._")
+        lines.append(
+            _subsection_heading(
+                "✅", "Recently completed", str(len(completed_agents))
+            )
+        )
+        if completed_agents:
+            lines.extend(_render_agent_forest(completed_forest, now=now))
+        else:
+            lines.append("_No recently completed resident-managed agents._")
+        omitted = _nonnegative_int(
+            report.managed_agents.get("recent_omitted_count")
+            if isinstance(report.managed_agents, Mapping)
+            else None
+        )
+        if omitted:
+            lines.append(
+                f"_…{omitted} additional terminal managed runs omitted by the bounded inventory._"
+            )
     return "\n".join(lines)
 
 
@@ -328,21 +557,27 @@ def _render_session(row: Mapping[str, Any]) -> str:
     progress = row.get("progress") if isinstance(row.get("progress"), Mapping) else {}
     name = _first_label(row.get("display_name"), row.get("session"), "unnamed session")
     current_plan = _first_label(progress.get("current_plan"), row.get("current_plan"))
+    name_label = f"`{_safe_label(name)}`"
     if current_plan and current_plan.casefold() != name.casefold():
-        name = f"{name} · {current_plan}"
+        name_label = f"{name_label} · `{_safe_label(current_plan)}`"
 
     display_state = _optional_label(progress.get("display_state"))
     active_phase = progress.get("active_phase")
     if active_phase is None:
         active_phase = row.get("active_phase")
-    if display_state:
+    effective_session_status = _effective_session_status(row)
+    if display_state and not (
+        effective_session_status == "repairing" and display_state.casefold() == "failed"
+    ):
         status = display_state
     elif _phase_name(active_phase) == "execute":
         status = "executing"
     else:
         status = _first_label(
-            progress.get("plan_state"), row.get("status"), "status unavailable"
+            progress.get("plan_state"), effective_session_status, "status unavailable"
         )
+        if effective_session_status == "repairing" and status.casefold() == "failed":
+            status = effective_session_status
 
     details: list[str] = []
     overall_percent = _percent(progress.get("percent"))
@@ -355,8 +590,8 @@ def _render_session(row: Mapping[str, Any]) -> str:
         details.append("overall progress unavailable")
     plan_percent = _percent(progress.get("plan_percent"))
     if plan_percent is not None:
-        details.append(f"{plan_percent}% in-flight plan")
-    session_status = _optional_label(row.get("status"))
+        details.append(f"{plan_percent}% plan bookkeeping (not acceptance)")
+    session_status = effective_session_status
     if session_status and session_status.casefold() == _ATTENTION_SESSION_STATUS:
         details.append("⚠️ attention")
         operator_next = _optional_label(row.get("operator_next"))
@@ -364,7 +599,18 @@ def _render_session(row: Mapping[str, Any]) -> str:
             details.append(_safe_label(operator_next))
     elif session_status and session_status.casefold() != status.casefold():
         details.append(f"chain {session_status}")
-    return f"• **{_safe_label(name)}**\n  `{_safe_label(status)}` · {' · '.join(details)}"
+    return f"• {name_label}\n  `{_safe_label(status)}` · {' · '.join(details)}"
+
+
+def _effective_session_status(row: Mapping[str, Any]) -> str | None:
+    """Prefer an active repair signal over a stale failure display state."""
+
+    session_status = _optional_label(row.get("status"))
+    if row.get("repairing") is True or (
+        session_status and session_status.casefold() == "repairing"
+    ):
+        return "repairing"
+    return session_status
 
 
 def _percentage_point_delta(value: object) -> int | float | None:
@@ -399,7 +645,13 @@ def _render_completed_session(row: Mapping[str, Any]) -> str:
     return f"• **{_safe_label(name)}**\n  `{details[0]}`{suffix}"
 
 
-def _render_agent(row: Mapping[str, Any], *, now: datetime | None = None) -> str:
+def _render_agent(
+    row: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+    depth: int = 0,
+    provenance_note: str | None = None,
+) -> str:
     description = _agent_description(row) or "Resident-managed task"
     status = _first_label(row.get("status"), "running")
     identity = _agent_identity(row.get("run_id"))
@@ -411,11 +663,40 @@ def _render_agent(row: Mapping[str, Any], *, now: datetime | None = None) -> str
     token_usage = _agent_token_usage(row)
     if token_usage:
         details.append(token_usage)
+    delivery = _agent_delivery_status(row)
+    if delivery:
+        details.append(delivery)
+    marker = "• " if depth == 0 else f"{'  ' * depth}↳ "
+    detail_indent = "  " * (depth + 1)
+    if provenance_note:
+        details.append(f"⚠ {_safe_label(provenance_note)}")
     return (
-        f"• **{_safe_label(description)}**\n"
-        f"  `{details[0]}`"
+        f"{marker}**{_safe_label(description)}**\n"
+        f"{detail_indent}`{details[0]}`"
         f"{' · ' + ' · '.join(details[1:]) if len(details) > 1 else ''}"
         f"{identity_detail}"
+    )
+
+
+def _agent_delivery_status(row: Mapping[str, Any]) -> str | None:
+    """Render terminal Discord delivery state without changing delivery policy."""
+
+    if str(row.get("status") or "").casefold() not in _TERMINAL_AGENT_STATUSES:
+        return None
+    delivery = row.get("completion_delivery")
+    if not isinstance(delivery, Mapping):
+        return None
+    status = _optional_label(delivery.get("status"))
+    if not status or status.casefold() == "not_applicable":
+        return None
+    return f"delivery {status.replace('_', ' ')}"
+
+
+def _nonnegative_int(value: Any) -> int:
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        else 0
     )
 
 
@@ -530,21 +811,22 @@ def _with_human_agent_descriptions(
     """Hydrate opaque legacy labels from their exact immutable inbound source."""
 
     result = dict(inventory)
-    running = inventory.get("running")
-    if not isinstance(running, list):
-        return result
-    hydrated: list[Any] = []
-    for row in running:
-        if not isinstance(row, Mapping) or _agent_description(row):
-            hydrated.append(row)
+    for field in ("running", "recent"):
+        rows = inventory.get(field)
+        if not isinstance(rows, list):
             continue
-        source_label = _authoritative_source_label(row, project_root=project_root)
-        hydrated.append(
-            {**dict(row), "display_description": source_label}
-            if source_label
-            else row
-        )
-    result["running"] = hydrated
+        hydrated: list[Any] = []
+        for row in rows:
+            if not isinstance(row, Mapping) or _agent_description(row):
+                hydrated.append(row)
+                continue
+            source_label = _authoritative_source_label(row, project_root=project_root)
+            hydrated.append(
+                {**dict(row), "display_description": source_label}
+                if source_label
+                else row
+            )
+        result[field] = hydrated
     return result
 
 
@@ -635,6 +917,20 @@ def _snapshot_label(status_node: Mapping[str, Any]) -> str | None:
     return f"_Snapshot generated {rendered}_"
 
 
+def _managed_agent_snapshot_time(
+    status_node: Mapping[str, Any] | None, *, now: datetime | None
+) -> datetime:
+    """Choose the renderer snapshot clock for rolling managed-agent status."""
+
+    if isinstance(status_node, Mapping):
+        generated_at = _parse_utc_timestamp(
+            status_node.get("generated_at") or status_node.get("watchdog_generated_at")
+        )
+        if generated_at is not None:
+            return generated_at
+    return now.astimezone(UTC) if now else datetime.now(UTC)
+
+
 def _degraded_label(value: Any) -> str:
     reasons = value.get("reasons") if isinstance(value, Mapping) else None
     if isinstance(reasons, list):
@@ -687,6 +983,7 @@ __all__ = [
     "CurrentlyRunningReport",
     "collect_currently_running",
     "discover_live_managed_agents",
+    "discover_recently_completed_managed_agents",
     "discover_attention_sessions",
     "discover_recently_completed_sessions",
     "discover_running_sessions",

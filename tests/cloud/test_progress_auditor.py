@@ -92,6 +92,81 @@ def _load_superfixer_cycle_functions() -> dict[str, object]:
     return namespace
 
 
+def test_nested_repair_queue_drift_is_a_deterministic_finding() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _nested_repair_queue_custody_drift_reason(ev):")
+    end = text.index("\ndef _queue_coalesced_without_live_owner_reason", start)
+    namespace: dict[str, object] = {
+        "_chain_state_looks_nonterminal": lambda chain: bool(chain),
+    }
+    exec(text[start:end], namespace)
+    reason = namespace["_nested_repair_queue_custody_drift_reason"]({
+        "repair_custody_summary": {
+            "nested_queue_root": "/workspace/demo/.megaplan/repair-queue",
+            "nested_accepted_unclaimed_request_ids": ["request-1"],
+        },
+        "chain_state_summary": {"current": {"last_state": "blocked"}},
+    })
+
+    assert reason.startswith("nested_repair_queue_custody_drift:")
+    assert "request-1" in reason
+
+
+def test_repair_custody_gather_correlates_nested_and_central_queues(
+    tmp_path: Path,
+) -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _repair_custody_summary(session, plan_state, current_target):")
+    end = text.index("\ndef _load_events", start)
+    central = tmp_path / ".megaplan" / "repair-queue"
+    nested = tmp_path / "workspace" / ".megaplan" / "repair-queue"
+    (nested / "requests").mkdir(parents=True)
+    (nested / "decisions").mkdir()
+
+    def project_repair_custody(**kwargs):
+        queue_root = Path(kwargs["queue_root"])
+        if queue_root == nested:
+            return {
+                "active_request_ids": ["nested-request"],
+                "accepted_unclaimed_request_ids": ["nested-request"],
+                "claim_count": 0,
+                "attempt_count": 0,
+            }
+        return {
+            "active_request_ids": [],
+            "accepted_unclaimed_request_ids": [],
+            "claim_count": 0,
+            "attempt_count": 0,
+        }
+
+    namespace: dict[str, object] = {
+        "os": os,
+        "pathlib": __import__("pathlib"),
+        "REPAIR_QUEUE_ROOT": central,
+        "iter_repair_requests": lambda *_args, **_kwargs: [],
+        "iter_repair_decisions": lambda queue, **_kwargs: (
+            [{"request_id": "nested-request", "decision": "accepted"}]
+            if Path(queue) == nested
+            else []
+        ),
+        "iter_repair_attempts": lambda *_args, **_kwargs: [],
+        "project_repair_custody": project_repair_custody,
+        "repair_request_runtime_available": True,
+        "_redact_scalar": str,
+    }
+    exec(text[start:end], namespace)
+
+    summary = namespace["_repair_custody_summary"](
+        "demo",
+        {"current_state": "blocked"},
+        {"current_refs": {"workspace": str(tmp_path / "workspace")}},
+    )
+
+    assert summary["queue_root"] == str(central)
+    assert summary["nested_queue_root"] == str(nested)
+    assert summary["nested_accepted_unclaimed_request_ids"] == ["nested-request"]
+
+
 def _wbc_superfixer_cycle_evidence() -> dict[str, object]:
     return {
         "resolver_state": {"canonical_state": "MACHINE_ACTION_REQUIRED"},
@@ -382,6 +457,11 @@ def _run_gather_program(
     # never let live marker or meta-run evidence alter the deterministic fixture.
     env["MEGAPLAN_AUDIT_MARKER_DIR"] = str(tmp_path / ".megaplan" / "cloud-sessions")
     env["MEGAPLAN_AUDIT_META_RUN_DIR"] = str(tmp_path / ".megaplan" / "meta-runs")
+    # Keep ordinary fixtures independent of the host installation. Drift-specific
+    # tests override this with a deliberately different installed wrapper.
+    env["MEGAPLAN_AUDIT_INSTALLED_WRAPPER"] = str(
+        WRAPPER_DIR / "arnold-progress-auditor"
+    )
     if extra_env:
         env.update(extra_env)
 
@@ -830,7 +910,7 @@ from arnold_pipelines.megaplan.cloud._stub_capture import write_capture
 AUDIT_RESULT = {audit_result_literal}
 
 
-def build_audit_input(session, *, root, now):
+def build_audit_input(session, *, root, now, persist=True):
     return {{
         "brief": {{
             "found": True,
@@ -1405,6 +1485,7 @@ class TestGreenChecksJsonSchema:
             "plan", "workspace", "session", "sources", "current_state",
             "iteration", "active_step_phase", "plan_v_count",
             "last_gate_recommendation", "last_gate_score",
+            "suppression", "auditor_wrapper_runtime",
         }
 
     def test_timestamp_always_present(self, tmp_path: Path) -> None:
@@ -1734,7 +1815,7 @@ class TestAuditorCrossReferences:
         assert finding["incident_brief"]["incident_id"] == "inc-demo"
         assert finding["incident_audit"]["incident_id"] == "inc-demo"
         assert finding["reasons"][0].startswith("reconciler ")
-        assert Path(finding["source_refs"]["incident_summary_path"]).exists()
+        assert not Path(finding["source_refs"]["incident_summary_path"]).exists()
 
 
 class TestAuditorWrapperBoundary:
@@ -2344,6 +2425,202 @@ class TestAuditorWrapperBoundary:
 
 
 class TestLiveSignalFiltering:
+    def test_preserve_live_owner_missing_dispatch_is_deterministic_finding(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "current-plan"
+        plan_dir.mkdir(parents=True)
+        now = datetime.now(timezone.utc).isoformat()
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "current-plan",
+                    "current_state": "finalized",
+                    "latest_failure": {},
+                    "active_step": {
+                        "active": True,
+                        "phase": "execute",
+                        "worker_pid": os.getpid(),
+                        "last_activity_at": now,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        goal_path = tmp_path / "goal.json"
+        goal_path.write_text(
+            json.dumps(
+                {
+                    "status": "active",
+                    "goal_id": "repair-goal-cfc07d8070fe6618517bd2cd",
+                    "checkpoint_digest": "checkpoint-1",
+                    "owners": [],
+                    "last_evaluation": {
+                        "control_action": "preserve_live",
+                        "correct_worker_alive": True,
+                        "fresh_progress": True,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        request_id = "741233a457493a63d27d40d65eb202662c617ff3629f6654c6e41fcced452eed"
+        request_path = tmp_path / ".megaplan" / "repair-queue" / "requests" / f"{request_id}.json"
+        request_path.parent.mkdir(parents=True)
+        request_path.write_text(
+            json.dumps(
+                {
+                    "request_id": request_id,
+                    "source": "watchdog_goal_recovery",
+                    "problem_signature": {
+                        "failure_kind": "repair_goal_owner_missing",
+                        "current_state": "finalized",
+                        "phase_or_step": "execute",
+                        "milestone_or_plan": "current-plan",
+                        "gate_recommendation": "preserve_live_until_beyond_execute",
+                    },
+                    "target": {"plan_name": "current-plan"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir()
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "request_id": request_id,
+                    "repair_goal": {"goal_path": str(goal_path)},
+                    "outcome": "running",
+                    "current_attempt_id": "attempt-1",
+                    "current_signature": {"plan_name": "current-plan", "phase": "execute"},
+                    "attempts": [{"attempt_id": "attempt-1", "dispatched_at": now}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        report = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "current-plan",
+                    "session": "demo-session",
+                    "kind": "plan",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        assert report["green_checks"] == []
+        finding = report["findings"][0]
+        assert any(
+            reason.startswith("repair_dispatch_during_preserve_live:")
+            for reason in finding["reasons"]
+        )
+        goal = finding["meta_repair_summary"]["repair_goal"]
+        assert goal["repair_dispatch_during_preserve_live"] is True
+        assert finding["meta_repair_summary"]["should_dispatch"] is False
+        assert finding["meta_repair_summary"]["trigger"] == ""
+
+    def test_meta_repair_summary_detects_stale_request_under_live_goal_owner(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "current-plan"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(timezone.utc).isoformat()
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "current-plan",
+                    "current_state": "finalized",
+                    "latest_failure": {},
+                    "active_step": {
+                        "active": True,
+                        "phase": "execute",
+                        "worker_pid": os.getpid(),
+                        "last_activity_at": now,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        owner_manifest = tmp_path / "owner-manifest.json"
+        owner_manifest.write_text(
+            json.dumps({"status": "running", "pid": os.getpid()}), encoding="utf-8"
+        )
+        goal_path = tmp_path / "goal.json"
+        goal_path.write_text(
+            json.dumps(
+                {
+                    "status": "active",
+                    "goal_id": "goal-1",
+                    "checkpoint_digest": "checkpoint-1",
+                    "owners": [{"manifest_path": str(owner_manifest)}],
+                    "last_evaluation": {"control_action": "preserve_live"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir()
+        request_id = "stale-request"
+        queue_request = tmp_path / ".megaplan" / "repair-queue" / "requests" / f"{request_id}.json"
+        queue_request.parent.mkdir(parents=True)
+        queue_request.write_text(
+            json.dumps(
+                {
+                    "request_id": request_id,
+                    "problem_signature": {
+                        "milestone_or_plan": "old-plan",
+                        "phase_or_step": "review",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "request_id": request_id,
+                    "repair_goal": {"goal_path": str(goal_path)},
+                    "outcome": "running",
+                    "current_attempt_id": "attempt-1",
+                    "current_signature": {"plan_name": "current-plan", "phase": "execute"},
+                    "attempts": [{"attempt_id": "attempt-1", "dispatched_at": now}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "current-plan",
+                    "session": "demo-session",
+                    "kind": "plan",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        meta = findings["findings"][0]["meta_repair_summary"]
+        assert meta["should_dispatch"] is True
+        assert meta["trigger"] == "repair_context_target_mismatch"
+        assert meta["repair_goal"]["owner_live"] is True
+        assert meta["repair_goal"]["request_target_mismatch"] is True
+
     def test_chain_log_awaiting_human_ignores_pytest_command_substring(self, tmp_path: Path) -> None:
         workspace = tmp_path / "workspace"
         plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
@@ -3060,6 +3337,142 @@ class TestLiveSignalFiltering:
         assert len(findings["findings"]) == 1
         assert any("repair_data_ghost_running" in reason for reason in findings["findings"][0]["reasons"])
         assert findings["findings"][0]["repair_data_summary"]["current_attempt_id"] == ""
+
+    def test_gather_flags_captured_repair_activity_without_investigation(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "blocked",
+                    "latest_failure": {"kind": "execution_blocked", "message": "captured repeat"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 0,
+                    "current_plan_name": "demo-plan",
+                    "last_state": "blocked",
+                    "chain_complete": False,
+                    "milestones": [{"label": "m1"}],
+                    "completed": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir(parents=True, exist_ok=True)
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "outcome": "repair_exhausted",
+                    "attempts": [{"attempt_id": 1, "failure_classification": "execution_blocked"}],
+                    "iterations": [{"i": 1, "mechanical_launch": "failed"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        reason_text = " ".join(findings["findings"][0]["reasons"])
+        assert "repair_without_valid_investigation:" in reason_text
+        assert findings["findings"][0]["repair_data_summary"]["investigation_summary"]["status"] == "missing"
+
+    def test_gather_routes_l1_context_constructor_failure_with_exact_reason(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "blocked",
+                    "latest_failure": {
+                        "kind": "quality_gate_blocked",
+                        "message": "T24 remains blocked",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 1,
+                    "current_plan_name": "demo-plan",
+                    "last_state": "blocked",
+                    "chain_complete": False,
+                    "milestones": [{"label": "m1"}, {"label": "m2"}],
+                    "completed": [{"label": "m1", "status": "done"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir(parents=True, exist_ok=True)
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "outcome": "fixer_infrastructure_failure",
+                    "attempts": [{"attempt_id": 15, "outcome": "fixer_infrastructure_failure"}],
+                    "investigation": {
+                        "status": "failed",
+                        "failure_phase": "context_construction",
+                        "reason": "bounded repair investigation context construction failed",
+                        "error_excerpt": "TypeError: unhashable type: 'slice'",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        finding = findings["findings"][0]
+        reason_text = " ".join(finding["reasons"])
+        assert "repair_without_valid_investigation:" in reason_text
+        assert "bounded repair investigation context construction failed" in reason_text
+        assert finding["repair_data_summary"]["investigation_summary"]["status"] == "invalid"
 
     def test_gather_flags_complete_repair_with_incomplete_chain(self, tmp_path: Path) -> None:
         """The exact false-success artifact must be visible to the L3 prompt."""
@@ -5578,3 +5991,291 @@ class TestProgressAuditorCompletionRecordShape:
         payload, _md = _run_report_assembler(findings_data, tmp_path)
         assert payload["findings"][0]["plan"] == "audit-plan"
         assert payload["findings"][0]["session"] == "audit-sess"
+
+
+
+
+def test_gather_report_only_does_not_write_audited_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    plan = "read-only-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan, "current_state": "executing"}),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    (chain_dir / "chain-read-only.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan,
+                "last_state": "executing",
+                "chain_complete": False,
+                "milestones": [{"label": "m1"}],
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = {
+        path.relative_to(workspace): path.read_bytes()
+        for path in workspace.rglob("*")
+        if path.is_file()
+    }
+
+    _run_gather_program(
+        [
+            {
+                "workspace": str(workspace),
+                "plan": plan,
+                "session": "read-only-session",
+                "kind": "chain",
+            }
+        ],
+        tmp_path,
+    )
+
+    after = {
+        path.relative_to(workspace): path.read_bytes()
+        for path in workspace.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+def test_gather_flags_liveness_and_repair_churn_without_acceptance(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    session = "green-churn"
+    plan = "active-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
+    repair_dir = marker_dir / "repair-data"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    repair_dir.mkdir(parents=True)
+    now = datetime.now(timezone.utc).isoformat()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan, "current_state": "blocked", "iteration": 7}),
+        encoding="utf-8",
+    )
+    events = [
+        {"kind": kind, "phase": "execute", "ts_utc": now, "seq": index}
+        for index, kind in enumerate(
+            ["llm_token_heartbeat", "state_written", "cost_recorded", "llm_token_heartbeat"],
+            start=101,
+        )
+    ]
+    (plan_dir / "events.ndjson").write_text(
+        "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
+    )
+    (chain_dir / "chain-green.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan,
+                "last_state": "blocked",
+                "chain_complete": False,
+                "milestones": [{"label": "m1"}, {"label": "m2"}],
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (marker_dir / f"{session}.chain-health.progress.json").write_text(
+        json.dumps({"no_advance_ticks": 4, "stuck_ticks": 3, "updated_at": now}),
+        encoding="utf-8",
+    )
+    (repair_dir / f"{session}.repair-data.json").write_text(
+        json.dumps({"session": session, "outcome": "running", "iterations": [{"i": 1}]}),
+        encoding="utf-8",
+    )
+
+    payload = _run_gather_program(
+        [{"workspace": str(workspace), "plan": plan, "session": session, "kind": "chain"}],
+        tmp_path,
+        extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_dir)},
+    )
+
+    assert payload["green_checks"] == []
+    reasons = payload["findings"][0]["reasons"]
+    assert any(reason.startswith("green_with_recent_repair_churn:") for reason in reasons)
+    assert any(reason.startswith("liveness_without_acceptance_progress:") for reason in reasons)
+
+
+def test_gather_flags_deterministic_repair_failure_exhaustion(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    session = "deterministic-repair-loop"
+    plan = "active-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    repair_dir = tmp_path / "repair-data"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    repair_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan, "current_state": "executing"}), encoding="utf-8"
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    (chain_dir / "chain-loop.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan,
+                "last_state": "blocked",
+                "chain_complete": False,
+                "milestones": [{"label": "m1"}],
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    repeated = {
+        "chain_state_summary": {"current_plan_name": plan, "last_state": "blocked"},
+        "plan_latest_failure": {"kind": "phase_failed", "message": "same parse failure"},
+    }
+    (repair_dir / f"{session}.repair-data.json").write_text(
+        json.dumps({"session": session, "outcome": "running", "iterations": [repeated] * 3}),
+        encoding="utf-8",
+    )
+
+    payload = _run_gather_program(
+        [{"workspace": str(workspace), "plan": plan, "session": session, "kind": "chain"}],
+        tmp_path,
+        extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_dir)},
+    )
+
+    assert payload["green_checks"] == []
+    assert any(
+        reason.startswith("deterministic_failure_exhaustion:")
+        for reason in payload["findings"][0]["reasons"]
+    )
+
+
+def test_gather_suppresses_clean_completed_shadow_but_not_session_custody(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    session = "completed-shadow"
+    shadow = "m1-done"
+    current = "m2-current"
+    plan_dir = workspace / ".megaplan" / "plans" / shadow
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": shadow, "current_state": "done"}), encoding="utf-8"
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    chain_path = chain_dir / "chain-shadow.json"
+    chain_path.write_text(
+        json.dumps(
+            {
+                "current_plan_name": current,
+                "last_state": "executing",
+                "chain_complete": False,
+                "milestones": [{"label": "m1"}, {"label": "m2"}],
+                "completed": [{"label": "m1", "plan": shadow, "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    worklist = [{"workspace": str(workspace), "plan": shadow, "session": session, "kind": "chain"}]
+
+    clean = _run_gather_program(worklist, tmp_path)
+
+    assert clean["findings"] == []
+    assert clean["green_checks"][0]["suppression"]["reason"] == (
+        "completed_plan_shadow_plan_local_evidence_suppressed"
+    )
+    repair_dir = tmp_path / "repair-data"
+    repair_dir.mkdir()
+    (repair_dir / f"{session}.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": session,
+                "outcome": "running",
+                "current_attempt_id": "",
+                "attempt_ids": [],
+                "iterations": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    suspicious = _run_gather_program(
+        worklist,
+        tmp_path,
+        extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_dir)},
+    )
+
+    assert suspicious["green_checks"] == []
+    assert any(
+        reason.startswith("repair_data_ghost_running:")
+        for reason in suspicious["findings"][0]["reasons"]
+    )
+
+
+def test_gather_promotes_installed_wrapper_drift_and_ignores_terminal_history(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plan = "current-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    state_path = plan_dir / "state.json"
+    state_path.write_text(json.dumps({"name": plan, "current_state": "executing"}), encoding="utf-8")
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    chain_path = chain_dir / "chain-wrapper.json"
+    chain_path.write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan,
+                "last_state": "executing",
+                "chain_complete": False,
+                "milestones": [{"label": "m1"}],
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    installed = tmp_path / "installed-auditor"
+    installed.write_text("older wrapper\n", encoding="utf-8")
+    worklist = [{"workspace": str(workspace), "plan": plan, "session": "wrapper-drift", "kind": "chain"}]
+
+    active = _run_gather_program(
+        worklist,
+        tmp_path,
+        extra_env={"MEGAPLAN_AUDIT_INSTALLED_WRAPPER": str(installed)},
+    )
+
+    assert active["green_checks"] == []
+    assert any(
+        reason.startswith("installed_wrapper_drift:")
+        for reason in active["findings"][0]["reasons"]
+    )
+    assert active["findings"][0]["auditor_wrapper_runtime"]["installed_matches_source"] is False
+    report, _markdown = _run_report_assembler(active, tmp_path)
+    assert report["auditor_runtime_receipt"]["installed_matches_source"] is False
+    assert report["dispatch_summary"]["mode"] == "report_only"
+    assert report["dispatch_summary"]["repair_dispatched"] is False
+    assert report["dispatch_summary"]["file_edit_performed"] is False
+
+    state_path.write_text(json.dumps({"name": plan, "current_state": "done"}), encoding="utf-8")
+    chain_path.write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan,
+                "last_state": "done",
+                "chain_complete": True,
+                "pr_state": "merged",
+                "milestones": [{"label": "m1"}],
+                "completed": [{"label": "m1", "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
