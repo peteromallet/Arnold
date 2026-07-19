@@ -1441,10 +1441,16 @@ class ResidentRuntime:
             limit=self.config.history_window,
             exclude_ids=exclude_ids,
         )
+        has_discord_inbound = any(
+            message.direction == "inbound"
+            and getattr(message, "discord_message_id", None)
+            for message in rows
+        )
         history: list[dict[str, Any]] = []
         for message in rows:
             if (
                 discord_only
+                and has_discord_inbound
                 and message.direction == "inbound"
                 and not getattr(message, "discord_message_id", None)
             ):

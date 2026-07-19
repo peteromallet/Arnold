@@ -4557,6 +4557,30 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                 str(manifest.get("log_path") or manifest_path.parent / "run.log")
             ),
         )
+        if backend == "codex":
+            try:
+                codex_final_text = result_path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).strip()
+            except OSError:
+                codex_final_text = ""
+            if codex_final_text:
+                evidence = evidence.__class__(
+                    session_id=evidence.session_id,
+                    final_text=codex_final_text,
+                    events=evidence.events,
+                    usage=evidence.usage,
+                    failure_category=(
+                        None
+                        if evidence.failure_category == "empty_result"
+                        else evidence.failure_category
+                    ),
+                    failure_message=(
+                        None
+                        if evidence.failure_category == "empty_result"
+                        else evidence.failure_message
+                    ),
+                )
         write_normalized_events(events_path, evidence.events)
         if backend in {"hermes", "claude"} and evidence.final_text:
             _atomic_text(result_path, evidence.final_text.rstrip() + "\n")
@@ -4577,7 +4601,19 @@ def _run_managed_manifest(manifest_path: Path) -> int:
         if resolved_session_id is None and len(observed_session_ids) == 1:
             resolved_session_id = next(iter(observed_session_ids))
         if returncode == 0 and not resolved_session_id:
-            if manifest.get("schema_version") == MANAGED_RUN_SCHEMA:
+            provider_session_required = backend != "codex" or any(
+                key in manifest
+                for key in (
+                    "provider_contract",
+                    "provider_options",
+                    "provider_route",
+                    "model_session",
+                )
+            )
+            if (
+                manifest.get("schema_version") == MANAGED_RUN_SCHEMA
+                and provider_session_required
+            ):
                 returncode = 1
                 evidence = evidence.__class__(
                     session_id=None,
@@ -4651,7 +4687,8 @@ def _run_managed_manifest(manifest_path: Path) -> int:
         if returncode != 0:
             category = evidence.failure_category or "provider_error"
             message = evidence.failure_message or f"provider exited with status {returncode}"
-            manifest["error"] = f"managed {backend} worker failed: {category}"
+            if custody_error is None:
+                manifest["error"] = f"managed {backend} worker failed: {category}"
             manifest["failure"] = {
                 "category": category,
                 "message": message,
