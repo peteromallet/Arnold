@@ -1,6 +1,6 @@
 {
   "schema": "m6.work-ledger-vocabulary.v1",
-  "generated_at": "2026-07-19T19:25:06.522684+00:00",
+  "generated_at": "2026-07-19T19:28:04.448894+00:00",
   "generator": "tools/generate_m6_rollout_register.py",
   "source_evidence": {
     "unified_authority_research": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md",

@@ -1,6 +1,6 @@
 {
   "schema": "m6.controlled-writer-registry.v1",
-  "generated_at": "2026-07-19T19:25:06.246114+00:00",
+  "generated_at": "2026-07-19T19:28:04.165329+00:00",
   "generator": "tools/generate_m6_controlled_registries.py",
   "source_inventory": "evidence/wbc-boundary-inventory.json",
   "writer_count": 43,

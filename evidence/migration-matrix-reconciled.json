@@ -1,6 +1,6 @@
 {
   "schema": "m6.migration-matrix-reconciled.v1",
-  "generated_at": "2026-07-19T19:25:07.662519+00:00",
+  "generated_at": "2026-07-19T19:28:05.552959+00:00",
   "generator": "tools/reconcile_m6_migration_matrix.py",
   "source_matrix": ".megaplan/initiatives/custody-control-plane/research/migration-matrix.md",
   "source_matrix_hash": "7665789b417d64371ce9d9cd73c537d2f2f8155a4bf92fbbc53405744dfbac08",
