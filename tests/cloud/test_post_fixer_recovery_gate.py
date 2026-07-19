@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud import repair_contract
+from arnold_pipelines.megaplan.cloud.meta_repair import MetaRepairTrigger
 from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
     _l1_failure_fingerprint,
     bounded_repair_context,
@@ -289,6 +290,10 @@ def test_watchdog_and_l3_have_deterministic_gate_failure_routes() -> None:
 
     assert '"post_fixer_recovery_gate_failed"' in watchdog
     assert 'trigger = "post_fixer_recovery_gate_failed"' in auditor
+    assert (
+        MetaRepairTrigger("post_fixer_recovery_gate_failed")
+        is MetaRepairTrigger.POST_FIXER_RECOVERY_GATE_FAILED
+    )
     assert "failed_fixer_evidence" in auditor
     assert "post-fixer recovery circuit breaker stopped this repair owner" in repair_loop
     assert "L2 transcript-aware meta-repair required" in repair_loop

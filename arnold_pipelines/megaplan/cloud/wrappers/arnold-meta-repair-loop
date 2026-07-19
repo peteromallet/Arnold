@@ -15,12 +15,30 @@
 #      subagents (provider=deepseek, model=deepseek:deepseek-v4-pro,
 #      profile=partnered-5) for broad mapping, log/history review,
 #      independent root-cause probes, and bounded fix investigations.
-#   5. May commit and push by default where policy permits; operators can
-#      explicitly disable this with META_REPAIR_COMMIT_ENABLED=0.
+#   5. May commit where policy permits. Pushes require independent, explicit
+#      META_REPAIR_PUSH_ENABLED authority and default off.
 #   6. Retriggers the ordinary repair loop for the same session after
 #      applying any fix, then verifies terminal success.
 #   7. Persists a redacted meta-repair record under repair-data/meta/.
 set -uo pipefail
+
+# Long L2 runs must not resume through a wrapper that activation rewrote while
+# Bash was waiting on a child.  Pin a syntax-checked per-invocation snapshot;
+# keep the original path only for repository and sibling discovery.
+ARNOLD_META_REPAIR_LOOP_ORIGIN="${ARNOLD_META_REPAIR_LOOP_ORIGIN:-${BASH_SOURCE[0]:-$0}}"
+if [[ "${ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
+  meta_repair_loop_snapshot="$(mktemp "${TMPDIR:-/tmp}/arnold-meta-repair-loop.XXXXXXXX")"
+  if ! cp -- "$ARNOLD_META_REPAIR_LOOP_ORIGIN" "$meta_repair_loop_snapshot" \
+    || ! bash -n "$meta_repair_loop_snapshot"; then
+    rm -f -- "$meta_repair_loop_snapshot"
+    echo "arnold-meta-repair-loop: immutable wrapper snapshot failed validation" >&2
+    exit 78
+  fi
+  export ARNOLD_META_REPAIR_LOOP_ORIGIN
+  export ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE=1
+  exec bash "$meta_repair_loop_snapshot" "$@"
+fi
+trap 'rm -f -- "${BASH_SOURCE[0]:-$0}"' EXIT
 
 if [[ $# -lt 1 ]]; then
   echo "usage: arnold-meta-repair-loop <session> [trigger]" >&2
@@ -40,7 +58,7 @@ fi
 MARKER_DIR="${MEGAPLAN_META_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${MEGAPLAN_META_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
 ARNOLD_SRC="${MEGAPLAN_META_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"
-SELF_PATH="${MEGAPLAN_META_SELF_PATH:-${BASH_SOURCE[0]:-$0}}"
+SELF_PATH="${MEGAPLAN_META_SELF_PATH:-$ARNOLD_META_REPAIR_LOOP_ORIGIN}"
 if command -v readlink >/dev/null 2>&1; then
   SELF_PATH="$(readlink -f "$SELF_PATH" 2>/dev/null || printf '%s' "$SELF_PATH")"
 fi
@@ -49,7 +67,7 @@ if [[ ! -f "$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-m
   && [[ -f "$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop" ]]; then
   WRAPPER_REPO_ROOT="$ARNOLD_SRC"
 fi
-SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
+SUPERVISOR_RUNTIME_LIB="$(dirname "$ARNOLD_META_REPAIR_LOOP_ORIGIN")/arnold-supervisor-runtime-lib"
 if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
   SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
 fi
@@ -60,7 +78,7 @@ fi
 . "$SUPERVISOR_RUNTIME_LIB"
 arnold_supervisor_stdlib_init meta-repair-loop || exit $?
 SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
-SUPERVISOR_GAP_SCAN="${MEGAPLAN_SUPERVISOR_GAP_SCAN:-$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-gap-scan}"
+SUPERVISOR_GAP_SCAN="${MEGAPLAN_SUPERVISOR_GAP_SCAN:-$(dirname "$ARNOLD_META_REPAIR_LOOP_ORIGIN")/arnold-supervisor-gap-scan}"
 if [[ ! -x "$SUPERVISOR_GAP_SCAN" ]]; then
   SUPERVISOR_GAP_SCAN="/usr/local/bin/arnold-supervisor-gap-scan"
 fi
@@ -108,7 +126,8 @@ META_INVESTIGATION_MAX_BYTES=65536
 load_resident_delegation_context() {
   local marker_path encoded rc
   marker_path="$MARKER_DIR/$SESSION.json"
-  encoded="$(PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$marker_path" <<'PY'
+  encoded="$(PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
+    "$marker_path" "${ARNOLD_MANAGED_AGENT_MANIFEST:-}" <<'PY'
 import json
 import os
 import sys
@@ -128,6 +147,21 @@ if raw:
         print(f"invalid inherited resident delegation provenance: {exc}", file=sys.stderr)
         raise SystemExit(65)
     raise SystemExit(0)
+manifest_path = str(sys.argv[2] or "").strip()
+if manifest_path:
+    try:
+        manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        print(f"invalid managed-agent provenance manifest: {exc}", file=sys.stderr)
+        raise SystemExit(65)
+    payload = manifest.get("upstream_custody") if isinstance(manifest, dict) else None
+    if payload is not None:
+        try:
+            print(encoded_provenance(normalize_delegation_provenance(payload)), end="")
+        except Exception as exc:
+            print(f"invalid managed-agent upstream custody: {exc}", file=sys.stderr)
+            raise SystemExit(65)
+        raise SystemExit(0)
 try:
     marker = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 except (OSError, ValueError, TypeError):
@@ -308,6 +342,71 @@ PY
 fi
 log "recursion guard: $RECURSION_OUTPUT"
 
+# A literal L3 trigger is not launch authority. Validate the bounded auditor
+# context against its queued request and immutable resident provenance before
+# trigger classification. The same check runs again when the prompt pointer is
+# assembled, so a changed artifact fails closed before model dispatch.
+validate_l3_dispatch_context() {
+  PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
+    "$SESSION" \
+    "${ARNOLD_L3_REPAIR_CONTEXT_PATH:-}" \
+    "${ARNOLD_L3_REPAIR_CONTEXT_DIGEST:-}" \
+    "${ARNOLD_L3_ESCALATION_ID:-}" \
+    "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" \
+    "${ARNOLD_REPAIR_QUEUE_ROOT:-}" \
+    "${ARNOLD_L3_REPAIR_OUTCOME_PATH:-}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
+    validate_l3_repair_dispatch_context,
+)
+from arnold_pipelines.megaplan.cloud.repair_requests import requests_dir
+
+session, context_path, digest, escalation_id, request_id, queue_root, outcome_path = sys.argv[1:]
+try:
+    if not queue_root or not request_id:
+        raise ValueError("L3 repair queue identity is incomplete")
+    request_path = requests_dir(queue_root) / f"{request_id}.json"
+    pointer = validate_l3_repair_dispatch_context(
+        context_path=context_path,
+        request_path=request_path,
+        expected_session=session,
+        expected_context_digest=digest,
+        expected_escalation_id=escalation_id,
+        expected_request_id=request_id,
+    )
+    expected_outcome = Path(context_path).resolve(strict=True).with_name(
+        "repair-outcome.json"
+    )
+    if not outcome_path or Path(outcome_path).resolve(strict=False) != expected_outcome:
+        raise ValueError("L3 repair outcome pointer disagrees with its context")
+    pointer["outcome_path"] = str(expected_outcome)
+except (OSError, ValueError) as exc:
+    print(f"L3 dispatch validation failed: {exc}", file=sys.stderr)
+    raise SystemExit(65)
+print(json.dumps(pointer, sort_keys=True, separators=(",", ":")))
+PY
+}
+
+L3_REPAIR_POINTER_JSON=""
+if [[ "$WATCHDOG_TRIGGER" == "l3_progress_auditor" ]]; then
+  if [[ "${ARNOLD_L3_DEEP_REPAIR:-0}" != "1" ]]; then
+    log "L3 trigger missing explicit deep-repair authorization; refusing dispatch"
+    exit 65
+  fi
+  if ! L3_REPAIR_POINTER_JSON="$(validate_l3_dispatch_context 2>&1)"; then
+    log "$L3_REPAIR_POINTER_JSON"
+    exit 65
+  fi
+  export L3_REPAIR_POINTER_JSON
+  log "validated typed L3 repair request request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-} escalation_id=${ARNOLD_L3_ESCALATION_ID:-}"
+elif [[ "${ARNOLD_L3_DEEP_REPAIR:-0}" == "1" ]]; then
+  log "deep-repair authorization supplied without the L3 trigger; refusing dispatch"
+  exit 65
+fi
+
 # ---- classify failure + build redacted prompt via Python handoff -------------
 classification_and_prompt() {
   local force_emergency="${1:-0}"
@@ -398,11 +497,11 @@ run_meta_repair_investigation() {
     --arnold-src "$ARNOLD_SRC" \
     --request-id "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" \
     --blocker-id "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" \
-    --output "$META_INVESTIGATION_CONTEXT_PATH" >>"$RUN_LOG" 2>&1 || return 1
+    --output "$META_INVESTIGATION_CONTEXT_PATH" >/dev/null 2>>"$RUN_LOG" || return 1
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
     arnold_pipelines.megaplan.cloud.repair_investigation observe-meta \
     --context "$META_INVESTIGATION_CONTEXT_PATH" \
-    --output "$META_INVESTIGATION_OBSERVATION_PATH" >>"$RUN_LOG" 2>&1 || return 1
+    --output "$META_INVESTIGATION_OBSERVATION_PATH" >/dev/null 2>>"$RUN_LOG" || return 1
   META_INVESTIGATION_CONTEXT_DIGEST="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["context_digest"])' "$META_INVESTIGATION_CONTEXT_PATH")"
   {
     cat <<EOF
@@ -426,6 +525,12 @@ EOF
 </verified_bounded_observations>
 
 Follow the objective and authorization in the envelope. Return only one JSON object matching the referenced arnold-repair-investigator-receipt-v2 contract, with no markdown fence or commentary.
+Populate every required field, including a non-empty safe_repair_target.scope and
+the complete intended_recovery object. A historical needs_human artifact,
+manual_review retry strategy, or absent target worker is not by itself a human
+gate. preserve_live is valid only when a correct live worker is actually present;
+an active unowned repair goal with no live worker requires a replan handoff or a
+bounded repair-system target.
 EOF
   } > "$META_INVESTIGATION_PROMPT_PATH"
   redact_file_in_place "$META_INVESTIGATION_PROMPT_PATH"
@@ -477,18 +582,82 @@ EOF
   if [[ "$investigator_mode" == "codex_read_only" ]]; then
     managed_cmd+=(-- timeout "$SUBAGENT_TIMEOUT" codex exec --skip-git-repo-check --sandbox read-only -c model="$META_CODEX_MODEL" -c model_reasoning_effort=high --output-last-message "$META_INVESTIGATION_RECEIPT_PATH" -)
   else
-    managed_cmd+=(-- bash -c 'exec "$1" -P "$2" --model "$3" --toolsets "" --query_file "$4" --project_dir "$5" --max_tokens 16384 > "$6"' _ "$MEGAPLAN_SUPERVISOR_PYTHON" "$LAUNCHER" "$DEEPSEEK_MODEL" "$META_INVESTIGATION_PROMPT_PATH" "$ARNOLD_SRC" "$META_INVESTIGATION_RECEIPT_PATH")
+    # This launcher is already the sealed worker of the managed investigator
+    # above.  Suppress only the launcher's automatic *second* managed wrapper
+    # so stdout remains the typed JSON receipt channel; diagnostics stay on
+    # stderr in the outer managed run log.
+    managed_cmd+=(-- bash -c 'ARNOLD_NESTED_MANAGED_AGENT_WORKER=1 exec "$1" -P "$2" --model "$3" --toolsets "" --query_file "$4" --project_dir "$5" --max_tokens 16384 > "$6"' _ "$MEGAPLAN_SUPERVISOR_PYTHON" "$LAUNCHER" "$DEEPSEEK_MODEL" "$META_INVESTIGATION_PROMPT_PATH" "$ARNOLD_SRC" "$META_INVESTIGATION_RECEIPT_PATH")
   fi
   (cd "$ARNOLD_SRC" && "${managed_cmd[@]}") >>"$RUN_LOG" 2>&1 || return 1
   META_INVESTIGATION_RUN_ID="$(cat "$META_INVESTIGATION_RUN_ID_PATH" 2>/dev/null || true)"
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
-    arnold_pipelines.megaplan.cloud.repair_investigation validate \
-    --receipt "$META_INVESTIGATION_RECEIPT_PATH" --context-digest "$META_INVESTIGATION_CONTEXT_DIGEST" \
-    --observation "$META_INVESTIGATION_OBSERVATION_PATH" >>"$RUN_LOG" 2>&1 || return 1
+  local validation_output="" correction_prompt_path="" invalid_receipt_path=""
+  if ! validation_output="$(
+    PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
+      "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+      arnold_pipelines.megaplan.cloud.repair_investigation validate \
+      --receipt "$META_INVESTIGATION_RECEIPT_PATH" \
+      --context-digest "$META_INVESTIGATION_CONTEXT_DIGEST" \
+      --observation "$META_INVESTIGATION_OBSERVATION_PATH" 2>&1
+  )"; then
+    printf '%s\n' "$validation_output" >>"$RUN_LOG"
+    invalid_receipt_path="${META_INVESTIGATION_RECEIPT_PATH%.json}.invalid-1.json"
+    correction_prompt_path="${META_INVESTIGATION_PROMPT_PATH%.md}.correction-1.md"
+    cp -- "$META_INVESTIGATION_RECEIPT_PATH" "$invalid_receipt_path" || return 1
+    {
+      cat "$META_INVESTIGATION_PROMPT_PATH"
+      cat <<EOF
+
+<invalid_candidate_receipt>
+EOF
+      cat "$invalid_receipt_path"
+      cat <<EOF
+</invalid_candidate_receipt>
+
+The trusted validator rejected that candidate with this exact error:
+<validator_error>
+${validation_output:0:2000}
+</validator_error>
+
+Return one complete corrected JSON receipt only. Preserve evidence-grounded
+diagnosis, authority, and safety guards. Correct the contract defect; do not
+invent new evidence, broaden mutation scope, or omit any required field.
+EOF
+    } >"$correction_prompt_path"
+    redact_file_in_place "$correction_prompt_path"
+    envelope_bytes="$(wc -c < "$correction_prompt_path" | tr -d ' ')"
+    if [[ ! "$envelope_bytes" =~ ^[0-9]+$ ]] || (( envelope_bytes > META_INVESTIGATION_MAX_BYTES )); then
+      log "L2 investigator correction envelope failed 64 KiB preflight bytes=${envelope_bytes:-unknown}"
+      return 1
+    fi
+    local -a correction_cmd
+    correction_cmd=("${managed_cmd[@]}")
+    local command_index
+    for command_index in "${!correction_cmd[@]}"; do
+      if [[ "${correction_cmd[$command_index]}" == "$META_INVESTIGATION_PROMPT_PATH" ]]; then
+        correction_cmd[$command_index]="$correction_prompt_path"
+      elif [[ "${correction_cmd[$command_index]}" == "meta-repair-investigator:${SESSION}:${TRIGGER_TYPE}:${META_INVESTIGATION_CONTEXT_DIGEST}" ]]; then
+        correction_cmd[$command_index]="meta-repair-investigator:${SESSION}:${TRIGGER_TYPE}:${META_INVESTIGATION_CONTEXT_DIGEST}:correction:1"
+      elif [[ "${correction_cmd[$command_index]}" == "investigator:${META_INVESTIGATION_CONTEXT_DIGEST}" ]]; then
+        correction_cmd[$command_index]="investigator:${META_INVESTIGATION_CONTEXT_DIGEST}:correction:1"
+      fi
+    done
+    log "L2 investigator receipt failed schema validation; launching one bounded correction session=$SESSION invalid_receipt=$invalid_receipt_path"
+    (cd "$ARNOLD_SRC" && "${correction_cmd[@]}") >>"$RUN_LOG" 2>&1 || return 1
+    META_INVESTIGATION_RUN_ID="$(cat "$META_INVESTIGATION_RUN_ID_PATH" 2>/dev/null || true)"
+    PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
+      "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+      arnold_pipelines.megaplan.cloud.repair_investigation validate \
+      --receipt "$META_INVESTIGATION_RECEIPT_PATH" \
+      --context-digest "$META_INVESTIGATION_CONTEXT_DIGEST" \
+      --observation "$META_INVESTIGATION_OBSERVATION_PATH" >>"$RUN_LOG" 2>&1 || return 1
+  else
+    printf '%s\n' "$validation_output" >>"$RUN_LOG"
+  fi
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
     "$REPAIR_DATA_PATH" "$META_INVESTIGATION_CONTEXT_PATH" "$META_INVESTIGATION_RECEIPT_PATH" \
     "$META_INVESTIGATION_CONTEXT_DIGEST" "$META_INVESTIGATION_RUN_ID" "$investigator_mode" \
-    "$META_INVESTIGATION_OBSERVATION_PATH" <<'PY' >>"$RUN_LOG" 2>&1
+    "$META_INVESTIGATION_OBSERVATION_PATH" <<'PY' >>"$RUN_LOG" 2>&1 || return 1
+import json
 import pathlib
 import sys
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
@@ -497,9 +666,11 @@ from arnold_pipelines.megaplan.cloud.repair_investigation import validate_invest
 data_path, context_path, receipt_path, digest, run_id, mode, observation_path = sys.argv[1:]
 payload = load_json(pathlib.Path(data_path), default={})
 validated = validate_investigator_receipt(
-    load_json(pathlib.Path(receipt_path), default={}),
+    json.loads(pathlib.Path(receipt_path).read_text(encoding="utf-8")),
     expected_context_digest=digest,
-    observation_bundle=load_json(pathlib.Path(observation_path), default={}),
+    observation_bundle=json.loads(
+        pathlib.Path(observation_path).read_text(encoding="utf-8")
+    ),
 )
 payload["meta_investigation"] = {
     "context_path": context_path, "context_digest": digest, "receipt_path": receipt_path,
@@ -624,6 +795,46 @@ if validated.get("recommended_action") != "replan":
 if (validated.get("safe_repair_target") or {}).get("kind") != "repair_custody":
     raise SystemExit("L2 replan handoff did not target repair custody")
 PY
+  if ! l2_mutation_authorized; then
+    log "observed: L2 replan effects blocked by master-plus-path authorization gate session=$SESSION"
+    exit 77
+  fi
+  REPLAN_RECONCILIATION="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
+    "$REPAIR_DATA_PATH" "$MARKER_DIR/$SESSION.json" "$SESSION" "$META_INVESTIGATION_CONTEXT_DIGEST" "$META_INVESTIGATION_RECEIPT_PATH" <<'PY'
+import json
+import sys
+from arnold_pipelines.megaplan.cloud.repair_contract import load_json
+from arnold_pipelines.megaplan.cloud.repair_goal import reconcile_l2_replan
+
+data_path, marker_path, session, context_digest, receipt_path = sys.argv[1:]
+data = load_json(data_path, default={})
+marker = load_json(marker_path, default={})
+goal = data.get("repair_goal") if isinstance(data.get("repair_goal"), dict) else {}
+receipt = load_json(receipt_path, default={})
+if not goal.get("goal_path"):
+    raise SystemExit("L2 replan handoff lacks durable repair goal")
+result = reconcile_l2_replan(
+    goal["goal_path"], session=session,
+    workspace=str(marker.get("workspace") or data.get("workspace") or ""),
+    remote_spec=str(marker.get("remote_spec") or marker.get("spec") or data.get("spec") or ""),
+    blocker_id=str(data.get("blocker_id") or ""), context_digest=context_digest,
+    receipt_digest=str(receipt.get("receipt_digest") or ""),
+)
+print(json.dumps(result, sort_keys=True))
+PY
+)" || {
+    log "L2 replan reconciliation failed closed; refusing ordinary retrigger"
+    exit 1
+  }
+  IFS=$'\t' read -r REPLAN_RECONCILIATION_STATUS REPLAN_EPOCH <<< "$(python3 -c 'import json,sys; value=json.load(sys.stdin); print("\t".join((str(value.get("status") or ""), str(value.get("replan_epoch") or ""))))' <<< "$REPLAN_RECONCILIATION")"
+  if [[ "$REPLAN_RECONCILIATION_STATUS" == "already_reconciled" ]]; then
+    log "L2 replan handoff already reconciled; refusing duplicate ordinary retrigger session=$SESSION epoch=$REPLAN_EPOCH"
+    exit 0
+  fi
+  if [[ "$REPLAN_RECONCILIATION_STATUS" != "newly_reconciled" || -z "$REPLAN_EPOCH" ]]; then
+    log "L2 replan reconciliation returned invalid transition; refusing ordinary retrigger"
+    exit 1
+  fi
   REPLAN_RUN_ID_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-ordinary-retrigger-run-id"
   IFS=$'\t' read -r REPLAN_WORKSPACE REPLAN_REMOTE_SPEC < <(
     PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
@@ -640,38 +851,43 @@ PY
   replan_cmd=(
     "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold_pipelines.megaplan.managed_agent run
     --run-kind automatic_repair_retry
-    --identity-key "meta-replan:${SESSION}:${META_INVESTIGATION_CONTEXT_DIGEST}"
+    --identity-key "meta-replan:${SESSION}:${META_INVESTIGATION_CONTEXT_DIGEST}:epoch:${REPLAN_EPOCH}"
     --project-dir "$REPLAN_WORKSPACE" --task-kind autonomous --difficulty 8
     --model control-plane --reasoning-effort bounded
     --route-class meta_repair_retrigger --backend repair-loop
     --command-display "L2 replan to ordinary repair $SESSION"
     --origin-kind meta_repair_retrigger --origin-id "$SESSION"
     --origin-component arnold-meta-repair-loop
-    --trigger-id "replan:$META_INVESTIGATION_CONTEXT_DIGEST"
+    --trigger-id "replan:$META_INVESTIGATION_CONTEXT_DIGEST:epoch:$REPLAN_EPOCH"
     --run-id-file "$REPLAN_RUN_ID_PATH"
     --lineage-key "repair-retrigger:${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-$SESSION}"
     --link "repair_request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"
     --link "blocker_id=${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}"
     --link "cloud_session=$SESSION" --link "chain=$REPLAN_REMOTE_SPEC"
-    --link "phase=meta_repair_replan_handoff"
+    --link "phase=meta_repair_replan_handoff" --link "replan_epoch=$REPLAN_EPOCH"
   )
   if [[ -n "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" ]]; then
     replan_cmd+=(--parent-run-id "$ARNOLD_MANAGED_AGENT_RUN_ID")
   fi
   replan_cmd+=(-- "$REPAIR_LOOP_BIN" "$SESSION" "$REPLAN_WORKSPACE" "$REPLAN_REMOTE_SPEC")
   log "accepted L2 replan handoff; retriggering ordinary repair session=$SESSION"
+  export ARNOLD_REPAIR_L2_HANDOFF_PATH="$META_INVESTIGATION_OBSERVATION_PATH"
+  export ARNOLD_REPAIR_L2_CONTEXT_DIGEST="$META_INVESTIGATION_CONTEXT_DIGEST"
+  export ARNOLD_REPAIR_L2_REPLAN_EPOCH="$REPLAN_EPOCH"
   "${replan_cmd[@]}" >>"$RUN_LOG" 2>&1
   REPLAN_RC=$?
+  unset ARNOLD_REPAIR_L2_HANDOFF_PATH ARNOLD_REPAIR_L2_CONTEXT_DIGEST ARNOLD_REPAIR_L2_REPLAN_EPOCH
   REPLAN_RUN_ID="$(cat "$REPLAN_RUN_ID_PATH" 2>/dev/null || true)"
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
-    "$REPAIR_DATA_PATH" "$META_INVESTIGATION_CONTEXT_DIGEST" "$REPLAN_RUN_ID" "$REPLAN_RC" <<'PY' >>"$RUN_LOG" 2>&1
+    "$REPAIR_DATA_PATH" "$META_INVESTIGATION_CONTEXT_DIGEST" "$REPLAN_RUN_ID" "$REPLAN_RC" "$REPLAN_EPOCH" <<'PY' >>"$RUN_LOG" 2>&1
 import pathlib, sys
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
-path, digest, run_id, returncode = sys.argv[1:]
+path, digest, run_id, returncode, epoch = sys.argv[1:]
 payload = load_json(pathlib.Path(path), default={})
 payload["meta_replan_handoff"] = {
     "schema_version": "arnold-meta-replan-handoff-v1",
     "context_digest": digest,
+    "replan_epoch": int(epoch),
     "ordinary_retrigger_run_id": run_id,
     "returncode": int(returncode),
     "target": "ordinary_l1_repair",
@@ -700,48 +916,39 @@ append_l3_repair_contract() {
   if [[ "${ARNOLD_L3_DEEP_REPAIR:-0}" != "1" ]]; then
     return 0
   fi
+  local revalidated_pointer
+  revalidated_pointer="$(validate_l3_dispatch_context)" || return $?
+  if [[ "$revalidated_pointer" != "$L3_REPAIR_POINTER_JSON" ]]; then
+    echo "L3 repair pointer changed after trigger validation" >&2
+    return 65
+  fi
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
-    "${ARNOLD_L3_REPAIR_CONTEXT_PATH:-}" \
-    "${ARNOLD_L3_REPAIR_CONTEXT_DIGEST:-}" \
-    "$SUPERFIXER_SKILL" <<'PY'
-import hashlib
+    "$revalidated_pointer" "$SUPERFIXER_SKILL" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-context_path = Path(sys.argv[1])
-expected_digest = sys.argv[2]
-skill_path = Path(sys.argv[3])
-if not context_path.is_file():
-    raise SystemExit("deep repair context artifact is missing")
-payload = json.loads(context_path.read_text(encoding="utf-8"))
-observed = str(payload.get("context_digest") or "")
-digest_payload = dict(payload)
-digest_payload.pop("context_digest", None)
-recomputed = hashlib.sha256(
-    json.dumps(digest_payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
-).hexdigest()
-if not expected_digest or observed != expected_digest or observed != recomputed:
-    raise SystemExit("deep repair context digest disagrees with the queued request")
+pointer = json.loads(sys.argv[1])
+skill_path = Path(sys.argv[2])
 if not skill_path.is_file():
     raise SystemExit("superfixer-debug skill is unavailable")
-encoded = json.dumps(payload, indent=2, sort_keys=True)
-if len(encoded.encode("utf-8")) > 65536:
-    raise SystemExit("deep repair context exceeds the bounded artifact budget")
+encoded = json.dumps(pointer, indent=2, sort_keys=True)
+if len(encoded.encode("utf-8")) > 8192:
+    raise SystemExit("deep repair pointer exceeds its 8 KiB prompt budget")
 print("\n## Six-hour L3 escalation contract\n")
 print(f"Read and follow `{skill_path}` fully before changing anything.")
 print("Walk L1/L2/L3 with TRACKED/FIXED/INTENT/CONTEXT. Fix the first broken fixer/backstop first, then hunt sibling instances of the failure class, then re-trigger the ordinary canonical recovery path. Never alter chain/plan state directly, weaken completion or safety guards, or treat a pause/human gate as a fault.")
 print("You are the retained root-cause owner and the only execution owner. You may fan out at most three bounded read-only investigators through the canonical nested launcher; contributors must not edit. Synthesize their receipts yourself before making any change. Never launch or retain a second mutating owner.")
 print("Treat the repair goal as the durable /goal-style success authority, not the lifetime or exit status of any fixer process. Inspect its frozen checkpoint, recovery_contract, last observation, exact request identity, and bounded investigator receipt. If control_action=preserve_live, do not kill, relaunch, or duplicate the correct worker; if control_action=replan, stop the repeated mechanism and change the plan.")
 print("Recovery is verified only when the blocker is cleared, the applicable correct worker is alive with fresh progress, and the original plan advances beyond its frozen stage. A fixer report, clean exit, heartbeat, or same-stage liveness is not success.")
-print("The concrete auditor artifact below is authoritative bounded launch context; inspect its cited raw artifacts for full stderr, exit codes, exceptions, commands, token drift, stale projections, false success, missing launch evidence, and spinning fixers.")
+print("The pointer below was validated against the immutable queued request and 64 KiB auditor artifact. Read that artifact and its typed references for full stderr, exit codes, exceptions, commands, token drift, stale projections, false success, missing launch evidence, and spinning fixers; do not copy expanding evidence into another prompt.")
 print("```json")
 print(encoded)
 print("```")
 print("Your response must include exact lines `FIXER_FIXED=true|false`, `BACKSTOP_FIXED=true|false`, and `GUARD_WEAKENED=true|false`, followed by evidence paths/tests. A FIXED verdict without those receipts is false success.")
 PY
 }
-{
+if ! {
   echo "# Meta-Repair Diagnosis: $SESSION"
   echo
   echo "**Trigger:** \`$TRIGGER_TYPE\`"
@@ -788,10 +995,11 @@ ordinary repair can succeed.
   scope.
 
 ### Commit/push policy
-- You may commit and push fixes when ARNOLD_META_REPAIR_COMMIT_ENABLED is not
-  explicitly disabled.
-- Do not commit or push when ARNOLD_META_REPAIR_COMMIT_ENABLED=0/false/no/off.
-- Pushes require the same gate as commits.
+- You may commit fixes when ARNOLD_META_REPAIR_COMMIT_ENABLED is not explicitly
+  disabled.
+- Do not commit when ARNOLD_META_REPAIR_COMMIT_ENABLED=0/false/no/off.
+- Push only when the independent ARNOLD_META_REPAIR_PUSH_ENABLED gate is
+  explicitly on. Commit authority never implies push authority.
 
 ### Fix constraints
 - Fix only Arnold repair-system code (wrappers, Python modules under
@@ -820,7 +1028,10 @@ Then cite specific evidence, the root cause, the change(s) made
 PROMPT_POLICY
   echo "- Canonical nested launcher: $LAUNCHER. Automatic nested launches through this path self-register as child managed-agent runs; do not use another launcher path."
   append_l3_repair_contract
-} > "$BRIEF_PATH"
+} > "$BRIEF_PATH"; then
+  log "meta-repair brief assembly failed custody validation; refusing dispatch"
+  exit 65
+fi
 redact_file_in_place "$BRIEF_PATH"
 BRIEF_SIZE="$(wc -c < "$BRIEF_PATH" | tr -d ' ')"
 if [[ "$BRIEF_SIZE" =~ ^[0-9]+$ ]] && (( BRIEF_SIZE > BRIEF_PREFLIGHT_MAX_CHARS )); then
@@ -836,7 +1047,7 @@ if [[ "$BRIEF_SIZE" =~ ^[0-9]+$ ]] && (( BRIEF_SIZE > BRIEF_PREFLIGHT_MAX_CHARS 
     log "emergency prompt assembly produced empty output; exiting"
     exit 1
   fi
-  {
+  if ! {
     echo "# Meta-Repair Diagnosis: $SESSION"
     echo
     echo "**Trigger:** \`$TRIGGER_TYPE\`"
@@ -883,10 +1094,11 @@ ordinary repair can succeed.
   scope.
 
 ### Commit/push policy
-- You may commit and push fixes when ARNOLD_META_REPAIR_COMMIT_ENABLED is not
-  explicitly disabled.
-- Do not commit or push when ARNOLD_META_REPAIR_COMMIT_ENABLED=0/false/no/off.
-- Pushes require the same gate as commits.
+- You may commit fixes when ARNOLD_META_REPAIR_COMMIT_ENABLED is not explicitly
+  disabled.
+- Do not commit when ARNOLD_META_REPAIR_COMMIT_ENABLED=0/false/no/off.
+- Push only when the independent ARNOLD_META_REPAIR_PUSH_ENABLED gate is
+  explicitly on. Commit authority never implies push authority.
 
 ### Fix constraints
 - Fix only Arnold repair-system code (wrappers, Python modules under
@@ -915,7 +1127,10 @@ Then cite specific evidence, the root cause, the change(s) made
 PROMPT_POLICY
     echo "- Canonical nested launcher: $LAUNCHER. Automatic nested launches through this path self-register as child managed-agent runs; do not use another launcher path."
     append_l3_repair_contract
-  } > "$BRIEF_PATH"
+  } > "$BRIEF_PATH"; then
+    log "emergency brief assembly failed custody validation; refusing dispatch"
+    exit 65
+  fi
   redact_file_in_place "$BRIEF_PATH"
   BRIEF_SIZE="$(wc -c < "$BRIEF_PATH" | tr -d ' ')"
   log "emergency brief rebuilt chars=$BRIEF_SIZE"

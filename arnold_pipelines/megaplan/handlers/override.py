@@ -538,6 +538,18 @@ def _handle_routed_override(
     state: PlanState,
     args: argparse.Namespace,
 ) -> StepResponse:
+    if args.override_action == "replan":
+        from arnold_pipelines.megaplan.planning.source_binding import (
+            reconcile_canonical_source_for_replan,
+        )
+
+        reason = (
+            getattr(args, "reason", None)
+            or getattr(args, "note", None)
+            or "Re-entering planning loop"
+        )
+        reconcile_canonical_source_for_replan(plan_dir, state, reason=reason)
+        save_state_merge_meta(plan_dir, state)
     transition = ControlTransition(
         op="override",
         target_id=args.override_action,
@@ -1142,6 +1154,15 @@ def _override_replan(
     )
     if args.note:
         _append_to_meta(state, "notes", {"timestamp": timestamp, "note": args.note})
+    from arnold_pipelines.megaplan.planning.source_binding import (
+        reconcile_canonical_source_for_replan,
+    )
+
+    source_reconciliation = reconcile_canonical_source_for_replan(
+        plan_dir,
+        state,
+        reason=reason,
+    )
     reset_replan_loop_state(state, target_state=STATE_PLANNED)
     save_state_merge_meta(plan_dir, state)
     try:
@@ -1162,6 +1183,8 @@ def _override_replan(
         "plan_file": str(plan_file),
         "message": f"Edit {plan_file.name} to incorporate your changes, then run the next step.",
     }
+    if source_reconciliation is not None:
+        response["canonical_source_binding"] = source_reconciliation
     return response
 
 

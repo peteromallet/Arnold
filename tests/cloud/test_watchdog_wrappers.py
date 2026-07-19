@@ -45,6 +45,51 @@ def _repair_wrapper() -> str:
     return _wrapper("arnold-repair-loop")
 
 
+def test_auditor_classifies_meta_trigger_rejection_as_current_failure(
+    tmp_path: Path,
+) -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _meta_run_failure_code(path):")
+    end = text.index("\ndef _text_has_meta_launch_failure(", start)
+    namespace: dict[str, object] = {}
+    exec("import re\n" + text[start:end], namespace)
+    failure_code = namespace["_meta_run_failure_code"]
+    assert callable(failure_code)
+    log = tmp_path / "meta.log"
+    log.write_text(
+        "[meta-repair 2026-07-16T00:44:11+00:00] "
+        "no meta-repair trigger matched; exiting\n",
+        encoding="utf-8",
+    )
+
+    assert failure_code(log) == "meta_repair_trigger_rejected"
+    assert '"trigger_rejected": bool(current_episode and trigger_rejected)' in text
+    assert 'or meta.get("trigger_rejection_count")' in text
+
+
+def test_progress_auditor_review_uses_bounded_pointer_and_typed_response() -> None:
+    text = _wrapper("arnold-progress-auditor")
+
+    assert "bounded_audit_review_pointer" in text
+    assert 'cat "$review_evidence"' in text
+    assert 'cat "$gather_file"' not in text
+    assert "AUDIT_REVIEW_EVIDENCE_MAX_BYTES=65536" in text
+    assert "AUDIT_REVIEW_BRIEF_MAX_BYTES=131072" in text
+    assert '--output-last-message "$model_resp_path"' in text
+    assert "normalize_audit_review_response" in text
+    assert 'data["hypothesis"] = text[:2000]' in text
+
+
+def test_progress_auditor_completion_evidence_records_approval_corrective_path() -> None:
+    text = _wrapper("arnold-progress-auditor")
+
+    assert 'escalation.get("decision") == "approval_required"' in text
+    assert 'corrective_path.get("action") == "await_human_pr_merge"' in text
+    assert 'corrective_path.get("repair_dispatch_permitted") is False' in text
+    assert '"recommendation": "auditor_escalate_to_human"' in text
+    assert 'aggregate_next_event = "human_approval.pr_merge"' in text
+
+
 def test_relaunch_scripts_preserve_managed_repair_route_context() -> None:
     watchdog = _wrapper("arnold-watchdog")
     repair_loop = _repair_wrapper()
@@ -53,6 +98,8 @@ def test_relaunch_scripts_preserve_managed_repair_route_context() -> None:
         assert "export ARNOLD_REPAIR_MARKER_DIR=" in text
         assert "export ARNOLD_REPAIR_SESSION=" in text
         assert "export ARNOLD_REPAIR_RUN_KIND=" in text
+    assert "operator-managed runtime environment inside the new child" in repair_loop
+    assert ". /workspace/.cloud-hot-env" in repair_loop
 
 
 def test_superfixer_wrappers_prefer_pinned_runtime_source() -> None:
@@ -63,11 +110,113 @@ def test_superfixer_wrappers_prefer_pinned_runtime_source() -> None:
     assert "${MEGAPLAN_AUDIT_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-" in auditor
 
 
+@pytest.mark.parametrize(
+    ("wrapper_name", "prefix"),
+    [
+        ("arnold-watchdog", "ARNOLD_WATCHDOG"),
+        ("arnold-repair-loop", "ARNOLD_REPAIR_LOOP"),
+        ("arnold-meta-repair-loop", "ARNOLD_META_REPAIR_LOOP"),
+        ("arnold-progress-auditor", "ARNOLD_PROGRESS_AUDITOR"),
+    ],
+)
+def test_long_running_superfixer_wrappers_pin_syntax_checked_source_snapshot(
+    wrapper_name: str, prefix: str
+) -> None:
+    text = _wrapper(wrapper_name)
+
+    assert f'{prefix}_ORIGIN="${{{prefix}_ORIGIN:-' in text
+    assert f'${{{prefix}_SNAPSHOT_ACTIVE:-0}}' in text
+    assert "mktemp" in text
+    assert "bash -n" in text
+    assert f"export {prefix}_SNAPSHOT_ACTIVE=1" in text
+    assert 'trap \'rm -f -- "${BASH_SOURCE[0]:-$0}"\' EXIT' in text
+
+
+@pytest.mark.parametrize(
+    ("wrapper_name", "prefix", "args", "expected_returncode"),
+    [
+        ("arnold-repair-loop", "arnold-repair-loop", [], 64),
+        ("arnold-meta-repair-loop", "arnold-meta-repair-loop", [], 64),
+    ],
+)
+def test_wrapper_snapshot_is_removed_after_fail_closed_usage_exit(
+    tmp_path: Path,
+    wrapper_name: str,
+    prefix: str,
+    args: list[str],
+    expected_returncode: int,
+) -> None:
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    result = subprocess.run(
+        ["bash", str(WRAPPER_DIR / wrapper_name), *args],
+        env={**os.environ, "TMPDIR": str(snapshot_dir)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == expected_returncode
+    assert not list(snapshot_dir.glob(f"{prefix}.*"))
+
+
+def test_repair_wrapper_snapshot_survives_origin_replacement_while_waiting(
+    tmp_path: Path,
+) -> None:
+    wrapper = _repair_wrapper()
+    bootstrap = wrapper[: wrapper.index("\n\nif [[ $# -lt 3 ]]")]
+    origin = tmp_path / "repair-wrapper"
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    origin.write_text(
+        bootstrap
+        + "\nprintf 'snapshot-ready\\n'\n"
+        + "sleep 0.25\n"
+        + "printf 'snapshot-finished\\n'\n",
+        encoding="utf-8",
+    )
+    process = subprocess.Popen(
+        ["bash", str(origin)],
+        env={**os.environ, "TMPDIR": str(snapshot_dir)},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert process.stdout is not None
+    assert process.stdout.readline().strip() == "snapshot-ready"
+
+    # This would produce the exact lazy-parser EOF class if Bash resumed from
+    # the mutable origin rather than its already validated snapshot.
+    origin.write_text('printf "unterminated\n', encoding="utf-8")
+    stdout, stderr = process.communicate(timeout=5)
+
+    assert process.returncode == 0, stderr
+    assert stdout.strip() == "snapshot-finished"
+    assert not list(snapshot_dir.glob("arnold-repair-loop.*"))
+
+
 def _extract_repair_function(name: str) -> str:
     text = _repair_wrapper()
     start = text.index(f"{name}() {{")
     end = text.index("\n}\n", start) + 3
     return text[start:end]
+
+
+def test_repair_wrappers_restore_managed_upstream_custody_before_marker() -> None:
+    repair = _repair_wrapper()
+    meta = _meta_repair_wrapper()
+
+    for wrapper in (repair, meta):
+        function = wrapper[
+            wrapper.index("load_resident_delegation_context() {") :
+            wrapper.index("\n}\n", wrapper.index("load_resident_delegation_context() {")) + 3
+        ]
+        assert '"${ARNOLD_MANAGED_AGENT_MANIFEST:-}"' in function
+        assert 'manifest.get("upstream_custody")' in function
+        assert function.index('manifest.get("upstream_custody")') < function.index(
+            'marker.get("resident_delegation")'
+        )
+        assert "invalid managed-agent upstream custody" in function
 
 
 def _extract_wrapper_function(name: str) -> str:
@@ -443,31 +592,23 @@ def test_watchdog_repairs_setup_deviations_instead_of_skipping() -> None:
     assert '"skip" "workspace_missing"' not in text
 
 
-def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
+def test_repair_loop_dev_prompt_uses_bounded_typed_pointers() -> None:
     text = _repair_wrapper()
+    prompt = _extract_repair_function("write_dev_prompt")
 
-    assert "## Incident Snapshot" in text
-    assert "## RECURRENCE EVIDENCE" in text
-    assert "Recurrence means the prior attempts may have treated symptoms, not the cause." in text
-    assert "Start from the inline incident snapshot above." in text
-    assert "ATTEMPT to resolve those user actions before treating this as a human stop" in text
-    assert "Classification guide:" in text
-    assert "LAST EXECUTE ATTEMPT" in text
-    assert "The root cause might be in the Arnold SOURCE" in text
-    assert "OR in the PLAN STATE" in text
-    assert "deferred or blocked rather than failed" in text
-    assert "LIVE FAILURE: The latest_failure is recent" in text
-    assert "STALE STATE: The latest_failure predates a successful run" in text
-    assert "## STATE MISMATCH DETECTED + CLEARED" in text
-    assert "state mismatch detected + cleared" in text
-    assert "repair_clear_stale_state_if_needed()" in text
-    assert 'if [[ "$INITIAL_HEALTH" == "alive" ]]' in text
-    assert "repair target already running; no dev-fix needed" in text
-    assert "MEGAPLAN_ACTOR_ID=repair-loop-dev-fix" in text
-    assert "Use the raw failure signal, run narrative, and prior-attempt history" in text
-    assert "Do not hardcode a workflow-specific workaround when a general engine fix is appropriate." in text
-    assert "This is a recurring problem. Do NOT pick the likely fix." in text
-    assert "Trace the actual mechanism end-to-end" in text
+    assert 'DEV_PROMPT_MAX_BYTES="${CLOUD_WATCHDOG_DEV_PROMPT_MAX_BYTES:-65536}"' in text
+    assert "Bounded authoritative pointers:" in prompt
+    assert "investigator context (maximum 65,536 bytes)" in prompt
+    assert "validated receipt (maximum 65,536 bytes)" in prompt
+    assert "managed provenance manifest" in prompt
+    assert "Act only inside the receipt's mutation scope" in prompt
+    assert "never copy expanding logs, histories, state blobs" in prompt
+    assert 'prompt_bytes="$(wc -c < "$prompt_path"' in prompt
+    assert "dev prompt exceeds ${max_bytes}-byte bound" in prompt
+    assert "render_failure_summary" not in prompt
+    assert "render_chain_health_block" not in prompt
+    assert "render_recurrence_block" not in prompt
+    assert "investigation_receipt" not in prompt
 
 
 def test_repair_loop_large_failure_context_is_passed_by_file() -> None:
@@ -527,8 +668,73 @@ def test_repair_loop_prompt_files_redact_secret_bearers_before_dispatch(tmp_path
     assert "bearer-secret-token-value" not in dev_text
     assert "supersecret" not in dev_text
     assert "supersecret" not in kimi_text
-    assert REDACTION in dev_text
     assert REDACTION in kimi_text
+
+
+def test_repair_loop_dev_prompt_does_not_inline_pathological_evidence_and_fails_closed(
+    tmp_path: Path,
+) -> None:
+    context_path = tmp_path / "context.json"
+    receipt_path = tmp_path / "receipt.json"
+    prompt_path = tmp_path / "prompt.md"
+    oversized_prompt_path = tmp_path / "oversized-prompt.md"
+    pathological = "expanding-status-history-log" * 900_000
+    context_path.write_text(pathological, encoding="utf-8")
+    receipt_path.write_text(pathological, encoding="utf-8")
+    script = "\n\n".join(
+        [
+            _extract_repair_function("write_dev_prompt"),
+            "render_process_custody_policy() { printf '%s\\n' 'bounded custody'; }",
+            "repair_delivery_policy() { printf '%s\\n' 'commit locally; do not push'; }",
+            "redact_file_in_place() { :; }",
+            "SESSION=demo-session",
+            "WORKSPACE=/tmp/workspace",
+            "ARNOLD_SRC=/tmp/runtime",
+            "SYNC_BRANCH=target-branch",
+            "DATA_FILE=/tmp/repair-data.json",
+            "ARNOLD_REPAIR_GOAL_ID=goal-1",
+            "ARNOLD_REPAIR_GOAL_PATH=/tmp/goal.json",
+            "ARNOLD_REPAIR_CHECKPOINT_DIGEST=checkpoint-1",
+            f"INVESTIGATION_CONTEXT_PATH={shlex.quote(str(context_path))}",
+            f"INVESTIGATOR_RECEIPT_PATH={shlex.quote(str(receipt_path))}",
+            "INVESTIGATION_CONTEXT_DIGEST=context-digest-1",
+            "DEV_PROMPT_MAX_BYTES=65536",
+            (
+                f"write_dev_prompt {shlex.quote(str(prompt_path))} requested dispatch "
+                f"{shlex.quote(str(tmp_path / 'report.json'))} 0"
+            ),
+            f"test $(wc -c < {shlex.quote(str(prompt_path))}) -lt 8192",
+            f"! grep -q expanding-status-history-log {shlex.quote(str(prompt_path))}",
+            "DEV_PROMPT_MAX_BYTES=512",
+            (
+                f"! write_dev_prompt {shlex.quote(str(oversized_prompt_path))} requested dispatch "
+                f"{shlex.quote(str(tmp_path / 'report-2.json'))} 0"
+            ),
+            f"test ! -e {shlex.quote(str(oversized_prompt_path))}",
+        ]
+    )
+
+    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert prompt_path.stat().st_size < 8192
+
+
+def test_repair_loop_requires_fresh_investigation_after_dev_mutation() -> None:
+    text = _repair_wrapper()
+    dev_call = text.index('run_dev_fix_turn "$iteration"')
+    reinvestigate = text.index(
+        'repair_data_set_outcome "repair_applied_reinvestigate"', dev_call
+    )
+    owner_exit = text.index("exit 1", reinvestigate)
+    legacy_recovery = text.index(
+        'recover_blocked_after_dev_fix_if_possible "$iteration"', dev_call
+    ) if 'recover_blocked_after_dev_fix_if_possible "$iteration"' in text[dev_call:] else -1
+    mechanical = text.index('mechanical_launch_step "$iteration"', dev_call)
+
+    assert reinvestigate < owner_exit < mechanical
+    assert legacy_recovery == -1
+    assert "fresh investigation required before recovery" in text[reinvestigate:mechanical]
 
 
 def test_repair_loop_effective_fixer_prompts_require_canonical_process_custody_policy(
@@ -1956,6 +2162,8 @@ def test_repair_data_dev_and_mechanical_writers_preserve_legacy_shapes(tmp_path:
             "mechanical_log_path": "/tmp/mech.log",
         }
     ]
+
+
     assert payload["attempts"] == [
         {
             "attempt_id": 4,
@@ -1997,6 +2205,49 @@ def test_repair_data_dev_and_mechanical_writers_preserve_legacy_shapes(tmp_path:
             "post_launch_failure_context": failure_context,
         }
     ]
+
+
+def test_repair_data_records_iteration_zero_baseline_without_index_error(
+    tmp_path: Path,
+) -> None:
+    data_path = tmp_path / "repair-data.json"
+    failure_context_path = tmp_path / "failure-context.json"
+    data_path.write_text('{"attempts": [], "iterations": []}\n', encoding="utf-8")
+    failure_context_path.write_text(
+        json.dumps(
+            {
+                "failure_classification": "stale_chain_state_after_terminal_plan",
+                "chain_state_summary": {"last_state": "awaiting_pr_merge"},
+                "plan_runtime_state": {"current_state": "done"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    program = _extract_repair_program(
+        "repair_data_record_mechanical",
+        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$iteration\" \"$attempt_id\" \"$status\" \"$detail\" \"$failure_context_file\" <<'PY'",
+    )
+
+    result = _run_embedded_python(
+        program,
+        str(data_path),
+        "0",
+        "0",
+        "failed:awaiting_pr_merge",
+        "baseline supported CLI returned rc=0 but PR remains open",
+        str(failure_context_path),
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(data_path.read_text(encoding="utf-8"))
+    assert payload["iterations"] == []
+    assert payload["baseline_mechanical"]["i"] == 0
+    assert payload["baseline_mechanical"]["mechanical_launch"] == (
+        "failed:awaiting_pr_merge"
+    )
+    assert payload["baseline_mechanical"]["chain_state_summary"] == {
+        "last_state": "awaiting_pr_merge"
+    }
 
 
 def test_repair_data_kimi_and_outcome_writers_preserve_legacy_shapes(tmp_path: Path) -> None:
@@ -3472,7 +3723,7 @@ echo "status:$REPAIR_DISPATCH_RESULT"
         "REPORT:meta_repair:dispatched:L2 took custody after confirmed L1 launch failure",
         "status:dispatched",
     ]
-    assert "META:l1_launch_failed" in result.stderr
+    assert "META:model_tool_launch_failure" in result.stderr
     assert "L2 now has custody" in result.stderr
 
 
@@ -5095,15 +5346,108 @@ verify_relaunch_health demo /workspace/demo /workspace/demo/chain.yaml chain '' 
 
 def test_supervise_exhaustion_queues_repair_request() -> None:
     text = _wrapper("arnold-supervise")
+    helper = (REPO_ROOT / "arnold_pipelines/megaplan/cloud/supervise.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "queue_repair_request()" in text
-    assert 'source="arnold_supervise_exit"' in text
-    assert '"failure_kind": "supervised_run_exhausted"' in text
+    assert "enqueue_supervisor_repair_request" in text
+    assert 'source="arnold_supervise_exit"' in helper
+    assert '"failure_kind": "supervised_run_exhausted"' in helper
     assert "non-quota retries exhausted" in text
     assert "exit_with_repair_request" in text
     assert "SUPERVISE_SESSION" in text
     assert "SUPERVISE_WORKSPACE" in text
     assert "SUPERVISE_REMOTE_SPEC" in text
+
+
+def test_supervise_deterministic_binding_failure_does_not_retry(tmp_path: Path) -> None:
+    command = tmp_path / "binding-drift"
+    command.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' '{\"success\":false,\"error\":\"chain_execution_binding_drift\"}'\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    command.chmod(command.stat().st_mode | stat.S_IXUSR)
+    env = dict(os.environ)
+    env.update(
+        {
+            "PYTHONPATH": f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}",
+            "ARNOLD_AUTONOMY": "1",
+            "ARNOLD_REPAIR_TRIGGER_ENABLED": "1",
+            "ARNOLD_SUPERVISE_LOG": str(tmp_path / "supervise.log"),
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(WRAPPER_DIR / "arnold-supervise"), "binding", str(command)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 1
+    assert "refusing retry spin" in result.stdout
+    assert "error retry" not in result.stdout
+
+
+def test_supervise_durable_review_quality_block_does_not_retry(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir = workspace / ".megaplan" / "plans" / "review-plan"
+    chain_dir.mkdir(parents=True)
+    plan_dir.mkdir(parents=True)
+    (chain_dir / "chain-demo.json").write_text(
+        json.dumps({"current_plan_name": "review-plan", "last_state": "blocked"}),
+        encoding="utf-8",
+    )
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "blocked",
+                "latest_failure": {
+                    "kind": "review_quality_blocked_unknown",
+                    "message": "review rework budget exhausted with unresolved quality blockers",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    command = tmp_path / "blocked-review"
+    command.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    command.chmod(command.stat().st_mode | stat.S_IXUSR)
+    env = dict(os.environ)
+    env.update(
+        {
+            "PYTHONPATH": f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}",
+            "ARNOLD_AUTONOMY": "1",
+            "ARNOLD_REPAIR_TRIGGER_ENABLED": "1",
+            "ARNOLD_SUPERVISE_LOG": str(tmp_path / "supervise.log"),
+            "ARNOLD_SUPERVISE_SESSION": "demo",
+            "ARNOLD_SUPERVISE_WORKSPACE": str(workspace),
+            "ARNOLD_SUPERVISE_REMOTE_SPEC": str(workspace / "chain.yaml"),
+            "ARNOLD_SUPERVISE_RUN_KIND": "chain",
+            "ARNOLD_REPAIR_QUEUE_ROOT": str(tmp_path / "repair-queue"),
+            "CLOUD_WATCHDOG_MARKER_DIR": str(tmp_path / "markers"),
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(WRAPPER_DIR / "arnold-supervise"), "quality", str(command)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 1
+    assert "durable_review_quality_block:review_quality_blocked_unknown" in result.stdout
+    assert "refusing retry spin" in result.stdout
+    assert "error retry" not in result.stdout
 
 
 def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
@@ -5407,6 +5751,617 @@ def test_repair_loop_stale_marker_relaunch_command_regenerates_clean_runtime_cha
     assert "/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/runtime/editable-engine" in result.stdout
     assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
     assert "refusing editable install refresh: tracked changes in source checkout" not in result.stdout
+
+
+@pytest.mark.parametrize("wrapper_kind", ["watchdog", "repair"])
+def test_persisted_push_capable_marker_command_is_always_regenerated(
+    wrapper_kind: str,
+) -> None:
+    stale_command = (
+        "echo '[megaplan-refresh] refusing editable install refresh:'; "
+        "echo 'source checkout dirty; using clean runtime mirror'; "
+        "echo 'source checkout has local commits not contained in origin/$REF; attempting push'; "
+        "git -C \"$SRC\" push origin \"$REF\"; "
+        "git -C \"$MEGAPLAN_RUNTIME_SRC\" merge-base --is-ancestor HEAD \"origin/$REF\""
+    )
+    extract = _extract_wrapper_function if wrapper_kind == "watchdog" else _extract_repair_function
+    source_var = "SRC_DIR" if wrapper_kind == "watchdog" else "ARNOLD_SRC"
+    script = "\n\n".join(
+        [
+            extract("default_plan_relaunch_command"),
+            extract("resume_plan_relaunch_command"),
+            extract("chain_resume_plan_relaunch_command_if_needed"),
+            extract("stale_marker_relaunch_command"),
+            extract("default_chain_relaunch_command"),
+            extract("resolve_relaunch_command"),
+            f"{source_var}={str(REPO_ROOT)!r}",
+            "SYNC_BRANCH=editible-install",
+            (
+                "resolve_relaunch_command demo-session /tmp/workspace /tmp/chain.yaml "
+                f"chain '' {shlex.quote(stale_command)}"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
+    assert "using current source checkout at $SRC" in result.stdout
+    assert "attempting push" not in result.stdout
+    assert 'git -C "$SRC" push origin' not in result.stdout
+
+
+def _post_dev_quality_recovery_fixture(tmp_path: Path) -> tuple[Path, Path, Path, str]:
+    from arnold_pipelines.megaplan.orchestration.phase_result import Deviation, PhaseResult
+
+    workspace = tmp_path / "workspace"
+    plan_name = "quality-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "blocked",
+                "active_step": None,
+                "resume_cursor": {"phase": "review", "retry_strategy": "manual_review"},
+                "latest_failure": {
+                    "kind": "review_quality_blocked_unknown",
+                    "phase": "review",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "phase_result.json").write_text(
+        json.dumps(
+            PhaseResult(
+                phase="review",
+                invocation_id="review-invocation",
+                exit_kind="blocked_by_quality",
+                deviations=(
+                    Deviation(
+                        kind="quality_gate",
+                        message="review found a deterministic acceptance defect",
+                    ),
+                ),
+            ).to_dict()
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "review.json").write_text(
+        json.dumps(
+            {
+                "review_verdict": "needs_rework",
+                "rework_items": [{"evidence_file": "module.py"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    subprocess.run(["git", "-C", str(workspace), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(workspace), "commit", "-qm", "quality repair"], check=True)
+    head = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    report_path = tmp_path / "dev-report.json"
+    safe_target = {"kind": "target_workspace", "scope": "module.py"}
+    dev_report = {
+        "local_commit": head,
+        "safe_repair_target": safe_target,
+        "validation": {"focused": "passed"},
+    }
+    report_path.write_text(json.dumps(dev_report), encoding="utf-8")
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "iterations": [
+                    {
+                        "i": 1,
+                        "dev_turn_rc": 0,
+                        "dev_report_path": str(report_path),
+                        "dev_before_sha": "a" * 40,
+                        "dev_after_sha": head,
+                        "dev_fix_sha": head,
+                        "dev_fix_changed": True,
+                        "dev_report": dev_report,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    receipt_path = tmp_path / "investigator.json"
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "recommended_action": "repair_target",
+                "safe_repair_target": safe_target,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return workspace, data_path, receipt_path, plan_name
+
+
+def test_post_dev_quality_recovery_uses_fixed_resolution_and_supported_cli(
+    tmp_path: Path,
+) -> None:
+    workspace, data_path, receipt_path, plan_name = _post_dev_quality_recovery_fixture(tmp_path)
+    script = "\n\n".join(
+        [
+            _extract_repair_function("post_dev_fix_quality_recovery_command_if_needed"),
+            f"WORKSPACE={str(workspace)!r}",
+            f"PLAN_NAME={plan_name!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            f"INVESTIGATOR_RECEIPT_PATH={str(receipt_path)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            "post_dev_fix_quality_recovery_command_if_needed 1 'echo ordinary-relaunch'",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "quality-gate resolve" in result.stdout
+    assert "quality-gate resolve --project-dir" not in result.stdout
+    assert "override recover-blocked --project-dir" in result.stdout
+    assert "--resolution fixed" in result.stdout
+    assert "override recover-blocked" in result.stdout
+    assert "ordinary-relaunch" in result.stdout
+    assert "accepted_with_debt" not in result.stdout
+    assert "local dev fix commit:" in result.stdout
+    assert len(result.stdout.encode("utf-8")) <= 16384
+
+
+def test_post_dev_quality_recovery_accepts_exact_recover_state_cli(
+    tmp_path: Path,
+) -> None:
+    workspace, data_path, receipt_path, plan_name = _post_dev_quality_recovery_fixture(tmp_path)
+    ordinary_relaunch = "echo ordinary-relaunch"
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "recommended_action": "recover_state",
+                "safe_repair_target": {
+                    "kind": "plan_state_via_cli",
+                    "scope": "supported chain start",
+                },
+                "handoff": {
+                    "allowed_mutations": [f"supported_cli:{ordinary_relaunch}"]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("post_dev_fix_quality_recovery_command_if_needed"),
+            f"WORKSPACE={str(workspace)!r}",
+            f"PLAN_NAME={plan_name!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            f"INVESTIGATOR_RECEIPT_PATH={str(receipt_path)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            f"post_dev_fix_quality_recovery_command_if_needed 1 {ordinary_relaunch!r}",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert "quality-gate resolve" in result.stdout
+    assert "quality-gate resolve --project-dir" not in result.stdout
+    assert "override recover-blocked --project-dir" in result.stdout
+    assert "--resolution fixed" in result.stdout
+    assert "override recover-blocked" in result.stdout
+    assert ordinary_relaunch in result.stdout
+
+
+def test_post_dev_quality_recovery_rejects_recover_state_cli_mismatch(
+    tmp_path: Path,
+) -> None:
+    workspace, data_path, receipt_path, plan_name = _post_dev_quality_recovery_fixture(tmp_path)
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "recommended_action": "recover_state",
+                "safe_repair_target": {
+                    "kind": "plan_state_via_cli",
+                    "scope": "supported chain start",
+                },
+                "handoff": {"allowed_mutations": ["supported_cli:echo stale-command"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("post_dev_fix_quality_recovery_command_if_needed"),
+            f"WORKSPACE={str(workspace)!r}",
+            f"PLAN_NAME={plan_name!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            f"INVESTIGATOR_RECEIPT_PATH={str(receipt_path)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            "post_dev_fix_quality_recovery_command_if_needed 1 'echo ordinary-relaunch'",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+
+
+def test_post_dev_quality_recovery_rejects_unchanged_or_unbounded_evidence(
+    tmp_path: Path,
+) -> None:
+    workspace, data_path, receipt_path, plan_name = _post_dev_quality_recovery_fixture(tmp_path)
+    payload = json.loads(data_path.read_text(encoding="utf-8"))
+    payload["iterations"][0]["dev_fix_changed"] = False
+    data_path.write_text(json.dumps(payload), encoding="utf-8")
+    script = "\n\n".join(
+        [
+            _extract_repair_function("post_dev_fix_quality_recovery_command_if_needed"),
+            f"WORKSPACE={str(workspace)!r}",
+            f"PLAN_NAME={plan_name!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            f"INVESTIGATOR_RECEIPT_PATH={str(receipt_path)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            "post_dev_fix_quality_recovery_command_if_needed 1 'echo ordinary-relaunch'",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+
+
+def test_post_dev_quality_recovery_rejects_unpublished_tracked_branch_fix(
+    tmp_path: Path,
+) -> None:
+    workspace, data_path, receipt_path, plan_name = _post_dev_quality_recovery_fixture(tmp_path)
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+    subprocess.run(["git", "-C", str(workspace), "remote", "add", "origin", str(remote)], check=True)
+    branch = subprocess.run(
+        ["git", "-C", str(workspace), "branch", "--show-current"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "-C", str(workspace), "push", "-q", "-u", "origin", branch],
+        check=True,
+    )
+    before = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    (workspace / "module.py").write_text("fixed = True\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(workspace), "add", "module.py"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "commit", "-qm", "local repair"], check=True)
+    after = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    payload = json.loads(data_path.read_text(encoding="utf-8"))
+    entry = payload["iterations"][0]
+    entry["dev_before_sha"] = before
+    entry["dev_after_sha"] = after
+    entry["dev_fix_sha"] = after
+    entry["dev_fix_changed"] = True
+    entry["dev_report"]["local_commit"] = after
+    report_path = Path(entry["dev_report_path"])
+    report_path.write_text(json.dumps(entry["dev_report"]), encoding="utf-8")
+    data_path.write_text(json.dumps(payload), encoding="utf-8")
+    script = "\n\n".join(
+        [
+            _extract_repair_function("post_dev_fix_quality_recovery_command_if_needed"),
+            f"WORKSPACE={str(workspace)!r}",
+            f"PLAN_NAME={plan_name!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            f"INVESTIGATOR_RECEIPT_PATH={str(receipt_path)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            "post_dev_fix_quality_recovery_command_if_needed 1 'echo ordinary-relaunch'",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "not contained in tracked branch" in result.stderr
+    assert "publication authorization is required" in result.stderr
+
+
+def test_prior_receipted_legacy_dev_fix_can_enter_quality_recovery(tmp_path: Path) -> None:
+    workspace, data_path, receipt_path, plan_name = _post_dev_quality_recovery_fixture(tmp_path)
+    payload = json.loads(data_path.read_text(encoding="utf-8"))
+    entry = payload["iterations"][0]
+    entry.pop("dev_before_sha")
+    entry.pop("dev_after_sha")
+    entry.pop("dev_fix_changed")
+    entry.pop("dev_report_path")
+    data_path.write_text(json.dumps(payload), encoding="utf-8")
+    script = "\n\n".join(
+        [
+            _extract_repair_function("prior_receipted_dev_fix_iteration"),
+            _extract_repair_function("post_dev_fix_quality_recovery_command_if_needed"),
+            f"WORKSPACE={str(workspace)!r}",
+            f"PLAN_NAME={plan_name!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            f"INVESTIGATOR_RECEIPT_PATH={str(receipt_path)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            "prior_receipted_dev_fix_iteration",
+            "post_dev_fix_quality_recovery_command_if_needed 1 'echo ordinary-relaunch'",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert lines[0] == "1"
+    assert "quality-gate resolve" in result.stdout
+    assert f"bounded repair data:{data_path}#iterations[0].dev_report" in result.stdout
+
+
+def test_prior_receipted_attempt_can_enter_recover_state_quality_recovery(
+    tmp_path: Path,
+) -> None:
+    workspace, data_path, receipt_path, plan_name = _post_dev_quality_recovery_fixture(tmp_path)
+    payload = json.loads(data_path.read_text(encoding="utf-8"))
+    entry = payload.pop("iterations")[0]
+    entry.pop("dev_before_sha")
+    entry.pop("dev_after_sha")
+    entry.pop("dev_fix_changed")
+    entry.pop("dev_report_path")
+    payload["attempts"] = [entry]
+    data_path.write_text(json.dumps(payload), encoding="utf-8")
+    ordinary_relaunch = "echo ordinary-relaunch"
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "recommended_action": "recover_state",
+                "safe_repair_target": {
+                    "kind": "plan_state_via_cli",
+                    "scope": "supported chain start",
+                },
+                "handoff": {
+                    "allowed_mutations": [f"supported_cli:{ordinary_relaunch}"]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("prior_receipted_dev_fix_iteration"),
+            _extract_repair_function("post_dev_fix_quality_recovery_command_if_needed"),
+            f"WORKSPACE={str(workspace)!r}",
+            f"PLAN_NAME={plan_name!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            f"INVESTIGATOR_RECEIPT_PATH={str(receipt_path)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            'locator="$(prior_receipted_dev_fix_iteration)"',
+            'printf "%s\\n" "$locator"',
+            f"post_dev_fix_quality_recovery_command_if_needed \"$locator\" {ordinary_relaunch!r}",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == "attempts:0"
+    assert "quality-gate resolve" in result.stdout
+    assert f"bounded repair data:{data_path}#attempts[0].dev_report" in result.stdout
+
+
+def test_verified_quality_recovery_cannot_fall_back_without_receipt_locator(
+    tmp_path: Path,
+) -> None:
+    context = tmp_path / "context.json"
+    context.write_text(
+        json.dumps(
+            {
+                "durable_quality_block": {
+                    "active": True,
+                    "repair_evidence": {"verified": True},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("quality_recovery_requirement"),
+            _extract_repair_function("select_mechanical_relaunch_command"),
+            "post_dev_fix_quality_recovery_command_if_needed() { printf '%s\\n' 'unsafe-fallback'; }",
+            f"INVESTIGATION_CONTEXT_PATH={str(context)!r}",
+            "INVESTIGATOR_RECOMMENDED_ACTION=recover_state",
+            "POST_DEV_FIX_ITERATION=",
+            "select_mechanical_relaunch_command 'ordinary-relaunch'",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 76
+    assert result.stdout == ""
+    assert "no bounded dev-fix receipt locator" in result.stderr
+
+
+def test_verified_quality_recovery_cannot_fall_back_when_receipt_mismatches(
+    tmp_path: Path,
+) -> None:
+    context = tmp_path / "context.json"
+    context.write_text(
+        json.dumps(
+            {
+                "durable_quality_block": {
+                    "active": True,
+                    "repair_evidence": {"verified": True},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("quality_recovery_requirement"),
+            _extract_repair_function("select_mechanical_relaunch_command"),
+            "post_dev_fix_quality_recovery_command_if_needed() { return 0; }",
+            f"INVESTIGATION_CONTEXT_PATH={str(context)!r}",
+            "INVESTIGATOR_RECOMMENDED_ACTION=recover_state",
+            "POST_DEV_FIX_ITERATION=attempts:17",
+            "select_mechanical_relaunch_command 'ordinary-relaunch'",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 76
+    assert result.stdout == ""
+    assert "could not construct its receipt-bound command" in result.stderr
+
+
+def test_quality_recovery_context_bound_fails_closed(tmp_path: Path) -> None:
+    context = tmp_path / "context.json"
+    context.write_text(" " * 65_537, encoding="utf-8")
+    script = "\n\n".join(
+        [
+            _extract_repair_function("quality_recovery_requirement"),
+            _extract_repair_function("select_mechanical_relaunch_command"),
+            "post_dev_fix_quality_recovery_command_if_needed() { return 0; }",
+            f"INVESTIGATION_CONTEXT_PATH={str(context)!r}",
+            "INVESTIGATOR_RECOMMENDED_ACTION=recover_state",
+            "POST_DEV_FIX_ITERATION=attempts:17",
+            "select_mechanical_relaunch_command 'ordinary-relaunch'",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 76
+    assert result.stdout == ""
+    assert "65536-byte bound" in result.stderr
+
+
+def test_chain_marker_plan_identity_binds_from_validated_context(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plan_name = "current-chain-plan"
+    state_path = workspace / ".megaplan" / "plans" / plan_name / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text("{}", encoding="utf-8")
+    context = tmp_path / "context.json"
+    context.write_text(
+        json.dumps({"current": {"plan_name": plan_name}}), encoding="utf-8"
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("bind_plan_name_from_investigation_context"),
+            f"INVESTIGATION_CONTEXT_PATH={str(context)!r}",
+            f"WORKSPACE={str(workspace)!r}",
+            "PLAN_NAME=",
+            "bind_plan_name_from_investigation_context",
+            "printf '%s\\n' \"$PLAN_NAME\"",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == plan_name
+
+
+def test_context_plan_identity_cannot_override_marker_identity(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plan_name = "context-plan"
+    state_path = workspace / ".megaplan" / "plans" / plan_name / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text("{}", encoding="utf-8")
+    context = tmp_path / "context.json"
+    context.write_text(
+        json.dumps({"current": {"plan_name": plan_name}}), encoding="utf-8"
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("bind_plan_name_from_investigation_context"),
+            f"INVESTIGATION_CONTEXT_PATH={str(context)!r}",
+            f"WORKSPACE={str(workspace)!r}",
+            "PLAN_NAME=marker-plan",
+            "bind_plan_name_from_investigation_context",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 76
+    assert "conflicts with validated investigation context" in result.stderr
+
+
+def test_receipted_live_runner_gets_bounded_launch_settle_observation(
+    tmp_path: Path,
+) -> None:
+    calls = tmp_path / "calls"
+    script = "\n\n".join(
+        [
+            _extract_repair_function("wait_for_repair_goal_progress_if_live"),
+            f"CALLS={str(calls)!r}",
+            "repair_goal_control_snapshot() { if [[ -f \"$CALLS\" ]]; then printf '%s\\n' '{\"status\":\"progressed\",\"evaluation\":{\"control_action\":\"\",\"reason\":\"accepted\"},\"observation\":{}}'; else : > \"$CALLS\"; printf '%s\\n' '{\"status\":\"active\",\"evaluation\":{\"control_action\":\"investigate\",\"reason\":\"awaiting activity\"},\"observation\":{\"runner_transition\":{\"runner_pid_live\":true}}}'; fi; }",
+            "repair_data_set_outcome() { :; }",
+            "clear_repair_markers() { :; }",
+            "repair_goal_record_terminal_failure() { :; }",
+            "ensure_repair_budget_available() { :; }",
+            "cap_timeout_to_repair_budget() { printf '%s\\n' 0; }",
+            "log() { :; }",
+            "SESSION=test-session",
+            "REPAIR_GOAL_POLL_SECS=0",
+            "CLOUD_WATCHDOG_REPAIR_LAUNCH_SETTLE_SECS=120",
+            "wait_for_repair_goal_progress_if_live post-launch",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert calls.exists()
+
+
+def test_receipted_quality_prelude_gets_bounded_launch_settle_observation(
+    tmp_path: Path,
+) -> None:
+    calls = tmp_path / "calls"
+    script = "\n\n".join(
+        [
+            _extract_repair_function("wait_for_repair_goal_progress_if_live"),
+            f"CALLS={str(calls)!r}",
+            "repair_goal_control_snapshot() { if [[ -f \"$CALLS\" ]]; then printf '%s\\n' '{\"status\":\"progressed\",\"evaluation\":{\"control_action\":\"\",\"reason\":\"accepted\"},\"observation\":{}}'; else : > \"$CALLS\"; printf '%s\\n' '{\"status\":\"active\",\"evaluation\":{\"control_action\":\"investigate\",\"reason\":\"quality prelude running\"},\"observation\":{\"runner_transition\":{\"runner_pid_live\":false}}}'; fi; }",
+            "tmux() { [[ \"$1\" == has-session && \"$2\" == -t && \"$3\" == test-session ]]; }",
+            "repair_data_set_outcome() { :; }",
+            "clear_repair_markers() { :; }",
+            "repair_goal_record_terminal_failure() { :; }",
+            "ensure_repair_budget_available() { :; }",
+            "cap_timeout_to_repair_budget() { printf '%s\\n' 0; }",
+            "log() { :; }",
+            "SESSION=test-session",
+            "REPAIR_GOAL_POLL_SECS=0",
+            "CLOUD_WATCHDOG_REPAIR_LAUNCH_SETTLE_SECS=120",
+            "wait_for_repair_goal_progress_if_live post-launch",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert calls.exists()
 
 
 def test_watchdog_chain_relaunch_prefers_plan_resume_for_external_resume_required(tmp_path: Path) -> None:
@@ -8156,7 +9111,15 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     assert "verify_started_and_holding()" in text
     assert "mechanical_launch_step()" in text
     assert "kill_matching_runner_processes()" in text
-    assert 'kill_matching_runner_processes "$session" "$remote_spec" "$run_kind" "$plan_name"' in text
+    assert 'kill_matching_runner_processes "$session" "$remote_spec" "$run_kind" "$plan_name"' not in text
+    assert 'kill_tmux_session_if_present "$session"' not in text
+    assert 'failed:existing_tmux_custody_unverified' in text
+    assert 'preserved:existing_runner' in text
+    assert "runner cleanup refused without an exact managed-run lifecycle receipt" in text
+    assert "tmux cleanup refused without an exact managed-run lifecycle receipt" in text
+    assert "tmux kill-session" not in text
+    assert "os.killpg" not in text
+    assert "SIGKILL" not in text
     assert "marker_requires_repair_despite_alive()" in text
     assert 'python3 - "$MARKER_PATH" "$DATA_FILE"' in text
     assert 'repair_payload.get("current_failure_context")' in text
@@ -8179,11 +9142,80 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
         'PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold.agent.run_agent'
     )
     assert 'tmux new-session -d -s "$session"' in text
+    assert 'launch_receipt="$RUN_DIR/mechanical-launch-$iteration-receipt.json"' in text
+    assert '"schema_version": "arnold-mechanical-launch-receipt-v1"' in text
+    assert 'export ARNOLD_AUTONOMY=$(printf \'%q\' "${ARNOLD_AUTONOMY:-}")' in text
+    assert 'export ARNOLD_REPAIR_TRIGGER_ENABLED=$(printf \'%q\' "${ARNOLD_REPAIR_TRIGGER_ENABLED:-}")' in text
+    assert "l1_mutation_authorized()" in text
+    assert "observed: L1 mutation blocked before $mutation_label" in text
+    assert "investigation custody check failed closed before mutation" in text
+    assert '"started_at": started_at' in text
+    assert 'echo "terminal:$post_status:receipt=$launch_receipt"' in text
+    assert '"authorized-recovery-launch-failed"' in text
+    assert text.index('if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]') < text.index(
+        'GLM_MODEL=""'
+    )
     assert r'rm -f -- "\${BASH_SOURCE[0]}"' in text
     launch_start = text.index('if ! tmux new-session -d -s "$session"')
     verify_start = text.index('health="$(verify_started_and_holding', launch_start)
     assert text[launch_start:verify_start].rstrip().endswith("fi")
     assert 'repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "running"' in text
+
+
+def test_meta_replan_effects_require_l2_mutation_authority() -> None:
+    text = _wrapper("arnold-meta-repair-loop")
+
+    branch = text.index('if [[ "$META_INVESTIGATION_ACTION" == "replan" ]]')
+    authority = text.index("if ! l2_mutation_authorized; then", branch)
+    reconciliation = text.index('REPLAN_RECONCILIATION="$', branch)
+    retrigger = text.index('log "accepted L2 replan handoff; retriggering ordinary repair', branch)
+
+    assert branch < authority < reconciliation < retrigger
+    assert "observed: L2 replan effects blocked by master-plus-path authorization gate" in text
+
+
+@pytest.mark.parametrize(
+    ("authorized", "supervisor_python", "expected_rc", "expected_log"),
+    [
+        (False, "/bin/true", 77, "L1 mutation blocked before test-mutation"),
+        (True, "/bin/false", 76, "investigation custody check failed closed"),
+    ],
+)
+def test_repair_mutation_guard_cannot_be_ignored(
+    tmp_path: Path,
+    authorized: bool,
+    supervisor_python: str,
+    expected_rc: int,
+    expected_log: str,
+) -> None:
+    effect = tmp_path / "effect"
+    script = "\n\n".join(
+        [
+            _extract_repair_function("require_investigation_before_mutation"),
+            f"""
+require_repair_lock_held() {{ :; }}
+l1_mutation_authorized() {{ return {0 if authorized else 1}; }}
+log() {{ printf '%s\\n' "$*"; }}
+MEGAPLAN_SUPERVISOR_PYTHON={supervisor_python}
+WRAPPER_REPO_ROOT=/workspace/unused
+ARNOLD_SRC=/workspace/unused
+INVESTIGATION_CONTEXT_PATH=/workspace/unused-context
+INVESTIGATOR_RECEIPT_PATH=/workspace/unused-receipt
+INVESTIGATION_CONTEXT_DIGEST=unused
+SESSION=test-session
+require_investigation_before_mutation test-mutation
+touch {effect}
+""".strip(),
+        ]
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == expected_rc
+    assert expected_log in result.stdout
+    assert not effect.exists()
 
 
 def test_repair_loop_health_treats_orphaned_chain_process_as_alive(tmp_path: Path) -> None:
@@ -11836,7 +12868,7 @@ def _run_auditor_with_mocked_deepseek(tmp_path: Path) -> dict:
     )
 
     # Extract report-assembly python.
-    a_marker = "python3 - \"$GATHER_DIR/findings.json\" \"$JSON_OUT\" \"$MD_OUT\" \"$REPORT_LOG\" \"$TS\" <<'PY'"
+    a_marker = "python3 - \"$GATHER_DIR/findings.json\" \"$JSON_OUT\" \"$MD_OUT\" \"$REPORT_LOG\" \"$TS\""
     a_start = wrapper_text.index(a_marker)
     a_start = wrapper_text.index("\n", a_start) + 1
     a_end = wrapper_text.index("\nPY\n", a_start)
@@ -11844,11 +12876,16 @@ def _run_auditor_with_mocked_deepseek(tmp_path: Path) -> dict:
     json_out = tmp_path / "out.json"
     md_out = tmp_path / "out.md"
     log_path = tmp_path / "audit.log"
+    recovery_evidence = tmp_path / "recovery-evidence.json"
+    recovery_evidence.write_text(
+        json.dumps({"enabled": False, "decisions": []}), encoding="utf-8"
+    )
     asm = gather_dir / "asm.py"
     asm.write_text(asm_prog, encoding="utf-8")
     r2 = subprocess.run(
         [sys.executable, str(asm), str(gather_dir / "findings.json"),
-         str(json_out), str(md_out), str(log_path), "TESTTS"],
+         str(json_out), str(md_out), str(log_path), "TESTTS", "0", "0",
+         str(recovery_evidence), "gpt-test"],
         capture_output=True, text=True, env=env, check=False,
     )
     assert r2.returncode == 0, f"report asm failed: {r2.stderr}"
@@ -12722,6 +13759,131 @@ def test_auditor_gather_surfaces_missing_meta_repair_run_for_triggered_session(t
     assert "meta-repair trigger" in " ".join(finding["reasons"])
 
 
+def test_auditor_gather_retains_recent_l2_sandbox_failure_after_later_runs(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    plan_name = "m4-sandbox-retro"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    _write_plan(
+        plan_dir,
+        {
+            "name": plan_name,
+            "iteration": 4,
+            "current_state": "blocked",
+            "active_step": None,
+            "latest_failure": {
+                "kind": "stalled",
+                "message": "ordinary repair exhausted",
+                "recorded_at": _iso_hours_ago(1.0),
+            },
+        },
+        plan_v_bodies={"plan_v1.md": "v1"},
+        events_body="{}\n",
+    )
+    repair_data_dir = tmp_path / "repair-data"
+    repair_data_dir.mkdir()
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "outcome": "repair_exhausted",
+                "attempts": [
+                    {"attempt_id": index, "failure_classification": "timeout_or_hang"}
+                    for index in range(1, 4)
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    meta_runs = tmp_path / "meta-runs"
+    meta_runs.mkdir()
+    failed = meta_runs / "20260715T010000Z-demo-session-investigator-receipt.json"
+    failed.write_text(
+        json.dumps(
+            {
+                "failure_code": "investigator_read_sandbox_unavailable",
+                "observed_error": "bwrap: No permissions to create new namespace",
+            }
+        ),
+        encoding="utf-8",
+    )
+    for index in range(6):
+        path = meta_runs / f"20260715T02{index:02d}00Z-demo-session-success-{index}.log"
+        path.write_text("accepted L2 verdict\n", encoding="utf-8")
+        advanced_mtime = failed.stat().st_mtime + index + 1
+        os.utime(path, (advanced_mtime, advanced_mtime))
+    for index in range(2):
+        path = meta_runs / f"20260715T030{index}00Z-demo-session-invalid-{index}.log"
+        path.write_text(
+            (
+                "[meta-repair 2026-07-15T03:00:00+00:00] "
+                "L2 investigation failed or returned no valid receipt; "
+                "refusing all repair mutation\n"
+                if index == 0
+                else (
+                    "[meta-repair 2026-07-15T03:01:00+00:00] "
+                    "L2 investigator failed or returned no valid receipt\n"
+                )
+            ),
+            encoding="utf-8",
+        )
+        advanced_mtime = failed.stat().st_mtime + 10 + index
+        os.utime(path, (advanced_mtime, advanced_mtime))
+    authority_blocked = meta_runs / "20260715T031000Z-demo-session-authority.log"
+    authority_blocked.write_text(
+        "[meta-repair 2026-07-15T03:10:00+00:00] observed: "
+        "L2 Codex dispatch blocked by master-plus-path authorization gate\n",
+        encoding="utf-8",
+    )
+    advanced_mtime = failed.stat().st_mtime + 20
+    os.utime(authority_blocked, (advanced_mtime, advanced_mtime))
+
+    gather_dir = tmp_path / "gather"
+    gather_dir.mkdir()
+    worklist = tmp_path / "worklist.jsonl"
+    worklist.write_text(
+        json.dumps(
+            {
+                "workspace": str(workspace),
+                "plan": plan_name,
+                "session": "demo-session",
+                "kind": "chain",
+                "sources": ["marker"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    gather_path = gather_dir / "gather.py"
+    gather_path.write_text(_extract_auditor_gather_program(), encoding="utf-8")
+    env = dict(os.environ)
+    env["MEGAPLAN_AUDIT_REPAIR_DATA_DIR"] = str(repair_data_dir)
+    env["MEGAPLAN_AUDIT_META_RUN_DIR"] = str(meta_runs)
+    result = subprocess.run(
+        [sys.executable, str(gather_path), str(worklist), str(gather_dir), "6", str(tmp_path), "none"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    finding = json.loads(
+        (gather_dir / "findings.json").read_text(encoding="utf-8")
+    )["findings"][0]
+    meta_summary = finding["meta_repair_summary"]
+    failure_refs = [
+        item for item in meta_summary["meta_run_refs"] if item.get("failure_code")
+    ]
+    assert {item["failure_code"] for item in failure_refs} == {
+        "investigator_invalid_or_missing_receipt",
+        "investigator_read_sandbox_unavailable",
+        "meta_repair_authority_blocked",
+    }
+    assert meta_summary["failed_meta_run_count"] == 1
+    assert meta_summary["meta_run_refs"][0]["failure_code"] == (
+        "meta_repair_authority_blocked"
+    )
+
+
 def test_auditor_gather_flags_running_repair_without_attempt_context(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     plan_name = "m1-demo"
@@ -13437,6 +14599,114 @@ repair_unintended_stop() { printf 'dispatch\n' >> "$DISPATCH_PATH"; }
     assert "observing without repair launch" in log_path.read_text(encoding="utf-8")
 
 
+def test_watchdog_suppresses_unowned_goal_redispatch_for_authoritative_live_worker(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    report_path = tmp_path / "report.tsv"
+    dispatch_path = tmp_path / "dispatch.log"
+    log_path = tmp_path / "watchdog.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"MEGAPLAN_SUPERVISOR_PYTHON={sys.executable!r}",
+            f"LOG={str(log_path)!r}",
+            f"DISPATCH_PATH={str(dispatch_path)!r}",
+            """
+log() { printf '%s\n' "$*" >> "$LOG"; }
+report_item() { printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"; }
+repair_goal_watchdog_status() { printf 'active_unowned\tgoal-live\towner terminalized before review finished\tinvestigate\n'; }
+current_target_has_live_worker() { return 0; }
+dispatch_meta_repair() { printf 'l2\n' >> "$DISPATCH_PATH"; }
+repair_unintended_stop() { printf 'l1\n' >> "$DISPATCH_PATH"; }
+""".strip(),
+            f"launch_chain_tick custody-control-plane {str(tmp_path / 'workspace')!r} {str(tmp_path / 'chain.yaml')!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert not dispatch_path.exists()
+    assert "preserve authoritative live target worker" in report_path.read_text(encoding="utf-8")
+    assert "suppressing replacement-owner dispatch" in log_path.read_text(encoding="utf-8")
+
+
+def test_watchdog_suppresses_unowned_goal_while_runner_finishes_backstop(
+    tmp_path: Path,
+) -> None:
+    """A live canonical runner remains authoritative after active_step clears."""
+
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    report_path = tmp_path / "report.tsv"
+    dispatch_path = tmp_path / "dispatch.log"
+    log_path = tmp_path / "watchdog.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"MEGAPLAN_SUPERVISOR_PYTHON={sys.executable!r}",
+            f"LOG={str(log_path)!r}",
+            f"DISPATCH_PATH={str(dispatch_path)!r}",
+            """
+log() { printf '%s\n' "$*" >> "$LOG"; }
+report_item() { printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"; }
+repair_goal_watchdog_status() { printf 'active_unowned\tgoal-live\tcited fix missing from target history\tinvestigate\ttrue\n'; }
+current_target_has_live_worker() { return 1; }
+dispatch_meta_repair() { printf 'l2\n' >> "$DISPATCH_PATH"; }
+repair_unintended_stop() { printf 'l1\n' >> "$DISPATCH_PATH"; }
+""".strip(),
+            f"launch_chain_tick custody-control-plane {str(tmp_path / 'workspace')!r} {str(tmp_path / 'chain.yaml')!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert not dispatch_path.exists()
+    assert "preserve authoritative live target worker" in report_path.read_text(encoding="utf-8")
+    assert "suppressing replacement-owner dispatch" in log_path.read_text(encoding="utf-8")
+
+
+def test_current_target_live_worker_requires_active_pid_bound_heartbeat() -> None:
+    function = _extract_wrapper_function("current_target_has_live_worker")
+    live = json.dumps(
+        {
+            "active_step_heartbeat": {
+                "active": True,
+                "pid_live": True,
+                "worker_pid": "1179344",
+            }
+        }
+    )
+    stale = json.dumps(
+        {
+            "active_step_heartbeat": {
+                "active": True,
+                "pid_live": False,
+                "worker_pid": "1179344",
+            }
+        }
+    )
+
+    accepted = _run_watchdog_shell(f"{function}\ncurrent_target_has_live_worker {shlex.quote(live)}")
+    rejected = _run_watchdog_shell(f"{function}\ncurrent_target_has_live_worker {shlex.quote(stale)}")
+
+    assert accepted.returncode == 0, accepted.stderr
+    assert rejected.returncode == 1, rejected.stderr
+
+
 def test_watchdog_unowned_genuinely_stuck_goal_still_dispatches_one_l1_owner(
     tmp_path: Path,
 ) -> None:
@@ -13877,7 +15147,7 @@ def test_meta_repair_classification_embedded_python_matches_contract(
     """The classification_and_prompt embedded Python must call evaluate_meta_repair_triggers."""
     marker = (
         'python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" '
-        '"$META_REPAIR_ENABLED_VAR" "$WATCHDOG_TRIGGER" <<'
+        '"$MARKER_DIR" "$META_REPAIR_ENABLED_VAR" "$WATCHDOG_TRIGGER" <<'
     )
     text = _meta_repair_wrapper()
 
@@ -14499,11 +15769,14 @@ def test_meta_repair_dispatch_defaults_structural() -> None:
     """Verify META_REPAIR_BIN default and dispatch_meta_repair function exist in watchdog."""
     watchdog_text = _wrapper("arnold-watchdog")
 
-    # Watchdog repair persistence defaults on unless an operator opts out.
-    assert 'PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-1}"' in watchdog_text
+    # Local repair authority must not silently expand into remote publication.
+    assert 'PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-0}"' in watchdog_text
+    assert "set CLOUD_WATCHDOG_PUSH_REPAIRS=1" in watchdog_text
 
     # META_REPAIR_BIN default
-    assert 'META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-/usr/local/bin/arnold-meta-repair-loop}"' in watchdog_text
+    assert 'META_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"' in watchdog_text
+    assert 'META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-$META_REPAIR_SOURCE_BIN}"' in watchdog_text
+    assert 'META_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-meta-repair-loop"' in watchdog_text
 
     # dispatch_meta_repair function
     assert "dispatch_meta_repair() {" in watchdog_text

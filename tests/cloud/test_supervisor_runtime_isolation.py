@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
+
+from arnold_pipelines.megaplan.cloud import current_target
+from arnold_pipelines.megaplan.cloud.supervise import enqueue_supervisor_repair_request
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -229,6 +235,145 @@ def test_dependency_independent_gap_scan_flags_stopped_marker_without_custody(
     (chain_dir / "chain.json").write_text("{}\n", encoding="utf-8")
     subprocess.run(command, check=True, text=True, capture_output=True)
     assert json.loads(output.read_text())["status"] == "healthy"
+
+
+def test_supervisor_queue_binds_current_plan_not_chain_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker_dir = tmp_path / "markers"
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
+    workspace = tmp_path / "workspace"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    marker_dir.mkdir()
+    chain_dir.mkdir(parents=True)
+    spec = workspace / "chain.yaml"
+    spec.write_text("milestones: []\n", encoding="utf-8")
+    (marker_dir / "demo.json").write_text(
+        json.dumps(
+            {
+                "session": "demo",
+                "workspace": str(workspace),
+                "remote_spec": str(spec),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (chain_dir / "chain.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": "current-quality-plan",
+                "last_state": "blocked",
+                "metadata": {"chain_spec_path": str(spec)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_dir = workspace / ".megaplan" / "plans" / "current-quality-plan"
+    state_dir.mkdir(parents=True)
+    (state_dir / "state.json").write_text(
+        json.dumps({"name": "current-quality-plan", "current_state": "blocked"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        current_target,
+        "resolve_current_target",
+        lambda *args, **kwargs: {
+            "current_refs": {"current_plan_name": "current-quality-plan"}
+        },
+    )
+
+    result = enqueue_supervisor_repair_request(
+        queue_root=queue_root,
+        marker_dir=marker_dir,
+        session="demo",
+        workspace=workspace,
+        remote_spec=str(spec),
+        run_kind="chain",
+        reason="durable_review_quality_block:review_quality_blocked_unknown",
+        log_path=str(tmp_path / "supervise.log"),
+    )
+
+    request = result["request"]
+    assert request["target"]["plan_name"] == "current-quality-plan"
+    assert request["problem_signature"]["milestone_or_plan"] == "current-quality-plan"
+    assert request["problem_signature"]["milestone_or_plan"] != str(spec)
+
+
+def test_supervise_python_helpers_use_pinned_runtime_source() -> None:
+    text = _text("arnold-supervise")
+
+    assert (
+        'SUPERVISE_SOURCE="${MEGAPLAN_SUPERVISOR_SOURCE:-'
+        '${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"'
+    ) in text
+    assert text.count('PYTHONPATH="$SUPERVISE_SOURCE:${PYTHONPATH:-}"') == 2
+    assert 'PYTHONPATH="/workspace/arnold:${PYTHONPATH:-}"' not in text
+
+
+def test_dependency_independent_gap_scan_flags_execution_binding_drift(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    marker_dir.mkdir()
+    chain_dir.mkdir(parents=True)
+    spec = workspace / "chain.yaml"
+    old_spec = b"milestones:\n  - label: m5\n  - label: m6\n"
+    spec.write_bytes(
+        b"milestones:\n  - label: m5\n  - label: m5a\n  - label: m6\n"
+    )
+    (marker_dir / "demo.json").write_text(
+        json.dumps(
+            {
+                "session": "demo",
+                "workspace": str(workspace),
+                "remote_spec": str(spec),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (chain_dir / "chain.json").write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 0,
+                "current_plan_name": "m5-plan",
+                "metadata": {
+                    "execution_binding": {
+                        "launched_identity": {
+                            "bundle_sha256": "a" * 64,
+                            "chain_spec_sha256": hashlib.sha256(old_spec).hexdigest(),
+                            "milestone_sequence": [
+                                {"index": 0, "label": "m5"},
+                                {"index": 1, "label": "m6"},
+                            ],
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "gaps.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(WRAPPERS / "arnold-supervisor-gap-scan"),
+            "--marker-dir",
+            str(marker_dir),
+            "--output",
+            str(output),
+        ],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(output.read_text())
+    assert payload["status"] == "unhealthy"
+    assert payload["findings"][0]["reason"] == "chain_execution_binding_drift"
+    assert payload["findings"][0]["expected_milestone_count"] == 2
 
 
 def test_l2_and_l3_run_dependency_independent_gap_detection_before_model_work() -> None:

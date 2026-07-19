@@ -2,16 +2,24 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+from arnold_pipelines.megaplan.cloud import repair_investigation
 from arnold_pipelines.megaplan.cloud.repair_investigation import (
+    EVIDENCE_SOURCE_KINDS,
     MAX_CONTEXT_BYTES,
+    MAX_OBSERVATION_BUNDLE_BYTES,
     META_REPAIR_INVESTIGATION_ENVELOPE_SCHEMA,
     REPAIR_INVESTIGATOR_RECEIPT_SCHEMA,
     build_meta_investigation_context,
+    build_meta_observation_bundle,
     build_investigation_context,
+    build_repair_observation_bundle,
     summarize_investigation_artifacts,
     validate_meta_investigation_context,
     validate_investigator_receipt,
@@ -121,6 +129,163 @@ def test_context_is_bounded_and_carries_exact_error_and_recent_repairs(tmp_path:
     )
     assert "old-m5" in context["request"]["mismatch_reason"]
     assert len(context["context_digest"]) == 64
+    supported_cli = context["safe_repair_boundaries"]["supported_recovery_cli"]
+    assert supported_cli == (
+        f"python -P -m arnold_pipelines.megaplan chain start --spec {spec} "
+        f"--project-dir {workspace}"
+    )
+    assert context["required_investigator_output"][
+        "action_specific_handoff_examples"
+    ]["recover_state"]["allowed_mutations"] == [f"supported_cli:{supported_cli}"]
+
+
+def test_l1_broker_observation_is_digest_bound_typed_and_bounded(tmp_path: Path) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+    context_path = tmp_path / "context.json"
+    _write(context_path, context)
+
+    observation = build_repair_observation_bundle(context_path)
+
+    assert observation["schema_version"] == "arnold-repair-observation-bundle-v1"
+    assert observation["context_digest"] == context["context_digest"]
+    assert observation["access_verified"] is True
+    assert observation["required_receipt_shape"]["context_digest"] == context["context_digest"]
+    assert {item["kind"] for item in observation["observations"]} >= {
+        "plan_state",
+        "repair_data",
+        "repair_queue",
+    }
+    assert len(json.dumps(observation, sort_keys=True, separators=(",", ":")).encode()) <= 48 * 1024
+
+    context["exact_error"]["message"] = "tampered"
+    _write(context_path, context)
+    with pytest.raises(ValueError, match="context digest disagrees"):
+        build_repair_observation_bundle(context_path)
+
+
+def test_l1_broker_observation_bounds_oversized_error_without_losing_identity(
+    tmp_path: Path,
+) -> None:
+    context = {
+        "schema_version": "arnold-repair-investigation-context-v1",
+        "context_digest": "",
+        "session": "demo",
+        "goal_id": "goal-demo",
+        "target_kind": "l1_repair_target",
+        "exact_error": {"message": "x" * 50_000},
+        "evidence_sources": [],
+        "required_investigator_output": {},
+    }
+    digest_payload = {key: value for key, value in context.items() if key != "context_digest"}
+    context["context_digest"] = hashlib.sha256(
+        json.dumps(
+            digest_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode()
+    ).hexdigest()
+    context_path = tmp_path / "oversized-observation-context.json"
+    _write(context_path, context)
+    assert context_path.stat().st_size <= MAX_CONTEXT_BYTES
+
+    observation = build_repair_observation_bundle(context_path)
+
+    encoded = json.dumps(observation, sort_keys=True, separators=(",", ":")).encode()
+    assert len(encoded) <= MAX_OBSERVATION_BUNDLE_BYTES
+    assert observation["context_digest"] == context["context_digest"]
+    assert observation["analysis_context"]["exact_error"]["message"] == "x" * 600
+
+
+def test_external_snapshot_uses_authoritative_chain_pr_number(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "number": 255,
+                    "state": "OPEN",
+                    "headRefName": "different-from-local-branch",
+                    "statusCheckRollup": [],
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(repair_investigation.subprocess, "run", fake_run)
+    snapshot_path = repair_investigation._external_pr_snapshot(
+        session="demo",
+        workspace=workspace,
+        repair_root=tmp_path / "repair-data",
+        pull_request_number=255,
+    )
+
+    assert commands == [
+        [
+            "gh",
+            "pr",
+            "view",
+            "255",
+            "--json",
+            "number,url,state,isDraft,mergeStateStatus,headRefName,headRefOid,"
+            "baseRefName,baseRefOid,updatedAt,statusCheckRollup",
+        ]
+    ]
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert snapshot["available"] is True
+    assert snapshot["pull_request"]["number"] == 255
+    assert snapshot["query"].startswith("gh pr view 255")
+
+
+def test_open_green_pr_remains_pending_for_state_recovery() -> None:
+    observed = repair_investigation._bounded_observation(
+        "external_state",
+        json.dumps(
+            {
+                "available": True,
+                "pull_request": {
+                    "number": 255,
+                    "state": "OPEN",
+                    "isDraft": False,
+                    "mergeStateStatus": "CLEAN",
+                    "headRefOid": "b" * 40,
+                    "statusCheckRollup": [
+                        {
+                            "name": "test",
+                            "status": "COMPLETED",
+                            "conclusion": "SUCCESS",
+                        }
+                    ],
+                },
+            }
+        ).encode(),
+    )
+
+    assert observed["external_guard"] == {
+        "status": "pending",
+        "failing_checks": [],
+        "pending_checks": [],
+        "pr_state": "OPEN",
+        "is_draft": False,
+        "merge_state": "CLEAN",
+        "head_oid": "b" * 40,
+    }
 
 
 def test_context_normalizes_mapping_validation_from_real_repair_report(tmp_path: Path) -> None:
@@ -189,29 +354,52 @@ def test_fresh_quality_phase_result_is_exact_error_when_latest_failure_cleared(t
     assert context["current_phase_result"]["path"].endswith("phase_result.json")
 
 
-def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> None:
+def test_quality_block_context_carries_bounded_review_rework_evidence(tmp_path: Path) -> None:
     workspace, spec, repair_data, request, goal = _fixture(tmp_path)
-    access = tmp_path / "meta-observations.json"
+    state = workspace / ".megaplan/plans/current-m5a/state.json"
+    state_payload = json.loads(state.read_text(encoding="utf-8"))
+    state_payload["latest_failure"] = {
+        "kind": "review_quality_blocked_unknown",
+        "phase": "review",
+        "message": "review rework budget exhausted",
+    }
+    _write(state, state_payload)
     _write(
-        access,
+        state.parent / "phase_result.json",
         {
-            "access_verified": True,
-            "observations": [
+            "phase": "review",
+            "exit_kind": "blocked_by_quality",
+            "deviations": [{"kind": "quality_gate", "message": "wrapper gate failed"}],
+        },
+    )
+    _write(
+        state.parent / "review.json",
+        {
+            "review_verdict": "needs_rework",
+            "summary": "wrapper continuation opens with fake evidence",
+            "issues": ["wrong state loader"],
+            "criteria": [
                 {
-                    "kind": "external_state",
-                    "observed": {
-                        "external_guard": {
-                            "status": "failed",
-                            "failing_checks": [{"name": "test", "conclusion": "FAILURE"}],
-                        }
+                    "name": "wrapper paths fail closed",
+                    "pass": "fail",
+                    "evidence": "load_chain_state received the state path",
+                }
+            ],
+            "rework_items": [
+                {
+                    "task_id": "T24",
+                    "issue": "wrapper acceptance gate opens",
+                    "expected": "invalid acceptance evidence blocks",
+                    "actual": "gate_open=True",
+                    "evidence_file": "arnold_pipelines/megaplan/cloud/wrapper_acceptance_gate.py",
+                    "deterministic_check": {
+                        "command": "python bounded_wrapper_probe.py",
+                        "post_status": "failed",
                     },
                 }
             ],
         },
     )
-    payload = json.loads(repair_data.read_text(encoding="utf-8"))
-    payload["meta_investigation"] = {"access_receipt_path": str(access)}
-    _write(repair_data, payload)
 
     context = build_investigation_context(
         workspace=workspace,
@@ -222,8 +410,241 @@ def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> 
         goal_path=goal,
     )
 
+    quality = context["durable_quality_block"]
+    assert quality["active"] is True
+    assert quality["recover_state_allowed"] is False
+    assert quality["review_artifact"]["path"].endswith("review.json")
+    assert "recover_state" not in quality["allowed_actions"]
+    review_source = next(
+        item for item in context["evidence_sources"] if item["kind"] == "review_artifact"
+    )
+    assert review_source["path"].endswith("review.json")
+    assert review_source["observed"]["rework_items"][0]["task_id"] == "T24"
+    assert review_source["observed"]["rework_items"][0]["actual"] == "gate_open=True"
+    required = context["required_investigator_output"]
+    assert required["recommended_action"] == "repair_target"
+    assert required["safe_repair_target"]["kind"] == "target_workspace"
+    assert required["handoff"]["action"] == "repair_target"
+    assert "wrapper_acceptance_gate.py" in required["handoff"]["allowed_mutations"][0]
+    assert "recover_state" in required["prohibited_actions"]
+    assert len(json.dumps(context).encode()) <= MAX_CONTEXT_BYTES
+
+
+def test_oversized_review_artifact_fails_closed(tmp_path: Path) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    state = workspace / ".megaplan/plans/current-m5a/state.json"
+    state_payload = json.loads(state.read_text(encoding="utf-8"))
+    state_payload["latest_failure"] = {
+        "kind": "quality_gate_blocked",
+        "phase": "review",
+        "message": "blocked",
+    }
+    _write(state, state_payload)
+    (state.parent / "review.json").write_text("x" * (2 * 1024 * 1024 + 1), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="exceeds 2 MiB bound"):
+        build_investigation_context(
+            workspace=workspace,
+            session="custody-control-plane-20260714",
+            remote_spec=str(spec),
+            repair_data_path=repair_data,
+            request_path=request,
+            goal_path=goal,
+        )
+
+
+def test_l1_replan_handoff_carries_fresh_external_ci_failure(tmp_path: Path) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    state = workspace / ".megaplan/plans/current-m5a/state.json"
+    state_payload = json.loads(state.read_text(encoding="utf-8"))
+    state_payload["latest_failure"] = None
+    _write(state, state_payload)
+    request_payload = json.loads(request.read_text(encoding="utf-8"))
+    request_payload["problem_signature"] = {
+        "milestone_or_plan": "current-m5a",
+        "phase_or_step": "review",
+    }
+    request_payload["target"] = {"plan_name": "current-m5a"}
+    _write(request, request_payload)
+    access = tmp_path / "meta-observations.json"
+    external = tmp_path / "external-state.json"
+    external_value = {
+        "available": True,
+        "pull_request": {
+            "headRefOid": "deadbeef",
+            "mergeStateStatus": "UNSTABLE",
+            "statusCheckRollup": [
+                {"name": "test", "status": "COMPLETED", "conclusion": "FAILURE"}
+            ],
+        },
+    }
+    _write(external, external_value)
+    encoded_external = external.read_bytes()
+    context_digest = "c" * 64
+    _write(
+        access,
+        {
+            "schema_version": "arnold-meta-repair-observation-bundle-v1",
+            "context_digest": context_digest,
+            "access_verified": True,
+            "observations": [
+                {
+                    "kind": "external_state",
+                    "path": str(external),
+                    "sha256": hashlib.sha256(encoded_external).hexdigest(),
+                    "size_bytes": len(encoded_external),
+                    "observed": external_value,
+                }
+            ],
+        },
+    )
+    payload = json.loads(repair_data.read_text(encoding="utf-8"))
+    payload["meta_investigation"] = {
+        "access_receipt_path": str(tmp_path / "stale-erased-observations.json"),
+        "context_digest": "d" * 64,
+    }
+    _write(repair_data, payload)
+    goal_payload = json.loads(goal.read_text(encoding="utf-8"))
+    goal_payload["target"].update(
+        {
+            "session": "custody-control-plane-20260714",
+            "workspace": str(workspace),
+            "remote_spec": str(spec),
+        }
+    )
+    goal_payload["active_replan_epoch"] = 3
+    goal_payload["l2_replans"] = [
+        {
+            "epoch": 3,
+            "context_digest": context_digest,
+            "frozen_checkpoint_digest": "abc",
+        }
+    ]
+    _write(goal, goal_payload)
+
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+        l2_handoff_path=access,
+        l2_context_digest=context_digest,
+        l2_replan_epoch=3,
+    )
+
     assert context["exact_error"]["failure_kind"] == "external_pr_ci_guard_failed"
-    assert any(item["kind"] == "external_state" for item in context["evidence_sources"])
+    assert context["custody_status"] == "consistent"
+    assert context["custody_contradictions"] == []
+    assert context["request"]["stage_transition"] is True
+    assert context["request"]["stage_transition_remains_same_goal"] is True
+    assert context["goal_continuity"]["status"] == "successor_blocker"
+    assert context["goal_continuity"]["same_goal_continuity_valid"] is True
+    assert context["l2_replan_authorization"] == {
+        "verified": True,
+        "replan_epoch": 3,
+        "context_digest": context_digest,
+        "frozen_checkpoint_digest": "abc",
+        "allowed_recovery": "recover_state_via_supported_cli_only",
+        "forbidden": [
+            "direct_state_edit",
+            "hand_advance_chain",
+            "duplicate_live_worker",
+        ],
+    }
+    source = next(
+        item for item in context["evidence_sources"] if item["kind"] == "external_state"
+    )
+    assert source["path"] == str(external)
+
+    with pytest.raises(ValueError, match="replan authorization is stale"):
+        build_investigation_context(
+            workspace=workspace,
+            session="custody-control-plane-20260714",
+            remote_spec=str(spec),
+            repair_data_path=repair_data,
+            request_path=request,
+            goal_path=goal,
+            l2_handoff_path=access,
+            l2_context_digest=context_digest,
+            l2_replan_epoch=2,
+        )
+
+    clear_external = {
+        "available": True,
+        "external_guard": {
+            "status": "clear",
+            "failing_checks": [],
+            "pending_checks": [],
+        },
+    }
+    _write(external, clear_external)
+    clear_encoded = external.read_bytes()
+    access_payload = json.loads(access.read_text(encoding="utf-8"))
+    access_payload["observations"][0].update(
+        {
+            "sha256": hashlib.sha256(clear_encoded).hexdigest(),
+            "size_bytes": len(clear_encoded),
+            "observed": clear_external,
+        }
+    )
+    _write(access, access_payload)
+    recovery_context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+        l2_handoff_path=access,
+        l2_context_digest=context_digest,
+        l2_replan_epoch=3,
+    )
+    assert recovery_context["exact_error"] == {
+        "failure_kind": "active_unowned_repair_goal",
+        "message": (
+            "L2 verified the recovery epoch; no canonical runner is live and "
+            "the exact supported recovery CLI has not yet produced accepted progress"
+        ),
+        "replan_epoch": 3,
+    }
+
+    external.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="size disagrees|digest disagrees|content disagrees"):
+        build_investigation_context(
+            workspace=workspace,
+            session="custody-control-plane-20260714",
+            remote_spec=str(spec),
+            repair_data_path=repair_data,
+            request_path=request,
+            goal_path=goal,
+            l2_handoff_path=access,
+            l2_context_digest=context_digest,
+            l2_replan_epoch=3,
+        )
+
+
+def test_goal_identity_mismatch_remains_a_custody_contradiction(tmp_path: Path) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    goal_payload = json.loads(goal.read_text(encoding="utf-8"))
+    goal_payload["target"]["session"] = "different-session"
+    _write(goal, goal_payload)
+
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+
+    assert context["custody_status"] == "contradictory"
+    assert any(
+        item["contradiction"] == "repair-goal session identity differs from the current session"
+        for item in context["custody_contradictions"]
+    )
 
 
 def _receipt(digest: str = "digest-1", *, target_kind: str = "l1_repair_target") -> dict:
@@ -321,7 +742,299 @@ def test_failing_external_guard_rejects_state_recovery_handoff() -> None:
         )
 
 
-def test_context_tells_investigator_the_fail_closed_action_target_contract(tmp_path: Path) -> None:
+def test_missing_quality_commit_custody_rejects_state_recovery_handoff() -> None:
+    receipt = _receipt(target_kind="l2_repair_system")
+    receipt["recommended_action"] = "recover_state"
+    receipt["handoff"] = {
+        "action": "recover_state",
+        "allowed_mutations": ["supported recovery CLI"],
+        "forbidden_mutations": ["direct state edit"],
+    }
+    receipt["safe_repair_target"] = {
+        "kind": "repair_custody",
+        "scope": "repair custody",
+        "rationale": "reconcile stale state",
+    }
+    observation = {
+        "context_digest": "digest-1",
+        "observations": [
+            {
+                "kind": "external_state",
+                "observed": {"external_guard": {"status": "clear"}},
+            },
+            {
+                "kind": "repair_goal",
+                "observed": {
+                    "last_evaluation": {
+                        "quality_resolution_commit_custody": {
+                            "verified": False,
+                            "missing_commits": ["0beb5e8d"],
+                        }
+                    }
+                },
+            },
+        ],
+    }
+    with pytest.raises(ValueError, match="missing durable quality-resolution commits"):
+        validate_investigator_receipt(
+            receipt,
+            expected_context_digest="digest-1",
+            observation_bundle=observation,
+        )
+
+    with pytest.raises(ValueError, match="missing durable quality-resolution commits"):
+        validate_investigator_receipt(
+            receipt,
+            expected_context_digest="digest-1",
+            investigation_context={
+                "context_digest": "digest-1",
+                "current": {
+                    "quality_resolution_commit_custody": {
+                        "verified": False,
+                        "missing_commits": ["0beb5e8d"],
+                    }
+                },
+            },
+        )
+
+
+def test_preserve_live_requires_verified_live_worker_evidence() -> None:
+    receipt = _receipt()
+    receipt["recommended_action"] = "preserve_live"
+    receipt["preserve_live"] = True
+    receipt["handoff"] = {
+        "action": "preserve_live",
+        "allowed_mutations": ["none"],
+        "forbidden_mutations": ["all_mutations"],
+    }
+    receipt["safe_repair_target"] = {
+        "kind": "none",
+        "scope": "current live worker",
+        "rationale": "preserve a verified correct worker",
+    }
+    observation = {
+        "context_digest": "digest-1",
+        "observations": [
+            {
+                "kind": "repair_data",
+                "observed": {
+                    "target": {
+                        "active_step_heartbeat": {
+                            "active": False,
+                            "pid_live": False,
+                        }
+                    }
+                },
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="without verified live-worker evidence"):
+        validate_investigator_receipt(
+            receipt,
+            expected_context_digest="digest-1",
+            observation_bundle=observation,
+        )
+
+    observation["observations"][0]["observed"]["target"][
+        "active_step_heartbeat"
+    ] = {"active": True, "pid_live": True}
+    validated = validate_investigator_receipt(
+        receipt,
+        expected_context_digest="digest-1",
+        observation_bundle=observation,
+    )
+    assert validated["recommended_action"] == "preserve_live"
+
+
+def test_durable_quality_block_rejects_blind_state_recovery_handoff() -> None:
+    receipt = _receipt()
+    receipt["actual_failure"]["classification"] = "stale_state"
+    receipt["recommended_action"] = "recover_state"
+    receipt["handoff"] = {
+        "action": "recover_state",
+        "allowed_mutations": ["supported_cli:python -m megaplan chain start"],
+        "forbidden_mutations": ["direct state edit"],
+    }
+    receipt["safe_repair_target"] = {
+        "kind": "plan_state_via_cli",
+        "scope": "supported chain start",
+        "rationale": "workspace head changed",
+    }
+    context = {
+        "context_digest": "digest-1",
+        "durable_quality_block": {
+            "active": True,
+            "recover_state_allowed": False,
+            "review_artifact": {"path": "/workspace/review.json", "present": True},
+        },
+    }
+
+    with pytest.raises(ValueError, match="cannot replay a durable review-quality block"):
+        validate_investigator_receipt(
+            receipt,
+            expected_context_digest="digest-1",
+            investigation_context=context,
+        )
+
+
+def test_durable_quality_block_allows_receipt_bound_recovery_after_target_repair() -> None:
+    head = "b" * 40
+    receipt = _receipt()
+    receipt["actual_failure"]["classification"] = "stale_state"
+    receipt["recommended_action"] = "recover_state"
+    receipt["handoff"] = {
+        "action": "recover_state",
+        "allowed_mutations": ["supported_cli:python -m megaplan chain start"],
+        "forbidden_mutations": ["direct state edit"],
+    }
+    receipt["safe_repair_target"] = {
+        "kind": "plan_state_via_cli",
+        "scope": "supported chain start",
+        "rationale": "the bounded target repair is committed at current HEAD",
+    }
+    context = {
+        "context_digest": "digest-1",
+        "current": {"workspace_head": head},
+        "durable_quality_block": {
+            "active": True,
+            "recover_state_allowed": True,
+            "repair_evidence": {
+                "verified": True,
+                "workspace_head": head,
+                "dev_fix_sha": head,
+                "target_kind": "target_workspace",
+                "target_scope": "arnold_pipelines/megaplan/cloud/wrapper_acceptance_gate.py",
+                "validation_present": True,
+            },
+        },
+    }
+
+    validated = validate_investigator_receipt(
+        receipt,
+        expected_context_digest="digest-1",
+        investigation_context=context,
+    )
+
+    assert validated["recommended_action"] == "recover_state"
+
+
+def test_durable_quality_repair_context_is_bound_to_current_head_and_scope(
+    tmp_path: Path,
+) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    state = workspace / ".megaplan/plans/current-m5a/state.json"
+    state_payload = json.loads(state.read_text(encoding="utf-8"))
+    state_payload.update(
+        {
+            "current_state": "blocked",
+            "active_step": None,
+            "resume_cursor": {"phase": "review", "retry_strategy": "manual_review"},
+            "latest_failure": {
+                "kind": "review_quality_blocked_unknown",
+                "phase": "review",
+            },
+        }
+    )
+    _write(state, state_payload)
+    target_scope = "arnold_pipelines/megaplan/cloud/wrapper_acceptance_gate.py"
+    _write(
+        state.parent / "review.json",
+        {
+            "review_verdict": "needs_rework",
+            "rework_items": [
+                {"task_id": "T24", "evidence_file": target_scope, "issue": "bad gate"}
+            ],
+        },
+    )
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    subprocess.run(["git", "-C", str(workspace), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(workspace), "commit", "-qm", "bounded repair"], check=True)
+    head = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    payload = json.loads(repair_data.read_text(encoding="utf-8"))
+    payload["attempts"].append(
+        {
+            "attempt_id": 19,
+            "dev_turn_rc": 0,
+            "dev_fix_sha": head,
+            "dev_report": {
+                "local_commit": head,
+                "safe_repair_target": {"kind": "target_workspace", "scope": target_scope},
+                "validation": {"focused": "passed"},
+            },
+        }
+    )
+    _write(repair_data, payload)
+
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+
+    quality = context["durable_quality_block"]
+    assert quality["recover_state_allowed"] is True
+    assert quality["repair_evidence"]["workspace_head"] == head
+    assert quality["repair_evidence"]["target_scope"] == target_scope
+    assert "recover_state" in quality["allowed_actions"]
+    assert (
+        context["required_investigator_output"]["recommended_action"]
+        == "preserve_live|repair_source|repair_target|recover_state|replan"
+    )
+
+    payload["attempts"][-1]["dev_report"]["safe_repair_target"]["scope"] = (
+        "unrelated/component.py"
+    )
+    _write(repair_data, payload)
+    mismatched = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+    assert mismatched["durable_quality_block"]["recover_state_allowed"] is False
+
+
+def test_repair_wrapper_validates_receipt_against_durable_context() -> None:
+    wrapper = (
+        REPO_ROOT
+        / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+    ).read_text(encoding="utf-8")
+
+    assert '--context "$INVESTIGATION_CONTEXT_PATH"' in wrapper
+    assert "investigation_context=context" in wrapper
+
+
+def test_repair_wrapper_enforces_separate_commit_and_push_authority() -> None:
+    wrapper = (
+        REPO_ROOT
+        / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+    ).read_text(encoding="utf-8")
+
+    assert 'COMMIT_REPAIRS="${CLOUD_WATCHDOG_COMMIT_REPAIRS:-1}"' in wrapper
+    assert 'PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-0}"' in wrapper
+    assert "git push refused: repair push authority is disabled" in wrapper
+    assert "gh pr merge refused: remote merge is outside repair authority" in wrapper
+    assert 'PATH="$ARNOLD_REPAIR_DELIVERY_AUTHORITY_PATH:$PATH"' in wrapper
+    assert "commit and push them in the repo you changed" not in wrapper
+    assert "Do not push, force-push, create or merge a remote PR" in wrapper
+
+
+def test_context_separates_safe_target_from_handoff_mutation_contract(tmp_path: Path) -> None:
     workspace, spec, repair_data, request, goal = _fixture(tmp_path)
     context = build_investigation_context(
         workspace=workspace,
@@ -332,12 +1045,27 @@ def test_context_tells_investigator_the_fail_closed_action_target_contract(tmp_p
         goal_path=goal,
     )
 
-    contract = context["required_investigator_output"]["action_target_contract"]
+    contract = context["required_investigator_output"]["safe_repair_target_by_action"]
     assert contract["replan"] == ["none", "repair_custody"]
     assert contract["recover_state"] == ["plan_state_via_cli", "repair_custody"]
+    assert context["required_investigator_output"][
+        "handoff_allowed_mutations_by_action"
+    ]["replan"] == ["none"]
+    assert "action_target_contract" not in context["required_investigator_output"]
     assert "L2/root-cause target" in context["required_investigator_output"][
         "replan_contract"
     ]
+    examples = context["required_investigator_output"][
+        "action_specific_handoff_examples"
+    ]
+    assert set(examples) == {
+        "preserve_live", "replan", "repair_source", "repair_target", "recover_state"
+    }
+    assert all(
+        isinstance(example.get("forbidden_mutations"), list)
+        and example["forbidden_mutations"]
+        for example in examples.values()
+    )
 
     receipt = _receipt()
     receipt["recommended_action"] = "replan"
@@ -407,6 +1135,8 @@ def test_shared_summary_distinguishes_missing_invalid_and_accepted(tmp_path: Pat
     assert summary["status"] == "accepted"
     assert summary["evidence_source_kinds"] == ["plan_state"]
     assert summary["recommended_action"] == "repair_target"
+    assert summary["actual_failure"]["classification"] == "custody_failure"
+    assert summary["actual_failure"]["mechanism"]
 
 
 def test_meta_context_uses_common_evidence_and_recovery_semantics(tmp_path: Path) -> None:
@@ -419,6 +1149,13 @@ def test_meta_context_uses_common_evidence_and_recovery_semantics(tmp_path: Path
             "goal_id": "repair-goal-1",
             "checkpoint_digest": "a" * 64,
             "target": {"blocker_id": "blocker-1"},
+            "last_evaluation": {
+                "quality_resolution_commit_custody": {
+                    "verified": False,
+                    "required_commits": ["0beb5e8d"],
+                    "missing_commits": ["0beb5e8d"],
+                }
+            },
         },
     )
     _write(
@@ -429,6 +1166,12 @@ def test_meta_context_uses_common_evidence_and_recovery_semantics(tmp_path: Path
                 "goal_id": "repair-goal-1",
                 "goal_path": str(goal),
                 "checkpoint_digest": "a" * 64,
+            },
+            "meta_investigation": {
+                "context_digest": "stale-context-digest-that-must-not-be-reprompted",
+                "actual_failure": {"classification": "custody_failure"},
+                "recommended_action": "replan",
+                "receipt_path": "/tmp/prior-receipt.json",
             },
         },
     )
@@ -447,6 +1190,40 @@ def test_meta_context_uses_common_evidence_and_recovery_semantics(tmp_path: Path
     assert {item["kind"] for item in context["evidence_refs"]} >= {
         "repair_data", "session_marker", "repair_goal"
     }
+    context_path = tmp_path / "meta-context.json"
+    _write(context_path, context)
+    observation = build_meta_observation_bundle(context_path)
+    required = observation["required_receipt_shape"]
+    assert required["context_digest"] == context["context_digest"]
+    assert "stale-context-digest-that-must-not-be-reprompted" not in json.dumps(
+        observation, sort_keys=True
+    )
+    repair_observation = next(
+        item for item in observation["observations"] if item["kind"] == "repair_data"
+    )
+    assert repair_observation["observed"]["prior_meta_investigation_summary"] == {
+        "actual_failure": {"classification": "custody_failure"},
+        "recommended_action": "replan",
+        "receipt_path": "/tmp/prior-receipt.json",
+    }
+    assert required["recommended_action"] == "replan"
+    assert required["safe_repair_target"]["kind"] == "repair_custody"
+    assert required["handoff"] == {
+        "action": "replan",
+        "allowed_mutations": ["none"],
+        "forbidden_mutations": [
+            "direct_chain_state_edit",
+            "recover_state",
+            "hand_advance_chain",
+        ],
+    }
+    assert observation["quality_resolution_commit_custody"]["verified"] is False
+    assert "0beb5e8d" in observation["quality_resolution_commit_custody"][
+        "missing_commits"
+    ]
+    assert "Missing durable quality-resolution commits" in observation[
+        "quality_commit_policy"
+    ]
 
 
 def test_pathological_meta_context_stays_tiny_and_reference_only(tmp_path: Path) -> None:
@@ -506,21 +1283,176 @@ def test_pathological_meta_context_stays_tiny_and_reference_only(tmp_path: Path)
     assert "required_investigator_output" not in context
     assert validate_meta_investigation_context(context)["context_digest"] == context["context_digest"]
 
+    context_path = tmp_path / "meta-context.json"
+    _write(context_path, context)
+    observation = build_meta_observation_bundle(context_path)
+    observed_kinds = {item["kind"] for item in observation["observations"]}
+    assert {"resident_delegation", "source_contract"} <= observed_kinds
+    assert observed_kinds <= EVIDENCE_SOURCE_KINDS
+
+    receipt = _receipt(context["context_digest"], target_kind="l2_repair_system")
+    receipt["evidence_sources"] = observation["observations"]
+    assert validate_investigator_receipt(
+        receipt, expected_context_digest=context["context_digest"]
+    )["target_kind"] == "l2_repair_system"
+
     context["authorization"]["mutation_authorized"] = True
     with pytest.raises(ValueError, match="must not authorize mutation"):
         validate_meta_investigation_context(context)
 
 
-def test_repair_loop_embeds_bounded_context_for_sandbox_independent_investigation() -> None:
+def test_meta_context_prefers_inherited_delegation_over_stale_repair_data(
+    tmp_path: Path,
+) -> None:
+    repair_dir = tmp_path / "repair-data"
+    marker_dir = tmp_path / "markers"
+    goal = marker_dir / "repair-goals" / "demo" / "goal.json"
+    stale = {
+        "schema_version": "arnold-resident-delegation-provenance-v1",
+        "applicability": "applicable",
+        "transport": "discord",
+        "correlation_id": "discord-corr-stale",
+        "custody_id": "discord-custody-stale",
+        "resident_conversation_id": "rconv_stale",
+        "source_record_id": "msg_stale",
+        "conversation_key": "discord:dm:123",
+        "discord_message_id": "111",
+        "reply_to_message_id": "111",
+        "dm_user_id": "123",
+        "root_run_id": "root-stale",
+    }
+    inherited = {
+        **stale,
+        "correlation_id": "discord-corr-current",
+        "custody_id": "discord-custody-current",
+        "resident_conversation_id": "rconv_current",
+        "source_record_id": "msg_current",
+        "discord_message_id": "222",
+        "reply_to_message_id": "222",
+        "root_run_id": "root-current",
+    }
+    _write(
+        goal,
+        {
+            "goal_id": "repair-goal-current",
+            "checkpoint_digest": "a" * 64,
+            "target": {"blocker_id": "blocker-current"},
+        },
+    )
+    _write(
+        repair_dir / "demo.repair-data.json",
+        {
+            "repair_goal": {
+                "goal_id": "repair-goal-current",
+                "checkpoint_digest": "a" * 64,
+                "goal_path": str(goal),
+            },
+            "blocker_id": "blocker-current",
+            "resident_delegation": stale,
+        },
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _write(marker_dir / "demo.json", {"workspace": str(workspace)})
+
+    context = build_meta_investigation_context(
+        session="demo",
+        trigger="post_fixer_recovery_gate_failed",
+        repair_data_dir=repair_dir,
+        marker_dir=marker_dir,
+        arnold_src=REPO_ROOT,
+        resident_delegation=inherited,
+    )
+
+    provenance_ref = context["provenance_ref"]
+    provenance_path = Path(provenance_ref["path"])
+    assert provenance_ref["json_pointer"] == ""
+    assert provenance_ref["source_record_id"] == "msg_current"
+    assert provenance_ref["root_run_id"] == "root-current"
+    assert "resident-delegation-" in provenance_path.name
+    assert json.loads(provenance_path.read_text(encoding="utf-8"))[
+        "custody_id"
+    ] == "discord-custody-current"
+    assert "msg_stale" not in provenance_path.read_text(encoding="utf-8")
+    validate_meta_investigation_context(context)
+
+
+def test_repair_loop_uses_bounded_context_pointer_from_sandbox_root() -> None:
     wrapper = (
         REPO_ROOT
         / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
     ).read_text(encoding="utf-8")
 
-    assert '<authoritative_repair_context>' in wrapper
-    assert 'cat "$INVESTIGATION_CONTEXT_PATH" >> "$INVESTIGATOR_PROMPT_PATH"' in wrapper
-    assert "does not depend on filesystem sandbox availability" in wrapper
+    assert '<authoritative_repair_context>' not in wrapper
+    assert 'cat "$INVESTIGATION_CONTEXT_PATH" >> "$INVESTIGATOR_PROMPT_PATH"' not in wrapper
+    assert '--project-dir "$RUN_DIR"' in wrapper
+    assert '(cd "$RUN_DIR" && "${managed_cmd[@]}")' in wrapper
+    assert 'type: arnold-repair-investigation-context' in wrapper
+    assert 'sha256: $context_sha256' in wrapper
+    assert 'prompt_bytes > 65536' in wrapper
+    assert 'bwrap --ro-bind / / true' in wrapper
+    assert 'investigator_mode="brokered_no_tools"' in wrapper
+    assert '--toolsets ""' in wrapper
+    assert "repair_investigation observe" in wrapper
+    assert '--context "$INVESTIGATION_CONTEXT_PATH"' in wrapper
+    assert '"${context_build_cmd[@]}" >/dev/null 2>"$INVESTIGATION_BUILD_ERROR_PATH"' in wrapper
+    assert '--output "$INVESTIGATION_OBSERVATION_PATH" >/dev/null 2>>"$LOG"' in wrapper
+    meta_wrapper = (
+        REPO_ROOT
+        / "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
+    ).read_text(encoding="utf-8")
+    assert '--output "$META_INVESTIGATION_CONTEXT_PATH" >/dev/null 2>>"$RUN_LOG"' in meta_wrapper
+    assert '--output "$META_INVESTIGATION_OBSERVATION_PATH" >/dev/null 2>>"$RUN_LOG"' in meta_wrapper
     assert "<investigation_handoff>" in wrapper
+
+
+def test_repair_loop_has_one_bounded_invalid_receipt_correction() -> None:
+    wrapper = (
+        REPO_ROOT
+        / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+    ).read_text(encoding="utf-8")
+    function = wrapper[
+        wrapper.index("run_repair_investigator_turn() {") :
+        wrapper.index("\nrun_dev_fix_turn()", wrapper.index("run_repair_investigator_turn() {"))
+    ]
+
+    assert ":correction:1" in function
+    assert ":correction:2" not in function
+    assert "invalid_candidate_receipt; path:" in function
+    assert "validator_error; path:" in function
+    assert 'cat "$invalid_receipt_path"' in function
+    assert 'if [[ "$investigator_mode" == "brokered_no_tools" ]]' in function
+    assert '<verified_bounded_observation>' in function
+    assert '${validation_output:0:2000}' in function
+    assert "invalid_receipt_bytes > 65536" in function
+    assert "prompt_bytes > 65536" in function
+
+
+def test_receipt_validator_rejects_oversized_input_before_json_parse(tmp_path: Path) -> None:
+    receipt = tmp_path / "oversized-receipt.json"
+    receipt.write_bytes(b'{' + b'"padding":"' + b'x' * 65_536 + b'"}')
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-P",
+            "-m",
+            "arnold_pipelines.megaplan.cloud.repair_investigation",
+            "validate",
+            "--receipt",
+            str(receipt),
+            "--context-digest",
+            "unused",
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "investigator receipt exceeds 65536-byte bound" in result.stderr
 
 
 def test_l1_investigation_precedes_every_target_mutation_and_failures_stop() -> None:
@@ -533,11 +1465,13 @@ def test_l1_investigation_precedes_every_target_mutation_and_failures_stop() -> 
         'repair_source_initiative_if_possible; then',
         'repair_source_workspace_if_possible; then',
         'repair_dependency_manifests_if_possible; then',
-        'repair_clear_stale_state_if_needed 2>>"$LOG"',
         'mechanical_launch_step "0"',
         'run_dev_fix_turn "$iteration"',
     ):
         assert main.index(mutation) > investigation
+    assert 'repair_clear_stale_state_if_needed 2>>"$LOG"' not in main
+    assert "direct stale-state JSON synchronization is outside the recover_state receipt" in main
+    assert "recover_state receipt does not authorize the exact bounded supported CLI" in wrapper
     fail_closed = main[investigation : main.index("GLM_MODEL=", investigation)]
     assert "investigation failed or produced no valid handoff; target remains unchanged" in fail_closed
     assert '"status": "failed"' in wrapper

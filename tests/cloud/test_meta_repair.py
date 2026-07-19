@@ -1765,8 +1765,9 @@ class TestEdgeCases:
             "repair_goal_owner_missing",
             "repair_context_target_mismatch",
             "repair_goal_circuit_breaker",
+            "l3_progress_auditor",
         }
-        assert len(triggers) == 10
+        assert len(triggers) == 11
 
     def test_trigger_label_for_non_trigger(self) -> None:
         result = classify_repair_system_failure(session="edge-5")
@@ -2673,6 +2674,37 @@ class TestCheckMetaRepairRecursion:
         assert result.recursing is False
         assert result.existing_meta_repair_ids == ()
 
+    def test_completion_verdict_is_not_counted_as_a_second_attempt(
+        self, tmp_path: Path
+    ) -> None:
+        repair_dir = tmp_path / "repair-data"
+        meta_dir = repair_dir / "meta"
+        meta_dir.mkdir(parents=True)
+        (meta_dir / "mr-custody-1.json").write_text(
+            json.dumps({
+                "meta_repair_id": "mr-custody-1",
+                "session": "recursion-test",
+                "outcome": "commit_custody_failed",
+            }),
+            encoding="utf-8",
+        )
+        (meta_dir / "meta_repair_verdict.json").write_text(
+            json.dumps({
+                "contract_id": "repair.meta_complete.1",
+                "boundary_id": "meta_repair_completion",
+                "session": "recursion-test",
+                "outcome": "commit_custody_failed",
+            }),
+            encoding="utf-8",
+        )
+
+        result = check_meta_repair_recursion(
+            session="recursion-test", repair_data_dir=repair_dir
+        )
+
+        assert result.recursing is False
+        assert result.existing_meta_repair_ids == ()
+
     def test_repeated_commit_custody_failure_escalates(self, tmp_path: Path) -> None:
         repair_dir = tmp_path / "repair-data"
         meta_dir = repair_dir / "meta"
@@ -2931,7 +2963,7 @@ class TestCanCommitChanges:
 
 
 class TestCanPushChanges:
-    """Push gating: push uses the same commit gate."""
+    """Push gating requires a separate, default-off authority."""
 
     def test_push_allowed_when_flag_unset(self) -> None:
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
@@ -2944,6 +2976,7 @@ class TestCanPushChanges:
         os.environ["ARNOLD_AUTONOMY"] = "1"
         os.environ["ARNOLD_META_REPAIR_ENABLED"] = "1"
         os.environ["ARNOLD_META_REPAIR_COMMIT_ENABLED"] = "1"
+        os.environ["ARNOLD_META_REPAIR_PUSH_ENABLED"] = "1"
         try:
             result = can_push_changes()
             assert result.allowed is True
@@ -2952,6 +2985,7 @@ class TestCanPushChanges:
             os.environ.pop("ARNOLD_AUTONOMY", None)
             os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
             os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
+            os.environ.pop("ARNOLD_META_REPAIR_PUSH_ENABLED", None)
 
     def test_push_blocked_with_falsey_values(self) -> None:
         for val in ("0", "false"):
@@ -2962,8 +2996,8 @@ class TestCanPushChanges:
             finally:
                 os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
 
-    def test_push_uses_same_gate_as_commit(self) -> None:
-        """Push blocked when commit blocked; push allowed when commit allowed."""
+    def test_commit_authority_does_not_imply_push(self) -> None:
+        """A local commit grant must not authorize an external push."""
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
         commit_result = can_commit_changes()
         push_result = can_push_changes()
@@ -2975,8 +3009,23 @@ class TestCanPushChanges:
         try:
             commit_result = can_commit_changes()
             push_result = can_push_changes()
-            assert push_result.allowed == commit_result.allowed
+            assert commit_result.allowed is True
+            assert push_result.allowed is False
+            assert push_result.flag_name == "ARNOLD_META_REPAIR_PUSH_ENABLED"
         finally:
+            os.environ.pop("ARNOLD_AUTONOMY", None)
+            os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
+            os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
+
+    def test_push_requires_commit_gate_too(self) -> None:
+        os.environ["ARNOLD_META_REPAIR_PUSH_ENABLED"] = "1"
+        os.environ["ARNOLD_AUTONOMY"] = "1"
+        os.environ["ARNOLD_META_REPAIR_ENABLED"] = "1"
+        os.environ["ARNOLD_META_REPAIR_COMMIT_ENABLED"] = "0"
+        try:
+            assert can_push_changes().allowed is False
+        finally:
+            os.environ.pop("ARNOLD_META_REPAIR_PUSH_ENABLED", None)
             os.environ.pop("ARNOLD_AUTONOMY", None)
             os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
             os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)

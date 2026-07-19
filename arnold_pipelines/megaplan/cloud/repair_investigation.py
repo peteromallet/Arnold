@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -16,14 +17,20 @@ from arnold_pipelines.megaplan.cloud.meta_repair_policy import (
     resolve_authoritative_blocker_id,
 )
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
+from arnold_pipelines.megaplan.resident.provenance import (
+    normalize_delegation_provenance,
+    provenance_from_environment,
+)
 
 
 REPAIR_INVESTIGATION_CONTEXT_SCHEMA = "arnold-repair-investigation-context-v1"
 META_REPAIR_INVESTIGATION_ENVELOPE_SCHEMA = "arnold-meta-repair-investigation-envelope-v2"
 REPAIR_INVESTIGATOR_RECEIPT_SCHEMA = "arnold-repair-investigator-receipt-v2"
 MAX_CONTEXT_BYTES = 64 * 1024
+MAX_RECEIPT_BYTES = 64 * 1024
 MAX_OBSERVATION_BUNDLE_BYTES = 48 * 1024
 META_REPAIR_OBSERVATION_BUNDLE_SCHEMA = "arnold-meta-repair-observation-bundle-v1"
+REPAIR_OBSERVATION_BUNDLE_SCHEMA = "arnold-repair-observation-bundle-v1"
 INVESTIGATION_TARGET_KINDS = frozenset({"l1_repair_target", "l2_repair_system"})
 EVIDENCE_SOURCE_KINDS = frozenset(
     {
@@ -32,12 +39,17 @@ EVIDENCE_SOURCE_KINDS = frozenset(
         "chain_state",
         "plan_state",
         "phase_result",
+        "review_artifact",
         "event_log",
+        "chain_log",
         "repair_data",
         "repair_queue",
         "repair_goal",
         "meta_repair",
         "source_tree",
+        "source_contract",
+        "resident_delegation",
+        "automatic_system",
         "external_state",
     }
 )
@@ -57,6 +69,23 @@ def _load(path: str | Path | None) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError, TypeError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _load_bounded_json(path: str | Path, *, max_bytes: int, label: str) -> dict[str, Any]:
+    source = Path(path)
+    try:
+        encoded = source.open("rb").read(max_bytes + 1)
+    except OSError as exc:
+        raise ValueError(f"cannot read {label}: {source}") from exc
+    if len(encoded) > max_bytes:
+        raise ValueError(f"{label} exceeds {max_bytes}-byte bound")
+    try:
+        value = json.loads(encoded.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} is not valid UTF-8 JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    return value
 
 
 def _digest(value: Mapping[str, Any]) -> str:
@@ -154,6 +183,149 @@ def _phase_result_summary(plan_state_path: object) -> dict[str, Any]:
     }
 
 
+def _review_quality_blocker_summary(plan_state_path: object) -> dict[str, Any]:
+    """Return bounded authoritative rework evidence for a blocked review.
+
+    A workspace HEAD change is not evidence that a review blocker was fixed.
+    Keep the review verdict and its concrete rework target in the L1 envelope so
+    the investigator cannot replace the persisted quality decision with a
+    generic stale-state inference.
+    """
+
+    if not plan_state_path:
+        return {}
+    path = Path(str(plan_state_path)).parent / "review.json"
+    try:
+        stat = path.stat()
+        if stat.st_size > 2 * 1024 * 1024:
+            raise ValueError(f"review artifact exceeds 2 MiB bound: {path}")
+        raw = path.read_bytes()
+        if len(raw) != stat.st_size:
+            raise ValueError(f"review artifact changed while read: {path}")
+        value = json.loads(raw)
+    except FileNotFoundError:
+        return {"path": str(path), "present": False}
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        raise ValueError(f"review artifact is unreadable: {path}") from exc
+    if not isinstance(value, Mapping):
+        raise ValueError(f"review artifact is not an object: {path}")
+
+    criteria = value.get("criteria") if isinstance(value.get("criteria"), list) else []
+    failed_criteria = []
+    for item in criteria:
+        if not isinstance(item, Mapping) or str(item.get("pass") or "").lower() != "fail":
+            continue
+        failed_criteria.append(
+            {
+                "name": _text(item.get("name"), 750),
+                "evidence": _text(item.get("evidence"), 1000),
+            }
+        )
+    rework = value.get("rework_items") if isinstance(value.get("rework_items"), list) else []
+    rework_items = []
+    for item in rework[-6:]:
+        if not isinstance(item, Mapping):
+            continue
+        check = item.get("deterministic_check")
+        check_summary = {}
+        if isinstance(check, Mapping):
+            check_summary = {
+                "command": _text(check.get("command"), 1500),
+                "baseline_status": _text(check.get("baseline_status"), 500),
+                "post_status": _text(check.get("post_status"), 500),
+            }
+        rework_items.append(
+            {
+                "task_id": _text(item.get("task_id"), 200),
+                "issue": _text(item.get("issue"), 1000),
+                "expected": _text(item.get("expected"), 1000),
+                "actual": _text(item.get("actual"), 1000),
+                "evidence_file": _text(item.get("evidence_file"), 500),
+                "deterministic_check": check_summary,
+            }
+        )
+    return {
+        "path": str(path),
+        "present": True,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "size_bytes": len(raw),
+        "review_verdict": _text(value.get("review_verdict"), 300),
+        "summary": _text(value.get("summary"), 1000),
+        "issues": [_text(item, 1000) for item in (value.get("issues") or [])[-6:]],
+        "failed_criteria": failed_criteria[-6:],
+        "rework_items": rework_items,
+    }
+
+
+def _durable_quality_repair_evidence(
+    repair_data: Mapping[str, Any],
+    current: Mapping[str, Any],
+    review_quality_blocker: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Bind a prior target repair to the current HEAD and review rework scope."""
+
+    workspace_head = _text(current.get("workspace_head"), 100).lower()
+    if len(workspace_head) != 40 or any(
+        char not in "0123456789abcdef" for char in workspace_head
+    ):
+        return {"verified": False, "reason": "current workspace HEAD is unavailable"}
+    rework_scopes = {
+        _text(item.get("evidence_file"), 1000)
+        for item in review_quality_blocker.get("rework_items") or []
+        if isinstance(item, Mapping) and _text(item.get("evidence_file"), 1000)
+    }
+    candidates = [
+        item
+        for collection in (
+            repair_data.get("attempts") or [],
+            repair_data.get("iterations") or [],
+        )
+        for item in collection
+        if isinstance(item, Mapping)
+    ]
+    for item in reversed(candidates):
+        try:
+            if int(item.get("dev_turn_rc")) != 0:
+                continue
+        except (TypeError, ValueError):
+            continue
+        dev_fix_sha = _text(item.get("dev_fix_sha"), 100).lower()
+        if dev_fix_sha != workspace_head:
+            continue
+        report = item.get("dev_report")
+        report = report if isinstance(report, Mapping) else {}
+        validation = report.get("validation")
+        if validation in (None, "", [], {}):
+            continue
+        local_commit = _text(report.get("local_commit"), 100).lower()
+        if len(local_commit) < 7 or not workspace_head.startswith(local_commit):
+            continue
+        target = report.get("safe_repair_target")
+        target = target if isinstance(target, Mapping) else {}
+        target_scope = _text(target.get("scope") or target.get("path"), 2000)
+        if target.get("kind") != "target_workspace" or not target_scope:
+            continue
+        if rework_scopes and not any(
+            scope == target_scope or target_scope.endswith(f"/{scope}")
+            for scope in rework_scopes
+        ):
+            continue
+        return {
+            "verified": True,
+            "workspace_head": workspace_head,
+            "dev_fix_sha": dev_fix_sha,
+            "attempt_id": item.get("attempt_id") or item.get("i"),
+            "target_kind": target.get("kind"),
+            "target_scope": target_scope,
+            "validation_present": True,
+        }
+    return {
+        "verified": False,
+        "workspace_head": workspace_head,
+        "reason": "no successful validated target repair is bound to current HEAD and rework scope",
+    }
+
+
 def _evidence_source(kind: str, path: object, observed: object, *, authority: int) -> dict[str, Any]:
     return {
         "kind": kind,
@@ -200,23 +372,72 @@ def _common_required_output(target_kind: str) -> dict[str, Any]:
             "scope": "<bounded path/component or none>",
             "rationale": "<why this is the safe ownership boundary>",
         },
-        "action_target_contract": {
+        "safe_repair_target_by_action": {
             "preserve_live": ["none"],
             "replan": ["none", "repair_custody"],
             "repair_source": ["arnold_source", "target_workspace"],
             "repair_target": ["target_workspace"],
             "recover_state": ["plan_state_via_cli", "repair_custody"],
         },
+        "handoff_allowed_mutations_by_action": {
+            "preserve_live": ["none"],
+            "replan": ["none"],
+            "repair_source": ["arnold_source:<bounded component>"],
+            "repair_target": ["target_workspace:<bounded component>"],
+            "recover_state": ["supported_cli:<exact command>"],
+        },
         "replan_contract": (
-            "replan never authorizes an L1 mutation; repair_custody may be named "
-            "only as the bounded L2/root-cause target when custody is contradictory"
+            "replan handoff.allowed_mutations MUST equal [\"none\"] and never authorizes "
+            "an L1 mutation; repair_custody may be named only in safe_repair_target.kind "
+            "as the bounded L2/root-cause target when custody is contradictory"
         ),
         "handoff": {
             "action": "preserve_live|repair_source|repair_target|recover_state|replan",
-            "allowed_mutations": [
-                "none for preserve/replan, otherwise an exact bounded source, target, supported CLI, or repair_custody operation"
-            ],
+            "allowed_mutations": ["<use one exact action-specific example below>"],
             "forbidden_mutations": ["<unsafe mutation>"],
+        },
+        "action_specific_handoff_examples": {
+            "preserve_live": {
+                "action": "preserve_live",
+                "allowed_mutations": ["none"],
+                "forbidden_mutations": ["all_mutations"],
+            },
+            "replan": {
+                "action": "replan",
+                "allowed_mutations": ["none"],
+                "forbidden_mutations": [
+                    "direct_chain_state_edit",
+                    "recover_state",
+                    "hand_advance_chain",
+                ],
+            },
+            "repair_source": {
+                "action": "repair_source",
+                "allowed_mutations": ["arnold_source:<bounded component>"],
+                "forbidden_mutations": [
+                    "audited_workspace",
+                    "direct_chain_state_edit",
+                    "guard_weakening",
+                ],
+            },
+            "repair_target": {
+                "action": "repair_target",
+                "allowed_mutations": ["target_workspace:<bounded component>"],
+                "forbidden_mutations": [
+                    "arnold_source",
+                    "direct_chain_state_edit",
+                    "guard_weakening",
+                ],
+            },
+            "recover_state": {
+                "action": "recover_state",
+                "allowed_mutations": ["supported_cli:<exact command>"],
+                "forbidden_mutations": [
+                    "direct_chain_state_edit",
+                    "hand_advance_chain",
+                    "guard_weakening",
+                ],
+            },
         },
         "mutation_contract": (
             "recover_state may authorize only a named supported CLI or repair_custody "
@@ -240,7 +461,8 @@ def _context_contradictions(
     request_mismatch: bool,
     request_path: object,
     goal_path: object,
-    frozen_checkpoint: Mapping[str, Any],
+    goal_target: Mapping[str, Any],
+    session: str,
     current: Mapping[str, Any],
 ) -> list[dict[str, str]]:
     contradictions: list[dict[str, str]] = []
@@ -252,19 +474,38 @@ def _context_contradictions(
                 "contradiction": "queued request plan/stage does not match the current target",
             }
         )
-    frozen_failure = frozen_checkpoint.get("latest_failure")
-    current_failure = current.get("latest_failure")
-    if isinstance(frozen_failure, Mapping) and isinstance(current_failure, Mapping):
-        frozen_fingerprint = _digest(dict(frozen_failure))
-        current_fingerprint = _digest(dict(current_failure))
-        if frozen_fingerprint != current_fingerprint:
-            contradictions.append(
-                {
-                    "left_source": _text(goal_path, 2000) or "repair_goal",
-                    "right_source": _text(current.get("plan_state_path"), 2000) or "plan_state",
-                    "contradiction": "frozen repair-goal failure differs from current plan failure",
-                }
-            )
+    goal_session = _text(goal_target.get("session"), 300)
+    if goal_session and goal_session != session:
+        contradictions.append(
+            {
+                "left_source": _text(goal_path, 2000) or "repair_goal",
+                "right_source": "current_session",
+                "contradiction": "repair-goal session identity differs from the current session",
+            }
+        )
+    goal_plan = _text(goal_target.get("plan_name"), 500)
+    current_plan = _text(current.get("plan_name"), 500)
+    if goal_plan and current_plan and goal_plan != current_plan:
+        contradictions.append(
+            {
+                "left_source": _text(goal_path, 2000) or "repair_goal",
+                "right_source": _text(current.get("plan_state_path"), 2000) or "plan_state",
+                "contradiction": "repair-goal plan identity differs from the current plan",
+            }
+        )
+    session_identity = (
+        current.get("session_identity")
+        if isinstance(current.get("session_identity"), Mapping)
+        else {}
+    )
+    if session_identity.get("identity_matches") is False:
+        contradictions.append(
+            {
+                "left_source": _text(goal_path, 2000) or "repair_goal",
+                "right_source": _text(session_identity.get("marker_path"), 2000) or "session_marker",
+                "contradiction": "repair-goal target identity differs from the authoritative session marker",
+            }
+        )
     return contradictions
 
 
@@ -276,6 +517,9 @@ def build_investigation_context(
     repair_data_path: str | Path,
     request_path: str | Path | None,
     goal_path: str | Path,
+    l2_handoff_path: str | Path | None = None,
+    l2_context_digest: str = "",
+    l2_replan_epoch: int | str | None = None,
     max_prior_attempts: int = 6,
 ) -> dict[str, Any]:
     repair_data = _load(repair_data_path)
@@ -292,11 +536,40 @@ def build_investigation_context(
         workspace=workspace,
         plan_name=plan_name,
         remote_spec=remote_spec,
+        marker_dir=str(goal_target.get("marker_dir") or ""),
+        session=session,
     )
     phase_result = _phase_result_summary(current.get("plan_state_path"))
     phase_exit_kind = _text(phase_result.get("exit_kind"), 300).lower()
     phase_result_blocked = bool(
         phase_result and phase_exit_kind not in {"", "success", "succeeded", "completed", "done"}
+    )
+    latest_failure = (
+        current.get("latest_failure")
+        if isinstance(current.get("latest_failure"), Mapping)
+        else {}
+    )
+    latest_failure_kind = _text(latest_failure.get("kind"), 300).lower()
+    durable_quality_block = bool(
+        str(current.get("plan_state") or "").lower() == "blocked"
+        and (
+            "quality" in latest_failure_kind
+            or phase_exit_kind == "blocked_by_quality"
+        )
+    )
+    review_quality_blocker = (
+        _review_quality_blocker_summary(current.get("plan_state_path"))
+        if durable_quality_block
+        else {}
+    )
+    durable_quality_repair = (
+        _durable_quality_repair_evidence(
+            repair_data,
+            current,
+            review_quality_blocker,
+        )
+        if durable_quality_block
+        else {"verified": False, "reason": "no active durable quality block"}
     )
     request_signature = (
         request.get("problem_signature")
@@ -311,15 +584,18 @@ def build_investigation_context(
     current_plan = _text(current.get("plan_name"), 500)
     current_stage = _text(current.get("target_stage"), 200).lower()
     request_mismatch = bool(
-        (request_plan and current_plan and request_plan != current_plan)
-        or (request_stage and current_stage and request_stage != current_stage)
+        request_plan and current_plan and request_plan != current_plan
+    )
+    request_stage_transition = bool(
+        request_stage and current_stage and request_stage != current_stage
     )
     attempts = [item for item in repair_data.get("attempts") or [] if isinstance(item, Mapping)]
     contradictions = _context_contradictions(
         request_mismatch=request_mismatch,
         request_path=request_path,
         goal_path=goal_path,
-        frozen_checkpoint=frozen_checkpoint,
+        goal_target=goal_target,
+        session=session,
         current=current,
     )
     recovery_contract = (
@@ -332,16 +608,81 @@ def build_investigation_context(
         if isinstance(repair_data.get("meta_investigation"), Mapping)
         else {}
     )
-    access_receipt_path = Path(str(meta_handoff.get("access_receipt_path") or ""))
+    explicit_handoff_path = str(l2_handoff_path or "").strip()
+    access_receipt_path = Path(
+        explicit_handoff_path or str(meta_handoff.get("access_receipt_path") or "")
+    )
     access_receipt = _load(access_receipt_path)
     external_observation: dict[str, Any] = {}
-    if access_receipt.get("access_verified") is True:
+    external_observation_path = ""
+    l2_replan_authorization: dict[str, Any] = {"verified": False}
+    if explicit_handoff_path or str(meta_handoff.get("access_receipt_path") or "").strip():
+        expected_handoff_digest = (
+            str(l2_context_digest or "").strip()
+            or str(meta_handoff.get("context_digest") or "").strip()
+        )
+        if (
+            access_receipt.get("schema_version") != META_REPAIR_OBSERVATION_BUNDLE_SCHEMA
+            or access_receipt.get("access_verified") is not True
+            or not expected_handoff_digest
+            or access_receipt.get("context_digest") != expected_handoff_digest
+        ):
+            raise ValueError("L2-to-L1 evidence handoff receipt is invalid")
         for item in access_receipt.get("observations") or []:
             if isinstance(item, Mapping) and item.get("kind") == "external_state":
-                observed = item.get("observed")
+                observed = _bounded_observation(
+                    "external_state", _verified_reference_bytes(item)
+                )
                 if isinstance(observed, Mapping):
                     external_observation = dict(observed)
+                    external_observation_path = str(item.get("path") or "")
                 break
+        if not external_observation:
+            raise ValueError("L2-to-L1 evidence handoff lacks external state")
+        requested_epoch = int(l2_replan_epoch or 0)
+        if requested_epoch:
+            active_epoch = int(goal.get("active_replan_epoch") or 0)
+            replans = goal.get("l2_replans") if isinstance(goal.get("l2_replans"), list) else []
+            matching_replan = next(
+                (
+                    item
+                    for item in replans
+                    if isinstance(item, Mapping)
+                    and int(item.get("epoch") or 0) == requested_epoch
+                    and str(item.get("context_digest") or "") == expected_handoff_digest
+                ),
+                None,
+            )
+            target_identity = {
+                "session": _text(goal_target.get("session"), 300),
+                "workspace": str(Path(str(goal_target.get("workspace") or ""))),
+                "remote_spec": _text(goal_target.get("remote_spec"), 2000),
+            }
+            actual_identity = {
+                "session": _text(session, 300),
+                "workspace": str(Path(workspace)),
+                "remote_spec": _text(remote_spec, 2000),
+            }
+            if (
+                active_epoch != requested_epoch
+                or matching_replan is None
+                or target_identity != actual_identity
+            ):
+                raise ValueError("L2-to-L1 replan authorization is stale or disagrees with goal identity")
+            l2_replan_authorization = {
+                "verified": True,
+                "replan_epoch": requested_epoch,
+                "context_digest": expected_handoff_digest,
+                "frozen_checkpoint_digest": _text(
+                    matching_replan.get("frozen_checkpoint_digest"), 100
+                ),
+                "allowed_recovery": "recover_state_via_supported_cli_only",
+                "forbidden": [
+                    "direct_state_edit",
+                    "hand_advance_chain",
+                    "duplicate_live_worker",
+                ],
+            }
     evidence_sources = [
         _evidence_source("repair_data", repair_data_path, {
             "outcome": repair_data.get("outcome"),
@@ -369,13 +710,22 @@ def build_investigation_context(
         evidence_sources.append(
             _evidence_source("phase_result", phase_result.get("path"), phase_result, authority=5)
         )
+    if review_quality_blocker:
+        evidence_sources.append(
+            _evidence_source(
+                "review_artifact",
+                review_quality_blocker.get("path"),
+                review_quality_blocker,
+                authority=5,
+            )
+        )
     if external_observation:
         evidence_sources.append(
             _evidence_source(
                 "external_state",
-                access_receipt_path,
+                external_observation_path,
                 external_observation,
-                authority=3,
+                authority=4,
             )
         )
     external_guard = (
@@ -392,6 +742,79 @@ def build_investigation_context(
         if external_guard.get("status") == "failed"
         else {}
     )
+    frozen_failure = (
+        frozen_checkpoint.get("latest_failure")
+        if isinstance(frozen_checkpoint.get("latest_failure"), Mapping)
+        else {}
+    )
+    current_authoritative_failure = external_failure or (
+        current.get("latest_failure")
+        if isinstance(current.get("latest_failure"), Mapping)
+        else {}
+    )
+    blocker_transitioned = bool(
+        frozen_failure
+        and current_authoritative_failure
+        and _digest(dict(frozen_failure)) != _digest(dict(current_authoritative_failure))
+    )
+    supported_recovery_cli = shlex.join(
+        [
+            "python",
+            "-P",
+            "-m",
+            "arnold_pipelines.megaplan",
+            "chain",
+            "start",
+            "--spec",
+            str(remote_spec),
+            "--project-dir",
+            str(Path(workspace)),
+        ]
+    )
+    required_investigator_output = _common_required_output("l1_repair_target")
+    required_investigator_output["action_specific_handoff_examples"]["recover_state"][
+        "allowed_mutations"
+    ] = [f"supported_cli:{supported_recovery_cli}"]
+    if durable_quality_block and durable_quality_repair.get("verified") is not True:
+        rework_items = (
+            review_quality_blocker.get("rework_items")
+            if isinstance(review_quality_blocker.get("rework_items"), list)
+            else []
+        )
+        repair_files = [
+            _text(item.get("evidence_file"), 500)
+            for item in rework_items
+            if isinstance(item, Mapping) and _text(item.get("evidence_file"), 500)
+        ]
+        repair_scope = ",".join(repair_files)[:2000] or "current review rework target"
+        required_investigator_output.update(
+            {
+                "recommended_action": "repair_target",
+                "safe_repair_target": {
+                    "kind": "target_workspace",
+                    "scope": repair_scope,
+                    "rationale": (
+                        "The authoritative blocked review artifact names unresolved target "
+                        "rework; state replay is prohibited until that rework is repaired."
+                    ),
+                },
+                "handoff": {
+                    "action": "repair_target",
+                    "allowed_mutations": [f"target_workspace:{repair_scope}"],
+                    "forbidden_mutations": [
+                        "arnold_source",
+                        "direct_chain_state_edit",
+                        "hand_advance_chain",
+                        "guard_weakening",
+                    ],
+                },
+                "prohibited_actions": {
+                    "recover_state": (
+                        "persisted review-quality blocker has concrete unresolved rework"
+                    )
+                },
+            }
+        )
     context: dict[str, Any] = {
         "schema_version": REPAIR_INVESTIGATION_CONTEXT_SCHEMA,
         "target_kind": "l1_repair_target",
@@ -408,9 +831,56 @@ def build_investigation_context(
         "recovery_contract": recovery_contract,
         "current": current,
         "current_phase_result": phase_result,
+        "durable_quality_block": {
+            "active": durable_quality_block,
+            "recover_state_allowed": bool(
+                not durable_quality_block
+                or durable_quality_repair.get("verified") is True
+            ),
+            "reason": (
+                "A persisted blocked review verdict is authoritative until its concrete "
+                "rework is repaired by a validated commit bound to the current HEAD and "
+                "target scope."
+                if durable_quality_block and durable_quality_repair.get("verified") is not True
+                else (
+                    "The bounded target repair is durably bound to the current HEAD; "
+                    "recovery may record resolution=fixed and must rerun review."
+                    if durable_quality_block
+                    else ""
+                )
+            ),
+            "repair_evidence": durable_quality_repair,
+            "review_artifact": {
+                key: review_quality_blocker.get(key)
+                for key in ("path", "present", "sha256", "size_bytes", "review_verdict")
+            },
+            "allowed_actions": (
+                ["repair_source", "repair_target", "replan"]
+                if durable_quality_block and durable_quality_repair.get("verified") is not True
+                else [
+                    "preserve_live",
+                    "repair_source",
+                    "repair_target",
+                    "recover_state",
+                    "replan",
+                ]
+            ),
+        },
         "exact_error": external_failure
         or current.get("latest_failure")
         or (phase_result if phase_result_blocked else {})
+        or (
+            {
+                "failure_kind": "active_unowned_repair_goal",
+                "message": (
+                    "L2 verified the recovery epoch; no canonical runner is live and "
+                    "the exact supported recovery CLI has not yet produced accepted progress"
+                ),
+                "replan_epoch": l2_replan_authorization.get("replan_epoch"),
+            }
+            if l2_replan_authorization.get("verified") is True
+            else {}
+        )
         or frozen_checkpoint.get("latest_failure")
         or {},
         "request": {
@@ -419,9 +889,12 @@ def build_investigation_context(
             "problem_signature": dict(request_signature),
             "target": dict(request_target),
             "matches_current_target": not request_mismatch,
+            "stage_transition": request_stage_transition,
+            "stage_transition_remains_same_goal": bool(
+                request_stage_transition and not request_mismatch
+            ),
             "mismatch_reason": (
-                f"queued request plan/stage {request_plan!r}/{request_stage!r} disagrees with "
-                f"current {current_plan!r}/{current_stage!r}"
+                f"queued request plan {request_plan!r} disagrees with current {current_plan!r}"
                 if request_mismatch
                 else ""
             ),
@@ -430,8 +903,21 @@ def build_investigation_context(
         "repair_outcome": _text(repair_data.get("outcome"), 300),
         "managed_run_id": _text(repair_data.get("managed_agent_run_id"), 300),
         "evidence_sources": evidence_sources,
+        "l2_replan_authorization": l2_replan_authorization,
         "custody_status": "contradictory" if contradictions else "consistent",
         "custody_contradictions": contradictions,
+        "goal_continuity": {
+            "status": "successor_blocker" if blocker_transitioned else "same_blocker_or_unknown",
+            "checkpoint_role": "immutable_acceptance_baseline",
+            "same_goal_continuity_valid": not contradictions,
+            "current_blocker_may_differ": True,
+            "reason": (
+                "A durable repair goal owns the recovery outcome, not one immutable failure label. "
+                "A newly exposed authoritative blocker remains inside the same goal until accepted "
+                "progress advances beyond the frozen checkpoint. Blocker evolution alone is not a "
+                "custody contradiction."
+            ),
+        },
         "intended_recovery": {
             "predicate": _text(
                 recovery_contract.get("predicate")
@@ -445,8 +931,9 @@ def build_investigation_context(
         "safe_repair_boundaries": {
             "allowed": ["arnold_source", "target_workspace", "plan_state_via_cli", "repair_custody"],
             "forbidden": ["guard_weakening", "direct_state_edit", "duplicate_live_worker", "uncited_mutation"],
+            "supported_recovery_cli": supported_recovery_cli,
         },
-        "required_investigator_output": _common_required_output("l1_repair_target"),
+        "required_investigator_output": required_investigator_output,
     }
     digest_payload = dict(context)
     context["context_digest"] = _digest(digest_payload)
@@ -489,7 +976,11 @@ def _git_observation(root: Path) -> dict[str, Any]:
 
 
 def _external_pr_snapshot(
-    *, session: str, workspace: Path, repair_root: Path
+    *,
+    session: str,
+    workspace: Path,
+    repair_root: Path,
+    pull_request_number: int | None = None,
 ) -> Path:
     """Persist a fresh, bounded read-only PR/CI observation for custody review."""
 
@@ -499,16 +990,21 @@ def _external_pr_snapshot(
         "number,url,state,isDraft,mergeStateStatus,headRefName,headRefOid,"
         "baseRefName,baseRefOid,updatedAt,statusCheckRollup"
     )
+    selector = str(pull_request_number) if pull_request_number else "current_branch"
     snapshot: dict[str, Any] = {
         "schema_version": "arnold-external-pr-ci-observation-v1",
         "captured_at": utc_now(),
         "workspace": str(workspace),
-        "query": "gh pr view --json <bounded fields>",
+        "query": f"gh pr view {selector} --json <bounded fields>",
         "available": False,
     }
     try:
+        command = ["gh", "pr", "view"]
+        if pull_request_number:
+            command.append(str(pull_request_number))
+        command.extend(["--json", fields])
         proc = subprocess.run(
-            ["gh", "pr", "view", "--json", fields],
+            command,
             cwd=workspace,
             check=False,
             capture_output=True,
@@ -545,6 +1041,7 @@ def build_meta_investigation_context(
     arnold_src: str | Path,
     request_id: str = "",
     blocker_id: str = "",
+    resident_delegation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a minimal, reference-only, read-only L2 launch envelope."""
 
@@ -607,8 +1104,18 @@ def build_meta_investigation_context(
     target_workspace = Path(str(marker.get("workspace") or ""))
     if not str(marker.get("workspace") or "").strip():
         raise ValueError("session marker does not identify a target workspace")
+    chain_state_ref = current_target.get("chain_state")
+    chain_state_ref = chain_state_ref if isinstance(chain_state_ref, Mapping) else {}
+    chain_state = _load(str(chain_state_ref.get("path") or ""))
+    try:
+        pull_request_number = int(chain_state.get("pr_number") or 0)
+    except (TypeError, ValueError):
+        pull_request_number = 0
     external_path = _external_pr_snapshot(
-        session=session, workspace=target_workspace, repair_root=repair_root
+        session=session,
+        workspace=target_workspace,
+        repair_root=repair_root,
+        pull_request_number=pull_request_number if pull_request_number > 0 else None,
     )
     evidence_refs.append(_file_reference("external_state", external_path))
     current_paths = (
@@ -627,14 +1134,44 @@ def build_meta_investigation_context(
             evidence_refs.append(_file_reference("meta_repair", path))
             seen_paths.add(str(path))
 
-    delegation = (
-        repair_data.get("resident_delegation")
-        if isinstance(repair_data.get("resident_delegation"), Mapping)
-        else {}
+    inherited_delegation = (
+        normalize_delegation_provenance(resident_delegation)
+        if resident_delegation is not None
+        else None
     )
+    if inherited_delegation is not None:
+        encoded_delegation = json.dumps(
+            inherited_delegation, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        delegation_digest = hashlib.sha256(encoded_delegation).hexdigest()
+        safe_session = re.sub(r"[^A-Za-z0-9_.-]+", "-", session).strip("-") or "session"
+        delegation_path = (
+            repair_root
+            / "meta"
+            / "evidence"
+            / f"{safe_session}-resident-delegation-{delegation_digest}.json"
+        )
+        if delegation_path.exists():
+            if _load(delegation_path) != inherited_delegation:
+                raise ValueError("content-addressed resident delegation evidence disagrees")
+        else:
+            _atomic_write(delegation_path, inherited_delegation)
+        delegation = inherited_delegation
+        delegation_source_path = delegation_path
+        delegation_pointer = ""
+    else:
+        delegation = (
+            repair_data.get("resident_delegation")
+            if isinstance(repair_data.get("resident_delegation"), Mapping)
+            else {}
+        )
+        delegation_source_path = repair_path
+        delegation_pointer = "/resident_delegation"
     if delegation:
         provenance_ref = _file_reference(
-            "resident_delegation", repair_path, json_pointer="/resident_delegation"
+            "resident_delegation",
+            delegation_source_path,
+            json_pointer=delegation_pointer,
         )
         provenance_ref.update(
             {
@@ -814,7 +1351,7 @@ def _bounded_observation(kind: str, encoded: bytes) -> Any:
     keys_by_kind = {
         "repair_data": (
             "session", "outcome", "request_id", "blocker_id", "plan_name",
-            "repair_goal", "meta_investigation", "target", "verification",
+            "repair_goal", "target", "verification",
             "evidence_compaction", "current_failure_context",
         ),
         "session_marker": (
@@ -869,18 +1406,22 @@ def _bounded_observation(kind: str, encoded: bytes) -> Any:
             if item["status"].upper() not in {"COMPLETED", "SUCCESS"}
             and not item["conclusion"]
         ]
+        pr_state = _text(pull.get("state"), 100).upper()
+        is_draft = pull.get("isDraft") is True
         selected["external_guard"] = {
             "status": (
                 "unknown"
                 if value.get("available") is not True
                 else "failed"
-                if failing
+                if failing or pr_state == "CLOSED"
                 else "pending"
-                if pending
+                if pending or is_draft or pr_state != "MERGED"
                 else "clear"
             ),
             "failing_checks": failing,
             "pending_checks": pending,
+            "pr_state": pr_state,
+            "is_draft": is_draft,
             "merge_state": _text(pull.get("mergeStateStatus"), 100),
             "head_oid": _text(pull.get("headRefOid"), 100),
         }
@@ -894,6 +1435,17 @@ def _bounded_observation(kind: str, encoded: bytes) -> Any:
                 "chain_log_path", "run_log_path",
             )
             if key in current
+        }
+    if kind == "repair_data" and isinstance(value.get("meta_investigation"), Mapping):
+        prior = value["meta_investigation"]
+        selected["prior_meta_investigation_summary"] = {
+            key: prior[key]
+            for key in (
+                "actual_failure", "recommended_action", "four_axis",
+                "safe_repair_target", "target_kind", "investigator_run_id",
+                "receipt_path",
+            )
+            if key in prior
         }
     if kind in {"source_contract", "resident_delegation", "automatic_system"}:
         return {"verified": True}
@@ -915,6 +1467,8 @@ def _bound_observation_value(value: Any, *, depth: int = 0) -> Any:
     """Deterministically cap nested derived observations, never source evidence."""
 
     if depth >= 3:
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
         return _text(value, 300)
     if isinstance(value, str):
         return value[:600]
@@ -942,30 +1496,81 @@ def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
         context.get("receipt_contract_ref"),
     ]
     observations: list[dict[str, Any]] = []
+    quality_resolution_commit_custody: dict[str, Any] = {}
     for ref in refs:
         if not isinstance(ref, Mapping):
             raise ValueError("observation reference is invalid")
         encoded = _verified_reference_bytes(ref)
         kind = str(ref.get("kind") or "")
+        observed = _bounded_observation(kind, encoded)
+        if kind == "repair_goal" and isinstance(observed, Mapping):
+            last_evaluation = observed.get("last_evaluation")
+            last_evaluation = (
+                last_evaluation if isinstance(last_evaluation, Mapping) else {}
+            )
+            commit_custody = last_evaluation.get(
+                "quality_resolution_commit_custody"
+            )
+            if isinstance(commit_custody, Mapping):
+                quality_resolution_commit_custody = {
+                    key: commit_custody.get(key)
+                    for key in ("verified", "required_commits", "missing_commits")
+                }
         observations.append(
             {
                 "kind": kind,
                 "path": str(ref.get("path") or ""),
                 "sha256": str(ref.get("sha256") or ""),
                 "size_bytes": int(ref.get("size_bytes") or 0),
-                "observed": _bounded_observation(kind, encoded),
+                "observed": observed,
             }
         )
+    required_receipt = _common_required_output("l2_repair_system")
+    # Replace the illustrative placeholder with the one current immutable
+    # envelope identity. Prior receipts are summarized above without their old
+    # digests so the model cannot accidentally bind its response to stale custody.
+    required_receipt["context_digest"] = context["context_digest"]
+    external_guard_status = "unknown"
+    for item in observations:
+        if item.get("kind") != "external_state":
+            continue
+        observed = item.get("observed")
+        if isinstance(observed, Mapping):
+            guard = observed.get("external_guard")
+            if isinstance(guard, Mapping):
+                external_guard_status = str(guard.get("status") or "unknown")
+        break
+    missing_quality_commits = quality_resolution_commit_custody.get(
+        "missing_commits"
+    ) not in (None, "", [], "[]")
+    if external_guard_status != "clear" or missing_quality_commits:
+        required_receipt["recommended_action"] = "replan"
+        required_receipt["safe_repair_target"]["kind"] = "repair_custody"
+        required_receipt["handoff"] = {
+            "action": "replan",
+            "allowed_mutations": ["none"],
+            "forbidden_mutations": [
+                "direct_chain_state_edit",
+                "recover_state",
+                "hand_advance_chain",
+            ],
+        }
     bundle = redact_payload(
         {
             "schema_version": META_REPAIR_OBSERVATION_BUNDLE_SCHEMA,
             "context_digest": context["context_digest"],
             "access_verified": True,
-            "required_receipt_shape": _common_required_output("l2_repair_system"),
+            "required_receipt_shape": required_receipt,
             "external_guard_policy": (
                 "A failed or pending PR/CI check forbids recover_state and chain-state "
                 "synchronization. Return replan targeting repair_custody so ordinary L1 "
                 "receives the fresh external failure; never hand-advance the chain."
+            ),
+            "quality_resolution_commit_custody": quality_resolution_commit_custody,
+            "quality_commit_policy": (
+                "Missing durable quality-resolution commits forbid recover_state and "
+                "chain-state synchronization. Replan to ordinary L1 so the bounded "
+                "target/source repair can be integrated; never discard commit custody."
             ),
             "observations": observations,
         }
@@ -976,9 +1581,81 @@ def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
     return bundle
 
 
+def build_repair_observation_bundle(context_path: str | Path) -> dict[str, Any]:
+    """Broker one bounded L1 view when the host cannot enforce read-only tools."""
+
+    context = _load_bounded_json(
+        context_path,
+        max_bytes=MAX_CONTEXT_BYTES,
+        label="repair investigation context",
+    )
+    if context.get("schema_version") != REPAIR_INVESTIGATION_CONTEXT_SCHEMA:
+        raise ValueError("repair investigation context schema is invalid")
+    digest = str(context.get("context_digest") or "")
+    recomputed = _digest({key: value for key, value in context.items() if key != "context_digest"})
+    if not digest or digest != recomputed:
+        raise ValueError("repair investigation context digest disagrees")
+
+    observations: list[dict[str, Any]] = []
+    for source in context.get("evidence_sources") or []:
+        if not isinstance(source, Mapping) or source.get("kind") not in EVIDENCE_SOURCE_KINDS:
+            raise ValueError("repair investigation evidence source is invalid")
+        observations.append(
+            {
+                "kind": source.get("kind"),
+                "path": str(source.get("path") or ""),
+                "authority": source.get("authority"),
+                "observed": _bound_observation_value(source.get("observed")),
+            }
+        )
+
+    analysis_keys = (
+        "exact_error",
+        "frozen_checkpoint",
+        "current",
+        "current_phase_result",
+        "custody_contradictions",
+        "custody_status",
+        "durable_quality_block",
+        "goal_continuity",
+        "intended_recovery",
+        "l2_replan_authorization",
+        "prior_repairs",
+        "recovery_contract",
+        "repair_outcome",
+        "request",
+        "safe_repair_boundaries",
+    )
+    required_receipt = context.get("required_investigator_output")
+    required_receipt = dict(required_receipt) if isinstance(required_receipt, Mapping) else {}
+    required_receipt["context_digest"] = digest
+    bundle = redact_payload(
+        {
+            "schema_version": REPAIR_OBSERVATION_BUNDLE_SCHEMA,
+            "context_digest": digest,
+            "session": context.get("session"),
+            "goal_id": context.get("goal_id"),
+            "target_kind": context.get("target_kind"),
+            "access_verified": True,
+            "analysis_context": {
+                key: _bound_observation_value(context.get(key))
+                for key in analysis_keys
+                if key in context
+            },
+            "required_receipt_shape": required_receipt,
+            "observations": observations,
+        }
+    )
+    encoded_bundle = json.dumps(bundle, sort_keys=True, separators=(",", ":")).encode()
+    if len(encoded_bundle) > MAX_OBSERVATION_BUNDLE_BYTES:
+        raise ValueError("brokered repair observations exceed 48 KiB")
+    return bundle
+
+
 def validate_investigator_receipt(
     value: Mapping[str, Any], *, expected_context_digest: str,
     observation_bundle: Mapping[str, Any] | None = None,
+    investigation_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if value.get("schema_version") != REPAIR_INVESTIGATOR_RECEIPT_SCHEMA:
         raise ValueError("investigator receipt schema is invalid")
@@ -1071,6 +1748,8 @@ def validate_investigator_receipt(
     if value.get("preserve_live") and value.get("recommended_action") != "preserve_live":
         raise ValueError("preserve_live receipt action disagrees")
     action = str(value.get("recommended_action") or "")
+    if action == "preserve_live" and value.get("preserve_live") is not True:
+        raise ValueError("preserve_live action requires an explicit live-worker receipt")
     target_kind = str(target.get("kind") or "")
     allowed_targets = {
         "preserve_live": {"none"},
@@ -1081,23 +1760,140 @@ def validate_investigator_receipt(
     }
     if target_kind not in allowed_targets[action]:
         raise ValueError("investigator action and safe repair target disagree")
+    if isinstance(investigation_context, Mapping):
+        if investigation_context.get("context_digest") != expected_context_digest:
+            raise ValueError("investigator context digest disagrees")
+        quality_block = investigation_context.get("durable_quality_block")
+        if (
+            isinstance(quality_block, Mapping)
+            and quality_block.get("active") is True
+            and action == "recover_state"
+        ):
+            repair_evidence = quality_block.get("repair_evidence")
+            repair_evidence = (
+                repair_evidence if isinstance(repair_evidence, Mapping) else {}
+            )
+            current = investigation_context.get("current")
+            current = current if isinstance(current, Mapping) else {}
+            current_head = str(current.get("workspace_head") or "").strip().lower()
+            evidence_head = str(
+                repair_evidence.get("workspace_head") or ""
+            ).strip().lower()
+            if not (
+                quality_block.get("recover_state_allowed") is True
+                and repair_evidence.get("verified") is True
+                and len(current_head) == 40
+                and all(char in "0123456789abcdef" for char in current_head)
+                and evidence_head == current_head
+                and str(repair_evidence.get("dev_fix_sha") or "").strip().lower()
+                == current_head
+                and repair_evidence.get("target_kind") == "target_workspace"
+                and str(repair_evidence.get("target_scope") or "").strip()
+                and repair_evidence.get("validation_present") is True
+            ):
+                raise ValueError(
+                    "state recovery cannot replay a durable review-quality block before its "
+                    "bounded rework target is repaired"
+                )
+        current = investigation_context.get("current")
+        current = current if isinstance(current, Mapping) else {}
+        commit_custody = current.get("quality_resolution_commit_custody")
+        commit_custody = commit_custody if isinstance(commit_custody, Mapping) else {}
+        if (
+            action == "recover_state"
+            and commit_custody.get("verified") is not True
+            and commit_custody.get("missing_commits")
+        ):
+            raise ValueError(
+                "state recovery cannot discard missing durable quality-resolution commits"
+            )
     if isinstance(observation_bundle, Mapping):
         if observation_bundle.get("context_digest") != expected_context_digest:
             raise ValueError("investigator observation bundle digest disagrees")
         external_guard = {}
+        live_worker_observed = False
+        bundle_commit_custody = observation_bundle.get(
+            "quality_resolution_commit_custody"
+        )
+        bundle_commit_custody = (
+            bundle_commit_custody
+            if isinstance(bundle_commit_custody, Mapping)
+            else {}
+        )
+        bundle_missing = bundle_commit_custody.get("missing_commits")
+        missing_quality_commits = (
+            bundle_commit_custody.get("verified") is not True
+            and bundle_missing not in (None, "", [], "[]")
+        )
         for item in observation_bundle.get("observations") or []:
-            if isinstance(item, Mapping) and item.get("kind") == "external_state":
-                observed = item.get("observed")
-                if isinstance(observed, Mapping):
+            if not isinstance(item, Mapping):
+                continue
+            observed = item.get("observed")
+            observed = observed if isinstance(observed, Mapping) else {}
+            if item.get("kind") == "external_state":
+                if observed:
                     external_guard = (
                         observed.get("external_guard")
                         if isinstance(observed.get("external_guard"), Mapping)
                         else {}
                     )
-                break
+            if item.get("kind") == "live_process" and any(
+                observed.get(field) is True
+                for field in ("live", "pid_live", "session_live", "canonical_runner_live")
+            ):
+                live_worker_observed = True
+            if item.get("kind") == "repair_data":
+                target_observation = observed.get("target")
+                target_observation = (
+                    target_observation
+                    if isinstance(target_observation, Mapping)
+                    else {}
+                )
+                heartbeat = target_observation.get("active_step_heartbeat")
+                heartbeat = heartbeat if isinstance(heartbeat, Mapping) else {}
+                tmux_process = target_observation.get("tmux_process")
+                tmux_process = (
+                    tmux_process if isinstance(tmux_process, Mapping) else {}
+                )
+                if (
+                    heartbeat.get("active") is True
+                    and heartbeat.get("pid_live") is True
+                ) or (
+                    tmux_process.get("live_status") == "alive"
+                    and (
+                        tmux_process.get("pid_live") is True
+                        or tmux_process.get("session_live") is True
+                    )
+                ):
+                    live_worker_observed = True
+            if item.get("kind") == "repair_goal":
+                last_evaluation = observed.get("last_evaluation")
+                last_evaluation = (
+                    last_evaluation if isinstance(last_evaluation, Mapping) else {}
+                )
+                commit_custody = last_evaluation.get(
+                    "quality_resolution_commit_custody"
+                )
+                commit_custody = (
+                    commit_custody if isinstance(commit_custody, Mapping) else {}
+                )
+                missing = commit_custody.get("missing_commits")
+                if (
+                    commit_custody.get("verified") is not True
+                    and missing not in (None, "", [], "[]")
+                ):
+                    missing_quality_commits = True
         if external_guard.get("status") != "clear" and action == "recover_state":
             raise ValueError(
                 "state recovery cannot bypass a failing or pending external PR/CI guard"
+            )
+        if missing_quality_commits and action == "recover_state":
+            raise ValueError(
+                "state recovery cannot discard missing durable quality-resolution commits"
+            )
+        if action == "preserve_live" and not live_worker_observed:
+            raise ValueError(
+                "preserve_live cannot strand an active goal without verified live-worker evidence"
             )
     if (
         action == "replan"
@@ -1155,7 +1951,11 @@ def summarize_investigation_artifacts(
             "receipt_path": str(receipt_path),
         }
     try:
-        validated = validate_investigator_receipt(receipt, expected_context_digest=digest)
+        validated = validate_investigator_receipt(
+            receipt,
+            expected_context_digest=digest,
+            investigation_context=context,
+        )
     except ValueError as exc:
         return {
             "required": True,
@@ -1184,6 +1984,8 @@ def summarize_investigation_artifacts(
             "receipt_path": str(receipt_path),
             "context_digest": digest,
         }
+    actual_failure = validated.get("actual_failure")
+    actual_failure = actual_failure if isinstance(actual_failure, Mapping) else {}
     return {
         "required": True,
         "status": "accepted",
@@ -1192,7 +1994,12 @@ def summarize_investigation_artifacts(
         "receipt_path": str(receipt_path),
         "context_digest": digest,
         "receipt_digest": validated.get("receipt_digest"),
-        "actual_failure_classification": (validated.get("actual_failure") or {}).get("classification"),
+        "actual_failure_classification": actual_failure.get("classification"),
+        "actual_failure": {
+            "classification": _text(actual_failure.get("classification"), 100),
+            "error": _text(actual_failure.get("error"), 1000),
+            "mechanism": _text(actual_failure.get("mechanism"), 2000),
+        },
         "evidence_source_kinds": sorted(
             {str(item.get("kind")) for item in validated.get("evidence_sources") or [] if isinstance(item, Mapping)}
         ),
@@ -1202,6 +2009,7 @@ def summarize_investigation_artifacts(
         "safe_repair_target": validated.get("safe_repair_target"),
         "intended_recovery": validated.get("intended_recovery"),
         "four_axis": validated.get("four_axis"),
+        "access_receipt_path": str(investigation.get("access_receipt_path") or ""),
     }
 
 
@@ -1222,6 +2030,9 @@ def _parser() -> argparse.ArgumentParser:
     build.add_argument("--repair-data", required=True)
     build.add_argument("--request-path", default="")
     build.add_argument("--goal-path", required=True)
+    build.add_argument("--l2-handoff-path", default="")
+    build.add_argument("--l2-context-digest", default="")
+    build.add_argument("--l2-replan-epoch", default="0")
     build.add_argument("--output", required=True)
     build_meta = sub.add_parser("build-meta")
     build_meta.add_argument("--session", required=True)
@@ -1235,10 +2046,14 @@ def _parser() -> argparse.ArgumentParser:
     observe_meta = sub.add_parser("observe-meta")
     observe_meta.add_argument("--context", required=True)
     observe_meta.add_argument("--output", required=True)
+    observe = sub.add_parser("observe")
+    observe.add_argument("--context", required=True)
+    observe.add_argument("--output", required=True)
     validate = sub.add_parser("validate")
     validate.add_argument("--receipt", required=True)
     validate.add_argument("--context-digest", required=True)
     validate.add_argument("--observation", default="")
+    validate.add_argument("--context", default="")
     return parser
 
 
@@ -1252,6 +2067,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             repair_data_path=args.repair_data,
             request_path=args.request_path,
             goal_path=args.goal_path,
+            l2_handoff_path=args.l2_handoff_path,
+            l2_context_digest=args.l2_context_digest,
+            l2_replan_epoch=args.l2_replan_epoch,
         )
         _atomic_write(Path(args.output), value)
     elif args.command == "build-meta":
@@ -1263,16 +2081,45 @@ def main(argv: Sequence[str] | None = None) -> int:
             arnold_src=args.arnold_src,
             request_id=args.request_id,
             blocker_id=args.blocker_id,
+            resident_delegation=provenance_from_environment(strict=True),
         )
         _atomic_write(Path(args.output), value)
     elif args.command == "observe-meta":
         value = build_meta_observation_bundle(args.context)
         _atomic_write(Path(args.output), value)
+    elif args.command == "observe":
+        value = build_repair_observation_bundle(args.context)
+        _atomic_write(Path(args.output), value)
     else:
         value = validate_investigator_receipt(
-            _load(args.receipt),
+            _load_bounded_json(
+                args.receipt,
+                max_bytes=MAX_RECEIPT_BYTES,
+                label="investigator receipt",
+            ),
             expected_context_digest=args.context_digest,
-            observation_bundle=_load(args.observation) if args.observation else None,
+            observation_bundle=(
+                _load_bounded_json(
+                    args.observation,
+                    # The builder bounds the compact JSON payload to 48 KiB,
+                    # while its durable pretty-printed representation can be
+                    # larger. Keep the transport ceiling at the shared 64 KiB
+                    # fail-closed envelope.
+                    max_bytes=MAX_CONTEXT_BYTES,
+                    label="investigator observation bundle",
+                )
+                if args.observation
+                else None
+            ),
+            investigation_context=(
+                _load_bounded_json(
+                    args.context,
+                    max_bytes=MAX_CONTEXT_BYTES,
+                    label="repair investigation context",
+                )
+                if args.context
+                else None
+            ),
         )
     print(json.dumps(value, sort_keys=True))
     return 0
@@ -1284,6 +2131,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "MAX_CONTEXT_BYTES",
+    "MAX_RECEIPT_BYTES",
     "META_REPAIR_INVESTIGATION_ENVELOPE_SCHEMA",
     "REPAIR_INVESTIGATION_CONTEXT_SCHEMA",
     "REPAIR_INVESTIGATOR_RECEIPT_SCHEMA",
@@ -1291,6 +2139,7 @@ __all__ = [
     "INVESTIGATION_TARGET_KINDS",
     "build_meta_investigation_context",
     "build_meta_observation_bundle",
+    "build_repair_observation_bundle",
     "build_investigation_context",
     "summarize_investigation_artifacts",
     "validate_meta_investigation_context",

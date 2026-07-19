@@ -68,7 +68,25 @@ fi
 
 # ---- in-container audit -----------------------------------------------------
 
-WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
+# Audit reviews can run long enough to overlap hot activation.  Pin the final
+# selected in-container source before gathering so Bash cannot resume into a
+# different revision after an agentic child returns.
+ARNOLD_PROGRESS_AUDITOR_ORIGIN="${ARNOLD_PROGRESS_AUDITOR_ORIGIN:-${BASH_SOURCE[0]:-$0}}"
+if [[ "${ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
+  progress_auditor_snapshot="$(mktemp "${TMPDIR:-/tmp}/arnold-progress-auditor.XXXXXXXX")"
+  if ! cp -- "$ARNOLD_PROGRESS_AUDITOR_ORIGIN" "$progress_auditor_snapshot" \
+    || ! bash -n "$progress_auditor_snapshot"; then
+    rm -f -- "$progress_auditor_snapshot"
+    echo "arnold-progress-auditor: immutable wrapper snapshot failed validation" >&2
+    exit 78
+  fi
+  export ARNOLD_PROGRESS_AUDITOR_ORIGIN
+  export ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_ACTIVE=1
+  exec bash "$progress_auditor_snapshot" "$@"
+fi
+trap 'rm -f -- "${BASH_SOURCE[0]:-$0}"' EXIT
+
+WRAPPER_REPO_ROOT="$(cd "$(dirname "$ARNOLD_PROGRESS_AUDITOR_ORIGIN")/../../../.." && pwd)"
 
 MARKER_DIR="${MEGAPLAN_AUDIT_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${MEGAPLAN_AUDIT_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
@@ -79,7 +97,7 @@ REPORT_DIR="${MEGAPLAN_AUDIT_REPORT_DIR:-/workspace/audit-reports}"
 REPORT_LOG="${MEGAPLAN_AUDIT_REPORT_LOG:-/workspace/audit-report.log}"
 WATCHDOG_REPORT="${MEGAPLAN_AUDIT_WATCHDOG_REPORT:-/workspace/watchdog-report.json}"
 ARNOLD_SRC="${MEGAPLAN_AUDIT_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}}"
-SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
+SUPERVISOR_RUNTIME_LIB="$(dirname "$ARNOLD_PROGRESS_AUDITOR_ORIGIN")/arnold-supervisor-runtime-lib"
 if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
   SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
 fi
@@ -91,7 +109,7 @@ fi
 arnold_supervisor_stdlib_init progress-auditor || exit $?
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$REPORT_DIR"
-SUPERVISOR_GAP_SCAN="${MEGAPLAN_SUPERVISOR_GAP_SCAN:-$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-gap-scan}"
+SUPERVISOR_GAP_SCAN="${MEGAPLAN_SUPERVISOR_GAP_SCAN:-$(dirname "$ARNOLD_PROGRESS_AUDITOR_ORIGIN")/arnold-supervisor-gap-scan}"
 if [[ ! -x "$SUPERVISOR_GAP_SCAN" ]]; then
   SUPERVISOR_GAP_SCAN="/usr/local/bin/arnold-supervisor-gap-scan"
 fi
@@ -104,6 +122,7 @@ arnold_supervisor_runtime_init progress-auditor "$ARNOLD_SRC" || exit $?
 DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
 LAUNCHER="${MEGAPLAN_AUDIT_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
 AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"
+AUDIT_WORKSPACE_ROOT="${MEGAPLAN_AUDIT_WORKSPACE_ROOT:-/workspace}"
 if ! "$MEGAPLAN_SUPERVISOR_STDLIB_PYTHON" - "$AUDIT_WINDOW_HOURS" <<'PY'
 import math
 import sys
@@ -124,6 +143,8 @@ SUBAGENT_PROFILE="${MEGAPLAN_AUDIT_SUBAGENT_PROFILE:-partnered-5}"
 DEEPSEEK_MODEL="${MEGAPLAN_AUDIT_MODEL:-deepseek:deepseek-v4-pro}"
 AUDIT_CODEX_MODEL="gpt-5.6-sol"
 CODEX_TIMEOUT="${MEGAPLAN_AUDIT_CODEX_TIMEOUT_SECS:-1800}"
+AUDIT_REVIEW_BRIEF_MAX_BYTES=131072
+AUDIT_REVIEW_EVIDENCE_MAX_BYTES=65536
 SUBAGENT_SKILL="${MEGAPLAN_AUDIT_SUBAGENT_SKILL:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md}"
 AUDIT_GITHUB_REPO="${MEGAPLAN_AUDIT_GITHUB_REPO:-}"
 AUDIT_GITHUB_REPO_PATH="${MEGAPLAN_AUDIT_GITHUB_REPO_PATH:-}"
@@ -434,7 +455,7 @@ run_recovery_sweep() {
 run_recovery_sweep
 
 # Build the plan worklist from marker, tmux, and workspace-activity discovery.
-python3 - "$MARKER_DIR" "$WORKLIST" "$AUDIT_WINDOW_HOURS" "$DISCOVER_BIN" "/workspace" "$ARNOLD_SRC" <<'PY'
+python3 - "$MARKER_DIR" "$WORKLIST" "$AUDIT_WINDOW_HOURS" "$DISCOVER_BIN" "$AUDIT_WORKSPACE_ROOT" "$ARNOLD_SRC" <<'PY'
 import datetime as dt
 import json
 import os
@@ -464,6 +485,39 @@ def _plan_dirs(workspace: pathlib.Path) -> list[pathlib.Path]:
         return sorted(p for p in plans_root.iterdir() if p.is_dir())
     except OSError:
         return []
+
+
+def _authoritative_current_plan(workspace: pathlib.Path) -> str:
+    chain_root = workspace / ".megaplan" / "plans" / ".chains"
+    try:
+        candidates = sorted(
+            chain_root.glob("*.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return ""
+    for path in candidates:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        current = str(payload.get("current_plan_name") or "").strip()
+        if current:
+            return current
+        last_state = str(payload.get("last_state") or "").strip().lower()
+        if payload.get("chain_complete") is True or last_state in {
+            "done", "complete", "completed",
+        }:
+            completed = payload.get("completed")
+            if isinstance(completed, list):
+                for item in reversed(completed):
+                    if not isinstance(item, dict):
+                        continue
+                    terminal_plan = str(item.get("plan") or "").strip()
+                    if terminal_plan:
+                        return terminal_plan
+    return ""
 
 
 def _merge(
@@ -537,7 +591,9 @@ for marker_path in sorted(pathlib.Path(marker_dir).glob("*.json")):
         marker_plan_dir = workspace / ".megaplan" / "plans" / marker_plan_name
         plan_dirs = [marker_plan_dir] if marker_plan_dir.is_dir() else []
     else:
-        plan_dirs = _plan_dirs(workspace)
+        current_plan = _authoritative_current_plan(workspace)
+        current_dir = workspace / ".megaplan" / "plans" / current_plan
+        plan_dirs = [current_dir] if current_plan and current_dir.is_dir() else _plan_dirs(workspace)
     for plan_dir in plan_dirs:
         _merge(entries, workspace, plan_dir, session, "marker", updated, marker_path, payload)
 
@@ -594,6 +650,11 @@ for workspace in workspace_children:
         events_path = plan_dir / "events.ndjson"
         if _recent_mtime(state_path) or _recent_mtime(events_path):
             _merge(entries, workspace, plan_dir, workspace.name, "workspace_activity")
+
+for entry in entries.values():
+    current_plan = _authoritative_current_plan(pathlib.Path(entry["workspace"]))
+    entry["authoritative_current_plan"] = current_plan
+    entry["session_evidence_scope"] = bool(current_plan and current_plan == entry["plan"])
 
 with open(out, "w", encoding="utf-8") as handle:
     for entry in sorted(entries.values(), key=lambda item: (item["workspace"], item["plan"])):
@@ -661,6 +722,10 @@ from arnold_pipelines.megaplan.cloud.auditor_external_evidence import (
 )
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
+from arnold_pipelines.megaplan.cloud.progress_auditor_liveness import classify_runner_liveness
+from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
+    bounded_auditor_projection,
+)
 try:
     from arnold_pipelines.megaplan.cloud.repair_investigation import summarize_investigation_artifacts
 except ImportError:
@@ -761,6 +826,7 @@ from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 
 MAX_CROSS_REF_ITEMS = 3
 MAX_COMMIT_REFS = 5
+MAX_META_RUN_INSPECT_ITEMS = 64
 WATCHDOG_REPORT_PATH = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_WATCHDOG_REPORT", "/workspace/watchdog-report.json"))
 WATCHDOG_REPORT_ARCHIVE_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_WATCHDOG_REPORT_ARCHIVE_DIR", "/workspace/watchdog-reports"))
 AUDIT_REPORT_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_REPORT_DIR", "/workspace/audit-reports"))
@@ -1017,7 +1083,12 @@ def _collect_meta_run_refs(session):
     if not META_RUN_DIR.exists():
         return refs
     safe_session = "".join(ch if ch.isalnum() or ch in "_.-" else "-" for ch in str(session))
-    candidates = list(META_RUN_DIR.glob(f"*{safe_session}*")) + list(META_RUN_DIR.glob(f"*{session}*"))
+    candidates = (
+        list(META_RUN_DIR.glob(f"*{safe_session}*.log"))
+        + list(META_RUN_DIR.glob(f"*{session}*.log"))
+        + list(META_RUN_DIR.glob(f"*{safe_session}*investigator-receipt.json"))
+        + list(META_RUN_DIR.glob(f"*{session}*investigator-receipt.json"))
+    )
     seen = set()
     ordered = []
     for path in candidates:
@@ -1027,18 +1098,121 @@ def _collect_meta_run_refs(session):
         seen.add(key)
         ordered.append((_mtime(path), path))
     ordered.sort(reverse=True)
-    for mtime, path in ordered[:5]:
+    selected = list(ordered[:5])
+    # Keep a bounded typed investigator failure even when later successful logs
+    # would otherwise evict it from the five-file tail. It remains historical
+    # corroboration; only index zero may become current launch-failure evidence.
+    retained_failure_codes = {
+        _meta_run_failure_code(path) for _, path in selected
+    }
+    for mtime, path in ordered[5:]:
+        failure_code = _meta_run_failure_code(path)
+        if (
+            not failure_code.startswith("investigator_")
+            or failure_code in retained_failure_codes
+            or len(selected) >= 10
+        ):
+            continue
+        selected.append((mtime, path))
+        retained_failure_codes.add(failure_code)
+    for index, (mtime, path) in enumerate(selected):
         tail = _tail_with_line_numbers(path, lines=12)
-        launch_failure = _text_has_meta_launch_failure(tail)
+        failure_code = _meta_run_failure_code(path)
+        current_episode = index == 0
+        ordinary_retrigger_failed = failure_code == "ordinary_retrigger_failed"
+        trigger_rejected = failure_code == "meta_repair_trigger_rejected"
+        terminal_failure = bool(
+            current_episode
+            and failure_code in {
+                "investigator_read_sandbox_unavailable",
+                "investigator_envelope_overflow",
+                "investigator_invalid_or_missing_receipt",
+                "meta_repair_launch_failure",
+                "meta_repair_authority_blocked",
+                "meta_repair_commit_custody_failed",
+                "meta_repair_no_fix",
+                "ordinary_retrigger_failed",
+                "meta_repair_trigger_rejected",
+            }
+        )
+        launch_failure = bool(
+            current_episode
+            and not ordinary_retrigger_failed
+            and not trigger_rejected
+            and (
+                failure_code in {
+                    "investigator_read_sandbox_unavailable",
+                    "investigator_envelope_overflow",
+                    "investigator_invalid_or_missing_receipt",
+                    "meta_repair_launch_failure",
+                }
+                or _text_has_meta_launch_failure(tail)
+            )
+        )
         refs.append(
             {
                 "path": _redact_scalar(path),
                 "mtime_age_min": int((now.timestamp() - mtime) // 60) if mtime else None,
                 "tail": _redact_scalar(tail),
                 "launch_failure": launch_failure,
+                "terminal_failure": terminal_failure,
+                "current_episode": current_episode,
+                "ordinary_retrigger_failed": bool(current_episode and ordinary_retrigger_failed),
+                "trigger_rejected": bool(current_episode and trigger_rejected),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                **({"failure_code": failure_code} if failure_code else {}),
             }
         )
     return refs
+
+def _meta_run_failure_code(path):
+    if path.name.endswith("investigator-receipt.json"):
+        payload = _load_json(path)
+        typed = str(payload.get("failure_code") or "").strip()
+        if typed.startswith("investigator_"):
+            return typed
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            prefix = handle.read(131072)
+            suffix = b""
+            if size > len(prefix):
+                handle.seek(max(0, size - 131072))
+                suffix = handle.read(131072)
+        text = (prefix + b"\n" + suffix).decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+    event_lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.lstrip().startswith("[meta-repair ") or line.lstrip().startswith("bwrap:")
+    ]
+    lowered = "\n".join(event_lines).lower()
+    if re.search(r"l2 replan handoff ordinary repair completed .*returncode=[1-9][0-9]*", lowered):
+        return "ordinary_retrigger_failed"
+    if "no meta-repair trigger matched; exiting" in lowered:
+        return "meta_repair_trigger_rejected"
+    if (
+        "investigator_read_sandbox_unavailable" in lowered
+        or "bwrap: no permissions to create new namespace" in lowered
+    ):
+        return "investigator_read_sandbox_unavailable"
+    if "l2 investigator launch envelope failed 64 kib preflight" in lowered:
+        return "investigator_envelope_overflow"
+    if (
+        "l2 investigator failed or returned no valid receipt" in lowered
+        or "l2 investigation failed or returned no valid receipt" in lowered
+    ):
+        return "investigator_invalid_or_missing_receipt"
+    if "l2 codex dispatch blocked by master-plus-path authorization gate" in lowered:
+        return "meta_repair_authority_blocked"
+    if "commit custody accepted=false" in lowered:
+        return "meta_repair_commit_custody_failed"
+    if "verdict=no_fix" in lowered:
+        return "meta_repair_no_fix"
+    if _text_has_meta_launch_failure(text):
+        return "meta_repair_launch_failure"
+    return ""
 
 def _text_has_meta_launch_failure(text):
     if not isinstance(text, str):
@@ -1046,6 +1220,8 @@ def _text_has_meta_launch_failure(text):
     needles = (
         "Codex meta-repair orchestrator returned no output",
         "Codex meta-repair prompt exceeded input limit",
+        "all meta-repair launch paths failed",
+        "direct Hermes fallback produced no recordable verdict",
         "Not inside a trusted directory",
         "--skip-git-repo-check was not specified",
         "codex CLI missing; no automated meta-repair",
@@ -1071,6 +1247,21 @@ def _meta_record_is_launch_failure(path):
         haystacks.extend(str(value or "") for value in subagent_results.values())
     return _text_has_meta_launch_failure("\n".join(haystacks))
 
+def _meta_record_is_terminal_failure(path):
+    payload = _load_json(path)
+    if not isinstance(payload, dict):
+        return False
+    outcome = str(payload.get("outcome") or "").strip().lower()
+    diagnosis = str(payload.get("diagnosis") or "").strip().lower()
+    return bool(
+        outcome in {
+            "commit_custody_failed", "no_fix", "mutation_not_authorized",
+            "launch_failed", "investigation_failed",
+        }
+        or diagnosis.startswith("no_fix")
+        or _meta_record_is_launch_failure(path)
+    )
+
 def _repair_attempt_signals(repair_payload):
     attempts = repair_payload.get("attempts") if isinstance(repair_payload, dict) else []
     iterations = repair_payload.get("iterations") if isinstance(repair_payload, dict) else []
@@ -1094,7 +1285,7 @@ def _repair_attempt_signals(repair_payload):
                 break
     repair_outcome = str(repair_payload.get("outcome") or "") if isinstance(repair_payload, dict) else ""
     attempt_outcomes = [
-        str(item.get("outcome") or repair_outcome or "").strip()
+        str(item.get("outcome") or "").strip()
         for item in recent_attempts + recent_iterations
         if isinstance(item, dict)
     ]
@@ -1486,7 +1677,13 @@ def _meta_repair_summary(
             "repeated watchdog reports already classified this session as alive, so stale recurring "
             f"repair sidecars do not prove an unhandled meta-repair dispatch gap (alive_refs={len(watchdog_alive_refs)})"
         ]
-    failed_run_refs = [item for item in run_refs if item.get("launch_failure")]
+    failed_run_refs = [item for item in run_refs if item.get("terminal_failure")]
+    ordinary_retrigger_failure_refs = [
+        item for item in run_refs if item.get("ordinary_retrigger_failed")
+    ]
+    trigger_rejection_refs = [
+        item for item in run_refs if item.get("trigger_rejected")
+    ]
     failed_meta_records = []
     recursion_guard_blocked = False
     for item in meta_refs or []:
@@ -1497,7 +1694,7 @@ def _meta_repair_summary(
             and "recursion" in str(record.get("reason") or "").lower()
         ):
             recursion_guard_blocked = True
-        if path and _meta_record_is_launch_failure(pathlib.Path(str(path))):
+        if path and _meta_record_is_terminal_failure(pathlib.Path(str(path))):
             failed_meta_records.append(item)
     return {
         "should_dispatch": should_dispatch,
@@ -1525,6 +1722,8 @@ def _meta_repair_summary(
         "meta_run_log_count": len(run_refs),
         "meta_run_refs": run_refs,
         "failed_meta_run_count": len(failed_run_refs),
+        "ordinary_retrigger_failure_count": len(ordinary_retrigger_failure_refs),
+        "trigger_rejection_count": len(trigger_rejection_refs),
         "failed_meta_record_count": len(failed_meta_records),
         **({"recursion_guard_blocked": True} if recursion_guard_blocked else {}),
         "missing_meta_run_evidence": bool(should_dispatch and not meta_refs and not run_refs),
@@ -1882,6 +2081,7 @@ def _chain_state_summary(workspace, plan):
             "chain_complete": data.get("chain_complete"),
             "pr_number": data.get("pr_number"),
             "pr_state": data.get("pr_state"),
+            "base_branch": data.get("base_branch") or data.get("target_base") or "",
             "reason": data.get("reason") or data.get("error") or "",
             "events": data.get("events")[-8:] if isinstance(data.get("events"), list) else [],
             "completed": [],
@@ -1905,7 +2105,19 @@ def _chain_state_summary(workspace, plan):
         summaries.append(summary)
     current = next((item for item in summaries if item.get("current_plan_name") == plan), None)
     if current is None:
-        current = summaries[0] if summaries else {}
+        current = next(
+            (
+                item
+                for item in summaries
+                if any(
+                    isinstance(completed, dict) and completed.get("plan") == plan
+                    for completed in item.get("completed") or []
+                )
+            ),
+            None,
+        )
+    if current is None:
+        current = {}
     return {"current": current, "all": summaries}
 
 def _accepted_event_receipt(events_path):
@@ -2153,6 +2365,30 @@ def _repair_data_summary(session):
     ]
     investigation_summary = summarize_investigation_artifacts(payload, field="investigation")
     meta_investigation_summary = summarize_investigation_artifacts(payload, field="meta_investigation")
+    repair_goal_summary = {}
+    repair_goal_ref = payload.get("repair_goal") if isinstance(payload, dict) else {}
+    repair_goal_ref = repair_goal_ref if isinstance(repair_goal_ref, dict) else {}
+    repair_goal_path = pathlib.Path(str(repair_goal_ref.get("goal_path") or ""))
+    repair_goal = _load_json(repair_goal_path) if repair_goal_path.is_file() else {}
+    terminal_failures = repair_goal.get("terminal_failures") if isinstance(repair_goal, dict) else []
+    terminal_failures = terminal_failures if isinstance(terminal_failures, list) else []
+    if repair_goal:
+        repair_goal_summary = {
+            "goal_id": str(repair_goal.get("goal_id") or "")[:200],
+            "path": str(repair_goal_path),
+            "status": str(repair_goal.get("status") or "")[:100],
+            "terminal_failures": [
+                {
+                    "recorded_at": str(item.get("recorded_at") or "")[:100],
+                    "phase": str(item.get("phase") or "")[:300],
+                    "outcome": str(item.get("outcome") or "")[:300],
+                    "reason": str(item.get("reason") or "")[:1200],
+                    "owner_run_id": str(item.get("owner_run_id") or "")[:300],
+                }
+                for item in terminal_failures[-5:]
+                if isinstance(item, dict)
+            ],
+        }
     return {
         "path": str(path),
         "exists": True,
@@ -2169,7 +2405,21 @@ def _repair_data_summary(session):
             else {}
         ),
         "mtime_age_min": int((now.timestamp() - _mtime(path)) // 60) if _mtime(path) else None,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         "outcome": payload.get("outcome") if isinstance(payload, dict) else "",
+        "l1_outcome_raw": payload.get("outcome") if isinstance(payload, dict) else "",
+        "meta_replan_handoff": (
+            payload.get("meta_replan_handoff")
+            if isinstance(payload, dict) and isinstance(payload.get("meta_replan_handoff"), dict)
+            else {}
+        ),
+        "effective_custody_outcome": (
+            "ordinary_retrigger_failed"
+            if isinstance(payload, dict)
+            and isinstance(payload.get("meta_replan_handoff"), dict)
+            and int(payload["meta_replan_handoff"].get("returncode") or 0) != 0
+            else (payload.get("outcome") if isinstance(payload, dict) else "")
+        ),
         "current_attempt_id": payload.get("current_attempt_id") if isinstance(payload, dict) else "",
         "attempt_count": len(attempts),
         "attempt_ids": (
@@ -2186,6 +2436,7 @@ def _repair_data_summary(session):
         "managed_agent_runs": payload.get("managed_agent_runs") if isinstance(payload, dict) and isinstance(payload.get("managed_agent_runs"), list) else [],
         "investigation_summary": investigation_summary,
         "meta_investigation_summary": meta_investigation_summary,
+        "repair_goal_summary": repair_goal_summary,
         "iteration_count": len(iterations),
         "iterations": summarized_iterations,
         "repeated_failure_signatures": repeated[:6],
@@ -3508,6 +3759,13 @@ def _repair_data_ghost_running_reason(ev):
 
 def _investigation_handoff_reason(ev):
     """Surface automatic repair that mutated or claimed success without investigation."""
+    chain_current = (
+        (ev.get("chain_state_summary") or {}).get("current")
+        if isinstance(ev.get("chain_state_summary"), dict)
+        else {}
+    )
+    if _chain_state_looks_terminal(chain_current):
+        return ""
     repair = ev.get("repair_data_summary") if isinstance(ev, dict) else {}
     repair = repair if isinstance(repair, dict) else {}
     investigation = repair.get("investigation_summary") if isinstance(repair.get("investigation_summary"), dict) else {}
@@ -3538,6 +3796,57 @@ def _investigation_handoff_reason(ev):
             f"{meta_investigation.get('reason') or 'no shared evidence receipt'}"
         )
     return ""
+
+def _repair_owner_terminal_failure_reason(ev):
+    chain_current = (
+        (ev.get("chain_state_summary") or {}).get("current")
+        if isinstance(ev.get("chain_state_summary"), dict)
+        else {}
+    )
+    if _chain_state_looks_terminal(chain_current):
+        return ""
+    repair = ev.get("repair_data_summary") if isinstance(ev, dict) else {}
+    repair = repair if isinstance(repair, dict) else {}
+    goal = repair.get("repair_goal_summary")
+    goal = goal if isinstance(goal, dict) else {}
+    failures = goal.get("terminal_failures")
+    failures = failures if isinstance(failures, list) else []
+    if not failures:
+        return ""
+    latest = failures[-1] if isinstance(failures[-1], dict) else {}
+    reason = str(latest.get("reason") or "")
+    phase = str(latest.get("phase") or "")
+    failure_class = "repair_owner_terminal_failure"
+    if "quality_recovery_command_invalid" in reason:
+        failure_class = "receipt_bound_quality_recovery_transport"
+    elif "failed:stopped:rc=" in reason:
+        failure_class = "supported_recovery_command_failed"
+    elif phase == "authorized-recovery-no-progress":
+        failure_class = "owner_terminalized_before_outcome"
+    investigation = repair.get("investigation_summary")
+    investigation = investigation if isinstance(investigation, dict) else {}
+    actual = investigation.get("actual_failure")
+    actual = actual if isinstance(actual, dict) else {}
+    mechanism = str(actual.get("mechanism") or "")[:700]
+    if not mechanism:
+        mechanism = {
+            "receipt_bound_quality_recovery_transport": (
+                "validated receipt-bound quality recovery could not be constructed or launched"
+            ),
+            "supported_recovery_command_failed": (
+                "supported recovery command terminalized before proving target advancement"
+            ),
+            "owner_terminalized_before_outcome": (
+                "owner terminalized while its exact supported recovery command remained live "
+                "without accepted progress"
+            ),
+        }.get(failure_class, "terminal repair owner failed before semantic recovery")
+    return (
+        "repair_owner_terminal_failure: "
+        f"class={failure_class} phase={phase or 'unknown'} "
+        f"outcome={latest.get('outcome') or 'unknown'} reason={reason[:700] or 'missing'} "
+        f"investigated_root_cause={mechanism}"
+    )
 
 def _canonical_launch_disagreement_reason(ev):
     repair = ev.get("repair_data_summary") if isinstance(ev, dict) else {}
@@ -3697,9 +4006,15 @@ def _meta_repair_launch_failure_reason(ev):
     meta = ev.get("meta_repair_summary") if isinstance(ev, dict) else {}
     meta = meta if isinstance(meta, dict) else {}
     if meta.get("should_dispatch") and int(meta.get("failed_meta_run_count") or 0) > 0:
+        failure_codes = sorted({
+            str(item.get("failure_code") or "")
+            for item in (meta.get("meta_run_refs") or [])
+            if isinstance(item, dict) and item.get("failure_code")
+        })
+        codes = f" failure_codes={','.join(failure_codes)}" if failure_codes else ""
         return (
             "meta_repair_launch_failure: meta-repair is required but run logs show "
-            f"launch/no-output failure (bad_run_logs={meta.get('failed_meta_run_count')})"
+            f"launch/no-output failure (bad_run_logs={meta.get('failed_meta_run_count')}{codes})"
         )
     return ""
 
@@ -3881,6 +4196,9 @@ def _workflow_cursor_mismatch_reason(ev):
     )
 
 def _superfixer_cycle_evidence(ev):
+    from arnold_pipelines.megaplan.cloud.progress_auditor_liveness import (
+        classify_runner_liveness,
+    )
     resolver = ev.get("resolver_state") if isinstance(ev, dict) else {}
     resolver = resolver if isinstance(resolver, dict) else {}
     canonical_state = str(resolver.get("canonical_state") or "UNKNOWN").strip().upper()
@@ -3925,26 +4243,8 @@ def _superfixer_cycle_evidence(ev):
     active = ev.get("active_step_liveness") if isinstance(ev, dict) else {}
     active = active if isinstance(active, dict) else {}
     tmux_process = target.get("tmux_process") if isinstance(target.get("tmux_process"), dict) else {}
-    tmux_live = (
-        tmux_process.get("pid_live") is True
-        or tmux_process.get("session_live") is True
-        or str(tmux_process.get("live_status") or "").strip().lower() == "alive"
-    )
-    dead_active_step = active.get("present") is True and active.get("worker_pid_alive") is False
-    explicit_stopped = str(tmux_process.get("live_status") or "").strip().lower() in {
-        "dead", "missing", "stopped", "unavailable"
-    }
     watchdog_refs = ev.get("prior_watchdog_report_refs") if isinstance(ev, dict) else []
     watchdog_refs = watchdog_refs if isinstance(watchdog_refs, list) else []
-    watchdog_stopped = any(
-        str(item.get("matched_status") or "").strip().lower()
-        in {"stopped", "dead", "progress_stall", "broken_superfixer"}
-        for item in watchdog_refs
-        if isinstance(item, dict)
-    )
-    runner_dead = bool(not tmux_live and (dead_active_step or explicit_stopped or watchdog_stopped))
-    incomplete_chain = _chain_state_looks_nonterminal(chain_current)
-
     meta_ages = [
         item.get("mtime_age_min")
         for item in (ev.get("meta_repair_refs") or [])
@@ -3955,7 +4255,34 @@ def _superfixer_cycle_evidence(ev):
         for item in (meta.get("meta_run_refs") or [])
         if isinstance(item, dict) and isinstance(item.get("mtime_age_min"), int)
     )
-    failed_l2 = bool(meta.get("failed_meta_run_count") or meta.get("failed_meta_record_count"))
+    failed_l2 = bool(
+        meta.get("failed_meta_run_count")
+        or meta.get("failed_meta_record_count")
+        or meta.get("ordinary_retrigger_failure_count")
+        or meta.get("trigger_rejection_count")
+    )
+    watchdog_statuses = [
+        str(item.get("matched_status") or "")
+        for item in watchdog_refs
+        if isinstance(item, dict)
+    ]
+    if failed_l2:
+        watchdog_statuses.append("terminal_repair_failure")
+    liveness = classify_runner_liveness(
+        tmux_process,
+        active,
+        watchdog_statuses,
+    )
+    dead_active_step = active.get("present") is True and active.get("worker_pid_alive") is False
+    watchdog_stopped = any(
+        str(item.get("matched_status") or "").strip().lower()
+        in {"stopped", "dead", "progress_stall", "broken_superfixer", "canonical_launch_evidence_missing"}
+        for item in watchdog_refs
+        if isinstance(item, dict)
+    )
+    runner_dead = liveness["dead"]
+    incomplete_chain = _chain_state_looks_nonterminal(chain_current)
+
     current_l2 = bool(meta_ages and min(meta_ages) <= 60 and not failed_l2)
     absent_or_stale_l2 = not current_l2
 
@@ -3981,6 +4308,7 @@ def _superfixer_cycle_evidence(ev):
         "repair_outcome": repair_outcome,
         "repair_age_min": repair_age,
         "runner_dead": runner_dead,
+        "runner_liveness": liveness,
         "dead_active_step": dead_active_step,
         "tmux_live_status": tmux_process.get("live_status"),
         "chain_incomplete": incomplete_chain,
@@ -4152,11 +4480,15 @@ def _normalize_engine_tree_evidence(value, *, repo_root, workspace_root):
         normalized["import_consumers"] = impacted_consumers if isinstance(impacted_consumers, list) else []
     return normalized
 
-def _collect_external_ci_health(repo_root, *, pr_number=None):
+def _collect_external_ci_health(repo_root, *, pr_number=None, base_branch=""):
     if not repo_root.is_dir():
         return _ci_health_unavailable(repo_root, reason="repo_context_unavailable")
     try:
-        payload = collect_ci_health(repo_root, base_branch="main", pr_number=pr_number)
+        payload = collect_ci_health(
+            repo_root,
+            base_branch=str(base_branch or "main"),
+            pr_number=pr_number,
+        )
     except Exception as exc:
         return _ci_health_unavailable(
             repo_root,
@@ -4166,6 +4498,115 @@ def _collect_external_ci_health(repo_root, *, pr_number=None):
     if not isinstance(payload, dict):
         return _ci_health_unavailable(repo_root, reason="ci_health_invalid_payload")
     return dict(payload)
+
+
+def _cached_external_ci_health(repair_summary, *, expected_pr_number=None):
+    meta = repair_summary.get("meta_investigation_summary") if isinstance(repair_summary, dict) else {}
+    meta = meta if isinstance(meta, dict) else {}
+    access_path_text = str(meta.get("access_receipt_path") or "").strip()
+    expected_context_digest = str(meta.get("context_digest") or "").strip()
+    if not access_path_text:
+        return _ci_health_unavailable("", reason="typed_external_cache_pointer_missing")
+    access_path = pathlib.Path(access_path_text)
+    bundle = _load_json(access_path)
+    if (
+        bundle.get("schema_version") != "arnold-meta-repair-observation-bundle-v1"
+        or bundle.get("access_verified") is not True
+        or not expected_context_digest
+        or bundle.get("context_digest") != expected_context_digest
+    ):
+        return _ci_health_unavailable(
+            "",
+            reason="typed_external_cache_bundle_invalid",
+            cache_source_path=str(access_path),
+        )
+    observation = next(
+        (
+            item
+            for item in bundle.get("observations") or []
+            if isinstance(item, dict) and item.get("kind") == "external_state"
+        ),
+        None,
+    )
+    if not isinstance(observation, dict):
+        return _ci_health_unavailable(
+            "",
+            reason="typed_external_cache_observation_missing",
+            cache_source_path=str(access_path),
+        )
+    artifact_path = pathlib.Path(str(observation.get("path") or ""))
+    try:
+        raw = artifact_path.read_bytes()
+    except OSError:
+        return _ci_health_unavailable(
+            "",
+            reason="typed_external_cache_artifact_unreadable",
+            cache_source_path=str(access_path),
+            artifact_path=str(artifact_path),
+        )
+    expected_size = observation.get("size_bytes")
+    expected_sha = str(observation.get("sha256") or "").strip()
+    if (
+        not expected_sha
+        or not isinstance(expected_size, int)
+        or len(raw) != expected_size
+        or hashlib.sha256(raw).hexdigest() != expected_sha
+    ):
+        return _ci_health_unavailable(
+            "",
+            reason="typed_external_cache_integrity_mismatch",
+            cache_source_path=str(access_path),
+            artifact_path=str(artifact_path),
+        )
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        payload = {}
+    pull_request = payload.get("pull_request") if isinstance(payload, dict) else {}
+    pull_request = pull_request if isinstance(pull_request, dict) else {}
+    observed_pr = pull_request.get("number")
+    if (
+        expected_pr_number not in (None, "")
+        and str(observed_pr or "") != str(expected_pr_number)
+    ):
+        return _ci_health_unavailable(
+            "",
+            reason="typed_external_cache_pr_mismatch",
+            expected_pr_number=expected_pr_number,
+            pr_number=observed_pr,
+            cache_source_path=str(access_path),
+            artifact_path=str(artifact_path),
+        )
+    rollup = pull_request.get("statusCheckRollup")
+    rollup = rollup if isinstance(rollup, list) else []
+    failed = [
+        item for item in rollup
+        if isinstance(item, dict)
+        and str(item.get("conclusion") or "").upper() not in {"", "SUCCESS", "NEUTRAL", "SKIPPED"}
+    ]
+    pending = [
+        item for item in rollup
+        if isinstance(item, dict)
+        and str(item.get("status") or "").upper() not in {"", "COMPLETED"}
+    ]
+    status = "red" if failed else ("pending" if pending else "green")
+    return {
+        "status": status,
+        "available": bool(payload.get("available") is True and observed_pr),
+        "base_branch": pull_request.get("baseRefName") or "",
+        "pr_number": observed_pr,
+        "pr_state": pull_request.get("state") or "",
+        "pr_head_oid": pull_request.get("headRefOid") or "",
+        "merge_state": pull_request.get("mergeStateStatus") or "",
+        "is_draft": pull_request.get("isDraft"),
+        "failed_checks": failed,
+        "pending_checks": pending,
+        "checks": rollup,
+        "evidence_source": "typed_l2_external_cache",
+        "cache_source_path": str(access_path),
+        "artifact_path": str(artifact_path),
+        "artifact_sha256": expected_sha,
+    }
 
 def _candidate_engine_tree_roots(workspace_root, repo_root):
     candidates = [repo_root, workspace_root / ".megaplan" / "runtime" / "editable-engine"]
@@ -4431,10 +4872,44 @@ def _plan_evidence(entry):
     )
     resolver_state = _resolve_resolver_state_payload(current_target)
     repair_custody = _repair_custody_summary(session, state, current_target)
-    ci_health = _collect_external_ci_health(
+    cached_ci_health = _cached_external_ci_health(
+        repair_data,
+        expected_pr_number=chain_current.get("pr_number") if isinstance(chain_current, dict) else None,
+    )
+    live_ci_health = _collect_external_ci_health(
         workspace_path,
         pr_number=chain_current.get("pr_number") if isinstance(chain_current, dict) else None,
+        base_branch=cached_ci_health.get("base_branch") or chain_current.get("base_branch") or "",
     )
+    expected_pr_number = chain_current.get("pr_number") if isinstance(chain_current, dict) else None
+    live_pr_number = live_ci_health.get("pr_number") if isinstance(live_ci_health, dict) else None
+    live_coherent = bool(
+        isinstance(live_ci_health, dict)
+        and live_ci_health.get("available") is True
+        and (expected_pr_number in (None, "") or str(live_pr_number or "") == str(expected_pr_number))
+    )
+    if live_coherent:
+        ci_health = dict(live_ci_health)
+        if cached_ci_health.get("available") is True:
+            ci_health["typed_cache_corroboration"] = {
+                "status": cached_ci_health.get("status"),
+                "cache_source_path": cached_ci_health.get("cache_source_path"),
+                "artifact_path": cached_ci_health.get("artifact_path"),
+                "artifact_sha256": cached_ci_health.get("artifact_sha256"),
+            }
+    elif cached_ci_health.get("available") is True:
+        ci_health = dict(cached_ci_health)
+        ci_health["live_probe"] = {
+            "status": live_ci_health.get("status"),
+            "reason": live_ci_health.get("reason"),
+        }
+    else:
+        ci_health = dict(live_ci_health)
+        ci_health["typed_cache_failure"] = {
+            "reason": cached_ci_health.get("reason"),
+            "cache_source_path": cached_ci_health.get("cache_source_path"),
+            "artifact_path": cached_ci_health.get("artifact_path"),
+        }
     engine_tree = _collect_external_engine_tree(repo_root, workspace_path)
     projection_input = audit_input.get("projection_input") if isinstance(audit_input.get("projection_input"), dict) else {}
     projection_input = {
@@ -4500,10 +4975,25 @@ def _plan_evidence(entry):
                 }
             )
 
+    bounded_incident_brief = bounded_auditor_projection(
+        incident_brief, kind="brief"
+    )
+    bounded_incident_projection = bounded_auditor_projection(
+        incident_projection, kind="incident"
+    )
+    bounded_problem_projection = bounded_auditor_projection(
+        problem_projection, kind="problem"
+    )
+    bounded_incident_audit = bounded_auditor_projection(
+        incident_audit, kind="audit"
+    )
+
     return {
         "plan": plan_dir.name,
         "workspace": workspace,
         "session": session,
+        "authoritative_current_plan": entry.get("authoritative_current_plan") or "",
+        "session_evidence_scope": bool(entry.get("session_evidence_scope")),
         "state_path": str(state_path),
         "sources": entry.get("sources") or [],
         "session_header": session_header,
@@ -4556,12 +5046,14 @@ def _plan_evidence(entry):
         "latest_failure_kind": latest_failure.get("kind"),
         "latest_failure_message": (latest_failure.get("message") or "")[:240],
         "latest_failure_metadata": _metadata_excerpt(latest_failure_metadata),
-        "incident_brief": incident_brief,
-        "incident_projection": incident_projection,
-        "problem_projection": problem_projection,
-        "incident_audit": incident_audit,
+        "incident_brief": bounded_incident_brief,
+        "incident_projection": bounded_incident_projection,
+        "problem_projection": bounded_problem_projection,
+        "incident_audit": bounded_incident_audit,
         "current_target": current_target,
         "resolver_state": resolver_state,
+        "ci_health": ci_health,
+        "engine_tree": engine_tree,
         "incident_handoff_gap_count": len(expired_claims),
         "incident_handoff_gap_refs": incident_handoff_gap_refs,
         "incident_dead_worker_count": dead_worker_count,
@@ -4662,7 +5154,11 @@ for entry in plans:
     if repeated_failures:
         corroboration.append(f"repair data repeats same failure signature {repeated_failures[0].get('count')}x")
     meta_summary = ev.get("meta_repair_summary") or {}
-    authoritative_plan = str(chain_current.get("current_plan_name") or "").strip()
+    authoritative_plan = str(
+        ev.get("authoritative_current_plan")
+        or chain_current.get("current_plan_name")
+        or ""
+    ).strip()
     finding_state = str(ev.get("current_state") or "").strip().lower()
     completed_shadow = bool(
         finding_state in {"done", "complete", "completed", "finalized"}
@@ -4670,20 +5166,22 @@ for entry in plans:
         and authoritative_plan != str(ev.get("plan") or "").strip()
     )
     session_reasons = []
-    if meta_summary.get("missing_meta_run_evidence"):
+    session_evidence_scope = bool(ev.get("session_evidence_scope"))
+    if session_evidence_scope and meta_summary.get("missing_meta_run_evidence"):
         meta_gap_reason = f"meta-repair trigger {meta_summary.get('trigger')} has no meta record or run log"
         session_reasons.append(meta_gap_reason)
-    if meta_summary.get("failed_meta_run_evidence"):
+    if session_evidence_scope and meta_summary.get("failed_meta_run_evidence"):
         session_reasons.append(
             f"meta-repair trigger {meta_summary.get('trigger')} has only failed launch/no-output evidence "
             f"(bad_records={meta_summary.get('failed_meta_record_count')} bad_run_logs={meta_summary.get('failed_meta_run_count')})"
         )
-    for deterministic_reason in (
+    for deterministic_reason in ((
         _meta_record_no_verdict_reason(ev),
         _meta_repair_launch_failure_reason(ev),
         _watchdog_chain_health_disagreement_reason(ev),
         _repair_data_ghost_running_reason(ev),
         _investigation_handoff_reason(ev),
+        _repair_owner_terminal_failure_reason(ev),
         _canonical_launch_disagreement_reason(ev),
         _repair_complete_incomplete_chain_reason(ev),
         _green_with_recent_repair_churn_reason(ev),
@@ -4694,7 +5192,7 @@ for entry in plans:
         _liveness_without_acceptance_progress_reason(ev),
         _repair_dispatch_during_preserve_live_reason(ev),
         _stale_l1_l2_cycle_reason(ev),
-    ):
+    ) if session_evidence_scope else ()):
         if deterministic_reason:
             session_reasons.append(deterministic_reason)
     if not completed_shadow:
@@ -4725,8 +5223,10 @@ for entry in plans:
     if (run_kind == "plan" or chain_last_state == "awaiting_human") and unresolved_actions:
         ids = ",".join(str(item.get("id")) for item in unresolved_actions[:5])
         corroboration.append(f"unresolved user actions: {ids}")
-    if not reasons:
-        reasons = corroboration
+    # Deterministic custody findings and corroborating execution evidence are
+    # complementary.  Preserve both so a structural classification cannot
+    # erase the chain/log/repair facts needed by the corrective path.
+    reasons.extend(item for item in corroboration if item not in reasons)
     combined_corroboration = corroboration + soft_corroboration
     if combined_corroboration:
         ev["corroboration"] = combined_corroboration
@@ -4746,6 +5246,7 @@ for entry in plans:
             "incident_projection": ev.get("incident_projection"),
             "problem_projection": ev.get("problem_projection"),
             "incident_audit": ev.get("incident_audit"),
+            "chain_state_summary": ev.get("chain_state_summary"),
             "suppression": ev.get("suppression"),
             "auditor_wrapper_runtime": ev.get("auditor_wrapper_runtime"),
             "source_refs": ev.get("source_refs"),
@@ -4897,6 +5398,50 @@ FINDING_COUNT="$(python3 -c 'import json,sys; print(len((json.load(open(sys.argv
 
 log "suspicious_plans=$FINDING_COUNT stall_flags=$stall_summary"
 
+revalidate_audit_snapshot() {
+  python3 - "$GATHER_DIR/findings.json" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+superseded = 0
+for finding in payload.get("findings") or []:
+    refs = []
+    repair = finding.get("repair_data_summary") or {}
+    if repair.get("path") and repair.get("sha256"):
+        refs.append((repair["path"], repair["sha256"], "repair_data"))
+    for item in (finding.get("meta_repair_summary") or {}).get("meta_run_refs") or []:
+        if item.get("current_episode") and item.get("path") and item.get("sha256"):
+            refs.append((item["path"], item["sha256"], "current_meta_run"))
+    changed = []
+    for raw_path, expected, kind in refs:
+        artifact = pathlib.Path(raw_path)
+        try:
+            observed = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        except OSError:
+            observed = "missing"
+        if observed != expected:
+            changed.append({"kind": kind, "path": raw_path, "expected_sha256": expected, "observed_sha256": observed})
+    if not changed:
+        finding["evidence_snapshot"] = {"status": "current", "revalidated_ref_count": len(refs)}
+        continue
+    superseded += 1
+    finding["evidence_snapshot"] = {"status": "superseded", "changed_refs": changed}
+    finding.setdefault("reasons", []).append(
+        "evidence_snapshot_superseded: volatile repair/meta evidence changed after deterministic gather; dispatch fails closed until the next bounded gather"
+    )
+    superfixer = finding.get("deterministic_superfixer_evidence")
+    if isinstance(superfixer, dict):
+        superfixer["actionable"] = False
+        superfixer["snapshot_superseded"] = True
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+print(superseded)
+PY
+}
+
 # For each suspicious plan, dispatch Codex as the audit orchestrator. Codex then reads the subagent-launcher skill
 # and may use bounded DeepSeek research subagents for independent review;
 # subagent (partnered-5, provider=deepseek, model=deepseek:deepseek-v4-pro),
@@ -4969,7 +5514,7 @@ PY
 
 dispatch_one() {
   local gather_file="$1"
-  local plan workspace reasons kind receipt_root dispatch_id child_pid rc run_id_file managed_run_id managed_manifest
+  local plan workspace reasons kind receipt_root dispatch_id child_pid rc run_id_file managed_run_id managed_manifest review_evidence evidence_size brief_size model_resp_path
   plan="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['plan'])" "$gather_file")"
   workspace="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['workspace'])" "$gather_file")"
   reasons="$(python3 -c "import json,sys; print('; '.join(json.load(open(sys.argv[1]))['reasons']))" "$gather_file")"
@@ -4977,6 +5522,35 @@ dispatch_one() {
   log "plan=$plan reasons=$reasons"
 
   local brief="$GATHER_DIR/brief-${plan}.md"
+  review_evidence="$GATHER_DIR/review-evidence-${plan}.json"
+  if ! PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
+    "$gather_file" "$review_evidence" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
+    bounded_audit_review_pointer,
+)
+
+source = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+finding = json.loads(source.read_text(encoding="utf-8"))
+pointer = bounded_audit_review_pointer(finding, evidence_path=source)
+destination.write_text(
+    json.dumps(pointer, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+  then
+    log "L3 review evidence pointer failed closed plan=$plan"
+    return 1
+  fi
+  evidence_size="$(wc -c < "$review_evidence" | tr -d ' ')"
+  if [[ ! "$evidence_size" =~ ^[0-9]+$ ]] || (( evidence_size > AUDIT_REVIEW_EVIDENCE_MAX_BYTES )); then
+    log "L3 review evidence pointer exceeded 64 KiB plan=$plan bytes=${evidence_size:-unknown}"
+    return 1
+  fi
   {
     echo "# Progress audit: $plan"
     echo
@@ -4988,9 +5562,9 @@ dispatch_one() {
     echo "- Use live-process discovery, repair-data sidecars, tmux state, and watchdog archives only as corroboration."
     echo "- Reconcile contradictions explicitly instead of letting corroboration override the ledger."
     echo
-    echo "Evidence JSON (verbatim):"
+    echo "Validated bounded evidence pointer:"
     echo '```json'
-    cat "$gather_file"
+    cat "$review_evidence"
     echo '```'
     echo
     echo "You are reconciling a cloud megaplan SESSION, not just one plan. Reconciler"
@@ -5145,8 +5719,14 @@ EOF
 
   } > "$brief"
   redact_file_in_place "$brief"
+  brief_size="$(wc -c < "$brief" | tr -d ' ')"
+  if [[ ! "$brief_size" =~ ^[0-9]+$ ]] || (( brief_size > AUDIT_REVIEW_BRIEF_MAX_BYTES )); then
+    log "L3 reviewer brief exceeded 128 KiB preflight plan=$plan bytes=${brief_size:-unknown}"
+    return 1
+  fi
 
   local resp_path="$GATHER_DIR/resp-${plan}.txt"
+  model_resp_path="$GATHER_DIR/model-response-${plan}.txt"
   if python3 - "$gather_file" <<'PY'
 import json
 import sys
@@ -5252,6 +5832,7 @@ PY
           --sandbox read-only \
           -c model="$AUDIT_CODEX_MODEL" \
           -c model_reasoning_effort=high \
+          --output-last-message "$model_resp_path" \
           -
     ) > "$resp_path" 2>"$GATHER_DIR/resp-${plan}.err" &
     child_pid=$!
@@ -5265,6 +5846,24 @@ PY
     if ! finalize_audit_dispatch_receipt "$receipt_root" "$dispatch_id" "$rc"; then
       log "six-hour audit dispatch indeterminate: receipt finalization failed plan=$plan"
     fi
+    PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
+      "$resp_path" "$model_resp_path" <<'PY'
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
+    normalize_audit_review_response,
+)
+
+transcript = Path(sys.argv[1])
+model_output = Path(sys.argv[2])
+source = model_output if model_output.is_file() and model_output.stat().st_size else transcript
+try:
+    raw = source.read_text(encoding="utf-8", errors="replace")
+except OSError:
+    raw = ""
+transcript.write_text(normalize_audit_review_response(raw) + "\n", encoding="utf-8")
+PY
     redact_file_in_place "$resp_path"
     redact_file_in_place "$GATHER_DIR/resp-${plan}.err"
     managed_run_id="$(cat "$run_id_file" 2>/dev/null || true)"
@@ -5335,7 +5934,7 @@ text = redact_text(open(resp, encoding="utf-8").read().strip())
 data["codex_launch_attempted"] = launch_attempted == "1"
 data["requested_research_model"] = model
 data["agent_response"] = text
-data["hypothesis"] = text
+data["hypothesis"] = text[:2000]
 with open(gather, "w", encoding="utf-8") as h:
     json.dump(data, h, indent=2, sort_keys=True)
 PY
@@ -5618,11 +6217,22 @@ for item in findings + green_checks:
     audit_complete = incident_audit.get("audit_complete") if isinstance(incident_audit.get("audit_complete"), dict) else {}
     raw_handoff = audit_complete.get("next_expected_event") or incident_audit.get("next_expected_event")
     normalized_handoff = _normalize_handoff(audit_complete.get("outcome"), raw_handoff)
+    reconciler_findings = []
+    for finding in (incident_audit.get("findings") or [])[-10:]:
+        if not isinstance(finding, dict):
+            continue
+        reconciler_findings.append(
+            {
+                key: (str(finding.get(key) or "")[:1000] if key in {"message", "recommendation"} else finding.get(key))
+                for key in ("code", "status", "message", "recommendation")
+                if finding.get(key) not in (None, "")
+            }
+        )
     decision = {
-        "reconciler_findings": incident_audit.get("findings") or [],
+        "reconciler_findings": reconciler_findings,
         "reconciler_next_expected_event": raw_handoff,
-        "hypothesis": item.get("hypothesis") or "",
-        "corroboration": item.get("corroboration") or [],
+        "hypothesis": str(item.get("hypothesis") or "")[:2000],
+        "corroboration": [str(value)[:1000] for value in (item.get("corroboration") or [])[-10:]],
     }
     links = {
         "incident_summary": (item.get("source_refs") or {}).get("incident_summary_path"),
@@ -5674,6 +6284,7 @@ PY
 }
 
 # Snapshot each finding into its own gather file for the subagent.
+revalidate_audit_snapshot >/dev/null
 python3 - "$GATHER_DIR/findings.json" "$GATHER_DIR" <<'PY'
 import json, os, sys
 findings_path, gather_dir = sys.argv[1], sys.argv[2]
@@ -5692,6 +6303,10 @@ if [[ "$AUDIT_MUTATION_AUTHORIZED_FLAG" == "1" ]]; then
 else
   log "autofix observed but mutation blocked; skipping Codex dispatch for findings=$N_FINDINGS"
 fi
+
+# Model review can outlast a repair attempt.  Revalidate again before the
+# effect controller so a changed custody snapshot cannot dispatch stale work.
+revalidate_audit_snapshot >/dev/null
 
 record_incident_audits "$GATHER_DIR/findings.json"
 
@@ -6361,6 +6976,35 @@ for finding in findings:
         if isinstance(finding.get("l3_escalation"), dict)
         else {}
     )
+    corrective_path = (
+        escalation.get("corrective_path")
+        if isinstance(escalation.get("corrective_path"), dict)
+        else {}
+    )
+    if (
+        escalation.get("decision") == "approval_required"
+        and corrective_path.get("kind") == "approval_gate"
+        and corrective_path.get("action") == "await_human_pr_merge"
+        and corrective_path.get("repair_dispatch_permitted") is False
+    ):
+        # This is a valid non-mutating L3 corrective verdict, not a missing
+        # repair dispatch. Preserve the historical repair failure findings, but
+        # make the current next event and escalation receipt unambiguous.
+        audit_findings.append(
+            {
+                "layer": "l3",
+                "code": "approval_required",
+                "status": "warn",
+                "severity": "warn",
+                "message": str(corrective_path.get("reason") or "")[:2000],
+                "recommendation": "auditor_escalate_to_human",
+                "corrective_action": "await_human_pr_merge",
+                "pr_number": corrective_path.get("pr_number"),
+                "escalation_id": escalation.get("escalation_id"),
+            }
+        )
+        aggregate_outcome = "auditor_human_escalation"
+        aggregate_next_event = "human_approval.pr_merge"
     if escalation.get("repair_dispatched") is True:
         dispatch_ref = (
             escalation.get("managed_manifest_path")

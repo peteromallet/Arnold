@@ -3,17 +3,25 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+from pathlib import Path
+
+import pytest
 
 from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
+    AUDIT_REVIEW_EVIDENCE_MAX_BYTES,
     DEEP_REPAIR_DIFFICULTY,
     DEEP_REPAIR_MODEL,
     DEEP_REPAIR_RUN_KIND,
     EscalationPolicy,
     bounded_repair_context,
+    bounded_audit_review_pointer,
+    bounded_auditor_projection,
     classify_true_stall,
     next_attempt_state,
+    normalize_audit_review_response,
     plan_dispatch,
     record_reverification,
+    validate_l3_repair_dispatch_context,
     validate_managed_launch,
     verify_recovery,
 )
@@ -148,6 +156,156 @@ def _true_stall() -> dict:
     }
 
 
+def _approval_gate_after_superfixer_repair() -> dict:
+    finding = _true_stall()
+    finding["current_state"] = "done"
+    finding["resolver_state"] = {
+        "canonical_state": "COMPLETED",
+        "confidence": "high",
+    }
+    finding["chain_state_summary"]["current"].update(
+        {
+            "last_state": "awaiting_pr_merge",
+            "chain_complete": False,
+            "pr_number": 255,
+            "pr_state": "open",
+        }
+    )
+    finding["current_target"]["ci_health"] = {
+        "available": True,
+        "status": "green",
+        "pr_number": 255,
+    }
+    finding["repair_data_summary"].update(
+        {
+            "repair_goal_summary": {"status": "approval_required"},
+            "investigation_summary": {
+                "actual_failure": {
+                    "mechanism": "required quality commit was absent from target ancestry"
+                },
+                "safe_repair_target": {
+                    "kind": "target_workspace",
+                    "scope": "apply-required-quality-commit",
+                },
+            },
+        }
+    )
+    finding["meta_repair_summary"]["repair_goal"] = {
+        "status": "approval_required",
+        "control_action": "await_approval",
+    }
+    return finding
+
+
+def test_l3_dispatch_context_requires_coherent_bounded_request_custody(
+    tmp_path: Path,
+) -> None:
+    context = bounded_repair_context(_true_stall())
+    context_path = tmp_path / "repair-context.json"
+    context_path.write_text(json.dumps(context), encoding="utf-8")
+    request_id = "a" * 64
+    request_path = tmp_path / f"{request_id}.json"
+    gate = context["gate"]
+    request = {
+        "schema_version": 1,
+        "kind": "repair_request",
+        "request_id": request_id,
+        "source": "six_hour_auditor",
+        "session": context["session"],
+        "resident_delegation": {
+            "schema_version": "arnold-resident-delegation-provenance-v1",
+            "source_record_id": "message-1",
+        },
+        "target": {
+            "dispatch_intent": "deep_superfixer_repair",
+            "retry_strategy": "deep_superfixer_repair",
+            "repair_context_path": str(context_path),
+            "repair_context_digest": context["context_digest"],
+            "root_cause_identity": gate["escalation_id"],
+            "l3_escalation_gate": gate,
+        },
+    }
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+
+    pointer = validate_l3_repair_dispatch_context(
+        context_path=context_path,
+        request_path=request_path,
+        expected_session=context["session"],
+        expected_context_digest=context["context_digest"],
+        expected_escalation_id=gate["escalation_id"],
+        expected_request_id=request_id,
+    )
+
+    assert pointer["schema_version"] == "arnold-l3-meta-repair-pointer-v1"
+    assert pointer["context"]["bytes"] == context_path.stat().st_size
+    assert pointer["gate"]["first_broken_layer"] == "L1"
+
+    request["target"]["repair_context_digest"] = "b" * 64
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+    with pytest.raises(ValueError, match="disagrees"):
+        validate_l3_repair_dispatch_context(
+            context_path=context_path,
+            request_path=request_path,
+            expected_session=context["session"],
+            expected_context_digest=context["context_digest"],
+            expected_escalation_id=gate["escalation_id"],
+            expected_request_id=request_id,
+        )
+
+
+def test_l3_dispatch_context_fails_closed_above_64_kib(tmp_path: Path) -> None:
+    context_path = tmp_path / "repair-context.json"
+    context_path.write_bytes(b"{" + b" " * (64 * 1024) + b"}")
+    request_id = "c" * 64
+    request_path = tmp_path / f"{request_id}.json"
+    request_path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="byte bound"):
+        validate_l3_repair_dispatch_context(
+            context_path=context_path,
+            request_path=request_path,
+            expected_session="stuck-chain",
+            expected_context_digest="d" * 64,
+            expected_escalation_id="l3-escalation:test",
+            expected_request_id=request_id,
+        )
+
+
+def test_l3_review_pointer_does_not_inline_recursive_projection(
+    tmp_path: Path,
+) -> None:
+    recursive = {
+        "incident_id": "inc-1",
+        "summary": "current incident",
+        "decision": {"prior_audit_response": "x" * (23 * 1024 * 1024)},
+    }
+    bounded_projection = bounded_auditor_projection(recursive, kind="incident")
+    assert "decision" not in bounded_projection
+    assert len(json.dumps(bounded_projection).encode("utf-8")) < 8192
+
+    finding = _true_stall()
+    finding["incident_projection"] = recursive
+    evidence_path = tmp_path / "finding.json"
+    evidence_path.write_text(json.dumps(finding), encoding="utf-8")
+    pointer = bounded_audit_review_pointer(finding, evidence_path=evidence_path)
+    encoded = json.dumps(pointer, sort_keys=True).encode("utf-8")
+
+    assert len(encoded) <= AUDIT_REVIEW_EVIDENCE_MAX_BYTES
+    assert pointer["authoritative_evidence"]["bytes"] > 23 * 1024 * 1024
+    assert "x" * 4096 not in encoded.decode("utf-8")
+
+
+def test_l3_review_response_fails_closed_on_overflow_and_cli_error() -> None:
+    overflow = normalize_audit_review_response("x" * (33 * 1024))
+    cli_error = normalize_audit_review_response(
+        "OpenAI Codex\nError: turn/start failed: Input exceeds the maximum length; input_too_large"
+    )
+
+    assert overflow.startswith("REPAIR_REQUEST\n")
+    assert cli_error.startswith("REPAIR_REQUEST\n")
+    assert normalize_audit_review_response("PASSIVE\nNo issue.") == "PASSIVE\nNo issue."
+
+
 def test_true_stall_gate_requires_all_six_sources_and_walks_l1_l2_l3() -> None:
     gate = classify_true_stall(_true_stall())
 
@@ -201,6 +359,195 @@ def test_live_slow_chain_with_fresh_heartbeat_is_a_hard_noop() -> None:
         "chain_log",
         "token_heartbeat",
     ]
+
+
+def test_superseded_snapshot_fails_closed() -> None:
+    finding = _true_stall()
+    finding["evidence_snapshot"] = {
+        "status": "superseded",
+        "changed_refs": [{"kind": "repair_data", "path": "/tmp/repair.json"}],
+    }
+
+    gate = classify_true_stall(finding)
+
+    assert gate["eligible"] is False
+    assert "evidence_snapshot_superseded" in gate["blocks"]
+
+
+def test_terminal_repair_failure_is_not_semantic_progress() -> None:
+    finding = _true_stall()
+    finding["events_mtime_age_min"] = 2
+    finding["repair_data_summary"]["mtime_age_min"] = 1
+    finding["acceptance_progress"] = {"advanced": False, "accepted_event_age_min": None}
+    finding["deterministic_superfixer_evidence"].update(
+        {"actionable": True, "runner_dead": True, "chain_incomplete": True}
+    )
+
+    gate = classify_true_stall(finding)
+
+    assert "no_progress_window_not_proven" not in gate["blocks"]
+    assert gate["progress"]["terminal_repair_failure_without_progress"] is True
+
+
+def test_retroactive_superfixer_failure_routes_to_explicit_approval_gate() -> None:
+    gate = classify_true_stall(_approval_gate_after_superfixer_repair())
+
+    assert gate["eligible"] is False
+    assert gate["decision"] == "approval_required"
+    assert gate["corrective_path"] == {
+        "schema_version": "arnold-l3-corrective-path-v1",
+        "kind": "approval_gate",
+        "decision": "approval_required",
+        "action": "await_human_pr_merge",
+        "repair_dispatch_permitted": False,
+        "pr_number": 255,
+        "pr_state": "open",
+        "gate_state": "awaiting_pr_merge",
+        "root_cause": "required quality commit was absent from target ancestry",
+        "safe_repair_target": {
+            "kind": "target_workspace",
+            "scope": "apply-required-quality-commit",
+        },
+        "first_broken_layer": "L1",
+        "first_broken_axis": gate["custody_walk"]["first_broken_axis"],
+        "missed_by_layer": "L2",
+        "missed_by_axis": gate["custody_walk"]["missed_by_axis"],
+        "reason": (
+            "the historical L1/L2 failure is detected and repaired locally, but "
+            "the authoritative review policy requires remote PR merge approval"
+        ),
+    }
+    assert gate["custody_walk"]["first_broken_layer"] == "L1"
+    assert gate["custody_walk"]["missed_by_layer"] == "L2"
+
+
+def test_terminal_l2_receipt_completes_process_evidence_without_live_pid() -> None:
+    finding = _true_stall()
+    finding["current_target"]["tmux_process"] = {
+        "session": "custody-control-plane",
+        "live_status": "unknown",
+    }
+    finding["active_step_liveness"] = {"present": False}
+    finding["prior_watchdog_report_refs"] = [{"matched_status": "dispatched"}]
+    finding["meta_repair_summary"].update(
+        {
+            "should_dispatch": True,
+            "meta_run_refs": [
+                {
+                    "current_episode": True,
+                    "failure_code": "meta_repair_authority_blocked",
+                }
+            ],
+            "failed_meta_run_count": 1,
+            "failed_meta_run_evidence": True,
+        }
+    )
+    finding["deterministic_superfixer_evidence"].update(
+        {
+            "actionable": True,
+            "failed_l2_evidence": True,
+            "runner_dead": True,
+            "chain_incomplete": True,
+        }
+    )
+
+    gate = classify_true_stall(finding)
+
+    assert gate["evidence_sources"]["live_process"]["state"] == "dead"
+    assert "incomplete_or_incoherent_evidence" not in gate["blocks"]
+    assert gate["eligible"] is True
+
+
+def test_terminal_l2_all_launch_paths_failed_is_dispatchable_immediately() -> None:
+    finding = _true_stall()
+    finding["current_target"]["tmux_process"] = {"live_status": "unknown"}
+    finding["active_step_liveness"] = {"present": False}
+    finding["meta_repair_summary"].update(
+        {
+            "should_dispatch": True,
+            "missing_meta_run_evidence": False,
+            "meta_run_refs": [
+                {
+                    "current_episode": True,
+                    "failure_code": "meta_repair_launch_failure",
+                    "launch_failure": True,
+                    "terminal_failure": True,
+                }
+            ],
+            "failed_meta_run_count": 1,
+            "failed_meta_run_evidence": True,
+        }
+    )
+    finding["deterministic_superfixer_evidence"].update(
+        {
+            "actionable": True,
+            "failed_l2_evidence": True,
+            "runner_dead": True,
+            "chain_incomplete": True,
+        }
+    )
+
+    gate = classify_true_stall(finding)
+
+    assert gate["custody_walk"]["L2"]["FIXED"] is False
+    assert gate["evidence_sources"]["live_process"]["state"] == "dead"
+    assert gate["eligible"] is True
+
+
+def test_ordinary_retrigger_failure_is_l2_fixed_axis_not_tracking_axis() -> None:
+    finding = _true_stall()
+    finding["meta_repair_summary"]["failed_meta_run_count"] = 0
+    finding["meta_repair_summary"]["missing_meta_run_evidence"] = False
+    finding["meta_repair_summary"]["meta_record_count"] = 1
+    finding["meta_repair_summary"]["meta_run_log_count"] = 1
+    finding["meta_repair_summary"]["meta_run_refs"] = [
+        {
+            "current_episode": True,
+            "failure_code": "ordinary_retrigger_failed",
+            "ordinary_retrigger_failed": True,
+            "launch_failure": False,
+        }
+    ]
+    # "No healthy L2" is not the same as "no current L2 context": this
+    # current failed episode is sufficient context for the FIXED-axis verdict.
+    finding["deterministic_superfixer_evidence"]["absent_or_stale_l2"] = True
+
+    gate = classify_true_stall(finding)
+
+    assert gate["custody_walk"]["L2"]["TRACKED"] is True
+    assert gate["custody_walk"]["L2"]["CONTEXT"] is True
+    assert gate["custody_walk"]["L2"]["FIXED"] is False
+    assert gate["custody_walk"]["L2"]["failure"]["axis"] == "FIXED"
+
+
+def test_meta_trigger_rejection_is_l2_fixed_axis_with_current_context() -> None:
+    finding = _true_stall()
+    finding["meta_repair_summary"].update(
+        {
+            "failed_meta_run_count": 0,
+            "missing_meta_run_evidence": False,
+            "meta_record_count": 1,
+            "meta_run_log_count": 1,
+            "meta_run_refs": [
+                {
+                    "current_episode": True,
+                    "failure_code": "meta_repair_trigger_rejected",
+                    "trigger_rejected": True,
+                    "launch_failure": False,
+                }
+            ],
+        }
+    )
+    finding["deterministic_superfixer_evidence"]["absent_or_stale_l2"] = True
+
+    gate = classify_true_stall(finding)
+
+    l2 = gate["custody_walk"]["L2"]
+    assert l2["TRACKED"] is True
+    assert l2["CONTEXT"] is True
+    assert l2["FIXED"] is False
+    assert l2["failure"]["axis"] == "FIXED"
+    assert l2["failure"]["trigger_rejected"] is True
 
 
 def test_partial_liveness_with_unclaimed_request_is_l1_context_failure() -> None:

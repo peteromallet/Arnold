@@ -43,6 +43,7 @@ def test_repair_loop_bin_falls_back_when_override_missing() -> None:
             "SESSION=demo-session",
             f"MEGAPLAN_META_ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
             "MEGAPLAN_META_SELF_PATH=/usr/local/bin/arnold-meta-repair-loop",
+            f"ARNOLD_META_REPAIR_LOOP_ORIGIN={shlex.quote(str(WRAPPER_PATH))}",
             "MEGAPLAN_META_REPAIR_LOOP_BIN=/tmp/missing-repair-loop",
             prolog,
             'printf "REPAIR_LOOP_BIN=%s\\n" "$REPAIR_LOOP_BIN"',
@@ -79,6 +80,26 @@ def test_meta_repair_wrapper_fails_closed_on_commit_custody() -> None:
 
     assert 'SOURCE_BASELINE_HEAD="$(git -C "$ARNOLD_SRC" rev-parse HEAD' in text
     assert "verify_meta_repair_commit_custody" in text
+
+
+def test_l3_trigger_requires_typed_request_and_uses_pointer_prompt() -> None:
+    text = _meta_repair_wrapper()
+
+    assert 'if [[ "$WATCHDOG_TRIGGER" == "l3_progress_auditor" ]]' in text
+    assert "validate_l3_repair_dispatch_context" in text
+    assert '"${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}"' in text
+    assert '"${ARNOLD_REPAIR_QUEUE_ROOT:-}"' in text
+    assert '"${ARNOLD_L3_REPAIR_OUTCOME_PATH:-}"' in text
+    assert "arnold-l3-meta-repair-pointer-v1" in (
+        REPO_ROOT
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "progress_auditor_escalation.py"
+    ).read_text(encoding="utf-8")
+    assert "deep repair pointer exceeds its 8 KiB prompt budget" in text
+    assert "json.dumps(pointer, indent=2, sort_keys=True)" in text
+    assert "json.dumps(payload, indent=2, sort_keys=True)" not in text
 
 
 def test_meta_repair_provenance_bootstrap_uses_safe_python_path() -> None:
@@ -363,4 +384,21 @@ def test_retrigger_helper_passes_workspace_and_remote_spec(tmp_path: Path) -> No
     assert payload["accepted"] is True
     assert payload["retrigger_command"] == (
         f"{repair_loop_bin} demo-session {workspace} {spec_path}"
+    )
+
+
+def test_meta_investigator_gets_one_bounded_schema_correction_retry() -> None:
+    wrapper = _meta_repair_wrapper()
+
+    assert "invalid_candidate_receipt" in wrapper
+    assert "validator_error" in wrapper
+    assert ".invalid-1.json" in wrapper
+    assert ".correction-1.md" in wrapper
+    assert "correction envelope failed 64 KiB preflight" in wrapper
+    assert ":correction:1" in wrapper
+    assert "launching one bounded correction" in wrapper
+    assert "invent new evidence, broaden mutation scope" in wrapper
+    assert (
+        "preserve_live is valid only when a correct live worker is actually present"
+        in wrapper
     )

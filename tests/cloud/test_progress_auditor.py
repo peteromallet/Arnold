@@ -49,6 +49,13 @@ def test_auditor_gather_prefers_deployed_source_over_caller_cwd() -> None:
     assert cwd_at < deployed_source_at
 
 
+def test_auditor_workspace_discovery_root_is_operator_scopable() -> None:
+    text = _wrapper("arnold-progress-auditor")
+
+    assert 'AUDIT_WORKSPACE_ROOT="${MEGAPLAN_AUDIT_WORKSPACE_ROOT:-/workspace}"' in text
+    assert '"$DISCOVER_BIN" "$AUDIT_WORKSPACE_ROOT" "$ARNOLD_SRC"' in text
+
+
 def _systemd_file(name: str) -> str:
     return (SYSTEMD_DIR / name).read_text(encoding="utf-8")
 
@@ -110,6 +117,71 @@ def test_nested_repair_queue_drift_is_a_deterministic_finding() -> None:
 
     assert reason.startswith("nested_repair_queue_custody_drift:")
     assert "request-1" in reason
+
+
+def test_l3_carries_repair_root_cause_into_terminal_owner_finding() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _repair_owner_terminal_failure_reason(ev):")
+    end = text.index("\ndef _canonical_launch_disagreement_reason", start)
+    namespace: dict[str, object] = {
+        "_chain_state_looks_terminal": lambda _chain: False,
+    }
+    exec(text[start:end], namespace)
+    evidence = {
+        "chain_state_summary": {"current": {"last_state": "blocked"}},
+        "repair_data_summary": {
+            "investigation_summary": {
+                "actual_failure": {
+                    "mechanism": "validated target fix requires receipt-bound quality recovery"
+                }
+            },
+            "repair_goal_summary": {
+                "terminal_failures": [
+                    {
+                        "phase": "authorized-recovery-launch-failed",
+                        "outcome": "recovery_not_verified",
+                        "reason": "failed:quality_recovery_command_invalid",
+                    }
+                ]
+            },
+        },
+    }
+
+    reason = namespace["_repair_owner_terminal_failure_reason"](evidence)
+
+    assert "class=receipt_bound_quality_recovery_transport" in reason
+    assert "receipt-bound quality recovery" in reason
+
+
+def test_l3_derives_bounded_root_cause_when_active_retry_replaces_investigation() -> None:
+    text = _wrapper("arnold-progress-auditor")
+    start = text.index("def _repair_owner_terminal_failure_reason(ev):")
+    end = text.index("\ndef _canonical_launch_disagreement_reason", start)
+    namespace: dict[str, object] = {
+        "_chain_state_looks_terminal": lambda _chain: False,
+    }
+    exec(text[start:end], namespace)
+    evidence = {
+        "chain_state_summary": {"current": {"last_state": "executed"}},
+        "repair_data_summary": {
+            "investigation_summary": {"status": "missing"},
+            "repair_goal_summary": {
+                "terminal_failures": [
+                    {
+                        "phase": "authorized-recovery-no-progress",
+                        "outcome": "recovery_not_verified",
+                        "reason": "the exact investigator-authorized recovery command remained live",
+                    }
+                ]
+            },
+        },
+    }
+
+    reason = namespace["_repair_owner_terminal_failure_reason"](evidence)
+
+    assert "class=owner_terminalized_before_outcome" in reason
+    assert "owner terminalized while its exact supported recovery command remained live" in reason
+    assert "unavailable" not in reason
 
 
 def test_repair_custody_gather_correlates_nested_and_central_queues(
@@ -445,8 +517,11 @@ def _run_gather_program(
     worklist_path = tmp_path / "worklist.jsonl"
     gather_dir = tmp_path / "gather"
     gather_dir.mkdir(parents=True, exist_ok=True)
+    normalized_entries = [
+        {"session_evidence_scope": True, **entry} for entry in worklist_entries
+    ]
     worklist_path.write_text(
-        "".join(json.dumps(entry, sort_keys=True) + "\n" for entry in worklist_entries),
+        "".join(json.dumps(entry, sort_keys=True) + "\n" for entry in normalized_entries),
         encoding="utf-8",
     )
 
@@ -660,6 +735,8 @@ def _run_dispatch_one(
             "AUDIT_CODEX_MODEL=gpt-5.6-sol",
             "SUBAGENT_PROFILE=partnered-5",
             "CODEX_TIMEOUT=30",
+            "AUDIT_REVIEW_EVIDENCE_MAX_BYTES=65536",
+            "AUDIT_REVIEW_BRIEF_MAX_BYTES=131072",
             'AUDIT_AUTOFIX_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_enabled)"',
             'AUDIT_MUTATION_AUTHORIZED_FLAG="$(audit_flag_enabled audit_autofix_mutation_authorized)"',
             'AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_commit_enabled)"',
@@ -838,6 +915,17 @@ def evaluate_meta_repair_triggers(*args, **kwargs):
         "arnold_pipelines/megaplan/cloud/repair_contract.py": """
 def read_jsonl_records(*args, **kwargs):
     return []
+""",
+        "arnold_pipelines/megaplan/cloud/progress_auditor_liveness.py": """
+def classify_runner_liveness(tmux, active_step, watchdog_statuses=()):
+    live = bool((tmux or {}).get("pid_live") is True or (active_step or {}).get("worker_pid_alive") is True)
+    dead = bool(not live and (active_step or {}).get("worker_pid_alive") is False)
+    state = "alive" if live else ("dead" if dead else "unknown")
+    return {"state": state, "live": live, "dead": dead, "known": state != "unknown", "source": "stub"}
+""",
+        "arnold_pipelines/megaplan/cloud/progress_auditor_escalation.py": """
+def bounded_auditor_projection(value, *, kind):
+    return dict(value) if isinstance(value, dict) else {}
 """,
         "arnold_pipelines/megaplan/cloud/current_target.py": (
             "from arnold_pipelines.megaplan.cloud._stub_capture import append_call\n\n\n"
@@ -1644,7 +1732,8 @@ class TestAuditorAutofixPromptGates:
 
         assert updated["_codex_argv"] == [
             "exec", "--sandbox", "read-only", "-c", "model=gpt-5.6-sol",
-            "-c", "model_reasoning_effort=high", "-"
+            "-c", "model_reasoning_effort=high", "--output-last-message",
+            str(tmp_path / "gather" / "model-response-audit-model-pin.txt"), "-"
         ]
         receipt_path = (
             Path(updated["dispatch_receipt_root"])
@@ -1843,7 +1932,7 @@ class TestAuditorWrapperBoundary:
         repair_root = tmp_path / "repair-data"
         repair_root.mkdir(parents=True, exist_ok=True)
 
-        _run_gather_program(
+        findings = _run_gather_program(
             [
                 {
                     "workspace": str(workspace),
@@ -1890,6 +1979,8 @@ class TestAuditorWrapperBoundary:
         assert projection_input["ci_health"]["failing_run_count"] == 2
         assert projection_input["engine_tree"]["status"] == "red"
         assert projection_input["engine_tree"]["import_consumers"] == ["cloud_wrappers"]
+        assert findings["findings"][0]["ci_health"]["status"] == "red"
+        assert findings["findings"][0]["engine_tree"]["status"] == "red"
 
     def test_gather_filters_dead_liveness_and_uses_drift_metadata_for_reasons(
         self, tmp_path: Path
@@ -2886,6 +2977,13 @@ class TestLiveSignalFiltering:
             "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents).\n",
             encoding="utf-8",
         )
+        terminal_log = meta_runs / "20260703T211455Z-demo-session.log"
+        terminal_log.write_text(
+            "[meta-repair 2026-07-03T21:15:55+00:00] direct Hermes fallback produced no recordable verdict\n"
+            "[meta-repair 2026-07-03T21:15:56+00:00] all meta-repair launch paths failed; negative evidence persisted\n",
+            encoding="utf-8",
+        )
+        os.utime(terminal_log, (2_000_000_000, 2_000_000_000))
 
         findings = _run_gather_program(
             [
@@ -2911,7 +3009,12 @@ class TestLiveSignalFiltering:
         assert meta["failed_meta_run_evidence"] is True
         assert meta["failed_meta_record_count"] == 1
         assert meta["failed_meta_run_count"] >= 1
-        assert any("failed launch/no-output evidence" in reason for reason in finding["reasons"])
+        current_run = next(
+            ref for ref in meta["meta_run_refs"] if ref.get("current_episode")
+        )
+        assert current_run["failure_code"] == "meta_repair_launch_failure"
+        assert current_run["launch_failure"] is True
+        assert current_run["terminal_failure"] is True
 
     def test_meta_repair_summary_ignores_partial_liveness_for_complete_chain_without_repair_context(
         self, tmp_path: Path
@@ -3246,7 +3349,10 @@ class TestLiveSignalFiltering:
                     "chain_complete": True,
                     "pr_state": "merged",
                     "milestones": [{"label": "m1"}, {"label": "m2"}],
-                    "completed": [{"label": "m1", "status": "done"}, {"label": "m2", "status": "done"}],
+                    "completed": [
+                        {"label": "m1", "status": "done"},
+                        {"label": "m2", "plan": "demo-plan", "status": "done"},
+                    ],
                 }
             ),
             encoding="utf-8",
@@ -3300,7 +3406,7 @@ class TestLiveSignalFiltering:
                     "chain_complete": True,
                     "pr_state": "merged",
                     "milestones": [{"label": "m1"}],
-                    "completed": [{"label": "m1", "status": "done"}],
+                    "completed": [{"label": "m1", "plan": "demo-plan", "status": "done"}],
                 }
             ),
             encoding="utf-8",
@@ -6155,7 +6261,7 @@ def test_gather_flags_deterministic_repair_failure_exhaustion(
     )
 
 
-def test_gather_suppresses_clean_completed_shadow_but_not_session_custody(
+def test_gather_suppresses_completed_shadow_including_session_custody(
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -6183,7 +6289,15 @@ def test_gather_suppresses_clean_completed_shadow_but_not_session_custody(
         ),
         encoding="utf-8",
     )
-    worklist = [{"workspace": str(workspace), "plan": shadow, "session": session, "kind": "chain"}]
+    worklist = [
+        {
+            "workspace": str(workspace),
+            "plan": shadow,
+            "session": session,
+            "kind": "chain",
+            "session_evidence_scope": False,
+        }
+    ]
 
     clean = _run_gather_program(worklist, tmp_path)
 
@@ -6211,11 +6325,12 @@ def test_gather_suppresses_clean_completed_shadow_but_not_session_custody(
         extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_dir)},
     )
 
-    assert suspicious["green_checks"] == []
-    assert any(
-        reason.startswith("repair_data_ghost_running:")
-        for reason in suspicious["findings"][0]["reasons"]
+    assert suspicious["findings"] == []
+    assert suspicious["green_checks"][0]["suppression"]["reason"] == (
+        "completed_plan_shadow_plan_local_evidence_suppressed"
     )
+    chain = suspicious["green_checks"][0]["chain_state_summary"]["current"]
+    assert any(item.get("plan") == shadow for item in chain["completed"])
 
 
 def test_gather_promotes_installed_wrapper_drift_and_ignores_terminal_history(

@@ -208,7 +208,11 @@ def prepare_reset_notification(
     try:
         with _root_lock(root):
             if source_record_id:
-                existing = _restart_record_for_source(root, source_record_id)
+                existing = _restart_record_for_source(
+                    root,
+                    source_record_id,
+                    restart_request=record["restart"]["request"],
+                )
                 if existing is not None:
                     existing_path, existing_record = existing
                     return ResetNotificationReservation(
@@ -1080,24 +1084,40 @@ def _active_restart_record(root: Path) -> dict[str, Any] | None:
 
 
 def _restart_record_for_source(
-    root: Path, source_record_id: str
+    root: Path,
+    source_record_id: str,
+    *,
+    restart_request: Mapping[str, Any] | None = None,
 ) -> tuple[Path, dict[str, Any]] | None:
-    """Find the one durable restart consumed by an inbound source message.
+    """Find a durable restart consumed by one source and runtime revision.
 
-    A Discord message is an immutable command identity.  Once it has prepared
-    a restart, startup recovery or duplicate execution must reuse that receipt
-    forever rather than minting another restart transaction.
+    Legacy requests without a runtime revision retain the original one-receipt
+    behavior. Revision-bound requests reuse an exact receipt, while a later
+    installed revision may create a new guarded transaction after the earlier
+    restart is terminal.
     """
 
+    requested_revision = str((restart_request or {}).get("runtime_revision") or "")
+    requested_source = str((restart_request or {}).get("runtime_source") or "")
     for path in sorted(root.glob("reset-*.json"), reverse=True):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
             continue
         initiator = payload.get("initiator") if isinstance(payload, Mapping) else None
-        if (
+        if not (
             isinstance(initiator, Mapping)
             and str(initiator.get("source_record_id") or "") == source_record_id
+        ):
+            continue
+        if not requested_revision:
+            return path, dict(payload)
+        restart = payload.get("restart") if isinstance(payload, Mapping) else None
+        prior_request = restart.get("request") if isinstance(restart, Mapping) else None
+        if (
+            isinstance(prior_request, Mapping)
+            and str(prior_request.get("runtime_revision") or "") == requested_revision
+            and str(prior_request.get("runtime_source") or "") == requested_source
         ):
             return path, dict(payload)
     return None
@@ -1152,7 +1172,7 @@ def _restart_request_projection(value: Mapping[str, Any] | None) -> dict[str, An
     if not isinstance(value, Mapping):
         return {}
     projected: dict[str, Any] = {}
-    for key in ("service", "unit", "backend"):
+    for key in ("service", "unit", "backend", "runtime_source", "runtime_revision"):
         if value.get(key) is not None:
             projected[key] = str(value[key])
     old_identity = value.get("old_identity")

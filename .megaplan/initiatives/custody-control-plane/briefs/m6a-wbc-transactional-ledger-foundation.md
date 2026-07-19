@@ -173,6 +173,31 @@ to M7/M8: explicit WBC-owner substrate handoff, versioned store/API and migratio
 transaction/outbox contract, exact query semantics, process-safe adapters,
 fault/replay evidence, runtime trace format, and an empty substrate-blocker list.
 
+## F01–F17 amendment contract
+
+This milestone is the primary implementation owner for F04, supplies the
+durable fact/receipt/outbox prerequisites for F02, F03, and F15, and begins R1.
+It does not own F01 lease identity, F02 trigger policy, F03 executor adoption,
+or F15 custody semantics. The complete non-duplicative allocation is in
+`../decisions/f01-f17-upcoming-milestone-amendment-20260717.md`.
+
+- **Prerequisite:** validate the accepted protected M6 owner/vector/inventory
+  handoff byte-for-byte and retain every schema-only WBC row as residual.
+- **First safe action:** with dispatch, promotion, and effects disabled, select
+  and characterize the repository-supported store/API boundary and generate
+  `evidence/m6a-f01-f17-substrate-map.json` joining F02 block/exit timestamps,
+  F03 repair receipts, F04 attempt/effect records, and F15 terminal/outbox keys.
+- **Deliverables:** the versioned store/API and migrations, the substrate map,
+  payload-policy evidence, process-safe adapters, exact-version queries,
+  reconciliation traces, and a separately identified installed-runtime vector.
+- **Acceptance evidence:** crash/concurrency/migration/data-policy suites prove
+  start-before-dispatch, one terminal or typed indeterminate, no post-terminal
+  append, deterministic reconciliation, and no false success/duplicate effect.
+- **Component-versus-wiring safeguard:** the existing WBC schema and support
+  manifest are inputs only. M6A may mark storage/API rows implemented but may not
+  mark producers, consumers, repair adoption, custody, or runtime acceptance
+  complete.
+
 ## Profile rationale
 
 Difficulty 5/5; `partnered-5/thorough/high @codex`. Transaction ordering,
