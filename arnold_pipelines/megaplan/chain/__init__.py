@@ -3736,6 +3736,11 @@ def _append_reconciled_completed_record_with_guard(
         "pr_number": pr_number,
         "pr_state": pr_state,
     }
+    if pr_number is None:
+        local_commit_sha = _current_git_head(root)
+        if local_commit_sha is not None:
+            record["local_commit_sha"] = local_commit_sha
+            record["publication_evidence"] = "local_no_push_reconciliation"
     appended, reason = _append_completed_with_guard(
         root,
         state,
@@ -6082,6 +6087,7 @@ def run_chain(
         "yes",
         "YES",
     }
+    completed_before_reconciliation = len(state.completed)
     state = _reconcile_chain_from_ground_truth(
         root,
         spec_path,
@@ -6092,6 +6098,15 @@ def run_chain(
     )
 
     events: list[dict[str, Any]] = []
+
+    if one and len(state.completed) > completed_before_reconciliation:
+        return _result(
+            "done",
+            state,
+            events,
+            spec=spec,
+            reason="one-milestone limit reached during ground-truth reconciliation",
+        )
 
     def log(msg: str, **fields: Any) -> None:
         events.append({"msg": msg, **fields})
@@ -6435,11 +6450,33 @@ def run_chain(
             state.last_state == STATE_AWAITING_PR_MERGE
             and state.current_milestone_index == idx
         ):
+            local_publication_sha: str | None = None
             if not use_pr or state.pr_number is None:
                 log(
                     f"review merge wait for {milestone.label} has no PR context; advancing"
                 )
+                if not use_pr and state.pr_number is not None:
+                    local_publication_sha = _current_git_head(root)
+                    if local_publication_sha is None:
+                        return _result(
+                            "blocked",
+                            state,
+                            events,
+                            spec=spec,
+                            reason=(
+                                f"milestone {milestone.label} cannot reconcile its open PR "
+                                "to a local-only run without a readable local HEAD"
+                            ),
+                        )
+                    state.metadata["local_pr_reconciliation"] = {
+                        "milestone": milestone.label,
+                        "pr_number": state.pr_number,
+                        "observed_pr_state": state.pr_state,
+                        "local_commit_sha": local_publication_sha,
+                    }
+                    state.pr_number = None
                 state.pr_state = None
+                chain_spec.save_chain_state(spec_path, state)
             else:
                 pr_state = _pr_state(root, state.pr_number, writer=writer)
                 if pr_state == "closed":
@@ -6607,16 +6644,20 @@ def run_chain(
                     spec=spec,
                     reason=validation_reason,
                 )
+            completion_record = {
+                "label": milestone.label,
+                "plan": state.current_plan_name,
+                "status": "done",
+                "pr_number": state.pr_number,
+                "pr_state": "merged" if state.pr_number is not None else None,
+            }
+            if local_publication_sha is not None:
+                completion_record["local_commit_sha"] = local_publication_sha
+                completion_record["publication_evidence"] = "local_no_push_reconciliation"
             appended, reason = _append_completed_with_guard(
                 root,
                 state,
-                {
-                    "label": milestone.label,
-                    "plan": state.current_plan_name,
-                    "status": "done",
-                    "pr_number": state.pr_number,
-                    "pr_state": "merged" if state.pr_number is not None else None,
-                },
+                completion_record,
                 implementation_milestone=True,
                 writer=writer,
             )
@@ -6794,6 +6835,18 @@ def run_chain(
                         root, spec_path, branch=milestone.branch, pr_number=None
                     )
                     state = chain_spec.load_chain_state(spec_path)
+                from arnold_pipelines.megaplan.chain.source_admission import (
+                    admit_milestone_source,
+                )
+
+                admit_milestone_source(
+                    root=root,
+                    spec_path=spec_path,
+                    spec=spec,
+                    state=state,
+                    milestone=milestone,
+                    milestone_index=idx,
+                )
                 eff_profile = state.profile_bumps.get(milestone.label) or milestone.profile
                 eff_robustness = (
                     state.robustness_bumps.get(milestone.label)
@@ -7753,6 +7806,34 @@ def build_chain_parser(subparsers: Any) -> None:
         help="Read chain state from this project directory instead of discovering from CWD.",
     )
 
+    reconcile_source_parser = chain_sub.add_parser(
+        "reconcile-source",
+        help="Register a content-addressed canonical source update for a future milestone",
+    )
+    reconcile_source_parser.add_argument("--spec", required=True)
+    reconcile_source_parser.add_argument("--project-dir", required=False)
+    reconcile_source_parser.add_argument("--milestone", required=True)
+    reconcile_source_parser.add_argument("--authoritative-source", required=True)
+    reconcile_source_parser.add_argument("--reason", required=True)
+
+    rebind_parser = chain_sub.add_parser(
+        "rebind",
+        help="Guardedly adopt a content-addressed successor chain without moving its cursor",
+    )
+    rebind_parser.add_argument("--spec", required=True)
+    rebind_parser.add_argument("--project-dir", required=False)
+    rebind_parser.add_argument("--from-bundle-sha256", required=True)
+    rebind_parser.add_argument("--to-bundle-sha256", required=True)
+    rebind_parser.add_argument("--expected-current-milestone", required=True)
+    rebind_parser.add_argument(
+        "--expected-current-plan",
+        required=True,
+        help="Exact current plan name, or @none when the cursor has no plan yet.",
+    )
+    rebind_parser.add_argument("--expected-next-milestone", required=True)
+    rebind_parser.add_argument("--reason", required=True)
+    rebind_parser.add_argument("--actor", default="operator")
+
     pause_parser = chain_sub.add_parser(
         "pause", help="Durably pause a chain and disable automatic recovery"
     )
@@ -7955,6 +8036,88 @@ def run_chain_cli(
             return _emit_error(exc)
         sys.stdout.write(
             json.dumps({"success": True, "spec": str(spec_path), **payload}, indent=2) + "\n"
+        )
+        return 0
+
+    if action == "reconcile-source":
+        try:
+            spec = chain_spec.load_spec(spec_path)
+            chain_state = chain_spec.load_chain_state(
+                spec_path,
+                verify_execution_binding=False,
+            )
+            from arnold_pipelines.megaplan.chain.source_admission import (
+                require_milestone_source_update,
+            )
+
+            requirement = require_milestone_source_update(
+                spec_path=spec_path,
+                state=chain_state,
+                spec=spec,
+                milestone_label=args.milestone,
+                authoritative_source=Path(args.authoritative_source).expanduser().resolve(),
+                reason=args.reason,
+            )
+            chain_spec.save_chain_state(spec_path, chain_state)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "reconcile-source",
+                    "requirement": requirement,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "rebind":
+        try:
+            chain_state = chain_spec.load_chain_state(
+                spec_path,
+                verify_execution_binding=False,
+            )
+            before = chain_state.to_dict()
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                rebind_execution_identity,
+            )
+
+            result = rebind_execution_identity(
+                spec_path,
+                chain_state,
+                expected_previous_bundle_sha256=args.from_bundle_sha256,
+                expected_active_bundle_sha256=args.to_bundle_sha256,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                expected_next_milestone=args.expected_next_milestone,
+                reason=args.reason,
+                actor=args.actor,
+            )
+            after = chain_state.to_dict()
+            for field in before:
+                if field != "metadata" and before[field] != after[field]:
+                    raise CliError(
+                        "chain_execution_binding_drift",
+                        f"chain rebind refused: operational field {field!r} changed",
+                    )
+            chain_spec.save_chain_state(spec_path, chain_state)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "rebind",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
         )
         return 0
 

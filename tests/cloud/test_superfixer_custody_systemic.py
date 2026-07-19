@@ -100,6 +100,18 @@ def test_l3_treats_recursion_and_investigator_access_failure_as_backstop_failure
         "meta_repair_summary": {"should_dispatch": True},
     }
     assert _l2_failure_fingerprint(base)["investigator_access_failure"] is True
+    retained_log_failure = {
+        "repair_data_summary": {"outcome": "repair_exhausted"},
+        "meta_repair_summary": {
+            "should_dispatch": True,
+            "meta_run_refs": [
+                {"failure_code": "investigator_read_sandbox_unavailable"}
+            ],
+        },
+    }
+    retained = _l2_failure_fingerprint(retained_log_failure)
+    assert retained["investigator_access_failure"] is True
+    assert retained["failure_codes"] == ["investigator_read_sandbox_unavailable"]
     recurrence = {
         **base,
         "repair_data_summary": {"outcome": "repair_exhausted"},
@@ -112,6 +124,23 @@ def test_l3_treats_recursion_and_investigator_access_failure_as_backstop_failure
     assert verdict["failed"] is True
     assert verdict["recursion_guard_blocked"] is True
 
+    no_fix = {
+        "repair_data_summary": {"outcome": "recovery_not_verified"},
+        "meta_repair_summary": {
+            "should_dispatch": True,
+            "meta_run_refs": [
+                {
+                    "current_episode": True,
+                    "failure_code": "meta_repair_authority_blocked",
+                }
+            ],
+        },
+    }
+    terminal = _l2_failure_fingerprint(no_fix)
+    assert terminal["failed"] is True
+    assert terminal["axis"] == "FIXED"
+    assert terminal["terminal_no_fix"] is True
+
 
 def test_meta_wrapper_uses_bounded_broker_without_tool_authority() -> None:
     wrapper = Path(
@@ -120,10 +149,40 @@ def test_meta_wrapper_uses_bounded_broker_without_tool_authority() -> None:
     assert "observe-meta" in wrapper
     assert 'investigator_mode="brokered_no_tools"' in wrapper
     assert '--toolsets ""' in wrapper
+    assert "ARNOLD_NESTED_MANAGED_AGENT_WORKER=1 exec" in wrapper
     assert "bwrap --ro-bind / / true" in wrapper
     assert 'META_INVESTIGATION_ACTION" == "replan"' in wrapper
     assert "meta_repair_replan_handoff" in wrapper
     assert "ordinary_l1_repair" in wrapper
+    assert "reconcile_l2_replan" in wrapper
+    assert "already reconciled; refusing duplicate ordinary retrigger" in wrapper
+    assert '"replan_epoch": active_replan_epoch' in Path(
+        "arnold_pipelines/megaplan/cloud/repair_goal.py"
+    ).read_text(encoding="utf-8")
+    assert 'export ARNOLD_REPAIR_L2_HANDOFF_PATH="$META_INVESTIGATION_OBSERVATION_PATH"' in wrapper
+    assert 'export ARNOLD_REPAIR_L2_CONTEXT_DIGEST="$META_INVESTIGATION_CONTEXT_DIGEST"' in wrapper
+    repair_wrapper = Path(
+        "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+    ).read_text(encoding="utf-8")
+    assert 'for handoff_key in ("meta_investigation", "meta_replan_handoff")' in repair_wrapper
+    assert "payload[handoff_key] = dict(handoff_value)" in repair_wrapper
+    assert '--l2-handoff-path "$ARNOLD_REPAIR_L2_HANDOFF_PATH"' in repair_wrapper
+    assert '--l2-context-digest "${ARNOLD_REPAIR_L2_CONTEXT_DIGEST:-}"' in repair_wrapper
+    assert '--l2-replan-epoch "${ARNOLD_REPAIR_L2_REPLAN_EPOCH:-0}"' in repair_wrapper
+    assert "l2_replan_authorization.verified is true" in repair_wrapper
+    assert "never replan solely because the goal was previously unowned" in repair_wrapper
+    assert '"latest_failure", "workspace_head"' in repair_wrapper
+    assert "successor blocker should receive its bounded repair action" in repair_wrapper
+    assert "load_json(pathlib.Path(receipt_path), default={})" not in repair_wrapper
+    assert 'pathlib.Path(receipt_path).read_text(encoding="utf-8")' in repair_wrapper
+    assert "<<'PY' || return 1" in repair_wrapper
+    assert "load_json(pathlib.Path(receipt_path), default={})" not in wrapper
+    assert "load_json(pathlib.Path(observation_path), default={})" not in wrapper
+    assert 'pathlib.Path(observation_path).read_text(encoding="utf-8")' in wrapper
+    assert "<<'PY' >>\"$RUN_LOG\" 2>&1 || return 1" in wrapper
+    assert "STATE MISMATCH DETECTED — NOT CLEARED" in repair_wrapper
+    assert 'mismatch_cleared = state_mismatch.get("cleared") is True' in repair_wrapper
+    assert "Action taken: cleared chain last_state to match plan current_state" not in repair_wrapper
     launcher = Path(
         "arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py"
     ).read_text(encoding="utf-8")

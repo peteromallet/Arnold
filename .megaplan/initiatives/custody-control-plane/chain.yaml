@@ -116,7 +116,10 @@ milestones:
   depth: high
   with_prep: true
   prep_clarify: false
-  prep_direction: 'Start only from M6''s exact final landed WBC revision/runtime vector,
+  prep_direction: 'Apply the unique F01-F17/R1 allocation in
+    `decisions/f01-f17-upcoming-milestone-amendment-20260717.md`; do not credit
+    component existence as runtime wiring. First validate M6''s exact hashes and
+    classify every schema-only row with dispatch/effects off. Start only from M6''s exact final landed WBC revision/runtime vector,
     generated zero-exemption boundary inventory, and accepted ownership-decision record.
     The audited candidate ledger is schema-only: implement the WBC-owned transactional
     store/API, durable start-before-dispatch and exactly-one- terminal invariants,
@@ -139,7 +142,9 @@ milestones:
   robustness: thorough
   depth: high
   prep_clarify: false
-  prep_direction: Start only after M6's accepted ownership handoff, M6A's proved WBC
+  prep_direction: Apply the F01/F15 primary and F06 writer assignment in the
+    F01-F17 amendment decision. First generate the report-only occurrence/writer/
+    terminal/provenance map with gates and effects off. Start only after M6's accepted ownership handoff, M6A's proved WBC
     transactional ledger/API, and accepted ownership-decision record. Reuse the landed
     Run Authority decisions/fences and WBC-owned execution-attempt/ effect ledger.
     Define the custody-owned action-target, repair-occurrence, and renewable lease
@@ -166,7 +171,9 @@ milestones:
   robustness: thorough
   depth: high
   prep_clarify: false
-  prep_direction: Consume M7's controlled writer registry, M6A's WBC store/API, and
+  prep_direction: Apply the F02/F04/F17 adopter and R1 boundary assignment in the
+    F01-F17 amendment decision. First regenerate declared/static/runtime inventory
+    at one vector and exercise a fake adapter with promotion/effects off. Consume M7's controlled writer registry, M6A's WBC store/API, and
     M6's generated boundary inventory. Migrate every production WBC producer and writer
     across phase, runtime, chain, resident, cloud, child-lineage, repair, publication/delivery,
     and compatibility seams. No producer is exempt because a manifest says supported
@@ -187,7 +194,10 @@ milestones:
   robustness: thorough
   depth: high
   prep_clarify: false
-  prep_direction: 'Consume M8 exact-version adoption and the captured Transaction
+  prep_direction: 'Apply the sole F03/F07-F13 and R2 implementation assignment
+    in the F01-F17 amendment decision. First replay the captured corpus report-only
+    through the existing compiler, validation, splitter, source-admission, and
+    circuit seams; do not rewrite live or historical plans. Consume M8 exact-version adoption and the captured Transaction
     Spine and Strategy Roadmap fixtures. Implement only Megaplan-domain feasibility
     and efficiency controls: semantic dependency reasons and routing groups, critical-path/parallelism/turn-budget
     gates, complexity splitting, deterministic validation jobs, bounded invalid-ref/provider/compaction/
@@ -207,7 +217,9 @@ milestones:
   robustness: thorough
   depth: high
   prep_clarify: false
-  prep_direction: Trace every status, liveness, watchdog, repair/auditor, chain/publication,
+  prep_direction: Apply the F05/F14/F16 primary, F06 consumer, and R3 telemetry
+    assignment in the F01-F17 amendment decision. First delete/rebuild fixture
+    projections and shadow-compare consumers with positive actions off. Trace every status, liveness, watchdog, repair/auditor, chain/publication,
     resident, cloud, migration/retention, and operator reader from the M6 registry.
     Prove each uses exact-version canonical WBC queries and is a pure rebuildable
     projection or coherent evidence adapter over one exact-version reducer; join productive/replayed
@@ -228,7 +240,9 @@ milestones:
   robustness: thorough
   depth: high
   prep_clarify: false
-  prep_direction: Exercise failure injection and ambiguity edges across WBC reserve/start/
+  prep_direction: Apply the F01/F02/F04/F15/F16 recovery/effect acceptance and
+    R1/R3 assignment in the F01-F17 amendment decision. First run the complete
+    action-off fake fault/replay matrix; no real canary effect is authorized. Exercise failure injection and ambiguity edges across WBC reserve/start/
     terminal/outbox/migration plus retry, fallback, repair, publication, delivery,
     source/install/retrigger, and provider effects. Reuse WBC effect evidence and
     Run Authority fences; require reconciliation, authoritative reread, exact live
@@ -249,7 +263,10 @@ milestones:
   robustness: thorough
   depth: high
   prep_clarify: false
-  prep_direction: 'Close every residual migration-matrix and WBC boundary-inventory
+  prep_direction: 'Apply the final F01-F17/R1-R3 acceptance allocation in the
+    amendment decision. First revalidate every predecessor hash, manifest,
+    inventory row, dependency, and compatibility expiry from one clean pinned
+    vector before canary or deletion eligibility. Close every residual migration-matrix and WBC boundary-inventory
     row using exact prerequisite and milestone evidence. Deliver the comprehensive
     cross-contract acceptance and conformance suite: current Run Authority grant/fence
     plus current custody lease/epoch are required for every authoritative action;
@@ -278,7 +295,7 @@ driver:
   robustness: thorough
   vendor: codex
   execution_binding: required
-  intended_initiative_revision: 0f28081c0fed61faaa8f1a2b1ac5861de11dfddf
+  intended_initiative_revision: 28d54763c6b7e3181fbd3441cf9a0ec1c5ee4981
   initiative_path: .megaplan/initiatives/custody-control-plane
   require_editable_runtime_match: true
   phase_timeout: 10800

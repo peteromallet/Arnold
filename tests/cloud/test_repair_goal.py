@@ -10,11 +10,13 @@ from arnold_pipelines.megaplan.cloud.repair_goal import (
     GOAL_ACTIVE,
     GOAL_APPROVAL_REQUIRED,
     GOAL_PROGRESSED,
+    _quality_resolution_commit_custody,
     ensure_repair_goal,
     evaluate_checkpoint,
     evaluate_repair_goal,
     next_repair_goal_retry_sequence,
     record_terminal_failure,
+    reconcile_l2_replan,
 )
 
 
@@ -164,6 +166,47 @@ def test_retry_inherits_same_goal_and_frozen_checkpoint(tmp_path: Path) -> None:
         "repair-owner-2",
     ]
     assert second["request_ids"] == ["request-1", "request-2"]
+
+
+def test_l2_replan_epoch_is_idempotent_and_preserves_checkpoint(tmp_path: Path) -> None:
+    path, goal = _goal(tmp_path)
+    target = goal["target"]
+    kwargs = {
+        "session": "demo-session", "workspace": target["workspace"],
+        "remote_spec": target["remote_spec"], "blocker_id": target["blocker_id"],
+    }
+    first = reconcile_l2_replan(path, context_digest="digest-1", receipt_digest="receipt-1", **kwargs)
+    repeated = reconcile_l2_replan(path, context_digest="digest-1", receipt_digest="receipt-1", **kwargs)
+    second = reconcile_l2_replan(path, context_digest="digest-2", **kwargs)
+
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert first["status"] == "newly_reconciled"
+    assert repeated == {**first, "status": "already_reconciled"}
+    assert second["replan_epoch"] == 2
+    assert persisted["checkpoint_digest"] == goal["checkpoint_digest"]
+    assert [item["context_digest"] for item in persisted["l2_replans"]] == ["digest-1", "digest-2"]
+
+
+def test_l2_replan_epoch_scopes_deterministic_owner_breaker(tmp_path: Path) -> None:
+    path, goal = _goal(tmp_path)
+    target = goal["target"]
+    first = evaluate_repair_goal(path, action="owner-iteration-1-post-dev-fix")
+    tripped = evaluate_repair_goal(path, action="owner-iteration-2-post-dev-fix")
+    assert first["evaluation"].get("control_action") != "replan"
+    assert tripped["evaluation"]["control_action"] == "replan"
+
+    reconcile_l2_replan(
+        path,
+        session="demo-session",
+        workspace=target["workspace"],
+        remote_spec=target["remote_spec"],
+        blocker_id=target["blocker_id"],
+        context_digest="fresh-l2-context",
+    )
+    fresh = evaluate_repair_goal(path, action="owner-iteration-1-post-dev-fix")
+
+    assert fresh["evaluation"].get("control_action") != "replan"
+    assert fresh["recovery_contract"] == goal["recovery_contract"]
 
 
 def test_later_authoritative_transition_beyond_checkpoint_completes_goal(
@@ -329,12 +372,46 @@ def test_bounded_terminal_failure_records_exact_unresolved_checkpoint(tmp_path: 
     assert failure["owner_terminal"] is True
     assert failure["escalation_required"] is True
     assert failure["checkpoint_digest"] == goal["checkpoint_digest"]
+    assert failure["replan_epoch"] == 0
     assert failure["unresolved_checkpoint"]["digest"] == goal["checkpoint_digest"]
     assert failure["unresolved_checkpoint"]["latest_failure"] == (
         goal["frozen_checkpoint"]["latest_failure"]
     )
     persisted = json.loads(path.read_text(encoding="utf-8"))
     assert persisted["last_terminal_failure"] == failure
+
+
+def test_current_epoch_investigator_replan_routes_to_l2_once(tmp_path: Path) -> None:
+    path, goal = _goal(tmp_path)
+    target = goal["target"]
+    failure = record_terminal_failure(
+        path,
+        outcome="replan_required",
+        phase="investigator-replan-required",
+        reason="validated investigator requires L2 replan before target mutation",
+        owner_run_id="repair-owner-1",
+    )
+
+    routed = evaluate_repair_goal(path, action="watchdog_authority_check")
+
+    assert failure["terminal_failure"]["replan_epoch"] == 0
+    assert routed["status"] == GOAL_ACTIVE
+    assert routed["evaluation"]["control_action"] == "meta_repair"
+    assert routed["evaluation"]["failed_fixer_evidence"]["phase"] == (
+        "investigator-replan-required"
+    )
+
+    reconcile_l2_replan(
+        path,
+        session="demo-session",
+        workspace=target["workspace"],
+        remote_spec=target["remote_spec"],
+        blocker_id=target["blocker_id"],
+        context_digest="accepted-l2-context",
+    )
+    after_reconcile = evaluate_repair_goal(path, action="watchdog_authority_check")
+
+    assert after_reconcile["evaluation"]["control_action"] != "meta_repair"
 
 
 def test_productive_target_commit_resets_breaker_without_completing_goal(tmp_path: Path) -> None:
@@ -462,6 +539,74 @@ def test_blocker_cleared_live_runner_transition_is_preserved_not_accepted() -> N
     assert "step-transition" in result["reason"]
 
 
+def test_missing_quality_repair_commit_overrides_false_stage_advancement() -> None:
+    result = evaluate_checkpoint(
+        {
+            "target_stage": "review",
+            "target_stage_rank": 7,
+            "chain_current_plan_name": "m5a",
+            "chain_current_milestone_index": 1,
+            "chain_completed_count": 1,
+        },
+        {
+            "target_stage": "done",
+            "target_stage_rank": 11,
+            "plan_state": "done",
+            "latest_failure_cleared": True,
+            "chain_current_plan_name": "m5a",
+            "chain_current_milestone_index": 1,
+            "chain_completed_count": 1,
+            "quality_resolution_commit_custody": {
+                "required_commits": ["a" * 40],
+                "missing_commits": ["a" * 40],
+                "verified": False,
+            },
+        },
+    )
+
+    assert result["status"] == "active"
+    assert result["control_action"] == "investigate"
+    assert result["blocker_cleared"] is False
+    assert "not contained" in result["reason"]
+
+
+def test_quality_repair_commit_custody_reads_nested_state_metadata(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    subprocess.run(["git", "-C", str(workspace), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "config", "user.name", "Test"], check=True)
+    (workspace / "tracked.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(workspace), "add", "tracked.txt"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "commit", "-qm", "base"], check=True)
+    head = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    missing = "f" * 40
+    result = _quality_resolution_commit_custody(
+        {
+            "meta": {
+                "quality_gate_resolutions": [
+                    {
+                        "resolution": "fixed",
+                        "evidence": [f"local dev fix commit:{missing}"],
+                    }
+                ]
+            }
+        },
+        workspace=workspace,
+        workspace_head=head,
+    )
+
+    assert result == {
+        "required_commits": [missing],
+        "missing_commits": [missing],
+        "verified": False,
+    }
+
+
 def test_repair_loop_refuses_goal_custody_without_request_and_blocker_links() -> None:
     wrapper = (
         Path(__file__).parents[2]
@@ -493,10 +638,14 @@ def test_repair_loop_fences_mechanical_relaunch_and_uses_two_stage_owner() -> No
     assert 'repair_goal_control_snapshot "pre-mechanical-relaunch-$iteration"' in mechanical
     assert 'control_action"' in mechanical
     assert 'echo "preserved:live_progress"' in mechanical
-    assert mechanical.index("preserved:live_progress") < mechanical.index("kill_matching_runner_processes")
+    assert mechanical.index("preserved:live_progress") < mechanical.index('tmux has-session -t "$session"')
     assert 'echo "preserved:runner_transition"' in mechanical
-    assert mechanical.index("preserved:runner_transition") < mechanical.index("kill_matching_runner_processes")
+    assert mechanical.index("preserved:runner_transition") < mechanical.index('tmux has-session -t "$session"')
+    assert "kill_matching_runner_processes" not in mechanical
+    assert "tmux kill-session" not in mechanical
     assert "run_repair_investigator_turn()" in wrapper
+    assert '"investigator-replan-required"' in wrapper
+    assert '"validated investigator requires L2 replan before any target mutation"' in wrapper
     assert "automatic_research_subagent" in wrapper
     assert "--sandbox read-only" in wrapper
     assert 'REPAIR_OWNER_MODEL="${CLOUD_WATCHDOG_REPAIR_OWNER_MODEL:-gpt-5.6-sol}"' in wrapper

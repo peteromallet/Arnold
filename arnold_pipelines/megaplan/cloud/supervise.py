@@ -178,7 +178,42 @@ def enqueue_supervisor_repair_request(
 ) -> dict[str, Any]:
     """Queue an exhausted supervised run in the validated central queue."""
 
+    from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
     from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
+
+    # ``remote_spec`` identifies the chain, not its current repair target.  The
+    # central queue compares ``target.plan_name``/``milestone_or_plan`` with the
+    # authoritative current plan and correctly rejects mismatches as stale.
+    # Resolve that identity at enqueue time so a deterministic supervisor exit
+    # cannot be discarded merely because the producer substituted a spec path.
+    current_plan_name = ""
+    try:
+        current = resolve_current_target(
+            session,
+            marker_dir=Path(marker_dir),
+            repair_data_dir=Path(marker_dir) / "repair-data",
+        )
+        refs = current.get("current_refs") if isinstance(current, dict) else {}
+        if isinstance(refs, dict):
+            current_plan_name = str(
+                refs.get("current_plan_name")
+                or refs.get("chain_current_plan_name")
+                or refs.get("marker_plan_name")
+                or ""
+            ).strip()
+    except (OSError, ValueError, TypeError):
+        # An empty target is intentionally safer than the wrong target: intake
+        # will bind it to its own authoritative observation instead of
+        # terminalizing a valid request as advanced/stale.
+        current_plan_name = ""
+
+    target = {
+        "workspace": str(workspace),
+        "remote_spec": remote_spec,
+        "supervise_log": log_path,
+    }
+    if current_plan_name:
+        target["plan_name"] = current_plan_name
 
     return enqueue_repair_request(
         queue_root=queue_root,
@@ -187,16 +222,12 @@ def enqueue_supervisor_repair_request(
         source="arnold_supervise_exit",
         workspace=workspace,
         run_kind=run_kind,
-        target={
-            "workspace": str(workspace),
-            "remote_spec": remote_spec,
-            "supervise_log": log_path,
-        },
+        target=target,
         problem_signature={
             "failure_kind": "supervised_run_exhausted",
             "current_state": "process_exited",
             "phase_or_step": "arnold-supervise",
-            "milestone_or_plan": remote_spec,
+            "milestone_or_plan": current_plan_name,
             "gate_recommendation": "",
             "blocked_task_id": "",
         },

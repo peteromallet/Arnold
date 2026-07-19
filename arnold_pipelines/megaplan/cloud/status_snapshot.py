@@ -1251,13 +1251,13 @@ def _build_session_entry(
         "milestone_count": milestone_count,
         "chain_complete": chain_complete,
         "plan_state": plan_current_state or None,
+        "review_verdict": review_verdict or None,
         # Accepted-progress projection: distinguishes authoritative
         # milestone transitions (backed by acceptance receipts) from
         # worker activity, review, repair, custody, and fixer-infra
         # liveness signals.  Consumers read this to decide whether
         # progress is accepted or merely observed.
         "accepted_progress": accepted_progress,
-        "review_verdict": review_verdict or None,
         **presentation,
         "progress": _session_progress(
             completed_count=completed_count,

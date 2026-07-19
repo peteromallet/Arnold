@@ -153,13 +153,27 @@ def collect_ci_health(
             }
 
     failing_runs = _failing_runs(recent_runs)
-    status = "red" if failing_runs or failed_checks else "green"
+    base_status = "red" if failing_runs else "green"
+    if pr_number is not None:
+        pr_status = (
+            "unavailable"
+            if checks_probe.get("available") is not True
+            else ("red" if failed_checks else "green")
+        )
+        # A PR's merge guard is scoped to that PR.  Base-branch failures remain
+        # useful corroboration, but must not turn a green PR red.
+        status = pr_status
+    else:
+        pr_status = "not_applicable"
+        status = base_status
 
     return {
         "status": status,
-        "available": True,
+        "available": checks_probe.get("available") is True if pr_number is not None else True,
         "base_branch": base_branch,
         "pr_number": pr_number,
+        "base_status": base_status,
+        "pr_status": pr_status,
         "failing_run_count": len(failing_runs),
         "failed_checks": failed_checks,
         "recent_runs": recent_runs,

@@ -12,6 +12,7 @@ SUPERVISE_SESSION="${ARNOLD_SUPERVISE_SESSION:-}"
 SUPERVISE_WORKSPACE="${ARNOLD_SUPERVISE_WORKSPACE:-}"
 SUPERVISE_REMOTE_SPEC="${ARNOLD_SUPERVISE_REMOTE_SPEC:-}"
 SUPERVISE_RUN_KIND="${ARNOLD_SUPERVISE_RUN_KIND:-}"
+SUPERVISE_SOURCE="${MEGAPLAN_SUPERVISOR_SOURCE:-${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"
 QUOTA_MAX=4; QUOTA_BACKOFF=1800
 OTHER_MAX=5
 # Exponential backoff: 60s, 120s, 240s, 480s, 960s
@@ -21,8 +22,78 @@ quota_count=0; other_count=0
 last_err=""; streak=0
 log() { echo "[supervise $(date -Iseconds)] $*" | tee -a "$LOG"; }
 
+deterministic_failure_reason() {
+  local run_log="$1"
+  if grep -q '"error"[[:space:]]*:[[:space:]]*"chain_execution_binding_drift"' "$run_log"; then
+    printf '%s\n' chain_execution_binding_drift
+    return 0
+  fi
+  if grep -q '"error"[[:space:]]*:[[:space:]]*"gh_pr_view_failed"' "$run_log" \
+    && grep -q 'gh auth login\|GH_TOKEN environment variable' "$run_log"; then
+    printf '%s\n' github_auth_unavailable
+    return 0
+  fi
+  if grep -q '"error"[[:space:]]*:[[:space:]]*"\(invalid_spec\|initiative_retired\)"' "$run_log"; then
+    printf '%s\n' invalid_or_retired_initiative
+    return 0
+  fi
+  if [[ -n "$SUPERVISE_WORKSPACE" ]]; then
+    local durable_reason
+    durable_reason="$(python3 - "$SUPERVISE_WORKSPACE" <<'PY'
+import json
+import pathlib
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+chain_root = workspace / ".megaplan" / "plans" / ".chains"
+try:
+    chains = sorted(
+        chain_root.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True
+    )
+except OSError:
+    chains = []
+for chain_path in chains:
+    try:
+        if chain_path.stat().st_size > 2 * 1024 * 1024:
+            continue
+        chain = json.loads(chain_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        continue
+    plan = str(chain.get("current_plan_name") or "").strip()
+    if not plan:
+        continue
+    state_path = workspace / ".megaplan" / "plans" / plan / "state.json"
+    try:
+        if state_path.stat().st_size > 2 * 1024 * 1024:
+            break
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        break
+    failure = state.get("latest_failure")
+    failure = failure if isinstance(failure, dict) else {}
+    kind = str(failure.get("kind") or "").strip().lower()
+    message = str(failure.get("message") or "").strip().lower()
+    blocked = str(state.get("current_state") or "").strip().lower() == "blocked"
+    quality_block = (
+        kind.startswith("review_quality_blocked")
+        or kind in {"quality_gate_blocked", "review_rework_exhausted"}
+        or "review rework budget exhausted" in message
+    )
+    if blocked and quality_block:
+        print(f"durable_review_quality_block:{kind or 'unknown'}")
+    break
+PY
+)"
+    if [[ -n "$durable_reason" ]]; then
+      printf '%s\n' "$durable_reason"
+      return 0
+    fi
+  fi
+  return 1
+}
+
 l1_mutation_authorized() {
-  PYTHONPATH="${PYTHONPATH:-}:/workspace/arnold" python3 -B -c \
+  PYTHONPATH="$SUPERVISE_SOURCE:${PYTHONPATH:-}" python3 -B -c \
     'from arnold_pipelines.megaplan.cloud.feature_flags import MUTATION_PATH_L1, mutation_authorized; raise SystemExit(0 if mutation_authorized(MUTATION_PATH_L1) else 1)'
 }
 
@@ -33,7 +104,7 @@ queue_repair_request() {
     return 0
   fi
   local queue_root="${ARNOLD_REPAIR_QUEUE_ROOT:-${SUPERVISE_WORKSPACE}/.megaplan/repair-queue}"
-  PYTHONPATH="/workspace/arnold:${PYTHONPATH:-}" python3 - "$queue_root" "$MARKER_DIR" "$SUPERVISE_SESSION" "$SUPERVISE_WORKSPACE" "$SUPERVISE_REMOTE_SPEC" "$SUPERVISE_RUN_KIND" "$reason" "$LOG" <<'PY'
+  PYTHONPATH="$SUPERVISE_SOURCE:${PYTHONPATH:-}" python3 - "$queue_root" "$MARKER_DIR" "$SUPERVISE_SESSION" "$SUPERVISE_WORKSPACE" "$SUPERVISE_REMOTE_SPEC" "$SUPERVISE_RUN_KIND" "$reason" "$LOG" <<'PY'
 import json
 import sys
 
@@ -66,7 +137,10 @@ exit_with_repair_request() {
 # still emit an observation but do not start or describe work as dispatched.
 if ! l1_mutation_authorized; then
   log "observed: L1 supervisor mutation blocked (requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED)"
-  exit 0
+  # Refusing the effect is not a successful launch.  A zero exit code is
+  # consumed by repair-loop as a durable mechanical-launch receipt and can
+  # falsely describe a command that never started as successful.
+  exit 77
 fi
 
 log "starting cmd: ${CMD[*]}"
@@ -78,6 +152,12 @@ while true; do
   if [[ $rc -eq 0 ]]; then
     log "cmd exited clean (rc=0) — supervisor exiting; inner driver owns plan state"
     rm -f "$RUN_LOG"; exit 0
+  fi
+  deterministic_reason="$(deterministic_failure_reason "$RUN_LOG" || true)"
+  if [[ -n "$deterministic_reason" ]]; then
+    log "deterministic failure ($deterministic_reason) — refusing retry spin"
+    rm -f "$RUN_LOG"
+    exit_with_repair_request "deterministic supervised failure: $deterministic_reason"
   fi
   if grep -q 'quota_exceeded\|insufficient_quota\|rate_limit' "$RUN_LOG"; then
     err_class="quota"

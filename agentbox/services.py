@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -42,6 +43,63 @@ _TMUX_PANE_FORMAT = (
     "#{pane_current_command}\t#{pane_start_command}"
 )
 _TMUX_RESTART_GRACE_SECONDS = 1.0
+_GIT_REVISION_RE = re.compile(r"[0-9a-f]{40}")
+
+
+def _resident_runtime_request() -> dict[str, str]:
+    """Bind restart idempotency to the installed resident source revision."""
+
+    configured = str(os.environ.get("MEGAPLAN_RUNTIME_SRC") or "").strip()
+    if not configured:
+        return {}
+    source = Path(configured).expanduser().resolve()
+    marker = source / ".git"
+    try:
+        if marker.is_file():
+            line = marker.read_text(encoding="utf-8").strip()
+            if not line.startswith("gitdir:"):
+                return {}
+            git_dir = Path(line.split(":", 1)[1].strip())
+            if not git_dir.is_absolute():
+                git_dir = (source / git_dir).resolve()
+        elif marker.is_dir():
+            git_dir = marker
+        else:
+            return {}
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+        if _GIT_REVISION_RE.fullmatch(head):
+            revision = head
+        elif head.startswith("ref:"):
+            ref = head.split(":", 1)[1].strip()
+            candidates = [git_dir / ref]
+            common_path = git_dir / "commondir"
+            if common_path.is_file():
+                common_dir = (git_dir / common_path.read_text(encoding="utf-8").strip()).resolve()
+                candidates.append(common_dir / ref)
+            revision = ""
+            for candidate in candidates:
+                if candidate.is_file():
+                    revision = candidate.read_text(encoding="utf-8").strip()
+                    break
+            if not revision and common_path.is_file():
+                packed = common_dir / "packed-refs"
+                if packed.is_file():
+                    suffix = f" {ref}"
+                    revision = next(
+                        (
+                            row.split(" ", 1)[0]
+                            for row in packed.read_text(encoding="utf-8").splitlines()
+                            if row.endswith(suffix) and not row.startswith(("#", "^"))
+                        ),
+                        "",
+                    )
+        else:
+            return {}
+    except OSError:
+        return {}
+    if not _GIT_REVISION_RE.fullmatch(revision):
+        return {}
+    return {"runtime_source": str(source), "runtime_revision": revision}
 
 
 def services_available() -> bool:
@@ -172,6 +230,7 @@ def restart_service(
                     "unit": unit,
                     "backend": "systemd",
                     "old_identity": _systemd_identity(safety or {}),
+                    **_resident_runtime_request(),
                 },
             )
         except ResetNotificationError as exc:
@@ -248,6 +307,7 @@ def _restart_discord_resident_tmux(
                 "unit": unit,
                 "backend": "tmux",
                 "old_identity": _tmux_identity(safety),
+                **_resident_runtime_request(),
             },
         )
     except ResetNotificationError as exc:

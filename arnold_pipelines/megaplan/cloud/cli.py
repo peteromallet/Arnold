@@ -185,6 +185,11 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         ),
     )
     chain_parser.add_argument(
+        "--prepare-only",
+        action="store_true",
+        help="Upload and normalize canonical chain inputs without starting a runner.",
+    )
+    chain_parser.add_argument(
         "--force-clean-editable-install",
         action="store_true",
         help=(
@@ -230,6 +235,11 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
             "Optional local .megaplan/initiatives/<initiative>/chain.yaml. When supplied, "
             "uses the same derived cloud workspace as `cloud chain`."
         ),
+    )
+    sync_parser.add_argument(
+        "--on-box",
+        action="store_true",
+        help="Sync from inside the agentbox without SSH.",
     )
     sync_parser.add_argument(
         "--workspace",
@@ -812,8 +822,11 @@ def _status_should_use_chain(root: Path, args: argparse.Namespace, spec: CloudSp
 def _provider_for_action(spec: CloudSpec, args: argparse.Namespace):
     if bool(getattr(args, "on_box", False)):
         action = getattr(args, "cloud_action", None)
-        if action not in {"chain", "launch-epic"}:
-            raise CliError("invalid_args", "--on-box is supported only for cloud chain and launch-epic")
+        if action not in {"chain", "launch-epic", "sync-megaplan"}:
+            raise CliError(
+                "invalid_args",
+                "--on-box is supported only for cloud chain, launch-epic, and sync-megaplan",
+            )
         from arnold_pipelines.megaplan.cloud.providers.on_box import OnBoxProvider
 
         return OnBoxProvider(spec)
@@ -3072,6 +3085,39 @@ def _megaplan_refresh_command(
     return "\n".join(lines)
 
 
+def _megaplan_use_current_runtime_command(spec: CloudSpec | None = None) -> str:
+    """Activate an already-landed editable runtime without remote git mutation."""
+    src = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
+    ref = spec.megaplan.ref if spec is not None else _EDITABLE_INSTALL_BRANCH
+    lines = [
+        "set -e",
+        'echo "[megaplan-runtime] $(date -Iseconds) validating current source"',
+        f"SRC={shlex.quote(src)}",
+        f"REF={shlex.quote(ref)}",
+        'if [ ! -e "$SRC/.git" ]; then',
+        '  echo "[megaplan-runtime] source checkout missing at $SRC"',
+        "  exit 21",
+        "fi",
+        'BRANCH="$(git -C "$SRC" branch --show-current)"',
+        'if [ "$BRANCH" != "$REF" ]; then',
+        '  echo "[megaplan-runtime] expected branch $REF at $SRC, observed ${BRANCH:-detached}"',
+        "  exit 22",
+        "fi",
+        'if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then',
+        '  echo "[megaplan-runtime] refusing dirty tracked source at $SRC"',
+        "  exit 19",
+        "fi",
+        'export MEGAPLAN_RUNTIME_SRC="$SRC"',
+        'pip install -e "$MEGAPLAN_RUNTIME_SRC"',
+        'RUNTIME_REVISION="$(git -C "$MEGAPLAN_RUNTIME_SRC" rev-parse HEAD)"',
+        'PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}" python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root "$MEGAPLAN_RUNTIME_SRC" --expected-revision "$RUNTIME_REVISION"',
+        'export MEGAPLAN_LAUNCH_RUNTIME_SRC="$MEGAPLAN_RUNTIME_SRC"',
+        'echo "[megaplan-runtime] current source accepted at $RUNTIME_REVISION"',
+        "true",
+    ]
+    return "\n".join(lines)
+
+
 def _refresh_then_chain_start_command(
     remote_spec_path: str,
     *,
@@ -3080,6 +3126,7 @@ def _refresh_then_chain_start_command(
     one_shot: bool = False,
     no_git_refresh: bool = False,
     force_clean_editable_install: bool = False,
+    refresh_editable_install: bool = True,
     log_relative: str = _CHAIN_LOG_RELATIVE,
     repair_session: str | None = None,
     repair_run_kind: str = "chain",
@@ -3090,10 +3137,14 @@ def _refresh_then_chain_start_command(
         if project_dir
         else None
     )
-    refresh = _megaplan_refresh_command(
-        spec,
-        force_clean_editable_install=force_clean_editable_install,
-        runtime_src_path=runtime_src_path,
+    refresh = (
+        _megaplan_refresh_command(
+            spec,
+            force_clean_editable_install=force_clean_editable_install,
+            runtime_src_path=runtime_src_path,
+        )
+        if refresh_editable_install
+        else _megaplan_use_current_runtime_command(spec)
     )
     engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     return (
@@ -3109,6 +3160,7 @@ def _tmux_chain_launch_command(
     one_shot: bool = False,
     no_git_refresh: bool = False,
     force_clean_editable_install: bool = False,
+    refresh_editable_install: bool = True,
     session_name: str | None = None,
     spec: CloudSpec | None = None,
     log_relative: str = _CHAIN_LOG_RELATIVE,
@@ -3135,6 +3187,7 @@ def _tmux_chain_launch_command(
         one_shot=one_shot,
         no_git_refresh=no_git_refresh,
         force_clean_editable_install=force_clean_editable_install,
+        refresh_editable_install=refresh_editable_install,
         log_relative=log_relative,
         repair_session=name,
         repair_run_kind="chain",
@@ -4241,6 +4294,19 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     finally:
         if upload_spec_path != local_spec_path:
             upload_spec_path.unlink(missing_ok=True)
+    if bool(getattr(args, "prepare_only", False)):
+        payload = {
+            "success": True,
+            "event": "cloud_chain_prepared",
+            "remote_spec": remote_spec_path,
+            "chain_session": launch_ctx.session_name,
+            "workspace": launch_ctx.workspace,
+            "repo_head": repo_head,
+            "uploaded_idea_count": len(uploads),
+            "runner_started": False,
+        }
+        sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+        return 0
     launch_session = launch_ctx.session_name
     session_name = launch_ctx.session_name
     launch_started_at = datetime.now(timezone.utc).isoformat()
@@ -4259,6 +4325,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             log_relative=launch_ctx.log_relative,
             no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
             force_clean_editable_install=bool(getattr(args, "force_clean_editable_install", False)),
+            refresh_editable_install=not bool(getattr(args, "no_editable_install_sync", False)),
             repair_session=launch_session,
             repair_run_kind="chain",
             repair_marker_dir=str(PurePosixPath(launch_ctx.marker_path).parent),
@@ -4356,6 +4423,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             marker_payload=marker_payload,
             no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
             force_clean_editable_install=bool(getattr(args, "force_clean_editable_install", False)),
+            refresh_editable_install=not bool(getattr(args, "no_editable_install_sync", False)),
         )
     )
     _relay_output(result, secret_names=spec.secrets, env=os.environ)

@@ -591,6 +591,74 @@ def test_duplicate_restart_from_same_discord_source_reuses_durable_receipt(
     assert record["restart"]["request"]["old_identity"]["main_pid"] == 1001
 
 
+def test_same_discord_source_can_restart_a_new_installed_runtime_revision(
+    tmp_path, monkeypatch
+) -> None:
+    provenance = _discord_provenance()
+    provenance["resident_turn_id"] = "turn-restarting"
+    monkeypatch.setenv(DELEGATION_CONTEXT_ENV, json.dumps(provenance))
+    first = prepare_reset_notification(
+        notification_root=tmp_path,
+        restart_request={
+            "backend": "systemd",
+            "runtime_source": "/workspace/runtime",
+            "runtime_revision": "1" * 40,
+            "old_identity": {"backend": "systemd", "main_pid": 1001},
+        },
+    )
+    mark_reset_succeeded(
+        first,
+        restart_evidence={"backend": "systemd", "health": {"main_pid": 1002}},
+    )
+
+    second = prepare_reset_notification(
+        notification_root=tmp_path,
+        restart_request={
+            "backend": "systemd",
+            "runtime_source": "/workspace/runtime",
+            "runtime_revision": "2" * 40,
+            "old_identity": {"backend": "systemd", "main_pid": 1002},
+        },
+    )
+    replay = prepare_reset_notification(
+        notification_root=tmp_path,
+        restart_request={
+            "backend": "systemd",
+            "runtime_source": "/workspace/runtime",
+            "runtime_revision": "2" * 40,
+            "old_identity": {"backend": "systemd", "main_pid": 1002},
+        },
+    )
+
+    assert second.notification_id != first.notification_id
+    assert second.reused is False
+    assert replay.notification_id == second.notification_id
+    assert replay.reused is True
+    assert len(list(tmp_path.glob("reset-*.json"))) == 2
+
+
+def test_same_discord_source_cannot_overlap_two_runtime_revisions(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv(DELEGATION_CONTEXT_ENV, json.dumps(_discord_provenance()))
+    prepare_reset_notification(
+        notification_root=tmp_path,
+        restart_request={
+            "runtime_source": "/workspace/runtime",
+            "runtime_revision": "1" * 40,
+        },
+    )
+
+    with pytest.raises(ResetNotificationError, match="already active"):
+        prepare_reset_notification(
+            notification_root=tmp_path,
+            restart_request={
+                "runtime_source": "/workspace/runtime",
+                "runtime_revision": "2" * 40,
+            },
+        )
+
+
 def test_different_discord_source_cannot_queue_behind_active_restart(
     tmp_path, monkeypatch
 ) -> None:
