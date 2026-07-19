@@ -9,6 +9,7 @@ import sys
 
 import pytest
 
+from agentbox import services
 from agentbox.reset_notifications import list_reset_notifications
 from agentbox.services import (
     DISCORD_RESIDENT_RESTART_COMMAND,
@@ -181,6 +182,25 @@ def test_replayed_discord_restart_does_not_launch_second_supervisor(
     assert replay["notification"]["notification_id"] == first["notification"]["notification_id"]
     assert len(launches) == 1
     assert len(list(tmp_path.glob("reset-*.json"))) == 1
+
+
+def test_runtime_request_reads_worktree_revision(tmp_path, monkeypatch) -> None:
+    runtime = tmp_path / "runtime"
+    git_dir = tmp_path / "repo.git" / "worktrees" / "runtime"
+    common = tmp_path / "repo.git"
+    runtime.mkdir()
+    git_dir.mkdir(parents=True)
+    (runtime / ".git").write_text(f"gitdir: {git_dir}\n")
+    (git_dir / "HEAD").write_text("ref: refs/heads/runtime\n")
+    (git_dir / "commondir").write_text("../..\n")
+    (common / "refs" / "heads").mkdir(parents=True)
+    (common / "refs" / "heads" / "runtime").write_text("a" * 40 + "\n")
+    monkeypatch.setenv("MEGAPLAN_RUNTIME_SRC", str(runtime))
+
+    assert services._resident_runtime_request() == {
+        "runtime_source": str(runtime.resolve()),
+        "runtime_revision": "a" * 40,
+    }
 
 
 def test_resident_tmux_restart_marks_notification_failed_when_supervisor_cannot_launch(

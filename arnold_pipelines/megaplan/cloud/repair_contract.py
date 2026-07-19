@@ -75,6 +75,18 @@ _RETENTION_WINDOWS_DAYS = {
 _SNAPSHOT_RETENTION_DAYS = 30
 _MIN_ATTEMPTS_PER_SESSION = 20
 
+REPAIR_EVIDENCE_REF_SCHEMA = "arnold-repair-evidence-ref-v1"
+REPAIR_EVIDENCE_COMPACTION_SCHEMA = "arnold-repair-evidence-compaction-v1"
+MAX_REPAIR_DATA_BYTES = 4 * 1024 * 1024
+_EVIDENCE_EXTERNALIZE_THRESHOLD_BYTES = 16 * 1024
+_CURRENT_FAILURE_CONTEXT_MAX_BYTES = 512 * 1024
+_ATTEMPT_EVIDENCE_FIELDS = (
+    "failure_context",
+    "post_launch_failure_context",
+    "post_kimi_failure_context",
+    "execute_attempt_context",
+)
+
 
 BLOCKER_FINGERPRINT_VERSION = 1
 BLOCKER_FINGERPRINT_V1_PREFIX = "repair-blocker-fingerprint/v1"
@@ -469,6 +481,7 @@ class RepairCustodyRequestRecord(TypedDict):
     target: dict[str, Any]
     status: RepairRequestStatus | str
     active: bool
+    claimable: bool
     decision: RepairRequestDecisionRecord | None
     decision_history: list[RepairRequestDecisionRecord]
 
@@ -488,6 +501,14 @@ class RepairCustodyAttemptRecord(TypedDict):
     raw: dict[str, Any]
 
 
+class CoalescedWithoutLiveOwnerRecord(TypedDict):
+    request_id: str
+    related_request_id: str
+    created_at: str
+    reason: str
+    self_coalesced: bool
+
+
 class RepairCustodyProjection(TypedDict):
     blocker_id: str
     blocker_fingerprint: BlockerFingerprintV1 | BlockerFingerprintV2 | None
@@ -501,9 +522,12 @@ class RepairCustodyProjection(TypedDict):
     active_request_ids: list[str]
     active_claim_request_ids: list[str]
     accepted_unclaimed_request_ids: list[str]
+    coalesced_without_live_owner: list[CoalescedWithoutLiveOwnerRecord]
     request_count: int
     claim_count: int
     attempt_count: int
+    lifecycle_counts: dict[str, int]
+    lifecycle_request_ids: dict[str, list[str]]
     retry_budget: dict[str, Any]
     evidence_cursor: dict[str, Any]
     terminal_outcomes: list[str]
@@ -571,6 +595,40 @@ def blocker_fingerprint_from_evidence(
     target_plan_state = _as_mapping(target_payload.get("plan_state"))
     target_current_refs = _as_mapping(target_payload.get("current_refs"))
     target_event_cursors = _as_mapping(target_payload.get("event_cursors"))
+    failure_kind = _first_non_empty(
+        _as_text(latest_failure.get("kind")),
+        _as_text(signature.get("failure_kind")),
+    )
+    retry_strategy = _first_non_empty(
+        _as_text(resume_cursor.get("retry_strategy")),
+        _as_text(target_event_cursors.get("resume_retry_strategy")),
+        _as_text(signature.get("retry_strategy")),
+    )
+    # Accepted deterministic phase failures must retain a claimable identity
+    # after a successful phase replay clears latest_failure/resume_cursor.  The
+    # immutable lifecycle request still carries the typed failure kind.
+    if not retry_strategy and failure_kind == "deterministic_phase_failure":
+        retry_strategy = "repair_phase_contract"
+
+    phase_or_step = _first_non_empty(
+        _as_text(latest_failure.get("phase")),
+        _as_text(plan_payload.get("phase")),
+        _as_text(signature.get("phase_or_step")),
+    )
+    blocked_task_id = _first_non_empty(
+        _as_text(latest_failure.get("blocked_task_id")),
+        _as_text(latest_failure.get("task_id")),
+        _as_text(latest_failure_meta.get("blocked_task_id")),
+        _as_text(latest_failure_meta.get("task_id")),
+        _blocked_task_id_from_failure(latest_failure, latest_failure_meta),
+        _as_text(signature.get("blocked_task_id")),
+    )
+    # Phase-level deterministic failures have no task by construction.  They
+    # still need a stable blocker-scoped claim identity; otherwise an accepted
+    # lifecycle request can never be claimed.  Keep the distinction explicit
+    # instead of inventing a task number.
+    if not blocked_task_id and phase_or_step:
+        blocked_task_id = f"phase:{phase_or_step}"
 
     payload: dict[str, Any] = {
         "schema_version": BLOCKER_FINGERPRINT_VERSION,
@@ -579,34 +637,16 @@ def blocker_fingerprint_from_evidence(
             _as_text(target_current_refs.get("plan_current_state")),
             _as_text(signature.get("current_state")),
         ),
-        "retry_strategy": _first_non_empty(
-            _as_text(resume_cursor.get("retry_strategy")),
-            _as_text(target_event_cursors.get("resume_retry_strategy")),
-            _as_text(signature.get("retry_strategy")),
-        ),
-        "failure_kind": _first_non_empty(
-            _as_text(latest_failure.get("kind")),
-            _as_text(signature.get("failure_kind")),
-        ),
-        "phase_or_step": _first_non_empty(
-            _as_text(latest_failure.get("phase")),
-            _as_text(plan_payload.get("phase")),
-            _as_text(signature.get("phase_or_step")),
-        ),
+        "retry_strategy": retry_strategy,
+        "failure_kind": failure_kind,
+        "phase_or_step": phase_or_step,
         "milestone_or_plan": _first_non_empty(
             _as_text(plan_payload.get("name")),
             _as_text(target_current_refs.get("current_plan_name")),
             _as_text(target_current_refs.get("chain_current_plan_name")),
             _as_text(signature.get("milestone_or_plan")),
         ),
-        "blocked_task_id": _first_non_empty(
-            _as_text(latest_failure.get("blocked_task_id")),
-            _as_text(latest_failure.get("task_id")),
-            _as_text(latest_failure_meta.get("blocked_task_id")),
-            _as_text(latest_failure_meta.get("task_id")),
-            _blocked_task_id_from_failure(latest_failure, latest_failure_meta),
-            _as_text(signature.get("blocked_task_id")),
-        ),
+        "blocked_task_id": blocked_task_id,
         "target_fingerprint": _first_non_empty(
             _as_text(target_plan_state.get("fingerprint")),
             _as_text(_as_mapping(target_payload.get("chain_state")).get("fingerprint")),
@@ -738,17 +778,34 @@ def project_repair_custody(
                 "phase": signature_phase,
                 "metadata": {"blocked_task_id": signature_blocked_task_id},
             }
-        request_fingerprint = blocker_fingerprint_from_evidence(
+        compatibility_fingerprint = blocker_fingerprint_from_evidence(
             plan_state=request_plan_state,
             current_target=request_target,
             problem_signature=problem_signature,
         )
-        request_blocker_id = blocker_id_for_fingerprint(request_fingerprint) or ""
-        if blocker_id and request_blocker_id and request_blocker_id != blocker_id:
+        compatibility_blocker_id = blocker_id_for_fingerprint(compatibility_fingerprint) or ""
+        if blocker_id and compatibility_blocker_id and compatibility_blocker_id != blocker_id:
             continue
         if not blocker_id and current_plan_identity and request_plan_identity and request_plan_identity != current_plan_identity:
             continue
-        if blocker_id is None and request_blocker_id and blocker_id != request_blocker_id:
+        raw_stored_fingerprint = _as_mapping(record.get("blocker_fingerprint"))
+        stored_fingerprint = (
+            normalize_blocker_fingerprint_v1(raw_stored_fingerprint)
+            or normalize_blocker_fingerprint_v2(raw_stored_fingerprint)
+        )
+        stored_blocker_id = _as_text(record.get("blocker_id"))
+        if (
+            blocker_id_for_fingerprint(stored_fingerprint) != stored_blocker_id
+            or not repair_requests.has_claimable_repair_request_contract(record)
+        ):
+            stored_fingerprint = None
+            stored_blocker_id = ""
+        # Compatibility reconstruction is freshness evidence only.  It may
+        # scope a legacy request to the current target, but it must never mint
+        # authority that was absent from the persisted request itself.
+        request_fingerprint = stored_fingerprint
+        request_blocker_id = stored_blocker_id
+        if blocker_id is None and request_blocker_id:
             blocker_id = request_blocker_id
             fingerprint = request_fingerprint
         history = decision_history.get(str(record.get("request_id") or ""), [])
@@ -770,23 +827,44 @@ def project_repair_custody(
                 "target": _stable_mapping(_as_mapping(record.get("target"))),
                 "status": status,
                 "active": status in {REQUEST_STATUS_ACCEPTED, REQUEST_STATUS_DISPATCHED},
+                "claimable": bool(request_blocker_id and request_fingerprint is not None),
                 "decision": latest_decision,
                 "decision_history": history,
             }
         )
 
-    attempts = _collect_custody_attempts(
-        repair_data_dir=repair_data_dir,
-        sidecar_dir=sidecar_dir,
-        blocker_id=blocker_id or "",
-        fingerprint=fingerprint,
-        target_session=target_session,
+    active_requests = [request for request in requests if request["active"]]
+    active_identities = {
+        request["blocker_id"]: request["blocker_fingerprint"]
+        for request in requests
+        if request["active"]
+        and request["blocker_id"]
+        and request["blocker_fingerprint"] is not None
+    }
+    if active_requests and len(active_identities) == 1 and all(
+        request["claimable"] for request in active_requests
+    ):
+        blocker_id, fingerprint = next(iter(active_identities.items()))
+    elif active_requests:
+        blocker_id = None
+        fingerprint = None
+
+    attempts = (
+        _collect_custody_attempts(
+            repair_data_dir=repair_data_dir,
+            sidecar_dir=sidecar_dir,
+            blocker_id=blocker_id,
+            fingerprint=fingerprint,
+            target_session=target_session,
+        )
+        if blocker_id and fingerprint is not None
+        else []
     )
 
     active_request_ids = sorted(
         request["request_id"] for request in requests if request["active"] and request["request_id"]
     )
-    if validated_queue_root is not None:
+    if validated_queue_root is not None and blocker_id:
         for record in repair_requests.iter_repair_attempts(validated_queue_root):
             request_id = _as_text(record.get("request_id"))
             record_blocker_id = _as_text(record.get("blocker_id"))
@@ -794,6 +872,7 @@ def project_repair_custody(
                 continue
             if blocker_id and record_blocker_id != blocker_id:
                 continue
+            state, outcome, recorded_at, raw = _queue_dispatch_attempt_observation(record)
             attempts.append(
                 _build_attempt_record(
                     attempt_id=_as_text(record.get("attempt_id")),
@@ -803,10 +882,10 @@ def project_repair_custody(
                     blocker_id=record_blocker_id,
                     fingerprint=fingerprint,
                     request_id=request_id,
-                    state=ATTEMPT_STATE_RUNNING,
-                    outcome=REPAIRING,
-                    recorded_at=_as_text(record.get("created_at")),
-                    raw=record,
+                    state=state,
+                    outcome=outcome,
+                    recorded_at=recorded_at,
+                    raw=raw,
                 )
             )
     active_claim_request_ids: list[str] = []
@@ -831,12 +910,59 @@ def project_repair_custody(
     attempted_request_ids = {
         attempt["request_id"] for attempt in attempts if attempt["request_id"]
     }
+    persisted_request_ids = sorted(
+        request["request_id"] for request in requests if request["request_id"]
+    )
+    claimable_request_ids = sorted(
+        request["request_id"]
+        for request in requests
+        if request["request_id"] and request["claimable"]
+    )
+    launched_request_ids = sorted(
+        {
+            attempt["request_id"]
+            for attempt in attempts
+            if attempt["request_id"] and _attempt_authorizes_launched(attempt)
+        }
+    )
+    recovered_request_ids = sorted(
+        {
+            attempt["request_id"]
+            for attempt in attempts
+            if attempt["request_id"] and _attempt_authorizes_verified_recovered(attempt)
+        }
+    )
     accepted_unclaimed_request_ids = sorted(
         request_id
         for request_id in active_request_ids
         if request_id not in attempted_request_ids
         and request_id not in active_claim_request_ids
     )
+    active_request_id_set = set(active_request_ids)
+    active_claim_request_id_set = set(active_claim_request_ids)
+    coalesced_without_live_owner: list[CoalescedWithoutLiveOwnerRecord] = []
+    for record in queue_decisions:
+        if _as_text(record.get("decision")) != REQUEST_STATUS_COALESCED:
+            continue
+        owner_request_id = _as_text(record.get("related_request_id"))
+        if not owner_request_id or owner_request_id not in active_request_id_set:
+            continue
+        if _request_has_live_owner(
+            owner_request_id,
+            active_claim_request_ids=active_claim_request_id_set,
+            attempts=attempts,
+        ):
+            continue
+        request_id = _as_text(record.get("request_id"))
+        coalesced_without_live_owner.append(
+            {
+                "request_id": request_id,
+                "related_request_id": owner_request_id,
+                "created_at": _as_text(record.get("created_at")),
+                "reason": _as_text(record.get("reason")),
+                "self_coalesced": bool(request_id and request_id == owner_request_id),
+            }
+        )
     request_status_counts: dict[str, int] = {}
     for request in requests:
         status = str(request["status"])
@@ -907,9 +1033,28 @@ def project_repair_custody(
         "active_request_ids": active_request_ids,
         "active_claim_request_ids": active_claim_request_ids,
         "accepted_unclaimed_request_ids": accepted_unclaimed_request_ids,
+        "coalesced_without_live_owner": coalesced_without_live_owner,
         "request_count": len(requests),
         "claim_count": len(active_claim_request_ids),
         "attempt_count": len(attempts),
+        "lifecycle_counts": {
+            "requested": len(persisted_request_ids),
+            "persisted": len(persisted_request_ids),
+            "claimable": len(claimable_request_ids),
+            "claimed": len(active_claim_request_ids),
+            "attempted": len(attempted_request_ids),
+            "launched": len(launched_request_ids),
+            "recovered": len(recovered_request_ids),
+        },
+        "lifecycle_request_ids": {
+            "requested": persisted_request_ids,
+            "persisted": persisted_request_ids,
+            "claimable": claimable_request_ids,
+            "claimed": sorted(active_claim_request_ids),
+            "attempted": sorted(attempted_request_ids),
+            "launched": launched_request_ids,
+            "recovered": recovered_request_ids,
+        },
         "retry_budget": {
             "max_attempts": max_attempts,
             "used_attempts": used_attempts,
@@ -1631,7 +1776,11 @@ def _classify_from_recovery_view(
         # classified this as repairable; do not let a stale legacy custody bucket
         # override that classification.
         elif lock_evidence is not None or process_evidence is not None:
-            if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody={}):
+            if _has_active_repair(
+                lock_evidence=lock_evidence,
+                process_evidence=process_evidence,
+                custody=custody,
+            ):
                 decision = DISPATCH_DECISION_REPAIRING
                 dispatch_intent = DISPATCH_INTENT_QUEUE_ONLY
                 rationale.append("recovery view: repairable but active repair ownership exists")
@@ -1861,6 +2010,186 @@ def redact_repair_data(
     return _redact_value(validated, redactor)
 
 
+def _encoded_json(value: Any, *, pretty: bool = False) -> bytes:
+    if pretty:
+        return (json.dumps(value, indent=2, sort_keys=True, default=str) + "\n").encode(
+            "utf-8"
+        )
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), default=str
+    ).encode("utf-8")
+
+
+def _is_repair_evidence_ref(value: object) -> bool:
+    return bool(
+        isinstance(value, Mapping)
+        and value.get("schema_version") == REPAIR_EVIDENCE_REF_SCHEMA
+        and value.get("kind") == "content_addressed_repair_evidence"
+    )
+
+
+def _persist_repair_evidence(
+    target: Path,
+    value: Any,
+    *,
+    field: str,
+) -> dict[str, Any]:
+    """Persist expanding history once and return an immutable typed pointer."""
+
+    encoded = _encoded_json(value, pretty=True)
+    digest = sha256(encoded).hexdigest()
+    evidence_dir = target.parent / f"{target.stem}.evidence"
+    evidence_path = evidence_dir / f"sha256-{digest}.json"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    if evidence_path.exists():
+        observed = evidence_path.read_bytes()
+        if len(observed) != len(encoded) or sha256(observed).hexdigest() != digest:
+            raise ValueError(
+                f"content-addressed repair evidence disagrees: {evidence_path}"
+            )
+    else:
+        fd, temporary_raw = tempfile.mkstemp(
+            prefix=f".{evidence_path.name}.", suffix=".tmp", dir=evidence_dir
+        )
+        temporary = Path(temporary_raw)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, evidence_path)
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+    return {
+        "schema_version": REPAIR_EVIDENCE_REF_SCHEMA,
+        "kind": "content_addressed_repair_evidence",
+        "field": field,
+        "path": str(evidence_path.resolve()),
+        "sha256": digest,
+        "size_bytes": len(encoded),
+    }
+
+
+def load_repair_evidence_reference(value: Mapping[str, Any]) -> Any:
+    """Load a compacted evidence reference only after size and digest checks."""
+
+    if not _is_repair_evidence_ref(value):
+        raise ValueError("repair evidence reference schema is invalid")
+    path = Path(str(value.get("path") or ""))
+    expected_size = value.get("size_bytes")
+    expected_digest = str(value.get("sha256") or "")
+    if not path.is_absolute() or not isinstance(expected_size, int) or expected_size <= 0:
+        raise ValueError("repair evidence reference identity is incomplete")
+    encoded = path.read_bytes()
+    if len(encoded) != expected_size or sha256(encoded).hexdigest() != expected_digest:
+        raise ValueError("repair evidence reference content disagrees")
+    return json.loads(encoded)
+
+
+def _bounded_current_failure_context(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep the current decision fields inline while moving an oversized blob aside."""
+
+    allowed = (
+        "failure_classification",
+        "stale_state",
+        "state_mismatch",
+        "raw_failure_signals",
+        "plan_latest_failure",
+        "chain_state_summary",
+        "plan_runtime_state",
+        "last_gate",
+        "user_action_context",
+        "resolver_output",
+        "chain_log_path",
+        "run_log_path",
+        "plan_events_path",
+        "mechanical_log_path",
+    )
+    return {key: deepcopy(value[key]) for key in allowed if key in value}
+
+
+def compact_repair_data_evidence(
+    path: str | Path,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Externalize repeated expanding contexts without discarding their custody."""
+
+    target = Path(path)
+    compacted = deepcopy(dict(payload))
+    source_bytes = len(_encoded_json(compacted))
+    if source_bytes <= _EVIDENCE_EXTERNALIZE_THRESHOLD_BYTES:
+        return compacted
+    externalized = 0
+    unique_refs: set[str] = set()
+
+    def replace_large(container: dict[str, Any], field: str, *, force: bool = False) -> None:
+        nonlocal externalized
+        value = container.get(field)
+        if value in (None, "", [], {}) or _is_repair_evidence_ref(value):
+            return
+        if not force and len(_encoded_json(value)) <= _EVIDENCE_EXTERNALIZE_THRESHOLD_BYTES:
+            return
+        ref = _persist_repair_evidence(target, value, field=field)
+        container[field] = ref
+        externalized += 1
+        unique_refs.add(str(ref["sha256"]))
+
+    initial = compacted.get("initial_facts")
+    if isinstance(initial, dict):
+        for field in (
+            "failure_context",
+            "execute_attempt_context",
+            "semantic_health",
+            "semantic_context",
+            "custody_projection",
+        ):
+            replace_large(initial, field)
+
+    for collection_name in ("attempts", "iterations"):
+        collection = compacted.get(collection_name)
+        if not isinstance(collection, list):
+            continue
+        for item in collection:
+            if not isinstance(item, dict):
+                continue
+            for field in _ATTEMPT_EVIDENCE_FIELDS:
+                replace_large(item, field)
+
+    current = compacted.get("current_failure_context")
+    if (
+        isinstance(current, Mapping)
+        and len(_encoded_json(current)) > _CURRENT_FAILURE_CONTEXT_MAX_BYTES
+    ):
+        ref = _persist_repair_evidence(
+            target, current, field="current_failure_context"
+        )
+        summary = _bounded_current_failure_context(current)
+        summary["evidence_ref"] = ref
+        compacted["current_failure_context"] = summary
+        externalized += 1
+        unique_refs.add(str(ref["sha256"]))
+
+    compacted["evidence_compaction"] = {
+        "schema_version": REPAIR_EVIDENCE_COMPACTION_SCHEMA,
+        "source_size_bytes": source_bytes,
+        "externalized_field_count": externalized,
+        "unique_evidence_count": len(unique_refs),
+    }
+    persisted_bytes = 0
+    for _ in range(3):
+        persisted_bytes = len(_encoded_json(compacted))
+        compacted["evidence_compaction"]["persisted_size_bytes"] = persisted_bytes
+    if persisted_bytes > MAX_REPAIR_DATA_BYTES:
+        raise ValueError(
+            "repair-data remains above 4 MiB after evidence compaction; refusing expansion"
+        )
+    return compacted
+
+
 def save_repair_data(
     path: str | Path,
     payload: Mapping[str, Any],
@@ -1879,8 +2208,11 @@ def save_repair_data(
     incident-ledger root before falling back to the current working directory.
     """
 
-    prepared = redact_repair_data(payload, redactor=redactor)
     target = Path(path)
+    prepared = compact_repair_data_evidence(
+        target,
+        redact_repair_data(payload, redactor=redactor),
+    )
 
     # ------------------------------------------------------------------
     # Snapshot the previous payload *before* overwriting so we can
@@ -2134,6 +2466,7 @@ LIVE_WITH_FRESH_ACTIVITY = "live_with_fresh_activity"
 TRUE_HUMAN_BLOCKER = "true_human_blocker"
 PARTIAL_LIVENESS = "partial_liveness"
 REPAIRING = "repairing"
+RETRY_PENDING = "recurring_retry_pending"
 RECOVERY_VERIFIED = "verified_recovered"
 RECOVERY_PROVISIONAL = "provisional"
 RECOVERY_UNKNOWN = "unknown"
@@ -2155,6 +2488,7 @@ NON_SUCCESS_OUTCOMES: frozenset[str] = frozenset(
         LIVE_WITH_FRESH_ACTIVITY,
         PARTIAL_LIVENESS,
         REPAIRING,
+        RETRY_PENDING,
         REPAIR_TIMEOUT,
         REPAIR_EXHAUSTED,
         NEEDS_HUMAN,
@@ -2164,6 +2498,9 @@ NON_SUCCESS_OUTCOMES: frozenset[str] = frozenset(
 )
 
 ALL_OUTCOMES: frozenset[str] = SUCCESS_OUTCOMES | NON_SUCCESS_OUTCOMES
+NON_TERMINAL_OUTCOMES: frozenset[str] = frozenset(
+    {REPAIRING, RETRY_PENDING, PARTIAL_LIVENESS, LIVE_WITH_FRESH_ACTIVITY}
+)
 
 
 def is_success_outcome(outcome: str) -> bool:
@@ -2179,9 +2516,10 @@ def is_success_outcome(outcome: str) -> bool:
 def is_terminal_outcome(outcome: str) -> bool:
     """Return True when *outcome* is terminal (success or non-success).
 
-    ``repairing`` is the only non-terminal outcome; everything else is terminal.
+    Repairing, retry-pending, and liveness-only outcomes retain durable custody.
+    None may close the semantic repair goal.
     """
-    return outcome != REPAIRING
+    return outcome not in NON_TERMINAL_OUTCOMES
 
 
 # -- one-hour budget helpers ------------------------------------------------
@@ -2355,22 +2693,56 @@ def classify_recovery_verification(
         return unknown("partial", "blocker clearance was not directly observed")
     if observation.get("independent") is not True:
         return unknown("partial", "blocker clearance observation is not independent")
+    if observation.get("canonical_runner_live") is not True:
+        return unknown(
+            "contradictory"
+            if observation.get("canonical_runner_live") is False
+            else "partial",
+            "the exact canonical runner is not independently proven live",
+        )
+    if observation.get("fresh_progress_beyond_checkpoint") is not True:
+        return unknown(
+            "contradictory"
+            if observation.get("fresh_progress_beyond_checkpoint") is False
+            else "partial",
+            "fresh authoritative progress beyond the pre-repair checkpoint is not proven",
+        )
+    if observation.get("continued_progress") is not True:
+        return unknown(
+            "contradictory"
+            if observation.get("continued_progress") is False
+            else "partial",
+            "bounded follow-up observation did not prove continued progress",
+        )
 
     completed_at = _verification_timestamp(repair_completed_at)
+    first_progress_at = _verification_timestamp(
+        observation.get("first_progress_observed_at")
+    )
     observed_at = _verification_timestamp(observation.get("observed_at"))
-    if completed_at is None or observed_at is None:
+    if completed_at is None or first_progress_at is None or observed_at is None:
         return unknown("partial", "verification timestamps are incomplete")
-    if observed_at <= completed_at:
-        return unknown("stale", "verification observation is not later than repair completion")
+    if first_progress_at <= completed_at:
+        return unknown(
+            "stale", "initial recovery observation is not later than repair completion"
+        )
+    if observed_at <= first_progress_at:
+        return unknown(
+            "stale", "follow-up observation is not later than initial recovery progress"
+        )
 
     return {
         "status": RECOVERY_VERIFIED,
         "unknown_type": "",
         "recovery_verified": True,
         "authorizes_verified_recovered": True,
-        "reason": "later independent observation directly proves the original blocker cleared",
+        "reason": (
+            "two later independent observations prove blocker clearance, a live canonical "
+            "runner, beyond-checkpoint progress, and continued progress"
+        ),
         "blocker_identity": original_identity,
         "repair_completed_at": completed_at.isoformat(),
+        "first_progress_observed_at": first_progress_at.isoformat(),
         "observed_at": observed_at.isoformat(),
     }
 
@@ -3242,6 +3614,46 @@ def _decision_history_by_request(
     return history
 
 
+def effective_repair_request_decision_status(
+    *,
+    request_id: str,
+    decision: str,
+    related_request_id: str = "",
+) -> RepairRequestStatus | str:
+    normalized_decision = _as_text(decision)
+    if (
+        normalized_decision == REQUEST_STATUS_COALESCED
+        and _as_text(request_id)
+        and _as_text(request_id) == _as_text(related_request_id)
+    ):
+        return REQUEST_STATUS_ACCEPTED
+    return normalized_decision
+
+
+def repair_request_decision_is_terminal(
+    *,
+    request_id: str,
+    decision: str,
+    related_request_id: str = "",
+) -> bool:
+    """Return whether a queue decision permanently closes the request.
+
+    ``dispatched`` is an active lifecycle state, not a terminal outcome.  The
+    managed attempt can still fail (or finish without satisfying its durable
+    repair goal), in which case the same immutable request must remain visible
+    to the bounded retry classifier.
+    """
+    return effective_repair_request_decision_status(
+        request_id=request_id,
+        decision=decision,
+        related_request_id=related_request_id,
+    ) in {
+        REQUEST_STATUS_COALESCED,
+        REQUEST_STATUS_STALE,
+        REQUEST_STATUS_SUPERSEDED,
+    }
+
+
 def _effective_request_decision(
     history: list[RepairRequestDecisionRecord],
 ) -> RepairRequestDecisionRecord | None:
@@ -3254,14 +3666,61 @@ def _effective_request_decision(
         REQUEST_STATUS_COALESCED: 2,
         REQUEST_STATUS_ACCEPTED: 1,
     }
-    return max(
+    effective = max(
         history,
         key=lambda item: (
-            int(priority.get(str(item["decision"]), 0)),
+            int(
+                priority.get(
+                    effective_repair_request_decision_status(
+                        request_id=str(item["request_id"]),
+                        decision=str(item["decision"]),
+                        related_request_id=str(item["related_request_id"]),
+                    ),
+                    0,
+                )
+            ),
             str(item["created_at"]),
             str(item["decision_id"]),
         ),
     )
+    effective_status = effective_repair_request_decision_status(
+        request_id=str(effective["request_id"]),
+        decision=str(effective["decision"]),
+        related_request_id=str(effective["related_request_id"]),
+    )
+    if effective_status == effective["decision"]:
+        return effective
+    return {
+        **effective,
+        "decision": effective_status,
+    }
+
+
+def _request_has_live_owner(
+    request_id: str,
+    *,
+    active_claim_request_ids: set[str],
+    attempts: list[RepairCustodyAttemptRecord],
+) -> bool:
+    if request_id in active_claim_request_ids:
+        return True
+    latest_terminal = datetime.min.replace(tzinfo=timezone.utc)
+    for attempt in attempts:
+        if attempt.get("request_id") != request_id or attempt.get("terminal") is not True:
+            continue
+        recorded_at = _verification_timestamp(attempt.get("recorded_at"))
+        if recorded_at is not None and recorded_at > latest_terminal:
+            latest_terminal = recorded_at
+    for attempt in attempts:
+        if attempt.get("request_id") != request_id or attempt.get("terminal") is not False:
+            continue
+        if not _as_text(attempt.get("attempt_id")) or not _as_text(attempt.get("path")):
+            continue
+        recorded_at = _verification_timestamp(attempt.get("recorded_at"))
+        if recorded_at is not None and latest_terminal >= recorded_at:
+            continue
+        return True
+    return False
 
 
 def _collect_custody_attempts(
@@ -3651,6 +4110,104 @@ def _build_attempt_record(
     }
 
 
+def _attempt_authorizes_launched(attempt: Mapping[str, Any]) -> bool:
+    """Return true only for an immutable receipt or observed execution."""
+
+    if _as_text(attempt.get("source")) == "repair_queue_dispatch_attempt":
+        return True
+    if _as_text(attempt.get("source")) != "managed_agent_execution":
+        return False
+    raw = _as_mapping(attempt.get("raw"))
+    manifest = _as_mapping(raw.get("managed_agent_manifest"))
+    return _as_text(manifest.get("status")) in {"running", "adopting", "completed"}
+
+
+def _attempt_authorizes_verified_recovered(attempt: Mapping[str, Any]) -> bool:
+    """Return true only for blocker-specific independent recovery evidence."""
+
+    raw = _as_mapping(attempt.get("raw"))
+    candidates = [raw]
+    for key in ("managed_agent_manifest", "verification"):
+        candidate = _as_mapping(raw.get(key))
+        if candidate:
+            candidates.append(candidate)
+    for candidate in candidates:
+        if candidate.get("authorizes_verified_recovered") is True:
+            return True
+        verification = _as_mapping(candidate.get("recovery_verification"))
+        if verification.get("authorizes_verified_recovered") is True:
+            return True
+    return False
+
+
+def _queue_dispatch_attempt_observation(
+    record: Mapping[str, Any],
+) -> tuple[RepairAttemptState, str, str, Mapping[str, Any]]:
+    """Reconcile an immutable launch receipt with its managed-run manifest."""
+
+    default = (
+        ATTEMPT_STATE_RUNNING,
+        REPAIRING,
+        _as_text(record.get("created_at")),
+        record,
+    )
+    run_id = _as_text(record.get("managed_run_id"))
+    manifest_text = _as_text(record.get("managed_manifest_path"))
+    if not run_id or not manifest_text:
+        return default
+
+    from arnold_pipelines.megaplan.managed_agent import is_managed_manifest, observed_status
+
+    manifest_path = Path(manifest_text)
+    try:
+        manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        manifest_payload = {}
+    manifest = _as_mapping(manifest_payload)
+    if not isinstance(manifest, Mapping) or not is_managed_manifest(manifest):
+        return default
+    if _as_text(manifest.get("run_id")) != run_id:
+        return default
+    links = _as_mapping(manifest.get("links"))
+    for record_key, link_key in (
+        ("request_id", "repair_request_id"),
+        ("blocker_id", "blocker_id"),
+    ):
+        expected = _as_text(record.get(record_key))
+        observed = _as_text(links.get(link_key))
+        if expected and observed != expected:
+            return default
+
+    status, live = observed_status(manifest, manifest_path)
+    if status in {"reserved", "launching"}:
+        state = ATTEMPT_STATE_CLAIMED
+    elif status in {"running", "adopting"}:
+        state = ATTEMPT_STATE_RUNNING
+    elif status == "completed":
+        state = ATTEMPT_STATE_SUCCEEDED
+    elif status in {"cancelled", "superseded"}:
+        state = ATTEMPT_STATE_CANCELLED
+    else:
+        state = ATTEMPT_STATE_FAILED
+    outcome = _as_text(manifest.get("terminal_outcome"))
+    if state in {ATTEMPT_STATE_CLAIMED, ATTEMPT_STATE_RUNNING}:
+        outcome = REPAIRING
+    elif not outcome:
+        outcome = status
+    raw = {
+        "dispatch_attempt": dict(record),
+        "managed_agent_manifest": dict(manifest),
+        "observed_status": status,
+        "observed_live": live,
+    }
+    recorded_at = (
+        _as_text(manifest.get("updated_at"))
+        or _as_text(manifest.get("finished_at"))
+        or _as_text(record.get("created_at"))
+    )
+    return state, outcome, recorded_at, raw
+
+
 def _problem_signature_matches_fingerprint(
     problem_signature: Any,
     fingerprint: Mapping[str, Any] | None,
@@ -3791,17 +4348,26 @@ def _has_active_repair(
     if durable_repair_active(custody):
         return True
 
+    # A compatibility lock can corroborate custody, but it cannot manufacture
+    # the request/blocker identity that custody requires.
+    blocker_id = _as_text(custody.get("blocker_id"))
+    active_request_ids = {
+        _as_text(value)
+        for value in _as_list(custody.get("active_request_ids"))
+        if _as_text(value)
+    }
+    if not blocker_id or not active_request_ids:
+        return False
+
     lock_status = _as_text(getattr(lock_evidence, "status", ""))
     if not lock_status and isinstance(lock_evidence, Mapping):
         lock_status = _as_text(lock_evidence.get("status"))
     if lock_status in {"acquired", "busy", "claimed", "already_claimed"}:
         return True
 
-    process_payload = _as_mapping(process_evidence)
-    process_status = _as_text(process_payload.get("status"))
-    if process_payload.get("active") is True or process_payload.get("live") is True:
-        return True
-    return process_status in {"active", "busy", "claimed", "repairing", "running"}
+    # Process liveness is provisional transport evidence.  Without a durable
+    # blocker-scoped claim or lock it must not suppress a fresh repair owner.
+    return False
 
 
 def _is_known_repairable_shape(
@@ -3844,6 +4410,12 @@ def _is_known_repairable_shape(
         "no_next_step_state_mapping_failure",
     }:
         return _has_current_target_evidence(current_target)
+    if (
+        current_state == "blocked"
+        and retry_strategy == "repair_phase_contract"
+        and failure_kind == "deterministic_phase_failure"
+    ):
+        return _has_current_target_evidence(current_target)
 
     # --- fallback: semantic findings indicate repairable issues ----------
     if not failure_kind and current_state in {"blocked", "failed", ""}:
@@ -3859,10 +4431,9 @@ def _has_terminality_contradiction(current_target: Mapping[str, Any]) -> bool:
     """Return true for states that must reopen custody despite a success label."""
     target = _as_mapping(current_target)
     active_step = _as_mapping(target.get("active_step_heartbeat"))
-    if (
-        (bool(active_step.get("active")) or _as_text(active_step.get("worker_pid")))
-        and active_step.get("pid_live") is not True
-    ):
+    if bool(active_step.get("active")) or _as_text(active_step.get("worker_pid")):
+        if active_step.get("pid_live") is True:
+            return False
         return _has_current_target_evidence(target)
     stale_kinds = {
         _as_text(_as_mapping(item).get("kind"))
@@ -4028,6 +4599,7 @@ def build_ordinary_repair_verdict(
     before_evidence_refs: tuple[str, ...] | None = None,
     after_evidence_refs: tuple[str, ...] | None = None,
     durable_refs: tuple[str, ...] | None = None,
+    repair_goal_status_override: str = "",
     timestamp: str | None = None,
 ) -> RepairVerdict:
     """Build a structured ordinary repair completion verdict from available evidence.
@@ -4043,6 +4615,33 @@ def build_ordinary_repair_verdict(
     outcome = _as_text(payload.get("outcome"))
     verdict_kind = _OUTCOME_TO_VERDICT_KIND.get(outcome, REPAIR_VERDICT_NO_VERDICT)
 
+    # A repair process/result is not the semantic completion authority when a
+    # durable repair goal is linked.  Fail closed unless that goal itself has
+    # authoritative progress or an explicit approval gate.
+    repair_goal = _as_mapping(payload.get("repair_goal"))
+    repair_goal_path = _as_text(repair_goal.get("goal_path"))
+    repair_goal_status = ""
+    if repair_goal_path:
+        try:
+            goal_payload = json.loads(Path(repair_goal_path).read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            goal_payload = {}
+        if isinstance(goal_payload, Mapping):
+            repair_goal_status = _as_text(goal_payload.get("status"))
+        override = _as_text(repair_goal_status_override)
+        expected_override = {
+            "progressed": "progressed",
+            "true_human_blocker": "approval_required",
+        }.get(outcome, "")
+        if override and override == expected_override:
+            # The goal evaluator's returned terminal status is authoritative
+            # for this outcome.  Carry it across the verdict write so a
+            # concurrent stale goal-file writer cannot turn a verified
+            # terminal result back into no-verdict.
+            repair_goal_status = override
+        if repair_goal_status not in {"progressed", "approval_required"}:
+            verdict_kind = REPAIR_VERDICT_NO_VERDICT
+
     stale_detected = False
     stale_reason = ""
     if payload:
@@ -4052,6 +4651,11 @@ def build_ordinary_repair_verdict(
     no_verdict_reason = ""
     if verdict_kind == REPAIR_VERDICT_NO_VERDICT or not outcome:
         no_verdict_detected, no_verdict_reason = detect_no_verdict_artifact(payload)
+        if repair_goal_path and repair_goal_status not in {"progressed", "approval_required"}:
+            no_verdict_detected = True
+            no_verdict_reason = (
+                "durable repair goal remains active at the captured frozen checkpoint"
+            )
 
     evidence_ts = timestamp or _as_text(payload.get("evidence_timestamp") or payload.get("completed_at") or "")
     if not evidence_ts:
@@ -4796,12 +5400,14 @@ __all__ = [
     "ENVIRONMENT_GONE",
     "LIVE_WITH_FRESH_ACTIVITY",
     "NEEDS_HUMAN",
+    "NON_TERMINAL_OUTCOMES",
     "NON_SUCCESS_OUTCOMES",
     "PARTIAL_LIVENESS",
     "PROGRESSED",
     "REPAIR_EXHAUSTED",
     "REPAIR_TIMEOUT",
     "REPAIRING",
+    "RETRY_PENDING",
     "RECOVERY_PROVISIONAL",
     "RECOVERY_UNKNOWN",
     "RECOVERY_UNKNOWN_TYPES",
@@ -4822,6 +5428,7 @@ __all__ = [
     "classify_repair_dispatch",
     "classify_recovery_verification",
     "durable_repair_active",
+    "effective_repair_request_decision_status",
     "classify_verification_outcome",
     "cleanup_repair_data_retention",
     "compute_deadline",
@@ -4835,6 +5442,7 @@ __all__ = [
     "normalize_blocker_fingerprint_v1",
     "normalize_blocker_fingerprint_v2",
     "project_repair_custody",
+    "repair_request_decision_is_terminal",
     "RepairDispatchDecision",
     "RepairDispatchDecisionKind",
     "read_repair_index",

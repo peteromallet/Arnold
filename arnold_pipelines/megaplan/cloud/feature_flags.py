@@ -40,6 +40,9 @@ audit-autofix         ARNOLD_AUDIT_AUTOFIX_ENABLED  1 (on)     L3 path gate;
 meta-repair-commit    ARNOLD_META_REPAIR_COMMIT_
                       ENABLED                       1 (on)     Allow meta-repair
                                                                 to commit changes.
+meta-repair-push      ARNOLD_META_REPAIR_PUSH_
+                      ENABLED                       0 (off)    Allow meta-repair
+                                                                to push commits.
 audit-autofix-commit  ARNOLD_AUDIT_AUTOFIX_COMMIT_
                       ENABLED                       1 (on)     Allow auditor
                                                                 autofix commits.
@@ -209,6 +212,16 @@ def meta_repair_commit_enabled() -> bool:
     return _is_enabled("ARNOLD_META_REPAIR_COMMIT_ENABLED", True)
 
 
+def meta_repair_push_enabled() -> bool:
+    """Return ``True`` when meta-repair is explicitly allowed to push changes.
+
+    Controlled by ``ARNOLD_META_REPAIR_PUSH_ENABLED`` and defaults OFF.  Push
+    is an externally consequential superset of a local commit, so autonomy and
+    commit authority must not imply it.
+    """
+    return _is_enabled("ARNOLD_META_REPAIR_PUSH_ENABLED", False)
+
+
 def audit_autofix_commit_enabled() -> bool:
     """Return ``True`` when auditor autofix commits are permitted.
 
@@ -228,10 +241,11 @@ def audit_autofix_commit_enabled() -> bool:
 def mutation_authorized(path: str) -> bool:
     """Return whether mutation is authorized for the named repair *path*.
 
-    The default-off ``ARNOLD_AUTONOMY`` gate is the single master authority for
-    L1/L2/L3 state, source, commit, push, and mutation-capable subprocess
-    effects.  A path's own gate is necessary but insufficient: authorization
-    requires both gates.  Unknown paths fail closed.
+    The default-off ``ARNOLD_AUTONOMY`` gate is the master authority for
+    L1/L2/L3 state, source, commit, and mutation-capable subprocess effects. A
+    path's own gate is necessary but insufficient: authorization requires both
+    gates. Push has an additional explicit gate because it is externally
+    consequential. Unknown paths fail closed.
 
     This predicate deliberately does not gate observation, redaction, evidence
     capture, queue inspection, or reporting.  Those operations retain their
@@ -310,6 +324,11 @@ def meta_repair_commit_on() -> bool:
     return meta_repair_commit_enabled()
 
 
+def meta_repair_push_on() -> bool:
+    """Alias for :func:`meta_repair_push_enabled`."""
+    return meta_repair_push_enabled()
+
+
 def audit_autofix_commit_on() -> bool:
     """Alias for :func:`audit_autofix_commit_enabled`."""
     return audit_autofix_commit_enabled()
@@ -327,6 +346,8 @@ __all__ = [
     "escalation_ledger_on",
     "meta_repair_commit_enabled",
     "meta_repair_commit_on",
+    "meta_repair_push_enabled",
+    "meta_repair_push_on",
     "meta_repair_enabled",
     "meta_repair_mutation_authorized",
     "meta_repair_on",

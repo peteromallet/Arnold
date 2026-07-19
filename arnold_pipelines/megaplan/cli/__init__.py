@@ -253,6 +253,8 @@ def build_parser() -> argparse.ArgumentParser:
     override_parser.add_argument("--note")
     override_parser.add_argument("--source", default="user")
     override_parser.add_argument("--reason")
+    override_parser.add_argument("--repair-commit", dest="repair_commit")
+    override_parser.add_argument("--failure-fingerprint", dest="failure_fingerprint")
     override_parser.add_argument("--user-approved", action="store_true", default=False)
     override_parser.add_argument("--robustness", choices=ROBUSTNESS_ACCEPTED)
     override_parser.add_argument("--profile")
@@ -378,10 +380,31 @@ def build_parser() -> argparse.ArgumentParser:
     initiative_new.add_argument("--force", action="store_true")
     initiative_list = initiative_sub.add_parser("list")
     initiative_list.add_argument("--limit", type=int)
+    initiative_list.add_argument("--include-retired", action="store_true")
     initiative_search = initiative_sub.add_parser("search")
     initiative_search.add_argument("keywords", nargs="*")
     initiative_search.add_argument("--keywords-all", action="store_true")
     initiative_search.add_argument("--limit", type=int)
+    initiative_search.add_argument("--include-retired", action="store_true")
+    initiative_retire = initiative_sub.add_parser(
+        "retire", help="Write an identity-fenced metadata-only initiative tombstone"
+    )
+    initiative_retire.add_argument("slug")
+    initiative_retire.add_argument("--superseded-by", required=True)
+    initiative_retire.add_argument("--reason", required=True)
+    initiative_retire.add_argument("--expect-chain-sha256", required=True)
+    initiative_retire.add_argument(
+        "--evidence",
+        action="append",
+        default=[],
+        help="Repo-contained durable evidence path to hash into the tombstone. Repeatable.",
+    )
+    initiative_retire.add_argument(
+        "--external-evidence",
+        action="append",
+        default=[],
+        help="Absolute durable control-plane evidence path to hash. Repeatable.",
+    )
 
     ticket_parser = subparsers.add_parser("ticket")
     ticket_sub = ticket_parser.add_subparsers(dest="ticket_action", required=True)
@@ -1580,9 +1603,13 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
     )
     from arnold_pipelines.megaplan.layout import (
         ALLOWED_INITIATIVE_SUBDIRS,
+        INITIATIVE_RETIREMENT_MARKER,
         initiative_metadata,
         initiative_root,
         initiatives_dir,
+        is_initiative_retired,
+        read_initiative_retirement,
+        render_initiative_readme,
         search_initiatives,
         slugify_initiative,
     )
@@ -1632,7 +1659,10 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
         readme = initiative / "README.md"
         if args.force or not readme.exists():
             title = (args.title or slug.replace("-", " ").title()).strip()
-            readme.write_text(f"# {title}\n\n{description}\n", encoding="utf-8")
+            readme.write_text(
+                render_initiative_readme(title, description),
+                encoding="utf-8",
+            )
         north_star = args.north_star
         if args.north_star_file:
             source = Path(args.north_star_file).expanduser()
@@ -1734,6 +1764,7 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
             initiative_metadata(root, path.name)
             for path in sorted(base.iterdir())
             if path.is_dir()
+            and (bool(getattr(args, "include_retired", False)) or not is_initiative_retired(root, path.name))
         ]
         if args.limit is not None:
             rows = rows[: args.limit]
@@ -1752,6 +1783,7 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
             keywords,
             keywords_all=args.keywords_all,
             limit=args.limit or 25,
+            include_retired=bool(getattr(args, "include_retired", False)),
         )
         return {
             "success": True,
@@ -1759,6 +1791,136 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
             "action": "search",
             "keywords": keywords,
             "initiatives": rows,
+        }
+    if action == "retire":
+        slug = slugify_initiative(args.slug)
+        replacement = slugify_initiative(args.superseded_by)
+        reason = str(args.reason or "").strip()
+        expected_chain_sha = str(args.expect_chain_sha256 or "").strip().lower()
+        if slug == replacement:
+            raise CliError("invalid_args", "retired and superseding initiatives must differ")
+        if not reason:
+            raise CliError("invalid_args", "--reason must be non-empty")
+        if len(expected_chain_sha) != 64 or any(char not in "0123456789abcdef" for char in expected_chain_sha):
+            raise CliError("invalid_args", "--expect-chain-sha256 must be 64 lowercase hex characters")
+        target = initiative_root(root, slug)
+        replacement_root = initiative_root(root, replacement)
+        chain_path = target / "chain.yaml"
+        replacement_chain = replacement_root / "chain.yaml"
+        if not chain_path.is_file() or chain_path.is_symlink():
+            raise CliError("initiative_not_found", f"Canonical chain is unavailable: {chain_path}")
+        if not replacement_chain.is_file() or replacement_chain.is_symlink():
+            raise CliError(
+                "initiative_not_found", f"Superseding canonical chain is unavailable: {replacement_chain}"
+            )
+        actual_chain_sha = hashlib.sha256(chain_path.read_bytes()).hexdigest()
+        if actual_chain_sha != expected_chain_sha:
+            raise CliError(
+                "initiative_changed",
+                f"Chain SHA-256 changed for {slug}: expected {expected_chain_sha}, got {actual_chain_sha}",
+            )
+        evidence_rows: list[dict[str, Any]] = []
+        resolved_root = root.resolve()
+        evidence_inputs = [
+            (raw_path, False) for raw_path in list(getattr(args, "evidence", []) or [])
+        ] + [
+            (raw_path, True)
+            for raw_path in list(getattr(args, "external_evidence", []) or [])
+        ]
+        for raw_path, external in evidence_inputs:
+            path = Path(raw_path).expanduser()
+            if not path.is_absolute():
+                if external:
+                    raise CliError("invalid_args", "External retirement evidence must be absolute")
+                path = (resolved_root / path).resolve()
+            else:
+                path = path.resolve()
+            if external:
+                parts = path.parts
+                initiative_evidence = (
+                    path.is_relative_to(Path("/workspace"))
+                    and ".megaplan" in parts
+                    and "initiatives" in parts
+                )
+                if not path.is_relative_to(Path("/workspace/.megaplan")) and not initiative_evidence:
+                    raise CliError(
+                        "invalid_args",
+                        "External retirement evidence must be control-plane or initiative evidence under /workspace",
+                    )
+                evidence_path = str(path)
+            else:
+                try:
+                    evidence_path = path.relative_to(resolved_root).as_posix()
+                except ValueError as exc:
+                    raise CliError(
+                        "invalid_args", f"Retirement evidence must stay inside the repo: {path}"
+                    ) from exc
+            if not path.is_file() or path.is_symlink():
+                raise CliError("invalid_args", f"Retirement evidence is unavailable: {path}")
+            evidence_rows.append(
+                {
+                    "path": evidence_path,
+                    "scope": "external-control-plane" if external else "initiative-repo",
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "size": path.stat().st_size,
+                }
+            )
+        marker_path = target / INITIATIVE_RETIREMENT_MARKER
+        existing = read_initiative_retirement(root, slug)
+        if existing is not None:
+            identity = existing.get("identity") if isinstance(existing, dict) else None
+            if (
+                isinstance(identity, dict)
+                and identity.get("chain_sha256") == actual_chain_sha
+                and existing.get("superseded_by") == replacement
+            ):
+                return {
+                    "success": True,
+                    "step": "initiative",
+                    "action": "retire",
+                    "already_retired": True,
+                    "retirement": existing,
+                }
+            raise CliError("initiative_retired", f"Conflicting retirement marker already exists: {marker_path}")
+        retired_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        retirement_id = "iret-" + hashlib.sha256(
+            f"{slug}\0{actual_chain_sha}\0{replacement}\0{retired_at}".encode("utf-8")
+        ).hexdigest()[:24]
+        payload = {
+            "schema_version": "arnold.megaplan.initiative-retirement.v1",
+            "retirement_id": retirement_id,
+            "status": "retired",
+            "scope": "metadata_only",
+            "initiative": slug,
+            "superseded_by": replacement,
+            "retired_at": retired_at,
+            "reason": reason,
+            "identity": {
+                "chain_path": chain_path.relative_to(resolved_root).as_posix(),
+                "chain_sha256": actual_chain_sha,
+            },
+            "evidence": evidence_rows,
+            "truthfulness": {
+                "completion_asserted": False,
+                "unfinished_milestones_completed": False,
+                "historical_evidence_deleted": False,
+            },
+        }
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = marker_path.with_suffix(".retired.tmp")
+        with temporary.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, marker_path)
+        return {
+            "success": True,
+            "step": "initiative",
+            "action": "retire",
+            "already_retired": False,
+            "retirement": payload,
+            "marker_path": str(marker_path),
+            "marker_sha256": hashlib.sha256(marker_path.read_bytes()).hexdigest(),
         }
     raise CliError("invalid_args", f"Unknown initiative action: {action}")
 

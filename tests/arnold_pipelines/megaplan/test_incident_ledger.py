@@ -8,6 +8,7 @@ import pytest
 from arnold_pipelines.megaplan.incident import IncidentLedger
 from arnold_pipelines.megaplan.incident.schema import (
     MAX_COMMITTED_OUTPUT_BYTES,
+    MAX_STRUCTURED_FIELD_BYTES,
     cap_committed_output_text,
 )
 
@@ -78,6 +79,19 @@ def test_incident_ledger_rejects_invalid_events_before_writing(tmp_path: Path) -
 
     with pytest.raises(ValueError, match="incident event 'summary' must be <= 2048"):
         ledger.append_event(_event(summary="x" * 2049))
+
+    assert not ledger.events_path.exists()
+
+
+def test_incident_ledger_rejects_expanding_decision_before_redaction(
+    tmp_path: Path,
+) -> None:
+    ledger = IncidentLedger(tmp_path)
+
+    with pytest.raises(ValueError, match="incident event 'decision'.*bytes"):
+        ledger.append_event(
+            _event(decision={"recursive_audit_response": "x" * (MAX_STRUCTURED_FIELD_BYTES + 1)})
+        )
 
     assert not ledger.events_path.exists()
 

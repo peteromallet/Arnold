@@ -168,8 +168,8 @@ def test_custody_projection_reads_plan_state_and_accepted_request_without_migrat
         repair_data_dir=repair_data_dir,
     )
 
-    assert projection["blocker_fingerprint"] == _fingerprint()
-    assert projection["blocker_id"] == blocker_id_for_fingerprint(_fingerprint())
+    assert projection["blocker_fingerprint"] == queued["request"]["blocker_fingerprint"]
+    assert projection["blocker_id"] == queued["request"]["blocker_id"]
     assert projection["custody_bucket"] == CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING
     assert projection["current_state"] == "blocked"
     assert projection["retry_strategy"] == "manual_review"
@@ -180,6 +180,141 @@ def test_custody_projection_reads_plan_state_and_accepted_request_without_migrat
     assert projection["requests"][0]["status"] == "accepted"
     assert projection["requests"][0]["decision"]["decision"] == "accepted"
     assert projection["requests"][0]["problem_signature"]["blocked_task_id"] == "T1"
+    assert projection["requests"][0]["claimable"] is True
+    assert projection["lifecycle_counts"] == {
+        "requested": 1,
+        "persisted": 1,
+        "claimable": 1,
+        "claimed": 0,
+        "attempted": 0,
+        "launched": 0,
+        "recovered": 0,
+    }
+
+
+def test_self_coalesced_request_remains_claimable_and_accepted_unclaimed(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    queue_root = _queue_root(tmp_path)
+
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "",
+            "blocked_task_id": "T1",
+        },
+        target={"plan_dir": "/tmp/plan"},
+        root_cause_hint="repairable blocker",
+        created_at="2026-07-04T01:00:00Z",
+    )
+    replay = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "",
+            "blocked_task_id": "T1",
+        },
+        target={"plan_dir": "/tmp/plan"},
+        root_cause_hint="repairable blocker",
+        created_at="2026-07-04T01:10:00Z",
+    )
+
+    projection = project_repair_custody(
+        plan_state=_plan_state(),
+        current_target=_current_target(),
+        queue_root=queue_root,
+        repair_data_dir=repair_data_dir,
+    )
+
+    request_id = queued["request"]["request_id"]
+    assert replay["status"] == "coalesced"
+    assert replay["decision"]["related_request_id"] == request_id
+    assert projection["active_request_ids"] == [request_id]
+    assert projection["accepted_unclaimed_request_ids"] == [request_id]
+    assert projection["request_status_counts"] == {"accepted": 1}
+    assert projection["requests"][0]["status"] == "accepted"
+    assert projection["requests"][0]["claimable"] is True
+    assert len(projection["coalesced_without_live_owner"]) == 1
+    assert projection["coalesced_without_live_owner"][0]["request_id"] == request_id
+    assert projection["coalesced_without_live_owner"][0]["related_request_id"] == request_id
+    assert projection["coalesced_without_live_owner"][0]["reason"] == "request marker already exists"
+    assert projection["coalesced_without_live_owner"][0]["self_coalesced"] is True
+
+    claim = repair_requests.claim_active_repair_request(
+        queue_root,
+        blocker_id=queued["request"]["blocker_id"],
+        request_id=request_id,
+        actor="repair-trigger",
+        session="demo-session",
+        pid=4242,
+        is_pid_live=lambda _pid: True,
+    )
+    assert claim.claimed is True
+
+
+def test_identity_free_legacy_request_remains_unclaimable_after_projection(
+    tmp_path: Path,
+) -> None:
+    queue_root = _queue_root(tmp_path)
+    request_id = "legacy-m6-request"
+    signature = {
+        "failure_kind": "blocked_recovery_not_resolved",
+        "current_state": "blocked",
+        "phase_or_step": "execute",
+        "milestone_or_plan": "agentic-replay-viewer",
+        "gate_recommendation": "",
+        "blocked_task_id": "T1",
+        "event_signature": "",
+    }
+    repair_contract.atomic_write_json(
+        repair_requests.requests_dir(queue_root) / f"{request_id}.json",
+        {
+            "schema_version": 1,
+            "kind": "repair_request",
+            "request_id": request_id,
+            "created_at": "2026-07-16T13:35:03Z",
+            "source": "legacy_watchdog",
+            "session": "demo-session",
+            "target": {"plan_name": "agentic-replay-viewer"},
+            "problem_signature": signature,
+            "problem_signature_key": repair_requests.problem_signature_key(signature),
+        },
+    )
+
+    projection = project_repair_custody(
+        plan_state=_plan_state(),
+        current_target={**_current_target(), "target_session": "demo-session"},
+        queue_root=queue_root,
+        repair_data_dir=tmp_path / "repair-data",
+    )
+
+    assert projection["active_request_ids"] == [request_id]
+    assert projection["blocker_id"] == ""
+    assert projection["blocker_fingerprint"] is None
+    assert projection["requests"][0]["claimable"] is False
+    assert projection["lifecycle_counts"]["persisted"] == 1
+    assert projection["lifecycle_counts"]["claimable"] == 0
+    assert projection["lifecycle_counts"]["claimed"] == 0
+    assert projection["lifecycle_counts"]["attempted"] == 0
+    assert projection["lifecycle_counts"]["launched"] == 0
+    assert projection["lifecycle_counts"]["recovered"] == 0
 
 
 def test_advisory_sidecar_canonical_label_does_not_create_repair_custody(
@@ -311,6 +446,12 @@ def test_live_execute_worker_is_not_a_finalized_state_contradiction() -> None:
         "authoritative_source": "chain_state",
         "current_refs": {"current_plan_name": "s3-boundary-coverage"},
         "plan_state": {"present": True, "fingerprint": "sha256:live-plan"},
+        "chain_state": {
+            "present": True,
+            "fingerprint": "sha256:stale-chain",
+            "milestone_total": 10,
+            "completed_count": 2,
+        },
         "active_step_heartbeat": {
             "active": True,
             "worker_pid": "1004788",
@@ -433,7 +574,7 @@ def test_custody_projection_reads_immutable_queue_dispatch_attempt(
         root_cause_hint="dispatch me",
     )
     request_id = queued["request"]["request_id"]
-    blocker_id = blocker_id_for_fingerprint(_fingerprint())
+    blocker_id = queued["request"]["blocker_id"]
     assert blocker_id is not None
     repair_requests.write_decision(
         queue_root,
@@ -463,8 +604,156 @@ def test_custody_projection_reads_immutable_queue_dispatch_attempt(
     assert projection["custody_bucket"] == CUSTODY_BUCKET_REPAIRING
     assert projection["request_count"] == 1
     assert projection["attempt_count"] == 1
+    assert projection["lifecycle_counts"]["attempted"] == 1
+    assert projection["lifecycle_counts"]["launched"] == 1
+    assert projection["lifecycle_counts"]["recovered"] == 0
     assert projection["attempts"][0]["source"] == "repair_queue_dispatch_attempt"
     assert projection["attempts"][0]["terminal"] is False
+
+
+def test_reserved_managed_run_is_claimed_but_not_launched(
+    tmp_path: Path,
+) -> None:
+    queue_root = _queue_root(tmp_path)
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "repair",
+            "blocked_task_id": "T1",
+        },
+        root_cause_hint="fixture",
+    )
+    request = queued["request"]
+    repair_requests.write_decision(
+        queue_root,
+        request_id=request["request_id"],
+        decision="accepted",
+        reason="fixture",
+    )
+    repair_data_dir = tmp_path / "repair-data"
+    repair_data_dir.mkdir()
+    manifest_path = tmp_path / "managed.json"
+    repair_contract.atomic_write_json(
+        manifest_path,
+        {
+            "schema_version": "arnold-managed-agent-run-v2",
+            "custodian": "arnold.megaplan.managed_agent",
+            "run_id": "managed-reserved",
+            "run_kind": "manual_repair",
+            "status": "reserved",
+            "created_at": "2026-07-16T14:00:00Z",
+            "updated_at": "2026-07-16T14:00:00Z",
+            "links": {
+                "repair_request_id": request["request_id"],
+                "blocker_id": request["blocker_id"],
+            },
+        },
+    )
+    repair_contract.atomic_write_json(
+        repair_data_dir / "demo-session.repair-data.json",
+        {
+            "session": "demo-session",
+            "repair_request_id": request["request_id"],
+            "blocker_id": request["blocker_id"],
+            "managed_agent_runs": [
+                {
+                    "run_id": "managed-reserved",
+                    "manifest_path": str(manifest_path),
+                    "repair_request_id": request["request_id"],
+                    "blocker_id": request["blocker_id"],
+                }
+            ],
+        },
+    )
+
+    projection = project_repair_custody(
+        plan_state=_plan_state(),
+        current_target={**_current_target(), "target_session": "demo-session"},
+        queue_root=queue_root,
+        repair_data_dir=repair_data_dir,
+    )
+
+    assert projection["lifecycle_counts"]["attempted"] == 1
+    assert projection["lifecycle_counts"]["launched"] == 0
+
+
+def test_queue_dispatch_attempt_uses_terminal_managed_manifest(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    queue_root = _queue_root(tmp_path)
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "",
+            "blocked_task_id": "T1",
+        },
+        root_cause_hint="dispatch me",
+    )
+    request_id = queued["request"]["request_id"]
+    blocker_id = queued["request"]["blocker_id"]
+    assert blocker_id is not None
+    managed_dir = tmp_path / "managed-1"
+    managed_dir.mkdir()
+    manifest_path = managed_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps({
+            "schema_version": "arnold-managed-agent-run-v2",
+            "custodian": "arnold.megaplan.managed_agent",
+            "run_id": "managed-1",
+            "status": "failed",
+            "terminal_outcome": "failed",
+            "updated_at": "2026-07-04T01:06:00Z",
+            "links": {
+                "repair_request_id": request_id,
+                "blocker_id": blocker_id,
+            },
+        }),
+        encoding="utf-8",
+    )
+    repair_requests.write_decision(
+        queue_root,
+        request_id=request_id,
+        decision="dispatched",
+        reason="managed repair child launched",
+    )
+    repair_requests.write_dispatch_attempt(
+        queue_root,
+        request_id=request_id,
+        blocker_id=blocker_id,
+        actor="watchdog",
+        repair_layer="l1",
+        command="managed repair",
+        child_pid=4242,
+        managed_run_id="managed-1",
+        managed_manifest_path=str(manifest_path),
+    )
+
+    projection = project_repair_custody(
+        plan_state=_plan_state(),
+        current_target=_current_target(),
+        queue_root=queue_root,
+        repair_data_dir=repair_data_dir,
+    )
+
+    assert projection["attempts"][0]["state"] == "failed"
+    assert projection["attempts"][0]["outcome"] == "failed"
+    assert projection["attempts"][0]["terminal"] is True
+    assert projection["custody_bucket"] == CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING
 
 
 def test_custody_projection_uses_managed_execution_as_formal_attempt(
@@ -495,7 +784,7 @@ def test_custody_projection_uses_managed_execution_as_formal_attempt(
         created_at="2026-07-04T01:00:00Z",
     )
     request_id = queued["request"]["request_id"]
-    expected_blocker_id = blocker_id_for_fingerprint(_fingerprint())
+    expected_blocker_id = queued["request"]["blocker_id"]
     manifest_path = managed_dir / "manifest.json"
     stdin_path = managed_dir / "stdin.bin"
     stdin_path.write_bytes(b"x")

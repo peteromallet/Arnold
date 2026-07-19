@@ -21,7 +21,7 @@ MAX_CONTEXT_TEXT_CHARS = 500
 
 
 DELEGATION_POLICY: dict[str, Any] = {
-    "schema_version": "megaplan-resident-delegation-policy-v1",
+    "schema_version": "megaplan-resident-delegation-policy-v3",
     "preference": (
         "Default to `launch_subagent` for any user-requested execution work when delegation "
         "adds useful execution. Decompose the query into independent actionable "
@@ -30,7 +30,8 @@ DELEGATION_POLICY: dict[str, Any] = {
     ),
     "ownership": (
         "Assign one clear owner per sub-problem and never create overlapping ownership for the "
-        "same sub-problem."
+        "same sub-problem. For one logical request, name exactly one synthesis/delivery owner; "
+        "all implementation and review contributors report durable results to that owner."
     ),
     "task_prompt_contract": (
         "Give each owner an action-oriented task prompt with concrete boundaries, expected outcome, "
@@ -44,6 +45,54 @@ DELEGATION_POLICY: dict[str, Any] = {
     "launch_evidence": (
         "Durably launch requested execution and make that tool call before replying. Never claim "
         "a launch without its returned durable run ID."
+    ),
+    "execution_default": (
+        "When the user asks to do, fix, implement, land, or activate something, the delegated owner "
+        "normally implements, verifies, and delivers the authorized result; it does not stop at advice "
+        "or a patch description. Planning, explanation, diagnosis, status, and review requests remain "
+        "non-mutating unless the user also requests execution."
+    ),
+    "workspace_default": (
+        "For git-backed mutation, use an isolated worktree and feature branch by default, based on the "
+        "verified target revision. Preserve concurrent dirty work and inspect both the project checkout "
+        "and any pinned resident runtime before resident-code changes. Work in the current checkout only "
+        "when the user explicitly requires it or the repository has no usable worktree workflow and the "
+        "mutation is demonstrably isolated from unrelated work."
+    ),
+    "integration_default": (
+        "The target is the branch explicitly named or clearly implied by the request; otherwise use the "
+        "launch-time current non-main branch. For resident-source work, a separately pinned clean attached "
+        "runtime branch in the same repository is the target over an unrelated dirty project checkout. "
+        "Never infer literal `main` from an unspecified target. A dirty, detached, or divergent launch "
+        "checkout requires isolation and recorded target discovery; those facts alone are not target "
+        "ambiguity. For authorized implementation, revalidate the recorded target ref after verification. "
+        "If it advanced on the same lineage, rebase or replay as needed and integrate locally, preferring "
+        "fast-forward-only or the repository's documented non-destructive merge method. Keep the verified "
+        "commit isolated with an exact enumerated gate only when multiple plausible writable refs remain, "
+        "target history was rewritten or conflicts, or authorization differs materially. Local integration "
+        "does not authorize a remote push, pull-request merge, deployment, or service restart."
+    ),
+    "external_actions": (
+        "Automatically commit and locally integrate verified implementation when the request clearly "
+        "authorizes execution and the target is unambiguous. Push, merge a remote pull request, deploy, "
+        "or restart only when the request explicitly implies that effect or an established policy grants "
+        "it, and only after exact target and revision reconciliation. Unspecified literal `main`, remote "
+        "default-branch mutation, production deployment, destructive cleanup, force operations, credential "
+        "changes, and other externally consequential actions require explicit approval."
+    ),
+    "tentative_work": (
+        "For tentative, speculative, review-only, planning-only, or materially ambiguous requests, do not "
+        "integrate or perform external effects. Use read-only analysis or an isolated disposable branch "
+        "when a prototype is useful, label it unintegrated, and ask for the missing target or authority when "
+        "different answers would materially change the delivered result."
+    ),
+    "completion_evidence": (
+        "Before claiming completion, record proportional tests or checks, the reviewed diff, commit SHA, "
+        "base and target revisions, and a clean isolated worktree. A local integration claim also requires "
+        "durable ancestry evidence that the target branch contains the commit. A push requires the observed "
+        "remote ref; deployment or restart requires installed-runtime revision reconciliation, the supported "
+        "operation receipt, service health, and an outcome probe. A started command, PID, acknowledgement, "
+        "agent prose, or artifact path alone never proves completion."
     ),
     "exceptions": {
         "non_execution": (
@@ -79,6 +128,12 @@ def _delegation_policy_instruction() -> str:
             str(DELEGATION_POLICY["ownership"]),
             str(DELEGATION_POLICY["task_prompt_contract"]),
             str(DELEGATION_POLICY["aggregation"]),
+            str(DELEGATION_POLICY["execution_default"]),
+            str(DELEGATION_POLICY["workspace_default"]),
+            str(DELEGATION_POLICY["integration_default"]),
+            str(DELEGATION_POLICY["external_actions"]),
+            str(DELEGATION_POLICY["tentative_work"]),
+            str(DELEGATION_POLICY["completion_evidence"]),
             str(exceptions["non_execution"]),
             str(exceptions["trivial_or_non_independent"]),
             str(exceptions["authorization"]),
@@ -104,8 +159,14 @@ POLICY_PACKS: dict[str, str] = {
         "conversation. Reply ancestry comes only from immutable preloaded ancestors or read-reply-chain."
     ),
     "initiatives": (
-        "Keep planning assets under .megaplan/initiatives/<slug> using the canonical subdirectories. "
-        "Search and reuse a matching initiative before creating one."
+        "A document is speculative/exploratory/durable knowledge and does not approve execution. A ticket "
+        "is a specific addressable problem/opportunity/idea, not yet a coordinated plan. An initiative is a "
+        "committed coherent outcome with boundaries and success criteria; planning or execution may follow. "
+        "Search and reuse related documents, tickets, and initiatives before creating anything. Keep planning "
+        "assets under .megaplan/initiatives/<slug>; README.md is the current truth/front door and canonical "
+        "index. Use briefs/, research/, decisions/, notes/, handoff/, and assets/. NORTHSTAR.md and chain.yaml "
+        "are optional readiness artifacts. Curate subagent findings into canonical documents that cite raw "
+        "runs; never store raw run output as current truth or create planning documents under .megaplan/briefs."
     ),
     "todos": (
         "The todo preview contains pending items, not necessarily due items. Use read_todo_list for the "
@@ -129,7 +190,10 @@ def classify_intent_packs(text: str | None) -> tuple[str, ...]:
         ("restart", ("restart", "relaunch", "reset", "resident")),
         ("delegation", ("launch", "subagent", "sub-agent", "implement", "fix", "run ", "push")),
         ("conversation", ("message", "reply", "conversation", "said", "history")),
-        ("initiatives", ("initiative", "epic", "brief", "north star", "plan")),
+        (
+            "initiatives",
+            ("document", "ticket", "initiative", "epic", "brief", "north star", "plan"),
+        ),
         ("todos", ("todo", "to-do", "remind", "recurring", "queue")),
     )
     for name, needles in rules:
@@ -156,7 +220,12 @@ def build_context_root(
     todos: Mapping[str, Any] | None,
     runtime: Mapping[str, Any] | None,
     conversation: Mapping[str, Any] | None,
+    knowledge_lifecycle: Mapping[str, Any] | None = None,
+    recent_activity: Mapping[str, Any] | None = None,
+    ticket_count: int = 0,
+    document_count: int = 0,
     intent_packs: Sequence[str] = (),
+    schedules: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the small always-on orientation and navigation node."""
 
@@ -184,8 +253,17 @@ def build_context_root(
                 {
                     key: _safe(row.get(key), depth=1)
                     for key in (
-                        "node_id", "session", "display_name", "status", "display_state",
-                        "current_plan", "latest_activity", "operator_next", "progress", "repairing",
+                        "node_id",
+                        "session",
+                        "display_name",
+                        "status",
+                        "display_state",
+                        "review_verdict",
+                        "current_plan",
+                        "latest_activity",
+                        "operator_next",
+                        "progress",
+                        "repairing",
                     )
                     if row.get(key) is not None
                 }
@@ -193,22 +271,41 @@ def build_context_root(
             ],
             "sessions_omitted_count": max(0, len(attention_candidates) - len(attention)),
             "running_agent_count": (agents or {}).get("running_count", 0),
+            "queued_agent_count": (agents or {}).get("queued_count", 0),
+            "agent_queue_attention_count": (agents or {}).get(
+                "queue_attention_count", 0
+            ),
             "agent_delivery_attention_count": (agents or {}).get("delivery_attention_count", 0),
             "pending_todo_count": (todos or {}).get("pending_count", 0),
+            "upcoming_schedule_count_12h": (schedules or {}).get(
+                "upcoming_enabled_count", 0
+            ),
+            "upcoming_schedules": _safe(
+                list((schedules or {}).get("upcoming_enabled") or [])[:4], depth=3
+            ),
         },
+        "knowledge_lifecycle": _safe(knowledge_lifecycle or {}, depth=4),
+        # Causal initiative activity is intentionally nested (initiative ->
+        # document events) but bounded before it reaches this generic guard.
+        "recent_knowledge_activity": _safe(recent_activity or {}, depth=7),
         "routes": [
             {"node_id": "status", "contains": "cloud sessions, progress, failures, repair evidence"},
-            {"node_id": "agents", "contains": "managed agent lifecycle and delivery"},
+            {"node_id": "agents", "contains": "managed agent lifecycle, queued dependencies, and delivery"},
             {"node_id": "conversation", "contains": "current transcript and reply/search guidance"},
-            {"node_id": "initiatives", "contains": "initiative index and documents"},
+            {"node_id": "tickets", "contains": "canonical ticket records and authoritative UTC timestamps"},
+            {"node_id": "initiatives", "contains": "canonical initiative index and document navigation"},
+            {"node_id": "documents", "contains": "durable non-state document inventory"},
             {"node_id": "runtime", "contains": "resident configuration, restart and lifecycle"},
             {"node_id": "todos", "contains": "VP special requests"},
+            {"node_id": "schedules", "contains": "upcoming enabled occurrences and operator guidance"},
             {"node_id": "capabilities", "contains": "resident tool directory"},
             {"node_id": "policies", "contains": "full operating policy packs"},
         ],
         "counts": {
             "status_sessions": (status or {}).get("session_count", len(status_sessions)),
             "initiatives": len(initiatives or ()),
+            "tickets": max(0, ticket_count),
+            "documents": max(0, document_count),
             "running_agents": (agents or {}).get("running_count", 0),
             "recent_agents": (agents or {}).get("recent_count", 0),
         },
@@ -284,17 +381,53 @@ def read_context_node(
     if head == "agents":
         agents = sources.get("agents") if isinstance(sources.get("agents"), Mapping) else {}
         branch = tail or "running"
-        if branch not in {"running", "recent"}:
+        if branch not in {"running", "queued", "recent"}:
             return _error(normalized, "unknown agents branch")
         return _page(normalized, list(agents.get(branch) or []), cursor, limit)
     if head == "conversation":
         if tail in {"", "messages"}:
             return _page(normalized, list(sources.get("messages") or []), cursor, limit)
         return _error(normalized, "unknown conversation branch")
+    if head == "tickets":
+        tickets = list(sources.get("tickets") or [])
+        if not tail:
+            return _page(normalized, tickets, cursor, limit)
+        match = next(
+            (
+                row
+                for row in tickets
+                if isinstance(row, Mapping) and str(row.get("id") or "") == tail
+            ),
+            None,
+        )
+        return _node(normalized, _safe(match, depth=4)) if match is not None else _error(normalized, "ticket not found")
     if head == "initiatives":
-        return _page(normalized, list(sources.get("initiatives") or []), cursor, limit)
+        initiatives = list(sources.get("initiatives") or [])
+        if not tail:
+            return _page(normalized, initiatives, cursor, limit)
+        match = next(
+            (
+                row
+                for row in initiatives
+                if isinstance(row, Mapping) and str(row.get("slug") or "") == tail
+            ),
+            None,
+        )
+        return (
+            _node(normalized, _safe(match, depth=4))
+            if match is not None
+            else _error(normalized, "initiative not found")
+        )
+    if head == "documents":
+        if tail:
+            return _error(normalized, "document paths are searched within the documents scope")
+        return _page(normalized, list(sources.get("documents") or []), cursor, limit)
     if head == "todos":
         return _page(normalized, list(sources.get("todos") or []), cursor, limit)
+    if head == "schedules":
+        if tail in {"", "upcoming"}:
+            return _page(normalized, list(sources.get("schedules") or []), cursor, limit)
+        return _error(normalized, "unknown schedules branch")
     if head == "capabilities":
         return _page(normalized, list(sources.get("capabilities") or []), cursor, limit)
     if head == "runtime":
@@ -317,7 +450,18 @@ def search_context(
 ) -> dict[str, Any]:
     """Bounded text search over an allow-listed context namespace."""
 
-    if scope not in {"status", "agents", "conversation", "initiatives", "todos", "capabilities", "policies"}:
+    if scope not in {
+        "status",
+        "agents",
+        "conversation",
+        "tickets",
+        "initiatives",
+        "documents",
+        "todos",
+        "schedules",
+        "capabilities",
+        "policies",
+    }:
         return _error(scope, "unknown search scope")
     if cursor < 0 or limit < 1 or limit > MAX_NODE_LIMIT:
         return _error(scope, f"cursor must be non-negative and limit 1..{MAX_NODE_LIMIT}")
@@ -329,10 +473,16 @@ def search_context(
         values = list(agents.get("running") or []) + list(agents.get("recent") or [])
     elif scope == "conversation":
         values = list(sources.get("messages") or [])
+    elif scope == "tickets":
+        values = list(sources.get("tickets") or [])
     elif scope == "initiatives":
         values = list(sources.get("initiatives") or [])
+    elif scope == "documents":
+        values = list(sources.get("documents") or [])
     elif scope == "todos":
         values = list(sources.get("todos") or [])
+    elif scope == "schedules":
+        values = list(sources.get("schedules") or [])
     elif scope == "capabilities":
         values = list(sources.get("capabilities") or [])
     else:

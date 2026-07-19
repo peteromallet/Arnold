@@ -168,9 +168,9 @@ def _phase_subprocess_command(argv: list[Any]) -> list[str]:
     if not args:
         return []
     if args[0] == "megaplan":
-        return [sys.executable, "-m", "arnold_pipelines.megaplan", *args[1:]]
+        return [sys.executable, "-P", "-m", "arnold_pipelines.megaplan", *args[1:]]
     if args[0] in _MEGAPLAN_MODULE_COMMANDS:
-        return [sys.executable, "-m", "arnold_pipelines.megaplan", *args]
+        return [sys.executable, "-P", "-m", "arnold_pipelines.megaplan", *args]
     return args
 
 

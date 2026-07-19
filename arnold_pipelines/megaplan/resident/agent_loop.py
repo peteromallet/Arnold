@@ -6,6 +6,7 @@ import asyncio
 import contextvars
 import json
 import os
+import signal
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,6 +54,7 @@ class AgentRequest:
     resume_handler: str | None = None
     target_id: str | None = None
     launch_origin: Mapping[str, Any] | None = None
+    report_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -97,6 +99,10 @@ class FakeAgentStep:
 
 class AgentLoopError(RuntimeError):
     """Deterministic resident agent-loop failure."""
+
+
+class AgentTimeoutError(AgentLoopError):
+    """A resident model process exceeded both bounded execution windows."""
 
 
 class AgentPromptTooLargeError(AgentLoopError):
@@ -184,6 +190,12 @@ class FakeAgentRunner:
             registration = tools.get(call.tool_name)
             tool_name = registration.name
             operation_kind = registration.operation_kind
+            denial = _report_only_tool_denial(
+                registration.name, registration.operation_kind, runtime_context
+            )
+            if denial is not None:
+                result_payload = denial
+                raise _ReportOnlyToolDenied
             tool_input = registration.input_model.model_validate(arguments)
             raw_result = await asyncio.wait_for(
                 _run_tool_handler(registration.handler, tool_input, runtime_context),
@@ -197,6 +209,8 @@ class FakeAgentRunner:
                 "message": f"tool timed out after {self.tool_timeout_s:g}s",
                 "data": {"error": "timeout"},
             }
+        except _ReportOnlyToolDenied:
+            pass
         except (ValidationError, Exception) as exc:
             result_payload = {
                 "ok": False,
@@ -349,7 +363,10 @@ class CodexCliAgentRunner(DispatchProtocol):
     async def run(self, request: AgentRequest, tools: ToolRegistry) -> AgentResponse:
         model_name = _request_model_name(request, self.config.model_name)
         prompt = self._prompt(request, tools)
+        started_at = perf_counter()
+        timeout_recovered = False
         with tempfile.NamedTemporaryFile(prefix="resident-codex-", suffix=".txt") as output:
+            effective_sandbox = "read-only" if request.report_only else self.sandbox
             cmd = [
                 "codex",
                 "exec",
@@ -360,7 +377,7 @@ class CodexCliAgentRunner(DispatchProtocol):
                 "-c",
                 'approval_policy="never"',
                 "--sandbox",
-                self.sandbox,
+                effective_sandbox,
                 "--skip-git-repo-check",
                 "--output-last-message",
                 output.name,
@@ -375,18 +392,42 @@ class CodexCliAgentRunner(DispatchProtocol):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     env=environment_with_provenance(request.launch_origin),
+                    start_new_session=True,
                 )
             except FileNotFoundError as exc:
                 raise AgentLoopError("codex CLI is required for resident model_provider=codex") from exc
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(prompt.encode("utf-8")),
-                    timeout=self.config.model_timeout_s,
+            communication = asyncio.create_task(proc.communicate(prompt.encode("utf-8")))
+            completed, _pending = await asyncio.wait(
+                {communication}, timeout=self.config.model_timeout_s
+            )
+            if not completed:
+                timeout_recovered = True
+                completed, _pending = await asyncio.wait(
+                    {communication}, timeout=self.config.model_timeout_recovery_grace_s
                 )
-            except asyncio.TimeoutError as exc:
-                proc.kill()
-                await proc.wait()
-                raise AgentLoopError(f"codex exec timed out after {self.config.model_timeout_s:g}s") from exc
+            if not completed:
+                await _kill_process_group(proc)
+                try:
+                    stdout, stderr = await asyncio.wait_for(
+                        asyncio.shield(communication), timeout=5.0
+                    )
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    communication.cancel()
+                    await asyncio.gather(communication, return_exceptions=True)
+                    stdout, stderr = b"", b""
+                elapsed_s = perf_counter() - started_at
+                stderr_tail = stderr.decode("utf-8", errors="replace").strip()[-800:]
+                detail = (
+                    f"codex exec exceeded {self.config.model_timeout_s:g}s and same-process "
+                    f"recovery exhausted after {self.config.model_timeout_recovery_grace_s:g}s "
+                    f"(continuations=1, elapsed={elapsed_s:.3f}s, pid={proc.pid}, "
+                    f"stdout_bytes={len(stdout)}, stderr_bytes={len(stderr)}); "
+                    "process group terminated; no invocation replayed"
+                )
+                if stderr_tail:
+                    detail += f"; stderr_tail={stderr_tail}"
+                raise AgentTimeoutError(detail)
+            stdout, stderr = communication.result()
             stdout_text = stdout.decode("utf-8", errors="replace")
             stderr_text = stderr.decode("utf-8", errors="replace")
             output.seek(0)
@@ -396,15 +437,29 @@ class CodexCliAgentRunner(DispatchProtocol):
             raise AgentLoopError(f"codex exec failed with exit {proc.returncode}: {detail[-2000:]}")
         if not final_text:
             final_text = _last_nonempty_line(stdout_text)
+        metadata: dict[str, Any] = {
+            "runner": "codex_cli",
+            "model": model_name,
+            "reasoning_effort": self.config.codex_reasoning_effort,
+            "sandbox": effective_sandbox,
+            "report_only": request.report_only,
+        }
+        if timeout_recovered:
+            metadata["timeout_recovery"] = {
+                "mode": "same_process_grace",
+                "continuations": 1,
+                "invocation_replays": 0,
+                "initial_timeout_s": self.config.model_timeout_s,
+                "recovery_grace_s": self.config.model_timeout_recovery_grace_s,
+                "elapsed_s": round(perf_counter() - started_at, 3),
+                "process_pid": proc.pid,
+                "stdout_bytes": len(stdout),
+                "stderr_bytes": len(stderr),
+            }
         return AgentResponse(
             final_text=final_text,
             tool_calls=(),
-            metadata={
-                "runner": "codex_cli",
-                "model": model_name,
-                "reasoning_effort": self.config.codex_reasoning_effort,
-                "sandbox": self.sandbox,
-            },
+            metadata=metadata,
         )
 
     def _prompt(self, request: AgentRequest, tools: ToolRegistry) -> str:
@@ -427,7 +482,8 @@ class CodexCliAgentRunner(DispatchProtocol):
             "When native function exposure is absent and delegated work is required, use the supported "
             "local resident seam before replying: write the complete task to a file, then run "
             "`python -P -m arnold_pipelines.megaplan.resident.subagent launch --task-file <path> "
-            "--task-kind <kind> --difficulty <D1-D10>`. Do not call a generic subagent launcher in its place. "
+            "--task-kind <kind> --work-intent <execution|review|speculative> "
+            "--difficulty <D1-D10>`. Do not call a generic subagent launcher in its place. "
             "The `-P` isolation flag is mandatory: this resident may intentionally run from a pinned "
             "runtime source while its working directory contains another checkout, and importing from "
             "that checkout would split launch manifests from status and delivery. "
@@ -439,7 +495,13 @@ class CodexCliAgentRunner(DispatchProtocol):
             "Keep final Discord replies concise. Messages are delivered to the user through Discord, "
             "so do not reference local filesystem paths or local-file links in user-facing replies; "
             "describe durable artifacts by run ID or human-readable name instead.\n\n"
-            "Resident request JSON:\n"
+            + (
+                "This request is report-only. The runner sandbox is read-only: do not launch or "
+                "follow up agents, start/resume cloud work, edit files, or mutate git. Only report "
+                "evidence and todo reconciliation recommendations.\n\n"
+                if request.report_only else ""
+            )
+            + "Resident request JSON:\n"
             + json.dumps(payload, sort_keys=True, default=str)
         )
         if len(prompt) > self.config.max_prompt_chars:
@@ -448,6 +510,22 @@ class CodexCliAgentRunner(DispatchProtocol):
                 f"{len(prompt)} > {self.config.max_prompt_chars} characters"
             )
         return prompt
+
+
+async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
+    """Kill the Codex wrapper and descendants created for one invocation."""
+
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        if proc.returncode is None:
+            proc.kill()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5.0)
+    except asyncio.TimeoutError:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
 
 
 async def _await_maybe(value: Any) -> Any:
@@ -515,6 +593,12 @@ async def _execute_registered_tool(
         registration = tools.get(tool_name)
         tool_name = registration.name
         operation_kind = registration.operation_kind
+        denial = _report_only_tool_denial(
+            registration.name, registration.operation_kind, runtime_context
+        )
+        if denial is not None:
+            result_payload = denial
+            raise _ReportOnlyToolDenied
         tool_input = registration.input_model.model_validate(arguments)
         raw_result = await asyncio.wait_for(
             _run_tool_handler(registration.handler, tool_input, runtime_context),
@@ -522,6 +606,8 @@ async def _execute_registered_tool(
         )
         result_model = _coerce_tool_result(registration.output_model, raw_result)
         result_payload = result_model.model_dump(mode="json")
+    except _ReportOnlyToolDenied:
+        pass
     except asyncio.TimeoutError:
         result_payload = {
             "ok": False,
@@ -543,6 +629,39 @@ async def _execute_registered_tool(
         result=result_payload,
         duration_ms=duration_ms,
     )
+
+
+class _ReportOnlyToolDenied(Exception):
+    """Internal control flow for a denied report-only tool call."""
+
+
+_REPORT_ONLY_TODO_MUTATIONS = frozenset(
+    {"complete_todo_item", "reconcile_todo_item", "supersede_todo_item"}
+)
+
+
+def _report_only_tool_denial(
+    tool_name: str,
+    operation_kind: str,
+    runtime_context: ToolRuntimeContext,
+) -> dict[str, Any] | None:
+    origin = runtime_context.launch_origin
+    report_only = bool(
+        isinstance(origin, Mapping) and origin.get("report_only") is True
+    )
+    if not report_only:
+        return None
+    if operation_kind in {"read", "cloud_read"} or tool_name in _REPORT_ONLY_TODO_MUTATIONS:
+        return None
+    return {
+        "ok": False,
+        "message": "scheduled audit is report-only; execution mutation denied",
+        "data": {
+            "error": "report_only_execution_denied",
+            "tool_name": tool_name,
+            "allowed_mutation": "todo reconciliation only",
+        },
+    }
 
 
 def openai_client_from_config(config: ResidentConfig) -> Any:

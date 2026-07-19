@@ -30,6 +30,7 @@ from arnold_pipelines.megaplan.prompts._shared import (
 from arnold_pipelines.megaplan.prompts.execute import (
     _checkpoint_requirements,
     _checkpoint_summary_requirement,
+    _completed_task_receipts_for_prompt,
     _execute_approval_note,
     _execute_nudges,
     _execute_rerun_guidance,
@@ -234,11 +235,6 @@ def _execute_doc_batch_prompt(
     )
     all_tasks = finalize_data.get("tasks", [])
     projected_tasks = projected_finalize.get("tasks", [])
-    tasks_by_id = {
-        task["id"]: task
-        for task in all_tasks
-        if isinstance(task, dict) and isinstance(task.get("id"), str)
-    }
     projected_tasks_by_id = {
         task["id"]: task
         for task in projected_tasks
@@ -249,11 +245,13 @@ def _execute_doc_batch_prompt(
         for task_id in batch_task_ids
         if task_id in projected_tasks_by_id
     ]
-    completed_tasks = [
-        projected_tasks_by_id[task_id]
-        for task_id in completed
-        if task_id not in set(batch_task_ids) and task_id in projected_tasks_by_id
-    ]
+    completed_task_receipts = _completed_task_receipts_for_prompt(
+        finalize_data,
+        plan_dir=plan_dir,
+        batch_task_ids=batch_task_ids,
+        completed_task_ids=completed,
+        projection_capabilities=projection_capabilities,
+    )
     projected_sense_checks = projected_finalize.get("sense_checks", [])
     batch_sense_checks = [
         sense_check
@@ -331,13 +329,13 @@ def _execute_doc_batch_prompt(
         Batch framing:
         - Execute batch {batch_number} of {batch_total}.
         - Actionable task IDs for this batch: {batch_task_ids}
-        - Already completed task IDs available as dependency context: {sorted(completed)}
+        - Completed task records are represented only by bounded dependency receipts below.
 
         Actionable tasks for this batch:
         {json_dump(batch_tasks).strip()}
 
-        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
-        {json_dump(completed_tasks).strip()}
+        Completed dependency receipts (already satisfied, do not re-execute):
+        {json_dump(completed_task_receipts).strip()}
 
         Prior batch deviations (address if applicable):
         {prior_batch_deviations}
@@ -356,6 +354,7 @@ def _execute_doc_batch_prompt(
         - You are an author. Write document sections to the configured output path.
         - Execute only the actionable tasks in this batch.
         - Treat completed tasks as dependency context, not new work.
+        - If dependency receipts report omitted evidence, inspect their `source_artifact`; if it is unavailable, mark the affected task blocked instead of guessing.
         - Return structured JSON only.
         - Only produce `task_updates` for these tasks: [{", ".join(batch_task_ids)}]
         - Only produce `sense_check_acknowledgments` for these sense checks: [{", ".join(batch_sense_check_ids)}]

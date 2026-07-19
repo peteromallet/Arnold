@@ -6,11 +6,14 @@ import json
 from types import SimpleNamespace
 
 from agentbox.reset_notifications import (
+    RESET_DELIVERY_INTERRUPTED_TURN_COMPLETION,
     RESET_NOTIFICATION_ENV,
+    list_reset_notifications,
     mark_reset_succeeded,
     prepare_reset_notification,
+    sweep_reset_notifications,
 )
-from arnold_pipelines.megaplan.resident.agent_loop import AgentResponse
+from arnold_pipelines.megaplan.resident.agent_loop import AgentResponse, AgentTimeoutError
 from arnold_pipelines.megaplan.resident.auth import AuthorizationSubject, ResidentAuthorizer
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
 from arnold_pipelines.megaplan.resident.discord import DiscordOutboundSink
@@ -96,6 +99,39 @@ class _ImmediateRunner:
         return AgentResponse(final_text="replayed exactly once")
 
 
+class _RecoveredTimeoutRunner:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def run(self, _request, _tools) -> AgentResponse:
+        self.calls += 1
+        return AgentResponse(
+            final_text="late result recovered exactly once",
+            metadata={
+                "timeout_recovery": {
+                    "mode": "same_process_grace",
+                    "continuations": 1,
+                    "invocation_replays": 0,
+                    "initial_timeout_s": 300,
+                    "recovery_grace_s": 60,
+                    "elapsed_s": 336.2,
+                    "process_pid": 1234,
+                    "stdout_bytes": 321,
+                    "stderr_bytes": 0,
+                }
+            },
+        )
+
+
+class _ExhaustedTimeoutRunner:
+    async def run(self, _request, _tools) -> AgentResponse:
+        raise AgentTimeoutError(
+            "codex exec exceeded 300s and same-process recovery exhausted after 60s "
+            "(continuations=1, elapsed=360.001s, pid=1234, stdout_bytes=321, "
+            "stderr_bytes=0); process group terminated; no invocation replayed"
+        )
+
+
 def _runtime(tmp_path, sink: object, runner: object) -> ResidentRuntime:
     store = FileStore(tmp_path / "store")
     config = ResidentConfig(
@@ -151,6 +187,65 @@ def test_working_starts_at_execution_not_receipt_and_duplicate_event_is_fenced(t
         await runtime.coalescer.flush_all()
         assert runner.calls == 1
         assert channel.messages[1001].reactions == ["☑️"]
+
+    asyncio.run(run_case())
+
+
+def test_timeout_recovery_records_diagnostics_without_duplicate_delivery(tmp_path) -> None:
+    async def run_case() -> None:
+        channel = _Channel()
+        sink = DiscordOutboundSink(
+            _Client(channel), reaction_effect_root=tmp_path / "reaction-effects"
+        )
+        runner = _RecoveredTimeoutRunner()
+        runtime = _runtime(tmp_path, sink, runner)
+
+        await runtime.receive(_event("1003", "safe read-only lookup"))
+        await runtime.receive(_event("1003", "safe read-only lookup"))
+        await runtime.coalescer.flush_all()
+        await runtime.receive(_event("1003", "safe read-only lookup"))
+        await runtime.coalescer.flush_all()
+
+        assert runner.calls == 1
+        assert [item["content"] for item in channel.sent] == [
+            "late result recovered exactly once"
+        ]
+        turns = runtime.store.list_recent_turns(n=10)
+        assert len(turns) == 1
+        assert turns[0].status == "completed"
+        assert turns[0].message_sent is True
+        assert turns[0].warnings_issued == [
+            "AgentTimeoutRecovery: same invocation completed during bounded grace; "
+            "continuations=1, invocation_replays=0, initial_timeout_s=300, "
+            "recovery_grace_s=60, elapsed_s=336.2, process_pid=1234, "
+            "stdout_bytes=321, stderr_bytes=0"
+        ]
+
+    asyncio.run(run_case())
+
+
+def test_exhausted_timeout_delivers_specific_bounded_failure(tmp_path) -> None:
+    async def run_case() -> None:
+        channel = _Channel()
+        sink = DiscordOutboundSink(
+            _Client(channel), reaction_effect_root=tmp_path / "reaction-effects"
+        )
+        runtime = _runtime(tmp_path, sink, _ExhaustedTimeoutRunner())
+
+        await runtime.receive(_event("1004", "safe read-only lookup"))
+        await runtime.coalescer.flush_all()
+
+        assert [item["content"] for item in channel.sent] == [
+            "I couldn't complete this resident turn because the model exceeded its "
+            "execution limit and did not finish during the single bounded same-process "
+            "recovery window. The process group was stopped, no second invocation was "
+            "started, and specific diagnostic evidence was recorded."
+        ]
+        turn = runtime.store.list_recent_turns(n=10)[0]
+        assert turn.status == "failed"
+        assert turn.message_sent is True
+        assert turn.warnings_issued and "continuations=1" in turn.warnings_issued[0]
+        assert "no invocation replayed" in turn.warnings_issued[0]
 
     asyncio.run(run_case())
 
@@ -379,7 +474,6 @@ def test_restart_interrupted_side_effectful_turn_is_consumed_without_model_repla
         second = await runtime.recover_restart_interrupted_turns(
             {"backend": "tmux", "pane_pid": 20}
         )
-
         assert first == 1
         assert second == 0
         assert runner.calls == 0
@@ -478,6 +572,10 @@ def test_restart_recovery_reuses_persisted_outbound_without_duplicate_execution(
         second = await runtime.recover_restart_interrupted_turns(
             {"backend": "tmux", "pane_pid": 20}
         )
+        reset_sweep = await sweep_reset_notifications(
+            outbound=sink,
+            notification_root=notification_root,
+        )
 
         assert first == 1
         assert second == 0
@@ -488,6 +586,17 @@ def test_restart_recovery_reuses_persisted_outbound_without_duplicate_execution(
         completed = next(row for row in store.list_recent_turns(n=20) if row.id == turn.id)
         assert completed.status == "completed"
         assert completed.final_output_message_id == outbound.id
+        assert reset_sweep.delivered == 0
+        assert [item["content"] for item in channel.sent] == [outbound.content]
+        receipt = list_reset_notifications(notification_root=notification_root)[
+            "records"
+        ][0]
+        assert receipt["restart"]["status"] == "succeeded"
+        assert receipt["delivery"]["status"] == "suppressed"
+        assert (
+            receipt["delivery"]["ownership"]
+            == RESET_DELIVERY_INTERRUPTED_TURN_COMPLETION
+        )
 
     asyncio.run(run_case())
 

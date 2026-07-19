@@ -331,9 +331,11 @@ def _build_verifiability_flags(
     issues = validate_requires(success_criteria)
     for issue_str in issues:
         is_unknown_cap = "unknown capability" in issue_str
+        concern = issue_str.strip()
         flags.append({
             "id": f"verifiability-{len(flags)}",
-            "concern": issue_str,
+            "concern": concern,
+            "evidence": concern,
             "category": "verifiability",
             "severity_hint": "likely-significant" if is_unknown_cap else "likely-minor",
             "status": "open",
@@ -342,17 +344,24 @@ def _build_verifiability_flags(
     audits = audit_criteria(success_criteria, worker_caps)
     for audit in audits:
         if audit.verdict == "unverifiable_no_worker":
+            concern = f"Criterion {audit.criterion_idx}: {audit.rationale} Missing: {', '.join(audit.missing_caps)}"
             flags.append({
                 "id": f"verifiability-{len(flags)}",
-                "concern": f"Criterion {audit.criterion_idx}: {audit.rationale} Missing: {', '.join(audit.missing_caps)}",
+                "concern": concern,
+                "evidence": concern,
                 "category": "verifiability",
                 "severity_hint": "likely-significant",
                 "status": "open",
             })
         elif audit.verdict == "human_only":
+            concern = (
+                f"Criterion {audit.criterion_idx}: requires human verification "
+                f"({', '.join(audit.missing_caps)})."
+            )
             flags.append({
                 "id": f"verifiability-{len(flags)}",
-                "concern": f"Criterion {audit.criterion_idx}: requires human verification ({', '.join(audit.missing_caps)}).",
+                "concern": concern,
+                "evidence": concern,
                 "category": "verifiability",
                 "severity_hint": "likely-minor",
                 "status": "open",

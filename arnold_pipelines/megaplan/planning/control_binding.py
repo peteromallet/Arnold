@@ -79,7 +79,11 @@ from arnold_pipelines.megaplan.orchestration.gate_checks import (
     run_gate_checks,
 )
 from arnold_pipelines.megaplan.orchestration.gate_signals import build_gate_signals
-from arnold_pipelines.megaplan.blocker_recovery import command_blocker_details, evaluate_blocker_recovery
+from arnold_pipelines.megaplan.blocker_recovery import (
+    command_blocker_details,
+    evaluate_blocker_recovery,
+    validated_deterministic_phase_repair,
+)
 from arnold_pipelines.megaplan.control_interface import declared_override_policy_target
 from arnold_pipelines.megaplan.orchestration.phase_result import read_phase_result
 
@@ -1124,21 +1128,35 @@ class PlanningControlBinding:
                         "suggested_recovery_commands": [resume_command],
                     },
                 )
+            phase_repair_evidence: dict[str, str] | None = None
             if phase_result is None:
-                raise CliError(
-                    "missing_phase_result",
-                    "recover-blocked requires phase_result.json with current blocker details",
-                    extra={"resume_cursor": dict(resume_cursor)},
+                project_dir = Path(str(transition.payload.get("root") or plan_dir))
+                phase_repair_evidence = validated_deterministic_phase_repair(
+                    project_dir,
+                    state,
+                    resume_cursor,
+                    transition.payload.get("repair_commit"),
+                    transition.payload.get("failure_fingerprint"),
                 )
-            evaluation = evaluate_blocker_recovery(
-                finalize_data,
-                state,
-                plan_dir=plan_dir,
-                blocked_tasks=phase_result.blocked_tasks,
-                deviations=phase_result.deviations,
-            )
-            blocker_details = command_blocker_details(evaluation)
-            if not evaluation.can_continue:
+                if phase_repair_evidence is None:
+                    raise CliError(
+                        "missing_phase_result",
+                        "recover-blocked requires phase_result.json with current blocker details",
+                        extra={"resume_cursor": dict(resume_cursor)},
+                    )
+                blocker_details: list[dict[str, Any]] = []
+                blocker_ids: list[str] = []
+            else:
+                evaluation = evaluate_blocker_recovery(
+                    finalize_data,
+                    state,
+                    plan_dir=plan_dir,
+                    blocked_tasks=phase_result.blocked_tasks,
+                    deviations=phase_result.deviations,
+                )
+                blocker_details = command_blocker_details(evaluation)
+                blocker_ids = [blocker.blocker_id for blocker in evaluation.blockers]
+            if phase_result is not None and not evaluation.can_continue:
                 unresolved_blockers = [
                     blocker
                     for blocker in blocker_details
@@ -1167,7 +1185,12 @@ class PlanningControlBinding:
                 "from_state": previous_state,
                 "to_state": recovered_state,
                 "resume_cursor": dict(resume_cursor),
-                "blocker_ids": [blocker.blocker_id for blocker in evaluation.blockers],
+                "blocker_ids": blocker_ids,
+                **(
+                    {"phase_contract_repair": phase_repair_evidence}
+                    if phase_repair_evidence is not None
+                    else {}
+                ),
             }
             return ControlTransitionResult(
                 accepted=True,
@@ -1175,6 +1198,7 @@ class PlanningControlBinding:
                 reason="recover-blocked",
                 artifacts={
                     "blockers": blocker_details,
+                    "phase_contract_repair": phase_repair_evidence,
                     "remove_state_keys": ("latest_failure", "active_step"),
                 },
                 state_deltas=(

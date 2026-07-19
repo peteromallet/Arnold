@@ -139,10 +139,15 @@ def test_megaplan_resident_create_initiative_writes_description_metadata(tmp_pat
     assert initiative["slug"] == "discord-context"
     assert initiative["description"] == "Classify worker messages and preserve initiative structure."
     root = project / ".megaplan" / "initiatives" / "discord-context"
-    assert (root / "README.md").read_text(encoding="utf-8") == (
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    assert readme.startswith(
         "# Discord Context\n\n"
         "Classify worker messages and preserve initiative structure.\n"
     )
+    assert "## Current truth and index" in readme
+    assert "`NORTHSTAR.md` — optional" in readme
+    assert "`chain.yaml` — optional" in readme
+    assert "cite raw agent/subagent run artifacts" in readme
     assert (root / "chain.yaml").exists()
 
 
@@ -152,6 +157,34 @@ def test_megaplan_resident_create_initiative_requires_description(tmp_path: Path
 
     with pytest.raises(ValidationError):
         tool.input_model(project_root=str(tmp_path), slug="No Description")
+
+
+def test_megaplan_resident_initiative_defaults_to_structure_without_readiness_artifacts(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    profile = MegaplanResidentProfile(store=FileStore(tmp_path / "store"))
+    tool = profile.tools().get("create_initiative")
+
+    result = tool.handler(
+        tool.input_model(
+            project_root=str(project),
+            slug="Exploratory Workspace",
+            description="Curate related knowledge without implying chain approval.",
+        )
+    )
+
+    assert result.ok is True
+    root = project / ".megaplan" / "initiatives" / "exploratory-workspace"
+    assert {path.name for path in root.iterdir() if path.is_dir()} == {
+        "assets",
+        "briefs",
+        "decisions",
+        "handoff",
+        "notes",
+        "research",
+    }
+    assert not (root / "NORTHSTAR.md").exists()
+    assert not (root / "chain.yaml").exists()
 
 
 def test_megaplan_resident_search_initiatives_uses_fuzzy_title_description(tmp_path: Path) -> None:
@@ -415,6 +448,51 @@ def test_resident_hot_context_projects_live_execute_over_finalized_lifecycle(
     assert state["active_phase"] == "execute"
     assert state["execution_state"] == "executing"
     assert state["display_state"] == "executing"
+
+
+def test_resident_hot_context_projects_review_driven_execute_as_reworking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "project"
+    chain_state_dir = project / ".megaplan" / "plans" / ".chains"
+    plan_dir = project / ".megaplan" / "plans" / "m1-rework"
+    chain_state_dir.mkdir(parents=True)
+    plan_dir.mkdir(parents=True)
+    (chain_state_dir / "chain-rework.json").write_text(
+        (
+            '{"current_plan_name":"m1-rework","current_milestone_index":0,'
+            '"last_state":"running","completed":[],"metadata":{'
+            '"chain_spec_path":"chain.yaml","execution_environment":{"work_dir":"%s"}}}'
+        )
+        % str(project),
+        encoding="utf-8",
+    )
+    (plan_dir / "state.json").write_text(
+        '{"current_state":"finalized","iteration":1,"active_step":{"phase":"execute"}}',
+        encoding="utf-8",
+    )
+    (plan_dir / "review.json").write_text(
+        '{"review_verdict":"needs_rework"}', encoding="utf-8"
+    )
+    monkeypatch.chdir(project)
+    profile = MegaplanResidentProfile(
+        store=FileStore(tmp_path / "store"),
+        config=ResidentConfig(cloud_yaml_path=Path("missing-cloud.yaml")),
+    )
+
+    context = asyncio.run(profile.load_hot_context("missing-conversation"))
+    chain = next(
+        row
+        for row in context["local_epic_chain_state"]["active_chains"]
+        if row["current_plan_name"] == "m1-rework"
+    )
+    state = chain["plan_state"]
+
+    assert state["review_verdict"] == "needs_rework"
+    assert state["active_phase"] == "execute"
+    assert state["execution_state"] == "reworking"
+    assert state["display_state"] == "reworking"
 
 
 def test_megaplan_resident_hot_context_prefers_cloud_status_snapshot(

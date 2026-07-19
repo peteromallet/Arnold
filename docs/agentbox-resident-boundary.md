@@ -52,6 +52,39 @@ In short: Arnold sees neutral resident protocols, Megaplan owns the resident
 runtime and Megaplan-specific tools, and AgentBox owns Operator/profile/helper
 integration around operations.
 
+## Resident-managed scheduling boundary
+
+`arnold_pipelines.megaplan.resident.schedules` owns durable timing and admission.
+It stores append-only definition revisions, immutable occurrence identities, and
+hash-linked transition receipts in the resident store. The resident scheduler
+materializes due time/event occurrences and uses fenced claims; it does not
+start an ad-hoc process or send a result itself.
+
+An admitted `resident_managed_agent` target enters `launch_subagent_task` with
+its pinned schedule revision, occurrence key, prompt/grant digests, source
+envelope, work intent, model/profile/toolset selection, dependencies, and exact
+route. The normal managed manifest/queue/execution/synthesis/completion-outbox
+lifecycle remains authoritative. A delivery retry or unknown provider outcome
+never causes the schedule task to execute again.
+
+Version 1 deliberately supports one file-store writer guarded by an OS lock.
+Database multi-worker scheduling is rejected until transactional occurrence
+insert, admission reservation, and fenced claims have parity. Legacy
+`ScheduledJob` handlers continue in parallel. The configured six-hour VP audit
+is the first explicit single-owner cutover: startup adopts its pending due time,
+cancels legacy pending recurrence jobs, and registers exactly one fixed-delay
+resident definition. Each occurrence still enters the unchanged VP handler,
+including its report-only payload and safety behavior; a schedule-owned marker
+prevents the handler from creating a second recurrence.
+
+The supported operator front door is `megaplan resident schedule add`. It
+accepts one-shot `--at`, anchored `--every ... --start ...`, five-field `--cron`,
+or wall-clock `--calendar 'Monday at 6:00 AM'` input. Wall-clock forms require an
+IANA timezone (or the current resident provenance timezone) and persist DST
+gap/fold policy. `schedule list --upcoming-hours 12` and `schedule cancel` are
+the bounded status and lifecycle paths. Creation requires an immutable grant;
+timing never expands the underlying work intent, route, expiry, or authority.
+
 ## Resident-Delegated Agent Lifecycle
 
 Discord conversation turns remain on the single Arnold path:
