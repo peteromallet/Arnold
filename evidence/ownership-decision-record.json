@@ -1,0 +1,1330 @@
+{
+  "schema": "m6.ownership-decision-record.v1",
+  "generated_at": "2026-07-19T19:25:06.477167+00:00",
+  "generator": "tools/generate_m6_ownership_decision.py",
+  "source_evidence": {
+    "prerequisite_verification": "/workspace/custody-control-plane-20260714/Arnold/evidence/m6-prerequisite-verification.json",
+    "migration_matrix_reconciled": "/workspace/custody-control-plane-20260714/Arnold/evidence/migration-matrix-reconciled.json",
+    "controlled_writer_registry": "/workspace/custody-control-plane-20260714/Arnold/evidence/controlled-writer-registry.json",
+    "authority_reader_registry": "/workspace/custody-control-plane-20260714/Arnold/evidence/authority-reader-registry.json",
+    "finding_prevention_register": "/workspace/custody-control-plane-20260714/Arnold/evidence/finding-prevention-register.json",
+    "unified_authority_research": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md",
+    "lineage_audit": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/research/authority-lineage-and-gap-audit-20260711.md"
+  },
+  "north_star_principles": [
+    "One exact-version Run Authority reducer decides which attempts and claims are accepted.",
+    "WBC preserves immutable attempt/boundary/effect facts.",
+    "TransitionWriter and fenced repair custody serialize lifecycle mutation and recovery.",
+    "All plan, chain, cloud, repair, resident, and operator views are rebuildable projections.",
+    "No legacy authority bypass survives completion."
+  ],
+  "explicit_ownership_matrix": [
+    {
+      "owner": "Run Authority",
+      "owns": "capability/dispatch grants; coordinator and subject attempts; accepted/rejected/quarantined/superseded decisions; fences; dependency acceptance; the pure authoritative reducer and authority-increasing views",
+      "must_not_own": "lifecycle writes, repair queue policy, WBC event storage, DAG design, model routing, executor budgets, status rendering, auditing"
+    },
+    {
+      "owner": "TransitionWriter and repair custody",
+      "owns": "plan/chain lifecycle CAS; occurrence request/claim/lease/fence; repair dispatch; terminalization; recurrence/reopen; independent verification scheduling",
+      "must_not_own": "accepting task claims, inventing attempt identity, self-verifying, direct sidecar authority, analytics policy"
+    },
+    {
+      "owner": "WBC",
+      "owns": "exact-version boundary contracts; transactional immutable execution-attempt and external-effect store/API; receipts/evidence and payload/reference governance; semantic findings; supported-runtime conformance",
+      "must_not_own": "grants/acceptance, lifecycle mutation, repair custody, aggregate status, planner/executor policy"
+    },
+    {
+      "owner": "Megaplan Maintenance",
+      "owns": "coherent observation envelopes; incident/maintenance analytical events; six-hour reconciliation/backstop; daily read-only efficiency analysis; deterministic findings and ticket proposals",
+      "must_not_own": "a second authority ledger, direct run mutation, active-chain redesign, model/budget changes, self-verified repair"
+    },
+    {
+      "owner": "Planner/compiler/finalizer",
+      "owns": "semantic dependency reasons; routing groups; critical-path/parallelism and turn-budget feasibility; complexity splitting; validation-job compilation; task/rework ceilings in the finalized contract",
+      "must_not_own": "authority acceptance, repair custody, provider effects, projection truth"
+    },
+    {
+      "owner": "Executor/launcher/runtime packaging",
+      "owns": "bounded invalid-ref/startup validation; worker/import/model isolation; timeout/failover/compaction/rework circuits; deterministic harness jobs; verify-only repair-receipt adoption",
+      "must_not_own": "silently widening scope/budget, rewriting attempts, blind retry, accepting stale repair work"
+    },
+    {
+      "owner": "Observability/projection/auditor",
+      "owns": "append-efficient projection builders; latency/work ledger; pure status/introspection; exact-evidence deterministic reasons; SLO and drift reporting",
+      "must_not_own": "refreshing liveness on read, resolving authority independently, performing repair, combining productive and replayed work"
+    }
+  ],
+  "owner_count": 15,
+  "total_surface_count": 89,
+  "blocker_count": 4,
+  "owner_decisions": [
+    {
+      "owner": "Executor/launcher",
+      "canonical_owns": "Not defined in explicit ownership matrix",
+      "canonical_must_not_own": "Not defined in explicit ownership matrix",
+      "matrix_surface_count": 3,
+      "classification_counts": {
+        "residual": 3
+      },
+      "residual_count": 3,
+      "blocked_count": 0,
+      "prerequisite_satisfied_count": 0,
+      "retired_count": 0,
+      "out_of_scope_count": 0,
+      "surfaces": [
+        {
+          "row_index": 84,
+          "consumer_surface": "launcher ref/runtime preflight",
+          "current_authority": "invalid refs and divergent installs repeatedly retried",
+          "target_authority": "one bounded validation/suggestion plus source/install/runtime version receipt",
+          "milestone": "M8A/M11",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 85,
+          "consumer_surface": "provider/summary/import/compaction policy",
+          "current_authority": "repeated invalid route/timeouts, target/runtime import leak, unbounded compaction",
+          "target_authority": "pre-resolved model, isolated imports, timeout/failover/compaction circuit",
+          "milestone": "M8A",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 87,
+          "consumer_surface": "normalized executor failure circuit",
+          "current_authority": "task-specific strings hide repeated budget exhaustion",
+          "target_authority": "normalized class with exact attempt identity; circuit after two equivalents",
+          "milestone": "M8A",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        }
+      ],
+      "blockers": [],
+      "row_hash": "3b7831532e0412fb55959f1baee9e2634be7d9199dee6f32ad7720fee14b5719"
+    },
+    {
+      "owner": "Megaplan Cloud",
+      "canonical_owns": "Not defined in explicit ownership matrix",
+      "canonical_must_not_own": "Not defined in explicit ownership matrix",
+      "matrix_surface_count": 2,
+      "classification_counts": {
+        "residual": 2
+      },
+      "residual_count": 2,
+      "blocked_count": 0,
+      "prerequisite_satisfied_count": 0,
+      "retired_count": 0,
+      "out_of_scope_count": 0,
+      "surfaces": [
+        {
+          "row_index": 38,
+          "consumer_surface": "cloud session markers",
+          "current_authority": "launch/session projection",
+          "target_authority": "immutable launch evidence ref",
+          "milestone": "M9",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 62,
+          "consumer_surface": "cloud provider/local/SSH adapters",
+          "current_authority": "process/API observations",
+          "target_authority": "evidence adapters plus effect outcomes",
+          "milestone": "M9/M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        }
+      ],
+      "blockers": [],
+      "row_hash": "2dd538bdcd0bfeef13dce4d8644d73ee179c0ba66e55860f98cc6059d906e2fd"
+    },
+    {
+      "owner": "Megaplan Maintenance",
+      "canonical_owns": "coherent observation envelopes; incident/maintenance analytical events; six-hour reconciliation/backstop; daily read-only efficiency analysis; deterministic findings and ticket proposals",
+      "canonical_must_not_own": "a second authority ledger, direct run mutation, active-chain redesign, model/budget changes, self-verified repair",
+      "matrix_surface_count": 3,
+      "classification_counts": {
+        "residual": 2,
+        "out-of-supported-scope": 1
+      },
+      "residual_count": 2,
+      "blocked_count": 0,
+      "prerequisite_satisfied_count": 0,
+      "retired_count": 0,
+      "out_of_scope_count": 1,
+      "surfaces": [
+        {
+          "row_index": 42,
+          "consumer_surface": "six-hour unblocker",
+          "current_authority": "observations + repair request path",
+          "target_authority": "history occurrence/custody consumer",
+          "milestone": "M9/M10",
+          "classification": "residual",
+          "handoff_milestone": "M9"
+        },
+        {
+          "row_index": 43,
+          "consumer_surface": "daily efficiency auditor",
+          "current_authority": "read-only analytic projections",
+          "target_authority": "immutable history analytics",
+          "milestone": "M9",
+          "classification": "residual",
+          "handoff_milestone": "M9"
+        },
+        {
+          "row_index": 76,
+          "consumer_surface": "Megaplan Maintenance",
+          "current_authority": "shared ledger/repair/audit product plan",
+          "target_authority": "consumer of canonical history/custody",
+          "milestone": "M9/M10",
+          "classification": "out-of-supported-scope",
+          "handoff_milestone": null
+        }
+      ],
+      "blockers": [],
+      "row_hash": "3246351ebcf5825325a379ef7d42b197d02124d8e6254d0fbd01b5158c606a31"
+    },
+    {
+      "owner": "Megaplan chain",
+      "canonical_owns": "Not defined in explicit ownership matrix",
+      "canonical_must_not_own": "Not defined in explicit ownership matrix",
+      "matrix_surface_count": 1,
+      "classification_counts": {
+        "residual": 1
+      },
+      "residual_count": 1,
+      "blocked_count": 0,
+      "prerequisite_satisfied_count": 0,
+      "retired_count": 0,
+      "out_of_scope_count": 0,
+      "surfaces": [
+        {
+          "row_index": 30,
+          "consumer_surface": "chain completion manifests",
+          "current_authority": "generated content-addressed proof",
+          "target_authority": "portfolio admission evidence only; never runtime action authority",
+          "milestone": "M11",
+          "classification": "residual",
+          "handoff_milestone": "M6A"
+        }
+      ],
+      "blockers": [],
+      "row_hash": "7b603948fd258d66e5050ffbaa9ef5c3f857ef2322b2ad066e8cfd49a164091f"
+    },
+    {
+      "owner": "Megaplan orchestration",
+      "canonical_owns": "Not defined in explicit ownership matrix",
+      "canonical_must_not_own": "Not defined in explicit ownership matrix",
+      "matrix_surface_count": 2,
+      "classification_counts": {
+        "residual": 2
+      },
+      "residual_count": 2,
+      "blocked_count": 0,
+      "prerequisite_satisfied_count": 0,
+      "retired_count": 0,
+      "out_of_scope_count": 0,
+      "surfaces": [
+        {
+          "row_index": 21,
+          "consumer_surface": "CLI override/user actions",
+          "current_authority": "append some resolution metadata and mutate state",
+          "target_authority": "authorized decision + transition append",
+          "milestone": "M7/M8",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 80,
+          "consumer_surface": "selectors/test selection/baselines",
+          "current_authority": "files/change metadata and defaults",
+          "target_authority": "selector receipt from canonical source/version",
+          "milestone": "M8/M11",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        }
+      ],
+      "blockers": [],
+      "row_hash": "5ff9256de63fda6c41a94d3210bbe555a53138dde96568c4f4e96aeeb486ce24"
+    },
+    {
+      "owner": "Megaplan runtime",
+      "canonical_owns": "Not defined in explicit ownership matrix",
+      "canonical_must_not_own": "Not defined in explicit ownership matrix",
+      "matrix_surface_count": 2,
+      "classification_counts": {
+        "residual": 2
+      },
+      "residual_count": 2,
+      "blocked_count": 0,
+      "prerequisite_satisfied_count": 0,
+      "retired_count": 0,
+      "out_of_scope_count": 0,
+      "surfaces": [
+        {
+          "row_index": 25,
+          "consumer_surface": "fallback chains/model seam",
+          "current_authority": "configured retry/fallback specs",
+          "target_authority": "history decision per attempt/fallback",
+          "milestone": "M8/M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 26,
+          "consumer_surface": "worker/process fanout",
+          "current_authority": "PID/result files",
+          "target_authority": "parent/child attempts with leases",
+          "milestone": "M8/M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        }
+      ],
+      "blockers": [],
+      "row_hash": "19ede6bd635dcd05be17257d1d05556f37c6caa92e44e3b8999de88cb3837a28"
+    },
+    {
+      "owner": "Native Parity",
+      "canonical_owns": "Not defined in explicit ownership matrix",
+      "canonical_must_not_own": "Not defined in explicit ownership matrix",
+      "matrix_surface_count": 5,
+      "classification_counts": {
+        "blocked": 2,
+        "residual": 3
+      },
+      "residual_count": 3,
+      "blocked_count": 2,
+      "prerequisite_satisfied_count": 0,
+      "retired_count": 0,
+      "out_of_scope_count": 0,
+      "surfaces": [
+        {
+          "row_index": 6,
+          "consumer_surface": "`.pypeline` and named subworkflows",
+          "current_authority": "intended topology authority",
+          "target_authority": "unchanged topology plus exact boundary evidence",
+          "milestone": "M8",
+          "classification": "blocked",
+          "handoff_milestone": null
+        },
+        {
+          "row_index": 72,
+          "consumer_surface": "Native Parity Corrective",
+          "current_authority": "source/evidence alignment chain",
+          "target_authority": "topology owner, consumed by WBC/custody",
+          "milestone": "M6/M8",
+          "classification": "blocked",
+          "handoff_milestone": null
+        },
+        {
+          "row_index": 7,
+          "consumer_surface": "Component/handler route tables",
+          "current_authority": "callable compatibility topology",
+          "target_authority": "non-authoritative adapter or deletion",
+          "milestone": "M8/M11",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 8,
+          "consumer_surface": "Graph/native-program projections",
+          "current_authority": "generated route/topology views",
+          "target_authority": "rebuildable source projection",
+          "milestone": "M8/M11",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 79,
+          "consumer_surface": "compatibility aliases (`planning`, old paths)",
+          "current_authority": "callable legacy imports/routes",
+          "target_authority": "fail-closed read-only adapters",
+          "milestone": "M11",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        }
+      ],
+      "blockers": [
+        {
+          "row_index": 6,
+          "consumer_surface": "`.pypeline` and named subworkflows",
+          "blocked_by": [
+            "m5_bound_head_vs_current_head",
+            "wbc_file_hashes"
+          ],
+          "proof_required": "native traceability/conformance",
+          "milestone": "M8"
+        },
+        {
+          "row_index": 72,
+          "consumer_surface": "Native Parity Corrective",
+          "blocked_by": [
+            "m5_bound_head_vs_current_head",
+            "wbc_file_hashes"
+          ],
+          "proof_required": "completion/traceability proof",
+          "milestone": "M6/M8"
+        }
+      ],
+      "row_hash": "7f9b0f705e9f8a7ad8096378acdae9993b72815c450f70821833605862819d87"
+    },
+    {
+      "owner": "Native Platform",
+      "canonical_owns": "Not defined in explicit ownership matrix",
+      "canonical_must_not_own": "Not defined in explicit ownership matrix",
+      "matrix_surface_count": 5,
+      "classification_counts": {
+        "residual": 5
+      },
+      "residual_count": 5,
+      "blocked_count": 0,
+      "prerequisite_satisfied_count": 0,
+      "retired_count": 0,
+      "out_of_scope_count": 0,
+      "surfaces": [
+        {
+          "row_index": 2,
+          "consumer_surface": "Kernel `WorkflowManifest` identity",
+          "current_authority": "compiled manifest plus package identity",
+          "target_authority": "exact hash/version recorded on every attempt",
+          "milestone": "M6/M8",
+          "classification": "residual",
+          "handoff_milestone": "M6A"
+        },
+        {
+          "row_index": 4,
+          "consumer_surface": "Native persistence checkpoint/cursor",
+          "current_authority": "checkpoint JSON including native `pc`",
+          "target_authority": "versioned evidence projection bound to accepted attempt",
+          "milestone": "M8",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 5,
+          "consumer_surface": "Native trace hooks (`state/events/stages/artifacts/checkpoint`)",
+          "current_authority": "parallel trace files",
+          "target_authority": "projections/evidence refs from one history",
+          "milestone": "M8/M11",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 19,
+          "consumer_surface": "effect ledger/enforcement",
+          "current_authority": "local effect records",
+          "target_authority": "history intent/outcome/idempotency/reconcile",
+          "milestone": "M7/M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 32,
+          "consumer_surface": "Git/provider effects",
+          "current_authority": "subprocess/API result",
+          "target_authority": "reconciled non-compensable effect record",
+          "milestone": "M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        }
+      ],
+      "blockers": [],
+      "row_hash": "3e9811ddb2c7a2db3dfe0e20363c0856df6e48ee5f6f64e14b81d2fb37a34eec"
+    },
+    {
+      "owner": "Observability",
+      "canonical_owns": "Not defined in explicit ownership matrix",
+      "canonical_must_not_own": "Not defined in explicit ownership matrix",
+      "matrix_surface_count": 1,
+      "classification_counts": {
+        "residual": 1
+      },
+      "residual_count": 1,
+      "blocked_count": 0,
+      "prerequisite_satisfied_count": 0,
+      "retired_count": 0,
+      "out_of_scope_count": 0,
+      "surfaces": [
+        {
+          "row_index": 89,
+          "consumer_surface": "work/token/cost classification",
+          "current_authority": "raw totals cannot separate legitimate work from replay/wait",
+          "target_authority": "joined task/batch/attempt ledger with productive/proof/review/replay/wait classes",
+          "milestone": "M6/M8A/M9",
+          "classification": "residual",
+          "handoff_milestone": "M9"
+        }
+      ],
+      "blockers": [],
+      "row_hash": "8de76324d99729e87a0ca1f137c0be3ae94da75469693f02654981a28d0d9a1e"
+    },
+    {
+      "owner": "Planner/compiler",
+      "canonical_owns": "Not defined in explicit ownership matrix",
+      "canonical_must_not_own": "Not defined in explicit ownership matrix",
+      "matrix_surface_count": 4,
+      "classification_counts": {
+        "residual": 4
+      },
+      "residual_count": 4,
+      "blocked_count": 0,
+      "prerequisite_satisfied_count": 0,
+      "retired_count": 0,
+      "out_of_scope_count": 0,
+      "surfaces": [
+        {
+          "row_index": 81,
+          "consumer_surface": "planner DAG dependencies/routing",
+          "current_authority": "`depends_on` also serializes routing; no reason/critical-path feasibility",
+          "target_authority": "semantic dependency reasons plus separate `routing_group`, seriality/width/turn feasibility report",
+          "milestone": "M8A",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 82,
+          "consumer_surface": "complexity/task proof budgets",
+          "current_authority": "uniform turn ceilings combine implementation and proof",
+          "target_authority": "complexity >=7 split/checkpoint or explicit authorized budget",
+          "milestone": "M8A",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 83,
+          "consumer_surface": "deterministic validation tasks",
+          "current_authority": "no-file checks dispatched to models",
+          "target_authority": "content-addressed harness validation job",
+          "milestone": "M8A",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 86,
+          "consumer_surface": "review rework fanout",
+          "current_authority": "review can exceed normal wave ceiling",
+          "target_authority": "rework compiled and granted under normal maximum scope",
+          "milestone": "M8A",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        }
+      ],
+      "blockers": [],
+      "row_hash": "3abedb39ee0bded0f9486702ce47330faa863e402eabefc2370283c1f792ef15"
+    },
+    {
+      "owner": "Portfolio gate",
+      "canonical_owns": "Not defined in explicit ownership matrix",
+      "canonical_must_not_own": "Not defined in explicit ownership matrix",
+      "matrix_surface_count": 2,
+      "classification_counts": {
+        "blocked": 2
+      },
+      "residual_count": 0,
+      "blocked_count": 2,
+      "prerequisite_satisfied_count": 0,
+      "retired_count": 0,
+      "out_of_scope_count": 0,
+      "surfaces": [
+        {
+          "row_index": 78,
+          "consumer_surface": "installed/editable/cloud runtime",
+          "current_authority": "potentially divergent source trees",
+          "target_authority": "identical pinned contract/runtime SHA",
+          "milestone": "M11",
+          "classification": "blocked",
+          "handoff_milestone": null
+        },
+        {
+          "row_index": 91,
+          "consumer_surface": "PC adjacent work",
+          "current_authority": "program counter / Parity Corrective / control plane ambiguous",
+          "target_authority": "explicitly owned typed scope",
+          "milestone": "M6",
+          "classification": "blocked",
+          "handoff_milestone": null
+        }
+      ],
+      "blockers": [
+        {
+          "row_index": 78,
+          "consumer_surface": "installed/editable/cloud runtime",
+          "blocked_by": [
+            "m5_bound_head_vs_current_head",
+            "wbc_file_hashes"
+          ],
+          "proof_required": "import/source SHA gate",
+          "milestone": "M11"
+        },
+        {
+          "row_index": 91,
+          "consumer_surface": "PC adjacent work",
+          "blocked_by": [
+            "m5_bound_head_vs_current_head",
+            "wbc_file_hashes"
+          ],
+          "proof_required": "`PC_SCOPE_DECISION`",
+          "milestone": "M6"
+        }
+      ],
+      "row_hash": "5507df0a204a4c7586690e97fad864ef811008c4939d1e8fe5ad88bb8d14f6c1"
+    },
+    {
+      "owner": "Run Authority",
+      "canonical_owns": "capability/dispatch grants; coordinator and subject attempts; accepted/rejected/quarantined/superseded decisions; fences; dependency acceptance; the pure authoritative reducer and authority-increasing views",
+      "canonical_must_not_own": "lifecycle writes, repair queue policy, WBC event storage, DAG design, model routing, executor budgets, status rendering, auditing",
+      "matrix_surface_count": 7,
+      "classification_counts": {
+        "blocked": 3,
+        "residual": 4
+      },
+      "residual_count": 4,
+      "blocked_count": 3,
+      "prerequisite_satisfied_count": 0,
+      "retired_count": 0,
+      "out_of_scope_count": 0,
+      "surfaces": [
+        {
+          "row_index": 0,
+          "consumer_surface": "Run Authority M1-M3 completion receipts",
+          "current_authority": "all three `accepted: false`; stale/missing phase evidence, diff mismatches, structural failures",
+          "target_authority": "three fresh content-addressed accepted receipts",
+          "milestone": "M5",
+          "classification": "blocked",
+          "handoff_milestone": null
+        },
+        {
+          "row_index": 1,
+          "consumer_surface": "Canonical `runauthority-epic` retirement",
+          "current_authority": "no initiative `.retired` marker; a duplicate-session tombstone exists but is not initiative retirement authority",
+          "target_authority": "metadata-only `.megaplan/initiatives/runauthority-epic/.retired` marker plus content-addressed retirement attestation",
+          "milestone": "M5",
+          "classification": "blocked",
+          "handoff_milestone": null
+        },
+        {
+          "row_index": 9,
+          "consumer_surface": "`RunAuthorityKernel` grants",
+          "current_authority": "grant/fence contracts",
+          "target_authority": "same records in joined causal history",
+          "milestone": "M7",
+          "classification": "blocked",
+          "handoff_milestone": null
+        },
+        {
+          "row_index": 10,
+          "consumer_surface": "Accepted attempt/decision reducer",
+          "current_authority": "deterministic Run Authority view",
+          "target_authority": "pure source-backed acceptance projection; never a bearer grant or custody lease",
+          "milestone": "M7/M8",
+          "classification": "residual",
+          "handoff_milestone": "M6A"
+        },
+        {
+          "row_index": 11,
+          "consumer_surface": "Runner/publication/human/recovery views",
+          "current_authority": "separate domain views",
+          "target_authority": "versioned projections from history/evidence",
+          "milestone": "M9",
+          "classification": "residual",
+          "handoff_milestone": "M6A"
+        },
+        {
+          "row_index": 29,
+          "consumer_surface": "chain advancement/guards",
+          "current_authority": "mixed plan/chain/PR status",
+          "target_authority": "authoritative reducer + post-reread",
+          "milestone": "M9",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 31,
+          "consumer_surface": "PR merge/publication supervisor",
+          "current_authority": "PR/CI API plus state cursor",
+          "target_authority": "effect intent/outcome + publication view",
+          "milestone": "M8/M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        }
+      ],
+      "blockers": [
+        {
+          "row_index": 0,
+          "consumer_surface": "Run Authority M1-M3 completion receipts",
+          "blocked_by": [
+            "m5_bound_head_vs_current_head",
+            "wbc_file_hashes"
+          ],
+          "proof_required": "canonical receipt regeneration plus `chain verify` divergence count 0",
+          "milestone": "M5"
+        },
+        {
+          "row_index": 1,
+          "consumer_surface": "Canonical `runauthority-epic` retirement",
+          "blocked_by": [
+            "m5_bound_head_vs_current_head",
+            "wbc_file_hashes"
+          ],
+          "proof_required": "three accepted receipts, canonical divergence count 0, regenerated proof/manifest, exact chain-state identity, constrained duplicate-session lookup/tombstone, and canonical asset hashes",
+          "milestone": "M5"
+        },
+        {
+          "row_index": 9,
+          "consumer_surface": "`RunAuthorityKernel` grants",
+          "blocked_by": [
+            "m5_bound_head_vs_current_head",
+            "wbc_file_hashes"
+          ],
+          "proof_required": "grant/fence/quarantine tests",
+          "milestone": "M7"
+        }
+      ],
+      "row_hash": "2ff8fd75cc9632153a77a6e5f59b6c11571d498a91841cd4814717088687bfbd"
+    },
+    {
+      "owner": "TransitionWriter/repair custody",
+      "canonical_owns": "Not defined in explicit ownership matrix",
+      "canonical_must_not_own": "Not defined in explicit ownership matrix",
+      "matrix_surface_count": 0,
+      "classification_counts": {},
+      "residual_count": 0,
+      "blocked_count": 0,
+      "prerequisite_satisfied_count": 0,
+      "retired_count": 0,
+      "out_of_scope_count": 0,
+      "surfaces": [],
+      "blockers": [],
+      "row_hash": "2529b30d9c08be31a99010b75adcc19820cfad411a52aa2219aaf67c503ce5cb"
+    },
+    {
+      "owner": "WBC",
+      "canonical_owns": "exact-version boundary contracts; transactional immutable execution-attempt and external-effect store/API; receipts/evidence and payload/reference governance; semantic findings; supported-runtime conformance",
+      "canonical_must_not_own": "grants/acceptance, lifecycle mutation, repair custody, aggregate status, planner/executor policy",
+      "matrix_surface_count": 14,
+      "classification_counts": {
+        "blocked": 5,
+        "prerequisite-satisfied": 1,
+        "residual": 8
+      },
+      "residual_count": 8,
+      "blocked_count": 5,
+      "prerequisite_satisfied_count": 1,
+      "retired_count": 0,
+      "out_of_scope_count": 0,
+      "surfaces": [
+        {
+          "row_index": 66,
+          "consumer_surface": "WBC declarations/attempt ledger",
+          "current_authority": "C1-C6-owned schemas; exact final merge commit pending; audited candidate ledger is schema-only",
+          "target_authority": "exact-version transactional boundary/evidence store/API joined to Run Authority and Custody IDs but granting neither capability nor lease",
+          "milestone": "M6/M6A/M8/M11",
+          "classification": "blocked",
+          "handoff_milestone": null
+        },
+        {
+          "row_index": 67,
+          "consumer_surface": "WBC payload/privacy/retention/encryption",
+          "current_authority": "schema validators and policy metadata; no audited stored-byte enforcement",
+          "target_authority": "tenant/access-enforced encrypted durable references, retention/legal hold/tombstone/deletion evidence and key/version audit",
+          "milestone": "M6A/M9/M11",
+          "classification": "blocked",
+          "handoff_milestone": null
+        },
+        {
+          "row_index": 68,
+          "consumer_surface": "WBC schema/data migration",
+          "current_authority": "no audited transactional WBC storage migration/backfill",
+          "target_authority": "checksummed, crash-resumable, idempotent, mixed-version migration with explicit unknown legacy records",
+          "milestone": "M6A/M9/M10/M11",
+          "classification": "blocked",
+          "handoff_milestone": null
+        },
+        {
+          "row_index": 69,
+          "consumer_surface": "WBC universal producer adoption",
+          "current_authority": "audited 35-contract matrix: 5 auto, 8 manual emission, 13 declared-only, 9 unknown",
+          "target_authority": "every declared and discovered boundary writes durable start, all required phase/effect evidence, and exactly one terminal/indeterminate through WBC API",
+          "milestone": "M6/M8/M10/M11",
+          "classification": "blocked",
+          "handoff_milestone": null
+        },
+        {
+          "row_index": 70,
+          "consumer_surface": "WBC universal consumer adoption",
+          "current_authority": "no audited canonical query use in status/cloud/resident/repair/chain operational consumers",
+          "target_authority": "exact-version WBC query API across status, watchdog/repair/auditor, chain/publication, resident/cloud, retention/migration and trace",
+          "milestone": "M9/M11",
+          "classification": "blocked",
+          "handoff_milestone": null
+        },
+        {
+          "row_index": 71,
+          "consumer_surface": "WBC semantic findings",
+          "current_authority": "WBC-owned durable findings mapped to repair",
+          "target_authority": "evidence/decision refs; no self-clear",
+          "milestone": "M6/M8/M10",
+          "classification": "prerequisite-satisfied",
+          "handoff_milestone": null
+        },
+        {
+          "row_index": 3,
+          "consumer_surface": "Kernel NDJSON journal",
+          "current_authority": "append-only generic runtime events",
+          "target_authority": "WBC transactional execution-attempt store/API plus Run Authority-linked causal envelope",
+          "milestone": "M6A/M8",
+          "classification": "residual",
+          "handoff_milestone": "M6A"
+        },
+        {
+          "row_index": 17,
+          "consumer_surface": "`phase_result.json`",
+          "current_authority": "stage terminal claim",
+          "target_authority": "evidence ref awaiting accepted decision",
+          "milestone": "M8",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 18,
+          "consumer_surface": "receipts/routing/cost ledgers",
+          "current_authority": "separate append logs",
+          "target_authority": "evidence/effect events linked by attempt",
+          "milestone": "M7/M8",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 22,
+          "consumer_surface": "prep/plan/revise stages",
+          "current_authority": "handlers and state/artifact writes",
+          "target_authority": "exact-version attempt/boundary events",
+          "milestone": "M8",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 23,
+          "consumer_surface": "critique/gate/tiebreaker/reducer stages",
+          "current_authority": "handler results, verdict artifacts and mutable state",
+          "target_authority": "exact-version attempts plus accepted Run Authority decisions",
+          "milestone": "M8",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 24,
+          "consumer_surface": "finalize/execute/review/feedback stages",
+          "current_authority": "artifacts, batch checkpoints, receipts and state",
+          "target_authority": "causal attempts/effects with post-transition reread",
+          "milestone": "M8/M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 27,
+          "consumer_surface": "human suspend/resume/approval",
+          "current_authority": "markers, cursor, CLI state",
+          "target_authority": "signed decision/effect history",
+          "milestone": "M8",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 88,
+          "consumer_surface": "repair receipt adoption",
+          "current_authority": "fixed work cannot become an accepted checkpoint",
+          "target_authority": "immutable receipt plus current verify-only Run Authority acceptance",
+          "milestone": "M7/M8A",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        }
+      ],
+      "blockers": [
+        {
+          "row_index": 66,
+          "consumer_surface": "WBC declarations/attempt ledger",
+          "blocked_by": [
+            "m5_bound_head_vs_current_head",
+            "wbc_file_hashes"
+          ],
+          "proof_required": "exact landed/runtime proof plus store, call-site set equality, runtime traces, fault/replay and bypass-negative suite",
+          "milestone": "M6/M6A/M8/M11"
+        },
+        {
+          "row_index": 67,
+          "consumer_surface": "WBC payload/privacy/retention/encryption",
+          "blocked_by": [
+            "m5_bound_head_vs_current_head",
+            "wbc_file_hashes"
+          ],
+          "proof_required": "cross-tenant, missing-key, retention/hold/tombstone/deletion tests against stored bytes",
+          "milestone": "M6A/M9/M11"
+        },
+        {
+          "row_index": 68,
+          "consumer_surface": "WBC schema/data migration",
+          "blocked_by": [
+            "m5_bound_head_vs_current_head",
+            "wbc_file_hashes"
+          ],
+          "proof_required": "every supported version, interruption/resume, corrupt/partial, duplicate backfill and rollback/forward-fix tests",
+          "milestone": "M6A/M9/M10/M11"
+        },
+        {
+          "row_index": 69,
+          "consumer_surface": "WBC universal producer adoption",
+          "blocked_by": [
+            "m5_bound_head_vs_current_head",
+            "wbc_file_hashes"
+          ],
+          "proof_required": "generated contract/call-site/runtime-trace set equality plus positive, negative and failure/replay cases",
+          "milestone": "M6/M8/M10/M11"
+        },
+        {
+          "row_index": 70,
+          "consumer_surface": "WBC universal consumer adoption",
+          "blocked_by": [
+            "m5_bound_head_vs_current_head",
+            "wbc_file_hashes"
+          ],
+          "proof_required": "generated consumer inventory and raw-state/prose/token/implicit-latest negative tests",
+          "milestone": "M9/M11"
+        }
+      ],
+      "row_hash": "a3d33e98a6c6766e6ec5284c6682f99741d33f4898a679aecb6eb70e666eed79"
+    },
+    {
+      "owner": "custody-control-plane",
+      "canonical_owns": "Not defined in explicit ownership matrix",
+      "canonical_must_not_own": "Not defined in explicit ownership matrix",
+      "matrix_surface_count": 38,
+      "classification_counts": {
+        "residual": 38
+      },
+      "residual_count": 38,
+      "blocked_count": 0,
+      "prerequisite_satisfied_count": 0,
+      "retired_count": 0,
+      "out_of_scope_count": 0,
+      "surfaces": [
+        {
+          "row_index": 12,
+          "consumer_surface": "Canonical run-state resolver",
+          "current_authority": "ordered raw evidence classifier",
+          "target_authority": "read-coherent reducer/evidence binding",
+          "milestone": "M6/M9",
+          "classification": "residual",
+          "handoff_milestone": "M6A"
+        },
+        {
+          "row_index": 13,
+          "consumer_surface": "Run-state classifiers",
+          "current_authority": "local precedence rules",
+          "target_authority": "pure policy over coherent versioned envelope",
+          "milestone": "M9",
+          "classification": "residual",
+          "handoff_milestone": "M6A"
+        },
+        {
+          "row_index": 14,
+          "consumer_surface": "`state.json` writer / merge-on-save",
+          "current_authority": "mutable plan truth plus append-only meta",
+          "target_authority": "compatibility projection writer after history append",
+          "milestone": "M7",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 15,
+          "consumer_surface": "`state.json` readers",
+          "current_authority": "widespread phase/status/resume reads",
+          "target_authority": "signed projection or reducer query",
+          "milestone": "M8/M9/M11",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 16,
+          "consumer_surface": "Plan `events.ndjson`",
+          "current_authority": "detailed but separate plan journal",
+          "target_authority": "migrated/imported causal event stream",
+          "milestone": "M7",
+          "classification": "residual",
+          "handoff_milestone": "M6A"
+        },
+        {
+          "row_index": 20,
+          "consumer_surface": "prep/plan/revise stages",
+          "current_authority": "handler/native stage state",
+          "target_authority": "exact-version attempt boundaries",
+          "milestone": "M8",
+          "classification": "residual",
+          "handoff_milestone": "M6A"
+        },
+        {
+          "row_index": 28,
+          "consumer_surface": "chain state writer/driver",
+          "current_authority": "`.chains/*.json`, logs, plan state",
+          "target_authority": "chain projection from accepted milestone events",
+          "milestone": "M7/M8",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 33,
+          "consumer_surface": "CLI status/projection",
+          "current_authority": "raw state + compatibility formatter",
+          "target_authority": "rebuildable multidimensional view",
+          "milestone": "M9",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 34,
+          "consumer_surface": "introspect/trace/doctor",
+          "current_authority": "events, state, process probes",
+          "target_authority": "pure observer over history/evidence",
+          "milestone": "M9",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 35,
+          "consumer_surface": "status projection module",
+          "current_authority": "mixed source presentation",
+          "target_authority": "signed/versioned projection",
+          "milestone": "M9",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 36,
+          "consumer_surface": "cloud status snapshot/formatter",
+          "current_authority": "markers/state/watchdog/process best effort",
+          "target_authority": "view-only reducer snapshot",
+          "milestone": "M9",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 37,
+          "consumer_surface": "cloud current-target selector",
+          "current_authority": "precedence across marker/live/state/chain",
+          "target_authority": "history target identity decision",
+          "milestone": "M9",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 39,
+          "consumer_surface": "watchdog Python discovery",
+          "current_authority": "filesystem/state/mtime/process scan",
+          "target_authority": "coherent evidence collector only",
+          "milestone": "M9",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 40,
+          "consumer_surface": "`arnold-watchdog` wrapper",
+          "current_authority": "duplicated shell selectors/classifiers",
+          "target_authority": "thin input/output adapter",
+          "milestone": "M9/M11",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 41,
+          "consumer_surface": "progress auditor/L3",
+          "current_authority": "ledger plus snapshots and wrappers",
+          "target_authority": "read-only audit of reducer/custody",
+          "milestone": "M9/M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 44,
+          "consumer_surface": "human-blocker markers/classifier",
+          "current_authority": "marker lifecycle plus raw facts",
+          "target_authority": "history decision projection",
+          "milestone": "M9",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 45,
+          "consumer_surface": "repair request queue",
+          "current_authority": "queue files/systemd trigger",
+          "target_authority": "history request/claim projection",
+          "milestone": "M7/M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 46,
+          "consumer_surface": "repair locks/leases",
+          "current_authority": "blocker file locks, active claims, and repair projections",
+          "target_authority": "`CustodyTargetKey`/`RepairOccurrenceKey` plus renewable `CustodyLease` event stream and monotonic custody epoch joined to current Run Authority grant/fence",
+          "milestone": "M7/M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 47,
+          "consumer_surface": "repair-data/repair contract",
+          "current_authority": "JSON custody buckets/attempts",
+          "target_authority": "compatibility projection from history",
+          "milestone": "M7/M10/M11",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 48,
+          "consumer_surface": "L1 repair loop",
+          "current_authority": "wrapper/queue/raw status decisions",
+          "target_authority": "fenced occurrence repair policy",
+          "milestone": "M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 49,
+          "consumer_surface": "L2 meta-repair",
+          "current_authority": "meta records/retrigger verification",
+          "target_authority": "history attempt + independent verifier",
+          "milestone": "M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 50,
+          "consumer_surface": "L3/audit repair",
+          "current_authority": "gather/recommend/escalate",
+          "target_authority": "read-only audit events",
+          "milestone": "M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 51,
+          "consumer_surface": "source/install/retrigger repair",
+          "current_authority": "commits/install hashes/process relaunch",
+          "target_authority": "distinct fenced effect events",
+          "milestone": "M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 52,
+          "consumer_surface": "independent recovery verification",
+          "current_authority": "optional/delayed repair evidence",
+          "target_authority": "mandatory later negative control + progress",
+          "milestone": "M10",
+          "classification": "residual",
+          "handoff_milestone": "M9"
+        },
+        {
+          "row_index": 53,
+          "consumer_surface": "resident inbound message/turn",
+          "current_authority": "resident store and conversation cursor",
+          "target_authority": "immutable root custody provenance",
+          "milestone": "M8",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 54,
+          "consumer_surface": "resident managed child launch",
+          "current_authority": "manifest/run PID/result",
+          "target_authority": "child attempt under parent/root custody",
+          "milestone": "M8/M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 55,
+          "consumer_surface": "resident completion outbox",
+          "current_authority": "per-child auto-delivery state",
+          "target_authority": "parent-owned aggregated delivery effect",
+          "milestone": "M8/M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 56,
+          "consumer_surface": "ordinary resident reply",
+          "current_authority": "DB message then Discord send then turn completion",
+          "target_authority": "durable intent/provider receipt effect outbox",
+          "milestone": "M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 57,
+          "consumer_surface": "scheduled notification",
+          "current_authority": "metadata and fire lifecycle split around send",
+          "target_authority": "same durable effect outbox and nonce receipt",
+          "milestone": "M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 58,
+          "consumer_surface": "resident scheduler/todo sweep",
+          "current_authority": "mutable hot context and run scan",
+          "target_authority": "history custody/read model",
+          "milestone": "M9",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 59,
+          "consumer_surface": "Discord status/follow-up",
+          "current_authority": "snapshot/local fallback prose",
+          "target_authority": "non-authoritative projection from history",
+          "milestone": "M9",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 60,
+          "consumer_surface": "AgentBox guardian/reconcile",
+          "current_authority": "operation state/tmux/process views",
+          "target_authority": "target/custody reducer consumer",
+          "milestone": "M9/M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 61,
+          "consumer_surface": "cloud resident service/heartbeat",
+          "current_authority": "systemd/tmux/heartbeat freshness",
+          "target_authority": "runner lease and correlated heartbeat event",
+          "milestone": "M9",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 63,
+          "consumer_surface": "cloud repair wrappers",
+          "current_authority": "generated shell with selectors/retries",
+          "target_authority": "thin calls to history APIs",
+          "milestone": "M10/M11",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 64,
+          "consumer_surface": "cloud/source initiative repair",
+          "current_authority": "source/branch/install state",
+          "target_authority": "fenced effects with SHA reread",
+          "milestone": "M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 65,
+          "consumer_surface": "notification safety/delivery",
+          "current_authority": "separate safety and outbox projections",
+          "target_authority": "history effect + target receipt + supersession",
+          "milestone": "M10",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 77,
+          "consumer_surface": "archived/historical runs",
+          "current_authority": "legacy files and schemas",
+          "target_authority": "read-only versioned adapters",
+          "milestone": "M11",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        },
+        {
+          "row_index": 90,
+          "consumer_surface": "event-driven recovery trigger",
+          "current_authority": "hourly scan is primary discovery",
+          "target_authority": "deduplicated durable block/exit trigger, exact live signature/fence, six-hour reconciliation backstop",
+          "milestone": "M10/M11",
+          "classification": "residual",
+          "handoff_milestone": "M8"
+        }
+      ],
+      "blockers": [],
+      "row_hash": "7e320a0469f5cafce48d54f4dc821f2318cf2ec4fe9e656735e7ae7c426331d6"
+    }
+  ],
+  "global_blockers": [
+    {
+      "blocker_id": "OWNERSHIP-BLOCKER-001",
+      "description": "Run Authority M1-M3 completion receipts: all three have `accepted: false`. Stale/missing phase evidence, diff mismatches, and structural failures prevent acceptance. M5 owns reconciliation and canonical retirement proof before adoption proceeds. Until accepted, Run Authority ownership decisions remain provisional.",
+      "affected_owner": "Run Authority",
+      "source_evidence": [
+        "migration matrix row 0 (Run Authority M1-M3 completion receipts)",
+        "authority-lineage-and-gap-audit-20260711.md §2026-07-13 ownership reconciliation",
+        "unified-authority-efficiency-prevention-20260714.md §Evidence reconciled"
+      ],
+      "required_resolution": "Three content-addressed accepted receipts with canonical divergence count 0",
+      "status": "blocked",
+      "blocks_milestones": [
+        "M6A",
+        "M7",
+        "M8",
+        "M8A",
+        "M9",
+        "M10",
+        "M11"
+      ]
+    },
+    {
+      "blocker_id": "OWNERSHIP-BLOCKER-002",
+      "description": "Portfolio gate approval required for PC scope decision. Migration matrix row 91 (PC adjacent work) has owner 'Portfolio gate' (human portfolio gate) with proof requirement `PC_SCOPE_DECISION`. Until human approval is recorded, PC defaults to program counter and M7 is blocked on material overlap.",
+      "affected_owner": "Portfolio gate",
+      "source_evidence": [
+        "migration matrix row 91 (PC adjacent work)",
+        "evidence/pc-scope-decision.json (machine-generated, pending human approval)"
+      ],
+      "required_resolution": "Human portfolio gate approval record for PC scope decision",
+      "status": "blocked",
+      "blocks_milestones": [
+        "M7"
+      ]
+    },
+    {
+      "blocker_id": "OWNERSHIP-BLOCKER-003",
+      "description": "M5 bound-head (8bb779d) does not match current HEAD. Prerequisite verification reports INCOHERENT for m5_bound_head_vs_current_head. Downstream M6 handoff artifacts are not marked complete until this is resolved.",
+      "affected_owner": "Run Authority",
+      "source_evidence": [
+        "evidence/m6-prerequisite-verification.json §check=m5_bound_head_vs_current_head → INCOHERENT"
+      ],
+      "required_resolution": "Either rebase to M5 bound head or produce successor attestation",
+      "status": "blocked",
+      "blocks_milestones": [
+        "M6A",
+        "M7",
+        "M8",
+        "M8A",
+        "M9",
+        "M10",
+        "M11"
+      ]
+    },
+    {
+      "blocker_id": "OWNERSHIP-BLOCKER-004",
+      "description": "WBC file hash check reports INCOHERENT: one source file mismatch between current working tree and the WBC integration commit (24afce00). This must be resolved before WBC ownership evidence is fully coherent.",
+      "affected_owner": "WBC",
+      "source_evidence": [
+        "evidence/m6-prerequisite-verification.json §check=wbc_file_hashes → INCOHERENT"
+      ],
+      "required_resolution": "Reconcile diverged WBC file or accept as documented drift",
+      "status": "blocked",
+      "blocks_milestones": [
+        "M6A"
+      ]
+    }
+  ],
+  "composite_hash": "fffd53345726b1b5c1050d2ea228806d8c5e78c07dce6ec560f61685551e00cb"
+}

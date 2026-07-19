@@ -1,0 +1,12 @@
+{
+  "adapters": [],
+  "meta": {
+    "adapter_count": 0,
+    "description": "Historical adapter allowlist for WBC boundary. Each adapter requires: path/symbol, permitted read operations and versions, proof of zero authority-increasing callers, named owner/approver, expiry, and deletion gate. Default-empty because no read-only adapters have been proven at this milestone.",
+    "generated_by": "M6 Step 6 (T7) \u2014 generate_wbc_boundary_inventory.py",
+    "schema": "m6.wbc-historical-adapters.v1",
+    "status": "default_empty",
+    "status_detail": "No read-only adapters have been proven with the required evidence fields. Set to empty until proof is provided.",
+    "timestamp_utc": "2026-07-19T19:25:07.551536+00:00"
+  }
+}

@@ -1,0 +1,159 @@
+{
+  "schema": "m6.work-ledger-vocabulary.v1",
+  "generated_at": "2026-07-19T19:25:06.522684+00:00",
+  "generator": "tools/generate_m6_rollout_register.py",
+  "source_evidence": {
+    "unified_authority_research": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md",
+    "finding_F14": "Productive and replayed time/tokens/cost were not authoritative"
+  },
+  "north_star_guard": "All baseline denominators are preserved as UNKNOWN. No field is defaulted to zero or labeled success evidence. Missing cost has an explicit reason. The prevention target is avoidable overhead, reported separately from productive implementation and necessary proof/review.",
+  "stage_count": 12,
+  "cost_dimension_count": 3,
+  "stages": [
+    {
+      "stage_id": "compaction",
+      "label": "Compaction time",
+      "description": "Time spent compacting conversation context for budget management.",
+      "category": "overhead",
+      "unit": "seconds",
+      "baseline": "UNKNOWN",
+      "baseline_rationale": "Exact compaction time and the productive fraction of compaction are UNKNOWN until M8A instrumentation exists. Source: unified-authority-efficiency-prevention-20260714.md §Explicit unknowns."
+    },
+    {
+      "stage_id": "git",
+      "label": "Git operation time",
+      "description": "Time spent on Git operations (commits, diffs, status checks).",
+      "category": "overhead",
+      "unit": "seconds",
+      "baseline": "UNKNOWN",
+      "baseline_rationale": "Measured Git operation baselines are UNKNOWN until M8A instrumentation exists."
+    },
+    {
+      "stage_id": "inference",
+      "label": "Inference time",
+      "description": "Time spent on model inference calls (prompt processing and token generation).",
+      "category": "productive",
+      "unit": "seconds",
+      "baseline": "UNKNOWN",
+      "baseline_rationale": "Productive-versus-replayed inference baselines are UNKNOWN until joined per-task/attempt/repair receipts exist."
+    },
+    {
+      "stage_id": "queue",
+      "label": "Queue time",
+      "description": "Time spent waiting for a worker slot after admission.",
+      "category": "overhead",
+      "unit": "seconds",
+      "baseline": "UNKNOWN",
+      "baseline_rationale": "Measured queue time baselines are UNKNOWN until M8A instrumentation and joined ledger exist."
+    },
+    {
+      "stage_id": "repair",
+      "label": "Repair time",
+      "description": "Time spent on repair custody operations (dispatch, terminalization, verification).",
+      "category": "productive",
+      "unit": "seconds",
+      "baseline": "UNKNOWN",
+      "baseline_rationale": "Measured repair time baselines are UNKNOWN until M7/M10 custody instrumentation exists."
+    },
+    {
+      "stage_id": "replay",
+      "label": "Replay time",
+      "description": "Time spent on deterministic replay of captured fixtures for proof generation.",
+      "category": "productive",
+      "unit": "seconds",
+      "baseline": "UNKNOWN",
+      "baseline_rationale": "Measured replay time baselines are UNKNOWN; current captured fixtures are M6 observe-only baselines."
+    },
+    {
+      "stage_id": "retry_wait",
+      "label": "Retry-wait time",
+      "description": "Time spent waiting between retry attempts (backoff, provider cooldown).",
+      "category": "overhead",
+      "unit": "seconds",
+      "baseline": "UNKNOWN",
+      "baseline_rationale": "Measured retry-wait baselines are UNKNOWN until M8A circuit instrumentation exists."
+    },
+    {
+      "stage_id": "session_start",
+      "label": "Session-start time",
+      "description": "Time spent on worker/session initialization, model loading, and import resolution.",
+      "category": "overhead",
+      "unit": "seconds",
+      "baseline": "UNKNOWN",
+      "baseline_rationale": "Measured session-start time baselines are UNKNOWN until M8A instrumentation exists."
+    },
+    {
+      "stage_id": "tool",
+      "label": "Tool execution time",
+      "description": "Time spent executing tool calls (shell, file operations, API calls).",
+      "category": "productive",
+      "unit": "seconds",
+      "baseline": "UNKNOWN",
+      "baseline_rationale": "Measured tool time baselines are UNKNOWN until M8A instrumentation exists."
+    },
+    {
+      "stage_id": "transition",
+      "label": "Transition time",
+      "description": "Time spent on lifecycle state transitions (plan/chain/task phase changes).",
+      "category": "overhead",
+      "unit": "seconds",
+      "baseline": "UNKNOWN",
+      "baseline_rationale": "Measured transition time baselines are UNKNOWN until M7 writer boundary instrumentation exists."
+    },
+    {
+      "stage_id": "validation",
+      "label": "Validation time",
+      "description": "Time spent on deterministic harness validation jobs.",
+      "category": "productive",
+      "unit": "seconds",
+      "baseline": "UNKNOWN",
+      "baseline_rationale": "Measured validation time baselines are UNKNOWN until M8A instrumentation exists."
+    },
+    {
+      "stage_id": "verify",
+      "label": "Verification time",
+      "description": "Time spent on verify-only repair receipt adoption (checkpoint replay, test re-execution).",
+      "category": "productive",
+      "unit": "seconds",
+      "baseline": "UNKNOWN",
+      "baseline_rationale": "Measured verification time baselines are UNKNOWN until M8A verify-only adoption path exists."
+    }
+  ],
+  "cost_dimensions": [
+    {
+      "dimension_id": "calls",
+      "label": "Model calls",
+      "description": "Number of model inference calls (prompt processing + generation).",
+      "category": "productive",
+      "unit": "count",
+      "baseline": "UNKNOWN",
+      "baseline_rationale": "Productive-versus-replayed call count baselines are UNKNOWN until joined ledger exists."
+    },
+    {
+      "dimension_id": "dollars",
+      "label": "Cost (USD)",
+      "description": "Estimated cost in USD for model calls, provider usage, and infrastructure.",
+      "category": "productive",
+      "unit": "USD",
+      "baseline": "UNKNOWN",
+      "baseline_rationale": "Productive-versus-replayed cost baselines are UNKNOWN until joined per-task/attempt/repair receipts exist."
+    },
+    {
+      "dimension_id": "tokens",
+      "label": "Tokens",
+      "description": "Number of input and output tokens consumed.",
+      "category": "productive",
+      "unit": "count",
+      "baseline": "UNKNOWN",
+      "baseline_rationale": "Productive-versus-replayed token baselines are UNKNOWN until joined ledger exists."
+    }
+  ],
+  "global_unknowns": {
+    "productive_implementation_fraction": "UNKNOWN",
+    "productive_implementation_fraction_rationale": "The fraction of total time/tokens/cost that is productive implementation (versus avoidable queue, replay, retry, compaction, validation, detection, and projection overhead) is UNKNOWN until joined per-task/attempt/repair receipts with stage decomposition exist. Source: F14 finding and unified-authority-efficiency-prevention-20260714.md §Explicit unknowns.",
+    "total_bytes_projected": "UNKNOWN",
+    "total_bytes_projected_rationale": "Total projection I/O bytes are UNKNOWN until M9 timing and byte telemetry exists. The 137 GiB estimate demonstrates amplification risk, not a measured value. Source: unified-authority-efficiency-prevention-20260714.md §Explicit unknowns.",
+    "slo_p95": "UNKNOWN",
+    "slo_p95_rationale": "Initial p95 and circuit thresholds are safety policies, not claims about mature cohort distributions. Source: unified-authority-efficiency-prevention-20260714.md §Explicit unknowns."
+  }
+}

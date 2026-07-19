@@ -1,0 +1,268 @@
+{
+  "schema": "m6.finding-prevention-register.v1",
+  "generated_at": "2026-07-19T19:25:07.603950+00:00",
+  "generator": "tools/generate_m6_finding_register.py",
+  "source_document": ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md",
+  "finding_count": 17,
+  "expected_coverage": "F01–F17 (exactly 17 findings)",
+  "rows": [
+    {
+      "finding_id": "F01",
+      "title": "stale repair identity attached T7 evidence to T12",
+      "root_cause": "repair identity was request/session oriented and was not revalidated against the live attempt and normalized failure signature.",
+      "canonical_owner": "Run Authority",
+      "owner_control": "Run Authority defines attempt/fence identity; repair custody dispatches only an exact tuple `(environment, session, chain, plan_revision, phase, task, attempt, normalized_failure_kind, blocker_or_phase_result_hash, fence)` and supersedes mismatches.",
+      "acceptance_proof": "M7 freezes identity and quarantine semantics; M10 enforces dispatch and terminal closure. Captured T7/T12 replay proves cross-binding is impossible and every request/claim/attempt/decision/index ends terminal.",
+      "rollout_gate": "shadow mismatch telemetry must have exact evidence IDs before a repair/worker canary. p95 event-to-accepted-repair is measured in the canary.",
+      "rollback_behavior": "mismatch becomes superseded/quarantined and launches nothing. Delete basename, implicit-latest, and request-only selectors only after zero runtime callers and mixed-version replay proof in M11.",
+      "deletion_gate": "Delete basename, implicit-latest, and request-only selectors only after zero runtime callers and mixed-version replay proof in M11.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "row_hash": "0b32b838c877a93189fd57b739358d659f5ff43d30622783b92b221f7bd0db8b"
+    },
+    {
+      "finding_id": "F02",
+      "title": "scan-driven recovery added 1h38m44s",
+      "root_cause": "blocked/process-exit state depended on hourly discovery.",
+      "canonical_owner": "WBC",
+      "owner_control": "WBC emits durable block/exit events; repair custody consumes a deduplicated trigger; Run Authority validates current identity/fence. Hourly scan and six-hour Maintenance pass reconcile missed events only.",
+      "acceptance_proof": "M6A/M8 make block/exit writes durable; M10 runs deterministic lost/duplicate/out-of-order trigger fixtures and a real eligible blocked-run prove p95 under five minutes plus missed-event recovery by the six-hour backstop.",
+      "rollout_gate": "action-off shadow SLO, then one allowlisted repair/worker canary.",
+      "rollback_behavior": "delivery ambiguity stays pending and scan-recoverable; no duplicate launch. Retire scan-as-primary only after the missed-event corpus and canary both pass.",
+      "deletion_gate": "Retire scan-as-primary only after the missed-event corpus and canary both pass.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "row_hash": "5168f6e69e3f25d231877b8127bddae284f6e5e589f518c890cbd3cd1a8a4dfb"
+    },
+    {
+      "finding_id": "F03",
+      "title": "repair results were not adoptable and work replayed",
+      "root_cause": "repair receipts lacked current grant/task/revision/tree/test/fence proof and could not become accepted checkpoints.",
+      "canonical_owner": "WBC",
+      "owner_control": "WBC stores immutable receipt evidence; Run Authority validates and accepts/quarantines; executor offers a verify-only adoption path.",
+      "acceptance_proof": "M6A/M8 make WBC receipt/attempt evidence durable; M7 joins custody identity; M8A implements verify-only adoption. Valid T7/T12 fixtures skip full replay; any altered contract, tree, test set, or fence rejects adoption and executes normally.",
+      "rollout_gate": "shadow comparison, captured replay, executor canary.",
+      "rollback_behavior": "no receipt means no adoption, never implicit trust. Remove repair-specific replay shortcuts after zero callers and replay parity.",
+      "deletion_gate": "Remove repair-specific replay shortcuts after zero callers and replay parity.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "row_hash": "0af3fe6f2a9517e3df5bf8e7a9307e0b34b12f9fccc3b334e061fa865e2f7df0"
+    },
+    {
+      "finding_id": "F04",
+      "title": "mutable aliases overwrote attempt history",
+      "root_cause": "`execution`, batch, and review aliases acted as both current view and historical record.",
+      "canonical_owner": "WBC",
+      "owner_control": "WBC owns append-only attempt-scoped artifacts/events; Run Authority reducer selects accepted attempt; aliases become projections.",
+      "acceptance_proof": "M6A supplies the store, M8 adopts review/rework producers, and M10 proves replay. Two review/rework cycles preserve byte-identical attempt 1, monotonic ordinals, causal parents, and deterministic current projection.",
+      "rollout_gate": "dual-write shadow and deterministic replay before enforcement.",
+      "rollback_behavior": "append failure is `persistence_failed`/`indeterminate`; no success. Delete mutable historical writes after old-reader compatibility expiry and zero-writer scan in M11.",
+      "deletion_gate": "Delete mutable historical writes after old-reader compatibility expiry and zero-writer scan in M11.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "row_hash": "6ea7d834151f05c8aeaaa45c87cddfa844b0a61e519465b8457d08c5f9b9f3c9"
+    },
+    {
+      "finding_id": "F05",
+      "title": "plan, chain, cloud, repair, and introspection disagreed",
+      "root_cause": "independent precedence rules reduced mutable snapshots and sidecars, allowing `repairing`, `executing`, and `finalized` simultaneously.",
+      "canonical_owner": "Run Authority",
+      "owner_control": "one pure attempt-aware Run Authority reducer; custody supplies coherent evidence; every other view projects reducer cursor/hash and keeps execution, liveness, custody, publication, delivery, and integrity separate.",
+      "acceptance_proof": "M9. Captured review-rework input renders `executing attempt 2` everywhere with 100% cursor/hash agreement; torn evidence becomes unknown.",
+      "rollout_gate": "deterministic replay, action-off shadow, then idle projection canary before any control consumer promotion.",
+      "rollback_behavior": "disagreement emits drift and blocks action. Delete local status classifiers and raw fallback control reads only after M11 zero- reader and forced-rollback proof.",
+      "deletion_gate": "Delete local status classifiers and raw fallback control reads only after M11 zero- reader and forced-rollback proof.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "row_hash": "b0fda791bf3b0097ab75b61920cadb3e11a840d86aa500acf9eb516766f96317"
+    },
+    {
+      "finding_id": "F06",
+      "title": "heartbeat projection rewrote a growing journal non-atomically",
+      "root_cause": "every heartbeat performed a quadratic full-file compatibility rewrite and exposed partial destinations to readers.",
+      "canonical_owner": "Observability/projection",
+      "owner_control": "observability owns cursor-checked O(event-size) append and atomic rebuild; authority remains upstream and projections disposable.",
+      "acceptance_proof": "M7 lands/proves the writer boundary; M9 proves complete rebuild. At least 10,000 heartbeats yield sequences 0..9999, one rebuild, monotonic valid concurrent reads, zero false stalls, and recorded bytes/time.",
+      "rollout_gate": "review candidate commits, deterministic stress, idle runtime canary, then controlled deployment with installed SHA provenance.",
+      "rollback_behavior": "cursor mismatch rebuilds atomically while the prior complete file remains readable. Remove full-journal rewrite only after rollback and historical-reader compatibility proof.",
+      "deletion_gate": "Remove full-journal rewrite only after rollback and historical-reader compatibility proof.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "row_hash": "b55d3da6ad406ac09a608336685f42e739eee00a9878c8194d2b7c07980d72e3"
+    },
+    {
+      "finding_id": "F07",
+      "title": "fully serial DAGs were admitted without feasibility proof",
+      "root_cause": "`depends_on` mixed semantic prerequisites with routing/order and finalization did not report critical path or usable parallelism.",
+      "canonical_owner": "Planner/compiler",
+      "owner_control": "planner/compiler requires a reason per dependency, separates `routing_group`, calculates critical path/width/seriality/turn demand, and rejects unexplained 100% serialization for eight or more tasks.",
+      "acceptance_proof": "M8A. Replaying both finalized plans flags the observed serial chains and produces safe independent waves without changing semantics.",
+      "rollout_gate": "report-only compiler diagnostics, captured replay, then new-plan canary; existing plans are never silently rewritten.",
+      "rollback_behavior": "infeasible plan returns a typed planning blocker requiring split/replan or explicit authorized exception. Delete implicit dependency/order coupling after corpus parity and zero emitters.",
+      "deletion_gate": "Delete implicit dependency/order coupling after corpus parity and zero emitters.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "row_hash": "80acede6978cceab171f68c48a65ee68463c0ef2232aca72f4799a2b37ecbd74"
+    },
+    {
+      "finding_id": "F08",
+      "title": "high-complexity tasks exhausted fixed worker budgets",
+      "root_cause": "complexity 7–9 tasks bundled implementation and proof under one uniform 90-iteration ceiling.",
+      "canonical_owner": "Planner/compiler",
+      "owner_control": "planner/compiler splits implementation from proof at complexity >=7 or records an explicit evidence-backed larger budget; executor enforces the compiled ceiling and checkpoint boundaries.",
+      "acceptance_proof": "M8A. T7/T12 and later complexity-8/9 fixtures either split or fail admission; no partial implementation is discarded when proof budget ends.",
+      "rollout_gate": "shadow feasibility, replay, then executor canary.",
+      "rollback_behavior": "budget exhaustion opens a typed blocker/checkpoint, never blind retry. Remove uniform-budget fallback after zero callers.",
+      "deletion_gate": "Remove uniform-budget fallback after zero callers.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "row_hash": "5364d9462868657b0e84ff69c78442fed754edeaab9969e3f79bafcff90522f7"
+    },
+    {
+      "finding_id": "F09",
+      "title": "deterministic validation consumed model calls",
+      "root_cause": "no-file checks were compiled as ordinary model tasks.",
+      "canonical_owner": "Planner/compiler",
+      "owner_control": "planner/compiler emits harness validation jobs; executor runs them outside model calls with captured command, environment, output, and hash.",
+      "acceptance_proof": "M8A. Strategy T10/T12/T15 equivalents make zero model calls and reproduce the same pass/fail semantics.",
+      "rollout_gate": "shadow task classification, captured replay, executor canary.",
+      "rollback_behavior": "ambiguous or mutating checks remain explicit model or human tasks; they are not guessed mechanical. Delete validation-only model routing after zero classified callers and parity.",
+      "deletion_gate": "Delete validation-only model routing after zero classified callers and parity.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "row_hash": "75a613fcc97f4faf5388f700762a1495457118934f2f33ed63fc8311bf48cdfb"
+    },
+    {
+      "finding_id": "F10",
+      "title": "invalid source refs retried for 2h09m",
+      "root_cause": "launcher did not validate/suggest once and lacked a startup retry circuit tied to source/runtime provenance.",
+      "canonical_owner": "Executor/launcher",
+      "owner_control": "launcher/runtime packaging validates the ref once, suggests a valid audited ref, caps attempts, and proves detached source/install/runtime SHA equality before start.",
+      "acceptance_proof": "M8A. Invalid-ref and dirty/divergent-checkout fixtures stop within the configured bounded attempts and never create repeated chain starts.",
+      "rollout_gate": "fixture and dry-run preflight before any controlled deployment.",
+      "rollback_behavior": "unresolved or divergent ref is a launch blocker. Remove permissive repeated-start paths after installed-runtime provenance canary.",
+      "deletion_gate": "Remove permissive repeated-start paths after installed-runtime provenance canary.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "row_hash": "436e35dd0d4f4127726662d8a3ae83bf06e1acbeb299a09877b66ef6ecfae814"
+    },
+    {
+      "finding_id": "F11",
+      "title": "provider timeout, invalid summary model, import leakage, and compaction churn",
+      "root_cause": "worker configuration/import boundaries were mutable, repeated invalid model requests were not terminal, and provider/compaction budgets were not joined to one attempt circuit.",
+      "canonical_owner": "Executor/launcher",
+      "owner_control": "executor/launcher resolves model before dispatch, isolates target/runtime imports, permits at most one repeated 300-second timeout before failover/escalation, and caps compaction at one per turn unless authorized.",
+      "acceptance_proof": "M8A. Empty/invalid model, divergent checkout, import leakage, repeated timeout, and compaction fixtures terminate within bounds with exact reasons and no duplicate effect.",
+      "rollout_gate": "shadow counters and worker canary before promotion.",
+      "rollback_behavior": "invalid route/import or exhausted budget is visible terminal/escalated state. Remove ambient unbounded fallbacks after zero use.",
+      "deletion_gate": "Remove ambient unbounded fallbacks after zero use.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "row_hash": "55588b5dd6f5cf1243238dea1e49b1c1da37c8404f6d1351c0e5000f761bff64"
+    },
+    {
+      "finding_id": "F12",
+      "title": "oversized rework exceeded the five-task ceiling",
+      "root_cause": "review rework bypassed finalized dispatch-wave limits.",
+      "canonical_owner": "Planner/compiler",
+      "owner_control": "planner/compiler compiles rework waves; executor enforces the same maximum scope/grant as normal dispatch.",
+      "acceptance_proof": "M8A. Six-task fixture splits into bounded waves with exact grants and identical accepted output.",
+      "rollout_gate": "replay then executor canary.",
+      "rollback_behavior": "oversized grant is rejected before worker launch. Delete review-only fanout bypass after zero-call scan.",
+      "deletion_gate": "Delete review-only fanout bypass after zero-call scan.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "row_hash": "fdc83a966a8a9187adf4b3cf0e371553ce68c1b033684231d7cf8d0478bca890"
+    },
+    {
+      "finding_id": "F13",
+      "title": "repeated normalized budget failures did not stop retries",
+      "root_cause": "circuit identity included task-specific text and every retry was treated as novel.",
+      "canonical_owner": "Executor/launcher",
+      "owner_control": "executor normalizes failure class while retaining exact task/ attempt identity; two equivalent `worker_budget_exhausted` occurrences open a plan circuit requiring split/budget authority.",
+      "acceptance_proof": "M8A. T7 plus T12 opens the circuit before a third blind retry; unrelated failures do not collide.",
+      "rollout_gate": "shadow-only circuits on captured corpus, then executor canary.",
+      "rollback_behavior": "open circuit blocks dispatch and preserves checkpoints. Delete unconditional retry branch after false-positive review.",
+      "deletion_gate": "Delete unconditional retry branch after false-positive review.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "row_hash": "9529f79f1e63ea675d4fc2a5e2892c5874c7d2b5b6b160c63e64953df3fed735"
+    },
+    {
+      "finding_id": "F14",
+      "title": "productive and replayed time/tokens/cost were not authoritative",
+      "root_cause": "telemetry lacked joined task/batch/attempt/repair identities and stage decomposition.",
+      "canonical_owner": "Observability/projection",
+      "owner_control": "observability emits queue, session-start, inference, tool, validation, retry-wait, compaction, Git, transition, repair, verify, and replay time plus calls/tokens/dollars and accepted-output deltas; Maintenance analyzes but does not mutate.",
+      "acceptance_proof": "M6 freezes unknown baselines/schema; M8A emits executor fields; M9 joins projections. Replays reconcile totals and never label legitimate M4 implementation/review as waste; missing cost has an explicit reason.",
+      "rollout_gate": "shadow telemetry across captured and canary runs before an SLO becomes enforcing.",
+      "rollback_behavior": "missing denominators yield unknown, not zero. Remove raw-total efficiency reports after joined-ledger coverage reaches the M11 gate.",
+      "deletion_gate": "Remove raw-total efficiency reports after joined-ledger coverage reaches the M11 gate.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "row_hash": "2087d4d6403e39ecfe2d7a4291025cfb8a4ac6c2315ad48eb905adc2a65c100b"
+    },
+    {
+      "finding_id": "F15",
+      "title": "custody records and overlaps were left open or contradictory",
+      "root_cause": "request, claim, attempt, decision, index, worker, and repair terminalization were separate best-effort paths.",
+      "canonical_owner": "TransitionWriter/repair custody",
+      "owner_control": "repair custody owns one fenced terminalization transaction or reconciled outbox; Run Authority prevents simultaneous current worker and repair grants for the same subject attempt.",
+      "acceptance_proof": "M7 writer/identity contract and M10 fault matrix. Every success, failure, cancellation, supersession, timeout, and escalation closes exactly one custody chain; overlap fixture accepts only one actor.",
+      "rollout_gate": "shadow closure audit, repair/worker canary, genuine block test.",
+      "rollback_behavior": "ambiguity remains open/pending and blocks another effect. Delete repair sidecar authority after zero reader/writer proof.",
+      "deletion_gate": "Delete repair sidecar authority after zero reader/writer proof.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "row_hash": "10dcf13e7344e63f87a0b1647c0c43960e048a85061575f704e08cb3301b9e63"
+    },
+    {
+      "finding_id": "F16",
+      "title": "auditor reasons were heuristic and could join unrelated sessions",
+      "root_cause": "findings used labels/basenames and omitted deterministic exact IDs.",
+      "canonical_owner": "Observability/projection",
+      "owner_control": "observability gathers exact evidence; Maintenance owns read-only deterministic reasons for normalized consecutive blocks, signature drift, unclosed custody, index mismatch, detection SLO, worker/repair overlap, cross-session joins, projection amplification, full seriality, oversized rework, invalid model, and missing ledger coverage.",
+      "acceptance_proof": "M9 reason fixtures fire once with exact evidence IDs and never match a same-basename unrelated session; M10/M11 verify recovery reporting.",
+      "rollout_gate": "report-only shadow and precision review before ticket proposals.",
+      "rollback_behavior": "unknown evidence produces an explicit unknown reason and no repair. Remove old heuristic gather branches after reason parity.",
+      "deletion_gate": "Remove old heuristic gather branches after reason parity.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "row_hash": "6e3751ee628d249591c31018768897a8251e28c1654a3256a2951abde61b62ba"
+    },
+    {
+      "finding_id": "F17",
+      "title": "mixed source/install/runtime versions could invalidate every proof",
+      "root_cause": "source, editable install, wrapper, worker, and running process provenance were not one enforced version vector.",
+      "canonical_owner": "WBC",
+      "owner_control": "WBC records code/config/adapter identity; launcher proves it; Run Authority rejects wrong-version claims; observability reports provenance.",
+      "acceptance_proof": "M6 freezes the vector, M8 adopts it, M11 proves old-reader/ new-writer and new-reader/old-run behavior plus source/install/cloud/resident SHA equality in canary/live evidence.",
+      "rollout_gate": "no deployment without pinned source and installed/runtime/wrapper receipts.",
+      "rollback_behavior": "mismatch stops launch/promotion and preserves read-only historical adapters. Delete compatibility writers only after mixed-version replay and forced rollback pass.",
+      "deletion_gate": "Delete compatibility writers only after mixed-version replay and forced rollback pass.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "row_hash": "936f70e9d14bf565f8a132261c1615c73d24fee68ba3947eea192e5899b5c7c4"
+    }
+  ],
+  "composite_hash": "333e5197273d0d749571c3091262bc0e6a5a3c8ca94ccee431e47d3fea48b13f",
+  "row_hash_algorithm": "SHA-256",
+  "row_hash_coverage": "each row hash computed from deterministically ordered JSON excluding row_hash field"
+}
