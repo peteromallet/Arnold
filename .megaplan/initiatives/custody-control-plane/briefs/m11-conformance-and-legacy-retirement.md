@@ -204,6 +204,34 @@ register, canary/runtime-reconciliation/genuine-block receipts, conformance and
 rollback reports, legacy deletion/retirement eligibility receipts, and operational runbook.
 Any hashed input change invalidates this handoff.
 
+## F01–F17 amendment contract
+
+This milestone is the final acceptance and retirement owner for every F01–F17
+row and R1–R3, with specific primary acceptance for F05, F10, and F17. It must
+verify predecessor evidence; it may not re-implement or silently waive a row.
+
+- **Prerequisite:** complete M10 evidence bundle, unchanged protected M5/M5A/M6
+  definitions, exact M6A–M10 handoffs, and one clean source/install/wrapper/
+  config/contract/process vector.
+- **First safe action:** from the clean pin, revalidate every manifest,
+  recommendation allocation, inventory row, artifact digest, dependency, and
+  compatibility expiry before running a canary or marking deletion eligible.
+- **Deliverables:** `evidence/f01-f17-completion-index.json`, named top-level
+  acceptance suite, exact-runtime trace inventory, captured replay/canary/
+  rollback reports, genuine-block receipt, zero-bypass scan, proof map,
+  compatibility register, and chain-generated completion manifest.
+- **Acceptance evidence:** every F row has scope owner, predecessor receipts,
+  positive/negative/fault/migration/replay proof, exact runtime trace, rollback,
+  and retirement disposition; R1–R3 measures pass together; no component-only
+  or unknown field is coerced to acceptance.
+- **Component-versus-wiring safeguard:** schemas, manifests, commits, focused
+  tests, fixtures, PIDs, and status labels remain insufficient unless the exact
+  supported runtime call site is traced and accepted by its named owner.
+- **Version/custody safeguard:** any hash/vector mismatch invalidates the suite.
+  Deletion, deployment, restart, promotion, or live-chain mutation remain
+  separately authorized operations; this milestone may only produce their
+  machine-verifiable eligibility evidence.
+
 ## Profile rationale
 
 Difficulty 5/5; `partnered-5/thorough/high @codex`. This milestone certifies
