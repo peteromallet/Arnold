@@ -68,6 +68,27 @@ def test_scheduled_turn_uses_exact_inbound_content_without_a_summary_field(tmp_p
         assert '"content": "synthetic audit prompt"' in runner.request.system_prompt
         assert runner.request.launch_origin["applicability"] == "not_applicable"
         assert runner.request.launch_origin["source_kind"] == "scheduled_turn"
+        assert runner.request.report_only is False
+
+    asyncio.run(run_case())
+
+
+def test_scheduled_audit_propagates_report_only_custody(tmp_path) -> None:
+    async def run_case() -> None:
+        runtime, runner, _ = _runtime(tmp_path)
+        await runtime.receive(
+            InboundEvent(
+                idempotency_key="scheduled:report-only",
+                conversation_key="discord:dm:owner",
+                subject=AuthorizationSubject(user_id="owner"),
+                content="bounded todo audit",
+                raw={"source_kind": "scheduled_turn", "report_only": True},
+            )
+        )
+        await runtime.coalescer.flush_all()
+
+        assert runner.request.report_only is True
+        assert runner.request.launch_origin["report_only"] is True
 
     asyncio.run(run_case())
 

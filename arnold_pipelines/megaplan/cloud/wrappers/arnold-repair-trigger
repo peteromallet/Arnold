@@ -73,7 +73,18 @@ try:
     from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
     from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
     from arnold_pipelines.megaplan.cloud.redact import redact_payload
+    from arnold_pipelines.megaplan.cloud.repair_contract import (
+        classify_repair_dispatch,
+        project_repair_custody,
+        repair_request_decision_is_terminal,
+    )
+    from arnold_pipelines.megaplan.cloud.repair_goal import (
+        GOAL_ACTIVE,
+        attach_repair_goal_owner,
+        ensure_repair_goal,
+    )
     from arnold_pipelines.megaplan.cloud.repair_contract import classify_repair_dispatch, project_repair_custody
+    from arnold_pipelines.megaplan.cloud.repair_escalation import evaluate_checkpoint_escalation
     from arnold_pipelines.megaplan.cloud.repair_lock import (
         acquire_repair_lock,
         inspect_repair_lock,
@@ -90,7 +101,7 @@ except Exception:
     _runtime_failure("readiness_import_failed")
     raise SystemExit(78)
 
-TERMINAL_DECISIONS = {"coalesced", "stale", "superseded", "dispatched"}
+TERMINAL_DECISIONS = {"coalesced", "stale", "superseded"}
 STALE_EVIDENCE_KINDS = {
     "invalid_marker_json",
     "missing_marker_json",
@@ -100,6 +111,25 @@ STALE_EVIDENCE_KINDS = {
     "stale_needs_human_plan_ref",
 }
 HOT_ENV_PATH = Path(os.environ.get("ARNOLD_CLOUD_HOT_ENV", "/workspace/.cloud-hot-env"))
+
+
+def _is_typed_supervisor_binding_drift(record: Mapping[str, Any]) -> bool:
+    """Return whether a supervisor exit carries exact binding-drift custody."""
+
+    signature = (
+        record.get("problem_signature")
+        if isinstance(record.get("problem_signature"), Mapping)
+        else {}
+    )
+    return bool(
+        record.get("source") == "arnold_supervise_exit"
+        and signature.get("failure_kind") == "chain_execution_binding_drift"
+        and signature.get("phase_or_step") == "chain_execution_binding"
+        and str(signature.get("blocked_task_id") or "").startswith(
+            "chain_execution_binding:"
+        )
+        and "active_errors=" in str(signature.get("event_signature") or "")
+    )
 
 
 def _load_hot_env(path: Path = HOT_ENV_PATH) -> None:
@@ -152,18 +182,32 @@ def main(argv: list[str] | None = None) -> int:
             for record in request_records
             if str(record.get("request_id") or "") == requested_request_id
         ]
-    requested_deep = any(
-        isinstance(record.get("target"), Mapping)
-        and str(record["target"].get("dispatch_intent") or "")
-        == "deep_superfixer_repair"
-        for record in request_records
+    def requested_mutation_path(record: Mapping[str, Any]) -> str:
+        if _is_typed_supervisor_binding_drift(record):
+            return feature_flags.MUTATION_PATH_L2
+        target = record.get("target") if isinstance(record.get("target"), Mapping) else {}
+        deterministic = (
+            target.get("deterministic_superfixer_evidence")
+            if isinstance(target.get("deterministic_superfixer_evidence"), Mapping)
+            else {}
+        )
+        if deterministic.get("actionable") is True:
+            if (
+                str(target.get("dispatch_intent") or "") == "deep_superfixer_repair"
+                and str(target.get("retry_strategy") or "") == "deep_superfixer_repair"
+            ):
+                return feature_flags.MUTATION_PATH_L3
+            return feature_flags.MUTATION_PATH_L2
+        return feature_flags.MUTATION_PATH_L1
+
+    # Select authorization from immutable request evidence before taking the
+    # queue lock. Mixed queues may carry L1/L2/L3 candidates; _dispatch still
+    # revalidates the exact classified layer at the claim/subprocess boundary.
+    requested_paths = {requested_mutation_path(record) for record in request_records}
+    authorized = any(
+        feature_flags.mutation_authorized(path)
+        for path in requested_paths
     )
-    authorization_path = (
-        feature_flags.MUTATION_PATH_L3
-        if requested_deep
-        else feature_flags.MUTATION_PATH_L1
-    )
-    authorized = feature_flags.mutation_authorized(authorization_path)
     if not request_records:
         _emit(
             {
@@ -243,9 +287,20 @@ def _scan_under_lock(
     dispatch_candidate: dict[str, Any] | None = None
 
     records = list(repair_requests.iter_repair_requests(queue_dir, include_malformed=True))
-    # Preserve the earliest accepted request as the canonical duplicate owner;
-    # file-name ordering is unrelated to custody chronology.
-    records.sort(key=lambda item: str(item.get("created_at") or ""))
+    def evidence_rank(item: Mapping[str, Any]) -> int:
+        target = item.get("target") if isinstance(item.get("target"), Mapping) else {}
+        deterministic = (
+            target.get("deterministic_superfixer_evidence")
+            if isinstance(target.get("deterministic_superfixer_evidence"), Mapping)
+            else {}
+        )
+        # A later L3 request can be a strict evidence upgrade of an earlier
+        # same-signature observation. Prefer the actionable typed receipt so
+        # an evidence-poor sibling cannot permanently shadow its corrective
+        # path; chronology remains the tie-breaker within the same rank.
+        return 0 if deterministic.get("actionable") is True else 1
+
+    records.sort(key=lambda item: (evidence_rank(item), str(item.get("created_at") or "")))
     for record in records:
         if requested_request_id and str(record.get("request_id") or "") != requested_request_id:
             continue
@@ -388,6 +443,7 @@ def _scan_under_lock(
         return 0
 
     if not authorized:
+        mutation_path = str(dispatch_candidate.get("dispatch_intent") or "dispatch_l1")
         _emit(
             {
                 "event": "repair_trigger",
@@ -396,7 +452,9 @@ def _scan_under_lock(
                 "authorized": False,
                 "reason": (
                     "L3 mutation requires ARNOLD_AUTONOMY and ARNOLD_AUDIT_AUTOFIX_ENABLED"
-                    if request_id
+                    if mutation_path == "deep_superfixer_repair"
+                    else "L2 mutation requires ARNOLD_AUTONOMY and ARNOLD_META_REPAIR_ENABLED"
+                    if mutation_path == "broken_superfixer"
                     else "L1 mutation requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED"
                 ),
             }
@@ -405,6 +463,7 @@ def _scan_under_lock(
 
     return _dispatch(
         queue_dir=queue_dir,
+        marker_dir=marker_dir,
         repair_bin=repair_bin,
         meta_repair_bin=meta_repair_bin,
         request=dispatch_candidate,
@@ -414,6 +473,7 @@ def _scan_under_lock(
 def _dispatch(
     *,
     queue_dir: Path,
+    marker_dir: Path,
     repair_bin: Path,
     meta_repair_bin: Path,
     request: Mapping[str, Any],
@@ -571,6 +631,11 @@ def _dispatch(
     env["CLOUD_WATCHDOG_REPAIR_BLOCKER_ID"] = blocker_id
     env["CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID"] = str(os.getpid())
     env["ARNOLD_REPAIR_QUEUE_ROOT"] = str(queue_dir)
+    env["ARNOLD_REPAIR_MARKER_DIR"] = str(marker_dir)
+    env["ARNOLD_REPAIR_SESSION"] = session
+    env["ARNOLD_REPAIR_RUN_KIND"] = str(
+        refs.get("run_kind") or marker.get("run_kind") or request.get("run_kind") or "chain"
+    )
     env["ARNOLD_REPAIR_TRIGGER_DISPATCHED"] = "1"
     request_target = request.get("target") if isinstance(request.get("target"), Mapping) else {}
     escalation_gate = (
@@ -581,7 +646,14 @@ def _dispatch(
     escalation_id = str(escalation_gate.get("escalation_id") or "")
     context_path = str(request_target.get("repair_context_path") or "")
     context_digest = str(request_target.get("repair_context_digest") or "")
-    retry_of_run_id = str(request_target.get("retry_of_run_id") or "")
+    recorded_retry_run_id, attempt_ordinal = _dispatch_retry_lineage(
+        queue_dir,
+        request_id=request_id,
+        repair_layer=repair_layer,
+    )
+    retry_of_run_id = str(
+        request_target.get("retry_of_run_id") or recorded_retry_run_id
+    )
     outcome_path = str(Path(context_path).with_name("repair-outcome.json")) if context_path else ""
     if deep_dispatch:
         env["ARNOLD_L3_DEEP_REPAIR"] = "1"
@@ -598,7 +670,12 @@ def _dispatch(
         if l2_dispatch
         else "automatic_repair"
     )
-    identity_key = f"repair-trigger:{request_id}:{repair_layer}"
+    identity_base = f"repair-trigger:{request_id}:{repair_layer}"
+    identity_key = (
+        identity_base
+        if attempt_ordinal == 1
+        else f"{identity_base}:attempt:{attempt_ordinal}"
+    )
     managed_run_id = stable_managed_run_id(run_kind, identity_key)
     managed_project = Path(workspace).resolve()
     managed_manifest = (
@@ -609,6 +686,100 @@ def _dispatch(
         / managed_run_id
         / "manifest.json"
     )
+    inherited_goal_path = str(request_target.get("repair_goal_path") or "").strip()
+    try:
+        if inherited_goal_path:
+            goal_path, goal_payload = attach_repair_goal_owner(
+                inherited_goal_path,
+                request_id=request_id,
+                owner_run_id=managed_run_id,
+                owner_manifest_path=str(managed_manifest),
+            )
+            goal_target = (
+                goal_payload.get("target")
+                if isinstance(goal_payload.get("target"), Mapping)
+                else {}
+            )
+            if goal_target.get("session") != session:
+                raise ValueError("inherited repair goal targets a different cloud session")
+        else:
+            goal_marker_dir = Path(
+                os.environ.get(
+                    "CLOUD_WATCHDOG_MARKER_DIR",
+                    "/workspace/.megaplan/cloud-sessions",
+                )
+            )
+            goal_path, goal_payload = ensure_repair_goal(
+                marker_dir=goal_marker_dir,
+                session=session,
+                workspace=workspace,
+                remote_spec=remote_spec,
+                plan_name=str(
+                    refs.get("current_plan_name")
+                    or refs.get("plan_name")
+                    or marker.get("plan_name")
+                    or ""
+                ),
+                blocker_id=blocker_id,
+                request_id=request_id,
+                owner_run_id=managed_run_id,
+                owner_manifest_path=str(managed_manifest),
+            )
+    except (OSError, TypeError, ValueError) as exc:
+        repair_requests.release_active_repair_request_claim(
+            queue_dir,
+            blocker_id=blocker_id,
+            owner=claim.owner,
+            expected_pid=os.getpid(),
+        )
+        retry = repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason="durable repair goal custody could not be established",
+        )
+        _emit(
+            {
+                "event": "repair_trigger_dispatch",
+                "status": "goal_custody_failed",
+                "request_id": request_id,
+                "error_type": type(exc).__name__,
+                "custody_retry": retry,
+            }
+        )
+        return 0
+    if goal_payload.get("status") != GOAL_ACTIVE:
+        repair_requests.release_active_repair_request_claim(
+            queue_dir,
+            blocker_id=blocker_id,
+            owner=claim.owner,
+            expected_pid=os.getpid(),
+        )
+        decision = repair_requests.write_decision(
+            queue_dir,
+            request_id=request_id,
+            decision="stale",
+            reason=(
+                "durable repair goal already has authoritative progress evidence"
+                if goal_payload.get("status") == "progressed"
+                else "durable repair goal already surfaced an explicit approval gate"
+            ),
+            related_request_id=str(goal_payload.get("goal_id") or ""),
+        )
+        _emit(
+            {
+                "event": "repair_trigger_dispatch",
+                "status": "goal_terminal",
+                "request_id": request_id,
+                "goal_id": goal_payload.get("goal_id"),
+                "goal_path": str(goal_path),
+                "goal_status": goal_payload.get("status"),
+                "decision": decision,
+            }
+        )
+        return 0
+    env["ARNOLD_REPAIR_GOAL_ID"] = str(goal_payload["goal_id"])
+    env["ARNOLD_REPAIR_GOAL_PATH"] = str(goal_path)
+    env["ARNOLD_REPAIR_CHECKPOINT_DIGEST"] = str(goal_payload["checkpoint_digest"])
     try:
         child_argv = (
             [str(selected_bin), session, "l3_progress_auditor"]
@@ -686,6 +857,12 @@ def _dispatch(
             f"repair_context_digest={context_digest}",
             "--link",
             f"repair_outcome_path={outcome_path}",
+            "--link",
+            f"repair_goal_id={goal_payload['goal_id']}",
+            "--link",
+            f"repair_goal_path={goal_path}",
+            "--link",
+            f"repair_checkpoint_digest={goal_payload['checkpoint_digest']}",
             "--",
             *child_argv,
         ]
@@ -817,10 +994,15 @@ def _dispatch(
             "pid": proc.pid,
             "managed_run_id": managed_run_id,
             "managed_manifest_path": str(managed_manifest),
+            "repair_goal_id": goal_payload["goal_id"],
+            "repair_goal_path": str(goal_path),
+            "repair_checkpoint_digest": goal_payload["checkpoint_digest"],
             "session": session,
             "workspace": workspace,
             "remote_spec": remote_spec,
             "repair_layer": repair_layer,
+            "attempt_ordinal": attempt_ordinal,
+            "retry_of_run_id": retry_of_run_id,
             "attempt": attempt,
             "decision": decision,
         }
@@ -946,6 +1128,53 @@ def _classify_request(
         queue_root=queue_dir,
         repair_data_dir=repair_data_dir,
     )
+    # The queue projection is session-wide, while this classifier is deciding
+    # custody for one immutable request.  Legacy identity-free siblings must
+    # not erase a newer request's valid blocker identity, and a valid sibling
+    # identity must never be borrowed by the request currently being scanned.
+    # Scope the authority-bearing fields to the exact request before asking the
+    # shared dispatch classifier for an effect decision.
+    request_id = str(record.get("request_id") or "").strip()
+    projected_request = next(
+        (
+            item
+            for item in (projection.get("requests") or [])
+            if isinstance(item, Mapping)
+            and str(item.get("request_id") or "").strip() == request_id
+        ),
+        None,
+    )
+    scoped_projection = dict(projection)
+    if isinstance(projected_request, Mapping):
+        request_active = projected_request.get("active") is True
+        request_claimable = projected_request.get("claimable") is True
+        scoped_projection["active_request_ids"] = [request_id] if request_active else []
+        scoped_projection["claimable_request_ids"] = (
+            [request_id] if request_active and request_claimable else []
+        )
+        scoped_projection["accepted_unclaimed_request_ids"] = [
+            item
+            for item in (projection.get("accepted_unclaimed_request_ids") or [])
+            if str(item or "").strip() == request_id
+        ]
+        scoped_projection["blocker_id"] = (
+            str(projected_request.get("blocker_id") or "").strip()
+            if request_claimable
+            else ""
+        )
+        scoped_projection["blocker_fingerprint"] = (
+            projected_request.get("blocker_fingerprint") or {}
+            if request_claimable
+            else {}
+        )
+    else:
+        # Missing exact projection evidence is not authority to borrow a
+        # session-level identity.  Keep the request visible but unclaimable.
+        scoped_projection["active_request_ids"] = []
+        scoped_projection["claimable_request_ids"] = []
+        scoped_projection["accepted_unclaimed_request_ids"] = []
+        scoped_projection["blocker_id"] = ""
+        scoped_projection["blocker_fingerprint"] = {}
     human_blocker = None
     needs_human = target.get("needs_human") if isinstance(target.get("needs_human"), Mapping) else {}
     if bool(needs_human.get("present")):
@@ -957,7 +1186,7 @@ def _classify_request(
             resolver_record=normalized_target,
         )
     lock_evidence = None
-    blocker_id = str(projection.get("blocker_id") or "").strip()
+    blocker_id = str(scoped_projection.get("blocker_id") or "").strip()
     if blocker_id:
         lock_evidence = inspect_repair_lock(
             repair_requests.active_repair_claim_lock_dir(queue_dir, blocker_id)
@@ -969,15 +1198,29 @@ def _classify_request(
         current_target=normalized_target,
         human_blocker_classification=human_blocker,
         lock_evidence=lock_evidence,
-        custody_projection=projection,
+        custody_projection=scoped_projection,
     )
     deterministic_l3 = (
         record.get("source") == "six_hour_auditor"
         and isinstance(request_target.get("deterministic_superfixer_evidence"), Mapping)
         and request_target["deterministic_superfixer_evidence"].get("actionable") is True
     )
-    l2_actionable = decision.decision == "broken_superfixer" and deterministic_l3 and bool(
-        projection.get("blocker_id")
+    typed_supervisor_binding_drift = _is_typed_supervisor_binding_drift(record)
+    canonical_blocker_id = str(projection.get("blocker_id") or "").strip()
+    goal_escalation = evaluate_checkpoint_escalation(
+        marker_dir=marker_dir,
+        session=session,
+        plan_name=current_plan_name,
+        blocker_id=canonical_blocker_id,
+    )
+    goal_l2_actionable = bool(
+        goal_escalation.get("actionable") is True
+        and canonical_blocker_id
+        and decision.decision in {"broken_superfixer", "dispatch_l1_repair"}
+    )
+    l2_actionable = bool(
+        (decision.decision == "broken_superfixer" and deterministic_l3 and canonical_blocker_id)
+        or goal_l2_actionable
     )
     requested_deep = bool(
         deterministic_l3
@@ -987,21 +1230,45 @@ def _classify_request(
         and request_target["l3_escalation_gate"].get("eligible") is True
         and request_target["l3_escalation_gate"].get("decision") == "true_stall"
     )
-    deep_actionable = bool(requested_deep and l2_actionable)
+    # A typed, eligible L3 request is already the backstop's exact effect
+    # contract.  A session that independently looks L1-repairable must not
+    # downgrade that request to an ordinary repair manifest; that loses the
+    # requested model/difficulty/reasoning custody and makes launch validation
+    # fail after the subprocess starts.  Human/terminal/repairing decisions
+    # remain ineligible, and exact blocker identity is still mandatory.
+    deep_actionable = bool(
+        requested_deep
+        and bool(scoped_projection.get("blocker_id"))
+        and decision.decision in {"broken_superfixer", "dispatch_l1_repair"}
+    )
+    l2_actionable = (
+        decision.decision == "broken_superfixer"
+        and (deterministic_l3 or typed_supervisor_binding_drift)
+        and bool(scoped_projection.get("blocker_id"))
+    )
     return {
         "decision": (
             "actionable"
-            if decision.decision == "dispatch_l1_repair" or l2_actionable
+            if decision.decision == "dispatch_l1_repair" or l2_actionable or deep_actionable
             else "non_actionable"
         ),
-        "reason": "; ".join(decision.rationale) or "shared custody classifier did not allow dispatch",
+        "reason": (
+            str(goal_escalation.get("reason") or "")
+            if goal_l2_actionable
+            else "; ".join(decision.rationale)
+            or "shared custody classifier did not allow dispatch"
+        ),
         "dispatch_decision": decision.decision,
         "dispatch_intent": (
-            "deep_superfixer_repair" if deep_actionable else decision.dispatch_intent
+            "deep_superfixer_repair"
+            if deep_actionable
+            else "broken_superfixer"
+            if goal_l2_actionable
+            else decision.dispatch_intent
         ),
         "custody_bucket": decision.custody_bucket,
-        "blocker_id": projection.get("blocker_id", ""),
-        "blocker_fingerprint": projection.get("blocker_fingerprint") or {},
+        "blocker_id": scoped_projection.get("blocker_id", ""),
+        "blocker_fingerprint": scoped_projection.get("blocker_fingerprint") or {},
     }
 
 
@@ -1032,10 +1299,35 @@ def _terminal_request_ids(queue_dir: Path) -> set[str]:
             continue
         if payload.get("decision") not in TERMINAL_DECISIONS:
             continue
-        request_id = payload.get("request_id")
-        if isinstance(request_id, str) and request_id:
+        request_id = str(payload.get("request_id") or "").strip()
+        if not repair_request_decision_is_terminal(
+            request_id=request_id,
+            decision=str(payload.get("decision") or ""),
+            related_request_id=str(payload.get("related_request_id") or ""),
+        ):
+            continue
+        if request_id:
             result.add(request_id)
     return result
+
+
+def _dispatch_retry_lineage(
+    queue_dir: Path,
+    *,
+    request_id: str,
+    repair_layer: str,
+) -> tuple[str, int]:
+    """Return the prior managed owner and next bounded attempt ordinal."""
+
+    attempts = [
+        record
+        for record in repair_requests.iter_repair_attempts(queue_dir)
+        if str(record.get("request_id") or "") == request_id
+        and str(record.get("repair_layer") or "") == repair_layer
+    ]
+    if not attempts:
+        return "", 1
+    return str(attempts[-1].get("managed_run_id") or ""), len(attempts) + 1
 
 
 def _target_summary(target: Mapping[str, Any]) -> dict[str, Any]:

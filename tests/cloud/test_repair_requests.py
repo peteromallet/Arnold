@@ -7,7 +7,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Barrier
 
-from arnold_pipelines.megaplan.cloud import repair_requests
+import pytest
+
+from arnold_pipelines.megaplan.cloud import repair_contract, repair_requests
 
 
 def _signature(**overrides: str) -> dict[str, str]:
@@ -335,6 +337,33 @@ def test_problem_signature_dedupe_ignores_timestamp_but_not_signature(tmp_path: 
     ]
 
 
+def test_same_signature_does_not_coalesce_across_sessions(tmp_path: Path) -> None:
+    queue_dir = _queue_root(tmp_path)
+
+    first = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="session-a",
+        source="watchdog",
+        problem_signature=_signature(),
+        root_cause_hint="same failure",
+    )
+    second = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="session-b",
+        source="watchdog",
+        problem_signature=_signature(),
+        root_cause_hint="same failure",
+    )
+
+    assert first["status"] == second["status"] == "queued"
+    assert first["request"]["request_id"] != second["request"]["request_id"]
+    assert first["request"]["blocker_id"] != second["request"]["blocker_id"]
+    assert {record["session"] for record in repair_requests.iter_repair_requests(queue_dir)} == {
+        "session-a",
+        "session-b",
+    }
+
+
 def test_distinct_redacted_root_cause_hints_have_distinct_hashes() -> None:
     secret_a = "Authorization: Bearer sk-proj-abcdefghijklmnopqrstuvwxyz123456"
     secret_b = "Authorization: Bearer sk-proj-abcdefghijklmnopqrstuvwxyz999999"
@@ -499,26 +528,181 @@ def test_request_id_for_differs_with_different_sessions() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_write_decision_creates_immutable_decision_record(tmp_path: Path) -> None:
+def test_write_decision_rejects_identity_free_acceptance(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
-    decision = repair_requests.write_decision(
-        queue_dir,
-        request_id="req-abc123",
-        decision="accepted",
-        reason="queued",
-        created_at="2026-07-01T03:00:00Z",
-    )
-    assert decision["decision"] == "accepted"
-    assert decision["request_id"] == "req-abc123"
-    assert decision["reason"] == "queued"
-    assert "decision_id" in decision
-    assert "_path" in decision
+    try:
+        repair_requests.write_decision(
+            queue_dir,
+            request_id="req-abc123",
+            decision="accepted",
+            reason="queued",
+            created_at="2026-07-01T03:00:00Z",
+        )
+    except ValueError as exc:
+        assert "persisted canonical blocker identity" in str(exc)
+    else:
+        raise AssertionError("accepted an identity-free repair request")
+    assert not list(repair_requests.decisions_dir(queue_dir).glob("*.json"))
 
-    # Decision file exists on disk
-    decision_path = Path(decision["_path"])
-    assert decision_path.exists()
-    payload = json.loads(decision_path.read_text(encoding="utf-8"))
-    assert payload["decision"] == "accepted"
+
+def test_enqueue_rejects_missing_provenance_before_persistence(tmp_path: Path) -> None:
+    queue_dir = _queue_root(tmp_path)
+
+    with pytest.raises(ValueError, match="provenance source"):
+        repair_requests.enqueue_repair_request(
+            queue_root=queue_dir,
+            session="demo",
+            source="",
+            problem_signature=_signature(),
+            root_cause_hint="observed failure",
+        )
+
+    assert not list(repair_requests.requests_dir(queue_dir).glob("*.json"))
+    assert not list(repair_requests.decisions_dir(queue_dir).glob("*.json"))
+
+
+def test_acceptance_rejects_identity_with_missing_provenance_or_evidence(
+    tmp_path: Path,
+) -> None:
+    queue_dir = _queue_root(tmp_path)
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo",
+        source="watchdog",
+        problem_signature=_signature(),
+        root_cause_hint="observed failure",
+        stale_reason="fixture setup",
+    )
+    request_path = Path(queued["path"])
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    request.pop("provenance")
+    request.pop("evidence_refs")
+    repair_contract.atomic_write_json(request_path, request)
+
+    with pytest.raises(ValueError, match="persisted canonical blocker identity"):
+        repair_requests.write_decision(
+            queue_dir,
+            request_id=request["request_id"],
+            decision="accepted",
+            reason="queued",
+        )
+
+
+def test_phase_failure_persists_replay_stable_claim_identity(tmp_path: Path) -> None:
+    queue_dir = _queue_root(tmp_path)
+    signature = {
+        "failure_kind": "deterministic_phase_failure",
+        "current_state": "blocked",
+        "phase_or_step": "critique",
+        "milestone_or_plan": "m6-exact-contract-and-20260716-1303",
+        "gate_recommendation": "repair the phase contract",
+        "blocked_task_id": "",
+    }
+    target = {
+        "plan_name": "m6-exact-contract-and-20260716-1303",
+        "plan_dir": str(tmp_path / ".megaplan" / "plans" / "m6-exact-contract-and-20260716-1303"),
+        "retry_strategy": "repair_phase_contract",
+    }
+
+    first = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="custody-control-plane-20260714",
+        source="lifecycle_failure",
+        problem_signature=signature,
+        target=target,
+        workspace=tmp_path,
+        root_cause_hint="duplicate worker-local flag IDs and blank evidence",
+        created_at="2026-07-16T13:35:03Z",
+    )
+    replay = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="custody-control-plane-20260714",
+        source="lifecycle_failure",
+        problem_signature=signature,
+        target=target,
+        workspace=tmp_path,
+        root_cause_hint="duplicate worker-local flag IDs and blank evidence",
+        created_at="2026-07-16T13:36:03Z",
+    )
+
+    assert first["status"] == "queued"
+    assert replay["status"] == "coalesced"
+    assert replay["request"]["request_id"] == first["request"]["request_id"]
+    persisted = repair_requests.iter_repair_requests(queue_dir)
+    assert len(persisted) == 1
+    request = persisted[0]
+    assert request["problem_signature"]["blocked_task_id"] == "phase:critique"
+    assert request["blocker_id"] == repair_contract.blocker_id_for_fingerprint(
+        request["blocker_fingerprint"]
+    )
+    assert request["provenance"] == {
+        "producer": "lifecycle_failure",
+        "session": "custody-control-plane-20260714",
+        "run_kind": "",
+    }
+    assert {ref["kind"] for ref in request["evidence_refs"]} == {
+        "problem_signature_digest",
+        "redacted_root_cause_hint_digest",
+    }
+    assert all(ref["sha256"] for ref in request["evidence_refs"])
+    claim = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id=request["blocker_id"],
+        request_id=request["request_id"],
+        actor="repair-trigger",
+        session=request["session"],
+        pid=4242,
+        is_pid_live=lambda _pid: True,
+    )
+    assert claim.claimed
+    assert claim.owner is not None
+    assert claim.owner["blocker_id"] == request["blocker_id"]
+
+
+def test_replay_mints_claimable_successor_for_identity_free_legacy_request(
+    tmp_path: Path,
+) -> None:
+    queue_dir = _queue_root(tmp_path)
+    signature = _signature()
+    legacy_request_id = repair_requests.request_id_for(
+        session="demo",
+        problem_signature=signature,
+        root_cause_hint="same failure",
+    )
+    legacy_path = repair_requests.requests_dir(queue_dir) / f"{legacy_request_id}.json"
+    legacy_record = {
+        "schema_version": 1,
+        "kind": "repair_request",
+        "request_id": legacy_request_id,
+        "created_at": "2026-07-01T00:00:00Z",
+        "session": "demo",
+        "problem_signature": repair_requests.normalize_problem_signature(signature),
+        "problem_signature_key": repair_requests.problem_signature_key(signature),
+    }
+    repair_contract.atomic_write_json(legacy_path, legacy_record)
+    legacy_bytes = legacy_path.read_bytes()
+
+    replay = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo",
+        source="lifecycle_failure",
+        problem_signature=signature,
+        root_cause_hint="same failure",
+        created_at="2026-07-01T00:01:00Z",
+    )
+
+    assert replay["status"] == "queued"
+    assert replay["request"]["request_id"] != legacy_request_id
+    assert replay["request"]["predecessor_request_id"] == legacy_request_id
+    assert replay["request"]["blocker_id"] == repair_contract.blocker_id_for_fingerprint(
+        replay["request"]["blocker_fingerprint"]
+    )
+    assert legacy_path.read_bytes() == legacy_bytes
+    reloaded = repair_requests.iter_repair_requests(queue_dir)
+    assert {record["request_id"] for record in reloaded} == {
+        legacy_request_id,
+        replay["request"]["request_id"],
+    }
 
 
 def test_write_decision_idempotency_via_claim(tmp_path: Path) -> None:
@@ -582,6 +766,32 @@ def test_find_pending_by_signature_finds_queued_request(tmp_path: Path) -> None:
     )
     assert found is not None
     assert found["request_id"] == enqueued["request"]["request_id"]
+
+
+def test_find_pending_by_signature_keeps_dispatched_request_open(tmp_path: Path) -> None:
+    queue_dir = _queue_root(tmp_path)
+    enqueued = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo",
+        source="test",
+        problem_signature=_signature(blocked_task_id="T1"),
+        root_cause_hint="find me after dispatch",
+    )
+    request_id = enqueued["request"]["request_id"]
+    repair_requests.write_decision(
+        queue_dir,
+        request_id=request_id,
+        decision="dispatched",
+        reason="managed repair launched",
+    )
+
+    found = repair_requests.find_pending_by_signature(
+        queue_dir,
+        _signature(blocked_task_id="T1"),
+    )
+
+    assert found is not None
+    assert found["request_id"] == request_id
 
 
 def test_find_pending_by_signature_excludes_stale_requests(tmp_path: Path) -> None:

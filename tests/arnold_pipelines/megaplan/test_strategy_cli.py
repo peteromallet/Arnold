@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from arnold_pipelines.megaplan.cli import build_parser
+from arnold_pipelines.megaplan.cli import _resolve_project_root, build_parser
 from arnold_pipelines.megaplan.handlers.strategy import (
     handle_strategy,
     handle_strategy_add,
@@ -395,6 +395,21 @@ class TestStrategyCLIParserRegistration:
 class TestStrategyCLIInit:
     """Tests for strategy init command handler."""
 
+    def test_init_resolves_fresh_git_root_before_ancestor_megaplan(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ancestor = tmp_path / "ancestor"
+        ancestor_strategy = ancestor / ".megaplan" / "STRATEGY.md"
+        ancestor_strategy.parent.mkdir(parents=True)
+        ancestor_strategy.write_text("unrelated ancestor\n", encoding="utf-8")
+        repo_root = ancestor / "fresh-repo"
+        (repo_root / ".git").mkdir(parents=True)
+        monkeypatch.chdir(repo_root)
+
+        args = build_parser().parse_args(["strategy", "init"])
+
+        assert _resolve_project_root(args) == repo_root.resolve()
+
     def test_init_creates_file(self, tmp_path: Path) -> None:
         """strategy init creates an initiative-root strategy from the template."""
         repo_root = _setup_empty_repo(tmp_path)
@@ -488,6 +503,60 @@ class TestStrategyCLIInit:
 
         assert exc_info.value.code == "strategy_exists"
         assert strategy_file.read_text(encoding="utf-8") == "user content\n"
+
+    def test_init_preserves_a_lone_legacy_strategy(self, tmp_path: Path) -> None:
+        repo_root = _setup_repo(tmp_path)
+        legacy = repo_root / ".megaplan" / "STRATEGY.md"
+        original = legacy.read_text(encoding="utf-8")
+
+        with pytest.raises(CliError) as exc_info:
+            handle_strategy_init(repo_root, _ns(force=False))
+
+        assert exc_info.value.code == "strategy_exists"
+        assert legacy.read_text(encoding="utf-8") == original
+        assert not (repo_root / ".megaplan" / "initiatives").exists()
+
+    def test_init_fails_closed_on_legacy_and_initiative_authorities(
+        self, tmp_path: Path
+    ) -> None:
+        repo_root = _setup_repo(tmp_path)
+        initiative_strategy = (
+            repo_root
+            / ".megaplan"
+            / "initiatives"
+            / "repository-strategy-roadmap"
+            / "STRATEGY.md"
+        )
+        initiative_strategy.parent.mkdir(parents=True)
+        initiative_strategy.write_text("initiative content\n", encoding="utf-8")
+
+        with pytest.raises(CliError) as exc_info:
+            handle_strategy_init(repo_root, _ns(force=False))
+
+        assert exc_info.value.code == "strategy_ambiguous"
+        assert ".megaplan/STRATEGY.md" in str(exc_info.value)
+        assert (
+            ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+            in str(exc_info.value)
+        )
+
+    def test_init_fails_closed_on_multiple_initiative_authorities(
+        self, tmp_path: Path
+    ) -> None:
+        repo_root = _setup_empty_repo(tmp_path)
+        for slug in ("repository-strategy", "repository-strategy-roadmap"):
+            strategy = (
+                repo_root / ".megaplan" / "initiatives" / slug / "STRATEGY.md"
+            )
+            strategy.parent.mkdir(parents=True, exist_ok=True)
+            strategy.write_text(f"{slug}\n", encoding="utf-8")
+
+        with pytest.raises(CliError) as exc_info:
+            handle_strategy_init(repo_root, _ns(force=False))
+
+        assert exc_info.value.code == "strategy_ambiguous"
+        assert "repository-strategy/STRATEGY.md" in str(exc_info.value)
+        assert "repository-strategy-roadmap/STRATEGY.md" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------

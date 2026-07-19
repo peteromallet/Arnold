@@ -344,6 +344,69 @@ def test_resolve_current_target_uses_existing_fallback_chain_state_candidate(tmp
     ]
 
 
+def test_resolve_current_target_uses_spec_total_and_marks_live_successor_contradiction(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text(
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: m1.md\n"
+        "  - label: m2\n"
+        "    idea: m2.md\n",
+        encoding="utf-8",
+    )
+    plan_name = "m2-live-successor"
+    _write_marker(
+        marker_dir / "demo-session.json",
+        {
+            "session": "demo-session",
+            "workspace": str(workspace),
+            "remote_spec": str(spec_path),
+            "run_kind": "chain",
+        },
+    )
+    _write_chain_state(
+        _chain_state_path(workspace, spec_path),
+        {
+            "current_milestone_index": 1,
+            "current_plan_name": plan_name,
+            "last_state": "done",
+            "completed": [{"label": "m1"}],
+        },
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {"name": plan_name, "current_state": "planned"},
+    )
+
+    record = resolve_current_target(
+        "demo-session",
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+
+    assert record["chain_state"]["milestone_total"] == 2
+    assert record["chain_state"]["completed_count"] == 1
+    assert record["stale_evidence"] == [
+        {
+            "kind": "stale_terminal_chain_state_with_active_plan",
+            "path": str(_chain_state_path(workspace, spec_path)),
+            "plan_name": plan_name,
+            "plan_state": "planned",
+            "chain_last_state": "done",
+        }
+    ]
+    assert record["evidence_state"]["unknown_type"] == "stale"
+
+
 def test_resolve_current_target_prefers_terminal_plan_over_stale_chain_state(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     repair_data_dir = marker_dir / "repair-data"
@@ -412,6 +475,7 @@ def test_resolve_current_target_tolerates_partial_evidence_fixture(tmp_path: Pat
         "chain_current_plan_name": "",
         "chain_last_state": "",
         "plan_current_state": "",
+        "plan_current_phase": "",
     }
     assert record["ignored_artifacts"] == []
     assert record["repair_progress"] == {"present": False, "items": []}
@@ -1129,8 +1193,45 @@ def test_active_step_dead_pid_is_stale_not_live(tmp_path: Path) -> None:
 
     assert record["active_step_heartbeat"]["active"] is False
     assert record["active_step_heartbeat"]["pid_live"] is False
+    assert record["plan_state"]["current_phase"] == "execute"
+    assert record["current_refs"]["plan_current_phase"] == "execute"
     assert {item["kind"] for item in record["stale_evidence"]} >= {"stale_active_step_dead_pid"}
     assert "active_step worker PID is not live" in record["rationale"]
+
+
+def test_resolve_current_target_phase_precedence_is_deterministic(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "phase-plan"
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "name": plan_name,
+            "current_state": "failed",
+            "current_phase": "gate",
+            "active_step": {"phase": "execute", "worker_pid": 4242},
+            "resume_cursor": {"phase": "review"},
+        },
+    )
+    _write_marker(
+        marker_dir / "demo-session.json",
+        {
+            "session": "demo-session",
+            "workspace": str(workspace),
+            "plan_name": plan_name,
+            "run_kind": "plan",
+        },
+    )
+
+    record = resolve_current_target(
+        "demo-session",
+        marker_dir=marker_dir,
+        pid_is_live=lambda pid: False,
+    )
+
+    assert record["plan_state"]["current_phase"] == "gate"
+    assert record["current_refs"]["plan_current_phase"] == "gate"
 
 
 def test_resolve_current_target_reports_failed_resume_execute_authority_divergence(

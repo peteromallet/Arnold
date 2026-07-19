@@ -1,0 +1,53 @@
+base_branch: consolidate/arnold-runtime-activation-20260714
+anchors:
+  north_star: NORTHSTAR.md
+
+milestones:
+  - label: m1-compiler-core
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m1-compiler-core.md
+    branch: megaplan/session-knowledge-compiler/m1-compiler-core
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: Read decisions/managed-execution-observation-lineage.md, then re-inventory authoritative and corroborating seams across resident roots/nested agents, every Megaplan phase/step and implementation/review worker, retries/rework, repair/meta-repair/watchdog/auditor lifecycle, chain and higher-workflow transitions, Hermes/Codex/Claude/future backends, Store transactions, scheduler claims, and structured direct-Hermes extraction before planning the smallest envelope-to-accepted-checkpoint slice.
+    deepseek_provider: direct
+    notes: "~2 skilled-human weeks; estimate, not guarantee. Difficulty 5/5 because position, atomicity, evidence, and claim-kind mistakes can silently corrupt durable truth."
+
+  - label: m2-knowledge-use-governance
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m2-knowledge-use-governance.md
+    branch: megaplan/session-knowledge-compiler/m2-knowledge-use-governance
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: Verify M1's accepted checkpoint, full workflow-to-agent lineage, causality, time semantics, authority/custody separation, evidence scopes, and query primitives, then implement correctable run/attempt/step/plan/milestone/epic/workflow projections plus reviewed cross-epic promotion on one append-only lifecycle and scoped query path.
+    deepseek_provider: direct
+    notes: "~2 skilled-human weeks; estimate, not guarantee. Difficulty 5/5 because correction, applicability, and contradiction errors can present derived or stale material as fact."
+
+  - label: m3-consolidation-operational-proof
+    idea: .megaplan/initiatives/session-knowledge-compiler/briefs/m3-consolidation-operational-proof.md
+    branch: megaplan/session-knowledge-compiler/m3-consolidation-operational-proof
+    profile: partnered-4
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: Verify M1-M2 end-to-end lineage, then complete the producer/backend matrix, schema/upcast and privacy controls, read-only reconciler, ticket adapter, and content-addressed non-mutating custody-control-plane replay; prove no compiler path changes execution authority, scheduling, acceptance, custody, repair, result, or delivery.
+    deepseek_provider: direct
+    notes: "~2 skilled-human weeks; estimate, not guarantee. Difficulty 4/5 because the truth contracts are fixed, while complete producer/backend coverage, reconciler non-mutation, cross-backend failure isolation, and reversible rollout still require deep integration review."
+
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  robustness: full
+  phase_timeout: 10800
+  auto_approve: false
+  on_escalate: abort
+  max_iterations: 60
+  poll_sleep: 8.0

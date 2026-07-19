@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ ALLOWED_INITIATIVE_SUBDIRS = frozenset(
 ROOT_INITIATIVE_FILES = frozenset(
     {"README.md", "NORTHSTAR.md", "STRATEGY.md", "chain.yaml"}
 )
+INITIATIVE_RETIREMENT_MARKER = ".retired"
 
 InitiativeDocKind = Literal[
     "briefs",
@@ -36,6 +38,42 @@ InitiativeDocKind = Literal[
     "assets",
     "handoff",
 ]
+
+
+def render_initiative_readme(title: str, description: str) -> str:
+    """Render the initiative front door and canonical working index.
+
+    ``README.md`` is required for agent-obvious discovery.  Readiness anchors
+    remain optional: creating an initiative must not imply that a North Star or
+    executable chain already exists.
+    """
+
+    clean_title = " ".join(str(title).split())
+    clean_description = " ".join(str(description).split())
+    if not clean_title:
+        raise ValueError("initiative title must not be empty")
+    if not clean_description:
+        raise ValueError("initiative description must not be empty")
+    return (
+        f"# {clean_title}\n\n"
+        f"{clean_description}\n\n"
+        "## Current truth and index\n\n"
+        "Keep this README current as the initiative front door: state the outcome, boundaries, "
+        "success criteria, lifecycle/readiness, and link the canonical documents below. Initiative "
+        "creation records commitment to an outcome; it does not launch work.\n\n"
+        "- `briefs/` — curated planning inputs and milestone briefs.\n"
+        "- `research/` — evidence, investigations, alternatives, and syntheses.\n"
+        "- `decisions/` — durable decisions with rationale and consequences.\n"
+        "- `notes/` — working notes worth retaining but not yet promoted.\n"
+        "- `handoff/` — curated handoffs and canonical syntheses; cite raw agent/subagent run "
+        "artifacts instead of copying raw output here.\n"
+        "- `assets/` — supporting non-prose files.\n"
+        "- `NORTHSTAR.md` — optional durable end-state anchor, added when lifecycle maturity needs it.\n"
+        "- `chain.yaml` — optional executable coordination, added only when execution is ready.\n\n"
+        "Promote notes/research into decisions or briefs when they become authoritative, and update "
+        "this index. Search and reuse related documents, tickets, and initiatives before creating "
+        "another artifact.\n"
+    )
 
 
 def slugify_initiative(value: str) -> str:
@@ -85,25 +123,26 @@ def strategy_file_path(
     if initiative_slug is not None:
         return base / slugify_initiative(initiative_slug) / STRATEGY_FILENAME
 
-    if base.is_dir():
-        adopted = sorted(
+    legacy = root / LEGACY_STRATEGY_PATH
+    adopted = (
+        sorted(
             path / STRATEGY_FILENAME
             for path in base.iterdir()
             if path.is_dir() and (path / STRATEGY_FILENAME).is_file()
         )
-        if len(adopted) == 1:
-            return adopted[0]
-        if len(adopted) > 1:
-            exact = base / DEFAULT_STRATEGY_INITIATIVE_SLUG / STRATEGY_FILENAME
-            if exact in adopted:
-                return exact
-            raise ValueError(
-                "multiple initiative strategy documents found; keep one "
-                "canonical repository strategy or specify an initiative"
-            )
-
-    legacy = root / LEGACY_STRATEGY_PATH
-    if legacy.is_file():
+        if base.is_dir()
+        else []
+    )
+    authorities = [*adopted, *([legacy] if legacy.is_file() else [])]
+    if len(authorities) > 1:
+        paths = ", ".join(str(path.relative_to(root)) for path in authorities)
+        raise ValueError(
+            "multiple strategy documents found; keep one canonical repository "
+            f"strategy or specify an initiative for initialization: {paths}"
+        )
+    if adopted:
+        return adopted[0]
+    if authorities:
         return legacy
 
     matching = _matching_strategy_initiative(root)
@@ -129,6 +168,55 @@ def initiatives_dir(repo_root: str | Path) -> Path:
 
 def initiative_root(repo_root: str | Path, slug: str) -> Path:
     return initiatives_dir(repo_root) / slugify_initiative(slug)
+
+
+def initiative_retirement_marker(repo_root: str | Path, slug: str) -> Path:
+    """Return the metadata-only retirement marker for one initiative."""
+
+    return initiative_root(repo_root, slug) / INITIATIVE_RETIREMENT_MARKER
+
+
+def is_initiative_retired(repo_root: str | Path, slug: str) -> bool:
+    """Fail closed when a canonical initiative retirement marker exists."""
+
+    marker = initiative_retirement_marker(repo_root, slug)
+    return marker.is_symlink() or marker.is_file()
+
+
+def retired_chain_marker(spec_path: str | Path, repo_root: str | Path) -> Path | None:
+    """Return the retirement marker when *spec_path* is a retired initiative chain."""
+
+    path = Path(spec_path).expanduser().resolve()
+    root = Path(repo_root).expanduser().resolve()
+    if not is_canonical_chain_spec(path, root):
+        return None
+    marker = path.parent / INITIATIVE_RETIREMENT_MARKER
+    return marker if marker.is_symlink() or marker.is_file() else None
+
+
+def read_initiative_retirement(repo_root: str | Path, slug: str) -> dict[str, Any] | None:
+    """Read JSON retirement evidence, retaining legacy key/value markers."""
+
+    marker = initiative_retirement_marker(repo_root, slug)
+    if marker.is_symlink():
+        return {"status": "retired", "marker_path": str(marker), "valid": False}
+    if not marker.is_file():
+        return None
+    try:
+        text = marker.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return {"status": "retired", "marker_path": str(marker), "valid": False}
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        payload = {}
+        for line in text.splitlines():
+            key, separator, value = line.partition(":")
+            if separator and key.strip():
+                payload[key.strip()] = value.strip()
+    if not isinstance(payload, dict):
+        payload = {}
+    return {"status": "retired", "marker_path": str(marker), **payload}
 
 
 def initiative_doc_dir(repo_root: str | Path, slug: str, kind: InitiativeDocKind) -> Path:
@@ -222,6 +310,8 @@ def initiative_metadata(repo_root: str | Path, slug: str) -> dict[str, Any]:
         ],
         "recent_docs": docs,
         "layout_policy_version": LAYOUT_POLICY_VERSION,
+        "retired": is_initiative_retired(repo_root, slug),
+        "retirement": read_initiative_retirement(repo_root, slug),
     }
 
 
@@ -248,6 +338,8 @@ def initiative_compact_index(repo_root: str | Path, *, limit: int = 50) -> list[
     for path in sorted(base.iterdir()):
         if not path.is_dir():
             continue
+        if is_initiative_retired(repo_root, path.name):
+            continue
         metadata = initiative_metadata(repo_root, path.name)
         rows.append(
             {
@@ -269,6 +361,7 @@ def search_initiatives(
     *,
     keywords_all: bool = False,
     limit: int = 25,
+    include_retired: bool = False,
 ) -> list[dict[str, Any]]:
     """Search initiatives by slug/title/description with forgiving token matching."""
     terms = _search_terms(query)
@@ -280,6 +373,8 @@ def search_initiatives(
     rows: list[dict[str, Any]] = []
     for path in sorted(base.iterdir()):
         if not path.is_dir():
+            continue
+        if not include_retired and is_initiative_retired(repo_root, path.name):
             continue
         metadata = initiative_metadata(repo_root, path.name)
         searchable = " ".join(
@@ -314,6 +409,14 @@ def _read_initiative_readme(root: Path) -> dict[str, str | None]:
         lines = path.read_text(encoding="utf-8").splitlines()
     except UnicodeDecodeError:
         return {"title": None, "description": None}
+    if lines and lines[0].strip() == "---":
+        try:
+            closing = next(
+                index for index, line in enumerate(lines[1:], start=1) if line.strip() == "---"
+            )
+        except StopIteration:
+            return {"title": None, "description": None}
+        lines = lines[closing + 1 :]
     title: str | None = None
     description_parts: list[str] = []
     in_description = False

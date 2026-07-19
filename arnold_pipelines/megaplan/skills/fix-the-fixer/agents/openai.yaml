@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fix the Fixer"
+  short_description: "Repair a failed fixer and prove epic recovery"
+  default_prompt: "Use $fix-the-fixer --target \"EPIC_OR_SESSION_TEXT\" to repair the failed fixer and prove the epic advances."

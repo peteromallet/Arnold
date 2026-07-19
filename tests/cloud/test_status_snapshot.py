@@ -124,6 +124,13 @@ class Fixture:
             payload["active_step"] = active_step
         (plan_dir / "state.json").write_text(json.dumps(payload), encoding="utf-8")
 
+    def add_review(self, session: str, plan_name: str, *, verdict: str) -> None:
+        plan_dir = self.root / session / ".megaplan" / "plans" / plan_name
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "review.json").write_text(
+            json.dumps({"review_verdict": verdict}), encoding="utf-8"
+        )
+
     def add_needs_human(self, name: str, *, summary: str = "awaiting human action") -> None:
         marker = json.loads((self.marker_dir / f"{name}.json").read_text(encoding="utf-8"))
         plan_name = str(marker.get("plan_name") or "")
@@ -1593,7 +1600,7 @@ def test_live_execute_projects_executing_without_mutating_finalized_or_weighted_
     assert entry["progress"]["plan_state"] == "finalized"
     assert entry["progress"]["display_state"] == "executing"
     assert entry["progress"]["plan_percent"] == 93
-    assert "plan=93% (executing)" in sf.format_cloud_status_detailed(snapshot)
+    assert "plan bookkeeping 93% (executing)" in sf.format_cloud_status_detailed(snapshot)
 
 
 def test_finalized_without_live_execute_remains_ready_and_finalized(fx):
@@ -1608,8 +1615,8 @@ def test_finalized_without_live_execute_remains_ready_and_finalized(fx):
     assert entry["execution_state"] == "ready"
     assert entry["display_state"] == "finalized"
     snapshot = fx.build()
-    assert "plan=30% (finalized)" in sf.format_cloud_status_detailed(snapshot)
-    assert "in-flight 30% (finalized)" in "\n".join(
+    assert "plan bookkeeping 30% (finalized)" in sf.format_cloud_status_detailed(snapshot)
+    assert "plan bookkeeping 30% (finalized)" in "\n".join(
         sf.format_cloud_status_short(snapshot)
     )
 
@@ -1648,11 +1655,62 @@ def test_live_execute_at_full_weighted_task_completion_still_renders_executing(f
     assert entry["progress"]["plan_percent"] == 100
     assert entry["progress"]["display_state"] == "executing"
     detailed = sf.format_cloud_status_detailed(snapshot)
-    assert "plan=100% (executing)" in detailed
-    assert "plan=100% (finalized)" not in detailed
+    assert "plan bookkeeping 100% (executing)" in detailed
+    assert "plan bookkeeping 100% (finalized)" not in detailed
     discord = "\n".join(sf.format_cloud_status_short(snapshot))
-    assert "in-flight 100% (executing)" in discord
-    assert "in-flight 100% (finalized)" not in discord
+    assert "plan bookkeeping 100% (executing)" in discord
+    assert "plan bookkeeping 100% (finalized)" not in discord
+
+
+def test_full_task_weight_reexecution_after_needs_rework_is_not_presented_as_accepted(fx):
+    workspace = fx.add_session("review-rework", plan_name="s1-rework")
+    fx.add_chain_health(
+        "review-rework", current_plan_name="s1-rework", last_state="finalized"
+    )
+    fx.add_plan_state(
+        "review-rework",
+        "s1-rework",
+        current_state="finalized",
+        active_step={"phase": "execute", "agent": "codex"},
+    )
+    fx.add_review("review-rework", "s1-rework", verdict="needs_rework")
+    finalize_path = workspace / ".megaplan" / "plans" / "s1-rework" / "finalize.json"
+    finalize_path.write_text(
+        json.dumps({"tasks": [{"id": "T1", "complexity": 10, "status": "done"}]}),
+        encoding="utf-8",
+    )
+
+    snapshot = fx.build()
+    entry = _by_session(snapshot, "review-rework")
+
+    assert entry["review_verdict"] == "needs_rework"
+    assert entry["display_state"] == "reworking"
+    assert entry["progress"]["display_state"] == "reworking"
+    assert entry["progress"]["plan_percent"] == 100
+    assert "not implementation acceptance" in entry["progress"]["plan_percent_basis"]
+    rendered = "\n".join(sf.format_cloud_status_short(snapshot))
+    assert "plan bookkeeping 100% (reworking)" in rendered
+    assert "accepted" not in rendered
+    assert "finalized" not in rendered
+
+
+def test_active_review_after_rework_is_presented_as_reviewing(fx):
+    fx.add_session("reviewing", plan_name="s1-reviewing")
+    fx.add_chain_health(
+        "reviewing", current_plan_name="s1-reviewing", last_state="executed"
+    )
+    fx.add_plan_state(
+        "reviewing",
+        "s1-reviewing",
+        current_state="executed",
+        active_step={"phase": "review", "agent": "codex"},
+    )
+    fx.add_review("reviewing", "s1-reviewing", verdict="needs_rework")
+
+    entry = _by_session(fx.build(), "reviewing")
+
+    assert entry["display_state"] == "reviewing"
+    assert entry["progress"]["display_state"] == "reviewing"
 
 
 def test_plan_stage_percent_none_for_off_ladder_states():
@@ -1989,7 +2047,7 @@ def test_detailed_renders_plan_percent_and_state(fx):
     snap = fx.build(watchdog_report_path=fx.root / "absent.json")
     detailed = sf.format_cloud_status_detailed(snap)
     assert "progress=50%" in detailed
-    assert "plan=100% (executed)" in detailed
+    assert "plan bookkeeping 100% (executed)" in detailed
 
 
 def test_epic_percent_folds_in_flight_plan_fraction():
@@ -2023,7 +2081,7 @@ def test_detailed_renders_plan_state_when_not_percentageable(fx):
     fx.add_needs_human("blk")
     snap = fx.build(watchdog_report_path=fx.root / "absent.json")
     detailed = sf.format_cloud_status_detailed(snap)
-    assert "plan=blocked" in detailed
+    assert "plan state blocked" in detailed
     assert "plan=blocked%" not in detailed
 
 

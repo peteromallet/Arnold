@@ -1,0 +1,117 @@
+base_branch: resident-scheduling/deployed-20260716
+
+anchors:
+  north_star: NORTHSTAR.md
+
+milestones:
+  - label: cl1-contract-oracle
+    idea: .megaplan/initiatives/critique-ledger/briefs/cl1-contract-and-m6-oracle.md
+    branch: megaplan/critique-ledger/cl1-contract-oracle
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    prep_direction: >-
+      Revalidate the landed WBC merge and current critique/evaluator/custody/gate
+      contracts, then content-address the preserved M6 corpus before freezing
+      ownership and acceptance schemas. Prove the minimum semantic loop against
+      M6 as an implementation gate; do not mutate M6 or create a shadow path.
+    deepseek_provider: direct
+    notes: >-
+      Overall plan difficulty 5/5; partnered-5/thorough/high. This freezes a
+      cross-boundary public contract and early reconstruction oracle whose
+      omissions could false-green every later sprint.
+
+  - label: cl2-ledger-replay
+    depends_on:
+      - cl1-contract-oracle
+    idea: .megaplan/initiatives/critique-ledger/briefs/cl2-ledger-persistence-and-replay.md
+    branch: megaplan/critique-ledger/cl2-ledger-replay
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    prep_direction: >-
+      Consume the reviewed CL1 contract bundle; map current file and Store
+      persistence, WBC durable references, critique custody, and flag registry
+      before implementing append/replay and the one-time migration reader.
+    deepseek_provider: direct
+    notes: >-
+      Overall plan difficulty 5/5; partnered-5/thorough/high. Append-only schema
+      and replay defects can preserve local tests while corrupting cross-round
+      custody.
+
+  - label: cl3-routing-briefings
+    depends_on:
+      - cl2-ledger-replay
+    idea: .megaplan/initiatives/critique-ledger/briefs/cl3-evaluator-routing-and-briefings.md
+    branch: megaplan/critique-ledger/cl3-routing-briefings
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: medium
+    with_prep: true
+    prep_direction: >-
+      Trace current evaluator selection, critique runtime, parallel fanout,
+      prompt projection, token budgets, and critic model routing; preserve the
+      CL1/CL2 contracts and prove bounded complete domain briefings.
+    deepseek_provider: direct
+    notes: >-
+      Overall plan difficulty 5/5; partnered-5/full/medium. The architecture is
+      locked, but subtle routing and context-budget errors can suppress findings
+      while all individual workers appear healthy.
+
+  - label: cl4-reconcile-role-flow
+    depends_on:
+      - cl3-routing-briefings
+    idea: .megaplan/initiatives/critique-ledger/briefs/cl4-reconciliation-reviser-gate.md
+    branch: megaplan/critique-ledger/cl4-reconcile-role-flow
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: medium
+    with_prep: true
+    prep_direction: >-
+      Trace evaluator output validation, flag lifecycle, revise metadata, gate
+      signals/carry, finalize custody, and WBC boundary receipts before wiring
+      semantic reconciliation and explicit disposition consumption.
+    deepseek_provider: direct
+    notes: >-
+      Overall plan difficulty 5/5; partnered-5/full/medium. A plausible role-flow
+      change can pass phase tests yet silently omit non-actioned findings or let
+      semantic prose mutate authoritative state.
+
+  - label: cl5-cutover-retirement
+    depends_on:
+      - cl4-reconcile-role-flow
+    idea: .megaplan/initiatives/critique-ledger/briefs/cl5-big-bang-cutover-and-retirement.md
+    branch: megaplan/critique-ledger/cl5-cutover-retirement
+    profile: partnered-5
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    prep_direction: >-
+      Revalidate the frozen M6 oracle, full semantic loop, WBC custody, exact
+      target revision, one-time import, backup/restore, and operator authority;
+      then prepare one atomic cutover and legacy-path retirement checklist.
+    deepseek_provider: direct
+    notes: >-
+      Overall plan difficulty 5/5; partnered-5/thorough/high. This is the single
+      authority-changing migration boundary; false success could corrupt custody
+      or retire the only recoverable path.
+
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: review
+driver:
+  robustness: full
+  phase_timeout: 10800
+  auto_approve: false
+  on_escalate: abort
+  max_iterations: 60
+  poll_sleep: 8.0

@@ -28,8 +28,12 @@ from arnold_pipelines.megaplan.cloud.feature_flags import (
     escalation_ledger_on,
     meta_repair_commit_enabled,
     meta_repair_commit_on,
+    meta_repair_push_enabled,
+    meta_repair_push_on,
     meta_repair_enabled,
     meta_repair_on,
+    meta_repair_push_enabled,
+    meta_repair_push_on,
     MUTATION_PATH_L1,
     MUTATION_PATH_L2,
     MUTATION_PATH_L3,
@@ -464,6 +468,16 @@ class TestM5Defaults:
         with _clear_env():
             assert meta_repair_commit_enabled() is True
             assert meta_repair_commit_on() is True
+
+    def test_meta_repair_push_defaults_off(self) -> None:
+        with _clear_env():
+            assert meta_repair_push_enabled() is False
+            assert meta_repair_push_on() is False
+
+    def test_meta_repair_push_requires_explicit_opt_in(self) -> None:
+        with _set_env(ARNOLD_META_REPAIR_PUSH_ENABLED="1"):
+            assert meta_repair_push_enabled() is True
+            assert meta_repair_push_on() is True
 
     def test_audit_autofix_commit_defaults_on(self) -> None:
         with _clear_env():

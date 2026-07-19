@@ -311,6 +311,53 @@ def test_run_chain_commits_base_branch_milestone_without_pr_branch(tmp_path: Pat
     commit_and_push.assert_not_called()
 
 
+def test_run_chain_persists_successor_state_before_driving_plan(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    spec_path = _write_base_branch_chain_spec(tmp_path)
+    _write_plan(
+        tmp_path,
+        current_state="initialized",
+        execution_batch=False,
+    )
+    save_chain_state(
+        spec_path,
+        ChainState(current_milestone_index=0, last_state="done"),
+    )
+
+    def assert_initialized_chain_projection(*_args, **_kwargs):
+        saved = load_chain_state(spec_path)
+        assert saved.current_plan_name == "plan-m1"
+        assert saved.last_state == "initialized"
+        return chain_module.DriverOutcome(
+            status="blocked",
+            plan="plan-m1",
+            final_state="blocked",
+            iterations=1,
+            reason="fixture stop after successor-state assertion",
+        )
+
+    with (
+        patch(
+            "arnold_pipelines.megaplan.chain._refresh_base_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch("arnold_pipelines.megaplan.chain._init_plan", return_value="plan-m1"),
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            side_effect=assert_initialized_chain_projection,
+        ),
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            writer=lambda _msg: None,
+            mode="execute",
+            no_push=True,
+        )
+
+    assert result["status"] == "stopped"
+
+
 def test_non_terminal_gated_plan_cannot_complete_from_pr_merge_alone(
     tmp_path: Path,
 ) -> None:
@@ -417,6 +464,244 @@ def test_run_chain_stops_when_resumed_pr_is_closed(tmp_path: Path) -> None:
     assert result["reason"] == "milestone m1 PR #99 is closed"
     assert saved.pr_state == "closed"
     assert saved.last_state == "pr_closed"
+
+
+def test_run_chain_accepts_local_completion_committed_during_pr_sync(
+    tmp_path: Path,
+) -> None:
+    head = _init_repo(tmp_path)
+    spec_path = _write_chain_spec(tmp_path)
+    _write_plan(
+        tmp_path,
+        current_state="done",
+        base_sha=head,
+        finalize_tasks=[{"id": "T1", "status": "done"}],
+    )
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name="plan-m1",
+            last_state="executed",
+            pr_number=255,
+            pr_state="open",
+        ),
+    )
+    pr_lookups: list[int] = []
+    messages: list[str] = []
+
+    def pr_state(_root: Path, pr_number: int | None, **_kwargs) -> str:
+        assert pr_number is not None, "local completion must not become PR #None"
+        pr_lookups.append(pr_number)
+        return "open"
+
+    def capture_local_completion(
+        _root: Path,
+        _spec_path: Path,
+        *,
+        branch: str | None,
+        pr_number: int | None,
+    ) -> None:
+        assert branch == "test/m1"
+        if pr_number is None:
+            return
+        assert pr_number == 255
+        state = load_chain_state(spec_path)
+        state.completed = [
+            {
+                "label": "m1",
+                "plan": "plan-m1",
+                "status": "done",
+                "pr_number": None,
+                "local_commit_sha": head,
+                "publication_evidence": "local_no_push_reconciliation",
+            }
+        ]
+        state.current_milestone_index = 1
+        state.current_plan_name = None
+        state.last_state = "between_milestones"
+        state.pr_number = None
+        state.pr_state = None
+        save_chain_state(spec_path, state)
+
+    with (
+        patch(
+            "arnold_pipelines.megaplan.chain._reconcile_chain_from_ground_truth",
+            side_effect=lambda _root, _spec_path, _spec, state, **_kwargs: state,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._refresh_base_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+            return_value=head,
+        ),
+        patch("arnold_pipelines.megaplan.chain._init_plan", return_value="plan-m1"),
+        patch("arnold_pipelines.megaplan.chain._ensure_milestone_pr", return_value=255),
+        patch("arnold_pipelines.megaplan.chain._pr_state", side_effect=pr_state),
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            return_value=chain_module.DriverOutcome(
+                status="done",
+                plan="plan-m1",
+                final_state="done",
+                iterations=1,
+                reason="ok",
+            ),
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._plan_terminal_completion_is_authoritative",
+            return_value=(True, "ok"),
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._shadow_milestone_completion_verdict",
+            return_value=False,
+        ),
+        patch("arnold_pipelines.megaplan.chain._run_full_suite_backstop_gate", return_value={}),
+        patch("arnold_pipelines.megaplan.chain._commit_and_push_phase"),
+        patch(
+            "arnold_pipelines.megaplan.chain._capture_sync_state",
+            side_effect=capture_local_completion,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._chain_completion_guard",
+            return_value=(True, "accepted local completion"),
+        ),
+    ):
+        result = run_chain(spec_path, tmp_path, writer=messages.append, mode="execute")
+
+    saved = load_chain_state(spec_path)
+    assert result["status"] == "done"
+    assert saved.current_milestone_index == 1
+    assert saved.current_plan_name is None
+    assert pr_lookups == [255]
+    assert not any("PR #None" in message for message in messages)
+    assert any("continuing without PR metadata" in message for message in messages)
+
+
+def test_reconcile_preserves_guarded_local_no_push_completion(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    spec_path = _write_chain_spec(tmp_path)
+    _git(tmp_path, "add", "chain.yaml", "idea.md", "NORTHSTAR.md")
+    _git(tmp_path, "commit", "-m", "track chain inputs")
+    _write_plan(
+        tmp_path,
+        current_state="done",
+        base_sha=base,
+        finalize_tasks=[{"id": "T1", "status": "done"}],
+    )
+    local_commit_sha = _commit_semantic_change(tmp_path)
+    state = ChainState(
+        current_milestone_index=1,
+        current_plan_name=None,
+        last_state="between_milestones",
+        completed=[
+            {
+                "label": "m1",
+                "plan": "plan-m1",
+                "status": "done",
+                "pr_number": None,
+                "local_commit_sha": local_commit_sha,
+                "publication_evidence": "local_no_push_reconciliation",
+            }
+        ],
+    )
+    save_chain_state(spec_path, state)
+    messages: list[str] = []
+
+    with patch(
+        "arnold_pipelines.megaplan.chain._pr_state",
+        side_effect=AssertionError("local completion must not query a PR"),
+    ):
+        reconciled = chain_module._reconcile_chain_from_ground_truth(
+            tmp_path,
+            spec_path,
+            load_spec(spec_path),
+            state,
+            writer=messages.append,
+            push_enabled=True,
+        )
+
+    assert reconciled.current_milestone_index == 1
+    assert reconciled.current_plan_name is None
+    assert [record["label"] for record in reconciled.completed] == ["m1"]
+    assert any("preserved accepted local/no-push completion" in msg for msg in messages)
+
+
+def test_reconcile_rejects_unguarded_prless_branch_completion(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    spec_path = _write_chain_spec(tmp_path)
+    state = ChainState(
+        current_milestone_index=1,
+        current_plan_name=None,
+        last_state="between_milestones",
+        completed=[{"label": "m1", "plan": "plan-m1", "status": "done"}],
+    )
+    save_chain_state(spec_path, state)
+
+    reconciled = chain_module._reconcile_chain_from_ground_truth(
+        tmp_path,
+        spec_path,
+        load_spec(spec_path),
+        state,
+        writer=lambda _message: None,
+        push_enabled=True,
+    )
+
+    assert reconciled.current_milestone_index == 0
+    assert reconciled.completed == []
+    assert reconciled.last_state == "authority_divergence"
+
+
+def test_reconcile_local_completion_clears_merge_wait_before_successor(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    spec_path = _write_chain_spec(tmp_path)
+    with spec_path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            "  - label: m2\n"
+            f"    idea: {tmp_path / 'idea.md'}\n"
+            "    branch: test/m2\n"
+        )
+    _write_plan(
+        tmp_path,
+        current_state="done",
+        base_sha=base,
+        finalize_tasks=[{"id": "T1", "status": "done"}],
+    )
+    _commit_semantic_change(tmp_path)
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="plan-m1",
+        last_state=STATE_AWAITING_PR_MERGE,
+        pr_number=255,
+        pr_state="open",
+    )
+    save_chain_state(spec_path, state)
+
+    reconciled = chain_module._reconcile_chain_from_ground_truth(
+        tmp_path,
+        spec_path,
+        load_spec(spec_path),
+        state,
+        writer=lambda _message: None,
+        push_enabled=False,
+    )
+
+    assert reconciled.current_milestone_index == 1
+    assert reconciled.current_plan_name is None
+    assert reconciled.last_state == "between_milestones"
+    assert reconciled.pr_number is None
+    assert [record["label"] for record in reconciled.completed] == ["m1"]
+    assert reconciled.completed[0]["publication_evidence"] == (
+        "local_no_push_reconciliation"
+    )
 
 
 def test_run_chain_publishes_claimed_changes_before_auto_merge(

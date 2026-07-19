@@ -15,6 +15,7 @@ from arnold_pipelines.megaplan.incident.schema import validate_incident_event
 
 _INCIDENT_LEDGER_DIR = Path(".megaplan") / "incident-ledger"
 _EVENTS_FILE = "events.jsonl"
+MAX_INCIDENT_JOURNAL_LINE_BYTES = 256 * 1024
 _INCIDENTS_FILE = "incidents.json"
 _PROBLEMS_FILE = "problems.json"
 _TRANSIENT_PATH_RE = re.compile(
@@ -34,11 +35,20 @@ _VOLATILE_TOKEN_RE = re.compile(
 )
 
 
-def rebuild_projections(root: Path | None = None) -> dict[str, Any]:
-    """Rebuild deterministic incident/problem projections from ``events.jsonl``."""
+def rebuild_projections(
+    root: Path | None = None,
+    *,
+    persist: bool = True,
+) -> dict[str, Any]:
+    """Rebuild deterministic incident/problem projections from ``events.jsonl``.
+
+    ``persist=False`` keeps evaluator-style callers read-only while returning
+    the same in-memory projection documents.
+    """
     workspace_root = Path.cwd() if root is None else Path(root)
     ledger_dir = workspace_root / _INCIDENT_LEDGER_DIR
-    ledger_dir.mkdir(parents=True, exist_ok=True)
+    if persist:
+        ledger_dir.mkdir(parents=True, exist_ok=True)
     events_path = ledger_dir / _EVENTS_FILE
 
     raw_scan = _scan_raw_lines(events_path)
@@ -51,7 +61,7 @@ def rebuild_projections(root: Path | None = None) -> dict[str, Any]:
     integrity_findings.extend(fold_findings)
 
     source_meta = {
-        "digest": _sha256_text(events_path.read_text(encoding="utf-8"))
+        "digest": _sha256_file(events_path)
         if events_path.exists()
         else "sha256:" + hashlib.sha256(b"").hexdigest(),
         "event_count": len(incident_events),
@@ -95,8 +105,9 @@ def rebuild_projections(root: Path | None = None) -> dict[str, Any]:
             key=lambda item: (item["problem_id"], item["last_seen_seq"], item["first_seen_seq"]),
         ),
     }
-    _write_projection(ledger_dir / _INCIDENTS_FILE, incidents_doc)
-    _write_projection(ledger_dir / _PROBLEMS_FILE, problems_doc)
+    if persist:
+        _write_projection(ledger_dir / _INCIDENTS_FILE, incidents_doc)
+        _write_projection(ledger_dir / _PROBLEMS_FILE, problems_doc)
     return {
         "incidents": incidents_doc,
         "problems": problems_doc,
@@ -113,24 +124,42 @@ def _scan_raw_lines(events_path: Path) -> dict[str, Any]:
 
     findings: list[dict[str, Any]] = []
     malformed_count = 0
-    lines = events_path.read_text(encoding="utf-8").splitlines()
-    for line_number, line in enumerate(lines, start=1):
-        if not line.strip():
-            continue
-        try:
-            json.loads(line)
-        except json.JSONDecodeError as exc:
-            malformed_count += 1
-            findings.append(
-                _finding(
-                    "malformed_json",
-                    message=f"Malformed JSON at line {line_number}",
-                    line_number=line_number,
-                    error=str(exc),
+    line_count = 0
+    with events_path.open("rb") as handle:
+        lines = handle
+        for line_number, encoded in enumerate(lines, start=1):
+            line_count = line_number
+            if not encoded.strip():
+                continue
+            if len(encoded) > MAX_INCIDENT_JOURNAL_LINE_BYTES:
+                malformed_count += 1
+                findings.append(
+                    _finding(
+                        "oversized_event_line",
+                        message=(
+                            f"Incident journal line {line_number} exceeds "
+                            f"{MAX_INCIDENT_JOURNAL_LINE_BYTES} bytes"
+                        ),
+                        line_number=line_number,
+                        size_bytes=len(encoded),
+                    )
                 )
-            )
+                continue
+            try:
+                line = encoded.decode("utf-8")
+                json.loads(line)
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                malformed_count += 1
+                findings.append(
+                    _finding(
+                        "malformed_json",
+                        message=f"Malformed JSON at line {line_number}",
+                        line_number=line_number,
+                        error=str(exc),
+                    )
+                )
     return {
-        "line_count": len(lines),
+        "line_count": line_count,
         "malformed_count": malformed_count,
         "findings": findings,
     }
@@ -141,10 +170,12 @@ def _read_valid_journal_events(events_path: Path) -> list[dict[str, Any]]:
         return []
     with tempfile.TemporaryDirectory(prefix="incident-projection-") as tmp_dir:
         tmp_root = Path(tmp_dir)
-        (tmp_root / "events.ndjson").write_text(
-            events_path.read_text(encoding="utf-8"),
-            encoding="utf-8",
-        )
+        with events_path.open("rb") as source, (tmp_root / "events.ndjson").open(
+            "wb"
+        ) as destination:
+            for line in source:
+                if len(line) <= MAX_INCIDENT_JOURNAL_LINE_BYTES:
+                    destination.write(line)
         return read_event_journal_paged(tmp_root, sort_page=True)
 
 
@@ -877,6 +908,14 @@ def _sha256_text(text: str) -> str:
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return "sha256:" + digest.hexdigest()
+
+
 def _stable_sort_json_values(values: list[Any]) -> list[Any]:
     return sorted(values, key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
 
@@ -970,6 +1009,8 @@ def build_brief(
     id_or_session: str,
     root: Path | None = None,
     now: str | None = None,
+    *,
+    persist: bool = True,
 ) -> dict[str, Any]:
     """Build a bounded incident brief, resolved by incident or session id.
 
@@ -990,7 +1031,7 @@ def build_brief(
         When omitted no ``deadline_status`` key is emitted.
     """
     workspace_root = Path.cwd() if root is None else Path(root)
-    projections = rebuild_projections(workspace_root)
+    projections = rebuild_projections(workspace_root, persist=persist)
 
     # ── resolve incident ────────────────────────────────────────────
     incident = _resolve_incident(projections, id_or_session)

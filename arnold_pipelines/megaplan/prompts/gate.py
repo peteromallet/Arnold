@@ -18,6 +18,9 @@ from arnold_pipelines.megaplan._core import (
     unresolved_significant_flags,
 )
 from arnold_pipelines.megaplan.flags import flag_resolution_summary
+from arnold_pipelines.megaplan.orchestration.gate_checks import (
+    is_operational_unverifiable_check,
+)
 from arnold_pipelines.megaplan.audits.iteration import compute_iteration_pressure, render_pressure_table
 from arnold_pipelines.megaplan.north_star_actions import (
     NORTH_STAR_ACTION_CATEGORIES,
@@ -42,8 +45,28 @@ def _gate_signals_for_prompt(gate_signals: Mapping[str, Any]) -> dict[str, Any]:
         projected_signals = dict(signals)
         projected_signals.pop("debt_overlaps", None)
         projected_signals.pop("escalated_debt_subsystems", None)
-        projected_signals.pop("unverifiable_checks", None)
-        projected_signals.pop("execution_acceptance_contract", None)
+        # Structural unverifiability is gate evidence. It used to be removed
+        # here, which let a critique failure appear clear to the gate model.
+        # Operational provider/sandbox cases are already classified separately
+        # by gate_checks and remain non-blocking policy inputs.
+        unverifiable = projected_signals.get("unverifiable_checks")
+        if isinstance(unverifiable, list):
+            structural = [
+                check
+                for check in unverifiable
+                if isinstance(check, dict) and not is_operational_unverifiable_check(check)
+            ]
+            if structural:
+                projected_signals["unverifiable_checks"] = structural
+                contract = projected_signals.get("execution_acceptance_contract")
+                if isinstance(contract, Mapping):
+                    projected_signals["execution_acceptance_contract"] = {
+                        **contract,
+                        "required_checks": structural,
+                    }
+            else:
+                projected_signals.pop("unverifiable_checks", None)
+                projected_signals.pop("execution_acceptance_contract", None)
         projected["signals"] = projected_signals
     warnings = gate_signals.get("warnings")
     if isinstance(warnings, list):

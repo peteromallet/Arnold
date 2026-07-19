@@ -1,10 +1,12 @@
 """Durable Discord transaction state for the canonical resident restart.
 
-Exactly one user-visible message is eligible for each restart transaction: the
-terminal success or failure outcome.  It remains ineligible until an external
-supervisor or replacement startup has determined that outcome, then uses
-retryable, provider-idempotent outbox state tied to the initiating Discord
-message or the configured fallback conversation.
+Exactly one delivery owner is selected for each restart transaction.  A direct
+request may use the terminal success or failure outbox, while a Discord
+interaction or detached agent completion can own the user-facing result and
+leave the restart receipt durable but suppressed.  Eligible terminal outcomes
+remain ineligible until an external supervisor or replacement startup has
+determined the result, then use retryable, provider-idempotent outbox state tied
+to the initiating Discord message or the configured fallback conversation.
 """
 
 from __future__ import annotations
@@ -27,6 +29,10 @@ RESET_NOTIFICATION_SCHEMA = "agentbox-resident-reset-notification-v1"
 RESET_NOTIFICATION_CONTRACT = "single-terminal-v2"
 RESET_NOTIFICATION_ENV = "AGENTBOX_RESET_NOTIFICATION_ROOT"
 RESET_FALLBACK_CONVERSATION_ENV = "AGENTBOX_DISCORD_RESET_FALLBACK_CONVERSATION"
+RESET_DELIVERY_RESTART_TERMINAL = "restart_terminal"
+RESET_DELIVERY_EPHEMERAL_INTERACTION = "ephemeral_interaction"
+RESET_DELIVERY_DETACHED_COMPLETION = "detached_completion"
+RESET_DELIVERY_INTERRUPTED_TURN_COMPLETION = "interrupted_turn_completion"
 DEFAULT_NOTIFICATION_ROOT = Path("/workspace/.megaplan/resident/reset_notifications")
 _RETRY_BASE_SECONDS = 30
 _RETRY_MAX_SECONDS = 60 * 60
@@ -88,6 +94,7 @@ def prepare_reset_notification(
     *,
     notification_root: str | Path | None = None,
     restart_request: Mapping[str, Any] | None = None,
+    delivery_ownership: str | None = None,
     now: datetime | None = None,
 ) -> ResetNotificationReservation:
     """Persist an ineligible reset outbox record before touching the resident.
@@ -103,7 +110,39 @@ def prepare_reset_notification(
     except OSError as exc:
         raise ResetNotificationError("cannot create durable resident reset outbox") from exc
 
-    provenance, provenance_mode, provenance_error = _current_provenance()
+    if delivery_ownership == RESET_DELIVERY_EPHEMERAL_INTERACTION:
+        # Application-command interactions already have a genuinely ephemeral
+        # response.  Ambient turn provenance, if any, belongs to another
+        # request and must not turn the receipt into a normal channel message.
+        provenance, provenance_mode, provenance_error = (
+            None,
+            "discord_interaction",
+            None,
+        )
+    else:
+        provenance, provenance_mode, provenance_error = _current_provenance()
+    if delivery_ownership is None:
+        delivery_ownership = (
+            RESET_DELIVERY_DETACHED_COMPLETION
+            if provenance is not None and provenance.get("root_run_id")
+            else RESET_DELIVERY_RESTART_TERMINAL
+        )
+    if delivery_ownership not in {
+        RESET_DELIVERY_RESTART_TERMINAL,
+        RESET_DELIVERY_EPHEMERAL_INTERACTION,
+        RESET_DELIVERY_DETACHED_COMPLETION,
+    }:
+        raise ResetNotificationError("invalid restart notification delivery ownership")
+    delivery_suppressed = delivery_ownership != RESET_DELIVERY_RESTART_TERMINAL
+    delivery_status = "suppressed" if delivery_suppressed else "prepared"
+    delivery_evidence = {
+        RESET_DELIVERY_EPHEMERAL_INTERACTION: (
+            "ephemeral_discord_interaction_owns_user_delivery"
+        ),
+        RESET_DELIVERY_DETACHED_COMPLETION: (
+            "durable_detached_completion_owns_user_delivery"
+        ),
+    }.get(delivery_ownership, "outbox_committed_before_guarded_restart")
     notification_id = f"reset-{uuid4().hex}"
     path = root / f"{notification_id}.json"
     initiator = _initiator_projection(provenance)
@@ -130,15 +169,16 @@ def prepare_reset_notification(
         },
         "delivery": {
             "transport": "discord",
-            "status": "prepared",
+            "status": delivery_status,
+            "ownership": delivery_ownership,
             "attempt_count": 0,
             "idempotency_key": f"agentbox-resident-reset:{notification_id}",
             "discord_nonce": _nonce(notification_id, phase="terminal"),
             "state_history": [
                 {
-                    "status": "prepared",
+                    "status": delivery_status,
                     "at": _timestamp(now),
-                    "evidence": "outbox_committed_before_guarded_restart",
+                    "evidence": delivery_evidence,
                 }
             ],
         },
@@ -162,13 +202,17 @@ def prepare_reset_notification(
             "kind": "reply",
         }
         record["delivery"]["reply_target"] = dict(target)
-    else:
+    elif not delivery_suppressed:
         fallback = os.environ.get(RESET_FALLBACK_CONVERSATION_ENV) or None
         record["delivery"]["fallback_target"] = fallback
     try:
         with _root_lock(root):
             if source_record_id:
-                existing = _restart_record_for_source(root, source_record_id)
+                existing = _restart_record_for_source(
+                    root,
+                    source_record_id,
+                    restart_request=record["restart"]["request"],
+                )
                 if existing is not None:
                     existing_path, existing_record = existing
                     return ResetNotificationReservation(
@@ -324,21 +368,22 @@ def mark_reset_failed(
         if restart.get("status") in {"succeeded", "failed"}:
             return _public_record(record)
         delivery = dict(record.get("delivery") or {})
-        history = list(delivery.get("state_history") or [])
-        history.append(
-            {
-                "status": "pending",
-                "at": _timestamp(now),
-                "evidence": "guarded_restart_reported_failure",
-            }
-        )
-        delivery.update(
-            {
-                "status": "pending",
-                "updated_at": _timestamp(now),
-                "state_history": history[-20:],
-            }
-        )
+        if delivery.get("status") == "prepared":
+            history = list(delivery.get("state_history") or [])
+            history.append(
+                {
+                    "status": "pending",
+                    "at": _timestamp(now),
+                    "evidence": "guarded_restart_reported_failure",
+                }
+            )
+            delivery.update(
+                {
+                    "status": "pending",
+                    "updated_at": _timestamp(now),
+                    "state_history": history[-20:],
+                }
+            )
         _append_restart_state(
             restart,
             status="failed",
@@ -625,6 +670,7 @@ def finish_restart_interrupted_turn(
     status: str,
     replacement_turn_id: str | None = None,
     error_class: str | None = None,
+    user_delivery_owned: bool = False,
     notification_root: str | Path | None = None,
     now: datetime | None = None,
 ) -> None:
@@ -643,6 +689,23 @@ def finish_restart_interrupted_turn(
             replay["last_error_class"] = str(error_class)
         replay.pop("claimed_by", None)
         record["interrupted_turn_replay"] = replay
+        if user_delivery_owned:
+            delivery = dict(record.get("delivery") or {})
+            if delivery.get("status") not in _TERMINAL_DELIVERY_STATES:
+                delivery.update(
+                    {
+                        "status": "suppressed",
+                        "ownership": RESET_DELIVERY_INTERRUPTED_TURN_COMPLETION,
+                        "updated_at": _timestamp(now),
+                    }
+                )
+                _append_state(
+                    delivery,
+                    status="suppressed",
+                    now=now,
+                    evidence="recovered_substantive_reply_owns_user_delivery",
+                )
+                record["delivery"] = delivery
         record["updated_at"] = _timestamp(now)
         _atomic_json(reservation.path, record)
 
@@ -1021,24 +1084,40 @@ def _active_restart_record(root: Path) -> dict[str, Any] | None:
 
 
 def _restart_record_for_source(
-    root: Path, source_record_id: str
+    root: Path,
+    source_record_id: str,
+    *,
+    restart_request: Mapping[str, Any] | None = None,
 ) -> tuple[Path, dict[str, Any]] | None:
-    """Find the one durable restart consumed by an inbound source message.
+    """Find a durable restart consumed by one source and runtime revision.
 
-    A Discord message is an immutable command identity.  Once it has prepared
-    a restart, startup recovery or duplicate execution must reuse that receipt
-    forever rather than minting another restart transaction.
+    Legacy requests without a runtime revision retain the original one-receipt
+    behavior. Revision-bound requests reuse an exact receipt, while a later
+    installed revision may create a new guarded transaction after the earlier
+    restart is terminal.
     """
 
+    requested_revision = str((restart_request or {}).get("runtime_revision") or "")
+    requested_source = str((restart_request or {}).get("runtime_source") or "")
     for path in sorted(root.glob("reset-*.json"), reverse=True):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
             continue
         initiator = payload.get("initiator") if isinstance(payload, Mapping) else None
-        if (
+        if not (
             isinstance(initiator, Mapping)
             and str(initiator.get("source_record_id") or "") == source_record_id
+        ):
+            continue
+        if not requested_revision:
+            return path, dict(payload)
+        restart = payload.get("restart") if isinstance(payload, Mapping) else None
+        prior_request = restart.get("request") if isinstance(restart, Mapping) else None
+        if (
+            isinstance(prior_request, Mapping)
+            and str(prior_request.get("runtime_revision") or "") == requested_revision
+            and str(prior_request.get("runtime_source") or "") == requested_source
         ):
             return path, dict(payload)
     return None
@@ -1093,7 +1172,7 @@ def _restart_request_projection(value: Mapping[str, Any] | None) -> dict[str, An
     if not isinstance(value, Mapping):
         return {}
     projected: dict[str, Any] = {}
-    for key in ("service", "unit", "backend"):
+    for key in ("service", "unit", "backend", "runtime_source", "runtime_revision"):
         if value.get(key) is not None:
             projected[key] = str(value[key])
     old_identity = value.get("old_identity")

@@ -32,6 +32,36 @@ def test_plan_status_presentation_preserves_lifecycle_precedence(
     }
 
 
+def test_plan_status_presentation_distinguishes_review_rework_from_acceptance():
+    reworking = plan_status_presentation(
+        "finalized",
+        active_step={"phase": "execute"},
+        review_verdict="needs_rework",
+    )
+    reviewing = plan_status_presentation(
+        "executed",
+        active_step={"phase": "review"},
+        review_verdict="needs_rework",
+    )
+    awaiting_rework = plan_status_presentation(
+        "finalized",
+        review_verdict="needs_rework",
+    )
+
+    assert reworking["display_state"] == "reworking"
+    assert reviewing["display_state"] == "reviewing"
+    assert awaiting_rework["display_state"] == "needs_rework"
+
+
+def test_accepted_and_idle_finalized_presentations_keep_terminal_precedence():
+    assert plan_status_presentation(
+        "done", review_verdict="needs_rework"
+    )["display_state"] == "done"
+    assert plan_status_presentation(
+        "finalized", review_verdict="approved"
+    )["display_state"] == "finalized"
+
+
 def test_cli_status_distinguishes_live_execution_from_finalized_lifecycle(tmp_path):
     state = {
         "name": "live-plan",

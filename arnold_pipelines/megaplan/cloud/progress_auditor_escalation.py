@@ -15,9 +15,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
+from pathlib import Path
 from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.managed_agent import validate_automatic_managed_manifest
+from arnold_pipelines.megaplan.cloud.progress_auditor_liveness import classify_runner_liveness
 
 
 ESCALATION_SCHEMA = "arnold-progress-auditor-escalation-v1"
@@ -26,6 +28,10 @@ DEEP_REPAIR_RUN_KIND = "automatic_root_cause_repair"
 DEEP_REPAIR_MODEL = "gpt-5.6-sol"
 DEEP_REPAIR_DIFFICULTY = 9
 DEEP_REPAIR_REASONING = "high"
+L3_REPAIR_CONTEXT_MAX_BYTES = 64 * 1024
+L3_REPAIR_REQUEST_MAX_BYTES = 256 * 1024
+AUDIT_REVIEW_EVIDENCE_MAX_BYTES = 64 * 1024
+AUDIT_REVIEW_RESPONSE_MAX_BYTES = 32 * 1024
 
 _MACHINE_ACTION_STATES = frozenset(
     {
@@ -104,6 +110,316 @@ def evidence_digest(value: object) -> str:
     return sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
+def validate_l3_repair_dispatch_context(
+    *,
+    context_path: str | Path,
+    request_path: str | Path,
+    expected_session: str,
+    expected_context_digest: str,
+    expected_escalation_id: str,
+    expected_request_id: str,
+) -> dict[str, Any]:
+    """Validate the typed custody handoff for an L3 repair launch.
+
+    A command-line trigger is not authority. The auditor context and queued
+    request must independently agree on identity, provenance, eligibility,
+    path, and digest. Only a compact pointer envelope is returned so callers
+    do not inline the expanding evidence artifact in a prompt.
+    """
+
+    normalized_session = _text(expected_session)
+    normalized_digest = _text(expected_context_digest)
+    normalized_escalation = _text(expected_escalation_id)
+    normalized_request_id = _text(expected_request_id)
+    if not all(
+        (
+            normalized_session,
+            normalized_digest,
+            normalized_escalation,
+            normalized_request_id,
+        )
+    ):
+        raise ValueError("L3 dispatch identity is incomplete")
+
+    def load_bounded(
+        path_value: str | Path, *, maximum: int, label: str
+    ) -> tuple[Path, dict[str, Any], int]:
+        path = Path(path_value).resolve(strict=True)
+        encoded = path.read_bytes()
+        if not encoded or len(encoded) > maximum:
+            raise ValueError(f"{label} artifact violates its byte bound")
+        try:
+            value = json.loads(encoded)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"{label} artifact is not valid JSON") from exc
+        if not isinstance(value, dict):
+            raise ValueError(f"{label} artifact must be a JSON object")
+        return path, value, len(encoded)
+
+    context_resolved, context, context_bytes = load_bounded(
+        context_path,
+        maximum=L3_REPAIR_CONTEXT_MAX_BYTES,
+        label="L3 repair context",
+    )
+    request_resolved, request, request_bytes = load_bounded(
+        request_path,
+        maximum=L3_REPAIR_REQUEST_MAX_BYTES,
+        label="L3 repair request",
+    )
+
+    observed_digest = _text(context.get("context_digest"))
+    recomputed_digest = evidence_digest(
+        {key: value for key, value in context.items() if key != "context_digest"}
+    )
+    gate = _mapping(context.get("gate"))
+    if (
+        observed_digest != normalized_digest
+        or recomputed_digest != normalized_digest
+        or _text(context.get("session")) != normalized_session
+        or _text(gate.get("session")) != normalized_session
+        or _text(gate.get("schema_version")) != ESCALATION_SCHEMA
+        or _text(gate.get("policy_version")) != POLICY_VERSION
+        or gate.get("eligible") is not True
+        or _text(gate.get("decision")) != "true_stall"
+        or _list(gate.get("blocks"))
+        or _text(gate.get("escalation_id")) != normalized_escalation
+    ):
+        raise ValueError(
+            "L3 repair context failed identity, integrity, or eligibility validation"
+        )
+
+    target = _mapping(request.get("target"))
+    request_gate = _mapping(target.get("l3_escalation_gate"))
+    request_context_path = Path(_text(target.get("repair_context_path"))).resolve(
+        strict=False
+    )
+    provenance = _mapping(request.get("resident_delegation"))
+    if (
+        _text(request.get("kind")) != "repair_request"
+        or _text(request.get("source")) != "six_hour_auditor"
+        or _text(request.get("request_id")) != normalized_request_id
+        or request_resolved.name != f"{normalized_request_id}.json"
+        or _text(request.get("session")) != normalized_session
+        or _text(target.get("dispatch_intent")) != "deep_superfixer_repair"
+        or _text(target.get("retry_strategy")) != "deep_superfixer_repair"
+        or request_context_path != context_resolved
+        or _text(target.get("repair_context_digest")) != normalized_digest
+        or _text(target.get("root_cause_identity")) != normalized_escalation
+        or _text(request_gate.get("escalation_id")) != normalized_escalation
+        or _text(request_gate.get("evidence_digest"))
+        != _text(gate.get("evidence_digest"))
+        or request_gate.get("eligible") is not True
+        or _list(request_gate.get("blocks"))
+        or not provenance
+        or _text(provenance.get("schema_version"))
+        != "arnold-resident-delegation-provenance-v1"
+    ):
+        raise ValueError("L3 repair request disagrees with its context or provenance")
+
+    custody = _mapping(gate.get("custody_walk"))
+    return {
+        "schema_version": "arnold-l3-meta-repair-pointer-v1",
+        "session": normalized_session,
+        "request_id": normalized_request_id,
+        "escalation_id": normalized_escalation,
+        "context": {
+            "path": str(context_resolved),
+            "digest": normalized_digest,
+            "bytes": context_bytes,
+        },
+        "request": {"path": str(request_resolved), "bytes": request_bytes},
+        "gate": {
+            "decision": "true_stall",
+            "first_broken_layer": _text(custody.get("first_broken_layer")),
+            "first_broken_axis": _text(custody.get("first_broken_axis")),
+            "missed_by_layer": _text(custody.get("missed_by_layer")),
+            "missed_by_axis": _text(custody.get("missed_by_axis")),
+        },
+    }
+
+
+def _bounded_review_value(
+    value: object,
+    *,
+    depth: int,
+    max_depth: int,
+    max_string: int,
+    max_items: int,
+) -> object:
+    if depth >= max_depth:
+        if isinstance(value, (Mapping, list, tuple)):
+            return {"omitted": True, "kind": type(value).__name__}
+        return value
+    if isinstance(value, str):
+        encoded = value.encode("utf-8")
+        if len(encoded) <= max_string:
+            return value
+        clipped = encoded[:max_string].decode("utf-8", errors="ignore")
+        return f"{clipped}\n[omitted {len(encoded) - len(clipped.encode('utf-8'))} bytes]"
+    if isinstance(value, Mapping):
+        result: dict[str, object] = {}
+        items = sorted(value.items(), key=lambda item: str(item[0]))[:max_items]
+        for raw_key, item_value in items:
+            key = str(raw_key)
+            result[key] = _bounded_review_value(
+                item_value,
+                depth=depth + 1,
+                max_depth=max_depth,
+                max_string=max_string,
+                max_items=max_items,
+            )
+        omitted = len(value) - len(items)
+        if omitted > 0:
+            result["_omitted_fields"] = omitted
+        return result
+    if isinstance(value, (list, tuple)):
+        selected = list(value)[-max_items:]
+        result = [
+            _bounded_review_value(
+                item,
+                depth=depth + 1,
+                max_depth=max_depth,
+                max_string=max_string,
+                max_items=max_items,
+            )
+            for item in selected
+        ]
+        if len(value) > len(selected):
+            result.insert(0, {"omitted_items": len(value) - len(selected)})
+        return result
+    return value
+
+
+def bounded_auditor_projection(
+    value: Mapping[str, Any] | None,
+    *,
+    kind: str,
+) -> dict[str, Any]:
+    """Return a non-recursive bounded projection for L3 evidence transport."""
+
+    fields = {
+        "brief": (
+            "found", "incident_id", "problem_id", "session_id", "state",
+            "outcome", "summary", "next_expected_event", "deadline_ts",
+            "first_timestamp", "last_timestamp", "claims", "evidence_refs",
+        ),
+        "incident": (
+            "incident_id", "problem_ids", "session_ids", "state", "outcome",
+            "summary", "next_expected_event", "deadline_ts", "event_count",
+            "first_seq", "last_seq", "first_timestamp", "last_timestamp",
+            "latest_actor", "latest_kind", "claims", "evidence_refs",
+        ),
+        "problem": (
+            "problem_id", "status", "summary", "owner_actor",
+            "linked_incident_ids", "fix_commits", "recurred_after_fix",
+        ),
+        "audit": (
+            "incident_id", "problem_id", "session_id", "outcome", "summary",
+            "next_expected_event", "findings", "diagnosis", "audit_complete",
+        ),
+    }
+    source = value if isinstance(value, Mapping) else {}
+    selected = {key: source.get(key) for key in fields.get(kind, ()) if key in source}
+    bounded = _bounded_review_value(
+        selected,
+        depth=0,
+        max_depth=6,
+        max_string=2048,
+        max_items=12,
+    )
+    result = dict(bounded) if isinstance(bounded, Mapping) else {}
+    result["projection_custody"] = {
+        "schema_version": "arnold-auditor-bounded-projection-v1",
+        "kind": kind,
+        "source_field_count": len(source),
+        "omitted_fields": sorted(str(key) for key in source if key not in selected),
+    }
+    encoded = _canonical_json(result).encode("utf-8")
+    if len(encoded) > AUDIT_REVIEW_EVIDENCE_MAX_BYTES:
+        raise ValueError(f"bounded {kind} projection exceeds 64 KiB")
+    result["projection_custody"]["digest"] = evidence_digest(result)
+    if len(_canonical_json(result).encode("utf-8")) > AUDIT_REVIEW_EVIDENCE_MAX_BYTES:
+        raise ValueError(f"bounded {kind} projection exceeds 64 KiB after custody")
+    return result
+
+
+def bounded_audit_review_pointer(
+    finding: Mapping[str, Any],
+    *,
+    evidence_path: str | Path,
+) -> dict[str, Any]:
+    """Build the only evidence envelope permitted in an L3 reviewer prompt."""
+
+    path = Path(evidence_path).resolve(strict=True)
+    digest = sha256()
+    size = 0
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            size += len(chunk)
+            digest.update(chunk)
+    selected_keys = (
+        "session", "plan", "workspace", "reasons", "current_state", "iteration",
+        "active_step_liveness", "acceptance_progress", "plan_latest_failure",
+        "current_target", "chain_state_summary", "repair_data_summary",
+        "repair_custody_summary", "meta_repair_summary",
+        "deterministic_superfixer_evidence", "resolver_state", "ci_health",
+        "engine_tree", "incident_brief", "incident_projection",
+        "problem_projection", "incident_audit", "existing_agent_ownership",
+        "prior_watchdog_report_refs", "source_refs", "auditor_wrapper_runtime",
+    )
+    selected = {key: finding.get(key) for key in selected_keys if key in finding}
+    pointer: dict[str, Any] = {
+        "schema_version": "arnold-progress-auditor-review-pointer-v1",
+        "objective": "Classify the current bounded L1/L2/L3 custody failure and recommend the canonical repair route.",
+        "authoritative_evidence": {
+            "path": str(path),
+            "bytes": size,
+            "sha256": digest.hexdigest(),
+        },
+        "evidence": _bounded_review_value(
+            selected,
+            depth=0,
+            max_depth=6,
+            max_string=2048,
+            max_items=10,
+        ),
+    }
+    encoded = _canonical_json(pointer).encode("utf-8")
+    if len(encoded) > AUDIT_REVIEW_EVIDENCE_MAX_BYTES:
+        pointer["evidence"] = _bounded_review_value(
+            selected,
+            depth=0,
+            max_depth=4,
+            max_string=512,
+            max_items=5,
+        )
+        encoded = _canonical_json(pointer).encode("utf-8")
+    if len(encoded) > AUDIT_REVIEW_EVIDENCE_MAX_BYTES:
+        raise ValueError("L3 review pointer exceeds 64 KiB")
+    pointer["pointer_digest"] = evidence_digest(pointer)
+    if len(_canonical_json(pointer).encode("utf-8")) > AUDIT_REVIEW_EVIDENCE_MAX_BYTES:
+        raise ValueError("L3 review pointer exceeds 64 KiB after custody")
+    return pointer
+
+
+def normalize_audit_review_response(value: str) -> str:
+    """Accept only a bounded typed L3 review response; fail closed otherwise."""
+
+    text = str(value or "").strip()
+    encoded = text.encode("utf-8")
+    failure = "REPAIR_REQUEST\nL3 reviewer returned no bounded typed verdict; inspect its managed manifest and stderr."
+    if not text or len(encoded) > AUDIT_REVIEW_RESPONSE_MAX_BYTES:
+        return failure
+    lowered = text.lower()
+    if "input exceeds the maximum length" in lowered or "input_too_large" in lowered:
+        return "REPAIR_REQUEST\nL3 reviewer input overflowed; the evidence transport boundary must be repaired before retry."
+    allowed = {"NO_NEW_LAUNCH", "REPAIR_REQUEST", "ESCALATE", "STALE", "INEFFICIENT", "PASSIVE"}
+    first = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    if first not in allowed:
+        return failure
+    return text
+
+
 def semantic_cursor(finding: Mapping[str, Any]) -> dict[str, Any]:
     """Return the blocker-specific progress cursor used for re-verification."""
 
@@ -156,24 +472,26 @@ def _process_evidence(finding: Mapping[str, Any]) -> dict[str, Any]:
     target = _mapping(finding.get("current_target"))
     tmux = _mapping(target.get("tmux_process"))
     active = _mapping(finding.get("active_step_liveness"))
-    known = any(
-        value is not None and value != ""
-        for value in (
-            tmux.get("pid_live"),
-            tmux.get("session_live"),
-            tmux.get("live_status"),
-            active.get("worker_pid_alive"),
-        )
-    )
-    live = bool(
-        tmux.get("pid_live") is True
-        or tmux.get("session_live") is True
-        or _text(tmux.get("live_status")).lower() == "alive"
-        or active.get("worker_pid_alive") is True
+    watchdog_statuses = [
+        _text(item.get("matched_status"))
+        for item in _list(finding.get("prior_watchdog_report_refs"))
+        if isinstance(item, Mapping)
+    ]
+    l2_failure = _l2_failure_fingerprint(finding)
+    if l2_failure.get("failed") and l2_failure.get("failure_codes"):
+        # A current terminal L2 receipt/log is process custody evidence. The
+        # shared classifier still gives an observed live PID precedence.
+        watchdog_statuses.append("terminal_repair_failure")
+    liveness = classify_runner_liveness(
+        tmux,
+        active,
+        watchdog_statuses,
     )
     return {
-        "present": known,
-        "live": live,
+        "present": liveness["known"],
+        "live": liveness["live"],
+        "state": liveness["state"],
+        "source": liveness["source"],
         "tmux": dict(tmux),
         "active_step": dict(active),
     }
@@ -282,11 +600,13 @@ def _external_evidence(finding: Mapping[str, Any], chain: Mapping[str, Any]) -> 
             and (expected_pr is None or observed_pr == expected_pr)
         )
     )
-    intentional_wait = bool(
-        pr_state in {"open", "draft", "pending", "queued"}
-        or _text(chain.get("last_state")).lower()
-        in {"awaiting_pr_merge", "awaiting_ci", "ci_pending"}
-    )
+    # An open PR is evidence, not an instruction to wait.  Only the durable
+    # chain state may declare that the chain is intentionally awaiting PR/CI.
+    intentional_wait = _text(chain.get("last_state")).lower() in {
+        "awaiting_pr_merge",
+        "awaiting_ci",
+        "ci_pending",
+    }
     return {
         "applicable": applicable,
         "present": coherent,
@@ -309,26 +629,61 @@ def _fresh_progress(finding: Mapping[str, Any], policy: EscalationPolicy) -> dic
         or active.get("heartbeat_age_min")
         or _mapping(finding.get("current_target")).get("token_heartbeat_age_min")
     )
-    fresh_sources = []
+    acceptance = _mapping(finding.get("acceptance_progress"))
+    accepted_age = _integer(acceptance.get("accepted_event_age_min"))
+    semantic_advanced = acceptance.get("advanced") is True
+    # Log writes and heartbeats prove liveness only.  They must not erase a
+    # semantic stall (the incident emitted hourly drift lines indefinitely).
+    liveness_sources = []
     if event_age is not None and event_age < threshold_min:
-        fresh_sources.append("events")
+        liveness_sources.append("events")
     if log_age is not None and log_age < threshold_min:
-        fresh_sources.append("chain_log")
+        liveness_sources.append("chain_log")
     if token_age is not None and token_age < threshold_min:
-        fresh_sources.append("token_heartbeat")
+        liveness_sources.append("token_heartbeat")
+    fresh_sources = ["acceptance_progress"] if semantic_advanced else []
+    age_candidates = [value for value in (accepted_age,) if value is not None]
+    semantic_age = max(age_candidates) if age_candidates else None
+    deterministic_superfixer = _mapping(finding.get("deterministic_superfixer_evidence"))
+    accepted_unclaimed_backstop_stall = bool(
+        deterministic_superfixer.get("actionable") is True
+        and deterministic_superfixer.get("chain_incomplete") is True
+        and deterministic_superfixer.get("absent_or_stale_l2") is True
+        and _list(deterministic_superfixer.get("accepted_unclaimed_request_ids"))
+        and deterministic_superfixer.get("unknown_evidence") is not True
+        and log_age is not None
+        and log_age >= threshold_min
+        and not semantic_advanced
+    )
+    terminal_repair_failure_without_progress = bool(
+        deterministic_superfixer.get("actionable") is True
+        and deterministic_superfixer.get("chain_incomplete") is True
+        and (
+            deterministic_superfixer.get("runner_dead") is True
+            or deterministic_superfixer.get("failed_l2_evidence") is True
+        )
+        and not semantic_advanced
+    )
     return {
         "fresh": bool(fresh_sources),
         "fresh_sources": fresh_sources,
+        "liveness_sources": liveness_sources,
+        "semantic_advanced": semantic_advanced,
+        "semantic_age_min": semantic_age,
         "threshold_min": threshold_min,
         "events_mtime_age_min": event_age,
         "chain_log_mtime_age_min": log_age,
         "token_heartbeat_age_min": token_age,
         "old_enough": bool(
-            event_age is not None
-            and event_age >= threshold_min
-            and log_age is not None
-            and log_age >= threshold_min
+            not semantic_advanced
+            and (
+                terminal_repair_failure_without_progress
+                or accepted_unclaimed_backstop_stall
+                or (semantic_age is not None and semantic_age >= threshold_min)
+            )
         ),
+        "accepted_unclaimed_backstop_stall": accepted_unclaimed_backstop_stall,
+        "terminal_repair_failure_without_progress": terminal_repair_failure_without_progress,
     }
 
 
@@ -338,6 +693,8 @@ def _reason_tokens(finding: Mapping[str, Any]) -> list[str]:
 
 def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
     repair = _mapping(finding.get("repair_data_summary"))
+    meta = _mapping(finding.get("meta_repair_summary"))
+    repair_goal = _mapping(meta.get("repair_goal"))
     custody = _mapping(finding.get("repair_custody_summary"))
     superfixer = _mapping(finding.get("deterministic_superfixer_evidence"))
     retry = _mapping(custody.get("retry_budget") or superfixer.get("retry_budget"))
@@ -349,7 +706,29 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
     if retry_remaining is None:
         retry_remaining = _integer(retry.get("claim_retries_remaining"))
     outcome = _text(repair.get("outcome")).lower()
-    false_success = bool(
+    provisional_liveness = outcome in {
+        "partial_liveness",
+        "live_with_fresh_activity",
+    }
+    blocker_id = _text(custody.get("blocker_id"))
+    active_requests = [
+        _text(item)
+        for item in _list(custody.get("active_request_ids"))
+        if _text(item)
+    ]
+    missing_custody_links = bool(
+        provisional_liveness and (not blocker_id or not active_requests)
+    )
+    liveness_without_custody = bool(
+        provisional_liveness and (accepted or missing_custody_links)
+    )
+    recovery_gate_failed = repair_goal.get("recovery_gate_failed") is True
+    active_unowned_goal = bool(
+        repair_goal.get("status") == "active"
+        and repair_goal.get("owner_live") is not True
+        and _text(repair_goal.get("control_action")).lower() != "preserve_live"
+    )
+    false_success = recovery_gate_failed or bool(
         outcome in {"complete", "completed", "progressed", "success", "fixed"}
         and _chain_evidence(finding).get("nonterminal")
     ) or any("repair_complete_incomplete_chain" in item for item in reasons)
@@ -369,19 +748,37 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         or retry_used >= 2
         or repeated >= 3
     )
-    failed = bool(false_success or missing_manifest or (accepted and exhausted) or outcome in {
-        "repair_timeout",
-        "repair_exhausted",
-        "failed",
-        "failure",
-    })
+    # Gather has already proved this exact accepted-unclaimed episode is an
+    # actionable superfixer cycle using current chain, runner, human-gate, L2,
+    # and evidence-integrity guards.  Requiring bounded handoff exhaustion here
+    # made a request with zero claims/attempts report-only precisely when L1 had
+    # failed to begin.  Consume the typed gather verdict instead of imposing a
+    # divergent retry threshold at the effect gate.
+    actionable_accepted_unclaimed = bool(
+        accepted and superfixer.get("actionable") is True
+    )
+    failed = bool(
+        active_unowned_goal
+        or false_success
+        or missing_manifest
+        or liveness_without_custody
+        or actionable_accepted_unclaimed
+        or (accepted and exhausted)
+        or outcome
+        in {
+            "repair_timeout",
+            "repair_exhausted",
+            "failed",
+            "failure",
+        }
+    )
     axis = (
         "FIXED"
         if false_success
         else "TRACKED"
         if missing_manifest
         else "CONTEXT"
-        if accepted
+        if accepted or missing_custody_links
         else "FIXED"
     )
     return {
@@ -389,11 +786,17 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         "axis": axis if failed else "",
         "outcome": outcome,
         "accepted_unclaimed_count": len(accepted),
+        "actionable_accepted_unclaimed": actionable_accepted_unclaimed,
         "retry_used": retry_used,
         "retry_remaining": retry_remaining,
         "repeated_deterministic_failures": repeated,
         "false_success": false_success,
+        "post_fixer_recovery_gate_failed": recovery_gate_failed,
         "missing_canonical_manifest": missing_manifest,
+        "missing_custody_links": missing_custody_links,
+        "provisional_liveness": provisional_liveness,
+        "liveness_without_custody": liveness_without_custody,
+        "active_unowned_goal": active_unowned_goal,
     }
 
 
@@ -401,16 +804,48 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
     meta = _mapping(finding.get("meta_repair_summary"))
     superfixer = _mapping(finding.get("deterministic_superfixer_evidence"))
     reasons = _reason_tokens(finding)
+    current_meta_refs = [
+        item
+        for item in _list(meta.get("meta_run_refs"))
+        if isinstance(item, Mapping) and item.get("current_episode") is not False
+    ]
+    current_episode_present = bool(current_meta_refs)
     failed_launch = bool(meta.get("failed_meta_run_count") or meta.get("failed_meta_record_count"))
     missing = bool(
         meta.get("missing_meta_run_evidence")
-        or superfixer.get("absent_or_stale_l2")
+        or (
+            superfixer.get("absent_or_stale_l2")
+            and not current_episode_present
+        )
         or any("meta-repair trigger" in item and "no meta record" in item for item in reasons)
     )
     false_success = any(
         token in item
         for item in reasons
         for token in ("false_fixed_l2", "l2 false success", "no ordinary repair retrigger")
+    )
+    recursion_blocked = bool(meta.get("recursion_guard_blocked"))
+    investigation = _mapping(
+        _mapping(finding.get("repair_data_summary")).get("meta_investigation_summary")
+    )
+    failure_codes = {
+        _text(item.get("failure_code"))
+        for item in current_meta_refs
+        if item.get("failure_code")
+    }
+    access_failure = bool(
+        str(investigation.get("failure_code") or "").startswith("investigator_")
+        or any(code.startswith("investigator_") for code in failure_codes)
+    )
+    ordinary_retrigger_failed = "ordinary_retrigger_failed" in failure_codes
+    trigger_rejected = "meta_repair_trigger_rejected" in failure_codes
+    terminal_no_fix = bool(
+        failure_codes
+        & {
+            "meta_repair_authority_blocked",
+            "meta_repair_commit_custody_failed",
+            "meta_repair_no_fix",
+        }
     )
     l1 = _l1_failure_fingerprint(finding)
     due = bool(
@@ -419,8 +854,26 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         or superfixer.get("actionable")
         or l1.get("failed")
     )
-    failed = bool(due and (failed_launch or missing or false_success))
-    axis = "FIXED" if false_success else "TRACKED" if failed_launch else "CONTEXT"
+    failed = bool(
+        due
+        and (
+            failed_launch
+            or missing
+            or false_success
+            or recursion_blocked
+            or access_failure
+            or ordinary_retrigger_failed
+            or trigger_rejected
+            or terminal_no_fix
+        )
+    )
+    axis = (
+        "FIXED"
+        if false_success or ordinary_retrigger_failed or trigger_rejected or terminal_no_fix
+        else "TRACKED"
+        if failed_launch or recursion_blocked
+        else "CONTEXT"
+    )
     return {
         "failed": failed,
         "axis": axis if failed else "",
@@ -428,6 +881,12 @@ def _l2_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
         "failed_launch": failed_launch,
         "missing_or_stale": missing,
         "false_success": false_success,
+        "recursion_guard_blocked": recursion_blocked,
+        "investigator_access_failure": access_failure,
+        "ordinary_retrigger_failed": ordinary_retrigger_failed,
+        "trigger_rejected": trigger_rejected,
+        "terminal_no_fix": terminal_no_fix,
+        "failure_codes": sorted(failure_codes),
         "trigger": _text(meta.get("trigger")),
     }
 
@@ -467,8 +926,68 @@ def classify_true_stall(
         or unresolved_actions
         or chain_state in {"awaiting_human", "awaiting_human_verify"}
     )
-    intent_allowed = resolver_state in _MACHINE_ACTION_STATES
+    goal_actionable = bool(l1.get("active_unowned_goal"))
+    typed_backstop_stall = bool(
+        progress.get("accepted_unclaimed_backstop_stall")
+        and l1.get("actionable_accepted_unclaimed")
+        and l2.get("failed")
+    )
+    intent_allowed = bool(
+        resolver_state in _MACHINE_ACTION_STATES
+        or goal_actionable
+        or typed_backstop_stall
+    )
+    repair_goal = _mapping(
+        _mapping(finding.get("meta_repair_summary")).get("repair_goal")
+    )
+    preserve_live = bool(
+        repair_goal.get("status") == "active"
+        and _text(repair_goal.get("control_action")).lower() == "preserve_live"
+    )
+    healthy_live_process = process.get("live") is True
     intentional_wait = bool(explicit_pause or human_gate or external.get("intentional_wait"))
+
+    repair = _mapping(finding.get("repair_data_summary"))
+    goal = _mapping(repair.get("repair_goal_summary"))
+    meta_goal = _mapping(_mapping(finding.get("meta_repair_summary")).get("repair_goal"))
+    investigation = _mapping(repair.get("investigation_summary"))
+    actual_failure = _mapping(investigation.get("actual_failure"))
+    safe_target = _mapping(investigation.get("safe_repair_target"))
+    approval_gate_reached = bool(
+        _text(goal.get("status")).lower() == "approval_required"
+        and _text(meta_goal.get("control_action")).lower() == "await_approval"
+        and chain_state == "awaiting_pr_merge"
+        and external.get("coherent") is True
+        and l1.get("failed")
+        and l2.get("failed")
+    )
+    corrective_path = (
+        {
+            "schema_version": "arnold-l3-corrective-path-v1",
+            "kind": "approval_gate",
+            "decision": "approval_required",
+            "action": "await_human_pr_merge",
+            "repair_dispatch_permitted": False,
+            "pr_number": external.get("expected_pr_number"),
+            "pr_state": external.get("pr_state"),
+            "gate_state": chain_state,
+            "root_cause": _text(actual_failure.get("mechanism"))[:2000],
+            "safe_repair_target": {
+                "kind": _text(safe_target.get("kind")),
+                "scope": _text(safe_target.get("scope")),
+            },
+            "first_broken_layer": "L1",
+            "first_broken_axis": _text(l1.get("axis")),
+            "missed_by_layer": "L2",
+            "missed_by_axis": _text(l2.get("axis")),
+            "reason": (
+                "the historical L1/L2 failure is detected and repaired locally, but "
+                "the authoritative review policy requires remote PR merge approval"
+            ),
+        }
+        if approval_gate_reached
+        else {}
+    )
 
     evidence_sources = {
         "live_process": process,
@@ -478,10 +997,21 @@ def classify_true_stall(
         "logs": log,
         "external_state": external,
     }
+    source_substitutions = (
+        {
+            "live_process": (
+                "typed accepted-unclaimed L1 custody plus failed/missing L2 and "
+                "a stale nonterminal chain log prove a repair-system stall without "
+                "claiming that the runner is dead"
+            )
+        }
+        if typed_backstop_stall and process.get("present") is not True
+        else {}
+    )
     missing_sources = [
         name
         for name, evidence in evidence_sources.items()
-        if evidence.get("present") is not True
+        if evidence.get("present") is not True and name not in source_substitutions
     ]
     if marker.get("present") and not marker.get("consistent"):
         missing_sources.append("session_marker_consistency")
@@ -489,10 +1019,16 @@ def classify_true_stall(
         missing_sources.append("canonical_chain_path")
 
     blocks: list[str] = []
+    if _text(_mapping(finding.get("evidence_snapshot")).get("status")) == "superseded":
+        blocks.append("evidence_snapshot_superseded")
     if missing_sources:
         blocks.append("incomplete_or_incoherent_evidence")
     if resolver_state in _INTENTIONAL_WAIT_STATES or intentional_wait:
         blocks.append("intentional_pause_or_human_gate")
+    if preserve_live:
+        blocks.append("preserve_live_repair_goal")
+    if healthy_live_process and not goal_actionable:
+        blocks.append("healthy_live_process")
     if not intent_allowed:
         blocks.append("resolver_did_not_authorize_machine_action")
     if chain.get("terminal") or plan.get("terminal"):
@@ -518,7 +1054,11 @@ def classify_true_stall(
             "TRACKED": not bool(l1.get("missing_canonical_manifest")),
             "FIXED": not bool(l1.get("false_success")) and not bool(l1.get("failed")),
             "INTENT": not any("guard_weakening" in item for item in _reason_tokens(finding)),
-            "CONTEXT": not bool(l1.get("accepted_unclaimed_count")),
+            "CONTEXT": not bool(
+                l1.get("accepted_unclaimed_count")
+                or l1.get("missing_custody_links")
+                or l1.get("liveness_without_custody")
+            ),
             "failure": l1,
         },
         "L2": {
@@ -543,12 +1083,19 @@ def classify_true_stall(
         "schema_version": ESCALATION_SCHEMA,
         "policy_version": POLICY_VERSION,
         "eligible": eligible,
-        "decision": "true_stall" if eligible else "report_only",
+        "decision": (
+            "true_stall"
+            if eligible
+            else "approval_required"
+            if approval_gate_reached
+            else "report_only"
+        ),
         "session": _text(finding.get("session")),
         "plan": _text(finding.get("plan")),
         "escalation_id": escalation_identity(finding),
         "blocks": sorted(set(blocks)),
         "missing_sources": sorted(set(missing_sources)),
+        "source_substitutions": source_substitutions,
         "evidence_sources": evidence_sources,
         "progress": progress,
         "custody_walk": custody_walk,
@@ -561,6 +1108,7 @@ def classify_true_stall(
             "child_difficulty_ceiling": selected.child_difficulty_ceiling,
             "promotion_reason": "",
         },
+        "corrective_path": corrective_path,
         "quarantine": {
             "required": False,
             "state": "not_applied",
@@ -578,6 +1126,15 @@ def classify_true_stall(
             "custody_walk": custody_walk,
             "cursor": gate["baseline_cursor"],
         }
+    )
+    gate["gather_reason"] = (
+        "l3_actionable_repair: typed accepted-unclaimed L1 custody, failed or "
+        "missing L2 custody, and a stale nonterminal chain passed every "
+        "fail-closed authorization guard"
+        if eligible
+        else "l3_repair_gate_blocked: "
+        f"blocks={','.join(gate['blocks']) or 'none'} "
+        f"missing_sources={','.join(gate['missing_sources']) or 'none'}"
     )
     return gate
 
@@ -619,7 +1176,7 @@ def plan_dispatch(
     reason = "all escalation predicates and bounded policy controls passed"
     if gate.get("eligible") is not True:
         decision = "report_only"
-        reason = "true-stall gate did not pass"
+        reason = _text(gate.get("gather_reason")) or "true-stall gate did not pass"
     elif not authorized:
         decision = "blocked_authority"
         reason = "L3 master-plus-path mutation authority is absent"
@@ -917,6 +1474,7 @@ def bounded_repair_context(finding: Mapping[str, Any]) -> dict[str, Any]:
     metadata = _mapping(latest.get("metadata") or finding.get("latest_failure_metadata"))
     repair = _mapping(finding.get("repair_data_summary"))
     meta = _mapping(finding.get("meta_repair_summary"))
+    repair_goal = _mapping(meta.get("repair_goal"))
     source_refs = _mapping(finding.get("source_refs"))
     mechanics = {
         key: metadata.get(key)
@@ -946,6 +1504,10 @@ def bounded_repair_context(finding: Mapping[str, Any]) -> dict[str, Any]:
         "repair_iterations": _list(repair.get("iterations"))[-5:],
         "repair_attempts": _list(repair.get("attempts"))[-5:],
         "meta_run_refs": _list(meta.get("meta_run_refs"))[-5:],
+        "post_fixer_recovery_gate": _mapping(repair_goal.get("recovery_gate")),
+        "failed_fixer_evidence": _list(
+            repair_goal.get("failed_fixer_evidence")
+        )[-15:],
         "artifact_refs": {
             key: _list(value)[-10:] if isinstance(value, list) else value
             for key, value in source_refs.items()
@@ -981,15 +1543,23 @@ __all__ = [
     "DEEP_REPAIR_RUN_KIND",
     "ESCALATION_SCHEMA",
     "EscalationPolicy",
+    "AUDIT_REVIEW_EVIDENCE_MAX_BYTES",
+    "AUDIT_REVIEW_RESPONSE_MAX_BYTES",
+    "L3_REPAIR_CONTEXT_MAX_BYTES",
+    "L3_REPAIR_REQUEST_MAX_BYTES",
     "POLICY_VERSION",
     "bounded_repair_context",
+    "bounded_audit_review_pointer",
+    "bounded_auditor_projection",
     "classify_true_stall",
     "escalation_identity",
     "evidence_digest",
     "next_attempt_state",
+    "normalize_audit_review_response",
     "plan_dispatch",
     "record_reverification",
     "semantic_cursor",
+    "validate_l3_repair_dispatch_context",
     "validate_managed_launch",
     "verify_recovery",
 ]

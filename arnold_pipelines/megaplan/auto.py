@@ -1564,13 +1564,24 @@ def _latest_meaningful_history_failure(
     history = state_data.get("history")
     if not isinstance(history, list):
         return None
-    for entry in reversed(history):
+    succeeded_steps: set[str] = set()
+    for history_index in range(len(history) - 1, -1, -1):
+        entry = history[history_index]
         if not isinstance(entry, dict):
             continue
+        step = str(entry.get("step") or entry.get("phase") or "").strip().lower()
         result = str(entry.get("result") or "").strip().lower()
         message = _normalize_failure_message(entry.get("message"))
+        if result in {"success", "succeeded", "done", "pass", "passed", "ok"}:
+            if step:
+                succeeded_steps.add(step)
+            continue
+        if step and step in succeeded_steps:
+            continue
         if result in {"error", "failed", "failure", "blocked"} or message:
-            return entry
+            failure = dict(entry)
+            failure["_history_index"] = history_index
+            return failure
     return None
 
 
@@ -1597,6 +1608,21 @@ def _repeated_failure_signature(
     message = _normalize_failure_message(failure.get("message"))
     if not message:
         return None
+    history_index = int(failure.get("_history_index", -1))
+    occurrence_raw = json.dumps(
+        {
+            "history_index": history_index,
+            "timestamp": failure.get("timestamp") or failure.get("completed_at"),
+            "artifact_hash": failure.get("artifact_hash"),
+            "raw_output_file": failure.get("raw_output_file"),
+            "invocation_id": failure.get("invocation_id"),
+            "session_id": failure.get("session_id"),
+            "step": step,
+            "result": result,
+            "message": message,
+        },
+        sort_keys=True,
+    )
     raw = json.dumps(
         {
             "state": status.get("state"),
@@ -1612,7 +1638,30 @@ def _repeated_failure_signature(
         "step": step,
         "result": result,
         "message": message,
+        "history_index": history_index,
+        "timestamp": failure.get("timestamp") or failure.get("completed_at") or "",
+        "occurrence_id": hashlib.sha256(occurrence_raw.encode("utf-8")).hexdigest(),
     }
+
+
+def _update_repeated_failure_counter(
+    repeat: dict[str, Any] | None,
+    *,
+    tracked_signature: str | None,
+    tracked_occurrence: str | None,
+    count: int,
+) -> tuple[str | None, str | None, int]:
+    """Count distinct failure occurrences, never polls of one history entry."""
+
+    if repeat is None:
+        return None, None, 0
+    signature = str(repeat["hash"])
+    occurrence = str(repeat["occurrence_id"])
+    if signature != tracked_signature:
+        return signature, occurrence, 1
+    if occurrence == tracked_occurrence:
+        return signature, occurrence, count
+    return signature, occurrence, count + 1
 
 
 def _auto_verify_deferred_must_criteria(plan_dir: Path | None, *, log) -> bool:
@@ -2088,6 +2137,7 @@ def _record_lifecycle_failure(
         phase=phase,
         suggested_action=suggested_action,
         metadata=metadata,
+        retry_strategy=str((resume_cursor or {}).get("retry_strategy") or ""),
     )
     if progress_emitter is not None and failure_details is not None:
         if current_state == STATE_BLOCKED:
@@ -2109,6 +2159,7 @@ def _enqueue_lifecycle_failure_request(
     phase: str | None,
     suggested_action: str | None,
     metadata: dict[str, Any] | None,
+    retry_strategy: str = "",
 ) -> None:
     try:
         from arnold_pipelines.megaplan.cloud.feature_flags import repair_request_queue_enabled
@@ -2128,6 +2179,7 @@ def _enqueue_lifecycle_failure_request(
                 "plan_dir": str(plan_dir),
                 "plan_name": plan_dir.name,
                 "workspace_path": str(workspace_path),
+                "retry_strategy": retry_strategy,
             },
             problem_signature={
                 "failure_kind": kind,
@@ -2146,6 +2198,51 @@ def _enqueue_lifecycle_failure_request(
             plan_dir=plan_dir,
             phase=phase,
             context={"failure_kind": kind},
+        )
+
+
+def _enqueue_terminal_failure_request(plan_dir: Path) -> None:
+    """Route a handler-recorded terminal failure to the managed repair queue.
+
+    Some handlers, notably review, record ``latest_failure`` while transitioning
+    the plan directly to ``blocked``.  The auto driver observes that terminal
+    state without calling :func:`_record_lifecycle_failure`, so mirror the
+    existing failure into repair custody without rewriting plan state.
+    """
+
+    try:
+        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        failure = state.get("latest_failure") if isinstance(state, dict) else None
+        if not isinstance(failure, dict):
+            return
+        queue_root, marker_dir, repair_session, repair_run_kind = (
+            _lifecycle_repair_request_route(plan_dir)
+        )
+        metadata = failure.get("metadata")
+        _enqueue_lifecycle_failure_request(
+            plan_dir=plan_dir,
+            queue_root=queue_root,
+            marker_dir=marker_dir,
+            session=repair_session,
+            run_kind=repair_run_kind,
+            kind=str(failure.get("kind") or "terminal_blocked"),
+            message=str(failure.get("message") or "plan entered a blocked terminal state"),
+            current_state=str(state.get("current_state") or STATE_BLOCKED),
+            phase=str(failure.get("phase") or "") or None,
+            suggested_action=str(failure.get("suggested_action") or "") or None,
+            metadata=metadata if isinstance(metadata, dict) else None,
+            retry_strategy=str(
+                (state.get("resume_cursor") or {}).get("retry_strategy")
+                if isinstance(state.get("resume_cursor"), dict)
+                else ""
+            ),
+        )
+    except Exception:
+        _warn_best_effort_emit_failure(
+            "M3A_WARN_REPAIR_REQUEST_ENQUEUE",
+            action="enqueue_terminal_failure_request",
+            plan_dir=plan_dir,
+            phase="terminal_block",
         )
 
 
@@ -3760,6 +3857,7 @@ def drive(
     external_retry_counts_by_phase: dict[str, int] = {}
     blocked_retry_count = 0
     repeated_failure_signature: str | None = None
+    repeated_failure_occurrence: str | None = None
     repeated_failure_signature_count = 0
     invalid_transition_signature: str | None = None
     invalid_transition_signature_count = 0
@@ -4072,13 +4170,16 @@ def drive(
         )
 
         repeat = _repeated_failure_signature(plan_dir, status)
-        if repeat is None:
-            pass
-        elif repeat["hash"] == repeated_failure_signature:
-            repeated_failure_signature_count += 1
-        else:
-            repeated_failure_signature = str(repeat["hash"])
-            repeated_failure_signature_count = 1
+        (
+            repeated_failure_signature,
+            repeated_failure_occurrence,
+            repeated_failure_signature_count,
+        ) = _update_repeated_failure_counter(
+            repeat,
+            tracked_signature=repeated_failure_signature,
+            tracked_occurrence=repeated_failure_occurrence,
+            count=repeated_failure_signature_count,
+        )
         if (
             repeat is not None
             and max_repeated_failure_signatures > 0
@@ -4117,6 +4218,9 @@ def drive(
                     "failure_step": repeat.get("step"),
                     "failure_result": repeat.get("result"),
                     "failure_message": repeat.get("message"),
+                    "failure_occurrence_id": repeat.get("occurrence_id"),
+                    "failure_history_index": repeat.get("history_index"),
+                    "failure_timestamp": repeat.get("timestamp"),
                     "iteration": iteration,
                 },
             )
@@ -4311,6 +4415,7 @@ def drive(
                     _clear_latest_failure_for_success(plan_dir)
                 elif terminal_status == "blocked":
                     _clear_obsolete_failure_for_terminal_block(plan_dir, status)
+                    _enqueue_terminal_failure_request(plan_dir)
                 try:
                     if terminal_status == "aborted":
                         emit_event(EventKind.PLAN_ABORTED, plan_dir=plan_dir, payload={"state": state})

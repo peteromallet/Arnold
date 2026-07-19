@@ -157,9 +157,17 @@ def test_newest_launch_is_single_synthesis_delivery_owner_with_descriptions(
             self.pid = pid
 
     pids = iter((4101, 4102))
+
+    def spawn(manifest_path, manifest):
+        process = Process(next(pids))
+        current = dict(manifest)
+        current.update({"status": "running", "pid": process.pid})
+        manifest_path.write_text(json.dumps(current))
+        return process, current
+
     monkeypatch.setattr(
-        "arnold_pipelines.megaplan.resident.subagent.subprocess.Popen",
-        lambda *args, **kwargs: Process(next(pids)),
+        "arnold_pipelines.megaplan.resident.subagent._spawn_managed_supervisor",
+        spawn,
     )
     first = launch_codex_subagent_detached(
         task="Review the proposed resident relationship contract.",

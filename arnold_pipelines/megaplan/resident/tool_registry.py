@@ -62,6 +62,8 @@ class ToolRegistry:
             "read_context_node",
             "search_context",
             "launch_subagent",
+            "follow_up_subagent",
+            "fix_the_fixer",
             "read_reply_chain",
             "read_todo_list",
             "cloud_status_chain",

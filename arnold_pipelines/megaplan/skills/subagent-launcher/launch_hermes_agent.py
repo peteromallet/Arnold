@@ -302,7 +302,10 @@ def _automatic_managed_reexec() -> int | None:
     project_dir = str(Path.cwd())
     query_file = ""
     child_args: list[str] = []
-    for argument in sys.argv[1:]:
+    arguments = sys.argv[1:]
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
         if argument.startswith(("--model=",)):
             model = argument.split("=", 1)[1]
         elif argument.startswith(("--project_dir=", "--project-dir=")):
@@ -311,10 +314,29 @@ def _automatic_managed_reexec() -> int | None:
             query_file = argument.split("=", 1)[1]
             option = argument.split("=", 1)[0]
             child_args.append(f"{option}=@managed-stdin@")
+            index += 1
             continue
         elif argument.startswith("--query="):
             raise RuntimeError("automatic nested agent requires sealed --query-file input")
+        elif argument in {"--model", "--project_dir", "--project-dir", "--query_file", "--query-file"}:
+            if index + 1 >= len(arguments):
+                raise RuntimeError(f"automatic nested agent option {argument} requires a value")
+            value = arguments[index + 1]
+            if argument == "--model":
+                model = value
+                child_args.extend((argument, value))
+            elif argument in {"--project_dir", "--project-dir"}:
+                project_dir = value
+                child_args.extend((argument, value))
+            else:
+                query_file = value
+                child_args.extend((argument, "@managed-stdin@"))
+            index += 2
+            continue
+        elif argument == "--query":
+            raise RuntimeError("automatic nested agent requires sealed --query-file input")
         child_args.append(argument)
+        index += 1
     if not query_file:
         raise RuntimeError("automatic nested agent requires --query-file")
     query_path = Path(query_file).expanduser().resolve()
@@ -433,6 +455,8 @@ def run(
     max_tokens: int = 65536,
     context_budget_tokens: Optional[int] = None,
     session_id: Optional[str] = None,
+    resume_session: bool = False,
+    metadata_file: Optional[str] = None,
     project_dir: Optional[str] = None,
 ) -> None:
     """Dispatch a hermes-backed agent and print its final response to stdout.
@@ -458,7 +482,11 @@ def run(
             auto-compaction triggers. This raises the per-run compressor cap
             without changing Hermes config or context-length cache. Useful
             when provider metadata/cache underestimates a long-context model.
-        session_id: Reuse a prior hermes session id (optional).
+        session_id: Explicit Hermes session id. Managed launches reserve one
+            before process start so it is recoverable even after a crash.
+        resume_session: Require ``session_id`` to exist and hydrate its stored
+            conversation before running the new turn.
+        metadata_file: Optional path for a structured session/result receipt.
         project_dir: Working directory the agent should treat as cwd.
             Defaults to the script's invoking cwd. Note: this does NOT install
             the megaplan sandbox — see security note in module docstring.
@@ -473,6 +501,9 @@ def run(
         sys.exit(2)
     if context_budget_tokens is not None and int(context_budget_tokens) <= 0:
         _eprint("error: --context-budget-tokens must be a positive integer")
+        sys.exit(2)
+    if resume_session and not session_id:
+        _eprint("error: --resume-session requires --session-id")
         sys.exit(2)
 
     if query_file:
@@ -537,12 +568,22 @@ def run(
             "will run with the invoking user's privileges."
         )
 
+    session_db = SessionDB()
+    conversation_history = None
+    if resume_session:
+        if session_db.get_session(str(session_id)) is None:
+            _eprint(f"error: Hermes session {session_id!r} does not exist")
+            sys.exit(8)
+        conversation_history = session_db.get_messages_as_conversation(str(session_id))
+
     try:
         agent = AIAgent(
             model=resolved_model,
-            enabled_toolsets=toolset_list or None,
+            # [] is an explicit no-tools capability set.  None means "use the
+            # runtime default" and silently grants file/web tools.
+            enabled_toolsets=toolset_list,
             session_id=session_id,
-            session_db=SessionDB(),
+            session_db=session_db,
             max_tokens=max_tokens,
             skip_context_files=True,
             skip_memory=True,
@@ -585,7 +626,11 @@ def run(
     real_stdout = sys.stdout
     sys.stdout = sys.stderr
     try:
-        result = agent.run_conversation(user_message=query, **run_kwargs)
+        result = agent.run_conversation(
+            user_message=query,
+            conversation_history=conversation_history,
+            **run_kwargs,
+        )
     except KeyboardInterrupt:
         sys.stdout = real_stdout
         _eprint("[launch_hermes_agent] interrupted")
@@ -608,6 +653,57 @@ def run(
         )
         _eprint(f"[launch_hermes_agent] elapsed={elapsed:.1f}s")
         sys.exit(7)
+
+    if metadata_file:
+        metadata_path = Path(metadata_file).expanduser()
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        messages = result.get("messages") if isinstance(result, dict) else []
+        tool_events = []
+        for message in messages if isinstance(messages, list) else []:
+            if not isinstance(message, dict):
+                continue
+            for tool_call in message.get("tool_calls") or []:
+                if not isinstance(tool_call, dict):
+                    continue
+                function = tool_call.get("function") or {}
+                tool_events.append(
+                    {
+                        "event": "tool.requested",
+                        "tool_call_id": tool_call.get("id"),
+                        "tool": function.get("name") if isinstance(function, dict) else None,
+                    }
+                )
+        receipt = {
+            "schema_version": "arnold-hermes-launcher-metadata-v1",
+            "session_id": agent.session_id,
+            "resumed_session_id": session_id if resume_session else None,
+            "model": model,
+            "resolved_model": resolved_model,
+            "toolsets": toolset_list,
+            "max_tokens": int(max_tokens),
+            "status": "completed",
+            "elapsed_seconds": elapsed,
+            "usage": {
+                key: result.get(key)
+                for key in (
+                    "input_tokens",
+                    "output_tokens",
+                    "cache_read_tokens",
+                    "cache_write_tokens",
+                    "reasoning_tokens",
+                    "total_tokens",
+                    "estimated_cost_usd",
+                )
+                if isinstance(result, dict) and result.get(key) is not None
+            },
+            "events": tool_events,
+        }
+        temporary = metadata_path.with_name(f".{metadata_path.name}.{os.getpid()}.tmp")
+        temporary.write_text(
+            json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, metadata_path)
 
     print(final)
     _eprint(f"[launch_hermes_agent] done in {elapsed:.1f}s")

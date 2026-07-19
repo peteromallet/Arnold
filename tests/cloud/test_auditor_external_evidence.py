@@ -129,6 +129,32 @@ def test_collect_ci_health_reports_green_when_main_is_healthy() -> None:
     assert any(call[:3] == ["gh", "pr", "checks"] for call in calls)
 
 
+def test_pr_health_is_not_red_from_unrelated_base_failure() -> None:
+    module = _module()
+
+    def runner(args: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        if args[:4] == ["gh", "run", "list", "--branch"]:
+            return _completed(
+                args,
+                stdout=json.dumps(
+                    [{"status": "completed", "conclusion": "failure", "workflowName": "base-ci"}]
+                ),
+            )
+        if args[:3] == ["gh", "pr", "checks"]:
+            return _completed(args, stdout="build\tpass\tlink\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    result = module.collect_ci_health(
+        Path("/repo"), base_branch="release", pr_number=255, runner=runner
+    )
+
+    assert result["status"] == "green"
+    assert result["pr_status"] == "green"
+    assert result["base_status"] == "red"
+    assert result["failing_run_count"] == 1
+    assert result["base_branch"] == "release"
+
+
 def test_collect_ci_health_reports_unavailable_when_gh_cannot_run() -> None:
     module = _module()
 

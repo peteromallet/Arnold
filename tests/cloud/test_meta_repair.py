@@ -21,6 +21,9 @@ from pathlib import Path
 import pytest
 
 import arnold_pipelines.megaplan.cloud.meta_repair as meta_repair_module
+from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import (
+    PROCESS_CUSTODY_FAIL_CLOSED_POLICY,
+)
 from arnold_pipelines.megaplan.cloud.meta_repair import (
     META_REPAIR_BUDGET_SECS,
     _MIN_UNCHANGED_FINGERPRINT_ATTEMPTS,
@@ -200,7 +203,7 @@ def _make_session_dir(tmp_path: Path, session: str) -> Path:
 class TestTriggerPriority:
     def test_all_triggers_have_priority(self) -> None:
         for trigger in MetaRepairTrigger:
-            assert trigger_priority(trigger) in range(1, 8)
+            assert trigger_priority(trigger) in range(1, len(MetaRepairTrigger) + 1)
 
     def test_non_trigger_has_no_priority(self) -> None:
         assert trigger_priority("none") == 99  # type: ignore[arg-type]
@@ -668,6 +671,30 @@ class TestClassifyStateInspectionFailure:
             has_state_inspection_error=False,
         )
         assert result.trigger is None
+
+
+class TestClassifyL1CustodyFailure:
+    def test_context_or_investigation_failure_routes_immediately_to_l2(self) -> None:
+        result = classify_repair_system_failure(
+            session="custody-control-plane-20260714",
+            repair_outcome="fixer_infrastructure_failure",
+            has_l1_custody_failure=True,
+        )
+        assert result.trigger == MetaRepairTrigger.L1_CUSTODY_FAILURE
+        assert result.should_dispatch is True
+        assert "investigation/context custody handoff" in result.rationale[0]
+
+    def test_evaluate_passes_l1_custody_failure_to_classifier(self, tmp_path: Path) -> None:
+        repair_root = _make_session_dir(tmp_path, "l1-custody")
+        classification, prompt = evaluate_meta_repair_triggers(
+            session="l1-custody",
+            repair_data_dir=repair_root,
+            repair_outcome="fixer_infrastructure_failure",
+            has_l1_custody_failure=True,
+        )
+        assert classification.trigger == MetaRepairTrigger.L1_CUSTODY_FAILURE
+        assert prompt is not None
+        assert "l1_custody_failure" in prompt
 
 
 class TestClassifyModelToolLaunchFailure:
@@ -1232,6 +1259,30 @@ class TestLoadRedactedEvidence:
 
 
 class TestBuildMetaRepairPrompt:
+    def test_prompt_includes_canonical_fail_closed_process_custody_policy(self) -> None:
+        classification = classify_repair_system_failure(
+            session="process-custody",
+            repair_outcome=REPAIR_TIMEOUT,
+            repair_budget_exhausted=True,
+        )
+
+        normal_prompt = build_meta_repair_prompt(classification)
+        emergency_prompt = build_meta_repair_prompt(classification, force_emergency=True)
+
+        for prompt in (normal_prompt, emergency_prompt):
+            normalized_prompt = " ".join(prompt.split())
+            assert PROCESS_CUSTODY_FAIL_CLOSED_POLICY in prompt
+            assert "this same acting agent/run launched that exact target" in normalized_prompt
+            assert "Mere discovery by `pgrep`, `ps`" in prompt
+            assert "shared workspace or session" in normalized_prompt
+            assert "your launcher, parent, or any ancestor" in normalized_prompt
+            assert "child/descendant custody stack" in normalized_prompt
+            assert "process holding your durable goal" in normalized_prompt
+            assert "process owned by another run" in normalized_prompt
+            assert "do nothing and report the ambiguity" in normalized_prompt
+            assert "manifest-targeted lifecycle operations" in normalized_prompt
+            assert "Broad `pgrep`-derived kill lists" in prompt
+
     def test_prompt_includes_trigger_and_session(self) -> None:
         classification = classify_repair_system_failure(
             session="prompt-session",
@@ -1701,7 +1752,7 @@ class TestEdgeCases:
         assert result.trigger == MetaRepairTrigger.PERSISTENT_RECURRING_RETRY
 
     def test_all_triggers_represented(self) -> None:
-        """Ensure all seven trigger enum values are distinct and enumerable."""
+        """Ensure every canonical fixer-custody trigger is enumerable."""
         triggers = set(t.value for t in MetaRepairTrigger)
         assert triggers == {
             "repair_timeout",
@@ -1711,8 +1762,12 @@ class TestEdgeCases:
             "partial_liveness_recurrence",
             "discord_delivery_failure",
             "l1_custody_failure",
+            "repair_goal_owner_missing",
+            "repair_context_target_mismatch",
+            "repair_goal_circuit_breaker",
+            "l3_progress_auditor",
         }
-        assert len(triggers) == 7
+        assert len(triggers) == 11
 
     def test_trigger_label_for_non_trigger(self) -> None:
         result = classify_repair_system_failure(session="edge-5")
@@ -1879,6 +1934,7 @@ class TestMetaRepairRecordShape:
             "meta_repair_id",
             "session",
             "trigger",
+            "blocker_id",
             "diagnosis",
             "subagent_results",
             "changes",
@@ -1889,6 +1945,16 @@ class TestMetaRepairRecordShape:
             "created_at",
         }
         assert set(d.keys()) == required_keys
+
+    def test_record_roundtrips_blocker_identity(self) -> None:
+        record = MetaRepairRecord(
+            meta_repair_id="mr-blocker",
+            session="test-session",
+            trigger=MetaRepairTrigger.REPAIR_TIMEOUT,
+            blocker_id="blocker-current",
+        )
+
+        assert MetaRepairRecord.from_dict(record.to_dict()).blocker_id == "blocker-current"
 
     def test_extracts_reported_change_and_test_custody(self) -> None:
         response = """ESCALATE
@@ -2370,7 +2436,11 @@ class TestRetriggerVerification:
                     "blocker_cleared": True,
                     "directly_observed": True,
                     "independent": True,
-                    "observed_at": "2026-07-09T07:54:00+00:00",
+                    "canonical_runner_live": True,
+                    "fresh_progress_beyond_checkpoint": True,
+                    "continued_progress": True,
+                    "first_progress_observed_at": "2026-07-09T07:54:00+00:00",
+                    "observed_at": "2026-07-09T07:55:00+00:00",
                 },
             },
         )
@@ -2523,6 +2593,39 @@ class TestCheckMetaRepairRecursion:
         assert NEEDS_HUMAN in result.recommendation
         assert "mr-001" in result.existing_meta_repair_ids
 
+    def test_blocker_scoping_preserves_cap_without_poisoning_new_episode(
+        self, tmp_path: Path
+    ) -> None:
+        repair_dir = tmp_path / "repair-data"
+        meta_dir = repair_dir / "meta"
+        meta_dir.mkdir(parents=True)
+        for blocker_id in ("old-blocker", "current-blocker"):
+            (meta_dir / f"{blocker_id}.json").write_text(
+                json.dumps({
+                    "meta_repair_id": blocker_id,
+                    "session": "long-lived-session",
+                    "blocker_id": blocker_id,
+                    "outcome": "needs_human",
+                }),
+                encoding="utf-8",
+            )
+
+        fresh = check_meta_repair_recursion(
+            session="long-lived-session",
+            repair_data_dir=repair_dir,
+            blocker_id="new-blocker",
+        )
+        repeated = check_meta_repair_recursion(
+            session="long-lived-session",
+            repair_data_dir=repair_dir,
+            blocker_id="current-blocker",
+        )
+
+        assert fresh.recursing is False
+        assert fresh.existing_meta_repair_ids == ()
+        assert repeated.recursing is True
+        assert repeated.existing_meta_repair_ids == ("current-blocker",)
+
     def test_codex_launch_failure_record_does_not_poison_recursion(
         self, tmp_path: Path
     ) -> None:
@@ -2558,6 +2661,37 @@ class TestCheckMetaRepairRecursion:
         (meta_dir / "mr-custody-1.json").write_text(
             json.dumps({
                 "meta_repair_id": "mr-custody-1",
+                "session": "recursion-test",
+                "outcome": "commit_custody_failed",
+            }),
+            encoding="utf-8",
+        )
+
+        result = check_meta_repair_recursion(
+            session="recursion-test", repair_data_dir=repair_dir
+        )
+
+        assert result.recursing is False
+        assert result.existing_meta_repair_ids == ()
+
+    def test_completion_verdict_is_not_counted_as_a_second_attempt(
+        self, tmp_path: Path
+    ) -> None:
+        repair_dir = tmp_path / "repair-data"
+        meta_dir = repair_dir / "meta"
+        meta_dir.mkdir(parents=True)
+        (meta_dir / "mr-custody-1.json").write_text(
+            json.dumps({
+                "meta_repair_id": "mr-custody-1",
+                "session": "recursion-test",
+                "outcome": "commit_custody_failed",
+            }),
+            encoding="utf-8",
+        )
+        (meta_dir / "meta_repair_verdict.json").write_text(
+            json.dumps({
+                "contract_id": "repair.meta_complete.1",
+                "boundary_id": "meta_repair_completion",
                 "session": "recursion-test",
                 "outcome": "commit_custody_failed",
             }),
@@ -2829,10 +2963,12 @@ class TestCanCommitChanges:
 
 
 class TestCanPushChanges:
-    """Push gating: push uses the same commit gate."""
+    """Push gating requires a separate, default-off authority."""
+    """Push gating requires independent, default-off authority."""
 
-    def test_push_allowed_when_flag_unset(self) -> None:
+    def test_push_blocked_when_flag_unset(self) -> None:
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
+        os.environ.pop("ARNOLD_META_REPAIR_PUSH_ENABLED", None)
         result = can_push_changes()
         assert result.allowed is False
         assert "master" in result.reason.lower()
@@ -2842,6 +2978,7 @@ class TestCanPushChanges:
         os.environ["ARNOLD_AUTONOMY"] = "1"
         os.environ["ARNOLD_META_REPAIR_ENABLED"] = "1"
         os.environ["ARNOLD_META_REPAIR_COMMIT_ENABLED"] = "1"
+        os.environ["ARNOLD_META_REPAIR_PUSH_ENABLED"] = "1"
         try:
             result = can_push_changes()
             assert result.allowed is True
@@ -2850,6 +2987,7 @@ class TestCanPushChanges:
             os.environ.pop("ARNOLD_AUTONOMY", None)
             os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
             os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
+            os.environ.pop("ARNOLD_META_REPAIR_PUSH_ENABLED", None)
 
     def test_push_blocked_with_falsey_values(self) -> None:
         for val in ("0", "false"):
@@ -2860,12 +2998,14 @@ class TestCanPushChanges:
             finally:
                 os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
 
-    def test_push_uses_same_gate_as_commit(self) -> None:
-        """Push blocked when commit blocked; push allowed when commit allowed."""
+    def test_commit_authority_does_not_imply_push(self) -> None:
+        """A local commit grant must not authorize an external push."""
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
         commit_result = can_commit_changes()
         push_result = can_push_changes()
-        assert push_result.allowed == commit_result.allowed
+        assert commit_result.allowed is True
+        assert push_result.allowed is False
+        assert push_result.flag_name == "ARNOLD_META_REPAIR_PUSH_ENABLED"
 
         os.environ["ARNOLD_META_REPAIR_COMMIT_ENABLED"] = "1"
         os.environ["ARNOLD_AUTONOMY"] = "1"
@@ -2873,8 +3013,23 @@ class TestCanPushChanges:
         try:
             commit_result = can_commit_changes()
             push_result = can_push_changes()
-            assert push_result.allowed == commit_result.allowed
+            assert commit_result.allowed is True
+            assert push_result.allowed is False
+            assert push_result.flag_name == "ARNOLD_META_REPAIR_PUSH_ENABLED"
         finally:
+            os.environ.pop("ARNOLD_AUTONOMY", None)
+            os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
+            os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
+
+    def test_push_requires_commit_gate_too(self) -> None:
+        os.environ["ARNOLD_META_REPAIR_PUSH_ENABLED"] = "1"
+        os.environ["ARNOLD_AUTONOMY"] = "1"
+        os.environ["ARNOLD_META_REPAIR_ENABLED"] = "1"
+        os.environ["ARNOLD_META_REPAIR_COMMIT_ENABLED"] = "0"
+        try:
+            assert can_push_changes().allowed is False
+        finally:
+            os.environ.pop("ARNOLD_META_REPAIR_PUSH_ENABLED", None)
             os.environ.pop("ARNOLD_AUTONOMY", None)
             os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
             os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
@@ -3058,7 +3213,11 @@ def test_meta_retrigger_accepts_only_complete_with_authoritative_terminal_snapsh
                 "blocker_cleared": True,
                 "directly_observed": True,
                 "independent": True,
-                "observed_at": "2026-07-10T01:00:00+00:00",
+                "canonical_runner_live": True,
+                "fresh_progress_beyond_checkpoint": True,
+                "continued_progress": True,
+                "first_progress_observed_at": "2026-07-10T01:00:00+00:00",
+                "observed_at": "2026-07-10T01:01:00+00:00",
             },
         },
     )

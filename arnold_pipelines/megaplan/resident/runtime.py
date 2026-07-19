@@ -18,13 +18,23 @@ from arnold.execution.step_invocation import StepInvocation
 
 from agentbox.redaction import redact_text
 
-from .agent_loop import AgentRequest, AgentResponse, AgentRunner, durable_launch_run_ids
+from .agent_loop import (
+    AgentRequest,
+    AgentResponse,
+    AgentRunner,
+    AgentTimeoutError,
+    durable_launch_run_ids,
+    ToolRuntimeContext,
+    durable_launch_run_ids,
+    execute_registered_tool,
+)
 from .auth import AuthorizationDecision, AuthorizationSubject, ResidentAuthorizer
 from .cloud import CloudToolRequest
 from .coalescing import AsyncBurstCoalescer, BurstBatch
 from .config import ResidentConfig
 from .context_tree import classify_intent_packs
 from .escalations import EscalationAnswerDecision, authorize_escalation_answer, confirm_escalation_resolution
+from .fix_the_fixer import FIX_THE_FIXER_TOOL
 from .profile import MegaplanResidentProfile
 from .query_relationship import (
     classify_query_relationship,
@@ -186,9 +196,143 @@ class ResidentRuntime:
             current=persisted.message,
             project_root=self.project_root,
         )
+        if await self._route_resident_command(persisted):
+            return
         if await self._route_discord_managed_followup(persisted):
             return
         await self.coalescer.submit(persisted.conversation.id, persisted)
+
+    async def _route_resident_command(self, persisted: PersistedInboundEvent) -> bool:
+        command = persisted.event.raw.get("resident_command")
+        if not isinstance(command, Mapping) or command.get("name") != FIX_THE_FIXER_TOOL:
+            return False
+        conversation = self.store.load_resident_conversation(persisted.conversation.id)
+        conversation = conversation or persisted.conversation
+        hot_context = await self.profile.load_hot_context(conversation.id)
+        turn = self.store.create_turn(
+            epic_id=conversation.active_epic_id,
+            triggered_by_message_ids=[persisted.message.id],
+            prompt_snapshot={
+                "resident_command": FIX_THE_FIXER_TOOL,
+                "tool_catalog": self.profile.tools().as_compact_catalog(),
+            },
+            prompt_version=hot_context.get("prompt_version") if isinstance(hot_context, dict) else None,
+            state_at_turn=hot_context,
+            model_version="resident-direct-command",
+            idempotency_key=deterministic_idempotency_key(
+                "resident-command-turn", persisted.message.id, FIX_THE_FIXER_TOOL
+            ),
+        )
+        self.store.update_message(
+            persisted.message.id,
+            bot_turn_id=turn.id,
+            idempotency_key=deterministic_idempotency_key(
+                "resident-command-message-turn", persisted.message.id, turn.id
+            ),
+        )
+        discord_message_id = _optional_string(persisted.event.raw.get("discord_message_id"))
+        processing_message_ids = [discord_message_id] if discord_message_id else []
+        await self._invoke_transport_lifecycle(
+            "mark_processing",
+            conversation_key=conversation.conversation_key,
+            message_ids=processing_message_ids,
+            turn_id=turn.id,
+        )
+        error = _optional_string(command.get("error"))
+        processing_continues = False
+        if error:
+            safe_text = f"I couldn't launch fix-the-fixer: {error}"
+            turn_status = "completed"
+        else:
+            arguments = command.get("arguments")
+            arguments = dict(arguments) if isinstance(arguments, Mapping) else {}
+            audit_id = f"resident_command_{turn.id}"
+            launch_origin = self._managed_subagent_launch_origin(
+                [persisted],
+                turn_id=turn.id,
+                timezone_name=_timezone_name_from_hot_context(hot_context),
+            )
+            audit = await execute_registered_tool(
+                tools=self.profile.tools(),
+                tool_name=FIX_THE_FIXER_TOOL,
+                arguments=arguments,
+                audit_id=audit_id,
+                timeout_s=self.config.model_timeout_s,
+                runtime_context=ToolRuntimeContext(
+                    conversation_id=conversation.id,
+                    subject=persisted.event.subject,
+                    launch_origin={**launch_origin, "delegation_id": audit_id},
+                    tool_call_id=audit_id,
+                ),
+            )
+            result = audit.result if isinstance(audit.result, dict) else {}
+            data = result.get("data") if isinstance(result.get("data"), dict) else {}
+            run_id = _optional_string(data.get("run_id"))
+            run_status = _optional_string(data.get("status"))
+            if result.get("ok") is True and run_id and run_status:
+                target = str(data.get("target") or arguments.get("target") or "")
+                safe_text = (
+                    f"Launched one durable fix-the-fixer meta-fixer `{run_id}` for target "
+                    f"{json.dumps(target, ensure_ascii=False)}. It has D10/high recovery "
+                    "custody and will deliver its evidence-backed result to this request."
+                )
+                processing_continues = run_status in {"launching", "queued", "running"}
+                turn_status = "completed"
+            else:
+                safe_text = "I couldn't launch fix-the-fixer: " + str(
+                    result.get("message") or "the durable launch returned no run receipt"
+                )
+                turn_status = "failed"
+            self._record_tool_calls(
+                turn.id,
+                AgentResponse(final_text=safe_text, tool_calls=(audit,)),
+            )
+        safe_text = redact_text(safe_text)
+        outbound = self.store.create_message(
+            epic_id=conversation.active_epic_id,
+            conversation_id=conversation.id,
+            direction="outbound",
+            content=safe_text,
+            bot_turn_id=turn.id,
+            idempotency_key=deterministic_idempotency_key(
+                "resident-command-outbound", turn.id, FIX_THE_FIXER_TOOL
+            ),
+        )
+        await self.outbound.send(
+            OutboundMessage(
+                conversation_key=conversation.conversation_key,
+                content=safe_text,
+                idempotency_key=outbound.idempotency_key,
+                metadata={
+                    "conversation_id": conversation.id,
+                    "message_id": outbound.id,
+                    "turn_id": turn.id,
+                    "discord_reply_to_message_id": discord_message_id,
+                    "discord_processing_message_ids": processing_message_ids,
+                    "discord_processing_turn_id": turn.id,
+                    "discord_processing_continues": processing_continues,
+                },
+            )
+        )
+        self.store.update_resident_conversation(
+            conversation.id,
+            last_outbound_message_id=outbound.id,
+            delivery_cursor=outbound.id,
+            last_active_at=utc_now(),
+            idempotency_key=deterministic_idempotency_key(
+                "resident-command-conversation-outbound", conversation.id, outbound.id
+            ),
+        )
+        self.store.update_turn(
+            turn.id,
+            status=turn_status,
+            final_output_message_id=outbound.id,
+            message_sent=True,
+            idempotency_key=deterministic_idempotency_key(
+                "resident-command-turn-finished", turn.id, turn_status
+            ),
+        )
+        return True
 
     async def _route_discord_managed_followup(
         self, persisted: PersistedInboundEvent
@@ -300,6 +444,7 @@ class ResidentRuntime:
                     "parent_source_record_id": parent.id,
                     "target_run_id": target.run_id,
                     "error_class": exc.__class__.__name__,
+                    "rejection_reason": " ".join(redact_text(str(exc)).split())[:240],
                 },
                 idempotency_key=deterministic_idempotency_key(
                     "resident-subagent-followup-fallback", persisted.message.id
@@ -316,13 +461,15 @@ class ResidentRuntime:
             level="info",
             category="system",
             event_type="resident_subagent_followup_routed",
-            message="Discord reply queued into its exact resident-managed model session",
+            message="Discord reply durably routed to its canonical managed owner",
             details={
                 "source_record_id": persisted.message.id,
                 "parent_source_record_id": parent.id,
                 "target_run_id": target.run_id,
                 "lineage_root_run_id": target.lineage_root_run_id,
                 "continuation_run_id": result.continuation_run_id,
+                "route": result.route,
+                "delivery_owner_run_id": result.delivery_owner_run_id,
                 "launch_anchor": target.launch_anchor,
                 "launch_anchor_field": target.launch_anchor_field,
                 "window_seconds": 900,
@@ -492,6 +639,7 @@ class ResidentRuntime:
                     claim.notification_id,
                     status="complete",
                     replacement_turn_id=turn.id,
+                    user_delivery_owned=True,
                 )
                 recovered += 1
                 continue
@@ -636,6 +784,7 @@ class ResidentRuntime:
             conversation_id=conversation.id,
             messages=messages,
             system_prompt=system_prompt,
+            turn_id=turn_id,
             hot_context=hot_context,
             model_seam_metadata=self._model_seam_metadata(
                 conversation_id=conversation.id,
@@ -653,14 +802,21 @@ class ResidentRuntime:
                 redact_text(response.final_text).strip(), hot_context
             )
             classified_outcome = _classified_verification_outcome(safe_text)
-            outcome = classified_outcome or "unknown"
+            blocked_semantics = _completion_verification_is_semantically_blocked(
+                manifest, safe_text
+            )
+            if blocked_semantics:
+                outcome = "blocked"
+                safe_text = _blocked_completion_verification_text(safe_text)
+            else:
+                outcome = classified_outcome or "unknown"
             if not safe_text:
                 safe_text = (
                     "The verification outcome is unknown because the resident verification turn "
                     "returned no summary; the delegated result is not being treated as proof."
                 )
                 outcome = "unknown"
-            elif classified_outcome is None:
+            elif classified_outcome is None and not blocked_semantics:
                 safe_text = (
                     safe_text
                     + "\n\nThe verification outcome is unknown because the resident did not "
@@ -871,6 +1027,7 @@ class ResidentRuntime:
             conversation_id=conversation.id,
             messages=request_messages,
             system_prompt=system_prompt,
+            turn_id=turn.id,
             hot_context=hot_context,
             model_seam_metadata=model_seam_metadata,
             subject=items[-1].event.subject,
@@ -881,6 +1038,9 @@ class ResidentRuntime:
                 items,
                 turn_id=turn.id,
                 timezone_name=_timezone_name_from_hot_context(hot_context),
+            ),
+            report_only=bool(items) and all(
+                item.event.raw.get("report_only") is True for item in items
             ),
         )
         try:
@@ -995,6 +1155,7 @@ class ResidentRuntime:
             status="completed",
             final_output_message_id=final_message_id,
             message_sent=bool(final_message_id),
+            warnings_issued=_response_diagnostic_warnings(response),
             idempotency_key=deterministic_idempotency_key("resident-turn-completed", turn.id),
         )
 
@@ -1116,12 +1277,16 @@ class ResidentRuntime:
                 item.event.raw.get("source_kind") == "scheduled_turn"
                 for item in items
             )
+            report_only = bool(items) and all(
+                item.event.raw.get("report_only") is True for item in items
+            )
             return {
                 "transport": "non_discord",
                 "applicability": "not_applicable",
                 "source_kind": (
                     "scheduled_turn" if scheduled_turn else "scheduler_or_internal_turn"
                 ),
+                "report_only": report_only,
             }
         item = discord_items[0]
         message_id = _optional_string(item.event.raw.get("discord_message_id"))
@@ -1276,10 +1441,16 @@ class ResidentRuntime:
             limit=self.config.history_window,
             exclude_ids=exclude_ids,
         )
+        has_discord_inbound = any(
+            message.direction == "inbound"
+            and getattr(message, "discord_message_id", None)
+            for message in rows
+        )
         history: list[dict[str, Any]] = []
         for message in rows:
             if (
                 discord_only
+                and has_discord_inbound
                 and message.direction == "inbound"
                 and not getattr(message, "discord_message_id", None)
             ):
@@ -1386,6 +1557,13 @@ def _bounded_failure_warning(exc: Exception) -> str:
 
 
 def _resident_turn_failure_reply(exc: Exception) -> str:
+    if isinstance(exc, AgentTimeoutError):
+        return (
+            "I couldn't complete this resident turn because the model exceeded its execution "
+            "limit and did not finish during the single bounded same-process recovery window. "
+            "The process group was stopped, no second invocation was started, and specific "
+            "diagnostic evidence was recorded."
+        )
     detail = str(exc).lower()
     if "prompt exceeds" in detail or "input_too_large" in detail or "maximum length" in detail:
         return (
@@ -1396,6 +1574,23 @@ def _resident_turn_failure_reply(exc: Exception) -> str:
         "I couldn't complete this resident turn because the model invocation failed. "
         "The failure was recorded and no requested action was taken."
     )
+
+
+def _response_diagnostic_warnings(response: AgentResponse) -> list[str] | None:
+    recovery = response.metadata.get("timeout_recovery")
+    if not isinstance(recovery, Mapping):
+        return None
+    return [
+        "AgentTimeoutRecovery: same invocation completed during bounded grace; "
+        f"continuations={recovery.get('continuations', 1)}, "
+        f"invocation_replays={recovery.get('invocation_replays', 0)}, "
+        f"initial_timeout_s={recovery.get('initial_timeout_s')}, "
+        f"recovery_grace_s={recovery.get('recovery_grace_s')}, "
+        f"elapsed_s={recovery.get('elapsed_s')}, "
+        f"process_pid={recovery.get('process_pid')}, "
+        f"stdout_bytes={recovery.get('stdout_bytes')}, "
+        f"stderr_bytes={recovery.get('stderr_bytes')}",
+    ]
 
 
 def _timezone_instruction_from_hot_context(hot_context: Mapping[str, Any]) -> str:
@@ -1492,6 +1687,40 @@ def _managed_completion_verification_prompt(
         if isinstance(relationship, Mapping)
         else ""
     )
+    completion_verification = manifest.get("completion_verification")
+    verification_context = (
+        "Resident completion-verification contract outcome:\n"
+        + json.dumps(completion_verification, sort_keys=True, default=str)
+        + "\nTreat applicable_non_mutating_success as an explicit applicable success; do not "
+        "request git commit/diff/clean-worktree evidence for that classification. Git-backed "
+        "mutation still requires git_backed_mutation_custody_verified.\n\n"
+        if isinstance(completion_verification, Mapping)
+        else ""
+    )
+    queue = manifest.get("queue")
+    dependency_context = ""
+    if isinstance(queue, Mapping) and queue.get("state") == "dependency_failed":
+        dependency_context = (
+            "Terminal dependency evidence from the synthesis/delivery owner's durable queue:\n"
+            + json.dumps(
+                {
+                    key: queue.get(key)
+                    for key in (
+                        "state",
+                        "attention",
+                        "failed_predecessor_run_id",
+                        "predecessor_status",
+                        "predecessor_states",
+                    )
+                    if queue.get(key) is not None
+                },
+                sort_keys=True,
+                default=str,
+            )
+            + "\nThe synthesis/delivery child did not execute. Inspect predecessor manifests and "
+            "artifacts for partial work, label it as partial/unverified as appropriate, clearly "
+            "name the blocked or abandoned dependency, and never claim downstream synthesis ran.\n\n"
+        )
     return (
         "A resident-managed delegated execution has reached a terminal state and now requires "
         "independent completion verification. Do not accept its final response as proof.\n\n"
@@ -1504,6 +1733,8 @@ def _managed_completion_verification_prompt(
         f"Delegated final claim: {resolved_path('result_path', 'result.md')}\n"
         f"Full delegated log: {resolved_path('full_log_path', str(manifest.get('log_path') or 'run.log'))}\n\n"
         f"{relationship_context}"
+        f"{verification_context}"
+        f"{dependency_context}"
         "Authoritative original user request (preserve its requirements):\n"
         f"{source_message[:12000]}"
     )
@@ -1520,6 +1751,89 @@ def _classified_verification_outcome(text: str) -> str | None:
         ):
             return outcome
     return None
+
+
+def _completion_verification_is_semantically_blocked(
+    manifest: Mapping[str, Any], text: str
+) -> bool:
+    """Fail closed when lifecycle completion is not semantic recovery success.
+
+    Resident delivery and finite worker exit are transport/lifecycle facts.  A
+    linked repair goal or the verifier's own evidence can independently prove
+    that the underlying recovery is still blocked.  In that case the outbound
+    classification must remain blocked even if the verifier also used
+    success-led handoff wording.
+    """
+
+    semantic_completion = manifest.get("semantic_completion")
+    if isinstance(semantic_completion, Mapping):
+        authority = str(semantic_completion.get("authority") or "").strip()
+        status = str(semantic_completion.get("status") or "").strip().lower()
+        complete = semantic_completion.get("complete")
+        if authority == "repair_goal" and (
+            complete is False
+            or status
+            in {
+                "active",
+                "blocked",
+                "continuing",
+                "approval_required",
+                "retry_pending",
+                "unknown",
+            }
+        ):
+            return True
+
+    links = manifest.get("links")
+    goal_path = ""
+    if isinstance(links, Mapping):
+        goal_path = str(links.get("repair_goal_path") or "").strip()
+    if goal_path:
+        try:
+            goal = json.loads(Path(goal_path).read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            # Missing semantic authority cannot be converted into success.
+            return True
+        if isinstance(goal, Mapping):
+            goal_status = str(goal.get("status") or "unknown").strip().lower()
+            if goal_status != "progressed":
+                return True
+
+    normalized = " ".join(text.lower().split())
+    blocked_subjects = (
+        "underlying recovery",
+        "original recovery",
+        "original blocker",
+        "forward motion",
+        "target recovery",
+    )
+    blocked_states = (
+        "remains blocked",
+        "remain blocked",
+        "is blocked",
+        "remains unresolved",
+        "remain unresolved",
+        "has not resumed",
+        "stopped",
+    )
+    return any(subject in normalized for subject in blocked_subjects) and any(
+        state in normalized for state in blocked_states
+    )
+
+
+def _blocked_completion_verification_text(text: str) -> str:
+    """Lead blocked verification plainly and remove known success-led claims."""
+
+    cleaned = re.sub(
+        r"(?im)^.*(?:handoff|message delivery|message was durably sent).*(?:success(?:ful(?:ly)?)?|completed).*$",
+        "",
+        text,
+    ).strip()
+    prefix = (
+        "Forward motion remains blocked; completion or delivery of the finite delegated task "
+        "is not semantic recovery success. The verification outcome is blocked."
+    )
+    return prefix if not cleaned else f"{prefix}\n\n{cleaned}"
 
 
 def _verification_outcome(text: str) -> str:

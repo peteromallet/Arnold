@@ -14,7 +14,7 @@ import time
 from typing import Any, Literal, Mapping, Sequence
 from urllib.parse import urlparse
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from agentbox.redaction import redact_text
 from agentbox.reset_notifications import list_reset_notifications
@@ -47,12 +47,18 @@ from arnold_pipelines.megaplan.layout import (
     initiative_root,
     initiatives_dir,
     migrate_legacy_briefs_layout,
+    render_initiative_readme,
     search_initiatives,
     slugify_initiative,
 )
 
 from .auth import ActionKind, AuthorizationSubject, ConfirmationManager, ResidentAuthorizer, StoreBackedConfirmationManager
 from .agent_loop import current_tool_runtime_context
+from .fix_the_fixer import (
+    FIX_THE_FIXER_TOOL,
+    render_fix_the_fixer_goal,
+    validate_fix_the_fixer_target,
+)
 from .cloud import (
     CloudCliBackend,
     CloudOperation,
@@ -71,6 +77,8 @@ from .subagent import (
     DELEGATED_TASK_KINDS,
     MANAGED_RUN_SCHEMA,
     DelegatedTaskKind,
+    SubagentFollowupError,
+    follow_up_managed_subagent,
     launch_subagent_task,
     list_managed_resident_agents,
 )
@@ -80,7 +88,10 @@ from .reply_chain import (
     decode_reply_cursor,
     reply_chain_page,
 )
-from .query_relationship import correlate_semantic_follow_up
+from .query_relationship import (
+    correlate_semantic_follow_up,
+    relationship_from_environment_or_project,
+)
 from .status_tree import (
     DEFAULT_NODE_LIMIT,
     MAX_NODE_LIMIT,
@@ -95,8 +106,14 @@ from .context_tree import (
     read_context_node,
     search_context,
 )
+from .knowledge_context import KNOWLEDGE_LIFECYCLE, build_knowledge_context
+from .schedules import (
+    schedule_cli_capabilities,
+    schedule_hot_context,
+    schedule_store_root,
+)
 
-MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v9"
+MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v10"
 # The watchdog refreshes the snapshot roughly hourly; tolerate up to two ticks
 # of staleness before treating broad status as degraded.
 _SNAPSHOT_MAX_AGE_S = 2 * 60 * 60
@@ -106,8 +123,10 @@ _VP_TODO_HOT_CONTEXT_PREVIEW_LIMIT = 3
 _VP_TODO_HOT_CONTEXT_TASK_MAX_CHARS = 240
 _VP_TODO_HOT_CONTEXT_WHEN_MAX_CHARS = 160
 _INITIATIVE_HOT_CONTEXT_LIMIT = 5
+_INITIATIVE_CONTEXT_ROUTE_LIMIT = 200
 _RESIDENT_AGENT_RUNNING_LIMIT = 12
 _RESIDENT_AGENT_RECENT_LIMIT = 3
+_RESIDENT_AGENT_QUEUE_LIMIT = 8
 INITIATIVE_DOC_KIND = Literal["briefs", "research", "decisions", "notes", "assets", "handoff"]
 
 
@@ -298,7 +317,60 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
 
     def compact(row: Mapping[str, Any]) -> dict[str, Any]:
         delivery = row.get("completion_delivery")
-        return {
+        queue = row.get("queue")
+        queue_links = row.get("queue_links")
+        compact_queue = None
+        if isinstance(queue, Mapping):
+            authored = queue.get("authored_prompt")
+            compact_queue = {}
+            for key, limit in (
+                ("schema_version", 80),
+                ("state", 48),
+                ("trigger_policy", 48),
+                ("attention", 120),
+                ("predecessor_run_id", 96),
+                ("failed_predecessor_run_id", 96),
+                ("successor_run_id", 96),
+                ("predecessor_status", 48),
+                ("next_attempt_at", 48),
+            ):
+                if queue.get(key) is not None:
+                    compact_queue[key] = str(queue.get(key))[:limit]
+            for key in ("attempt_count", "max_launch_attempts"):
+                value = queue.get(key)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    compact_queue[key] = max(0, min(value, 10_000))
+            predecessor_run_ids = queue.get("predecessor_run_ids")
+            if isinstance(predecessor_run_ids, list):
+                compact_queue["predecessor_run_ids"] = [
+                    str(run_id)[:96] for run_id in predecessor_run_ids[:8]
+                ]
+            predecessor_states = queue.get("predecessor_states")
+            if isinstance(predecessor_states, list):
+                compact_queue["predecessor_states"] = [
+                    {
+                        key: str(state.get(key) or "")[:limit]
+                        for key, limit in (
+                            ("run_id", 96),
+                            ("status", 48),
+                            ("result_state", 48),
+                            ("attention", 120),
+                        )
+                    }
+                    for state in predecessor_states[:8]
+                    if isinstance(state, Mapping)
+                ]
+            if isinstance(authored, Mapping):
+                compact_queue["authored_prompt"] = {
+                    "description": str(authored.get("description") or "")[:180],
+                    "size_chars": (
+                        max(0, min(authored["size_chars"], 40_000))
+                        if isinstance(authored.get("size_chars"), int)
+                        and not isinstance(authored.get("size_chars"), bool)
+                        else None
+                    ),
+                }
+        compact_row = {
             key: row.get(key)
             for key in (
                 "run_id",
@@ -319,6 +391,8 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
                 "parent_run_id",
                 "query_relationship",
                 "aggregation",
+                "execution_contract",
+                "status_projection",
             )
             if row.get(key) is not None
         } | {
@@ -330,6 +404,38 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
             if isinstance(delivery, Mapping)
             else None
         }
+        if compact_queue is not None:
+            compact_row.pop("query_relationship", None)
+            compact_row.pop("aggregation", None)
+            for key, limit in (("run_id", 96), ("parent_run_id", 96), ("description", 180)):
+                if key in compact_row:
+                    compact_row[key] = str(compact_row[key])[:limit]
+            queue_delivery = compact_row.get("completion_delivery")
+            if isinstance(queue_delivery, dict):
+                compact_row["completion_delivery"] = {
+                    key: (
+                        max(0, min(value, 10_000))
+                        if key == "attempt_count"
+                        and isinstance(value, int)
+                        and not isinstance(value, bool)
+                        else str(value)[:120]
+                    )
+                    for key, value in queue_delivery.items()
+                    if value is not None
+                }
+            compact_row["queue"] = compact_queue
+        if isinstance(queue_links, Mapping):
+            compact_row["queue_links"] = {
+                "successor_run_ids": [
+                    str(value)[:96]
+                    for value in list(queue_links.get("successor_run_ids") or [])[:3]
+                ],
+                "successor_omitted_count": int(
+                    queue_links.get("successor_omitted_count") or 0
+                )
+                + max(0, len(list(queue_links.get("successor_run_ids") or [])) - 3),
+            }
+        return compact_row
 
     running = [
         compact(row)
@@ -341,6 +447,11 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
         for row in list(value.get("recent") or [])[:_RESIDENT_AGENT_RECENT_LIMIT]
         if isinstance(row, Mapping)
     ]
+    queued = [
+        compact(row)
+        for row in list(value.get("queued") or [])[:_RESIDENT_AGENT_QUEUE_LIMIT]
+        if isinstance(row, Mapping)
+    ]
     return {
         "schema_version": value.get("schema_version"),
         "scope": value.get("scope"),
@@ -348,10 +459,20 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
         "running": running,
         "running_omitted_count": max(0, int(value.get("running_count") or 0) - len(running)),
         "recent_count": value.get("recent_count", len(recent)),
+        "queued_count": value.get("queued_count", len(queued)),
+        "queued": queued,
+        "queued_preview_limit": _RESIDENT_AGENT_QUEUE_LIMIT,
+        "queued_omitted_count": max(
+            0, int(value.get("queued_count") or 0) - len(queued)
+        ),
+        "queue_attention_count": value.get("queue_attention_count", 0),
         "recent": recent,
         "recent_preview_limit": _RESIDENT_AGENT_RECENT_LIMIT,
         "delivery_status_counts": value.get("delivery_status_counts", {}),
         "terminal_delivery_status_counts": value.get("terminal_delivery_status_counts", {}),
+        "work_status_counts": value.get("work_status_counts", {}),
+        "request_status_counts": value.get("request_status_counts", {}),
+        "attention": list(value.get("attention") or [])[:8],
         "delivery_attention_count": value.get("delivery_attention_count", 0),
     }
 
@@ -752,7 +873,15 @@ class ReadContextNodeInput(ToolInput):
 
 class SearchContextInput(ToolInput):
     scope: Literal[
-        "status", "agents", "conversation", "initiatives", "todos", "capabilities", "policies"
+        "status",
+        "agents",
+        "conversation",
+        "tickets",
+        "initiatives",
+        "documents",
+        "todos",
+        "capabilities",
+        "policies",
     ]
     query: str = ""
     cursor: int = Field(default=0, ge=0)
@@ -776,6 +905,13 @@ class ReconcileTodoItemInput(ToolInput):
     resolution: str
 
 
+class SupersedeTodoItemInput(ToolInput):
+    id: str
+    canonical_record_id: str
+    evidence: str
+    resolution: str
+
+
 class AddTodoItemInput(ToolInput):
     task: str
     when: str = ""
@@ -787,6 +923,15 @@ class GetTimezonePreferenceInput(ToolInput):
 
 class SetTimezonePreferenceInput(ToolInput):
     timezone_name: str
+
+
+class FixTheFixerInput(ToolInput):
+    target: str
+
+    @field_validator("target")
+    @classmethod
+    def _non_empty_exact_target(cls, value: str) -> str:
+        return validate_fix_the_fixer_target(value)
 
 
 class LaunchSubagentInput(ToolInput):
@@ -804,8 +949,8 @@ class LaunchSubagentInput(ToolInput):
     ] = Field(
         default="synthesis_delivery_owner",
         description=(
-            "Use internal_contributor for reviewer/worker runs that must never reply to Discord; "
-            "launch exactly one synthesis_delivery_owner last to consolidate their durable results."
+            "Aggregation role only. Use internal_contributor for work consumed by a later owner; "
+            "delivery is resolved separately from the outcome contract."
         ),
     )
     synthesis_group: str | None = Field(
@@ -814,6 +959,28 @@ class LaunchSubagentInput(ToolInput):
         description=(
             "Stable explicit batch id shared by internal contributors and their one synthesis "
             "owner. Omit for an independently deliverable launch."
+        ),
+    )
+    outcome_contract: Literal[
+        "analytical_fragment", "independently_meaningful_execution", "synthesis_result"
+    ] | None = Field(
+        default=None,
+        description=(
+            "Explicit result contract. Independently meaningful execution contributors retain "
+            "truthful terminal delivery even when they also feed a synthesis owner."
+        ),
+    )
+    outcome_key: str | None = Field(
+        default=None,
+        max_length=160,
+        description="Stable subject key used to detect unrelated all-success fan-in.",
+    )
+    delivery_suppression_override_reason: str | None = Field(
+        default=None,
+        max_length=500,
+        description=(
+            "Explicit durable reason nondelivery is intended for an independently meaningful "
+            "internal contributor. Omit to preserve truthful independent delivery."
         ),
     )
     follow_up_to_source_record_id: str | None = Field(
@@ -825,15 +992,49 @@ class LaunchSubagentInput(ToolInput):
     )
     follow_up_rationale: str | None = Field(default=None, max_length=300)
     task_kind: DelegatedTaskKind = "routine"
+    work_intent: Literal["auto", "execution", "review", "speculative"] = Field(
+        default="auto",
+        description=(
+            "Execution integrates authorized implementation into a clearly identified target; "
+            "review is non-mutating; speculative remains isolated and unintegrated. Auto resolves "
+            "conservatively from task_kind, and the launch boundary always appends one instruction."
+        ),
+    )
+    mutation_claim: Literal["auto", "none", "git_backed"] = Field(
+        default="auto",
+        description=(
+            "Claim the task's actual repository effect. Auto treats lookup/extraction/mechanical "
+            "execution as non-mutating and mutation-shaped execution as git-backed. Git-backed "
+            "completion always requires strict isolated-worktree custody evidence."
+        ),
+    )
     difficulty: int = Field(default=4, ge=1, le=10)
     toolsets: str | None = None
     project_dir: str | None = None
-    backend: str = "codex"
+    backend: str = "auto"
     background: bool = True
     model: str | None = None
     reasoning_effort: Literal["minimal", "low", "medium", "high", "xhigh", "max"] | None = None
     request_id: str | None = None
     retry_of_run_id: str | None = None
+    depends_on_run_id: str | None = Field(
+        default=None,
+        description=(
+            "Queue this run behind one resident-managed predecessor. The successor inherits "
+            "immutable provenance, project/effect authorization, and sole delivery ownership; "
+            "it launches only after validated terminal success."
+        ),
+    )
+    depends_on_run_ids: list[str] | None = Field(
+        default=None,
+        max_length=8,
+        description=(
+            "Queue this run behind every listed resident-managed predecessor. IDs must be "
+            "distinct and all must validate and complete successfully before one launch. "
+            "Do not combine this field with depends_on_run_id."
+        ),
+    )
+    queue_max_launch_attempts: int = Field(default=3, ge=1, le=10)
     continue_turn: bool = Field(
         default=False,
         description=(
@@ -844,6 +1045,33 @@ class LaunchSubagentInput(ToolInput):
     )
 
 
+class FollowUpSubagentInput(ToolInput):
+    run_id: str = Field(
+        description="Exact resident-managed run ID whose persistent session should continue."
+    )
+    message: str = Field(
+        min_length=1,
+        max_length=32_000,
+        description="The exact follow-up instruction to commit to the managed lineage.",
+    )
+    project_dir: str | None = None
+    idempotency_key: str | None = Field(
+        default=None,
+        max_length=160,
+        description="Stable retry key, reusable only for identical content and custody.",
+    )
+    aggregation_role: Literal[
+        "synthesis_delivery_owner", "internal_contributor"
+    ] = Field(
+        default="synthesis_delivery_owner",
+        description=(
+            "Use internal_contributor when another run already exclusively owns delivery for "
+            "the current request."
+        ),
+    )
+    synthesis_group: str | None = Field(default=None, max_length=80)
+
+
 def _resident_core_prompt() -> str:
     """Small permanent contract; task-specific detail is loaded as policy packs."""
 
@@ -852,9 +1080,17 @@ def _resident_core_prompt() -> str:
         "unknowns. Use constrained resident/CLI operations for durable actions and never claim an "
         "action, launch, delivery, or restart without returned durable evidence. Ask for human input "
         "only when a real approval gate or material ambiguity blocks safe work.\n"
-        f"Planning assets follow {LAYOUT_POLICY_VERSION} under .megaplan/initiatives/<slug>/; search "
-        "initiatives by rough slug/title/description first and reuse matches before creating one. Never put planning docs directly under "
-        ".megaplan/briefs. Never create planning docs directly under .megaplan/briefs.\n"
+        "A document is speculative, exploratory, or durable knowledge and never implies execution "
+        "approval. A ticket is a specific problem, opportunity, or idea that probably should be "
+        "addressed but is not yet a coordinated plan. An initiative is a committed coherent outcome "
+        "with boundaries and success criteria; detailed planning and execution may come later. Always "
+        "search initiatives by rough slug/title/description first, then search related tickets and "
+        "documents; reuse the closest canonical artifact before creating anything.\n"
+        f"Planning assets follow {LAYOUT_POLICY_VERSION} under .megaplan/initiatives/<slug>/. README.md "
+        "is the current truth/front door and canonical index; use briefs/, research/, decisions/, "
+        "notes/, handoff/, and assets/. NORTHSTAR.md and chain.yaml are optional readiness artifacts. "
+        "Curate agent/subagent results into canonical documents that cite raw runs. Never create planning "
+        "docs directly under .megaplan/briefs.\n"
         "Hot context is a bounded orientation root, not the database. Follow context_root.routes and "
         "use read_context_node/search_context (or the listed python -P CLI twins) for only the branch "
         "needed. Never load a complete cloud-status JSON. conversation_history and model history are "
@@ -869,6 +1105,8 @@ def _resident_core_prompt() -> str:
         "For broad status, use context_root.attention and the status node, cite generated_at, and preserve "
         "canonical progress/display fields. Use `progress.display_state` as its canonical status label, "
         "falling back to `progress.plan_state` only when `display_state` is absent; show an active execute step as `executing`. "
+        "A review-driven execute step may instead be `reworking`, and an active review is `reviewing`. "
+        "`progress.plan_percent` is plan lifecycle/task-weight bookkeeping, not implementation acceptance. "
         "If stale_banner exists, emit it verbatim first and do not quote "
         "withheld frozen numbers.\n"
         "For a Discord restart, use only the canonical command in hot context; never use pkill, killall, "
@@ -932,14 +1170,17 @@ class MegaplanResidentProfile:
             "`add_todo_item` (optionally a `when` condition, e.g. 'once epic <id> is done'); use "
             "`read_todo_list` to show what's queued. In conversation you add and read items — a "
             "scheduled sweep picks up pending items and executes them with the resident-owned "
-            "`launch_subagent` managed Codex lifecycle. Hot context's `vp_special_requests_todos` "
+            "`launch_subagent` provider-aware managed lifecycle. Hot context's `vp_special_requests_todos` "
             "is only a bounded pending-item orientation summary: a pending item with a `when` "
             "condition is not known to be due until you verify that condition. Use its stable item "
             "IDs when referring to previewed work, and call `read_todo_list` with no arguments "
             "whenever you need the full list (including retained failed items). For normal "
-            "delegated work, keep its defaults (`backend=codex`, `background=true`) and report "
+            "delegated work, keep its defaults (`backend=auto`, `background=true`) and report "
             "the returned durable paths. "
-            "Always classify delegated work with `task_kind` and D1-D10 `difficulty`. Use Luna/low "
+            "Always classify delegated work with `task_kind`, `work_intent`, and D1-D10 "
+            "`difficulty`. Use work_intent=execution for authorized delivery, review for non-mutating "
+            "analysis, and speculative for tentative/unintegrated work; auto resolves conservatively "
+            "from task_kind when a compatibility caller omits it. Use Luna/low "
             "only for bounded lookup, extraction, or mechanical D1-D3 work; routine coding, "
             "debugging, and research default to Terra/medium; ambiguous, cross-cutting, high-risk, "
             "or D7-D10 work uses Sol/high. Do not request xhigh/max by default. "
@@ -1003,11 +1244,13 @@ class MegaplanResidentProfile:
             "epic's overall percent — e.g. 'Epic X: <progress.percent>% (A/B sprints done), currently "
             "on <current_plan>'. `progress.percent` already folds the in-flight plan's stage fraction "
             "in, so it advances as the current plan progresses rather than freezing between milestones. "
-            "When `progress.plan_percent` is present, also append the in-flight plan's stage estimate. "
+            "When `progress.plan_percent` is present, label it as plan lifecycle/task-weight "
+            "bookkeeping, never as implementation acceptance or completion. "
             "Use `progress.display_state` as its canonical status label when available, falling back "
             "to `progress.plan_state` only when `display_state` is absent — e.g. '...; in-flight "
             "<plan_percent>% (<display_state>)'. This preserves paused, blocked, failed, completed, "
-            "and idle-finalized truth while showing an active execute step as `executing`. If the "
+            "and idle-finalized truth while showing an active execute step as `executing`, a "
+            "review-driven execute step as `reworking`, and an active review as `reviewing`. If the "
             "chosen status label is present without a `plan_percent` (e.g. 'blocked'), show that state "
             "instead. When `epic_delta_1h` / "
             "`epic_delta_5h` are present, append the recent rate — e.g. '(+<d1>% in the past hour, "
@@ -1019,7 +1262,7 @@ class MegaplanResidentProfile:
             "started <relative time>, plan started <relative time>'. Use the pre-calculated fields as "
             "given; do not recompute them or invent other sub-plan percentages — `plan_percent` "
             "reserves 30% for pre-execute stages and weights execute progress by the finalized "
-            "task inventory's authoritative complexity scores. "
+            "task inventory's authoritative complexity scores; it does not measure review acceptance. "
             "Do not answer broad status from an arbitrary `.megaplan/plans` or `.chains` scan "
             "without labeling it degraded. For deeper status questions, navigate only the relevant "
             "child node with `read_cloud_status_node`. In the Codex CLI runner, use "
@@ -1031,6 +1274,12 @@ class MegaplanResidentProfile:
             "The command must fail closed unless the installed unit proves its main-process-only "
             "stop boundary. Be explicit that the current Discord turn can be interrupted even though "
             "durable resident agents and Megaplan/cloud chains are preserved."
+            " For schedule requests, use the supported commands and examples under "
+            "`resident_schedules.guidance`. Wall-clock/calendar input is interpreted in the explicit "
+            "IANA timezone or configured user timezone and retains DST gap/fold policy; anchored "
+            "intervals require an explicit start (including the explicit value `now`). Never invent "
+            "an unspecified hour. Creating a schedule cannot expand the immutable grant, task work "
+            "intent, delivery route, expiry, or other authority of the underlying task."
         )
 
     def system_prompt_for(self, request_text: str | None) -> str:
@@ -1056,6 +1305,7 @@ class MegaplanResidentProfile:
         (
             local_epic_chain_state,
             initiative_index,
+            knowledge_context,
             resident_agents,
             todo_context,
             restart_lifecycle,
@@ -1064,8 +1314,9 @@ class MegaplanResidentProfile:
         ) = await asyncio.gather(
             asyncio.to_thread(self._load_local_epic_chain_state_context),
             asyncio.to_thread(
-                initiative_compact_index, Path.cwd(), limit=_INITIATIVE_HOT_CONTEXT_LIMIT
+                initiative_compact_index, Path.cwd(), limit=_INITIATIVE_CONTEXT_ROUTE_LIMIT
             ),
+            asyncio.to_thread(build_knowledge_context, Path.cwd()),
             asyncio.to_thread(list_managed_resident_agents, project_root=Path.cwd()),
             asyncio.to_thread(_vp_todo_hot_context, self._todo_path()),
             asyncio.to_thread(list_reset_notifications, limit=5),
@@ -1080,6 +1331,26 @@ class MegaplanResidentProfile:
             status_snapshot.plan_activity_summary(full_cloud_status_snapshot)
         )
         compact_agents = _compact_resident_agents(resident_agents)
+        resident_schedule_root = schedule_store_root(self.store)
+        if resident_schedule_root is not None:
+            try:
+                resident_schedules = schedule_hot_context(resident_schedule_root)
+            except (OSError, ValueError, RuntimeError) as exc:
+                resident_schedules = {
+                    "schema_version": "arnold-resident-schedule-hot-context-v1",
+                    "available": False,
+                    "error": f"schedule projection unavailable: {type(exc).__name__}",
+                    "upcoming_enabled": [],
+                    "bounded_limit": 8,
+                }
+        else:
+            resident_schedules = {
+                "schema_version": "arnold-resident-schedule-hot-context-v1",
+                "available": False,
+                "error": "single-writer resident schedule store is not enabled",
+                "upcoming_enabled": [],
+                "bounded_limit": 8,
+            }
         base: dict[str, Any] = {
             "conversation_id": conversation_id,
             "prompt_version": MEGAPLAN_RESIDENT_PROMPT_VERSION,
@@ -1088,17 +1359,31 @@ class MegaplanResidentProfile:
                 "initiatives_root": ".megaplan/initiatives",
                 "allowed_doc_kinds": sorted(ALLOWED_INITIATIVE_SUBDIRS),
                 "legacy_briefs_root": ".megaplan/briefs",
+                "readme_role": "front door, current truth, and canonical index",
+                "optional_readiness_files": ["NORTHSTAR.md", "chain.yaml"],
             },
-            "initiative_index": initiative_index,
+            "initiative_index": initiative_index[:_INITIATIVE_HOT_CONTEXT_LIMIT],
             "resident_runtime": {
                 "model_provider": self.config.model_provider,
                 "model": self.config.model_name,
+                "managed_provider_controls": {
+                    "toolsets": self.config.model_toolsets,
+                    "max_tokens": self.config.model_max_tokens,
+                    "timeout_s": self.config.model_timeout_s,
+                    "session_scope": "durable resident conversation",
+                    "evidence": (
+                        "prompt.md/result.md/run.log/provider.raw/events.jsonl/manifest.json"
+                    ),
+                },
                 "codex_reasoning_effort": self.config.codex_reasoning_effort,
                 "codex_sandbox": self.config.codex_sandbox,
                 "codex_machine_access": (
                     "full machine access; Codex CLI is launched with danger-full-access"
-                    if self.config.codex_sandbox == "danger-full-access"
+                    if self.config.model_provider == "codex"
+                    and self.config.codex_sandbox == "danger-full-access"
                     else f"Codex CLI sandbox: {self.config.codex_sandbox}"
+                    if self.config.model_provider == "codex"
+                    else "not applicable to the selected resident provider"
                 ),
                 # P0 visibility: surface the build-vs-read decision so a resident
                 # that silently fell to cache mode (lost MEGAPLAN_TRUSTED_CONTAINER
@@ -1135,6 +1420,9 @@ class MegaplanResidentProfile:
                 "subagent_launch": {
                     "standard": MANAGED_RUN_SCHEMA,
                     "delegation_policy": delegation_policy_hot_context(),
+                    "backend": "auto",
+                    "providers": ["hermes", "codex", "claude"],
+                    "provider_routing": "model spec inferred; explicit compatible override allowed",
                     "codex_sandbox": "danger-full-access",
                     "stdin": "sealed",
                     "lifecycle": "detached with durable manifest, log, and result",
@@ -1142,6 +1430,62 @@ class MegaplanResidentProfile:
                         "terminal Discord-origin launches reply to the original inbound message; "
                         "manifest status is idempotent and retry-aware"
                     ),
+                    "queued_successors": {
+                        "resident_tool": (
+                            "launch_subagent with depends_on_run_id (legacy singular) or "
+                            "depends_on_run_ids (multi-predecessor fan-in)"
+                        ),
+                        "fan_in_example": {
+                            "contributor_contract": (
+                                "Launch independent contributors with "
+                                "aggregation_role=internal_contributor and one shared "
+                                "synthesis_group; retain each returned durable run ID."
+                            ),
+                            "synthesis_delivery_owner": {
+                                "resident_tool": "launch_subagent",
+                                "arguments": {
+                                    "task": (
+                                        "Read both contributor result artifacts, synthesize "
+                                        "their findings, complete verification, and deliver one "
+                                        "final reply."
+                                    ),
+                                    "description": "Synthesize contributor results and deliver",
+                                    "aggregation_role": "synthesis_delivery_owner",
+                                    "depends_on_run_ids": [
+                                        "subagent-20260716-120000-a1b2c3d4",
+                                        "subagent-20260716-120100-b2c3d4e5",
+                                    ],
+                                },
+                            },
+                        },
+                        "cli_create": (
+                            "python -P -m arnold_pipelines.megaplan resident "
+                            "queue-subagent-successor --after-run-ids "
+                            "subagent-20260716-120000-a1b2c3d4 "
+                            "subagent-20260716-120100-b2c3d4e5 --description "
+                            "'Synthesize contributor results and deliver' --prompt "
+                            "'Read both contributor result artifacts, synthesize their findings, "
+                            "complete verification, and deliver one final reply.'"
+                        ),
+                        "singular_compatibility": {
+                            "resident_tool": "launch_subagent with depends_on_run_id",
+                            "cli_create": (
+                                "python -P -m arnold_pipelines.megaplan resident "
+                                "queue-subagent-successor --after-run-id "
+                                "subagent-20260716-120000-a1b2c3d4 --description "
+                                "'Synthesize one predecessor result' --prompt "
+                                "'Read the predecessor result, finish verification, and deliver.'"
+                            ),
+                        },
+                        "cli_inspect": (
+                            "python -P -m arnold_pipelines.megaplan resident "
+                            "inspect-subagent-queue --run-id <run-id>"
+                        ),
+                        "policy": (
+                            "all-predecessors-success-only; failure or invalid result fails closed; "
+                            "cancellation and supersession propagate; launch retries are bounded and cycle-safe"
+                        ),
+                    },
                     "run_root": ".megaplan/plans/resident-subagents",
                     "resident_tool": "launch_subagent",
                     "codex_usage": {
@@ -1198,13 +1542,19 @@ class MegaplanResidentProfile:
             "local_epic_chain_state": local_epic_chain_state,
             "live_cloud_chain": live_cloud_chain,
             "resident_agents": compact_agents,
+            "resident_schedules": resident_schedules,
             "vp_special_requests_todos": todo_context,
         }
         base["context_root"] = build_context_root(
             status=cloud_status_tree_root,
             agents=compact_agents,
             initiatives=initiative_index,
+            knowledge_lifecycle=KNOWLEDGE_LIFECYCLE,
+            recent_activity=knowledge_context.recent_activity,
+            ticket_count=len(knowledge_context.tickets),
+            document_count=len(knowledge_context.documents),
             todos=todo_context,
+            schedules=resident_schedules,
             runtime={
                 "model_provider": self.config.model_provider,
                 "model": self.config.model_name,
@@ -1220,7 +1570,10 @@ class MegaplanResidentProfile:
                 "status_snapshot": full_cloud_status_snapshot,
                 "agents": resident_agents,
                 "initiatives": initiative_index,
+                "tickets": list(knowledge_context.tickets),
+                "documents": list(knowledge_context.documents),
                 "todos": [vp_todo.public_item(item) for item in vp_todo.load_items(self._todo_path())],
+                "schedules": list(resident_schedules.get("upcoming_enabled") or []),
                 "runtime": {
                     "model_provider": self.config.model_provider,
                     "model": self.config.model_name,
@@ -1234,7 +1587,9 @@ class MegaplanResidentProfile:
                     item.model_dump(mode="json") if hasattr(item, "model_dump") else item
                     for item in messages
                 ],
-                "capabilities": self.tool_registry.as_compact_catalog(),
+                "capabilities": (
+                    self.tool_registry.as_compact_catalog() + schedule_cli_capabilities()
+                ),
             }
             while len(self._context_source_cache) > 32:
                 self._context_source_cache.pop(next(iter(self._context_source_cache)))
@@ -1473,8 +1828,11 @@ class MegaplanResidentProfile:
             ToolRegistration("complete_todo_item", "Mark a to-do item done and clear it from the list; pass a short result summary.", "write", CompleteTodoItemInput, ToolResult, self._complete_todo_item),
             ToolRegistration("fail_todo_item", "Mark a to-do item failed (retained for retry); pass the reason.", "write", FailTodoItemInput, ToolResult, self._fail_todo_item),
             ToolRegistration("reconcile_todo_item", "Resolve a pending launch intent as superseded by an already-existing canonical run. Requires the stable run id, durable evidence location, and reconciliation reason; never use task-text overlap alone.", "write", ReconcileTodoItemInput, ToolResult, self._reconcile_todo_item),
+            ToolRegistration("supersede_todo_item", "Retire obsolete pending todo intent using a durable canonical retirement or replacement record. This does not assert completion.", "write", SupersedeTodoItemInput, ToolResult, self._supersede_todo_item),
             ToolRegistration("add_todo_item", "Append a new pending item to the VP to-do list. Optional `when` is a natural-language condition the agent checks before executing (e.g. 'once epic <id> is done').", "write", AddTodoItemInput, ToolResult, self._add_todo_item),
-            ToolRegistration("launch_subagent", "Launch a resident-managed Codex agent with a durable manifest, concise one-line description, full log, and result path. Multiple launches for one logical query have one newest synthesis/delivery owner; prior runs become internal contributors. Legacy synchronous Hermes requires an explicit backend override.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
+            ToolRegistration("follow_up_subagent", "Durably attach an instruction to one exact resident-managed persistent session. Returns a follow-up receipt and continuation run ID, or an explicit fail-closed error.", "write", FollowUpSubagentInput, ToolResult, self._follow_up_subagent),
+            ToolRegistration(FIX_THE_FIXER_TOOL, "Launch exactly one durable D10/high mutation-authorized meta-fixer for one non-empty epic/session target. The rendered goal composes superfixer-debug internally and inherits the active Discord provenance and authorization envelope.", "write", FixTheFixerInput, ToolResult, self._fix_the_fixer),
+            ToolRegistration("launch_subagent", "Launch or durably queue a provider-aware resident-managed agent through Hermes, Codex, or Claude with one durable manifest, bounded predecessor references, concise description, full log, and result path. The model spec selects its compatible provider when backend=auto; explicit mismatches fail before launch. Singular or multi-predecessor successors preserve provenance and make the newest synthesis/delivery owner; prior runs become internal contributors.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
         )
         for registration in registrations:
             self.tool_registry.register(registration)
@@ -1910,7 +2268,10 @@ class MegaplanResidentProfile:
             readme = initiative / "README.md"
             if not readme.exists():
                 title = (payload.title or slug.replace("-", " ").title()).strip()
-                readme.write_text(f"# {title}\n\n{description}\n", encoding="utf-8")
+                readme.write_text(
+                    render_initiative_readme(title, description),
+                    encoding="utf-8",
+                )
             if payload.create_chain:
                 chain = initiative / "chain.yaml"
                 if not chain.exists():
@@ -2705,6 +3066,24 @@ class MegaplanResidentProfile:
             item=vp_todo.public_item(resolved),
         )
 
+    def _supersede_todo_item(self, payload: SupersedeTodoItemInput) -> ToolResult:
+        try:
+            resolved = vp_todo.supersede_by_record(
+                self._todo_path(),
+                payload.id,
+                canonical_record_id=payload.canonical_record_id,
+                evidence=payload.evidence,
+                resolution=payload.resolution,
+            )
+        except ValueError as exc:
+            return _fail(str(exc), id=payload.id)
+        if resolved is None:
+            return _fail("todo item not found", id=payload.id)
+        return _ok(
+            "todo intent superseded by canonical record without asserting completion",
+            item=vp_todo.public_item(resolved),
+        )
+
     def _add_todo_item(self, payload: AddTodoItemInput) -> ToolResult:
         task = payload.task.strip()
         if not task:
@@ -2719,6 +3098,56 @@ class MegaplanResidentProfile:
             ),
         )
         return _ok("todo item added", item=vp_todo.public_item(item))
+
+    def _follow_up_subagent(self, payload: FollowUpSubagentInput) -> ToolResult:
+        runtime_context = current_tool_runtime_context()
+        launch_origin = runtime_context.launch_origin if runtime_context is not None else None
+        if not isinstance(launch_origin, Mapping) or launch_origin.get(
+            "applicability"
+        ) != "applicable":
+            return _fail(
+                "resident follow-up requires immutable Discord turn provenance"
+            )
+        project_root = Path(payload.project_dir or Path.cwd()).resolve()
+        source_record_id = str(launch_origin.get("source_record_id") or "")
+        query_relationship = relationship_from_environment_or_project(
+            source_record_id, project_root=project_root
+        )
+        try:
+            result = follow_up_managed_subagent(
+                run_id=payload.run_id,
+                message=payload.message,
+                project_dir=project_root,
+                workspace_root=None,
+                idempotency_key=(
+                    payload.idempotency_key
+                    or f"resident-turn:{launch_origin.get('resident_turn_id')}:{payload.run_id}"
+                ),
+                caller_provenance=launch_origin,
+                query_relationship=query_relationship,
+                aggregation_role=payload.aggregation_role,
+                synthesis_group=payload.synthesis_group,
+            )
+        except (SubagentFollowupError, ValueError, OSError) as exc:
+            return _fail(
+                str(exc),
+                error="resident_followup_rejected",
+                error_class=exc.__class__.__name__,
+                target_run_id=payload.run_id,
+            )
+        return _ok(
+            "subagent follow-up durably accepted",
+            followup_id=result.followup_id,
+            target_run_id=result.target_run_id,
+            parent_run_id=result.parent_run_id,
+            lineage_root_run_id=result.lineage_root_run_id,
+            continuation_run_id=result.continuation_run_id,
+            status=result.status,
+            evidence_path=result.evidence_path,
+            message_path=result.message_path,
+            continuation_manifest_path=result.continuation_manifest_path,
+            idempotent_replay=result.idempotent_replay,
+        )
 
     async def _launch_subagent(self, payload: LaunchSubagentInput) -> ToolResult:
         task = payload.task.strip()
@@ -2834,6 +3263,11 @@ class MegaplanResidentProfile:
             description=payload.description,
             aggregation_role=payload.aggregation_role,
             synthesis_group=payload.synthesis_group,
+            outcome_contract=payload.outcome_contract,
+            outcome_key=payload.outcome_key,
+            delivery_suppression_override_reason=(
+                payload.delivery_suppression_override_reason
+            ),
             toolsets=payload.toolsets,
             project_dir=payload.project_dir,
             backend=payload.backend,
@@ -2841,11 +3275,16 @@ class MegaplanResidentProfile:
             model=payload.model,
             reasoning_effort=payload.reasoning_effort,
             task_kind=payload.task_kind,
+            work_intent=payload.work_intent,
+            mutation_claim=payload.mutation_claim,
             difficulty=payload.difficulty,
             request_id=payload.request_id,
             launch_origin=launch_origin,
             retry_of_run_id=payload.retry_of_run_id,
             query_relationship=query_relationship,
+            depends_on_run_id=payload.depends_on_run_id,
+            depends_on_run_ids=payload.depends_on_run_ids,
+            queue_max_launch_attempts=payload.queue_max_launch_attempts,
         )
         if not result.ok:
             return ToolResult(
@@ -2872,7 +3311,13 @@ class MegaplanResidentProfile:
                 return _fail(str(exc), run_id=result.run_id, id=todo_item["id"])
         return ToolResult(
             ok=True,
-            message=("subagent launched" if result.status == "running" else "subagent completed"),
+            message=(
+                "subagent queued"
+                if result.status == "queued"
+                else "subagent launched"
+                if result.status == "running"
+                else "subagent completed"
+            ),
             data={
                 "final_text": result.final_text,
                 "returncode": result.returncode,
@@ -2886,6 +3331,57 @@ class MegaplanResidentProfile:
                 "todo_resolution": (
                     vp_todo.public_item(todo_resolution) if todo_resolution is not None else None
                 ),
+            },
+        )
+
+    async def _fix_the_fixer(self, payload: FixTheFixerInput) -> ToolResult:
+        runtime_context = current_tool_runtime_context()
+        launch_origin = (
+            runtime_context.launch_origin if runtime_context is not None else None
+        )
+        if (
+            runtime_context is None
+            or not isinstance(runtime_context.subject, AuthorizationSubject)
+            or not isinstance(launch_origin, Mapping)
+            or launch_origin.get("applicability") != "applicable"
+            or launch_origin.get("source_kind") != "discord_inbound_message"
+        ):
+            return _fail(
+                "fix-the-fixer requires one current authorized Discord invocation; "
+                "internal, scheduled, completion, and recursively executing goal contexts cannot relaunch it",
+                recursion_guard=True,
+                delegation_allowed=False,
+            )
+        result = await self._launch_subagent(
+            LaunchSubagentInput(
+                task=render_fix_the_fixer_goal(payload.target),
+                description="Repair the failed fixer and its missed backstop",
+                aggregation_role="synthesis_delivery_owner",
+                task_kind="root_cause",
+                difficulty=10,
+                backend="codex",
+                background=True,
+            )
+        )
+        return ToolResult(
+            ok=result.ok,
+            message=(
+                "fix-the-fixer meta-fixer launched"
+                if result.ok
+                else result.message or "fix-the-fixer launch failed"
+            ),
+            data={
+                **result.data,
+                "command": FIX_THE_FIXER_TOOL,
+                "target": payload.target,
+                "composes": "superfixer-debug",
+                "requested_route": {
+                    "task_kind": "root_cause",
+                    "difficulty": 10,
+                    "reasoning_effort": "high",
+                    "work_intent": "execution",
+                    "mutation_claim": "git_backed",
+                },
             },
         )
 
@@ -3485,10 +3981,13 @@ def _summarize_plan_state(work_dir: Path, plan_name: str) -> dict[str, Any] | No
         if not path.exists():
             continue
         data = _read_json_object(path)
+        review = _read_json_object(path.with_name("review.json"))
+        review_verdict = review.get("review_verdict")
         active_step = _summarize_active_step(data.get("active_step"))
         presentation = plan_status_presentation(
             data.get("current_state") or data.get("state"),
             active_step=active_step,
+            review_verdict=review_verdict,
         )
         return {
             "path": str(path),
@@ -3496,6 +3995,7 @@ def _summarize_plan_state(work_dir: Path, plan_name: str) -> dict[str, Any] | No
             "current_state": data.get("current_state") or data.get("state"),
             "iteration": data.get("iteration"),
             "active_step": active_step,
+            "review_verdict": review_verdict,
             **presentation,
             "last_gate": _summarize_last_gate(data.get("last_gate")),
             "read_error": data.get("_read_error"),

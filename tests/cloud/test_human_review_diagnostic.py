@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
+
+import pytest
 
 from arnold_pipelines.megaplan.cloud import human_review_diagnostic as diagnostic
 from arnold_pipelines.megaplan.resident import subagent as subagent_module
@@ -94,6 +97,126 @@ def _inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
         encoding="utf-8",
     )
     return project, marker_dir, repair_data_dir, payload_path
+
+
+def _stable_gate_inputs(tmp_path: Path, *, state: str = "awaiting_human_verify"):
+    project, marker_dir, repair_data_dir, payload_path = _inputs(tmp_path)
+    payload_path.write_text(
+        json.dumps(
+            {
+                "event": "cloud_watchdog_needs_human",
+                "notification_kind": "stable_human_gate",
+                "session": "demo-session",
+                "workspace": str(project),
+                "remote_spec": ".megaplan/initiatives/demo/chain.yaml",
+                "summary": "prep clarification requires answer (1 question)",
+                "plan": {"name": "demo-plan", "current_state": state},
+                "human_gate": {
+                    "state_token": state,
+                    "reason": "prep surfaced one blocking ambiguity",
+                    "evidence": {"question": "Which schema is authoritative?"},
+                    "required_action": "Choose the authoritative schema, then use resume-clarify.",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return project, marker_dir, repair_data_dir, payload_path
+
+
+def test_stable_gate_launch_is_one_read_only_agent_per_gate_fingerprint(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project, marker_dir, repair_data_dir, payload_path = _stable_gate_inputs(tmp_path)
+    monkeypatch.delenv(DELEGATION_CONTEXT_ENV, raising=False)
+    launches: list[list[str]] = []
+
+    class _Process:
+        pid = 43211
+
+    def fake_popen(argv, **kwargs):
+        launches.append(list(argv))
+        return _Process()
+
+    monkeypatch.setattr(subagent_module.subprocess, "Popen", fake_popen)
+
+    first = diagnostic.launch_human_review_diagnostic(
+        payload_path=payload_path,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+        project_dir=project,
+    )
+    replay = diagnostic.launch_human_review_diagnostic(
+        payload_path=payload_path,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+        project_dir=project,
+    )
+
+    assert first.ok is True
+    assert replay.idempotent_replay is True
+    assert replay.run_id == first.run_id
+    assert len(launches) == 1
+    assert Path(first.state_path).parent.name.startswith("gate-")
+    state = json.loads(Path(first.state_path).read_text(encoding="utf-8"))
+    task = Path(state["task_path"]).read_text(encoding="utf-8")
+    assert "notification-only, read-only work" in task
+    assert "awaiting_human_verify` (VERIFICATION)" in task
+    assert "Which schema is authoritative?" in task
+    assert "Do not approve, reject, resume, repair, restart, mutate state" in task
+    manifest = json.loads(Path(first.manifest_path or "").read_text(encoding="utf-8"))
+    assert manifest["work_intent"] == "review"
+    assert manifest["mutation_claim"] == "none"
+    assert manifest["completion_delivery"]["reply_target"]["source_record_id"] == "msg_humanreview1"
+    assert DELEGATION_CONTEXT_ENV not in os.environ
+
+
+def test_stable_gate_launch_failure_retries_three_times_then_dead_letters(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project, marker_dir, repair_data_dir, payload_path = _stable_gate_inputs(tmp_path)
+    monkeypatch.delenv(DELEGATION_CONTEXT_ENV, raising=False)
+    calls = 0
+
+    async def fail_launch(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise OSError("resident supervisor unavailable")
+
+    monkeypatch.setattr(diagnostic, "launch_subagent_task", fail_launch)
+    results = [
+        diagnostic.launch_human_review_diagnostic(
+            payload_path=payload_path,
+            marker_dir=marker_dir,
+            repair_data_dir=repair_data_dir,
+            project_dir=project,
+        )
+        for _ in range(4)
+    ]
+
+    assert calls == 3
+    assert [item.launch_attempt_count for item in results] == [1, 2, 3, 3]
+    assert all(item.fallback_delivery_required is False for item in results[:3])
+    assert all(item.retry_pending is True for item in results[:3])
+    assert results[3].status == "launch_dead_letter"
+    assert results[3].retry_exhausted is True
+    assert results[3].fallback_delivery_required is False
+
+
+def test_unknown_human_gate_state_token_fails_visible_instead_of_drifting(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv(DELEGATION_CONTEXT_ENV, raising=False)
+    project, marker_dir, repair_data_dir, payload_path = _stable_gate_inputs(
+        tmp_path, state="awaiting_some_new_human_token"
+    )
+    with pytest.raises(ValueError, match="unrecognized human-gate state token"):
+        diagnostic.launch_human_review_diagnostic(
+            payload_path=payload_path,
+            marker_dir=marker_dir,
+            repair_data_dir=repair_data_dir,
+            project_dir=project,
+        )
 
 
 def test_success_launch_inherits_discord_custody_and_is_idempotent(
