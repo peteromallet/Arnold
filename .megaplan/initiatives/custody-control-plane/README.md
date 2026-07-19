@@ -96,6 +96,11 @@ The delivery-level mapping from every missed behavior through call sites,
 milestones, tests, gates, and actual final verification is
 `research/end-state-coverage-matrix-20260714.md`.
 
+The 2026-07-16 M6 critique/repair incident, full L1/L2/L3 custody chain,
+identity-intake guardrails, contributor reconciliation, and original-session
+outcome probe are consolidated in
+`notes/m6-fixer-backstop-custody-closure-20260716.md`.
+
 ## Implemented adjacent M8A slice: critique custody
 
 Resident run `subagent-20260715-122715-f5ca5724` implements a fail-closed

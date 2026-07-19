@@ -74,9 +74,9 @@ def _in_flight_progress_text(progress: Any) -> str:
     label = progress.get("display_state") or progress.get("plan_state")
     plan_percent = progress.get("plan_percent")
     if plan_percent is not None:
-        text = f"in-flight {plan_percent}%"
+        text = f"plan bookkeeping {plan_percent}%"
         return f"{text} ({label})" if label else text
-    return f"in-flight {label}" if label else ""
+    return f"plan state {label}" if label else ""
 
 
 def format_cloud_status_short(
@@ -156,7 +156,7 @@ def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
             # or the raw plan state when it is not percentage-able (e.g. blocked).
             in_flight = _in_flight_progress_text(progress)
             if in_flight:
-                progress_str += "  plan=" + in_flight.removeprefix("in-flight ")
+                progress_str += "  " + in_flight
             # Epic percentage-point change over the last 1h / 5h, from sweep history.
             delta_parts = []
             for window, key in (("1h", "epic_delta_1h"), ("5h", "epic_delta_5h")):

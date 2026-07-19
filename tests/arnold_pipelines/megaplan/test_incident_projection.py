@@ -197,6 +197,42 @@ def test_rebuild_projections_reports_malformed_schema_and_dangling_refs(
     assert "workflow_cursor" not in brief["integrity"]
 
 
+def test_rebuild_projections_skips_oversized_journal_lines_without_loading_them(
+    tmp_path: Path,
+) -> None:
+    ledger_dir = tmp_path / ".megaplan" / "incident-ledger"
+    ledger_dir.mkdir(parents=True)
+    small = {"seq": 0, "kind": "incident.detection", "payload": _event()}
+    oversized = {
+        "seq": 1,
+        "kind": "incident.audit_complete",
+        "payload": _event(
+            event_id="evt-huge",
+            type="audit_complete",
+            decision={
+                "recursive_response": "x" * projection.MAX_INCIDENT_JOURNAL_LINE_BYTES
+            },
+        ),
+    }
+    events_path = ledger_dir / "events.jsonl"
+    events_path.write_text(
+        json.dumps(small) + "\n" + json.dumps(oversized) + "\n",
+        encoding="utf-8",
+    )
+
+    result = rebuild_projections(tmp_path, persist=False)
+
+    source = result["incidents"]["source"]
+    assert source["journal_line_count"] == 2
+    assert source["event_count"] == 1
+    assert source["malformed_line_count"] == 1
+    assert any(
+        item["code"] == "oversized_event_line"
+        for item in result["incidents"]["integrity"]
+    )
+    assert result["incidents"]["incidents"][0]["event_count"] == 1
+
+
 # ---------------------------------------------------------------------------
 # M2 shipped-fix chain projection fixtures
 # ---------------------------------------------------------------------------

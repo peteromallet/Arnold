@@ -39,6 +39,7 @@ def spec(
     run_kind: str = "automatic_repair_retry",
     lineage: str | None = None,
     links: dict[str, str] | None = None,
+    description: str | None = None,
 ) -> ManagedCommandSpec:
     return ManagedCommandSpec(
         run_kind=run_kind,
@@ -52,6 +53,7 @@ def spec(
         route_class="test_route",
         backend="codex",
         command_display="fixture managed worker",
+        description=description,
         launch_provenance=machine_origin_provenance(
             origin_kind="repair_loop_worker",
             origin_id=identity,
@@ -101,6 +103,7 @@ def test_automatic_run_has_full_truthful_lifecycle_and_unified_view(tmp_path: Pa
     assert payload["model"] == "gpt-5.6-sol"
     assert payload["reasoning_effort"] == "high"
     assert payload["difficulty"] == 8
+    assert payload["description"] == "fixture managed worker"
     assert payload["completion_delivery"]["status"] == "not_applicable"
     assert payload["launch_provenance"]["schema_version"] == MACHINE_ORIGIN_SCHEMA
     assert payload["launch_provenance"]["transport"] == "automatic_system"
@@ -116,6 +119,26 @@ def test_automatic_run_has_full_truthful_lifecycle_and_unified_view(tmp_path: Pa
     assert row["status"] == "completed"
     assert row["links"]["blocker_id"] == "blocker-1"
     assert view["delivery_status_counts"] == {"not_applicable": 1}
+
+
+def test_automatic_run_persists_specific_operator_description(tmp_path: Path) -> None:
+    item = spec(
+        tmp_path,
+        identity="described-investigator",
+        description=(
+            "Read-only investigation of repair_goal_owner_missing for custody-control-plane "
+            "at m5a/execute"
+        ),
+    )
+
+    path, payload, created = reserve_managed_command(item)
+
+    assert created is True
+    assert path.exists()
+    assert payload["description"] == (
+        "Read-only investigation of repair_goal_owner_missing for custody-control-plane "
+        "at m5a/execute"
+    )
 
 
 def test_terminal_failure_is_persisted_with_result(tmp_path: Path) -> None:
@@ -391,6 +414,84 @@ def test_required_output_failure_is_terminal_and_durable(tmp_path: Path) -> None
     assert result["output_size_bytes"] == 0
 
 
+def test_active_repair_goal_cannot_be_completed_by_worker_exit(tmp_path: Path) -> None:
+    goal_path = tmp_path / "active-repair-goal.json"
+    goal_path.write_text(
+        json.dumps(
+            {
+                "goal_id": "goal-active",
+                "checkpoint_digest": "checkpoint-active",
+                "status": "active",
+            }
+        ),
+        encoding="utf-8",
+    )
+    item = spec(
+        tmp_path,
+        identity="active-goal-worker-exit",
+        run_kind="automatic_repair",
+        links={"repair_goal_path": str(goal_path)},
+    )
+
+    assert run_managed_command(item) == 75
+    payload = json.loads(manifest_path(tmp_path, item).read_text())
+    assert payload["status"] == "failed"
+    assert payload["error_class"] == "RepairGoalIncomplete"
+    assert payload["semantic_completion"]["status"] == "continuing"
+    assert payload["semantic_completion"]["complete"] is False
+
+
+def test_missing_repair_goal_evidence_fails_closed(tmp_path: Path) -> None:
+    item = spec(
+        tmp_path,
+        identity="missing-goal-worker-exit",
+        run_kind="automatic_repair",
+        links={"repair_goal_path": str(tmp_path / "missing-goal.json")},
+    )
+
+    assert run_managed_command(item) == 75
+    payload = json.loads(manifest_path(tmp_path, item).read_text())
+    assert payload["status"] == "failed"
+    assert payload["repair_goal"]["status"] == "unknown"
+    assert payload["semantic_completion"]["complete"] is False
+
+
+def test_approval_gate_is_terminal_non_success_not_autonomous_failure(
+    tmp_path: Path,
+) -> None:
+    goal_path = tmp_path / "approval-repair-goal.json"
+    goal_path.write_text(
+        json.dumps(
+            {
+                "goal_id": "goal-approval",
+                "checkpoint_digest": "checkpoint-approval",
+                "status": "approval_required",
+            }
+        ),
+        encoding="utf-8",
+    )
+    item = spec(
+        tmp_path,
+        identity="approval-goal-worker-exit",
+        run_kind="automatic_repair",
+        links={"repair_goal_path": str(goal_path)},
+    )
+
+    assert run_managed_command(item) == 0
+    payload = json.loads(manifest_path(tmp_path, item).read_text())
+    assert payload["status"] == "completed"
+    assert payload.get("error_class") is None
+    assert payload["repair_goal"]["status"] == "approval_required"
+    assert payload["semantic_completion"] == {
+        "status": "blocked",
+        "complete": False,
+        "authority": "repair_goal",
+        "goal_id": "goal-approval",
+        "checkpoint_digest": "checkpoint-approval",
+        "reason": "explicit human approval or authorization gate verified",
+    }
+
+
 def test_automatic_child_gets_machine_origin_not_resident_reply_authority(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -450,8 +551,9 @@ def test_automatic_v2_without_canonical_contract_is_visible_but_not_live_evidenc
     assert row["live"] is False
 
 
+@pytest.mark.parametrize("split_options", [False, True])
 def test_nested_hermes_launch_reenters_shared_manager(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, split_options: bool
 ) -> None:
     parent = spec(tmp_path, identity="nested-parent")
     assert run_managed_command(parent) == 0
@@ -473,16 +575,25 @@ def test_nested_hermes_launch_reenters_shared_manager(
         "ARNOLD_MANAGED_AGENT_ORIGIN",
         json.dumps(parent_payload["launch_provenance"]),
     )
-    monkeypatch.setattr(
-        sys,
-        "argv",
+    launcher_args = (
         [
+            str(launcher_path),
+            "--model",
+            "deepseek:deepseek-v4-pro",
+            "--project_dir",
+            str(tmp_path),
+            "--query_file",
+            str(prompt),
+        ]
+        if split_options
+        else [
             str(launcher_path),
             "--model=deepseek:deepseek-v4-pro",
             f"--project_dir={tmp_path}",
             f"--query_file={prompt}",
-        ],
+        ]
     )
+    monkeypatch.setattr(sys, "argv", launcher_args)
     launched: list[str] = []
 
     def fake_run(command, **_kwargs):
@@ -495,6 +606,7 @@ def test_nested_hermes_launch_reenters_shared_manager(
     assert "automatic_research_subagent" in launched
     assert str(parent_payload["run_id"]) in launched
     assert "@managed-stdin@" in "\n".join(launched)
+    assert str(tmp_path.resolve()) in launched
 
 
 def test_root_authority_ceiling_is_durable_and_inherited_by_child(

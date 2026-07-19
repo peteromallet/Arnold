@@ -63,6 +63,13 @@ from .shared import (
     worker_module,
 )
 from arnold_pipelines.megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
+from arnold_pipelines.megaplan.orchestration.task_feasibility import (
+    assert_admitted_task_feasibility,
+)
+from arnold_pipelines.megaplan.orchestration.critique_custody import (
+    CritiqueCustodyError,
+    assert_finalize_custody,
+)
 
 log = logging.getLogger(__name__)
 
@@ -428,11 +435,45 @@ def _enforce_approval_gate(
 
 def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="execute") as (plan_dir, state):
+        from arnold_pipelines.megaplan.planning.source_binding import (
+            assert_canonical_source_current,
+        )
+
+        try:
+            assert_canonical_source_current(
+                plan_dir,
+                state,
+                operation="finalized plan execution admission",
+            )
+        except CliError:
+            save_state_merge_meta(plan_dir, state)
+            raise
         # Entry dispatch and approval gating are decided by typed policy
         # outcomes; the handler only translates those outcomes into legacy
         # CliErrors / state mutations (see execute.policy).
         _enforce_entry_route(state)
         apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
+        # V2 finalize admission is content-addressed. Re-run the same pure
+        # compiler before any approval receipt or mutating preflight so a stale
+        # or hand-edited graph cannot bypass the final-stage sense-check.
+        finalize_data = read_json(plan_dir / "finalize.json")
+        try:
+            assert_admitted_task_feasibility(finalize_data, state.get("config", {}))
+        except ValueError as exc:
+            raise CliError(
+                "finalized_task_graph_changed",
+                str(exc),
+                valid_next=["finalize", "revise"],
+            ) from exc
+        try:
+            assert_finalize_custody(plan_dir, finalize_data)
+        except CritiqueCustodyError as exc:
+            raise CliError(
+                exc.code,
+                str(exc),
+                valid_next=["finalize", "revise", "critique"],
+                extra={"issues": list(exc.issues)},
+            ) from exc
         # Loud operator warning if the resolved sandbox root is narrower than
         # the plan's stored project_dir. Silent divergence here cost entire
         # execute runs in the past (codex sandboxed to a subdirectory, writes

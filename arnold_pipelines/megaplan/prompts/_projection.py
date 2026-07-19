@@ -12,6 +12,8 @@ that preserve the complete set on disk.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import textwrap
 from dataclasses import dataclass
@@ -35,6 +37,15 @@ MAX_AUDIT_FILES = 40
 MAX_FILE_LIST_ITEMS = 20
 MAX_BULK_SUMMARY_SAMPLES = 5
 MAX_BULK_SUMMARY_INSTRUCTIONS = 5
+
+# Completed-task context is prompt-only and must stay bounded even when a
+# long-running plan has hundreds of completed task records on disk.
+MAX_COMPLETED_TASK_RECEIPTS = 32
+MAX_COMPLETED_TASK_RECEIPT_CONTEXT_CHARS = 24_000
+MAX_COMPLETED_TASK_RECEIPT_ID_CHARS = 120
+MAX_COMPLETED_TASK_RECEIPT_FILES = 6
+MAX_COMPLETED_TASK_RECEIPT_COMMANDS = 3
+MAX_COMPLETED_TASK_RECEIPT_EVIDENCE_FILES = 4
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +310,197 @@ def _project_sense_check(
             sense_check["executor_note"], limit=MAX_EXECUTOR_NOTES_CHARS
         )
     return projected
+
+
+def _receipt_identifier(value: Any) -> tuple[str, str | None]:
+    """Bound an identifier while preserving a stable lookup digest."""
+    text = value if isinstance(value, str) else str(value) if value is not None else ""
+    if len(text) <= MAX_COMPLETED_TASK_RECEIPT_ID_CHARS:
+        return text, None
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    suffix = f"...sha256:{digest[:16]}"
+    return text[: MAX_COMPLETED_TASK_RECEIPT_ID_CHARS - len(suffix)] + suffix, digest
+
+
+def _receipt_list(
+    value: Any,
+    *,
+    item_limit: int,
+    text_limit: int,
+) -> tuple[list[str], int]:
+    """Return bounded string evidence plus an explicit omitted count."""
+    if isinstance(value, dict):
+        raw_items = value.get("items", [])
+        inherited_omitted = value.get("omitted_count", 0)
+        inherited_omitted = inherited_omitted if isinstance(inherited_omitted, int) else 0
+    else:
+        raw_items = value
+        inherited_omitted = 0
+    if not isinstance(raw_items, list):
+        return [], inherited_omitted
+    strings = [item for item in raw_items if isinstance(item, str)]
+    return (
+        [_brief_text(item, limit=text_limit) for item in strings[:item_limit]],
+        inherited_omitted + max(0, len(strings) - item_limit),
+    )
+
+
+def _completed_task_receipt(task: dict[str, Any], *, direct: bool) -> dict[str, Any]:
+    task_id, task_id_digest = _receipt_identifier(task.get("id", ""))
+    receipt: dict[str, Any] = {
+        "task_id": task_id,
+        "dependency_scope": "direct" if direct else "transitive",
+        "status": _brief_text(task.get("status", "completed"), limit=40),
+        "description": _brief_text(task.get("description", ""), limit=240),
+        "outcome": _brief_text(task.get("executor_notes", ""), limit=500),
+    }
+    if task_id_digest:
+        receipt["task_id_sha256"] = task_id_digest
+
+    evidence: dict[str, Any] = {}
+    for field, item_limit, text_limit in (
+        ("files_changed", MAX_COMPLETED_TASK_RECEIPT_FILES, 180),
+        ("commands_run", MAX_COMPLETED_TASK_RECEIPT_COMMANDS, 240),
+        ("evidence_files", MAX_COMPLETED_TASK_RECEIPT_EVIDENCE_FILES, 180),
+    ):
+        items, omitted = _receipt_list(
+            task.get(field, []),
+            item_limit=item_limit,
+            text_limit=text_limit,
+        )
+        if items:
+            evidence[field] = items
+        if omitted:
+            evidence[f"{field}_omitted_count"] = omitted
+    if evidence:
+        receipt["evidence"] = evidence
+    return receipt
+
+
+def project_completed_task_receipts(
+    finalize_data: dict[str, Any],
+    *,
+    batch_task_ids: list[str],
+    completed_task_ids: set[str] | None,
+    source_artifact_ref: str = "finalize.json",
+) -> dict[str, Any]:
+    """Build bounded, dependency-scoped receipts for an execute prompt.
+
+    The complete task ledger remains unchanged in ``finalize.json``. Prompts
+    receive only completed tasks in the current batch's dependency closure,
+    ordered with direct dependencies first. Both receipt count and serialized
+    character size are capped. If a dependency receipt cannot fit, the payload
+    says so explicitly and points back to the authoritative artifact; executors
+    must block rather than guess when that artifact is unavailable.
+    """
+    raw_tasks = finalize_data.get("tasks", [])
+    tasks = [task for task in raw_tasks if isinstance(task, dict)] if isinstance(raw_tasks, list) else []
+    task_by_id = {
+        task["id"]: task
+        for task in tasks
+        if isinstance(task.get("id"), str) and task.get("id")
+    }
+    task_order = {task_id: index for index, task_id in enumerate(task_by_id)}
+    completed = {
+        task_id
+        for task_id in (completed_task_ids or set())
+        if isinstance(task_id, str) and task_id not in set(batch_task_ids)
+    }
+
+    direct_ids: set[str] = set()
+    dependency_ids: set[str] = set()
+    frontier: list[str] = []
+    for batch_id in batch_task_ids:
+        task = task_by_id.get(batch_id, {})
+        depends_on = task.get("depends_on", [])
+        if not isinstance(depends_on, list):
+            continue
+        for dependency_id in depends_on:
+            if isinstance(dependency_id, str) and dependency_id in completed:
+                direct_ids.add(dependency_id)
+                frontier.append(dependency_id)
+
+    while frontier:
+        dependency_id = frontier.pop(0)
+        if dependency_id in dependency_ids:
+            continue
+        dependency_ids.add(dependency_id)
+        task = task_by_id.get(dependency_id, {})
+        depends_on = task.get("depends_on", [])
+        if not isinstance(depends_on, list):
+            continue
+        for parent_id in depends_on:
+            if (
+                isinstance(parent_id, str)
+                and parent_id in completed
+                and parent_id not in dependency_ids
+            ):
+                frontier.append(parent_id)
+
+    ordered_dependency_ids = sorted(
+        (task_id for task_id in dependency_ids if task_id in task_by_id),
+        key=lambda task_id: (
+            0 if task_id in direct_ids else 1,
+            task_order.get(task_id, len(task_order)),
+            task_id,
+        ),
+    )
+    candidate_receipts = [
+        _completed_task_receipt(
+            task_by_id[task_id],
+            direct=task_id in direct_ids,
+        )
+        for task_id in ordered_dependency_ids
+    ]
+
+    payload: dict[str, Any] = {
+        "schema": "megaplan.completed_task_receipts.v1",
+        "source_artifact": _brief_text(source_artifact_ref, limit=300),
+        "selection": "completed dependency closure; direct dependencies first",
+        "completed_task_count": len(completed),
+        "dependency_task_count": len(candidate_receipts),
+        "unrelated_completed_task_count": len(completed - dependency_ids),
+        "receipts": [],
+        "omitted_dependency_receipt_count": len(candidate_receipts),
+    }
+
+    for receipt in candidate_receipts[:MAX_COMPLETED_TASK_RECEIPTS]:
+        proposed = dict(payload)
+        proposed_receipts = [*payload["receipts"], receipt]
+        proposed["receipts"] = proposed_receipts
+        proposed["omitted_dependency_receipt_count"] = len(candidate_receipts) - len(proposed_receipts)
+        if len(json.dumps(proposed, sort_keys=True, ensure_ascii=False)) > MAX_COMPLETED_TASK_RECEIPT_CONTEXT_CHARS:
+            break
+        payload = proposed
+
+    def refresh_overflow() -> None:
+        omitted_ids = ordered_dependency_ids[len(payload["receipts"]):]
+        payload["omitted_dependency_receipt_count"] = len(omitted_ids)
+        if not omitted_ids:
+            payload.pop("overflow", None)
+            return
+        digest_input = "\0".join(omitted_ids).encode("utf-8")
+        payload["overflow"] = {
+            "task_id_set_sha256": hashlib.sha256(digest_input).hexdigest(),
+            "task_id_sample": [
+                _receipt_identifier(task_id)[0] for task_id in omitted_ids[:5]
+            ],
+            "required_action": (
+                "Inspect source_artifact for omitted dependency evidence; "
+                "if it is unavailable, block instead of guessing."
+            ),
+        }
+
+    refresh_overflow()
+    while (
+        payload["receipts"]
+        and len(json.dumps(payload, sort_keys=True, ensure_ascii=False))
+        > MAX_COMPLETED_TASK_RECEIPT_CONTEXT_CHARS
+    ):
+        payload["receipts"].pop()
+        refresh_overflow()
+
+    return payload
 
 
 # ---------------------------------------------------------------------------

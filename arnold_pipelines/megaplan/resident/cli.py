@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -22,6 +25,7 @@ from .provenance import provenance_from_environment
 from .reply_chain import decode_reply_cursor, reply_chain_page
 from .runtime import ResidentRuntime
 from .scheduler import make_store_scheduler
+from . import vp_todo
 from .status_tree import DEFAULT_NODE_LIMIT, MAX_NODE_LIMIT, read_cloud_status_node
 from .context_tree import read_context_node, search_context
 from arnold_pipelines.megaplan.cloud import status_snapshot
@@ -85,6 +89,137 @@ def _register_resident_subcommands(parser: argparse.ArgumentParser) -> None:
     search_parser.add_argument("--cursor", type=int, default=0)
     search_parser.add_argument("--limit", type=int, default=DEFAULT_NODE_LIMIT)
 
+    queue_parser = sub.add_parser(
+        "queue-subagent-successor",
+        parents=[shared],
+        help="Durably queue a provenance-preserving successor after one or more managed runs",
+    )
+    dependency_source = queue_parser.add_mutually_exclusive_group(required=True)
+    dependency_source.add_argument(
+        "--after-run-id", help="Legacy singular predecessor run ID"
+    )
+    dependency_source.add_argument(
+        "--after-run-ids",
+        nargs="+",
+        help="Distinct predecessor run IDs; every run must succeed before launch",
+    )
+    prompt_source = queue_parser.add_mutually_exclusive_group(required=True)
+    prompt_source.add_argument("--prompt")
+    prompt_source.add_argument("--prompt-file")
+    queue_parser.add_argument("--description", required=True)
+    queue_parser.add_argument("--project-dir")
+    queue_parser.add_argument("--max-launch-attempts", type=int, default=3)
+
+    inspect_queue_parser = sub.add_parser(
+        "inspect-subagent-queue",
+        parents=[shared],
+        help="Inspect bounded resident successor dependency state",
+    )
+    inspect_queue_parser.add_argument("--run-id")
+    inspect_queue_parser.add_argument("--project-dir")
+    inspect_queue_parser.add_argument("--limit", type=int, default=8)
+
+    supersede_todo_parser = sub.add_parser(
+        "supersede-todo",
+        parents=[shared],
+        help=(
+            "Supersede obsolete pending todo intent using canonical retirement or "
+            "replacement evidence without asserting completion"
+        ),
+    )
+    supersede_todo_parser.add_argument("--id", required=True)
+    supersede_todo_parser.add_argument("--canonical-record-id", required=True)
+    supersede_todo_parser.add_argument("--evidence", required=True)
+    supersede_todo_parser.add_argument("--resolution", required=True)
+    supersede_todo_parser.add_argument(
+        "--todo-path",
+        help="Explicit todo store path; defaults to the resident configuration",
+    )
+
+    schedule_parser = sub.add_parser(
+        "schedule", parents=[shared], help="Manage durable resident-managed schedules"
+    )
+    schedule_sub = schedule_parser.add_subparsers(dest="schedule_action", required=True)
+    create = schedule_sub.add_parser("create", help="Create a versioned schedule definition")
+    create.add_argument("--file", required=True)
+    create.add_argument("--idempotency-key", required=True)
+    create.add_argument("--dry-run", action="store_true")
+    add = schedule_sub.add_parser(
+        "add",
+        help=(
+            "Create an authorized schedule from one-shot, anchored interval, cron, or "
+            "wall-clock calendar input"
+        ),
+    )
+    add.add_argument("--id", required=True, dest="schedule_id")
+    add.add_argument("--description", required=True)
+    prompt_source = add.add_mutually_exclusive_group(required=True)
+    prompt_source.add_argument("--prompt")
+    prompt_source.add_argument("--prompt-file")
+    add.add_argument(
+        "--grant-file", required=True,
+        help="Immutable AuthorizationGrant JSON; schedule timing never expands this grant",
+    )
+    timing_source = add.add_mutually_exclusive_group(required=True)
+    timing_source.add_argument(
+        "--at", help="ISO instant/local wall time or 'next <weekday> HH:MM'"
+    )
+    timing_source.add_argument("--every", help="Positive ISO 8601 interval, for example PT6H")
+    timing_source.add_argument("--cron", help="Five-field cron expression")
+    timing_source.add_argument(
+        "--calendar", help="Wall-clock expression such as 'Monday at 6:00 AM'"
+    )
+    add.add_argument(
+        "--start", help="Required interval anchor; use 'now' or an ISO/wall-clock timestamp"
+    )
+    add.add_argument(
+        "--timezone",
+        help="IANA timezone; defaults only to the current resident provenance timezone",
+    )
+    add.add_argument("--gap-policy", choices=["reject", "skip", "next_valid"], default="reject")
+    add.add_argument("--fold-policy", choices=["first", "second", "both"], default="first")
+    add.add_argument("--work-intent", choices=["speculative", "review", "execution"], default="review")
+    add.add_argument("--task-kind", default="other")
+    add.add_argument("--model", default="gpt-5.6-terra")
+    add.add_argument("--profile", default="resident-subagent-standard")
+    add.add_argument("--project-dir")
+    add.add_argument("--max-occurrences", type=int)
+    add.add_argument("--idempotency-key")
+    add.add_argument("--dry-run", action="store_true")
+    preview = schedule_sub.add_parser("preview", help="Preview nominal instants without writing")
+    preview.add_argument("--file", required=True)
+    preview.add_argument("--count", type=int, default=10)
+    get = schedule_sub.add_parser("get")
+    get.add_argument("schedule_id")
+    get.add_argument("--history", action="store_true")
+    listing = schedule_sub.add_parser("list")
+    listing.add_argument("--state")
+    listing.add_argument("--upcoming-hours", type=int, default=12)
+    listing.add_argument("--limit", type=int, default=20)
+    update = schedule_sub.add_parser("update")
+    update.add_argument("schedule_id")
+    update.add_argument("--file", required=True)
+    update.add_argument("--if-revision", required=True, type=int)
+    for action in ("activate", "pause", "resume", "cancel"):
+        lifecycle = schedule_sub.add_parser(action)
+        lifecycle.add_argument("schedule_id")
+        lifecycle.add_argument(
+            "--if-revision", type=int,
+            help="Optional optimistic revision; defaults to the currently observed revision",
+        )
+        lifecycle.add_argument("--reason", required=True)
+    occurrences = schedule_sub.add_parser("occurrences")
+    occurrences.add_argument("schedule_id")
+    occurrences.add_argument("--state")
+    schedule_sub.add_parser("dead-letters").add_argument("--schedule")
+    replay = schedule_sub.add_parser("replay", help="Replay a dead letter under a new grant")
+    replay.add_argument("occurrence_id")
+    replay.add_argument("--grant-file", required=True)
+    event = schedule_sub.add_parser("event", help="Ingest one typed append-only event")
+    event.add_argument("--file", required=True)
+    run_once = schedule_sub.add_parser("run-once", help="Materialize and process due occurrences")
+    run_once.add_argument("--worker-id", default="resident-schedule-cli")
+
 
 def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
     config = _resident_config(args)
@@ -95,6 +230,14 @@ def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
             return _resident_health(store, config, limit=args.limit)
         if action == "scheduler-once":
             return asyncio.run(_resident_scheduler_once(store, config, worker_id=args.worker_id))
+        if action == "queue-subagent-successor":
+            return _resident_queue_subagent_successor(root, config, args)
+        if action == "inspect-subagent-queue":
+            return _resident_inspect_subagent_queue(root, args)
+        if action == "supersede-todo":
+            return _resident_supersede_todo(config, args)
+        if action == "schedule":
+            return _resident_schedule(root, store, args)
         if action == "read-reply-chain":
             return _resident_read_reply_chain(
                 store,
@@ -128,6 +271,394 @@ def run_resident_cli(root: Path, args: argparse.Namespace) -> dict[str, Any]:
         if callable(close):
             close()
     raise CliError("invalid_args", f"Unknown resident action: {getattr(args, 'resident_action', None)!r}")
+
+
+def _resident_supersede_todo(
+    config: ResidentConfig, args: argparse.Namespace
+) -> dict[str, Any]:
+    path = Path(
+        args.todo_path or config.special_requests_todo_path
+    ).expanduser().resolve()
+    try:
+        item = vp_todo.supersede_by_record(
+            path,
+            args.id,
+            canonical_record_id=args.canonical_record_id,
+            evidence=args.evidence,
+            resolution=args.resolution,
+        )
+    except ValueError as exc:
+        raise CliError("todo_reconciliation_rejected", str(exc)) from exc
+    if item is None:
+        raise CliError("todo_not_found", f"todo item not found: {args.id}")
+    return {
+        "success": True,
+        "step": "resident",
+        "action": "supersede-todo",
+        "todo_path": str(path),
+        "item": vp_todo.public_item(item),
+    }
+
+
+def _resident_schedule(root: Path, store: Store, args: argparse.Namespace) -> dict[str, Any]:
+    from .schedules import (
+        AuthorizationGrant, ScheduleService, build_operator_schedule_definition,
+        definition_from_file, schedule_projection, schedule_store_root,
+    )
+
+    store_root = schedule_store_root(store)
+    if store_root is None:
+        raise CliError(
+            "unsupported_store",
+            "resident schedule v1 is single-writer file mode; database multi-worker support is not enabled",
+        )
+    service = ScheduleService(store_root, project_root=root)
+    action = args.schedule_action
+    try:
+        if action in {"create", "preview"}:
+            definition = definition_from_file(Path(args.file).expanduser().resolve())
+            preview = service.preview(definition, count=getattr(args, "count", 10))
+            if action == "preview" or args.dry_run:
+                return {
+                    "success": True, "step": "resident", "action": f"schedule-{action}",
+                    "dry_run": True, "definition": definition.model_dump(mode="json", by_alias=True),
+                    "nominal_times": [item.isoformat() for item in preview],
+                }
+            created, changed = service.create(
+                definition, idempotency_key=args.idempotency_key,
+            )
+            return {
+                "success": True, "step": "resident", "action": "schedule-create",
+                "created": changed, "definition": created.model_dump(mode="json", by_alias=True),
+                "nominal_times": [item.isoformat() for item in preview],
+            }
+        if action == "add":
+            if args.prompt_file:
+                prompt = Path(args.prompt_file).expanduser().resolve().read_text(encoding="utf-8")
+            else:
+                prompt = str(args.prompt or "")
+            grant = AuthorizationGrant.model_validate_json(
+                Path(args.grant_file).expanduser().resolve().read_text(encoding="utf-8")
+            )
+            provenance = provenance_from_environment(strict=True)
+            timezone = args.timezone or (
+                str(provenance.get("timezone_name"))
+                if provenance and provenance.get("timezone_name") else None
+            )
+            if not timezone:
+                raise ValueError(
+                    "--timezone is required when current resident provenance has no configured timezone"
+                )
+            definition = build_operator_schedule_definition(
+                schedule_id=args.schedule_id,
+                description=args.description,
+                prompt=prompt,
+                authorization=grant,
+                timezone=timezone,
+                at=args.at,
+                every=args.every,
+                start=args.start,
+                cron=args.cron,
+                calendar=args.calendar,
+                gap_policy=args.gap_policy,
+                fold_policy=args.fold_policy,
+                work_intent=args.work_intent,
+                task_kind=args.task_kind,
+                model=args.model,
+                profile=args.profile,
+                project_dir=args.project_dir,
+                max_occurrences=args.max_occurrences,
+            )
+            preview = service.preview(definition, count=10)
+            if args.dry_run:
+                return {
+                    "success": True, "step": "resident", "action": "schedule-add",
+                    "dry_run": True,
+                    "definition": definition.model_dump(mode="json", by_alias=True),
+                    "nominal_times": [item.isoformat() for item in preview],
+                }
+            created, changed = service.create(
+                definition,
+                idempotency_key=args.idempotency_key or f"schedule-add:{args.schedule_id}",
+            )
+            return {
+                "success": True, "step": "resident", "action": "schedule-add",
+                "created": changed,
+                "schedule": schedule_projection(service, created),
+                "nominal_times": [item.isoformat() for item in preview],
+            }
+        if action == "get":
+            definition = service.repo.read_definition(args.schedule_id)
+            payload: dict[str, Any] = {
+                "success": True, "step": "resident", "action": "schedule-get",
+                "definition": definition.model_dump(mode="json", by_alias=True),
+            }
+            if args.history:
+                payload["history"] = [
+                    service.repo.read_definition(args.schedule_id, revision).model_dump(mode="json", by_alias=True)
+                    for revision in range(1, definition.revision + 1)
+                ]
+            return payload
+        if action == "list":
+            rows = service.repo.definitions(state=args.state)
+            if args.upcoming_hours < 1 or args.upcoming_hours > 24 * 31:
+                raise ValueError("--upcoming-hours must be between 1 and 744")
+            if args.limit < 1 or args.limit > 100:
+                raise ValueError("--limit must be between 1 and 100")
+            now = datetime.now(UTC)
+            horizon = now + timedelta(hours=args.upcoming_hours)
+            projections = [schedule_projection(service, row, now=now) for row in rows]
+            for item in projections:
+                trigger = item.get("next_trigger_at")
+                item["within_upcoming_window"] = bool(
+                    trigger and datetime.fromisoformat(str(trigger)) <= horizon
+                )
+            return {
+                "success": True, "step": "resident", "action": "schedule-list",
+                "count": len(rows), "returned_count": min(len(rows), args.limit),
+                "upcoming_hours": args.upcoming_hours,
+                "items": projections[: args.limit],
+                "omitted_count": max(0, len(rows) - args.limit),
+            }
+        if action == "update":
+            replacement = definition_from_file(Path(args.file).expanduser().resolve())
+            revised = service.revise(args.schedule_id, replacement, if_revision=args.if_revision)
+            return {
+                "success": True, "step": "resident", "action": "schedule-update",
+                "definition": revised.model_dump(mode="json", by_alias=True),
+            }
+        if action in {"activate", "pause", "resume", "cancel"}:
+            state = {"activate": "active", "resume": "active", "pause": "paused", "cancel": "cancelled"}[action]
+            observed = service.repo.read_definition(args.schedule_id)
+            revised = service.set_state(
+                args.schedule_id, state,
+                if_revision=args.if_revision or observed.revision,
+                audit_reason=args.reason,
+            )
+            return {
+                "success": True, "step": "resident", "action": f"schedule-{action}",
+                "definition": revised.model_dump(mode="json", by_alias=True),
+            }
+        if action in {"occurrences", "dead-letters"}:
+            schedule_id = args.schedule_id if action == "occurrences" else args.schedule
+            rows = service.repo.occurrences(schedule_id)
+            wanted = getattr(args, "state", None) or ("dead_letter" if action == "dead-letters" else None)
+            if wanted:
+                rows = [row for row in rows if row.state == wanted]
+            return {
+                "success": True, "step": "resident", "action": f"schedule-{action}",
+                "count": len(rows), "items": [row.model_dump(mode="json") for row in rows],
+            }
+        if action == "event":
+            event = json.loads(Path(args.file).expanduser().resolve().read_text(encoding="utf-8"))
+            created = service.ingest_event(event)
+            return {
+                "success": True, "step": "resident", "action": "schedule-event",
+                "created_occurrence_ids": created,
+            }
+        if action == "replay":
+            grant = AuthorizationGrant.model_validate_json(
+                Path(args.grant_file).expanduser().resolve().read_text(encoding="utf-8")
+            )
+            created = service.replay(args.occurrence_id, grant=grant)
+            return {
+                "success": True, "step": "resident", "action": "schedule-replay",
+                "occurrence_id": created, "replay_of_occurrence_id": args.occurrence_id,
+            }
+        if action == "run-once":
+            receipt = asyncio.run(service.run_due_once(worker_id=args.worker_id))
+            return {
+                "success": True, "step": "resident", "action": "schedule-run-once",
+                "receipt": receipt.model_dump(),
+            }
+    except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
+        raise CliError("schedule_rejected", str(exc)) from exc
+    raise CliError("invalid_args", f"unknown schedule action: {action}")
+
+
+def _resident_queue_subagent_successor(
+    root: Path, config: ResidentConfig, args: argparse.Namespace
+) -> dict[str, Any]:
+    from .subagent import SubagentQueueError, launch_subagent_task
+
+    if args.prompt_file:
+        try:
+            prompt = Path(args.prompt_file).expanduser().read_text(encoding="utf-8")
+        except OSError as exc:
+            raise CliError("invalid_args", f"cannot read --prompt-file: {exc}") from exc
+    else:
+        prompt = str(args.prompt or "")
+    if not prompt.strip():
+        raise CliError("invalid_args", "queued successor prompt must not be empty")
+    project_dir = str(Path(args.project_dir).expanduser().resolve()) if args.project_dir else str(root)
+    try:
+        result = asyncio.run(
+            launch_subagent_task(
+                config,
+                task=prompt.strip(),
+                description=args.description,
+                project_dir=project_dir,
+                depends_on_run_id=getattr(args, "after_run_id", None),
+                depends_on_run_ids=getattr(args, "after_run_ids", None),
+                queue_max_launch_attempts=args.max_launch_attempts,
+            )
+        )
+    except (SubagentQueueError, ValueError, OSError) as exc:
+        raise CliError("queue_rejected", str(exc)) from exc
+    try:
+        manifest = json.loads(Path(result.manifest_path).read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError) as exc:
+        raise CliError(
+            "queue_rejected", "queued successor manifest is unavailable after commit"
+        ) from exc
+    queue = manifest.get("queue") if isinstance(manifest, Mapping) else None
+    predecessor_run_ids = (
+        list(queue.get("predecessor_run_ids") or [])
+        if isinstance(queue, Mapping)
+        else []
+    )
+    return {
+        "success": True,
+        "step": "resident",
+        "action": "queue-subagent-successor",
+        "run_id": result.run_id,
+        "status": result.status,
+        "predecessor_run_id": (
+            predecessor_run_ids[0] if len(predecessor_run_ids) == 1 else None
+        ),
+        "predecessor_run_ids": predecessor_run_ids,
+        "authorization_mode": _queue_authorization_mode(queue),
+        "manifest_path": result.manifest_path,
+        "description": result.description,
+    }
+
+
+def _queue_authorization_mode(queue: object) -> str:
+    if not isinstance(queue, Mapping):
+        return "invalid_queue_contract"
+    authorization = queue.get("cross_request_authorization")
+    if isinstance(authorization, Mapping):
+        return str(authorization.get("mode") or "invalid_cross_request_authorization")[:80]
+    authorizations = queue.get("cross_request_authorizations")
+    if not isinstance(authorizations, list):
+        return "same_request_custody"
+    modes = {
+        str(item.get("mode") or "invalid_cross_request_authorization")[:80]
+        for item in authorizations
+        if isinstance(item, Mapping)
+    }
+    return next(iter(modes)) if len(modes) == 1 else "invalid_cross_request_authorization"
+
+
+def _resident_inspect_subagent_queue(
+    root: Path, args: argparse.Namespace
+) -> dict[str, Any]:
+    from .subagent import list_managed_resident_agents
+
+    if args.limit < 1 or args.limit > 25:
+        raise CliError("invalid_args", "inspect-subagent-queue --limit must be 1..25")
+    project_dir = Path(args.project_dir).expanduser().resolve() if args.project_dir else root
+    inventory = list_managed_resident_agents(
+        project_root=project_dir,
+        workspace_root=None,
+        recent_limit=args.limit,
+        queue_limit=args.limit,
+    )
+    rows = list(inventory.get("queued") or []) + [
+        row
+        for row in inventory.get("recent") or []
+        if isinstance(row, dict) and isinstance(row.get("queue"), dict)
+    ]
+    if args.run_id:
+        rows = [row for row in rows if row.get("run_id") == args.run_id]
+        if not rows:
+            raise CliError("not_found", f"queued resident run not found: {args.run_id}")
+    bounded = []
+    for row in rows[: args.limit]:
+        queue = dict(row.get("queue") or {})
+        authored = queue.get("authored_prompt")
+        authored = authored if isinstance(authored, dict) else {}
+        references = []
+        for ref in list(queue.get("predecessor_references") or [])[:24]:
+            if not isinstance(ref, dict):
+                continue
+            references.append(
+                {
+                    "schema_version": str(ref.get("schema_version") or "")[:80],
+                    "run_id": str(ref.get("run_id") or "")[:96],
+                    "artifact_type": str(ref.get("artifact_type") or "")[:32],
+                    "path": str(ref.get("path") or "")[:4096],
+                    "content_inlined": bool(ref.get("content_inlined")),
+                }
+            )
+        predecessor_run_ids = [
+            str(value)[:96]
+            for value in list(queue.get("predecessor_run_ids") or [])[:8]
+            if isinstance(value, str)
+        ]
+        if not predecessor_run_ids and queue.get("predecessor_run_id"):
+            predecessor_run_ids = [str(queue.get("predecessor_run_id"))[:96]]
+        predecessor_states = []
+        for state in list(queue.get("predecessor_states") or [])[:8]:
+            if not isinstance(state, Mapping):
+                continue
+            predecessor_states.append(
+                {
+                    "run_id": str(state.get("run_id") or "")[:96],
+                    "status": str(state.get("status") or "")[:48],
+                    "result_state": str(state.get("result_state") or "")[:48],
+                    "attention": str(state.get("attention") or "")[:120],
+                }
+            )
+        bounded.append(
+            {
+                "run_id": str(row.get("run_id") or "")[:96],
+                "status": str(row.get("status") or "")[:48],
+                "description": str(row.get("description") or "")[:180],
+                "predecessor_run_id": str(queue.get("predecessor_run_id") or "")[:96],
+                "predecessor_run_ids": predecessor_run_ids,
+                "predecessor_states": predecessor_states,
+                "failed_predecessor_run_id": str(
+                    queue.get("failed_predecessor_run_id") or ""
+                )[:96],
+                "successor_run_id": str(queue.get("successor_run_id") or "")[:96],
+                "dependency_state": str(queue.get("state") or "")[:48],
+                "predecessor_status": str(queue.get("predecessor_status") or "")[:48],
+                "attention": str(queue.get("attention") or "")[:120],
+                "authorization_mode": _queue_authorization_mode(queue),
+                "attempt_count": (
+                    max(0, min(queue["attempt_count"], 10_000))
+                    if isinstance(queue.get("attempt_count"), int)
+                    and not isinstance(queue.get("attempt_count"), bool)
+                    else None
+                ),
+                "max_launch_attempts": (
+                    max(0, min(queue["max_launch_attempts"], 10_000))
+                    if isinstance(queue.get("max_launch_attempts"), int)
+                    and not isinstance(queue.get("max_launch_attempts"), bool)
+                    else None
+                ),
+                "authored_prompt": {
+                    "description": str(authored.get("description") or "")[:180],
+                    "size_chars": (
+                        max(0, min(authored["size_chars"], 40_000))
+                        if isinstance(authored.get("size_chars"), int)
+                        and not isinstance(authored.get("size_chars"), bool)
+                        else None
+                    ),
+                },
+                "predecessor_references": references,
+            }
+        )
+    return {
+        "success": True,
+        "step": "resident",
+        "action": "inspect-subagent-queue",
+        "items": bounded,
+        "count": len(bounded),
+        "queued_total_count": inventory.get("queued_count", 0),
+        "omitted_count": max(0, len(rows) - len(bounded)),
+    }
 
 
 def _resident_config(args: argparse.Namespace) -> ResidentConfig:
@@ -169,6 +700,40 @@ def _resident_health(store: Store, config: ResidentConfig, *, limit: int) -> dic
         for turn in store.list_recent_turns(n=limit * 2)
         if turn.status == "abandoned"
     ][:limit]
+    schedule_health: dict[str, Any] = {"supported": False, "reason": "database multi-worker schedule store not enabled"}
+    from .schedules import ScheduleService, schedule_store_root, utc_now as schedule_utc_now
+    if schedule_root := schedule_store_root(store):
+        service = ScheduleService(schedule_root)
+        definitions = service.repo.definitions()
+        occurrences = service.repo.occurrences()
+        schedule_health = {
+            "supported": True,
+            "definition_count": len(definitions),
+            "state_counts": {
+                state: sum(row.state == state for row in definitions)
+                for state in ("draft", "active", "paused", "cancelled", "exhausted")
+            },
+            "occurrence_state_counts": {
+                state: sum(row.state == state for row in occurrences)
+                for state in ("scheduled", "claimed", "launch_committed", "launched", "terminal", "suppressed", "cancelled", "dead_letter")
+            },
+            "stale_claim_count": sum(
+                row.state == "claimed" and row.claim_expires_at is not None
+                and row.claim_expires_at <= schedule_utc_now()
+                for row in occurrences
+            ),
+            "orphan_launch_commit_count": sum(
+                row.state == "launch_committed" and not row.run_id for row in occurrences
+            ),
+            "next_nominal": {
+                row.schedule_id: (
+                    service.preview(row, count=1)[0].isoformat()
+                    if row.state == "active" and service.preview(row, count=1)
+                    else None
+                )
+                for row in definitions
+            },
+        }
     return {
         "success": True,
         "step": "resident",
@@ -189,6 +754,7 @@ def _resident_health(store: Store, config: ResidentConfig, *, limit: int) -> dic
             "count": len(stale_control),
             "messages": [_model(row) for row in stale_control],
         },
+        "resident_schedules": schedule_health,
     }
 
 

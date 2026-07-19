@@ -321,6 +321,7 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     apply_profile_expansion(args, project_dir)
     positional_idea = getattr(args, "idea", None)
     idea_file = getattr(args, "idea_file", None)
+    idea_source_path: Path | None = None
     if positional_idea and idea_file:
         raise CliError("invalid_args", "Pass either the positional idea or --idea-file, not both")
     if idea_file:
@@ -332,6 +333,7 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         except OSError as exc:
             raise CliError("invalid_args", f"Unable to read --idea-file {idea_path}: {exc}") from exc
         idea_source = "--idea-file"
+        idea_source_path = idea_path
     elif positional_idea:
         idea_path = _resolve_idea_path(positional_idea, project_dir=project_dir)
         if idea_path.is_file():
@@ -340,6 +342,7 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
             except OSError as exc:
                 raise CliError("invalid_args", f"Unable to read idea file under {project_dir}: {idea_path}: {exc}") from exc
             idea_source = "positional idea file"
+            idea_source_path = idea_path
         elif _looks_like_idea_file_path(positional_idea):
             raise CliError("missing_idea_file", f"idea file not found under {project_dir}: {idea_path}")
         else:
@@ -469,6 +472,16 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         },
         "last_gate": {},
     }
+    if idea_source_path is not None:
+        from arnold_pipelines.megaplan.planning.source_binding import (
+            capture_canonical_source_binding,
+        )
+
+        capture_canonical_source_binding(
+            state,
+            source_path=idea_source_path,
+            project_dir=project_dir,
+        )
     if getattr(args, "profile", None):
         state["config"]["profile"] = args.profile
     # Persist --vendor / --critic so subprocess phases (which don't re-pass

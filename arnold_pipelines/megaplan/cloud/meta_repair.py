@@ -4,7 +4,7 @@ When ordinary repair fails as a system, meta-repair diagnoses the
 repair-system failure, builds a redacted Codex/DeepSeek prompt, and
 prepares evidence for the meta-repair loop to act on.
 
-Trigger types (seven specified + explicit non-trigger):
+Trigger types (twelve specified + explicit non-trigger):
     1. repair_timeout            – repair took longer than its allotted budget
     2. persistent_recurring_retry – same failure repeats across attempts
     3. state_inspection_failure   – resolver/snapshot failed to read state
@@ -14,6 +14,12 @@ Trigger types (seven specified + explicit non-trigger):
        human escalation
     7. l1_custody_failure         – L1 could not establish canonical
        request/blocker/claim custody
+    8. repair_goal_owner_missing – durable repair goal has no valid owner
+    9. repair_context_target_mismatch – repair handoff targets stale custody
+   10. repair_goal_circuit_breaker – repeated goal mechanism must replan
+   11. post_fixer_recovery_gate_failed – L1 terminalized without satisfying
+       the durable recovery acceptance contract
+   12. l3_progress_auditor       – validated typed L3 true-stall escalation
 
 Non-trigger: healthy repair, non-system error, stale evidence, etc.
 """
@@ -30,6 +36,9 @@ import subprocess
 from typing import Any, Callable, Literal, Mapping, Sequence, cast
 
 from arnold_pipelines.megaplan.cloud import feature_flags
+from arnold_pipelines.megaplan.cloud.fixer_prompt_policy import (
+    render_process_custody_policy,
+)
 from arnold_pipelines.megaplan.cloud.redact import redact_payload, redact_text
 from arnold_pipelines.megaplan.cloud.repair_lock import release_repair_lock
 from arnold_pipelines.megaplan.cloud.repair_contract import (
@@ -80,6 +89,11 @@ class MetaRepairTrigger(str, Enum):
     PARTIAL_LIVENESS_RECURRENCE = "partial_liveness_recurrence"
     DISCORD_DELIVERY_FAILURE = "discord_delivery_failure"
     L1_CUSTODY_FAILURE = "l1_custody_failure"
+    REPAIR_GOAL_OWNER_MISSING = "repair_goal_owner_missing"
+    REPAIR_CONTEXT_TARGET_MISMATCH = "repair_context_target_mismatch"
+    REPAIR_GOAL_CIRCUIT_BREAKER = "repair_goal_circuit_breaker"
+    POST_FIXER_RECOVERY_GATE_FAILED = "post_fixer_recovery_gate_failed"
+    L3_PROGRESS_AUDITOR = "l3_progress_auditor"
 
 
 # Canonical ordering for display / prompt ordering
@@ -91,6 +105,11 @@ _TRIGGER_ORDER: dict[MetaRepairTrigger, int] = {
     MetaRepairTrigger.PARTIAL_LIVENESS_RECURRENCE: 5,
     MetaRepairTrigger.DISCORD_DELIVERY_FAILURE: 6,
     MetaRepairTrigger.L1_CUSTODY_FAILURE: 7,
+    MetaRepairTrigger.REPAIR_GOAL_OWNER_MISSING: 8,
+    MetaRepairTrigger.REPAIR_CONTEXT_TARGET_MISMATCH: 9,
+    MetaRepairTrigger.REPAIR_GOAL_CIRCUIT_BREAKER: 10,
+    MetaRepairTrigger.POST_FIXER_RECOVERY_GATE_FAILED: 11,
+    MetaRepairTrigger.L3_PROGRESS_AUDITOR: 12,
 }
 
 # Outcomes that suppress another meta-repair dispatch.  Fresh activity remains
@@ -733,6 +752,7 @@ def classify_repair_system_failure(
     semantic_fingerprints: Sequence[str] = (),
     has_state_inspection_error: bool = False,
     has_model_tool_launch_error: bool = False,
+    has_l1_custody_failure: bool = False,
     partial_liveness_ticks: int = 0,
     discord_delivery_failed: bool = False,
     discord_escalation_is_true_blocker: bool = False,
@@ -851,6 +871,21 @@ def classify_repair_system_failure(
         return MetaRepairClassification(
             session=session,
             trigger=MetaRepairTrigger.REPAIR_TIMEOUT,
+            rationale=tuple(rationale),
+            evidence=deepcopy(dict(evidence)) if evidence else {},
+            attempted_at=now.isoformat(),
+        )
+
+    # A failed L1 investigation/context/receipt boundary is itself a repair
+    # system custody failure.  Route it immediately instead of spending three
+    # deterministic retries on the same unreachable repair path.
+    if has_l1_custody_failure:
+        rationale.append(
+            "ordinary repair could not establish a valid investigation/context custody handoff"
+        )
+        return MetaRepairClassification(
+            session=session,
+            trigger=MetaRepairTrigger.L1_CUSTODY_FAILURE,
             rationale=tuple(rationale),
             evidence=deepcopy(dict(evidence)) if evidence else {},
             attempted_at=now.isoformat(),
@@ -1587,6 +1622,8 @@ def build_meta_repair_prompt(
             parts.append("\n```\n\n")
 
         parts.append("### Instructions\n")
+        parts.append(render_process_custody_policy())
+        parts.append("\n\n")
         parts.append(
             "Diagnose the root cause of the repair-system failure described above. "
             "Focus on:\n"
@@ -1657,6 +1694,7 @@ class MetaRepairRecord:
     meta_repair_id: str
     session: str
     trigger: MetaRepairTrigger | None
+    blocker_id: str = ""
     diagnosis: str = ""
     subagent_results: dict[str, Any] = field(default_factory=dict)
     changes: list[dict[str, Any]] = field(default_factory=list)
@@ -1678,6 +1716,7 @@ class MetaRepairRecord:
             "meta_repair_id": self.meta_repair_id,
             "session": self.session,
             "trigger": self.trigger.value if self.trigger is not None else None,
+            "blocker_id": self.blocker_id,
             "diagnosis": self.diagnosis,
             "subagent_results": self.subagent_results,
             "changes": self.changes,
@@ -1702,6 +1741,7 @@ class MetaRepairRecord:
             meta_repair_id=str(data.get("meta_repair_id", "")),
             session=str(data.get("session", "")),
             trigger=trigger,
+            blocker_id=str(data.get("blocker_id", "")),
             diagnosis=str(data.get("diagnosis", "")),
             subagent_results=dict(data.get("subagent_results", {})),
             changes=list(data.get("changes", [])),
@@ -2397,6 +2437,7 @@ def evaluate_meta_repair_triggers(
     semantic_fingerprints: Sequence[str] = (),
     has_state_inspection_error: bool = False,
     has_model_tool_launch_error: bool = False,
+    has_l1_custody_failure: bool = False,
     partial_liveness_ticks: int = 0,
     discord_delivery_failed: bool = False,
     discord_escalation_is_true_blocker: bool = False,
@@ -2441,6 +2482,7 @@ def evaluate_meta_repair_triggers(
         semantic_fingerprints=semantic_fingerprints,
         has_state_inspection_error=has_state_inspection_error,
         has_model_tool_launch_error=has_model_tool_launch_error,
+        has_l1_custody_failure=has_l1_custody_failure,
         partial_liveness_ticks=partial_liveness_ticks,
         discord_delivery_failed=discord_delivery_failed,
         discord_escalation_is_true_blocker=discord_escalation_is_true_blocker,

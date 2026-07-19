@@ -126,6 +126,39 @@ def test_cloud_status_and_chains_accept_compact_since_flags() -> None:
     assert chains_args.since == "12h"
 
 
+def test_sync_megaplan_accepts_on_box_provider() -> None:
+    from arnold_pipelines.megaplan.cloud.providers.on_box import OnBoxProvider
+
+    args = _cloud_parser().parse_args(
+        ["cloud", "sync-megaplan", "initiative/chain.yaml", "--on-box"]
+    )
+
+    assert args.cloud_action == "sync-megaplan"
+    assert args.on_box is True
+    assert isinstance(_provider_for_action(_cloud_spec(), args), OnBoxProvider)
+
+
+def test_cloud_exec_accepts_on_box_provider() -> None:
+    from arnold_pipelines.megaplan.cloud.providers.on_box import OnBoxProvider
+
+    args = _cloud_parser().parse_args(
+        ["cloud", "exec", "printf on-box", "--on-box"]
+    )
+
+    assert args.cloud_action == "exec"
+    assert args.on_box is True
+    assert isinstance(_provider_for_action(_cloud_spec(), args), OnBoxProvider)
+
+
+def test_cloud_chain_accepts_prepare_only() -> None:
+    args = _cloud_parser().parse_args(
+        ["cloud", "chain", "initiative/chain.yaml", "--prepare-only"]
+    )
+
+    assert args.cloud_action == "chain"
+    assert args.prepare_only is True
+
+
 def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     command = _chain_start_command(
         "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
@@ -138,6 +171,22 @@ def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     assert 'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR=/workspace/arnold; fi;' in command
     assert 'cd /workspace/project && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}"' in command
     assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start" in command
+
+
+def test_managed_chain_start_exports_canonical_repair_route() -> None:
+    command = _chain_start_command(
+        "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
+        project_dir="/workspace/project",
+        engine_dir="/workspace/arnold",
+        repair_session="demo-chain",
+        repair_run_kind="chain",
+        repair_marker_dir="/workspace/.megaplan/cloud-sessions",
+    )
+
+    assert "ARNOLD_REPAIR_QUEUE_ROOT" in command
+    assert "ARNOLD_REPAIR_MARKER_DIR=/workspace/.megaplan/cloud-sessions" in command
+    assert "ARNOLD_REPAIR_SESSION=demo-chain" in command
+    assert "ARNOLD_REPAIR_RUN_KIND=chain" in command
 
 
 def test_tmux_chain_launch_default_marker_records_run_kind() -> None:
@@ -204,6 +253,30 @@ def test_megaplan_refresh_recognizes_linked_worktree_gitfile() -> None:
     assert '[ -e "$SRC/.git" ]' in command
     assert '[ -d "$SRC/.git" ]' not in command
     assert 'export MEGAPLAN_LAUNCH_RUNTIME_SRC="${MEGAPLAN_RUNTIME_SRC:-}"' in command
+
+
+def test_tmux_chain_launch_without_editable_sync_never_refreshes_remote_git() -> None:
+    spec = replace(
+        _cloud_spec(),
+        megaplan=MegaplanSpec(
+            ref="local-runtime",
+            src_path="/workspace/local-runtime",
+        ),
+    )
+
+    command = _tmux_chain_launch_command(
+        "/workspace/project",
+        "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
+        spec=spec,
+        refresh_editable_install=False,
+    )
+
+    assert "git push" not in command
+    assert "git fetch" not in command
+    assert "git pull" not in command
+    assert 'BRANCH="$(git -C "$SRC" branch --show-current)"' in command
+    assert "runtime_provenance --expected-root" in command
+    assert 'export MEGAPLAN_LAUNCH_RUNTIME_SRC="$MEGAPLAN_RUNTIME_SRC"' in command
 
 
 def test_preflight_phase_model_materialization_preserves_profile_tier_routing() -> None:

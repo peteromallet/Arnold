@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
+import shlex
 
 import pytest
 
@@ -10,6 +12,7 @@ from arnold_pipelines.megaplan.resident import vp_todo
 from arnold_pipelines.megaplan.resident import agent_loop as agent_loop_module
 from arnold_pipelines.megaplan.resident.agent_loop import ToolRuntimeContext
 from arnold_pipelines.megaplan.resident.auth import ResidentAuthorizer
+from arnold_pipelines.megaplan.resident.cli import _register_resident_subcommands
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
 from arnold_pipelines.megaplan.resident.profile import (
     AddTodoItemInput,
@@ -19,6 +22,7 @@ from arnold_pipelines.megaplan.resident.profile import (
     MegaplanResidentProfile,
     ReadTodoListInput,
     ReconcileTodoItemInput,
+    SupersedeTodoItemInput,
 )
 from arnold_pipelines.megaplan.resident.subagent import SubagentResult
 from arnold_pipelines.megaplan.store import FileStore
@@ -92,6 +96,27 @@ def test_reconcile_existing_canonical_run_is_terminal_and_idempotent(tmp_path) -
     assert profile._read_todo_list(ReadTodoListInput()).data["pending"] == 0
 
 
+def test_supersede_tool_uses_canonical_record_without_claiming_completion(tmp_path) -> None:
+    profile = _profile(tmp_path)
+    added = profile._add_todo_item(AddTodoItemInput(task="launch retired chain")).data["item"]
+    payload = SupersedeTodoItemInput(
+        id=added["id"],
+        canonical_record_id="initiative:custody-control-plane",
+        evidence="refs/heads/main:.megaplan/initiatives/wbc/.retired@deadbeef",
+        resolution="standalone chain was canonically retired and replaced",
+    )
+
+    first = profile._supersede_todo_item(payload)
+    second = profile._supersede_todo_item(payload)
+
+    assert first.ok is True and second.ok is True
+    item = profile._read_todo_list(ReadTodoListInput()).data["items"][0]
+    assert item["status"] == vp_todo.SUPERSEDED
+    assert item["canonical_record_id"] == "initiative:custody-control-plane"
+    assert "completion" in first.message
+    assert profile._read_todo_list(ReadTodoListInput()).data["pending"] == 0
+
+
 def test_reconcile_rejects_missing_evidence_and_conflicting_run(tmp_path) -> None:
     profile = _profile(tmp_path)
     added = profile._add_todo_item(AddTodoItemInput(task="launch chain")).data["item"]
@@ -156,6 +181,7 @@ def test_launch_subagent_tool_wraps_dispatcher(tmp_path, monkeypatch) -> None:
             LaunchSubagentInput(
                 task="summarize readme",
                 description="Summarize the repository README",
+                work_intent="review",
                 toolsets="file,web",
                 project_dir="/repo",
             )
@@ -168,6 +194,7 @@ def test_launch_subagent_tool_wraps_dispatcher(tmp_path, monkeypatch) -> None:
     assert captured["project_dir"] == "/repo"
     assert captured["backend"] == "codex"
     assert captured["background"] is True
+    assert captured["work_intent"] == "review"
 
 
 def test_launch_subagent_tool_propagates_failure(tmp_path, monkeypatch) -> None:
@@ -286,6 +313,7 @@ def test_hot_context_exposes_managed_resident_agents(tmp_path, monkeypatch) -> N
         "arnold-managed-agent-run-v2"
     )
     policy = context["resident_runtime"]["subagent_launch"]["delegation_policy"]
+    assert policy["schema_version"] == "megaplan-resident-delegation-policy-v3"
     assert "independent actionable sub-problems" in policy["preference"]
     assert "one clear owner per sub-problem" in policy["ownership"]
     assert "action-oriented task prompt" in policy["task_prompt_contract"]
@@ -295,6 +323,57 @@ def test_hot_context_exposes_managed_resident_agents(tmp_path, monkeypatch) -> N
     ]
     assert "never expands" in policy["exceptions"]["authorization"]
     assert "returned durable run ID" in policy["launch_evidence"]
+    assert "implements, verifies, and delivers" in policy["execution_default"]
+    assert "isolated worktree and feature branch" in policy["workspace_default"]
+    assert "Never infer literal `main`" in policy["integration_default"]
+    assert "explicit approval" in policy["external_actions"]
+    assert "label it unintegrated" in policy["tentative_work"]
+    assert "durable ancestry evidence" in policy["completion_evidence"]
+    schedules = context["resident_schedules"]
+    assert schedules["window"]["hours"] == 12
+    assert schedules["upcoming_enabled"] == []
+    assert "Monday at 6:00 AM" in schedules["guidance"]["create_calendar_sample"]
+    assert "--every PT6H --start now" in schedules["guidance"][
+        "create_anchored_interval_sample"
+    ]
+    capability_names = {
+        row.get("name") or row.get("tool")
+        for row in profile._context_source_cache["missing-conversation"]["capabilities"]
+    }
+    assert {
+        "resident_schedule_add", "resident_schedule_list", "resident_schedule_cancel"
+    } <= capability_names
+
+
+def test_hot_context_fan_in_example_matches_tool_and_cli_contract(tmp_path) -> None:
+    context = asyncio.run(_profile(tmp_path).load_hot_context("missing-conversation"))
+    queued = context["resident_runtime"]["subagent_launch"]["queued_successors"]
+    owner = queued["fan_in_example"]["synthesis_delivery_owner"]
+
+    assert owner["resident_tool"] == "launch_subagent"
+    tool_payload = LaunchSubagentInput(**owner["arguments"])
+    assert tool_payload.aggregation_role == "synthesis_delivery_owner"
+    assert tool_payload.depends_on_run_id is None
+    assert tool_payload.depends_on_run_ids == [
+        "subagent-20260716-120000-a1b2c3d4",
+        "subagent-20260716-120100-b2c3d4e5",
+    ]
+
+    parser = argparse.ArgumentParser()
+    _register_resident_subcommands(parser)
+    cli_tokens = shlex.split(queued["cli_create"])
+    cli_args = parser.parse_args(
+        cli_tokens[cli_tokens.index("queue-subagent-successor") :]
+    )
+    assert cli_args.after_run_id is None
+    assert cli_args.after_run_ids == tool_payload.depends_on_run_ids
+
+    singular_tokens = shlex.split(queued["singular_compatibility"]["cli_create"])
+    singular_args = parser.parse_args(
+        singular_tokens[singular_tokens.index("queue-subagent-successor") :]
+    )
+    assert singular_args.after_run_id == tool_payload.depends_on_run_ids[0]
+    assert singular_args.after_run_ids is None
 
 
 def test_hot_context_vp_todos_is_empty_when_no_pending_items(tmp_path) -> None:
@@ -414,3 +493,53 @@ def test_launch_subagent_tool_rejects_empty_task(tmp_path) -> None:
         )
     )
     assert result.ok is False
+
+
+def test_supersede_todo_cli_requires_canonical_record_evidence() -> None:
+    parser = argparse.ArgumentParser()
+    _register_resident_subcommands(parser)
+
+    args = parser.parse_args(
+        [
+            "supersede-todo",
+            "--id",
+            "todo-7",
+            "--canonical-record-id",
+            "initiative:replacement",
+            "--evidence",
+            "refs/heads/main:.megaplan/initiatives/old/.retired@abc",
+            "--resolution",
+            "canonical retirement replaced the old launch intent",
+            "--todo-path",
+            "/tmp/todo.json",
+        ]
+    )
+
+    assert args.resident_action == "supersede-todo"
+    assert args.canonical_record_id == "initiative:replacement"
+    assert args.evidence.endswith("@abc")
+
+
+def test_report_only_tool_boundary_denies_non_reconciliation_mutation(tmp_path) -> None:
+    profile = _profile(tmp_path)
+
+    audit = asyncio.run(
+        agent_loop_module._execute_registered_tool(
+            tools=profile.tools(),
+            tool_name="add_todo_item",
+            arguments={"task": "must not be added"},
+            audit_id="audit-denied",
+            timeout_s=5,
+            runtime_context=ToolRuntimeContext(
+                conversation_id="scheduled-audit",
+                launch_origin={
+                    "source_kind": "scheduled_turn",
+                    "report_only": True,
+                },
+            ),
+        )
+    )
+
+    assert audit.result["ok"] is False
+    assert audit.result["data"]["error"] == "report_only_execution_denied"
+    assert vp_todo.load_items(profile.config.special_requests_todo_path) == []

@@ -6,7 +6,9 @@ from types import SimpleNamespace
 
 import discord
 
+from agentbox.reset_notifications import RESET_DELIVERY_EPHEMERAL_INTERACTION
 from agentbox.services import DISCORD_RESIDENT_SERVICE
+from arnold_pipelines.megaplan.resident import discord as discord_module
 from arnold_pipelines.megaplan.resident import restart_resident as restart_module
 from arnold_pipelines.megaplan.resident.auth import AuthorizationDecision
 from arnold_pipelines.megaplan.resident.discord import (
@@ -114,6 +116,36 @@ def test_acknowledgement_is_confirmed_before_canonical_restart_invocation() -> N
     assert "replacement health is verified" in events[2][1]
 
 
+def test_application_command_uses_ephemeral_interaction_as_delivery_owner(
+    monkeypatch,
+) -> None:
+    events: list[tuple[str, str]] = []
+    calls: list[str | None] = []
+
+    class Authorizer:
+        def authorize_action(self, _subject, action):
+            assert action == "admin"
+            return AuthorizationDecision(True)
+
+    def restart_operation(*, delivery_ownership=None):
+        calls.append(delivery_ownership)
+        return {"ok": True, "accepted": True}
+
+    monkeypatch.setattr(
+        discord_module,
+        "restart_discord_resident",
+        restart_operation,
+    )
+    service = object.__new__(ResidentDiscordService)
+    service.runtime = SimpleNamespace(authorizer=Authorizer())
+
+    asyncio.run(_command(service).callback(_interaction(events)))
+
+    assert calls == [RESET_DELIVERY_EPHEMERAL_INTERACTION]
+    assert events[0] == ("response", RESTART_RESIDENT_ACKNOWLEDGEMENT)
+    assert events[1][0] == "edit_original"
+
+
 def test_fail_closed_result_is_reported_without_claiming_restart() -> None:
     events: list[tuple[str, str]] = []
     service = object.__new__(ResidentDiscordService)
@@ -182,16 +214,43 @@ def test_invalid_restart_result_makes_no_outcome_claim() -> None:
 
 
 def test_canonical_restart_wrapper_targets_only_the_named_resident(monkeypatch) -> None:
-    calls: list[str] = []
+    calls: list[tuple[str, dict[str, object]]] = []
     expected = {"ok": True, "accepted": True}
     monkeypatch.setattr(
         restart_module,
         "restart_service",
-        lambda service_name: calls.append(service_name) or expected,
+        lambda service_name, **kwargs: calls.append((service_name, kwargs)) or expected,
     )
 
     assert restart_discord_resident() is expected
-    assert calls == ["agentbox-discord-resident"]
+    assert calls == [
+        ("agentbox-discord-resident", {"notification_delivery_ownership": None})
+    ]
+
+
+def test_canonical_restart_wrapper_forwards_ephemeral_delivery_ownership(
+    monkeypatch,
+) -> None:
+    calls = []
+    monkeypatch.setattr(
+        restart_module,
+        "restart_service",
+        lambda service_name, **kwargs: calls.append((service_name, kwargs))
+        or {"ok": True},
+    )
+
+    restart_discord_resident(
+        delivery_ownership=RESET_DELIVERY_EPHEMERAL_INTERACTION
+    )
+
+    assert calls == [
+        (
+            "agentbox-discord-resident",
+            {
+                "notification_delivery_ownership": RESET_DELIVERY_EPHEMERAL_INTERACTION
+            },
+        )
+    ]
 
 
 def test_discord_restart_layer_contains_no_process_control_shortcuts() -> None:
@@ -212,4 +271,5 @@ def test_discord_restart_layer_contains_no_process_control_shortcuts() -> None:
     )
 
     assert not any(token in sources for token in forbidden)
-    assert "restart_service(discord_resident_service)" in sources
+    assert "restart_service(" in sources
+    assert "discord_resident_service" in sources

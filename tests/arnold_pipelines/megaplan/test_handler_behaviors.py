@@ -1546,9 +1546,12 @@ class TestFinalizeSemanticChecks:
             "last_gate": {},
         }
         payload = {
+            "task_contract_version": 2,
+            "validation_jobs": [],
             "tasks": [
                 {
                     "id": "T1",
+                    "objective": "Update focused contract regression coverage.",
                     "description": "Update code and run the focused regression tests.",
                     "depends_on": [],
                     "status": "pending",
@@ -1557,6 +1560,16 @@ class TestFinalizeSemanticChecks:
                     "kind": "test",
                     "complexity": 2,
                     "complexity_justification": "Focused regression coverage.",
+                    "estimated_minutes": 5,
+                    "dependency_reasons": {},
+                    "routing_group": "",
+                    "write_set": {"paths": ["tests/test_contract.py"], "complete": True},
+                    "narrow_tests": {
+                        "selectors": ["tests/test_contract.py"],
+                        "max_seconds": 120,
+                        "max_runs": 2,
+                    },
+                    "checkpoint": {"required": False, "max_interval_seconds": 300, "records": []},
                     "files_changed": ["tests/test_contract.py"],
                     "commands_run": ["pytest tests/test_contract.py -q"],
                 }
@@ -1617,9 +1630,12 @@ class TestFinalizeSemanticChecks:
             "last_gate": {},
         }
         payload = {
+            "task_contract_version": 2,
+            "validation_jobs": [],
             "tasks": [
                 {
                     "id": "T1",
+                    "objective": "Update focused contract regression coverage.",
                     "description": "Update code and run the focused regression tests.",
                     "depends_on": [],
                     "status": "pending",
@@ -1628,6 +1644,16 @@ class TestFinalizeSemanticChecks:
                     "kind": "test",
                     "complexity": 2,
                     "complexity_justification": "Focused regression coverage.",
+                    "estimated_minutes": 5,
+                    "dependency_reasons": {},
+                    "routing_group": "",
+                    "write_set": {"paths": ["tests/test_contract.py"], "complete": True},
+                    "narrow_tests": {
+                        "selectors": ["tests/test_contract.py"],
+                        "max_seconds": 120,
+                        "max_runs": 2,
+                    },
+                    "checkpoint": {"required": False, "max_interval_seconds": 300, "records": []},
                     "files_changed": ["tests/test_contract.py"],
                     "commands_run": ["pytest tests/test_contract.py -q"],
                 }
@@ -1671,8 +1697,9 @@ class TestFinalizeSemanticChecks:
         assert "megaplan user-action resolve" in gate_task["description"]
         assert payload["tasks"][1]["id"] == "T1"
         assert payload["tasks"][1]["description"].startswith(
-            "Introduce no new failures vs the recorded baseline;"
+            "Update code and run the focused regression tests."
         )
+        assert "limited by narrow_tests" in payload["tasks"][1]["description"]
         assert payload["tasks"][1]["depends_on"][0] == "T2"
         assert payload["sense_checks"][-1]["task_id"] == "T2"
 
@@ -2069,9 +2096,12 @@ class TestFinalizeBaselineSelectionRecovery:
 
     def _payload(self) -> dict[str, Any]:
         return {
+            "task_contract_version": 2,
+            "validation_jobs": [],
             "tasks": [
                 {
                     "id": "T1",
+                    "objective": "Update the bounded documentation note.",
                     "description": "Touch docs only.",
                     "depends_on": [],
                     "status": "pending",
@@ -2079,6 +2109,12 @@ class TestFinalizeBaselineSelectionRecovery:
                     "commands_run": [],
                     "complexity": 1,
                     "complexity_justification": "small",
+                    "estimated_minutes": 3,
+                    "dependency_reasons": {},
+                    "routing_group": "",
+                    "write_set": {"paths": ["docs/notes.md"], "complete": True},
+                    "narrow_tests": {"selectors": [], "max_seconds": 0, "max_runs": 0},
+                    "checkpoint": {"required": False, "max_interval_seconds": 300, "records": []},
                 }
             ],
             "user_actions": [],

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from arnold_pipelines.megaplan.orchestration.phase_result import BlockedTask, Deviation
 from arnold_pipelines.megaplan.quality_resolutions import (
@@ -27,12 +28,125 @@ from arnold_pipelines.megaplan.resolution_contract import (
     resolution_applies_to_task,
     resolution_state,
 )
+from arnold_pipelines.megaplan.types import CliError
 
 PREREQUISITE = "prerequisite"
 QUALITY = "quality"
 UNRESOLVED = "unresolved"
 MALFORMED = "malformed"
 _BEFORE_EXECUTE_GATE_PREFIX = "Read user_actions.md."
+
+
+def compact_failure_identity(value: object) -> dict[str, Any]:
+    """Return the canonical bounded failure identity used by repair custody."""
+
+    if not isinstance(value, Mapping):
+        return {}
+    compact = {
+        key: value.get(key)
+        for key in (
+            "failure_kind",
+            "kind",
+            "phase",
+            "step",
+            "task_id",
+            "blocked_task_id",
+            "message",
+            "error",
+            "timestamp",
+        )
+        if value.get(key) not in (None, "", [], {})
+    }
+    if compact:
+        compact["fingerprint"] = hashlib.sha256(
+            json.dumps(compact, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+    return compact
+
+
+def validated_deterministic_phase_repair(
+    project_dir: Path,
+    state: dict[str, Any],
+    resume_cursor: dict[str, Any] | Mapping[str, Any],
+    repair_commit: object,
+    failure_fingerprint: object,
+) -> dict[str, str] | None:
+    """Validate an explicit code-repair receipt for a phase result that never existed.
+
+    Deterministic internal phase failures can stop before ``phase_result.json`` is
+    emitted.  ``recover-blocked`` may replay such a phase only when its dedicated
+    repair cursor is current and the caller binds the recovery to the exact target
+    workspace HEAD.  Other missing-phase-result states retain the existing
+    fail-closed behavior.
+    """
+
+    latest_failure = state.get("latest_failure")
+    if not isinstance(latest_failure, dict) or (
+        latest_failure.get("kind") != "deterministic_phase_failure"
+        or resume_cursor.get("retry_strategy") != "repair_phase_contract"
+    ):
+        return None
+    failure_phase = str(latest_failure.get("phase") or "").strip()
+    cursor_phase = str(resume_cursor.get("phase") or "").strip()
+    if not failure_phase or failure_phase != cursor_phase:
+        raise CliError(
+            "phase_repair_cursor_mismatch",
+            "deterministic phase repair must match the current failure and resume phase",
+            extra={"failure_phase": failure_phase, "resume_phase": cursor_phase},
+        )
+    current_fingerprint = str(
+        compact_failure_identity(latest_failure).get("fingerprint") or ""
+    ).strip()
+    expected_fingerprint = str(failure_fingerprint or "").strip()
+    if not current_fingerprint or expected_fingerprint != current_fingerprint:
+        raise CliError(
+            "phase_repair_fingerprint_mismatch",
+            "deterministic phase recovery must bind the exact current failure fingerprint",
+            extra={
+                "expected_fingerprint": expected_fingerprint,
+                "current_fingerprint": current_fingerprint,
+            },
+        )
+    commit = str(repair_commit or "").strip().lower()
+    if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
+        raise CliError(
+            "missing_phase_repair_commit",
+            "deterministic phase recovery requires --repair-commit with the validated target HEAD",
+        )
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise CliError(
+            "phase_repair_head_unavailable",
+            "deterministic phase recovery could not verify the target workspace HEAD",
+            extra={"project_dir": str(project_dir), "error": str(error)},
+        ) from error
+    current_head = result.stdout.strip().lower() if result.returncode == 0 else ""
+    if current_head != commit:
+        raise CliError(
+            "phase_repair_commit_mismatch",
+            "deterministic phase recovery repair commit does not match the target workspace HEAD",
+            extra={
+                "project_dir": str(project_dir),
+                "repair_commit": commit,
+                "workspace_head": current_head,
+            },
+        )
+    return {
+        "failure_kind": "deterministic_phase_failure",
+        "phase": cursor_phase,
+        "repair_commit": commit,
+        "workspace_head": current_head,
+        "failure_fingerprint": current_fingerprint,
+        "authority": "explicit_repair_commit_bound_to_target_head",
+    }
 
 
 @dataclass(frozen=True)

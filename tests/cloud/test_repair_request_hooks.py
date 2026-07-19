@@ -149,6 +149,42 @@ class TestLifecycleFailureEnqueue:
         assert request["problem_signature"]["failure_kind"] == "phase_failed"
         assert request["problem_signature"]["blocked_task_id"] == "T19"
 
+    def test_terminal_handler_failure_is_enqueued_without_rewriting_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arnold_pipelines.megaplan.auto import _enqueue_terminal_failure_request
+
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "blocked-plan"
+        plan_dir.mkdir(parents=True)
+        state = {
+            "current_state": "blocked",
+            "latest_failure": {
+                "kind": "quality_gate_blocked",
+                "message": "deterministic review check failed",
+                "phase": "review",
+                "suggested_action": "dispatch bounded automatic repair",
+                "metadata": {"blocked_task_id": "T24"},
+            },
+        }
+        state_path = plan_dir / "state.json"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        queue_root = tmp_path / "central" / ".megaplan" / "repair-queue"
+        marker_dir = tmp_path / "central" / ".megaplan" / "cloud-sessions"
+        monkeypatch.setenv("ARNOLD_REPAIR_QUEUE_ROOT", str(queue_root))
+        monkeypatch.setenv("ARNOLD_REPAIR_MARKER_DIR", str(marker_dir))
+        monkeypatch.setenv("ARNOLD_REPAIR_SESSION", "blocked-chain")
+        monkeypatch.setenv("ARNOLD_REPAIR_RUN_KIND", "chain")
+
+        _enqueue_terminal_failure_request(plan_dir)
+
+        request = _read_requests(queue_root)[0]
+        assert request["session"] == "blocked-chain"
+        assert request["run_kind"] == "chain"
+        assert request["problem_signature"]["failure_kind"] == "quality_gate_blocked"
+        assert request["problem_signature"]["blocked_task_id"] == "T24"
+        assert json.loads(state_path.read_text(encoding="utf-8")) == state
+
     def test_lifecycle_marker_content(self, tmp_path: Path) -> None:
         """Enqueued request carries correct source, signature fields, and
         redacted hint hash — no raw failure text stored."""
@@ -194,6 +230,51 @@ class TestLifecycleFailureEnqueue:
         assert target["plan_dir"] == str(plan_dir)
         assert "workspace_path" in target
 
+    def test_phase_contract_lifecycle_request_allocates_identity_before_acceptance(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.auto import _enqueue_lifecycle_failure_request
+        from arnold_pipelines.megaplan.cloud.repair_contract import blocker_id_for_fingerprint
+
+        plan_dir = (
+            tmp_path
+            / ".megaplan"
+            / "plans"
+            / "m6-exact-contract-and-20260716-1303"
+        )
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"current_state": "blocked"}), encoding="utf-8"
+        )
+
+        _enqueue_lifecycle_failure_request(
+            plan_dir=plan_dir,
+            queue_root=_queue_root(tmp_path),
+            session="custody-control-plane-20260714",
+            run_kind="chain",
+            kind="deterministic_phase_failure",
+            message="duplicate worker-local flag IDs and blank evidence",
+            current_state="blocked",
+            phase="critique",
+            suggested_action="repair the deterministic phase contract",
+            metadata={"count": 3, "max_attempts": 3},
+            retry_strategy="repair_phase_contract",
+        )
+
+        request = _read_requests(_queue_root(tmp_path))[0]
+        assert request["problem_signature"]["blocked_task_id"] == "phase:critique"
+        assert request["target"]["retry_strategy"] == "repair_phase_contract"
+        assert request["blocker_id"] == blocker_id_for_fingerprint(
+            request["blocker_fingerprint"]
+        )
+        accepted = [
+            decision
+            for decision in _read_decisions(_queue_root(tmp_path))
+            if decision["decision"] == "accepted"
+        ]
+        assert [decision["request_id"] for decision in accepted] == [
+            request["request_id"]
+        ]
     def test_duplicate_lifecycle_failure_coalesces(self, tmp_path: Path) -> None:
         """Same failure kind+state+plan_dir submitted twice coalesces into
         a single request with a coalesced decision for the second."""
@@ -380,6 +461,52 @@ class TestLifecycleFailureEnqueue:
             decision["decision"] == "coalesced"
             for decision in _read_decisions(queue_root)
         )
+
+    def test_supervisor_preserves_execution_binding_drift_identity(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.cloud.supervise import (
+            enqueue_supervisor_repair_request,
+        )
+
+        workspace = tmp_path / "workspace"
+        marker_dir = workspace / ".megaplan" / "cloud-sessions"
+        marker_dir.mkdir(parents=True)
+        queue_root = _queue_root(workspace)
+
+        with patch(
+            "arnold_pipelines.megaplan.cloud.current_target.resolve_current_target",
+            return_value={"current_refs": {"current_plan_name": "m6-plan"}},
+        ):
+            result = enqueue_supervisor_repair_request(
+                queue_root=queue_root,
+                marker_dir=marker_dir,
+                session="custody-chain",
+                workspace=workspace,
+                remote_spec=".megaplan/initiatives/custody/chain.yaml",
+                run_kind="chain",
+                reason=(
+                    "deterministic supervised failure: "
+                    "chain_execution_binding_drift;"
+                    "active_errors=editable_runtime_import_root_mismatch"
+                ),
+                log_path="/tmp/supervise.log",
+            )
+
+        request = result["request"]
+        signature = request["problem_signature"]
+        assert result["status"] == "queued"
+        assert signature["failure_kind"] == "chain_execution_binding_drift"
+        assert signature["phase_or_step"] == "chain_execution_binding"
+        assert signature["blocked_task_id"] == (
+            "chain_execution_binding:editable_runtime_import_root_mismatch"
+        )
+        assert signature["event_signature"] == (
+            "chain_execution_binding_drift;"
+            "active_errors=editable_runtime_import_root_mismatch"
+        )
+        assert "content-addressed rebind" in signature["gate_recommendation"]
+        assert request["blocker_id"].startswith("blocker:v2:")
 
 
 # ---------------------------------------------------------------------------

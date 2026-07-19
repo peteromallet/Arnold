@@ -53,6 +53,15 @@ from arnold_pipelines.megaplan.orchestration.test_selection import (
     compute_test_blast_radius,
     resolve_baseline_test_selection,
 )
+from arnold_pipelines.megaplan.orchestration.task_feasibility import (
+    compile_task_feasibility,
+)
+from arnold_pipelines.megaplan.orchestration.critique_custody import (
+    CritiqueCustodyError,
+    bind_finalize_custody,
+    validate_finalize_resolution_coverage,
+    write_critique_clearance,
+)
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
 from arnold_pipelines.megaplan.schema_projection import (
     project_schema_owned_fields,
@@ -80,6 +89,19 @@ class FinalizeBaselineSelectionError(Exception):
     def __init__(self, test_selection: dict[str, Any]) -> None:
         self.test_selection = test_selection
         super().__init__(_finalize_baseline_contract_message(test_selection))
+
+
+class TaskFeasibilityError(Exception):
+    """Raised when a finalized v2 task graph cannot safely enter execute."""
+
+    def __init__(self, report: dict[str, Any]) -> None:
+        self.report = report
+        codes = ", ".join(
+            str(item.get("code"))
+            for item in report.get("diagnostics", [])
+            if isinstance(item, Mapping)
+        )
+        super().__init__(f"Finalized task graph failed feasibility admission: {codes}")
 
 
 def _finalize_baseline_contract_message(test_selection: dict[str, Any]) -> str:
@@ -431,6 +453,12 @@ def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerR
 
     # Residual semantic checks the schema subset cannot express.
     _finalize_semantic_postcheck(plan_dir, state, worker, _reject)
+    clearance_path = plan_dir / "critique_clearance.json"
+    if clearance_path.exists():
+        try:
+            validate_finalize_resolution_coverage(payload, read_json(clearance_path))
+        except CritiqueCustodyError as error:
+            _reject(str(error))
 
 
 def _finalize_semantic_postcheck(
@@ -589,50 +617,42 @@ def _task_matches_verification_pattern(task: dict[str, Any]) -> bool:
 
 
 def _ensure_verification_task(payload: dict, state: dict) -> None:
-    """Scrub re-run-until-pass language from any task that matches verification patterns.
+    """Bound verification loops without erasing the task's implementation objective.
 
-    Scans ALL tasks (not just ``tasks[-1]``).  For every task whose description
-    matches the tightened verification keywords or the catch-all regexes the
-    description is rewritten to the bounded "introduce no new failures" contract.
-    No new task is injected — the harness owns the authoritative post-execute
-    verification run.
+    Scans all tasks for re-run-until-pass language. The old scrubber replaced
+    the entire description and destroyed legitimate
+    implementation objectives.  Preserve the description and append the
+    bounded harness-owned verification contract instead.
     """
     tasks = payload.get("tasks", [])
     if not tasks:
         return
 
-    REWRITTEN_DESCRIPTION = (
-        "Introduce no new failures vs the recorded baseline; "
+    BOUNDED_SUFFIX = (
+        " Narrow verification is limited by narrow_tests; introduce no new failures "
+        "vs the recorded baseline; "
         "do not try to make pre-existing baseline failures pass; "
         "do not narrow to individual functions. "
         "The harness will run the authoritative post-execute verification — "
         "do not loop the suite."
     )
 
-    rewritten_tasks: list[dict[str, Any]] = []
     for task in tasks:
         if not isinstance(task, dict):
             continue
         if _task_matches_verification_pattern(task):
-            task["description"] = REWRITTEN_DESCRIPTION
-            rewritten_tasks.append(task)
+            if BOUNDED_SUFFIX.strip() not in task["description"]:
+                task["description"] = task["description"].rstrip() + BOUNDED_SUFFIX
 
     # Sense-check injection and _append_plan_step_coverage removed — the harness owns verification.
     failures = payload.get("baseline_test_failures")
     if isinstance(failures, list) and failures:
-        if rewritten_tasks:
-            # Append baseline-failure note only to a task that was rewritten.
-            rewritten_tasks[-1]["description"] += (
-                f" Note: {len(failures)} tests were already failing before your changes "
-                "(see baseline_test_failures in finalize.json) — "
-                "do not scope-creep into fixing these."
-            )
-        else:
-            # Surface the note exclusively via finalize.json.baseline_test_note.
-            payload["baseline_test_note"] = (
-                f"Note: {len(failures)} tests were already failing before your changes "
-                "(see baseline_test_failures in finalize.json)."
-            )
+        # Keep baseline information outside task objectives so the admitted
+        # task hash is stable across baseline capture.
+        payload["baseline_test_note"] = (
+            f"Note: {len(failures)} tests were already failing before your changes "
+            "(see baseline_test_failures in finalize.json)."
+        )
 
 def _ensure_user_actions_pre_gate_task(payload: dict[str, Any], state: dict[str, Any]) -> None:
     if state["config"].get("mode", "code") != "code":
@@ -651,6 +671,7 @@ def _ensure_user_actions_pre_gate_task(payload: dict[str, Any], state: dict[str,
     task_id = _next_task_id(tasks)
     gate_task = {
         "id": task_id,
+        "objective": "Resolve every before-execute human prerequisite.",
         "description": (
             "Read user_actions.md. For each before_execute action, programmatically verify "
             "completion using bash tools — grep .env for required keys, query the migrations "
@@ -673,7 +694,16 @@ def _ensure_user_actions_pre_gate_task(payload: dict[str, Any], state: dict[str,
             "mark this task blocked with reason and STOP."
         ),
         "depends_on": [],
+        "dependency_reasons": {},
+        "routing_group": "human-prerequisite-gate",
         "status": "pending",
+        "kind": "audit",
+        "complexity": 3,
+        "complexity_justification": "A bounded prerequisite check with no repository mutation.",
+        "estimated_minutes": 5,
+        "write_set": {"paths": [], "complete": True},
+        "narrow_tests": {"selectors": [], "max_seconds": 0, "max_runs": 0},
+        "checkpoint": {"required": False, "max_interval_seconds": 300, "records": []},
         "executor_notes": "",
         "files_changed": [],
         "commands_run": [],
@@ -687,6 +717,17 @@ def _ensure_user_actions_pre_gate_task(payload: dict[str, Any], state: dict[str,
             depends_on = []
         if task_id not in depends_on:
             task["depends_on"] = [task_id, *depends_on]
+            reasons = task.get("dependency_reasons")
+            if not isinstance(reasons, dict):
+                reasons = {}
+            task["dependency_reasons"] = {
+                task_id: {
+                    "kind": "human_prerequisite",
+                    "reason": "Execution cannot begin until required human-only prerequisites are resolved.",
+                    "required_output": "user_action_resolutions.json",
+                },
+                **reasons,
+            }
 
     sense_checks = payload.setdefault("sense_checks", [])
     sense_checks.append({
@@ -1345,7 +1386,10 @@ def _planned_task_changed_files(payload: dict[str, Any]) -> list[str]:
     for task in tasks:
         if not isinstance(task, dict):
             continue
-        raw_files = task.get("files_changed")
+        write_set = task.get("write_set")
+        raw_files = write_set.get("paths") if isinstance(write_set, Mapping) else None
+        if not isinstance(raw_files, list):
+            raw_files = task.get("files_changed")
         if not isinstance(raw_files, list):
             continue
         for raw_path in raw_files:
@@ -1411,6 +1455,13 @@ def _planned_task_pytest_command(payload: dict[str, Any]) -> str | None:
     for task in tasks:
         if not isinstance(task, dict):
             continue
+        narrow_tests = task.get("narrow_tests")
+        selectors = narrow_tests.get("selectors") if isinstance(narrow_tests, Mapping) else None
+        if isinstance(selectors, list):
+            for selector in selectors:
+                if isinstance(selector, str) and selector.strip() and selector not in seen:
+                    seen.add(selector)
+                    paths.append(selector.strip())
         commands = task.get("commands_run")
         if not isinstance(commands, list):
             continue
@@ -1673,6 +1724,144 @@ def _route_finalize_baseline_selection_failure_to_revise(
     return response
 
 
+def _route_finalize_task_feasibility_failure_to_revise(
+    plan_dir: Path,
+    state: PlanState,
+    worker: WorkerResult,
+    error: TaskFeasibilityError,
+) -> StepResponse:
+    """Persist final-stage sense-check evidence and route an infeasible DAG to revise."""
+
+    projection = _finalize_revise_fallback_projection()
+    diagnostics = error.report.get("diagnostics", [])
+    codes = [str(item.get("code")) for item in diagnostics if isinstance(item, Mapping)]
+    message = (
+        "Finalize rejected the executable task graph at the post-finalization "
+        f"feasibility gate ({', '.join(codes)}). Preserve legitimate dependencies, "
+        "but split oversized objectives/paths/tests and remove routing-only edges."
+    )
+    prior_gate_contract: dict[str, Any] = {}
+    for prior_name in ("gate_carry.json", "gate.json"):
+        prior_path = plan_dir / prior_name
+        if not prior_path.exists():
+            continue
+        prior = read_json(prior_path)
+        if isinstance(prior, Mapping):
+            prior_gate_contract = project_schema_owned_fields(
+                prior,
+                SCHEMAS["gate.json"],
+                contract="finalize feasibility gate preservation",
+            )
+            break
+    gate_feedback = {
+        **prior_gate_contract,
+        "recommendation": "ITERATE",
+        "passed": False,
+        "rationale": message,
+        "signals_assessment": "The model-authored DAG is not executable within bounded task and phase budgets.",
+        "warnings": [message],
+        "criteria_check": {
+            "finalized_task_feasibility": {
+                "passed": False,
+                "message": message,
+                "requires_revise": True,
+            }
+        },
+        "preflight_results": {},
+        "unresolved_flags": [
+            {
+                "id": "finalized-task-feasibility",
+                "severity": "significant",
+                "status": "open",
+                "concern": "The finalized graph exceeds executable task, dependency, path, or test budgets.",
+                "evidence": ", ".join(codes),
+                "category": "execution_feasibility",
+            }
+        ],
+        "addressed_flags": [],
+        "flag_resolutions": [],
+        "accepted_tradeoffs": prior_gate_contract.get("accepted_tradeoffs", []),
+        "settled_decisions": prior_gate_contract.get("settled_decisions", []),
+        "north_star_actions": prior_gate_contract.get("north_star_actions", []),
+        "orchestrator_guidance": (
+            "Run revise, then finalize again. Each task must have one <=15-minute objective, "
+            "<=5 declared paths, and <=3 narrow selectors/120 seconds/2 runs; every edge "
+            "must cite a concrete consumed output, write order, or human prerequisite."
+        ),
+        "signals": {},
+        "finalize_failure": {
+            "code": "finalized_task_feasibility_failed",
+            "diagnostic_codes": codes,
+            "task_contract_hash": error.report.get("task_contract_hash"),
+        },
+    }
+    require_schema_fields(
+        gate_feedback,
+        SCHEMAS["gate.json"],
+        contract="finalize feasibility revise gate persistence",
+    )
+    state["current_state"] = projection["state"]
+    from arnold_pipelines.megaplan.handlers.gate import (
+        _build_gate_carry,
+        _sync_legacy_last_gate_for_workflow,
+    )
+
+    _sync_legacy_last_gate_for_workflow(state, gate_feedback)
+    state.setdefault("meta", {}).setdefault("finalize_revise_feedback", []).append(
+        {"code": "finalized_task_feasibility_failed", "message": message, "diagnostic_codes": codes}
+    )
+    atomic_write_json(plan_dir / "gate.json", gate_feedback)
+    atomic_write_json(
+        plan_dir / "gate_carry.json",
+        {
+            **_build_gate_carry(gate_feedback, iteration=state["iteration"]),
+            "source": "finalize_task_feasibility",
+        },
+    )
+    atomic_write_json(
+        plan_dir / "finalize_revise_feedback.json",
+        {
+            "code": "finalized_task_feasibility_failed",
+            "message": message,
+            "next_step": "revise",
+            "diagnostic_codes": codes,
+            "report_artifact": "task_feasibility.json",
+        },
+    )
+    record_step_failure(
+        plan_dir,
+        state,
+        step="finalize",
+        iteration=state["iteration"],
+        error=CliError(
+            "finalized_task_feasibility_failed",
+            message,
+            valid_next=["revise"],
+            extra={"raw_output": worker.raw_output, "task_feasibility": error.report},
+        ),
+        duration_ms=worker.duration_ms,
+    )
+    response: StepResponse = {
+        "success": False,
+        "step": "finalize",
+        "result": "plan_contract_revise_needed",
+        "route_signal": projection["route_signal"],
+        "summary": message,
+        "artifacts": [
+            "task_feasibility.json",
+            "gate.json",
+            "gate_carry.json",
+            "finalize_revise_feedback.json",
+        ],
+        "next_step": projection["next_step"],
+        "state": projection["state"],
+        "iteration": state["iteration"],
+        "details": {"code": "finalized_task_feasibility_failed", "diagnostic_codes": codes},
+    }
+    _attach_next_step_runtime(response)
+    return response
+
+
 def _reject_finalize_unresolved_north_star(plan_dir: Path, state: PlanState) -> None:
     """Reject finalize when carried blocking North Star actions remain unresolved.
 
@@ -1776,6 +1965,22 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
     payload["provides"] = contract_payload["provides"]
     payload["assumes"] = contract_payload["assumes"]
     payload["pre_existing"] = contract_payload["pre_existing"]
+    # Apply all task-graph mutations first, then run the deterministic final
+    # sense-check. Baseline capture and evidence projection must not be able to
+    # change the admitted executable contract afterward.
+    _ensure_verification_task(payload, state)
+    if state["config"].get("mode") not in {"doc", "joke"}:
+        _ensure_user_actions_pre_gate_task(payload, state)
+        _ensure_user_actions_post_gate_task(payload, state)
+    _apply_programmatic_coverage(payload, plan_dir, state)
+    _normalize_task_complexity(payload)
+    if state["config"].get("mode", "code") == "code":
+        feasibility = compile_task_feasibility(payload, state.get("config", {}))
+        atomic_write_json(plan_dir / "task_feasibility.json", feasibility)
+        if not feasibility["admitted"]:
+            raise TaskFeasibilityError(feasibility)
+        payload["graph_report"] = feasibility
+
     if state["config"].get("mode") in {"doc", "joke"}:
         payload["baseline_test_failures"] = None
         payload["baseline_test_command"] = None
@@ -1814,18 +2019,22 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
         else:
             baseline = _capture_test_baseline_for_plan(plan_dir, project_dir, _config)
         payload.update(baseline)
-    # Scrub model-authored verification loops before injecting handler-owned
-    # coordination tasks. Otherwise the user-action gate matches the generic
-    # verification heuristic and gets rewritten into the baseline placeholder.
-    _ensure_verification_task(payload, state)
-    if state["config"].get("mode") not in {"doc", "joke"}:
-        _ensure_user_actions_pre_gate_task(payload, state)
-        _ensure_user_actions_post_gate_task(payload, state)
-    _apply_programmatic_coverage(payload, plan_dir, state)
-    _normalize_task_complexity(payload)
+        _ensure_verification_task(payload, state)
     _attach_calibration_route_reports(plan_dir, payload, state)
     _write_capability_claims_from_finalize(plan_dir, payload, state)
     _reconcile_validation_after_mutation(payload)
+    # Finalization and baseline helpers may mutate the graph after the first
+    # feasibility pass. Recompile at the final persistence boundary and bind
+    # critique clearance only to these exact bytes.
+    if state["config"].get("mode", "code") == "code":
+        feasibility = compile_task_feasibility(payload, state.get("config", {}))
+        atomic_write_json(plan_dir / "task_feasibility.json", feasibility)
+        if not feasibility["admitted"]:
+            raise TaskFeasibilityError(feasibility)
+        payload["graph_report"] = feasibility
+    clearance_path = plan_dir / "critique_clearance.json"
+    if clearance_path.exists():
+        bind_finalize_custody(plan_dir, payload, read_json(clearance_path))
     atomic_write_json(plan_dir / "contract.json", contract_payload)
     write_plan_artifact_json(
         plan_dir, "finalize.json", payload,
@@ -1897,6 +2106,16 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
             allowed_states.add(STATE_PLANNED)
         require_state(state, "finalize", allowed_states)
 
+        try:
+            write_critique_clearance(plan_dir, state)
+        except CritiqueCustodyError as error:
+            raise CliError(
+                error.code,
+                str(error),
+                valid_next=["critique", "revise", "gate"],
+                extra={"issues": list(error.issues)},
+            ) from error
+
         from arnold_pipelines.megaplan.handlers.structured_output import (
             require_scratch_filename_for_phase,
         )
@@ -1963,6 +2182,13 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
 
         try:
             artifact_hash = _write_finalize_artifacts(plan_dir, worker.payload, state)
+        except TaskFeasibilityError as error:
+            return _route_finalize_task_feasibility_failure_to_revise(
+                plan_dir,
+                state,
+                worker,
+                error,
+            )
         except FinalizeBaselineSelectionError as error:
             return _route_finalize_baseline_selection_failure_to_revise(
                 plan_dir,
@@ -1978,7 +2204,10 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
             step="finalize",
             worker=worker, agent=agent, mode=mode, refreshed=refreshed,
             summary=f"Finalized plan with {len(worker.payload['tasks'])} tasks and {len(worker.payload['watch_items'])} watch items.",
-            artifacts=["contract.json", "final.md", "finalize.json", "user_actions.md"],
+            artifacts=(
+                ["contract.json", "final.md", "finalize.json", "user_actions.md"]
+                + (["task_feasibility.json"] if state["config"].get("mode", "code") == "code" else [])
+            ),
             output_file="finalize.json",
             artifact_hash=artifact_hash,
             next_step=success_projection["next_step"],

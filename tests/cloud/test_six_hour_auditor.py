@@ -257,6 +257,13 @@ def test_build_audit_input_resolves_brief_incident_and_problem(tmp_path: Path) -
     assert payload["problem"]["problem_id"] == "prob-audit-1"
 
 
+def test_build_audit_input_can_remain_read_only(tmp_path: Path) -> None:
+    payload = build_audit_input("missing-session", root=tmp_path, persist=False)
+
+    assert payload["brief"]["found"] is False
+    assert not (tmp_path / ".megaplan").exists()
+
+
 def test_fixture_writer_cannot_alias_production_incident_paths(tmp_path: Path) -> None:
     production_root = tmp_path / "production"
     production_ledger = production_root / ".megaplan" / "incident-ledger"
@@ -1423,6 +1430,20 @@ class TestBuildAuditorCompletionEvidence:
     def test_build_default_window_is_6(self) -> None:
         evidence = build_auditor_completion_evidence()
         assert evidence.audited_window_hours == 6.0
+
+    @pytest.mark.parametrize("window", [0.0, -1.0, float("nan"), float("inf")])
+    def test_invalid_evidence_window_cannot_certify_empty_audit(self, window: float) -> None:
+        evidence = build_auditor_completion_evidence(
+            audit_findings=[],
+            audit_outcome="audit_cycle_complete",
+            audited_window_hours=window,
+            repair_dispatch_refs=("spurious-dispatch",),
+        )
+
+        assert evidence.outcome == "invalid_evidence_window"
+        assert evidence.highest_severity == "error"
+        assert evidence.next_expected_event == "auditor.retry_with_valid_evidence_window"
+        assert evidence.repair_dispatch_count == 0
 
 
 class TestSaveAuditorCompletionEvidence:

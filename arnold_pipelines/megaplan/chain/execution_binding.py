@@ -24,8 +24,10 @@ from arnold_pipelines.megaplan.types import CliError
 
 
 BINDING_SCHEMA = "arnold.megaplan.chain_execution_binding.v1"
+REBIND_SCHEMA = "arnold.megaplan.chain_execution_rebind.v1"
 DRIFT_ERROR = "chain_execution_binding_drift"
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+_FULL_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -113,13 +115,23 @@ def _asset_entry(
     project_root: Path,
 ) -> dict[str, Any]:
     path = _resolve_asset(path_value, spec_path=spec_path, project_root=project_root)
-    return {
+    entry = {
         "kind": kind,
         "declared_path": path_value,
         "resolved_path": str(path),
         "sha256": _sha256_file(path) if path.is_file() else "",
         "exists": path.is_file(),
     }
+    if path.is_file() and (kind == "north_star" or kind.startswith("milestone_brief:")):
+        from arnold_pipelines.megaplan.planning.source_binding import (
+            canonical_source_identity,
+        )
+
+        entry["semantic_sha256"] = canonical_source_identity(
+            path,
+            project_dir=project_root,
+        )["semantic_sha256"]
+    return entry
 
 
 def _bundle_assets(
@@ -340,16 +352,143 @@ def _state_has_progress(state: Any) -> bool:
     )
 
 
+def _comparable_assets(identity: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            key: item.get(key)
+            for key in ("kind", "declared_path", "resolved_path", "sha256", "exists")
+        }
+        for item in identity.get("assets") or []
+        if isinstance(item, Mapping)
+    ]
+
+
 def _comparable(identity: Mapping[str, Any]) -> dict[str, Any]:
     return {
-        "bundle_sha256": identity.get("bundle_sha256"),
         "chain_spec_sha256": identity.get("chain_spec_sha256"),
         "milestone_sequence": identity.get("milestone_sequence"),
-        "assets": identity.get("assets"),
+        "assets": _comparable_assets(identity),
         "intended_initiative_revision": identity.get("intended_initiative_revision"),
         "initiative_path": identity.get("initiative_path"),
-        "runtime": identity.get("runtime"),
     }
+
+
+def _future_source_reconciliation_is_safe(
+    *,
+    state: Any,
+    expected: Mapping[str, Any],
+    active: Mapping[str, Any],
+    drift_fields: list[str],
+) -> tuple[bool, list[str]]:
+    allowed_fields = {"bundle_sha256", "chain_spec_sha256", "assets", "intended_initiative_revision"}
+    if not set(drift_fields).issubset(allowed_fields):
+        return False, []
+    if expected.get("milestone_sequence") != active.get("milestone_sequence"):
+        return False, []
+    if expected.get("initiative_path") != active.get("initiative_path"):
+        return False, []
+    expected_assets = {
+        str(item.get("kind")): item
+        for item in _comparable_assets(expected)
+        if isinstance(item, Mapping)
+    }
+    active_assets = {
+        str(item.get("kind")): item
+        for item in _comparable_assets(active)
+        if isinstance(item, Mapping)
+    }
+    changed_kinds = sorted(
+        kind
+        for kind in set(expected_assets) | set(active_assets)
+        if expected_assets.get(kind) != active_assets.get(kind)
+    )
+    if not changed_kinds:
+        return False, []
+    cutoff = int(getattr(state, "current_milestone_index", -1))
+    if not getattr(state, "current_plan_name", None):
+        cutoff -= 1
+    for kind in changed_kinds:
+        if not kind.startswith("milestone_brief:"):
+            return False, changed_kinds
+        try:
+            index = int(kind.split(":", 1)[1])
+        except ValueError:
+            return False, changed_kinds
+        if index <= cutoff:
+            return False, changed_kinds
+    revision = active.get("revision_verification")
+    if not isinstance(revision, Mapping) or not revision.get("ok"):
+        requirements = (getattr(state, "metadata", {}) or {}).get(
+            "required_canonical_source_updates"
+        )
+        if not isinstance(requirements, Mapping):
+            return False, changed_kinds
+    return True, changed_kinds
+
+
+def _reconciled_requirements_cover_revision_errors(
+    state: Any,
+    active: Mapping[str, Any],
+) -> bool:
+    errors = list(active.get("errors") or [])
+    if not errors:
+        return True
+    requirements = (getattr(state, "metadata", {}) or {}).get(
+        "required_canonical_source_updates"
+    )
+    if not isinstance(requirements, Mapping):
+        return False
+    active_assets = {
+        str(item.get("kind")): item
+        for item in active.get("assets") or []
+        if isinstance(item, Mapping)
+    }
+    covered: set[str] = set()
+    for requirement in requirements.values():
+        if not isinstance(requirement, Mapping) or requirement.get("status") != "reconciled":
+            continue
+        index = requirement.get("milestone_index")
+        expected = requirement.get("expected")
+        if not isinstance(index, int) or not isinstance(expected, Mapping):
+            continue
+        kind = f"milestone_brief:{index}"
+        active_asset = active_assets.get(kind) or {}
+        if active_asset.get("semantic_sha256") == expected.get("semantic_sha256"):
+            covered.add(f"asset_not_at_intended_revision:{kind}")
+    return bool(errors) and set(errors).issubset(covered)
+
+
+def _bound_import_root_covers_editable_metadata_mismatch(
+    expected: Mapping[str, Any],
+    active: Mapping[str, Any],
+) -> bool:
+    """Accept unrelated global editable metadata only for the bound import root.
+
+    A shared supervisor interpreter can expose ``direct_url.json`` for another
+    editable Arnold checkout even though this process was launched with the
+    immutable chain runtime first on ``PYTHONPATH``.  Once a chain is bound, the
+    imported source root is the execution fact that must remain invariant.  Do
+    not make a later, process-global package metadata observation stronger than
+    that bound fact; equally, do not accept a different import root or any
+    additional launch-readiness error.
+    """
+
+    if set(active.get("errors") or []) != {"editable_runtime_import_root_mismatch"}:
+        return False
+    expected_runtime = expected.get("runtime")
+    active_runtime = active.get("runtime")
+    if not isinstance(expected_runtime, Mapping) or not isinstance(active_runtime, Mapping):
+        return False
+    expected_import = str(expected_runtime.get("import_root") or "").strip()
+    expected_editable = str(expected_runtime.get("editable_root") or "").strip()
+    active_import = str(active_runtime.get("import_root") or "").strip()
+    if not expected_import or not expected_editable or not active_import:
+        return False
+    return (
+        Path(expected_import).resolve(strict=False)
+        == Path(expected_editable).resolve(strict=False)
+        == Path(active_import).resolve(strict=False)
+    )
 
 
 def execution_binding_report(spec_path: Path, state: Any) -> dict[str, Any]:
@@ -379,12 +518,32 @@ def execution_binding_report(spec_path: Path, state: Any) -> dict[str, Any]:
             for key in expected_comparable
             if expected_comparable.get(key) != active_comparable.get(key)
         ]
-        status = "drift" if drift_fields or not active.get("ready") else "match"
+        safe_future, changed_asset_kinds = _future_source_reconciliation_is_safe(
+            state=state,
+            expected=expected,
+            active=active,
+            drift_fields=drift_fields,
+        )
+        bound_import_root_match = _bound_import_root_covers_editable_metadata_mismatch(
+            expected,
+            active,
+        )
+        active_ready = (
+            bool(active.get("ready"))
+            or _reconciled_requirements_cover_revision_errors(state, active)
+            or bound_import_root_match
+        )
+        if safe_future:
+            status = "reconcile_required"
+        else:
+            status = "drift" if drift_fields or not active_ready else "match"
     return {
         "schema": BINDING_SCHEMA,
         "required": policy["required"],
         "status": status,
         "drift_fields": drift_fields,
+        "bound_import_root_match": bound_import_root_match if expected is not None else False,
+        "changed_asset_kinds": changed_asset_kinds if expected is not None else [],
         "expected": dict(expected) if expected is not None else None,
         "active": active,
     }
@@ -402,7 +561,7 @@ def assert_execution_binding(
         return report
     if report["status"] == "missing" and allow_unbound_new and not _state_has_progress(state):
         return report
-    if report["status"] != "match":
+    if report["status"] not in {"match", "reconcile_required"}:
         active = report["active"]
         raise CliError(
             DRIFT_ERROR,
@@ -441,3 +600,223 @@ def bind_execution_identity(spec_path: Path, state: Any) -> dict[str, Any]:
     }
     state.metadata = metadata
     return execution_binding_report(spec_path, state)
+
+
+def _identity_labels(identity: Mapping[str, Any]) -> list[str]:
+    sequence = identity.get("milestone_sequence")
+    if not isinstance(sequence, list):
+        return []
+    labels: list[str] = []
+    for expected_index, item in enumerate(sequence):
+        if not isinstance(item, Mapping):
+            return []
+        try:
+            index = int(item.get("index"))
+        except (TypeError, ValueError):
+            return []
+        label = str(item.get("label") or "").strip()
+        if index != expected_index or not label:
+            return []
+        labels.append(label)
+    return labels if len(set(labels)) == len(labels) else []
+
+
+def _completed_labels(state: Any) -> list[str]:
+    completed = getattr(state, "completed", None)
+    if not isinstance(completed, list):
+        return []
+    labels: list[str] = []
+    for item in completed:
+        if not isinstance(item, Mapping):
+            raise CliError(
+                DRIFT_ERROR,
+                "chain rebind refused: malformed completed milestone record",
+            )
+        label = str(item.get("label") or item.get("milestone") or "").strip()
+        if not label:
+            raise CliError(
+                DRIFT_ERROR,
+                "chain rebind refused: completed milestone label is missing",
+            )
+        labels.append(label)
+    if len(set(labels)) != len(labels):
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: completed milestone labels are ambiguous",
+        )
+    return labels
+
+
+def rebind_execution_identity(
+    spec_path: Path,
+    state: Any,
+    *,
+    expected_previous_bundle_sha256: str,
+    expected_active_bundle_sha256: str,
+    expected_current_milestone: str,
+    expected_current_plan: str,
+    expected_next_milestone: str,
+    reason: str,
+    actor: str = "operator",
+) -> dict[str, Any]:
+    """Adopt an explicitly content-addressed successor chain without moving its cursor.
+
+    Rebinding is intentionally narrower than ordinary reconciliation.  The
+    operator must name both immutable bundle identities and the exact
+    current/next cursor.  Completed and current milestones must be an
+    unchanged prefix of both identities; only the future suffix may differ.
+    """
+
+    no_current_plan_guard = expected_current_plan == "@none"
+    arguments = {
+        "expected_previous_bundle_sha256": expected_previous_bundle_sha256,
+        "expected_active_bundle_sha256": expected_active_bundle_sha256,
+        "expected_current_milestone": expected_current_milestone,
+        "expected_current_plan": expected_current_plan,
+        "expected_next_milestone": expected_next_milestone,
+        "reason": reason,
+        "actor": actor,
+    }
+    if any(not str(value or "").strip() for value in arguments.values()):
+        raise CliError(DRIFT_ERROR, "chain rebind refused: every rebind guard is required")
+    guarded_current_plan = "" if no_current_plan_guard else expected_current_plan
+    if not _FULL_SHA256.fullmatch(expected_previous_bundle_sha256):
+        raise CliError(DRIFT_ERROR, "chain rebind refused: previous bundle SHA-256 is invalid")
+    if not _FULL_SHA256.fullmatch(expected_active_bundle_sha256):
+        raise CliError(DRIFT_ERROR, "chain rebind refused: active bundle SHA-256 is invalid")
+
+    report = execution_binding_report(spec_path, state)
+    if not report.get("required"):
+        raise CliError(DRIFT_ERROR, "chain rebind refused: execution binding is not required")
+    if report.get("status") not in {"drift", "reconcile_required"}:
+        raise CliError(
+            DRIFT_ERROR,
+            f"chain rebind refused: binding status is {report.get('status')!r}, not drift",
+        )
+    previous = report.get("expected")
+    active = report.get("active")
+    if not isinstance(previous, Mapping) or not isinstance(active, Mapping):
+        raise CliError(DRIFT_ERROR, "chain rebind refused: expected or active identity is missing")
+    if previous.get("bundle_sha256") != expected_previous_bundle_sha256:
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: previous bundle SHA-256 does not match persisted binding",
+        )
+    if active.get("bundle_sha256") != expected_active_bundle_sha256:
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: active bundle SHA-256 does not match validated source",
+        )
+    if not active.get("ready"):
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: active execution identity is not ready: "
+            + ", ".join(str(item) for item in active.get("errors") or []),
+        )
+
+    previous_labels = _identity_labels(previous)
+    active_labels = _identity_labels(active)
+    if not previous_labels or not active_labels:
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: milestone sequence is missing, duplicated, or malformed",
+        )
+    try:
+        current_index = int(getattr(state, "current_milestone_index"))
+    except (TypeError, ValueError):
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: current milestone index is ambiguous",
+        ) from None
+    if (
+        current_index < 0
+        or current_index >= len(previous_labels)
+        or current_index >= len(active_labels)
+    ):
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: current milestone index is outside a bound sequence",
+        )
+
+    completed_labels = _completed_labels(state)
+    if len(completed_labels) != current_index:
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: completed prefix does not equal the current cursor",
+        )
+    if (
+        previous_labels[:current_index] != completed_labels
+        or active_labels[:current_index] != completed_labels
+    ):
+        raise CliError(DRIFT_ERROR, "chain rebind refused: completed milestone prefix changed")
+    if previous_labels[current_index] != expected_current_milestone:
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: persisted current milestone does not match the guard",
+        )
+    if active_labels[current_index] != expected_current_milestone:
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: active source changed the current milestone",
+        )
+    if str(getattr(state, "current_plan_name", "") or "") != guarded_current_plan:
+        raise CliError(DRIFT_ERROR, "chain rebind refused: current plan does not match the guard")
+    next_index = current_index + 1
+    if next_index >= len(active_labels):
+        raise CliError(DRIFT_ERROR, "chain rebind refused: active source has no guarded successor")
+    if active_labels[next_index] != expected_next_milestone:
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: active next milestone does not match the guard",
+        )
+    if (
+        expected_next_milestone in completed_labels
+        or expected_next_milestone == expected_current_milestone
+    ):
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: guarded successor is already completed or current",
+        )
+
+    rebound_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    event_core = {
+        "schema": REBIND_SCHEMA,
+        "rebound_at": rebound_at,
+        "actor": actor,
+        "reason": reason,
+        "from_bundle_sha256": expected_previous_bundle_sha256,
+        "to_bundle_sha256": expected_active_bundle_sha256,
+        "current_milestone_index": current_index,
+        "current_milestone": expected_current_milestone,
+        "current_plan": guarded_current_plan,
+        "next_milestone": expected_next_milestone,
+        "completed_prefix": completed_labels,
+    }
+    event = {
+        **event_core,
+        "content_sha256": _sha256_bytes(
+            json.dumps(event_core, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ),
+    }
+    metadata = dict(getattr(state, "metadata", {}) or {})
+    binding = dict(metadata.get("execution_binding") or {})
+    events = binding.get("rebind_events")
+    events = list(events) if isinstance(events, list) else []
+    events.append(event)
+    binding.update(
+        {
+            "schema": BINDING_SCHEMA,
+            "launched_identity": dict(active),
+            "last_rebound_at": rebound_at,
+            "rebind_events": events,
+        }
+    )
+    metadata["execution_binding"] = binding
+    state.metadata = metadata
+    rebound_report = execution_binding_report(spec_path, state)
+    if rebound_report.get("status") != "match":
+        raise CliError(
+            DRIFT_ERROR,
+            "chain rebind refused: rebound identity did not verify as an exact match",
+        )
+    return {"event": event, "execution_binding": rebound_report}

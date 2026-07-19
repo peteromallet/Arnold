@@ -19,6 +19,11 @@ from arnold_pipelines.megaplan.orchestration.critique_status import (
     build_unverifiable_warnings,
 )
 from arnold_pipelines.megaplan.orchestration.parallel_critique import run_parallel_critique
+from arnold_pipelines.megaplan.orchestration.critique_custody import (
+    CritiqueCustodyError,
+    prepare_critique_payload,
+    write_critique_production_receipt,
+)
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion
 from arnold_pipelines.megaplan.model_seam import ModelStructuralAuditError, audit_step_payload
 from arnold_pipelines.megaplan.schema_projection import schema_property_names
@@ -39,6 +44,7 @@ from arnold_pipelines.megaplan.workers import WorkerResult
 from arnold_pipelines.megaplan._core import (
     adaptive_critique_enabled,
     atomic_write_json,
+    atomic_write_text,
     configured_robustness,
     infer_next_steps,
     is_creative_mode,
@@ -929,7 +935,37 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         if v_flags:
             worker.payload.setdefault("flags", []).extend(v_flags)
 
+        try:
+            prepare_critique_payload(worker.payload, expected_check_ids=expected_ids)
+        except CritiqueCustodyError as error:
+            _raise_step_validation_error(
+                plan_dir=plan_dir,
+                state=state,
+                step="critique",
+                iteration=iteration,
+                worker=worker,
+                code=error.code,
+                message=str(error),
+            )
+        atomic_write_text(plan_dir / f"critique_raw_v{iteration}.txt", worker.raw_output or "")
         atomic_write_json(plan_dir / critique_filename, worker.payload)
+        try:
+            custody_receipt = write_critique_production_receipt(
+                plan_dir,
+                state,
+                worker.payload,
+                expected_check_ids=expected_ids,
+            )
+        except CritiqueCustodyError as error:
+            _raise_step_validation_error(
+                plan_dir=plan_dir,
+                state=state,
+                step="critique",
+                iteration=iteration,
+                worker=worker,
+                code=error.code,
+                message=str(error),
+            )
         if is_creative_mode(state):
             fired = [
                 check.get("provocation", {})
@@ -1008,12 +1044,17 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             step="critique",
             worker=worker, agent=agent, mode=mode, refreshed=refreshed,
             summary=f"Recorded {len(worker.payload.get('flags', []))} critique flags.",
-            artifacts=[critique_filename, "faults.json"],
+            artifacts=[critique_filename, f"critique_custody_v{iteration}.json", "faults.json"],
             output_file=critique_filename,
             artifact_hash=sha256_file(plan_dir / critique_filename),
             response_fields={
                 **response_fields,
                 "critique_outcome": CritiqueOutcome.COMPLETED,
+                "critique_custody": {
+                    "receipt": f"critique_custody_v{iteration}.json",
+                    "finding_count": custody_receipt["finding_count"],
+                    "loss_count": 0,
+                },
             },
             history_fields={"flags_count": len(worker.payload.get("flags", []))},
         )
@@ -1081,23 +1122,6 @@ def _normalize_critique_payload_for_recovery(payload: dict[str, Any]) -> dict[st
         if not isinstance(check, dict):
             clean_checks.append(check)
             continue
-        # Strip unknown check-level keys as a defense against template/schema drift.
-        allowed_check_keys = {
-            "id",
-            "question",
-            "guidance",
-            "prior_findings",
-            "findings",
-            "status",
-            "unverifiable_reason",
-            "unverifiable_cause",
-            "unverifiable_retryable",
-            "unverifiable_error_kind",
-        }
-        check_extra_keys = set(check) - allowed_check_keys
-        if check_extra_keys:
-            check = {k: v for k, v in check.items() if k in allowed_check_keys}
-            changed = True
         findings = check.get("findings")
         if not isinstance(findings, list):
             clean_checks.append(check)
@@ -1108,10 +1132,6 @@ def _normalize_critique_payload_for_recovery(payload: dict[str, Any]) -> dict[st
             if not isinstance(finding, dict):
                 clean_findings.append(finding)
                 continue
-            extra_keys = set(finding) - {"detail", "flagged"}
-            if extra_keys:
-                finding = {k: v for k, v in finding.items() if k in {"detail", "flagged"}}
-                check_changed = True
             clean_findings.append(finding)
         if check_changed:
             check = dict(check)
