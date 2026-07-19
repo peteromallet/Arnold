@@ -1,6 +1,6 @@
 {
   "schema": "m6.proof-index.v2",
-  "generated_at": "2026-07-19T19:52:32.188018+00:00",
+  "generated_at": "2026-07-19T19:59:04.069598+00:00",
   "generator": "tools/validate_m6_evidence.py",
   "north_star_guard": "M6 is observe-only. This proof index is the aggregate validation result: every content hash is recomputed from disk, stale hashes are rejected, unexplained rows are flagged, WBC ancestry is re-verified, and incomplete prerequisites are recorded as blockers. Unavailable denominators and blocked prerequisites are recorded as UNKNOWN, never as success evidence or zero.",
   "validation_passed": false,
@@ -229,12 +229,12 @@
       "has_unexplained_rows": false
     }
   ],
-  "repository_head": "3e22fc9ef7e992887d98aadcb6b4dacb18747f9d",
+  "repository_head": "ba5295b455f732297d0e36ae9b98908585556846",
   "wbc_ancestry_result": {
     "check": "wbc_ancestry_reverified",
     "status": "PASS",
     "integration_commit": "24afce006b9ad20391ac7af10ef67ea0b1774f9f",
-    "current_head": "3e22fc9ef7e992887d98aadcb6b4dacb18747f9d",
+    "current_head": "ba5295b455f732297d0e36ae9b98908585556846",
     "merge_parents": [
       "7644f55dd9be75632670f990268e045d3ee1c2f7",
       "cbe69337d6f469fd7ae12f1fd0a51007d93b5d70"
@@ -285,7 +285,7 @@
     "productive_replay_ledger_rationale": "Productive-versus-replayed token/cost baselines are UNKNOWN until joined per-task/attempt/repair receipts exist. Source: F14 finding, work-ledger-vocabulary.",
     "wbc_ancestry_coherent": "UNKNOWN",
     "wbc_ancestry_rationale": "WBC ancestry is re-verified during aggregate validation. Any deviation from expected merge parents or ancestor relationships will be recorded as INCOHERENT.",
-    "repository_head": "3e22fc9ef7e992887d98aadcb6b4dacb18747f9d",
+    "repository_head": "ba5295b455f732297d0e36ae9b98908585556846",
     "repository_head_valid": true,
     "wbc_ancestry_parent_match": true,
     "wbc_first_parent_is_ancestor": true,
