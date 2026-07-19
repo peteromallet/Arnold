@@ -1,0 +1,138 @@
+{
+  "schema": "m5.milestone-range-attestation.v1",
+  "generated_at": "2026-07-14T15:19:54Z",
+  "generated_by_plan": "m5-run-authority-receipt-20260714-1428",
+  "generated_by_task": "T3",
+  "canonical_initiative": "runauthority-epic",
+  "canonical_session": "runauthority-epic-cloud",
+  "verified_against_ref": "main",
+  "milestones": [
+    {
+      "label": "m1-foundation",
+      "sprint_plan": "sprint-1-authority-freeze-and-20260710-1935",
+      "base_sha": "df95784af96d367f6bb2e6942c89ec62c6a3bcb3",
+      "head_sha": "ea93131022012be309107db2a9bf686554b03a4c",
+      "merge_parent_sha": "dcbc6cd9a6249b615998f69cfc8b88f67af7c970",
+      "base_exists_in_git": true,
+      "head_exists_in_git": true,
+      "merge_parent_exists_in_git": true,
+      "head_is_ancestor_of_main": true,
+      "pr_number": 207,
+      "pr_state": "merged",
+      "diff_file_count": 26,
+      "run_authority_files_in_diff": [
+        "arnold_pipelines/run_authority/__init__.py",
+        "arnold_pipelines/run_authority/contracts.py",
+        "arnold_pipelines/run_authority/reducer.py",
+        "tests/arnold_pipelines/run_authority/test_contracts.py",
+        "tests/arnold_pipelines/run_authority/test_reducer.py"
+      ],
+      "authority_files_in_diff": [
+        ".megaplan/cloud-chain-runauthority-epic-cloud.log",
+        ".megaplan/initiatives/runauthority-epic/notes/sprint-1-enforcement-handoff.md",
+        "arnold_pipelines/megaplan/authority/INVENTORY_READER_AUDIT.md",
+        "arnold_pipelines/megaplan/authority/__init__.py",
+        "arnold_pipelines/megaplan/authority/batch_scope.py",
+        "arnold_pipelines/megaplan/authority/binding.py",
+        "arnold_pipelines/megaplan/authority/inventory.py",
+        "arnold_pipelines/megaplan/authority/views.py",
+        "arnold_pipelines/run_authority/__init__.py",
+        "arnold_pipelines/run_authority/contracts.py",
+        "arnold_pipelines/run_authority/reducer.py",
+        "tests/arnold_pipelines/megaplan/fixtures/runauthority/vibecomfy_split_authority.json",
+        "tests/arnold_pipelines/megaplan/test_authority_batch_scope.py",
+        "tests/arnold_pipelines/megaplan/test_authority_incident_cycles.py",
+        "tests/arnold_pipelines/megaplan/test_authority_inventory.py",
+        "tests/arnold_pipelines/megaplan/test_authority_inventory_cli.py",
+        "tests/arnold_pipelines/megaplan/test_authority_views.py",
+        "tests/arnold_pipelines/run_authority/test_contracts.py",
+        "tests/arnold_pipelines/run_authority/test_reducer.py"
+      ],
+      "has_run_authority_content": true,
+      "base_sha_source": "state.json meta.chain_policy.milestone_base_sha",
+      "head_sha_source": "git merge commit for PR"
+    },
+    {
+      "label": "m2-enforcement",
+      "sprint_plan": "sprint-2-dispatch-grants-and-20260710-2200",
+      "base_sha": "ea93131022012be309107db2a9bf686554b03a4c",
+      "head_sha": "710a4609d53c78038e39f9167c09487912da5ba2",
+      "merge_parent_sha": "99e5d38c1f15f57e037362171c4d74be6c5b4ee0",
+      "base_exists_in_git": true,
+      "head_exists_in_git": true,
+      "merge_parent_exists_in_git": true,
+      "head_is_ancestor_of_main": true,
+      "pr_number": 210,
+      "pr_state": "merged",
+      "diff_file_count": 67,
+      "run_authority_files_in_diff": [],
+      "authority_files_in_diff": [
+        ".megaplan/initiatives/megaplan-maintenance/briefs/m2-coherent-evidence-and-authority.md",
+        ".megaplan/initiatives/runauthority-epic/chain.yaml",
+        "arnold_pipelines/megaplan/authority/__init__.py",
+        "arnold_pipelines/megaplan/authority/batch_scope.py",
+        "arnold_pipelines/megaplan/authority/binding.py",
+        "arnold_pipelines/megaplan/authority/views.py",
+        "arnold_pipelines/megaplan/orchestration/authority_readers.py",
+        "tests/arnold_pipelines/megaplan/test_authority_batch_scope.py",
+        "tests/arnold_pipelines/megaplan/test_authority_dispatch_grants.py",
+        "tests/arnold_pipelines/megaplan/test_authority_views.py",
+        "tests/arnold_pipelines/megaplan/test_chain_authority_shadow.py",
+        "tests/arnold_pipelines/megaplan/test_cloud_status_authority_shadow.py",
+        "tests/execute/test_authority_dispatch_validation.py",
+        "tests/execute/test_execute_frontier_authority.py"
+      ],
+      "has_run_authority_content": true,
+      "base_sha_source": "state.json meta.chain_policy.milestone_base_sha",
+      "head_sha_source": "git merge commit for PR"
+    },
+    {
+      "label": "m3-consumers",
+      "sprint_plan": "sprint-3-consumer-migration-20260711-0130",
+      "base_sha": "710a4609d53c78038e39f9167c09487912da5ba2",
+      "head_sha": "432760d13abb69a32a77e7bb1e79c1136d4ce533",
+      "merge_parent_sha": "710a4609d53c78038e39f9167c09487912da5ba2",
+      "base_exists_in_git": true,
+      "head_exists_in_git": true,
+      "merge_parent_exists_in_git": true,
+      "head_is_ancestor_of_main": true,
+      "pr_number": 212,
+      "pr_state": "merged",
+      "diff_file_count": 42,
+      "run_authority_files_in_diff": [
+        "tests/arnold_pipelines/run_authority/test_reducer.py"
+      ],
+      "authority_files_in_diff": [
+        ".megaplan/incident-ledger/summaries/incidents/inc-runauthority-epic-cloud.json",
+        "arnold_pipelines/megaplan/authority/__init__.py",
+        "arnold_pipelines/megaplan/authority/views.py",
+        "arnold_pipelines/megaplan/orchestration/authority_readers.py",
+        "docs/arnold/runauthority-sprint-3-migration-cleanup-report.md",
+        "tests/arnold_pipelines/megaplan/test_authority_views.py",
+        "tests/arnold_pipelines/megaplan/test_cloud_status_authority_shadow.py",
+        "tests/arnold_pipelines/run_authority/test_reducer.py"
+      ],
+      "has_run_authority_content": true,
+      "base_sha_source": "state.json meta.chain_policy.milestone_base_sha",
+      "head_sha_source": "git merge commit for PR"
+    }
+  ],
+  "unresolved_blockers": [],
+  "publication_gaps": [
+    {
+      "milestone": "m3-consumers",
+      "type": "pr_state_discrepancy",
+      "detail": "Chain state completed[] records pr_state='merged' for M3 (PR #212), but ground_truth_reconciliation recorded pr_state='open' as of 2026-07-11T13:34:13Z. Merge commit 432760d13 exists and is ancestor of main, confirming the PR was merged.",
+      "resolved": true,
+      "resolution": "Git history confirms merge. The ground_truth_reconciliation snapshot predates the final merge. No actionable gap."
+    }
+  ],
+  "notes": [
+    "M1 base SHA df95784af was not present in the local repository and was fetched from origin. All other SHAs were already available locally.",
+    "All three merge commits are verified ancestors of main, confirming merged publication.",
+    "All three milestone diffs contain Run Authority or Authority-related files.",
+    "M1 introduced core run_authority module (5 files).",
+    "M2 introduced authority infrastructure (14 authority-tagged files including DispatchGrant, views, batch_scope, binding).",
+    "M3 included test_reducer.py modification and authority view updates (8 authority-tagged files)."
+  ]
+}

@@ -273,16 +273,26 @@ def test_megaplan_artifact_layout_fails_on_loose_planning_files(tmp_path: Path) 
 
 def test_megaplan_artifact_layout_accepts_initiative_docs(tmp_path: Path) -> None:
     _write(tmp_path, ".megaplan/initiatives/demo/chain.yaml", "milestones: []\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/cloud.yaml", "provider: ssh\n")
     _write(tmp_path, ".megaplan/initiatives/demo/NORTHSTAR.md", "# North Star\n")
     _write(tmp_path, ".megaplan/initiatives/demo/STRATEGY.md", "# Strategy\n")
-    _write(tmp_path, ".megaplan/initiatives/demo/proof-map.json", "{}\n")
+    _write(
+        tmp_path,
+        ".megaplan/initiatives/demo/proof-map.json",
+        '{"m1": [".megaplan/initiatives/demo/validation-receipt.json"]}\n',
+    )
     _write(tmp_path, ".megaplan/initiatives/demo/completion-manifest.json", "{}\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/dependency-completion-proof.json", "{}\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/validation-receipt.json", "{}\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/.retired", "retired_at: now\n")
     _write(tmp_path, ".megaplan/initiatives/demo/briefs/m1.md", "# M1\n")
     _write(tmp_path, ".megaplan/initiatives/demo/research/audit.md", "# Audit\n")
     _write(tmp_path, ".megaplan/initiatives/demo/decisions/route.md", "# Decision\n")
     _write(tmp_path, ".megaplan/initiatives/demo/notes/status.md", "# Status\n")
     _write(tmp_path, ".megaplan/initiatives/demo/assets/data.json", "{}\n")
     _write(tmp_path, ".megaplan/initiatives/demo/handoff/subagent.md", "# Handoff\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/handoffs/m1/receipt.json", "{}\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/evidence/runtime.json", "{}\n")
 
     result = check_megaplan_artifact_layout(repo_root=tmp_path, allowlist=set())
 

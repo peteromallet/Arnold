@@ -5,6 +5,43 @@ ONE_FLAG="${2:-}"
 CANONICAL_LOG=".megaplan/cloud-chain.log"
 PROJECT_DIR="${MEGAPLAN_PROJECT_DIR:-$(pwd)}"
 ENGINE_DIR="${MEGAPLAN_ENGINE_DIR:-/workspace/arnold}"
+
+# ── pre-flight acceptance gate ───────────────────────────────────────
+# In atomic/enforce mode a completed chain with successors requiring
+# acceptance must carry a validated acceptance receipt for its final
+# milestone.  Restarting without one would re-initialise the successor
+# outside the Python chain flow.
+_check_acceptance_gate() {
+  local spec="$1" workspace="$2" gate_json exit_code
+  gate_json="$(PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}" python3 -P - "$spec" "$workspace" "chain_wrapper" <<'PY'
+import json, sys
+from pathlib import Path
+from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import check_wrapper_acceptance_gate
+spec_path, workspace, caller = sys.argv[1:4]
+result = check_wrapper_acceptance_gate(spec_path, workspace=workspace, caller_kind=caller)
+print(json.dumps(result, sort_keys=True))
+PY
+)" || true
+  exit_code=0
+  if [[ -z "$gate_json" ]]; then
+    return 0
+  fi
+  gate_open="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('gate_open',True))" <<<"$gate_json" 2>/dev/null || echo True)"
+  if [[ "$gate_open" == "True" || "$gate_open" == "true" ]]; then
+    return 0
+  fi
+  # Gate closed — log blocker event and refuse restart
+  blocker_event="$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d.get('blocker_event',{})))" <<<"$gate_json" 2>/dev/null || true)"
+  reason="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('reason','unknown'))" <<<"$gate_json" 2>/dev/null || echo "acceptance gate closed")"
+  echo "[arnold-chain] acceptance gate closed: $reason" >&2
+  if [[ -n "$blocker_event" && "$blocker_event" != "{}" ]]; then
+    echo "[arnold-chain] blocker event: $blocker_event" >&2
+  fi
+  exit 65
+}
+
+_check_acceptance_gate "$SPEC" "$PROJECT_DIR"
+
 if [ "$ONE_FLAG" = "--one" ]; then
     exec bash -lc "if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd \"\$2\" && PYTHONSAFEPATH=1 PYTHONPATH=\"\$0:\${PYTHONPATH:-}\" MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start --spec \"\$1\" --project-dir \"\$2\" --one >> \"\$2/$CANONICAL_LOG\" 2>&1" "$ENGINE_DIR" "$SPEC" "$PROJECT_DIR"
 else

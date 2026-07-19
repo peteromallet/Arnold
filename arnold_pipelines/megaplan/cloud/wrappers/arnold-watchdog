@@ -4685,7 +4685,8 @@ dispatch_kimi_repair() {
   local workspace="$2"
   local remote_spec="$3"
   local pgid_path repair_busy claim_status request_id blocker_id managed_identity incident_id
-  local run_id_file launch_evidence child_pid inherited_goal_id inherited_goal_path
+  local run_id_file launch_evidence child_pid gate_json gate_open reason
+  local inherited_goal_id inherited_goal_path
   local inherited_checkpoint_digest inherited_goal_blocker inherited_goal_request inherited_retry_sequence
   local -a managed_cmd
   REPAIR_DISPATCH_RESULT="unavailable"
@@ -4697,6 +4698,43 @@ dispatch_kimi_repair() {
     request_id="${PLAN_STATUS_REQUEST_ID:-}"
     blocker_id="${PLAN_STATUS_BLOCKER_ID:-}"
   fi
+
+  # ── acceptance gate before repair dispatch ──────────────────────────
+  # In atomic/enforce mode a completed chain with successors requiring
+  # acceptance must carry a validated acceptance receipt before the
+  # watchdog is allowed to dispatch a repair loop.
+  if [[ -n "$remote_spec" && -f "$remote_spec" ]]; then
+    gate_json="$(PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 -P - "$remote_spec" "$workspace" "watchdog" <<'PY'
+import json, sys
+from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import check_wrapper_acceptance_gate
+spec_path, workspace, caller = sys.argv[1:4]
+result = check_wrapper_acceptance_gate(spec_path, workspace=workspace, caller_kind=caller)
+print(json.dumps(result, sort_keys=True))
+PY
+)" || true
+    if [[ -n "$gate_json" ]]; then
+      gate_open="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('gate_open',True))" <<<"$gate_json" 2>/dev/null || echo True)"
+      if [[ "$gate_open" != "True" && "$gate_open" != "true" ]]; then
+        reason="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('reason','unknown'))" <<<"$gate_json" 2>/dev/null || echo "acceptance gate closed")"
+        blocker_event="$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d.get('blocker_event',{})))" <<<"$gate_json" 2>/dev/null || true)"
+        log "[watchdog] acceptance gate closed for session=$session: $reason"
+        if [[ -n "$blocker_event" && "$blocker_event" != "{}" ]]; then
+          local blocker_file="$REPAIR_DATA_DIR/${session}.blocker-acceptance-gate.json"
+          python3 -c "
+import json, pathlib, sys
+pathlib.Path(sys.argv[1]).parent.mkdir(parents=True, exist_ok=True)
+pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
+" "$blocker_file" "$blocker_event" 2>/dev/null || true
+          report_item "$REPORT_PATH" "$session" "watchdog" "blocked" "acceptance gate closed: $reason" "$workspace" "$remote_spec"
+          log "[watchdog] blocker event persisted: $blocker_file"
+        fi
+        REPAIR_DISPATCH_RESULT="blocked"
+        emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "acceptance gate closed: $reason" "blocked" "immediate_repair"
+        return 1
+      fi
+    fi
+  fi
+
   inherited_goal_id="${ARNOLD_REPAIR_RETRY_GOAL_ID:-}"
   inherited_goal_path="${ARNOLD_REPAIR_RETRY_GOAL_PATH:-}"
   inherited_checkpoint_digest=""

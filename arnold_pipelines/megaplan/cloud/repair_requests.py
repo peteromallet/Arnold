@@ -21,7 +21,12 @@ from arnold_pipelines.megaplan.cloud.repair_lock import (
     release_repair_lock,
     owner_metadata_path,
 )
-from arnold_pipelines.megaplan.cloud.repair_recurrence import PROBLEM_SIGNATURE_FIELDS
+from arnold_pipelines.megaplan.cloud.repair_recurrence import (
+    ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS,
+    EXTENDED_PROBLEM_SIGNATURE_FIELDS,
+    PROBLEM_SIGNATURE_FIELDS,
+    build_acceptance_predicate_signature,
+)
 
 QUEUE_DIR_NAME = "repair-queue"
 REQUESTS_DIR_NAME = "requests"
@@ -132,18 +137,35 @@ def active_repair_claim_lock_dir(queue_dir: str | Path, blocker_id: str) -> Path
     return active_claims_dir(queue_dir) / f"{_claim_path_token(normalized)}.lock"
 
 
-def normalize_problem_signature(problem_signature: Mapping[str, Any]) -> dict[str, str]:
-    """Return only the canonical signature fields, normalized for identity."""
+def normalize_problem_signature(
+    problem_signature: Mapping[str, Any],
+    *,
+    extra_fields: tuple[str, ...] = (),
+) -> dict[str, str]:
+    """Return canonical signature fields, normalized for identity.
 
-    return {
+    When *extra_fields* is provided the result also includes those keys
+    (e.g. :data:`~arnold_pipelines.megaplan.cloud.repair_recurrence.ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS`)
+    so acceptance predicate failures produce distinct repair identities.
+    """
+
+    result = {
         field: str(problem_signature.get(field) or "").strip()
         for field in PROBLEM_SIGNATURE_FIELDS
     }
+    for field in extra_fields:
+        result[field] = str(problem_signature.get(field) or "").strip()
+    return result
 
 
-def problem_signature_key(problem_signature: Mapping[str, Any]) -> str:
-    normalized = normalize_problem_signature(problem_signature)
-    return _sha256_json([normalized[field] for field in PROBLEM_SIGNATURE_FIELDS])
+def problem_signature_key(
+    problem_signature: Mapping[str, Any],
+    *,
+    extra_fields: tuple[str, ...] = (),
+) -> str:
+    normalized = normalize_problem_signature(problem_signature, extra_fields=extra_fields)
+    fields = PROBLEM_SIGNATURE_FIELDS + extra_fields
+    return _sha256_json([normalized[field] for field in fields])
 
 
 def redacted_hint_hash(root_cause_hint: Any) -> str:
@@ -158,13 +180,22 @@ def request_id_for(
     session: str,
     problem_signature: Mapping[str, Any],
     root_cause_hint: Any = "",
+    extra_signature_fields: tuple[str, ...] = (),
 ) -> str:
-    """Return a stable request id unaffected by timestamps or raw hint text."""
+    """Return a stable request id unaffected by timestamps or raw hint text.
+
+    When *extra_signature_fields* is provided (e.g.
+    :data:`~arnold_pipelines.megaplan.cloud.repair_recurrence.ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS`)
+    the problem signature is normalized with those additional keys so
+    acceptance predicate failures produce distinct request ids.
+    """
 
     return _sha256_json(
         {
             "session": str(session or "").strip(),
-            "problem_signature": normalize_problem_signature(problem_signature),
+            "problem_signature": normalize_problem_signature(
+                problem_signature, extra_fields=extra_signature_fields
+            ),
             "root_cause_hint_hash": redacted_hint_hash(root_cause_hint),
         }
     )
@@ -184,16 +215,67 @@ def enqueue_repair_request(
     created_at: str | None = None,
     stale_reason: str = "",
     superseded_by: str = "",
+    acceptance_predicate_failure: Mapping[str, Any] | None = None,
+    acceptance_transaction_id: str = "",
+    acceptance_snapshot_hash: str = "",
 ) -> dict[str, Any]:
-    """Write a request marker once, recording any rejection/coalescing separately."""
+    """Write a request marker once, recording any rejection/coalescing separately.
+
+    When *acceptance_predicate_failure* is provided the acceptance predicate
+    fields (kind, evidence_kind, summary) plus *acceptance_transaction_id*
+    and *acceptance_snapshot_hash* are appended to the problem signature so
+    atomic completion predicate failures produce repair identities distinct
+    from fixer-infrastructure failures.  Existing callers that omit these
+    parameters continue to produce legacy 7-field signatures.
+    """
 
     queue_root = validate_queue_root(queue_root)
-    normalized_signature = normalize_problem_signature(problem_signature)
+
+    # ── Merge acceptance predicate fields into the problem signature ──────
+    extended_signature = dict(problem_signature)
+    extra_fields: tuple[str, ...] = ()
+    if acceptance_predicate_failure is not None:
+        extra_fields = ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS
+        acc = dict(acceptance_predicate_failure) if isinstance(acceptance_predicate_failure, dict) else {}
+        details = acc.get("details")
+        details = dict(details) if isinstance(details, dict) else {}
+        raw_evidence_refs = details.get("evidence_refs")
+        if isinstance(raw_evidence_refs, list):
+            evidence_refs = ",".join(
+                str(item).strip() for item in raw_evidence_refs if str(item).strip()
+            )
+        else:
+            evidence_refs = str(raw_evidence_refs or "").strip()
+        extended_signature.update(
+            {
+                "acceptance_predicate_kind": str(acc.get("kind") or "").strip(),
+                "acceptance_predicate_evidence_kind": str(
+                    acc.get("evidence_kind") or ""
+                ).strip(),
+                "acceptance_predicate_summary": str(acc.get("summary") or "").strip(),
+                "acceptance_transaction_id": str(
+                    acceptance_transaction_id or ""
+                ).strip(),
+                "acceptance_snapshot_hash": str(
+                    acceptance_snapshot_hash or ""
+                ).strip(),
+                "acceptance_evidence_refs": evidence_refs,
+                "safe_recovery_action": str(
+                    details.get("safe_recovery_action") or ""
+                ).strip(),
+                "recovery_action": str(details.get("recovery_action") or "").strip(),
+            }
+        )
+
+    normalized_signature = normalize_problem_signature(
+        extended_signature, extra_fields=extra_fields
+    )
     hint_hash = redacted_hint_hash(root_cause_hint)
     request_id = request_id_for(
         session=session,
-        problem_signature=normalized_signature,
+        problem_signature=extended_signature,
         root_cause_hint=root_cause_hint,
+        extra_signature_fields=extra_fields,
     )
     request_path = requests_dir(queue_root) / f"{request_id}.json"
     record = {
@@ -209,7 +291,9 @@ def enqueue_repair_request(
         "queue_dir": str(queue_root),
         "target": _stable_mapping(target or {}),
         "problem_signature": normalized_signature,
-        "problem_signature_key": problem_signature_key(normalized_signature),
+        "problem_signature_key": problem_signature_key(
+            normalized_signature, extra_fields=extra_fields
+        ),
         "root_cause_hint_hash": hint_hash,
         "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
     }
@@ -235,7 +319,9 @@ def enqueue_repair_request(
         )
         return {"status": "superseded", "request": record, "path": str(request_path), "decision": decision}
 
-    existing = find_pending_by_signature(queue_root, normalized_signature)
+    existing = find_pending_by_signature(
+        queue_root, normalized_signature, extra_fields=extra_fields
+    )
     if existing is not None and existing["request_id"] != request_id:
         decision = write_decision(
             queue_root,
@@ -417,8 +503,10 @@ def iter_repair_attempts(
 def find_pending_by_signature(
     queue_dir: str | Path,
     problem_signature: Mapping[str, Any],
+    *,
+    extra_fields: tuple[str, ...] = (),
 ) -> dict[str, Any] | None:
-    key = problem_signature_key(problem_signature)
+    key = problem_signature_key(problem_signature, extra_fields=extra_fields)
     decided = _decided_request_ids(queue_dir)
     for record in iter_repair_requests(queue_dir):
         if record.get("request_id") in decided:

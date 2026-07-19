@@ -1056,7 +1056,69 @@ def _resolve_prep_models_with_inheritance(
     return merged
 
 
+# ``arnold_pipelines.megaplan.profiles`` historically exposed Megaplan policy
+# loading from this package.  A later neutral loader was added at the colliding
+# module path ``arnold_pipelines.megaplan.profiles.py``, which Python can never
+# import while this package exists.  Keep both contracts explicit: ordinary
+# Megaplan calls retain their established positional API, while calls carrying
+# neutral-loader keywords are delegated to the adjacent neutral module.
+from . import neutral as _neutral_profiles
+
+_load_megaplan_profile_sources = load_profile_sources
+_load_megaplan_profiles = load_profiles
+_load_megaplan_profile_metadata = load_profile_metadata
+
+ProfileLoadError = _neutral_profiles.ProfileLoadError
+AgentSpecShape = _neutral_profiles.AgentSpecShape
+parse_agent_spec_shape = _neutral_profiles.parse_agent_spec_shape
+parse_profiles_doc = _neutral_profiles.parse_profiles_doc
+validate_declared_stage_keys = _neutral_profiles.validate_declared_stage_keys
+merge_profile_layers = _neutral_profiles.merge_profile_layers
+resolve_default_profile = _neutral_profiles.resolve_default_profile
+
+_NEUTRAL_PROFILE_KEYS = frozenset(
+    {
+        "built_in_paths",
+        "user_path",
+        "project_path",
+        "declared_stage_keys",
+        "known_agents",
+        "metadata_keys",
+        "stage_value_validators",
+    }
+)
+
+
+def _uses_neutral_profile_contract(kwargs: dict[str, Any]) -> bool:
+    return bool(_NEUTRAL_PROFILE_KEYS.intersection(kwargs))
+
+
+def load_profile_sources(*args: Any, **kwargs: Any) -> Any:
+    if _uses_neutral_profile_contract(kwargs):
+        if args:
+            raise TypeError("neutral profile loading accepts keyword arguments only")
+        return _neutral_profiles.load_profile_sources(**kwargs)
+    return _load_megaplan_profile_sources(*args, **kwargs)
+
+
+def load_profiles(*args: Any, **kwargs: Any) -> Any:
+    if _uses_neutral_profile_contract(kwargs):
+        if args:
+            raise TypeError("neutral profile loading accepts keyword arguments only")
+        return _neutral_profiles.load_profiles(**kwargs)
+    return _load_megaplan_profiles(*args, **kwargs)
+
+
+def load_profile_metadata(*args: Any, **kwargs: Any) -> Any:
+    if _uses_neutral_profile_contract(kwargs):
+        if args:
+            raise TypeError("neutral profile loading accepts keyword arguments only")
+        return _neutral_profiles.load_profile_metadata(**kwargs)
+    return _load_megaplan_profile_metadata(*args, **kwargs)
+
+
 __all__ = [
+    "AgentSpecShape",
     "CANONICAL_PREP_MODELS",
     "DEFAULT_AGENT_ROUTING",
     "DEFAULT_DEEPSEEK_PROVIDER",
@@ -1076,6 +1138,7 @@ __all__ = [
     "VALID_DEPTH_CHOICES",
     "VALID_PHASE_KEYS",
     "PROFILE_METADATA_KEYS",
+    "ProfileLoadError",
     "apply_critic_rewrite",
     "apply_available_model_floor",
     "apply_deepseek_provider_rewrite",
@@ -1086,12 +1149,17 @@ __all__ = [
     "load_profile_metadata",
     "load_profile_sources",
     "load_profiles",
+    "merge_profile_layers",
+    "parse_agent_spec_shape",
+    "parse_profiles_doc",
     "profile_to_phase_models",
     "_prep_flat_spec_from_profile",
     "resolve_prep_models",
+    "resolve_default_profile",
     "resolve_profile",
     "resolve_pipeline_profile",
     "validate_prep_stage_provider",
+    "validate_declared_stage_keys",
     "_canonicalize_tier_models_for_json",
     "_load_pipeline_local_profiles",
     "_load_pipeline_local_metadata",
