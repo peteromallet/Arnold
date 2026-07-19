@@ -174,6 +174,7 @@ def _supervisor_problem_signature(
     queue handoff must retain that exact failure instead of collapsing it to
     the generic exhausted-process identity used for retry-budget exhaustion.
     """
+    """Preserve a deterministic supervised failure as repair identity."""
 
     prefix = "deterministic supervised failure:"
     normalized_reason = str(reason or "").strip()
@@ -201,6 +202,11 @@ def _supervisor_problem_signature(
             "phase_or_step": "chain_execution_binding"
             if failure_kind == "chain_execution_binding_drift"
             else "arnold-supervise",
+            "phase_or_step": (
+                "chain_execution_binding"
+                if failure_kind == "chain_execution_binding_drift"
+                else "arnold-supervise"
+            ),
             "blocked_task_id": f"deterministic:{failure_kind}",
             "event_signature": detail,
         }
@@ -276,6 +282,7 @@ def enqueue_supervisor_repair_request(
         reason=reason,
         current_plan_name=current_plan_name,
     )
+
     return enqueue_repair_request(
         queue_root=queue_root,
         marker_dir=marker_dir,

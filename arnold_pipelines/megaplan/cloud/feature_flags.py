@@ -217,7 +217,8 @@ def meta_repair_push_enabled() -> bool:
 
     Controlled by ``ARNOLD_META_REPAIR_PUSH_ENABLED`` and defaults OFF.  Push
     is an externally consequential superset of a local commit, so autonomy and
-    commit authority must not imply it.
+    commit authority must not imply it. A local commit grant must never silently
+    authorize a remote effect.
     """
     return _is_enabled("ARNOLD_META_REPAIR_PUSH_ENABLED", False)
 

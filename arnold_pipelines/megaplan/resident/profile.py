@@ -14,7 +14,7 @@ import time
 from typing import Any, Literal, Mapping, Sequence
 from urllib.parse import urlparse
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from agentbox.redaction import redact_text
 from agentbox.reset_notifications import list_reset_notifications
@@ -54,6 +54,11 @@ from arnold_pipelines.megaplan.layout import (
 
 from .auth import ActionKind, AuthorizationSubject, ConfirmationManager, ResidentAuthorizer, StoreBackedConfirmationManager
 from .agent_loop import current_tool_runtime_context
+from .fix_the_fixer import (
+    FIX_THE_FIXER_TOOL,
+    render_fix_the_fixer_goal,
+    validate_fix_the_fixer_target,
+)
 from .cloud import (
     CloudCliBackend,
     CloudOperation,
@@ -386,6 +391,8 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
                 "parent_run_id",
                 "query_relationship",
                 "aggregation",
+                "execution_contract",
+                "status_projection",
             )
             if row.get(key) is not None
         } | {
@@ -463,6 +470,9 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
         "recent_preview_limit": _RESIDENT_AGENT_RECENT_LIMIT,
         "delivery_status_counts": value.get("delivery_status_counts", {}),
         "terminal_delivery_status_counts": value.get("terminal_delivery_status_counts", {}),
+        "work_status_counts": value.get("work_status_counts", {}),
+        "request_status_counts": value.get("request_status_counts", {}),
+        "attention": list(value.get("attention") or [])[:8],
         "delivery_attention_count": value.get("delivery_attention_count", 0),
     }
 
@@ -915,6 +925,15 @@ class SetTimezonePreferenceInput(ToolInput):
     timezone_name: str
 
 
+class FixTheFixerInput(ToolInput):
+    target: str
+
+    @field_validator("target")
+    @classmethod
+    def _non_empty_exact_target(cls, value: str) -> str:
+        return validate_fix_the_fixer_target(value)
+
+
 class LaunchSubagentInput(ToolInput):
     task: str
     description: str | None = Field(
@@ -930,8 +949,8 @@ class LaunchSubagentInput(ToolInput):
     ] = Field(
         default="synthesis_delivery_owner",
         description=(
-            "Use internal_contributor for reviewer/worker runs that must never reply to Discord; "
-            "launch exactly one synthesis_delivery_owner last to consolidate their durable results."
+            "Aggregation role only. Use internal_contributor for work consumed by a later owner; "
+            "delivery is resolved separately from the outcome contract."
         ),
     )
     synthesis_group: str | None = Field(
@@ -940,6 +959,28 @@ class LaunchSubagentInput(ToolInput):
         description=(
             "Stable explicit batch id shared by internal contributors and their one synthesis "
             "owner. Omit for an independently deliverable launch."
+        ),
+    )
+    outcome_contract: Literal[
+        "analytical_fragment", "independently_meaningful_execution", "synthesis_result"
+    ] | None = Field(
+        default=None,
+        description=(
+            "Explicit result contract. Independently meaningful execution contributors retain "
+            "truthful terminal delivery even when they also feed a synthesis owner."
+        ),
+    )
+    outcome_key: str | None = Field(
+        default=None,
+        max_length=160,
+        description="Stable subject key used to detect unrelated all-success fan-in.",
+    )
+    delivery_suppression_override_reason: str | None = Field(
+        default=None,
+        max_length=500,
+        description=(
+            "Explicit durable reason nondelivery is intended for an independently meaningful "
+            "internal contributor. Omit to preserve truthful independent delivery."
         ),
     )
     follow_up_to_source_record_id: str | None = Field(
@@ -970,7 +1011,7 @@ class LaunchSubagentInput(ToolInput):
     difficulty: int = Field(default=4, ge=1, le=10)
     toolsets: str | None = None
     project_dir: str | None = None
-    backend: str = "codex"
+    backend: str = "auto"
     background: bool = True
     model: str | None = None
     reasoning_effort: Literal["minimal", "low", "medium", "high", "xhigh", "max"] | None = None
@@ -1129,12 +1170,12 @@ class MegaplanResidentProfile:
             "`add_todo_item` (optionally a `when` condition, e.g. 'once epic <id> is done'); use "
             "`read_todo_list` to show what's queued. In conversation you add and read items — a "
             "scheduled sweep picks up pending items and executes them with the resident-owned "
-            "`launch_subagent` managed Codex lifecycle. Hot context's `vp_special_requests_todos` "
+            "`launch_subagent` provider-aware managed lifecycle. Hot context's `vp_special_requests_todos` "
             "is only a bounded pending-item orientation summary: a pending item with a `when` "
             "condition is not known to be due until you verify that condition. Use its stable item "
             "IDs when referring to previewed work, and call `read_todo_list` with no arguments "
             "whenever you need the full list (including retained failed items). For normal "
-            "delegated work, keep its defaults (`backend=codex`, `background=true`) and report "
+            "delegated work, keep its defaults (`backend=auto`, `background=true`) and report "
             "the returned durable paths. "
             "Always classify delegated work with `task_kind`, `work_intent`, and D1-D10 "
             "`difficulty`. Use work_intent=execution for authorized delivery, review for non-mutating "
@@ -1325,12 +1366,24 @@ class MegaplanResidentProfile:
             "resident_runtime": {
                 "model_provider": self.config.model_provider,
                 "model": self.config.model_name,
+                "managed_provider_controls": {
+                    "toolsets": self.config.model_toolsets,
+                    "max_tokens": self.config.model_max_tokens,
+                    "timeout_s": self.config.model_timeout_s,
+                    "session_scope": "durable resident conversation",
+                    "evidence": (
+                        "prompt.md/result.md/run.log/provider.raw/events.jsonl/manifest.json"
+                    ),
+                },
                 "codex_reasoning_effort": self.config.codex_reasoning_effort,
                 "codex_sandbox": self.config.codex_sandbox,
                 "codex_machine_access": (
                     "full machine access; Codex CLI is launched with danger-full-access"
-                    if self.config.codex_sandbox == "danger-full-access"
+                    if self.config.model_provider == "codex"
+                    and self.config.codex_sandbox == "danger-full-access"
                     else f"Codex CLI sandbox: {self.config.codex_sandbox}"
+                    if self.config.model_provider == "codex"
+                    else "not applicable to the selected resident provider"
                 ),
                 # P0 visibility: surface the build-vs-read decision so a resident
                 # that silently fell to cache mode (lost MEGAPLAN_TRUSTED_CONTAINER
@@ -1367,6 +1420,9 @@ class MegaplanResidentProfile:
                 "subagent_launch": {
                     "standard": MANAGED_RUN_SCHEMA,
                     "delegation_policy": delegation_policy_hot_context(),
+                    "backend": "auto",
+                    "providers": ["hermes", "codex", "claude"],
+                    "provider_routing": "model spec inferred; explicit compatible override allowed",
                     "codex_sandbox": "danger-full-access",
                     "stdin": "sealed",
                     "lifecycle": "detached with durable manifest, log, and result",
@@ -1775,7 +1831,8 @@ class MegaplanResidentProfile:
             ToolRegistration("supersede_todo_item", "Retire obsolete pending todo intent using a durable canonical retirement or replacement record. This does not assert completion.", "write", SupersedeTodoItemInput, ToolResult, self._supersede_todo_item),
             ToolRegistration("add_todo_item", "Append a new pending item to the VP to-do list. Optional `when` is a natural-language condition the agent checks before executing (e.g. 'once epic <id> is done').", "write", AddTodoItemInput, ToolResult, self._add_todo_item),
             ToolRegistration("follow_up_subagent", "Durably attach an instruction to one exact resident-managed persistent session. Returns a follow-up receipt and continuation run ID, or an explicit fail-closed error.", "write", FollowUpSubagentInput, ToolResult, self._follow_up_subagent),
-            ToolRegistration("launch_subagent", "Launch or durably queue a resident-managed Codex agent with a manifest, bounded predecessor references, concise description, full log, and result path. `depends_on_run_id` remains the legacy singular dependency; `depends_on_run_ids` creates an all-success fan-in. A queued successor inherits provenance/authorization and becomes the one synthesis/delivery owner. Mixed singular/plural inputs are rejected. Legacy synchronous Hermes requires an explicit backend override.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
+            ToolRegistration(FIX_THE_FIXER_TOOL, "Launch exactly one durable D10/high mutation-authorized meta-fixer for one non-empty epic/session target. The rendered goal composes superfixer-debug internally and inherits the active Discord provenance and authorization envelope.", "write", FixTheFixerInput, ToolResult, self._fix_the_fixer),
+            ToolRegistration("launch_subagent", "Launch or durably queue a provider-aware resident-managed agent through Hermes, Codex, or Claude with one durable manifest, bounded predecessor references, concise description, full log, and result path. The model spec selects its compatible provider when backend=auto; explicit mismatches fail before launch. Singular or multi-predecessor successors preserve provenance and make the newest synthesis/delivery owner; prior runs become internal contributors.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
         )
         for registration in registrations:
             self.tool_registry.register(registration)
@@ -3206,6 +3263,11 @@ class MegaplanResidentProfile:
             description=payload.description,
             aggregation_role=payload.aggregation_role,
             synthesis_group=payload.synthesis_group,
+            outcome_contract=payload.outcome_contract,
+            outcome_key=payload.outcome_key,
+            delivery_suppression_override_reason=(
+                payload.delivery_suppression_override_reason
+            ),
             toolsets=payload.toolsets,
             project_dir=payload.project_dir,
             backend=payload.backend,
@@ -3269,6 +3331,57 @@ class MegaplanResidentProfile:
                 "todo_resolution": (
                     vp_todo.public_item(todo_resolution) if todo_resolution is not None else None
                 ),
+            },
+        )
+
+    async def _fix_the_fixer(self, payload: FixTheFixerInput) -> ToolResult:
+        runtime_context = current_tool_runtime_context()
+        launch_origin = (
+            runtime_context.launch_origin if runtime_context is not None else None
+        )
+        if (
+            runtime_context is None
+            or not isinstance(runtime_context.subject, AuthorizationSubject)
+            or not isinstance(launch_origin, Mapping)
+            or launch_origin.get("applicability") != "applicable"
+            or launch_origin.get("source_kind") != "discord_inbound_message"
+        ):
+            return _fail(
+                "fix-the-fixer requires one current authorized Discord invocation; "
+                "internal, scheduled, completion, and recursively executing goal contexts cannot relaunch it",
+                recursion_guard=True,
+                delegation_allowed=False,
+            )
+        result = await self._launch_subagent(
+            LaunchSubagentInput(
+                task=render_fix_the_fixer_goal(payload.target),
+                description="Repair the failed fixer and its missed backstop",
+                aggregation_role="synthesis_delivery_owner",
+                task_kind="root_cause",
+                difficulty=10,
+                backend="codex",
+                background=True,
+            )
+        )
+        return ToolResult(
+            ok=result.ok,
+            message=(
+                "fix-the-fixer meta-fixer launched"
+                if result.ok
+                else result.message or "fix-the-fixer launch failed"
+            ),
+            data={
+                **result.data,
+                "command": FIX_THE_FIXER_TOOL,
+                "target": payload.target,
+                "composes": "superfixer-debug",
+                "requested_route": {
+                    "task_kind": "root_cause",
+                    "difficulty": 10,
+                    "reasoning_effort": "high",
+                    "work_intent": "execution",
+                    "mutation_claim": "git_backed",
+                },
             },
         )
 

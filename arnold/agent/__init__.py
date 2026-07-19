@@ -44,6 +44,16 @@ from arnold.agent.contracts import (
 # ---------------------------------------------------------------------------
 
 from arnold.agent.dispatcher import ArnoldDispatcher
+from arnold.agent.routing import (
+    DEFAULT_MANAGED_AGENT_MODELS,
+    MANAGED_AGENT_BACKENDS,
+    MANAGED_AGENT_CAPABILITIES,
+    ManagedAgentCapabilities,
+    ManagedAgentRoute,
+    infer_managed_agent_backend,
+    managed_agent_capabilities,
+    resolve_managed_agent_route,
+)
 
 # ---------------------------------------------------------------------------
 # Adapter seam
@@ -110,6 +120,14 @@ __all__ = [
     "scatter_agent_units",
     # Dispatcher
     "ArnoldDispatcher",
+    "DEFAULT_MANAGED_AGENT_MODELS",
+    "MANAGED_AGENT_BACKENDS",
+    "MANAGED_AGENT_CAPABILITIES",
+    "ManagedAgentCapabilities",
+    "ManagedAgentRoute",
+    "infer_managed_agent_backend",
+    "managed_agent_capabilities",
+    "resolve_managed_agent_route",
     # Adapters
     "BackendAdapter",
     "CodexAdapter",

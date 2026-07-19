@@ -155,6 +155,7 @@ if ! l1_mutation_authorized; then
   # Refusing the effect is not a successful launch.  A zero exit code is
   # consumed by repair-loop as a durable mechanical-launch receipt and can
   # falsely describe a command that never started as successful.
+  # A refused effect is not a successful launch receipt.
   exit 77
 fi
 

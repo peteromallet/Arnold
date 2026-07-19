@@ -39,3 +39,16 @@ def test_render_goal_rejects_blank_target() -> None:
 
     assert completed.returncode == 2
     assert "--target must contain epic or session text" in completed.stderr
+
+
+def test_render_goal_preserves_target_orientation_exactly() -> None:
+    target = "  epic alpha / session  beta  "
+
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), "--target", target],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert f'target "{target}"' in completed.stdout

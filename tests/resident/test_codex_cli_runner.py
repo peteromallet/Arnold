@@ -19,15 +19,19 @@ from arnold_pipelines.megaplan.resident.tool_registry import ToolRegistry
 from arnold_pipelines.megaplan.resident.provenance import DELEGATION_CONTEXT_ENV
 
 
-def test_resident_config_defaults_to_codex() -> None:
+def test_resident_config_defaults_to_hermes_glm_52() -> None:
     config = ResidentConfig()
     env_config = ResidentConfig.from_env({})
 
-    assert config.model_provider == "codex"
-    assert config.model_name == "gpt-5.6-sol"
+    assert config.model_provider == "hermes"
+    assert config.model_name == "zhipu:glm-5.2"
+    assert config.model_max_tokens == 65_536
+    assert config.model_toolsets == "file,web,terminal"
     assert config.codex_reasoning_effort == "low"
-    assert env_config.model_provider == "codex"
-    assert env_config.model_name == "gpt-5.6-sol"
+    assert env_config.model_provider == "hermes"
+    assert env_config.model_name == "zhipu:glm-5.2"
+    assert env_config.model_max_tokens == 65_536
+    assert env_config.model_toolsets == "file,web,terminal"
     assert env_config.codex_reasoning_effort == "low"
 
 

@@ -301,6 +301,7 @@ def can_push_changes(
             allowed=True,
             reason=(
                 "master, meta-repair, commit, and explicit push gates are on; "
+                "master, meta-repair, commit, and push gates are on; "
                 "push is permitted"
                 + (f" (session={session})" if session else "")
             ),
@@ -311,6 +312,7 @@ def can_push_changes(
             allowed=False,
             reason=(
                 "master, meta-repair, commit, or explicit push gate is off; "
+                "master, meta-repair, commit, or push gate is off; "
                 "push is not permitted"
                 + (f" (session={session})" if session else "")
             ),

@@ -90,6 +90,50 @@ def _write_chain_state_for_spec(workspace: Path, spec: Path, *, current_plan_nam
     )
 
 
+def _write_checkpoint_replan_goal(marker_dir: Path, blocker_id: str) -> Path:
+    path = marker_dir / "repair-goals" / "demo" / "goal-a.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "goal_id": "goal-a",
+                "checkpoint_digest": "checkpoint-a",
+                "status": "active",
+                "target": {
+                    "session": "demo",
+                    "plan_name": "m3",
+                    "blocker_id": blocker_id,
+                },
+                "last_terminal_failure": {
+                    "outcome": "recovery_not_verified",
+                    "goal_id": "goal-a",
+                    "checkpoint_digest": "checkpoint-a",
+                    "escalation_required": True,
+                    "owner_terminal": True,
+                    "last_evaluation": {
+                        "control_action": "meta_repair",
+                        "failed_fixer_evidence": {
+                            "outcome": "replan_required",
+                            "goal_id": "goal-a",
+                            "checkpoint_digest": "checkpoint-a",
+                            "escalation_required": True,
+                            "owner_terminal": True,
+                            "owner_run_id": "repair-run-1",
+                        },
+                    },
+                    "last_observation": {
+                        "plan_name": "m3",
+                        "plan_state": "blocked",
+                        "active_worker": {"fresh": False, "worker_pid_live": False},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def _repair_stub(tmp_path: Path) -> Path:
     stub = tmp_path / "repair-loop"
     log = tmp_path / "repair-args.json"
@@ -792,6 +836,39 @@ def test_typed_l3_request_is_not_downgraded_when_target_also_looks_l1_repairable
     assert manifest["model"] == "gpt-5.6-sol"
     assert manifest["reasoning_effort"] == "high"
     assert manifest["difficulty"] == 9
+def test_terminal_l1_replan_routes_exact_request_to_l2(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    spec = _write_marker(marker_dir, workspace)
+    queued = _enqueue(marker_dir, workspace)
+    _write_chain_state_for_spec(workspace, spec)
+    request = queued["request"]
+    assert isinstance(request, dict)
+    custody = _project_request_custody(marker_dir, queued)
+    _write_checkpoint_replan_goal(marker_dir, str(custody["blocker_id"]))
+    meta_repair_bin = _repair_stub(tmp_path)
+
+    result = _run_trigger(
+        marker_dir,
+        tmp_path / "unused-l1",
+        enabled=True,
+        env_overrides={"ARNOLD_META_REPAIR_ENABLED": "1"},
+        meta_repair_bin=meta_repair_bin,
+    )
+
+    assert result.returncode == 0, result.stderr
+    observe = next(
+        event for event in _events(result) if event["event"] == "repair_trigger_observe"
+    )
+    assert observe["dispatch_decision"] == "dispatch_l1_repair"
+    assert observe["dispatch_intent"] == "broken_superfixer"
+    dispatch = next(
+        event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
+    )
+    assert dispatch["repair_layer"] == "l2"
+    launched = _read_json_eventually(tmp_path / "repair-args.json")
+    assert launched["argv"] == ["demo", "l1_custody_failure"]
+    assert launched["request_id"] == request["request_id"]
 
 
 def test_trigger_consumes_human_gate_request_from_explicit_central_queue(tmp_path: Path) -> None:
