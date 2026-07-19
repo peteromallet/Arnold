@@ -223,6 +223,8 @@ def test_update_agentbox_operation_rejects_foreign_operation(tmp_path: Path) -> 
 
 
 def test_agentbox_operations_module_has_no_megaplan_imports() -> None:
-    source = Path("agentbox/operations.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[2] / "agentbox/operations.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "megaplan" not in source.lower()
