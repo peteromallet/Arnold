@@ -5325,6 +5325,7 @@ def test_supervise_deterministic_binding_failure_does_not_retry(tmp_path: Path) 
     env.update(
         {
             "PYTHONPATH": f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}",
+            "MEGAPLAN_SUPERVISOR_SOURCE": str(REPO_ROOT),
             "ARNOLD_AUTONOMY": "1",
             "ARNOLD_REPAIR_TRIGGER_ENABLED": "1",
             "ARNOLD_SUPERVISE_LOG": str(tmp_path / "supervise.log"),
@@ -5403,6 +5404,13 @@ def test_supervise_durable_review_quality_block_does_not_retry(tmp_path: Path) -
     assert "durable_review_quality_block:review_quality_blocked_unknown" in result.stdout
     assert "refusing retry spin" in result.stdout
     assert "error retry" not in result.stdout
+def test_repair_loop_accepts_explicit_scoped_attested_runtime() -> None:
+    text = _wrapper("arnold-repair-loop")
+
+    assert (
+        'ARNOLD_SRC="${ARNOLD_REPAIR_RUNTIME_SRC:-'
+        '${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"'
+    ) in text
 
 
 def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:

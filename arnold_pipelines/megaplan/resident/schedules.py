@@ -812,6 +812,7 @@ class ScheduleService:
         else:
             horizon = start + timedelta(days=370)
             values = list(islice(_local_nominals(timing, start, horizon), count))
+            values = list(_local_nominals(timing, start, horizon))
         if definition.bounds.end_at:
             values = [item for item in values if item <= definition.bounds.end_at]
         return values[:count]

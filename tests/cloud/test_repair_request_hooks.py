@@ -507,6 +507,15 @@ class TestLifecycleFailureEnqueue:
         )
         assert "content-addressed rebind" in signature["gate_recommendation"]
         assert request["blocker_id"].startswith("blocker:v2:")
+        assert request["problem_signature"] != {
+            "failure_kind": "supervised_run_exhausted",
+            "current_state": "process_exited",
+            "phase_or_step": "arnold-supervise",
+            "milestone_or_plan": "m6-plan",
+            "gate_recommendation": "",
+            "blocked_task_id": "phase:arnold-supervise",
+            "event_signature": "",
+        }
 
 
 # ---------------------------------------------------------------------------

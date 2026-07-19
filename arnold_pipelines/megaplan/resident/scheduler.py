@@ -163,7 +163,10 @@ class ScheduledJobWorker:
                 await self.backend.mark_fired(str(job["id"]), now=now)
                 fired += 1
         return SchedulerRunResult(
-            claimed=len(jobs), fired=fired, retried=retried, cancelled=cancelled,
+            claimed=len(jobs),
+            fired=fired,
+            retried=retried,
+            cancelled=cancelled,
             schedules=schedule_receipt,
         )
 
@@ -774,7 +777,9 @@ def make_store_scheduler(
         async def _run_schedules(now: datetime) -> Mapping[str, int]:
             try:
                 receipt = await schedule_service.run_due_once(
-                    worker_id=worker_name, now=now, limit=config.scheduler_batch_size
+                    worker_id=worker_name,
+                    now=now,
+                    limit=config.scheduler_batch_size,
                 )
             except Exception as exc:
                 # Rich schedules are additive: a corrupt definition must not
@@ -784,8 +789,10 @@ def make_store_scheduler(
                         schedule_service.repo.root / "worker-errors.jsonl",
                         {
                             "schema_version": "arnold-resident-schedule-worker-error-v1",
-                            "at": now, "worker_id": worker_name,
-                            "error_type": type(exc).__name__, "error": str(exc)[:1000],
+                            "at": now,
+                            "worker_id": worker_name,
+                            "error_type": type(exc).__name__,
+                            "error": str(exc)[:1000],
                         },
                     )
                 return {"worker_errors": 1}
@@ -793,7 +800,9 @@ def make_store_scheduler(
 
         before_claim = _run_schedules
     return ScheduledJobWorker(
-        backend, handlers=handlers.handlers(), worker_id=worker_name,
+        backend,
+        handlers=handlers.handlers(),
+        worker_id=worker_name,
         before_claim=before_claim,
     )
 

@@ -37,6 +37,7 @@ def _minimal_state(tmp_path: Path) -> dict[str, Any]:
             "north_star_actions": [],
         },
     )
+    _write_json(plan_dir / "gate.json", {"recommendation": "PROCEED"})
     return {
         "name": "demo",
         "idea": "Change the behavior.",

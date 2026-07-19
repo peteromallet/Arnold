@@ -14,6 +14,11 @@ def _target_text(value: str) -> str:
     if "\x00" in target:
         raise argparse.ArgumentTypeError("--target must not contain NUL")
     return target
+    if not value.strip():
+        raise argparse.ArgumentTypeError("--target must contain epic or session text")
+    if "\x00" in value:
+        raise argparse.ArgumentTypeError("--target must not contain NUL")
+    return value
 
 
 def render_goal(target: str) -> str:

@@ -2964,9 +2964,11 @@ class TestCanCommitChanges:
 
 class TestCanPushChanges:
     """Push gating requires a separate, default-off authority."""
+    """Push gating requires independent, default-off authority."""
 
-    def test_push_allowed_when_flag_unset(self) -> None:
+    def test_push_blocked_when_flag_unset(self) -> None:
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
+        os.environ.pop("ARNOLD_META_REPAIR_PUSH_ENABLED", None)
         result = can_push_changes()
         assert result.allowed is False
         assert "master" in result.reason.lower()
@@ -3001,7 +3003,9 @@ class TestCanPushChanges:
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
         commit_result = can_commit_changes()
         push_result = can_push_changes()
-        assert push_result.allowed == commit_result.allowed
+        assert commit_result.allowed is True
+        assert push_result.allowed is False
+        assert push_result.flag_name == "ARNOLD_META_REPAIR_PUSH_ENABLED"
 
         os.environ["ARNOLD_META_REPAIR_COMMIT_ENABLED"] = "1"
         os.environ["ARNOLD_AUTONOMY"] = "1"
