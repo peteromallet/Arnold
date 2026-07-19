@@ -624,6 +624,107 @@ class TestFullPipelineIntegration:
             f"Proof index HEAD {recorded_head} != git HEAD {actual_head}"
         )
 
+    def test_committed_proof_index_head_matches_git_order_independent(
+        self,
+    ) -> None:
+        """Committed proof index HEAD is an ancestor of git HEAD (order-independent).
+
+        Reads the committed (git-versioned) file via ``git show`` so the
+        check cannot be masked by a prior regeneration step that rewrites
+        the working-tree copy before the head field is inspected.
+
+        Uses ancestor check (not exact match) because a committed artifact
+        cannot contain its own commit hash — the evidence records the HEAD
+        at generation time, which becomes a parent of the commit that
+        contains it.
+        """
+        result = subprocess.run(
+            ["git", "show", f"HEAD:evidence/m6-proof-index.json"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            pytest.skip("Committed proof index not available")
+
+        data = json.loads(result.stdout)
+        committed_head = data.get("repository_head", "")
+
+        git_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        actual_head = git_result.stdout.strip()
+
+        # Committed HEAD must be an ancestor of (or equal to) actual HEAD.
+        # Exact match is impossible when the evidence is committed because
+        # the commit SHA depends on the file content.
+        ancestor_result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", committed_head, actual_head],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            timeout=10,
+        )
+        assert ancestor_result.returncode == 0, (
+            f"Committed proof index HEAD {committed_head} is not an "
+            f"ancestor of git HEAD {actual_head}"
+        )
+
+    def test_committed_prerequisite_head_matches_git_order_independent(
+        self,
+    ) -> None:
+        """Committed prerequisite verification HEAD is an ancestor of git HEAD.
+
+        Reads the committed file via ``git show`` so the check is
+        order-independent — it cannot be fooled by a preceding
+        regeneration that updates the working-tree copy.
+
+        Uses ancestor check because a committed artifact cannot contain
+        its own commit hash.
+        """
+        result = subprocess.run(
+            ["git", "show", "HEAD:evidence/m6-prerequisite-verification.json"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            pytest.skip("Committed prerequisite verification not available")
+
+        data = json.loads(result.stdout)
+        checks = data.get("checks", [])
+        current_head_check = [
+            c for c in checks if c.get("check") == "current_head"
+        ]
+        committed_head = (
+            current_head_check[0]["head"] if current_head_check else ""
+        )
+
+        git_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        actual_head = git_result.stdout.strip()
+
+        ancestor_result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", committed_head, actual_head],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            timeout=10,
+        )
+        assert ancestor_result.returncode == 0, (
+            f"Committed prerequisite verification HEAD {committed_head} "
+            f"is not an ancestor of git HEAD {actual_head}"
+        )
+
 
 # ── Pinned inputs / no mutable state tests ─────────────────────────────────
 

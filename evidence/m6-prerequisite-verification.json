@@ -2,7 +2,7 @@
   "checks": [
     {
       "check": "current_head",
-      "head": "3e22fc9ef7e992887d98aadcb6b4dacb18747f9d",
+      "head": "5b5fe59088baf3e292103c9ca1bd9a638d4cd119",
       "status": "PASS"
     },
     {
@@ -16,7 +16,7 @@
     },
     {
       "check": "m5_bound_head_vs_current_head",
-      "current_head": "3e22fc9ef7e992887d98aadcb6b4dacb18747f9d",
+      "current_head": "5b5fe59088baf3e292103c9ca1bd9a638d4cd119",
       "detail": "M5 bound head does not match current HEAD, but is an ancestor. HEAD has advanced past the M5 attestation point. Downstream M6 handoff must not be marked complete.",
       "exact_match": false,
       "m5_bound_head": "8bb779dcaa08edcc92736eb265689ad894d8d839",
@@ -58,7 +58,7 @@
     },
     {
       "check": "wbc_ancestry",
-      "current_head": "3e22fc9ef7e992887d98aadcb6b4dacb18747f9d",
+      "current_head": "5b5fe59088baf3e292103c9ca1bd9a638d4cd119",
       "first_parent_is_ancestor": true,
       "parents_from_evidence": {
         "first_parent": "7644f55dd9be75632670f990268e045d3ee1c2f7",
@@ -69,8 +69,16 @@
     },
     {
       "check": "wbc_package_metadata",
-      "detail": "pip not available \u2014 cannot inspect package metadata",
-      "status": "UNKNOWN"
+      "detail": "Package metadata recorded; activation receipt evidence is evaluated separately. Editable install alone is not proof of WBC activation.",
+      "editable_matches_repo_root": false,
+      "editable_project_location": "/workspace/arnold-critique-ledger-runtime-recovery-20260717",
+      "import_resolves_to": "/workspace/arnold-engine-running-e894/arnold/__init__.py",
+      "install_location": "/root/.pyenv/versions/3.11.11/lib/python3.11/site-packages",
+      "is_editable": true,
+      "package_name": "arnold",
+      "repo_root": "/workspace/custody-control-plane-20260714/Arnold",
+      "status": "UNKNOWN",
+      "version": "0.23.0"
     },
     {
       "boundary_category": {
@@ -239,7 +247,7 @@
       "status": "UNKNOWN"
     }
   ],
-  "generated_at": "2026-07-19T19:52:31.253066+00:00",
+  "generated_at": "2026-07-19T20:22:15.678162+00:00",
   "notes": [
     "M6 is observe-only: this verifier reads git/files but writes only to the evidence artifact.",
     "INCOHERENT or BLOCKED overall status means downstream M6 handoff artifacts must not be marked complete.",

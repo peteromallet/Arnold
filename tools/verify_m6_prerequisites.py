@@ -1003,6 +1003,13 @@ def main() -> None:
         action="store_true",
         help="Also print the artifact to stdout",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        dest="check_mode",
+        help="Run in validation/check mode: exit according to prerequisite "
+        "status (0=PASS, 2=INCOHERENT/BLOCKED, 1=error)",
+    )
     args = parser.parse_args()
 
     try:
