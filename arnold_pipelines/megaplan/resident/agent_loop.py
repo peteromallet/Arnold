@@ -751,6 +751,12 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
             paths["result"].write_text(final_text.rstrip() + "\n", encoding="utf-8")
 
         resolved_session_id = evidence.session_id
+        if route.backend == "hermes" and resumable:
+            # The exact handle passed to Hermes is already proven resumable.
+            # Some Hermes versions return a different internal session id in
+            # metadata after compaction; persisting that value bricks the next
+            # turn even though this one completed successfully.
+            resolved_session_id = session_id
         failure_category = evidence.failure_category
         failure_message = evidence.failure_message
         if returncode == 0 and not resolved_session_id:
@@ -812,6 +818,50 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
                     "telemetry": dict(manifest["telemetry"]),
                 },
             )
+
+        missing_resume_session = (
+            route.backend == "hermes"
+            and resumable
+            and _hermes_resume_session_missing(
+                log_path=paths["log"],
+                raw_path=paths["raw"],
+                metadata_path=paths["metadata"],
+                returncode=returncode,
+            )
+        )
+        if missing_resume_session:
+            quarantine_path = self._quarantine_session_path(session_path)
+            manifest["model_session"] = {
+                "provider": route.backend,
+                "session_id": session_id,
+                "state": "quarantined",
+                "persistence": "invalidated_after_missing_resume",
+                "resume_semantics": "fresh_retry_required",
+            }
+            manifest["recovery"] = {
+                "strategy": "quarantine_missing_resume_and_retry_fresh",
+                "quarantine_path": str(quarantine_path),
+                "retry_replays_turn": False,
+            }
+            manifest["telemetry"].update(
+                {
+                    "status": "captured",
+                    "normalized_event_count": len(evidence.events),
+                    "usage": dict(evidence.usage),
+                }
+            )
+            manifest = self._terminal_manifest(
+                manifest,
+                status="failed",
+                returncode=returncode,
+                failure_category="resume_session_missing",
+                failure_message="Hermes could not resolve the persisted resume session",
+            )
+            _atomic_json_file(paths["manifest"], manifest)
+            # Retry inside the same resident turn.  The quarantined binding
+            # makes the recursive dispatch mode=new, so it cannot loop and no
+            # inbound message or durable turn is replayed.
+            return await self._run_locked(request, tools)
 
         manifest["model_session"] = (
             {
@@ -1013,6 +1063,20 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
         return path
 
     @staticmethod
+    def _quarantine_session_path(session_path: Path) -> Path:
+        quarantine_dir = session_path.parent / "quarantine"
+        quarantine_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        quarantine_path = quarantine_dir / f"{session_path.stem}.stale-{stamp}.json"
+        try:
+            session_path.replace(quarantine_path)
+        except FileNotFoundError as exc:
+            raise AgentLoopError(
+                "persisted Hermes session binding disappeared during recovery"
+            ) from exc
+        return quarantine_path
+
+    @staticmethod
     def _terminal_manifest(
         manifest: dict[str, Any],
         *,
@@ -1064,6 +1128,33 @@ def _atomic_json_file(path: Path, payload: Mapping[str, Any]) -> None:
         encoding="utf-8",
     )
     temporary.replace(path)
+
+
+def _hermes_resume_session_missing(
+    *,
+    log_path: Path,
+    raw_path: Path,
+    metadata_path: Path,
+    returncode: int,
+) -> bool:
+    # Exit 8 is emitted by the launcher before model construction when
+    # SessionDB cannot resolve the requested resume handle.  Never retry after
+    # ambiguous provider failures: doing so could repeat tool side effects.
+    if returncode != 8:
+        return False
+    try:
+        if raw_path.stat().st_size or metadata_path.stat().st_size:
+            return False
+    except OSError:
+        return False
+    try:
+        diagnostics = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return any(
+        line.startswith("error: Hermes session ") and line.endswith(" does not exist")
+        for line in diagnostics.splitlines()
+    )
 
 
 def _append_raw_log(log_path: Path, raw_path: Path, backend: str) -> None:
