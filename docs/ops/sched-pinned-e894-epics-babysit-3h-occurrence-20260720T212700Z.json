@@ -2,7 +2,8 @@
   "schema_version": "arnold-resident-schedule-occurrence-result-v1",
   "schedule": {
     "schedule_id": "sched_pinned_e894_epics_babysit_3h",
-    "definition_revision_observed": 9,
+    "definition_revision_observed": 10,
+    "prompt_digest_observed": "sha256:cf7a72e83741dbc634ac43172ffbd3f96fcc5b219381c5bbec6dfa4a07145882",
     "state_observed": "active",
     "occurrence_request_id": "occ_pinned_e894_epics_babysit_3h_0a0743d8a1dbfacee219c0f9",
     "resident_run_id": "subagent-20260720-212700-10bf6430",
@@ -11,12 +12,15 @@
   },
   "occurrence": {
     "started_at_utc": "2026-07-20T21:27:00.551208Z",
-    "assessment_completed_at_utc": "2026-07-20T21:42:36Z",
+    "assessment_completed_at_utc": "2026-07-20T21:51:42Z",
     "previous_occurrence_result": "/workspace/arnold/docs/ops/sched-pinned-e894-epics-babysit-3h-manual-20260720T210329Z.json",
-    "one_at_a_time_policy": "at_most_one_repair_owner_or_intervention_global",
-    "selected_repair_owner": "subagent-20260720-212230-092134bf",
+    "one_at_a_time_policy": "serial_interventions_all_targets_with_target_specific_deferral",
+    "selected_repair_owners": {
+      "custody-control-plane-20260714": "subagent-20260720-212230-092134bf",
+      "superpom-reflections-20260719": "subagent-20260720-213334-cd20ad73"
+    },
     "interventions_started_by_this_occurrence": 0,
-    "decision": "defer_to_active_custody_owner_and_observe_other_targets"
+    "decision": "defer_each_owned_target_to_its_verified_owner_and_continue_serial_assessment_of_all_targets"
   },
   "assessments": [
     {
@@ -24,21 +28,26 @@
       "workspace": "/workspace/custody-control-plane-20260714/Arnold",
       "spec": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/chain.yaml",
       "marker": "/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.json",
-      "health": "recovering_in_flight_not_yet_proven",
+      "health": "progressing_deferred_to_verified_owner",
       "milestone": "m8-runtime-and-boundary-adoption",
       "plan": "m8-universal-wbc-producer-and-20260720-0646",
       "phase": "execute",
       "semantic_checkpoint": {
         "plan_state": "finalized",
         "latest_failure": null,
-        "completed_task": "T26",
-        "pending_task": "T27",
+        "completed_task_before_recovery": "T26",
+        "active_batch_after_recovery": "T28",
         "t27_artifact": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m8-universal-wbc-producer-and-20260720-0646/execute_batch_27_output.json",
         "t27_artifact_bytes": 399,
         "t27_status": "pending_empty_output",
         "t27_artifact_timestamp_utc": "2026-07-20T21:34:36.095235Z",
-        "event_cursor": 828,
-        "event_timestamp_utc": "2026-07-20T21:42:10.723769Z",
+        "t27_audit_artifact": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m8-universal-wbc-producer-and-20260720-0646/execution_audit_batch_27_phantom_claims.json",
+        "t27_audit_artifact_bytes": 6966,
+        "t27_audit_artifact_timestamp_utc": "2026-07-20T21:47:21.894724Z",
+        "t28_artifact": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m8-universal-wbc-producer-and-20260720-0646/execute_batch_28_output.json",
+        "t28_artifact_timestamp_utc": "2026-07-20T21:47:24.320665Z",
+        "event_cursor": 840,
+        "event_timestamp_utc": "2026-07-20T21:47:24.553341Z",
         "runner_pid": 121675,
         "tmux_alive": true,
         "profile": "partnered-5",
@@ -63,7 +72,7 @@
         "status": "passed"
       },
       "agent_assessment": {
-        "assessment_at_utc": "2026-07-20T21:42:36Z",
+        "assessment_at_utc": "2026-07-20T21:51:42Z",
         "candidates": [
           {
             "run_id": "subagent-20260720-193054-5b0373d2",
@@ -80,7 +89,7 @@
               "path": "/workspace/arnold-engine-running-e894/.megaplan/plans/resident-subagents/subagent-20260720-193054-5b0373d2/result.md",
               "sha256": "5addf6e3f43cdc9c1f38d6c008e15982dff2577be7cee1dae3459cba659c2702",
               "timestamp_utc": "2026-07-20T19:51:37.370912Z",
-              "evidence_age_seconds": 6659
+              "evidence_age_seconds": 7205
             },
             "continuing_owner": false
           },
@@ -100,12 +109,13 @@
               "path": "/workspace/arnold-custody-no-reset-runtime-f7f0967",
               "commit": "be0fea686ca544dd487ceb75cbeca09f43e735ee",
               "timestamp_utc": "2026-07-20T21:33:33Z",
-              "evidence_age_seconds": 543,
+              "evidence_age_seconds": 1089,
               "verification": "4 passed, 34 deselected; exact marker resume returned runner_started=true and no_push=true"
             },
             "continuing_owner": true,
             "target_chain_recovery_proven": false,
-            "target_chain_recovery_reason": "The runner and T27 model call are live, but execute_batch_27_output.json still contains an empty pending T27 update."
+            "target_chain_semantic_advance_proven": true,
+            "target_chain_recovery_reason": "The preservation-safe run produced a substantive T27 audit artifact and transitioned into a new T28 model call without resetting the dirty checkout, but T27's task envelope still records pending."
           },
           {
             "run_id": "subagent-20260720-212749-3fd542af",
@@ -129,14 +139,16 @@
         ],
         "classification": "defer_to_agent",
         "decision": "skip_duplicate_repair_and_do_not_cancel_or_take_over_source_changes",
-        "rationale": "The exact Custody owner has fresh substantive source/test evidence and has started the preservation-safe exact-marker recovery on the correct pinned lineage.",
-        "uncertainty": "Target-chain recovery is not yet proven because T27 remains pending with empty output.",
-        "occupies_one_at_a_time_slot": true
+        "rationale": "The exact Custody owner has fresh substantive source/test evidence and the preservation-safe recovery advanced from T27 into T28 on the correct pinned lineage.",
+        "uncertainty": "T27's task envelope still records pending, so the owner is continuing through accepted execution evidence; M8 and the whole chain remain incomplete.",
+        "occupies_target_repair_slot": true
       },
       "post_assessment_proof": {
         "intervention_by_this_occurrence": "none",
-        "repair_owner_progress": "supported_no_push_recovery_running",
+        "repair_owner_progress": "supported_no_push_recovery_advanced_from_t27_to_t28",
         "target_chain_recovered": false,
+        "target_chain_semantic_advance_proven": true,
+        "whole_chain_complete": false,
         "work_preserved": true
       }
     },
@@ -148,14 +160,14 @@
       "health": "progressing",
       "milestone": "m1",
       "plan": "secure-provider-foundation-20260719-2014",
-      "phase": "review_rework_cycle",
+      "phase": "review",
       "semantic_checkpoint": {
         "plan_state": "finalized",
         "latest_failure": null,
-        "latest_review_result": "needs_rework",
-        "latest_review_timestamp_utc": "2026-07-20T21:41:10Z",
-        "event_cursor": 3222,
-        "event_timestamp_utc": "2026-07-20T21:42:22.133839Z",
+        "latest_review_result": "in_flight_after_execute_completion",
+        "latest_review_timestamp_utc": "2026-07-20T21:50:24.374446Z",
+        "event_cursor": 3247,
+        "event_timestamp_utc": "2026-07-20T21:51:09.179848Z",
         "runner_pid": 11289,
         "tmux_alive": true,
         "profile": "withings-deepseek-recovery",
@@ -171,17 +183,17 @@
         "status": "passed"
       },
       "agent_assessment": {
-        "assessment_at_utc": "2026-07-20T21:42:36Z",
+        "assessment_at_utc": "2026-07-20T21:51:42Z",
         "candidates": [],
         "classification": "healthy_no_repair",
         "decision": "leave_healthy_chain_untouched",
-        "rationale": "The exact runner and tmux session are alive, events are fresh, and the plan advanced through execute and a second review cycle during this occurrence.",
-        "uncertainty": "M1 remains incomplete and the latest review still requests rework.",
-        "occupies_one_at_a_time_slot": false
+        "rationale": "The exact runner and tmux session are alive, execute produced fresh artifacts, and the plan transitioned into another review at 2026-07-20T21:50:24Z.",
+        "uncertainty": "M1 remains incomplete and the current review has not yet reached a terminal result.",
+        "occupies_target_repair_slot": false
       },
       "post_assessment_proof": {
         "intervention_by_this_occurrence": "none",
-        "substantive_progress_kind": "execute_to_review_phase_transition",
+        "substantive_progress_kind": "fresh_execute_artifacts_and_execute_to_review_phase_transition",
         "target_chain_progressing": true,
         "milestone_completed": false
       }
@@ -191,7 +203,7 @@
       "workspace": "/workspace/superpom-reflections-20260719/Pumpernickel",
       "spec": "/workspace/superpom-reflections-20260719/Pumpernickel/.megaplan/initiatives/superpom-reflections/chain.yaml",
       "marker": "/workspace/.megaplan/cloud-sessions/superpom-reflections-20260719.json",
-      "health": "blocked",
+      "health": "externally_blocked_after_verified_root_fix",
       "milestone": "m4-hardening-ship",
       "plan": "m4-product-hardening-and-ship-20260720-0926",
       "phase": "execute_blocked",
@@ -200,8 +212,8 @@
         "latest_failure_kind": "execution_blocked",
         "blocked_task": "T24",
         "phase_result_timestamp_utc": "2026-07-20T19:29:25.775946Z",
-        "event_cursor": 7461,
-        "event_timestamp_utc": "2026-07-20T19:29:27.011318Z",
+        "event_cursor": 7465,
+        "event_timestamp_utc": "2026-07-20T21:43:26.856929Z",
         "process_alive": false,
         "tmux_alive": false,
         "profile": "partnered-5",
@@ -209,25 +221,51 @@
         "head": "dd0254b2e663fdc09ca1fd6f24dbe7548009091a",
         "worktree_dirty": true
       },
-      "current_blocker_objective": "Correct current-entry semantics so correction-only exact search returns the corrected entry and corrected entries receive embeddings, preserve the existing M4 work, then rerun focused staging evidence without deployment.",
+      "current_blocker_objective": "Apply verified migration 0065 in the authorized staging environment and rerun corrected-entry exact-search and embedding acceptance evidence; source semantics are fixed and preserved, but live staging mutation/deployment is outside this occurrence's authority.",
       "runtime_attestation": {
         "expected_revision": "e894881275e7d6587ee888928ce088af71ae64e9",
         "verified_import": "/workspace/arnold-engine-running-e894/arnold_pipelines/megaplan/__init__.py",
         "status": "passed_for_observation_no_relaunch"
       },
       "agent_assessment": {
-        "assessment_at_utc": "2026-07-20T21:42:36Z",
-        "candidates": [],
-        "classification": "repair_without_candidate",
-        "decision": "observe_only_due_global_single_repair_slot",
-        "rationale": "No active resident-managed run explicitly owns the exact corrected-entry blocker. The active exact Custody owner occupies the globally exclusive repair slot, so no parallel Superpom repair was started.",
-        "uncertainty": "none_about_owner; the product-data blocker remains actionable",
-        "occupies_one_at_a_time_slot": false
+        "assessment_at_utc": "2026-07-20T21:51:42Z",
+        "candidates": [
+          {
+            "run_id": "subagent-20260720-213334-cd20ad73",
+            "manifest": "/workspace/arnold/.megaplan/plans/resident-subagents/subagent-20260720-213334-cd20ad73/manifest.json",
+            "manifest_sha256": "342974b5a4e44344a4c0d21540c357a45801009c45212d2b32ef2b2e1e102e82",
+            "declared_description": "Follow up on Run the revised three-hour fixer immediately.",
+            "match": {
+              "session": "exact_in_revision_10_scope_and_occurrence_artifact",
+              "workspace": "exact",
+              "blocker_objective": "exact_corrected_entry_current_search_and_embedding_semantics"
+            },
+            "lifecycle_status": "running",
+            "substantive_evidence": {
+              "kind": "preserved_isolated_source_fix_commit_verified_tests_and_durable_target_note",
+              "path": "/workspace/arnold/docs/ops/sched-pinned-e894-epics-babysit-3h-manual-20260720T213334Z.json",
+              "commit": "ae2209948f9b6591501e785fd949b5b1a0e887df",
+              "timestamp_utc": "2026-07-20T21:43:26.856929Z",
+              "evidence_age_seconds": 496,
+              "verification": "123 passed; focused 89 passed, 5 skipped; static migration validation and git diff check passed"
+            },
+            "continuing_owner": true,
+            "target_chain_recovery_proven": false,
+            "target_chain_recovery_reason": "The verified fix is mirrored and durably noted, but the plan remains blocked until migration 0065 is applied and the exact staging search/embedding replay passes."
+          }
+        ],
+        "classification": "defer_to_agent",
+        "decision": "skip_duplicate_repair_and_leave_verified_superpom_owner_running",
+        "rationale": "The revision-10 owner explicitly repaired this exact workspace and blocker, preserved the target, committed the root fix in isolation, verified it, and recorded the remaining acceptance boundary.",
+        "uncertainty": "Target-chain recovery is not proven; applying migration 0065 and exact staging replay require deployment/live staging mutation outside this occurrence's authority.",
+        "occupies_target_repair_slot": true
       },
       "post_assessment_proof": {
-        "intervention_by_this_occurrence": "none",
-        "newest_precise_failure": "Current-entry queries still treat supersedes_entry_id IS NULL as current, returning the pre-correction entry for correction-only exact search and leaving corrected entries with zero embedding rows.",
+        "intervention_by_this_occurrence": "none; exact repair performed by verified revision-10 owner",
+        "repair_owner_progress": "commit ae2209948f9b6591501e785fd949b5b1a0e887df with migration 0065 and passing regression suites",
+        "newest_precise_failure": "The deployed staging instance has not applied verified migration 0065, so the original corrected-entry search/embedding acceptance failure remains un-replayed even though source semantics are fixed.",
         "target_chain_recovered": false,
+        "exact_external_blocker": "Applying migration 0065 and replaying corrected-entry exact-search and embedding evidence on staging require deployment/live staging mutation, which this occurrence is not authorized to perform.",
         "work_preserved": true
       }
     }
