@@ -1696,6 +1696,30 @@ def parse_agent_output(
     return payload, raw_output
 
 
+_TERMINAL_STREAMING_TIMEOUT_MARKERS = (
+    "streaming deadline retry ceiling reached",
+    "streaming deadline hit again",
+)
+
+
+def _raise_for_terminal_provider_failure(result: dict, *, step: str) -> None:
+    """Surface exhausted provider streaming timeouts before output parsing."""
+
+    if result.get("failed") is not True:
+        return
+    reason = result.get("error")
+    if not isinstance(reason, str):
+        return
+    normalized = reason.strip().lower()
+    if not any(marker in normalized for marker in _TERMINAL_STREAMING_TIMEOUT_MARKERS):
+        return
+    raise CliError(
+        "streaming_timeout",
+        f"Hermes provider timeout exhausted for step '{step}': {reason.strip()}",
+        extra={"provider_failure_category": "timeout"},
+    )
+
+
 def clean_parsed_payload(payload: dict, schema: dict, step: str) -> None:
     """Normalize a parsed Hermes payload before validation."""
     # Some providers flatten the single plan success criterion to top-level
@@ -2349,6 +2373,8 @@ def run_hermes_step(
             # (truncated/empty) normal completion.
             if watchdog is not None and watchdog.tripped:
                 raise _raise_worker_stall(None)
+
+            _raise_for_terminal_provider_failure(current_result, step=step)
 
             try:
                 current_payload, current_raw_output = parse_agent_output(
