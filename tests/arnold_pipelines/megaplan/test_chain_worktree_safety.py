@@ -1253,6 +1253,69 @@ def test_run_chain_resume_refreshes_milestone_branch_and_pr_context(
     assert saved.pr_state == "merged"
 
 
+def test_run_chain_no_push_resume_does_not_checkout_milestone_branch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    spec_path = _write_chain_spec(root)
+    plan_dir = root / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        '{"name":"plan-m1","current_state":"planned"}\n',
+        encoding="utf-8",
+    )
+    save_chain_state(
+        spec_path,
+        chain_module.ChainState(
+            current_milestone_index=0,
+            current_plan_name="plan-m1",
+            last_state="failed",
+        ),
+    )
+    dirty_path = root / "retained-wip.txt"
+    dirty_path.write_text("must survive resume\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._preflight_agent_backends",
+        lambda spec, *, writer: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.resolve_execution_environment",
+        lambda **_kwargs: SimpleNamespace(to_dict=lambda: {}),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._plan_state",
+        lambda *_args, **_kwargs: "planned",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("no-push resume must not prepare the PR branch")
+        ),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        lambda *args, **kwargs: SimpleNamespace(status="blocked", reason="stop"),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._handle_outcome",
+        lambda *args, **kwargs: "stop",
+    )
+
+    result = run_chain(
+        spec_path,
+        root,
+        writer=lambda _message: None,
+        no_push=True,
+        no_git_refresh=True,
+    )
+
+    assert result["status"] == "stopped"
+    assert dirty_path.read_text(encoding="utf-8") == "must survive resume\n"
+
+
 def test_run_chain_resume_without_pr_creates_init_anchor_before_pr(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
