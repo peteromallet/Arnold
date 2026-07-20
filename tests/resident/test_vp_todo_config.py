@@ -11,7 +11,7 @@ def test_special_requests_defaults() -> None:
     assert config.special_requests_conversation_key is None
     assert config.special_requests_subject_user_id is None
     assert config.special_requests_subagent_toolsets == "file,web,terminal"
-    assert config.special_requests_subagent_timeout_s == 600.0
+    assert config.special_requests_subagent_timeout_s is None
     assert config.special_requests_subagent_max_tokens == 65536
 
 
@@ -33,7 +33,8 @@ def test_special_requests_from_env() -> None:
     assert config.special_requests_conversation_key == "discord:guild:g:channel:c"
     assert config.special_requests_subject_user_id == "admin-1"
     assert config.special_requests_subagent_toolsets == "file,web"
-    assert config.special_requests_subagent_timeout_s == 30.0
+    assert config.special_requests_subagent_timeout_s is None
+    assert config.model_timeout_s is None
     assert config.special_requests_subagent_max_tokens == 4096
 
 

@@ -1571,6 +1571,8 @@ def launch_codex_subagent_detached(
     query_relationship: Mapping[str, Any] | None = None,
     aggregation_role: str = "synthesis_delivery_owner",
     synthesis_group: str | None = None,
+    provider_timeout_s: float | None = None,
+    timeout_source: str | None = None,
 ) -> SubagentResult:
     """Launch a durable, fully-permissioned Codex worker managed by Arnold.
 
@@ -1582,6 +1584,14 @@ def launch_codex_subagent_detached(
             f"delegated task exceeds {MAX_DELEGATED_TASK_CHARS} characters; "
             "store large evidence durably and pass paths/routes"
         )
+    if provider_timeout_s is not None and provider_timeout_s <= 0:
+        raise ValueError("provider timeout must be positive")
+    if provider_timeout_s is not None and timeout_source not in {
+        "trusted_cli", "verified_user_request"
+    }:
+        raise ValueError("provider timeout requires trusted ingress provenance")
+    if provider_timeout_s is None and timeout_source is not None:
+        raise ValueError("timeout provenance cannot be set without a timeout")
     project_root = Path(project_dir or Path.cwd()).resolve()
     provenance = _canonical_launch_provenance(
         launch_origin,
@@ -1651,6 +1661,7 @@ def launch_codex_subagent_detached(
         lineage_root_run_id or "",
         continued_session_id or "",
         followup_id or "",
+        str(provider_timeout_s) if provider_timeout_s is not None else "unbounded",
     )
     launch_lock = root / ".launch.lock"
     launch_handle = launch_lock.open("a+b")
@@ -1725,6 +1736,11 @@ def launch_codex_subagent_detached(
         "difficulty": difficulty,
         "route_class": route_class,
         "sandbox": "danger-full-access",
+        "timeout_policy": {
+            "mode": "explicit" if provider_timeout_s is not None else "unbounded",
+            "source": timeout_source if provider_timeout_s is not None else "default",
+            "timeout_s": provider_timeout_s,
+        },
         "project_dir": str(project_root),
         "manifest_path": str(manifest_path),
         "prompt_path": str(prompt_path),
@@ -2084,6 +2100,18 @@ def _await_continuation_parent(
         time.sleep(1)
 
 
+def _explicit_manifest_timeout(manifest: Mapping[str, Any]) -> float | None:
+    policy = manifest.get("timeout_policy")
+    if not isinstance(policy, Mapping) or policy.get("mode") != "explicit":
+        return None
+    if policy.get("source") not in {"trusted_cli", "verified_user_request"}:
+        return None
+    value = policy.get("timeout_s")
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    return float(value)
+
+
 def _run_codex_manifest(manifest_path: Path) -> int:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     prompt = Path(str(manifest["prompt_path"])).read_text(encoding="utf-8")
@@ -2091,6 +2119,7 @@ def _run_codex_manifest(manifest_path: Path) -> int:
     worker: subprocess.Popen[bytes] | None = None
     session_id: str | None = None
     interrupted_signal: int | None = None
+    timeout_s = _explicit_manifest_timeout(manifest)
 
     def _interrupt(signum: int, _frame: object) -> None:
         nonlocal interrupted_signal
@@ -2163,7 +2192,16 @@ def _run_codex_manifest(manifest_path: Path) -> int:
             ),
         }
         _atomic_json(manifest_path, manifest)
-        returncode = worker.wait()
+        try:
+            returncode = worker.wait(timeout=timeout_s) if timeout_s is not None else worker.wait()
+        except subprocess.TimeoutExpired:
+            worker.terminate()
+            try:
+                worker.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                worker.kill()
+                worker.wait()
+            returncode = 124
         # Codex writes the final response to result_path while its complete
         # stream is inherited by the supervisor and appended to run.log.
         result_path.touch(exist_ok=True)
@@ -3662,6 +3700,8 @@ async def launch_subagent_task(
     launch_origin: Mapping[str, Any] | None = None,
     retry_of_run_id: str | None = None,
     query_relationship: Mapping[str, Any] | None = None,
+    timeout_s: float | None = None,
+    timeout_source: str | None = None,
 ) -> SubagentResult:
     """Dispatch ``task`` through the resident-owned delegated-agent seam.
 
@@ -3674,6 +3714,14 @@ async def launch_subagent_task(
             f"delegated task exceeds {MAX_DELEGATED_TASK_CHARS} characters; "
             "store large evidence durably and pass paths/routes"
         )
+    if timeout_s is not None and timeout_s <= 0:
+        raise ValueError("provider timeout must be positive")
+    if timeout_s is not None and timeout_source not in {
+        "trusted_cli", "verified_user_request"
+    }:
+        raise ValueError("provider timeout requires trusted ingress provenance")
+    if timeout_s is None and timeout_source is not None:
+        raise ValueError("timeout provenance cannot be set without a timeout")
     if backend == "codex":
         if not background:
             raise ValueError(
@@ -3705,6 +3753,8 @@ async def launch_subagent_task(
             launch_origin=launch_origin,
             retry_of_run_id=retry_of_run_id,
             query_relationship=query_relationship,
+            provider_timeout_s=timeout_s,
+            timeout_source=timeout_source,
         )
     if backend != "hermes":
         raise ValueError(f"unsupported subagent backend: {backend}")
@@ -3750,9 +3800,13 @@ async def launch_subagent_task(
         query_path = handle.name
     argv += ["--query-file", query_path]
 
-    timeout_s = float(config.special_requests_subagent_timeout_s)
+    child_env = os.environ.copy()
+    if timeout_s is None:
+        child_env["HERMES_API_TIMEOUT"] = "inf"
+        child_env["HERMES_DEEPSEEK_API_TIMEOUT"] = "inf"
+        child_env["ARNOLD_RESIDENT_UNBOUNDED_REQUEST"] = "1"
     try:
-        completed = await asyncio.to_thread(_run_subprocess, argv, timeout_s)
+        completed = await asyncio.to_thread(_run_subprocess, argv, timeout_s, child_env)
     finally:
         try:
             Path(query_path).unlink(missing_ok=True)
@@ -3890,13 +3944,16 @@ if __name__ == "__main__":
     raise SystemExit(_main())
 
 
-def _run_subprocess(argv: list[str], timeout_s: float) -> SubagentResult:
+def _run_subprocess(
+    argv: list[str], timeout_s: float | None, env: Mapping[str, str] | None = None
+) -> SubagentResult:
     try:
         completed = subprocess.run(
             argv,
             capture_output=True,
             text=True,
             timeout=timeout_s,
+            env=dict(env) if env is not None else None,
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
@@ -3905,7 +3962,11 @@ def _run_subprocess(argv: list[str], timeout_s: float) -> SubagentResult:
             final_text="",
             stderr=str(exc),
             returncode=-1,
-            error=f"subagent timed out after {timeout_s:.0f}s",
+            error=(
+                f"subagent timed out after {timeout_s:.0f}s"
+                if timeout_s is not None
+                else "subagent provider request timed out"
+            ),
         )
     final_text = (completed.stdout or "").strip()
     stderr = completed.stderr or ""

@@ -483,6 +483,12 @@ def run(
         query = qpath.read_text(encoding="utf-8")
 
     _load_hermes_env()
+    if os.environ.get("ARNOLD_RESIDENT_UNBOUNDED_REQUEST") == "1":
+        # The launcher intentionally hydrates ~/.hermes/.env with overwrite
+        # semantics. Reassert the trusted supervisor's unbounded request
+        # policy after hydration so stale 300/1200 defaults cannot return.
+        os.environ["HERMES_API_TIMEOUT"] = "inf"
+        os.environ["HERMES_DEEPSEEK_API_TIMEOUT"] = "inf"
 
     # Optional cwd change so file tools resolve relative paths the caller expects.
     if project_dir:

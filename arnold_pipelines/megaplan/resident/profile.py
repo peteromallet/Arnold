@@ -789,6 +789,66 @@ class SetTimezonePreferenceInput(ToolInput):
     timezone_name: str
 
 
+_TIMEOUT_REQUEST_PATTERN = re.compile(
+    r"""
+    (?:
+        \b(?:time\s*out|timeout|deadline)\b
+        \s*(?:of|after|for|is|=|:)?\s*
+        (?P<amount_after>\d+(?:\.\d+)?)\s*
+        (?P<unit_after>milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\b
+      |
+        (?P<amount_before>\d+(?:\.\d+)?)\s*
+        (?P<unit_before>milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\b
+        \s+(?:time\s*out|timeout|deadline)\b
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _verified_user_timeout_source(
+    *, store: Store | None, launch_origin: Mapping[str, Any] | None, timeout_s: float | None
+) -> str | None:
+    if timeout_s is None:
+        return None
+    if (
+        store is None
+        or not isinstance(launch_origin, Mapping)
+        or launch_origin.get("applicability") != "applicable"
+    ):
+        raise ValueError("timeout requires an authoritative inbound user request")
+    source_record_id = str(launch_origin.get("source_record_id") or "").strip()
+    source = store.load_message(source_record_id) if source_record_id else None
+    conversation_id = str(
+        launch_origin.get("resident_conversation_id")
+        or launch_origin.get("conversation_id")
+        or ""
+    ).strip()
+    if (
+        source is None
+        or source.direction != "inbound"
+        or (conversation_id and source.conversation_id != conversation_id)
+    ):
+        raise ValueError("timeout requires an immutable matching inbound user message")
+    multipliers = {
+        "ms": 0.001, "msec": 0.001, "msecs": 0.001,
+        "millisecond": 0.001, "milliseconds": 0.001,
+        "s": 1.0, "sec": 1.0, "secs": 1.0, "second": 1.0, "seconds": 1.0,
+        "m": 60.0, "min": 60.0, "mins": 60.0, "minute": 60.0, "minutes": 60.0,
+        "h": 3600.0, "hr": 3600.0, "hrs": 3600.0, "hour": 3600.0, "hours": 3600.0,
+    }
+    explicit_values: set[float] = set()
+    for match in _TIMEOUT_REQUEST_PATTERN.finditer(source.content):
+        amount = match.group("amount_after") or match.group("amount_before")
+        unit = (match.group("unit_after") or match.group("unit_before")).lower()
+        explicit_values.add(float(amount) * multipliers[unit])
+    if explicit_values != {float(timeout_s)}:
+        raise ValueError(
+            "timeout must exactly match one unambiguous timeout/deadline in the immutable user request"
+        )
+    return "verified_user_request"
+
+
 class LaunchSubagentInput(ToolInput):
     task: str
     description: str | None = Field(
@@ -827,6 +887,14 @@ class LaunchSubagentInput(ToolInput):
     task_kind: DelegatedTaskKind = "routine"
     difficulty: int = Field(default=4, ge=1, le=10)
     toolsets: str | None = None
+    timeout_s: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Optional wall timeout in seconds. Set only when the immutable current user request "
+            "explicitly states the same timeout or deadline; omission means unbounded."
+        ),
+    )
     project_dir: str | None = None
     backend: str = "codex"
     background: bool = True
@@ -1141,6 +1209,19 @@ class MegaplanResidentProfile:
                     "codex_sandbox": "danger-full-access",
                     "stdin": "sealed",
                     "lifecycle": "detached with durable manifest, log, and result",
+                    "supervisor_wall_time": {
+                        "default": "unbounded",
+                        "optional_parameter": "timeout_s",
+                        "guidance": (
+                            "Subagents are unbounded by default. Omit timeout_s unless the user "
+                            "explicitly asks for a timeout or deadline. In that rare case, pass "
+                            "the optional timeout_s value exactly as seconds."
+                        ),
+                        "validation": (
+                            "timeout_s is accepted only when it exactly matches an unambiguous "
+                            "timeout or deadline in the immutable inbound user request"
+                        ),
+                    },
                     "completion_delivery": (
                         "terminal Discord-origin launches reply to the original inbound message; "
                         "manifest status is idempotent and retry-aware"
@@ -2849,6 +2930,14 @@ class MegaplanResidentProfile:
                     )
                 except ValueError as exc:
                     return _fail(str(exc))
+        try:
+            timeout_source = _verified_user_timeout_source(
+                store=self.store,
+                launch_origin=launch_origin if isinstance(launch_origin, Mapping) else None,
+                timeout_s=payload.timeout_s,
+            )
+        except ValueError as exc:
+            return _fail(str(exc))
         result = await launch_subagent_task(
             self.config,
             task=task,
@@ -2856,6 +2945,8 @@ class MegaplanResidentProfile:
             aggregation_role=payload.aggregation_role,
             synthesis_group=payload.synthesis_group,
             toolsets=payload.toolsets,
+            timeout_s=payload.timeout_s,
+            timeout_source=timeout_source,
             project_dir=payload.project_dir,
             backend=payload.backend,
             background=payload.background,

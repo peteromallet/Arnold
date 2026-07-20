@@ -228,7 +228,7 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
     ) -> None:
         self.config = config
         self.max_tool_calls = max_tool_calls or config.max_tool_calls_per_turn
-        self.tool_timeout_s = tool_timeout_s or config.model_timeout_s
+        self.tool_timeout_s = tool_timeout_s or 30.0
         self._client_override = client_override
         self._model_override = model_override
         if self.max_tool_calls <= 0:
@@ -256,15 +256,19 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
                 }))
             except ModelBudgetError:
                 raise
-            response = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model=model_name,
-                    messages=messages,
-                    tools=openai_tools or None,
-                    tool_choice="auto" if openai_tools else None,
-                    timeout=self.config.model_timeout_s,
-                ),
-                timeout=self.config.model_timeout_s,
+            request_kwargs: dict[str, Any] = {
+                "model": model_name,
+                "messages": messages,
+                "tools": openai_tools or None,
+                "tool_choice": "auto" if openai_tools else None,
+            }
+            if self.config.model_timeout_s is not None:
+                request_kwargs["timeout"] = self.config.model_timeout_s
+            model_request = client.chat.completions.create(**request_kwargs)
+            response = (
+                await asyncio.wait_for(model_request, timeout=self.config.model_timeout_s)
+                if self.config.model_timeout_s is not None
+                else await model_request
             )
             message = response.choices[0].message
             tool_calls = tuple(message.tool_calls or ())
@@ -379,10 +383,14 @@ class CodexCliAgentRunner(DispatchProtocol):
             except FileNotFoundError as exc:
                 raise AgentLoopError("codex CLI is required for resident model_provider=codex") from exc
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(prompt.encode("utf-8")),
-                    timeout=self.config.model_timeout_s,
-                )
+                communication = proc.communicate(prompt.encode("utf-8"))
+                if self.config.model_timeout_s is None:
+                    stdout, stderr = await communication
+                else:
+                    stdout, stderr = await asyncio.wait_for(
+                        communication,
+                        timeout=self.config.model_timeout_s,
+                    )
             except asyncio.TimeoutError as exc:
                 proc.kill()
                 await proc.wait()
@@ -577,6 +585,16 @@ def openai_client_for_endpoint(
         # The resident owns the outer timeout and user-facing fallback. Avoid
         # SDK retries extending a failed voice-note request beyond that bound.
         kwargs["max_retries"] = 0
+    else:
+        import httpx
+
+        kwargs["timeout"] = httpx.Timeout(
+            timeout=None,
+            connect=30.0,
+            read=120.0,
+            write=30.0,
+            pool=30.0,
+        )
     return AsyncOpenAI(**kwargs)
 
 
