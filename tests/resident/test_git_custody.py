@@ -7,6 +7,9 @@ import subprocess
 import pytest
 
 from arnold_pipelines.megaplan.resident import subagent as subagent_module
+from arnold_pipelines.megaplan.resident.runtime import (
+    _managed_completion_verification_prompt,
+)
 from arnold_pipelines.megaplan.resident.git_custody import (
     GIT_CUSTODY_EVIDENCE_SCHEMA,
     GitCustodyError,
@@ -495,3 +498,191 @@ def test_zero_exit_worker_fails_closed_without_git_custody_receipt(
     assert terminal["terminal_outcome"] == "failed"
     assert terminal["error"] == "git custody verification failed"
     assert "missing or invalid git custody evidence" in terminal["git_custody_error"]
+    assert terminal["completion_verification"]["status"] == "failed"
+
+
+def test_zero_exit_git_backed_worker_accepts_valid_integrated_custody_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    base = _repo(project)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    prompt_path = run_dir / "prompt.md"
+    result_path = run_dir / "result.md"
+    manifest_path = run_dir / "manifest.json"
+    prompt_path.write_text("implement it", encoding="utf-8")
+    result_path.write_text("implemented", encoding="utf-8")
+    custody = resolve_launch_git_custody(
+        project_root=project,
+        runtime_root=project,
+        evidence_path=run_dir / "git-custody-evidence.json",
+    )
+    feature = tmp_path / "feature"
+    _git(project, "worktree", "add", "-b", "feature/custody", str(feature), base)
+    commit = _commit(feature, "implement", "feature.txt")
+    before = _git(project, "rev-parse", "refs/heads/main")
+    _git(project, "merge", "--ff-only", "refs/heads/feature/custody")
+    after = _git(project, "rev-parse", "refs/heads/main")
+    (run_dir / "git-custody-evidence.json").write_text(
+        json.dumps(
+            {
+                "schema_version": GIT_CUSTODY_EVIDENCE_SCHEMA,
+                "launch_target": {
+                    "target_ref": "refs/heads/main",
+                    "base_revision": base,
+                },
+                "implementation": {
+                    "worktree_path": str(feature),
+                    "branch_ref": "refs/heads/feature/custody",
+                    "base_revision": base,
+                    "commit_revision": commit,
+                },
+                "verification": {
+                    "diff_reviewed": True,
+                    "git_diff_check": "passed",
+                    "tests": [{"command": "pytest -q focused", "status": "passed"}],
+                },
+                "preservation": {"launch_checkout_untouched": True},
+                "revalidation": {
+                    "target_ref": "refs/heads/main",
+                    "observed_revision": after,
+                },
+                "integration": {
+                    "status": "integrated",
+                    "target_ref": "refs/heads/main",
+                    "before_revision": before,
+                    "after_revision": after,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "arnold-managed-agent-run-v2",
+                "run_kind": "resident_delegated_agent",
+                "custodian": "arnold.megaplan.managed_agent",
+                "status": "running",
+                "pid": 111,
+                "prompt_path": str(prompt_path),
+                "result_path": str(result_path),
+                "project_dir": str(project),
+                "model": "gpt-test",
+                "reasoning_effort": "high",
+                "task_kind": "coding",
+                "work_intent": "execution",
+                "mutation_claim": "git_backed",
+                "git_custody": custody,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _Worker:
+        pid = 222
+
+        def wait(self, timeout=None):
+            return 0
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(subagent_module.subprocess, "Popen", lambda *args, **kwargs: _Worker())
+
+    assert subagent_module._run_codex_manifest(manifest_path) == 0
+    terminal = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert terminal["status"] == "completed"
+    assert terminal["completion_verification"]["classification"] == (
+        "git_backed_mutation_custody_verified"
+    )
+    assert terminal["completion_verification"]["evidence"]["status"] == "verified_integrated"
+
+
+def test_zero_exit_non_mutating_result_is_classified_without_git_custody(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    _repo(project)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    prompt_path = run_dir / "prompt.md"
+    result_path = run_dir / "result.md"
+    manifest_path = run_dir / "manifest.json"
+    prompt_path.write_text("diagnose it", encoding="utf-8")
+    result_path.write_text("diagnosis", encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "arnold-managed-agent-run-v2",
+                "run_kind": "resident_delegated_agent",
+                "custodian": "arnold.megaplan.managed_agent",
+                "status": "running",
+                "pid": 111,
+                "prompt_path": str(prompt_path),
+                "result_path": str(result_path),
+                "project_dir": str(project),
+                "model": "gpt-test",
+                "reasoning_effort": "high",
+                "task_kind": "root_cause",
+                "work_intent": "review",
+                "mutation_claim": "none",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _Worker:
+        pid = 222
+
+        def wait(self, timeout=None):
+            return 0
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(subagent_module.subprocess, "Popen", lambda *args, **kwargs: _Worker())
+
+    assert subagent_module._run_codex_manifest(manifest_path) == 0
+    terminal = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert terminal["completion_verification"]["classification"] == (
+        "applicable_non_mutating_success"
+    )
+    assert terminal["completion_verification"]["git_custody"] == "not_applicable"
+    assert "git_custody" not in terminal
+
+
+def test_mutation_shaped_execution_cannot_opt_out_of_git_custody() -> None:
+    with pytest.raises(ValueError, match="cannot opt out"):
+        subagent_module.resolve_delegated_mutation_claim(
+            task_kind="coding", work_intent="execution", mutation_claim="none"
+        )
+
+
+def test_completion_verifier_receives_non_mutating_contract_classification(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    manifest_path = run_dir / "manifest.json"
+    manifest = {
+        "run_id": "subagent-20260720-000000-abcdefgh",
+        "status": "completed",
+        "returncode": 0,
+        "completion_verification": {
+            "schema_version": subagent_module.COMPLETION_VERIFICATION_SCHEMA,
+            "status": "success",
+            "classification": "applicable_non_mutating_success",
+            "git_custody": "not_applicable",
+        },
+    }
+
+    prompt = _managed_completion_verification_prompt(
+        manifest_path=manifest_path,
+        manifest=manifest,
+        source_message="Diagnose without mutation.",
+    )
+
+    assert "applicable_non_mutating_success" in prompt
+    assert "do not request git commit/diff/clean-worktree evidence" in prompt

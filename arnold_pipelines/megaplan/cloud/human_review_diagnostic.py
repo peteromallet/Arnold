@@ -402,6 +402,8 @@ def launch_human_review_diagnostic(
                     description=f"Diagnose Megaplan human review for {session}",
                     project_dir=str(Path(project_dir).resolve()),
                     task_kind="root_cause",
+                    work_intent="review",
+                    mutation_claim="none",
                     difficulty=9,
                 )
             )

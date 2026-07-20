@@ -132,6 +132,12 @@ def test_success_launch_inherits_discord_custody_and_is_idempotent(
     assert len(launches) == 1
 
     manifest = json.loads(Path(first.manifest_path or "").read_text(encoding="utf-8"))
+    assert manifest["work_intent"] == "review"
+    assert manifest["mutation_claim"] == "none"
+    assert "git_custody" not in manifest
+    assert manifest["completion_verification_contract"]["git_custody_requirement"] == (
+        "not_applicable"
+    )
     assert manifest["launch_provenance"] == normalize_delegation_provenance(_provenance())
     assert manifest["discord_origin"]["reply_to_message_id"] == "987654321"
     delivery = manifest["completion_delivery"]

@@ -70,7 +70,9 @@ from . import vp_todo
 from .subagent import (
     DELEGATED_TASK_KINDS,
     MANAGED_RUN_SCHEMA,
+    DelegatedMutationClaim,
     DelegatedTaskKind,
+    DelegatedWorkIntent,
     launch_subagent_task,
     list_managed_resident_agents,
 )
@@ -885,6 +887,8 @@ class LaunchSubagentInput(ToolInput):
     )
     follow_up_rationale: str | None = Field(default=None, max_length=300)
     task_kind: DelegatedTaskKind = "routine"
+    work_intent: DelegatedWorkIntent = "auto"
+    mutation_claim: DelegatedMutationClaim = "auto"
     difficulty: int = Field(default=4, ge=1, le=10)
     toolsets: str | None = None
     timeout_s: float | None = Field(
@@ -2971,6 +2975,8 @@ class MegaplanResidentProfile:
             model=payload.model,
             reasoning_effort=payload.reasoning_effort,
             task_kind=payload.task_kind,
+            work_intent=payload.work_intent,
+            mutation_claim=payload.mutation_claim,
             difficulty=payload.difficulty,
             request_id=payload.request_id,
             launch_origin=launch_origin,

@@ -125,8 +125,9 @@ def test_builds_argv_and_reads_stdout(tmp_path, monkeypatch) -> None:
     assert "--project-dir" in argv and str(tmp_path) in argv
     assert "--query-file" in argv
     assert captured["query"].startswith(
-        "hello\nworld\n\n[Completion delivery contract]"
+        "hello\nworld\n\n[Resident delegation execution/delivery instruction"
     )
+    assert "[Completion delivery contract]" in captured["query"]
     assert FINAL_SUMMARY_INSTRUCTION in captured["query"]
     # query file cleaned up after the run
     qf = argv[argv.index("--query-file") + 1]
@@ -252,8 +253,9 @@ def test_codex_background_launch_writes_durable_manifest(tmp_path, monkeypatch) 
     assert Path(manifest["result_path"]).is_file()
     prompt = Path(manifest["prompt_path"]).read_text()
     assert prompt.startswith(
-        "do the work\n\n[Completion delivery contract]"
+        "do the work\n\n[Resident delegation execution/delivery instruction"
     )
+    assert "[Completion delivery contract]" in prompt
     assert "[Delegated context directory]" in prompt
     assert "full resident/cloud/conversation state is deliberately not embedded" in prompt
     assert "resident context --node root" in prompt
