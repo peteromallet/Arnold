@@ -1,0 +1,253 @@
+{
+  "schema_version": "arnold-resident-schedule-occurrence-result-v1",
+  "schedule": {
+    "schedule_id": "sched_pinned_e894_epics_babysit_3h",
+    "definition_revision_observed": 9,
+    "state_observed": "active",
+    "occurrence_request_id": "occ_pinned_e894_epics_babysit_3h_0a0743d8a1dbfacee219c0f9",
+    "resident_run_id": "subagent-20260720-212700-10bf6430",
+    "recurring_schedule_mutated": false,
+    "recurring_schedule_cancelled": false
+  },
+  "occurrence": {
+    "started_at_utc": "2026-07-20T21:27:00.551208Z",
+    "assessment_completed_at_utc": "2026-07-20T21:42:36Z",
+    "previous_occurrence_result": "/workspace/arnold/docs/ops/sched-pinned-e894-epics-babysit-3h-manual-20260720T210329Z.json",
+    "one_at_a_time_policy": "at_most_one_repair_owner_or_intervention_global",
+    "selected_repair_owner": "subagent-20260720-212230-092134bf",
+    "interventions_started_by_this_occurrence": 0,
+    "decision": "defer_to_active_custody_owner_and_observe_other_targets"
+  },
+  "assessments": [
+    {
+      "session": "custody-control-plane-20260714",
+      "workspace": "/workspace/custody-control-plane-20260714/Arnold",
+      "spec": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/chain.yaml",
+      "marker": "/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.json",
+      "health": "recovering_in_flight_not_yet_proven",
+      "milestone": "m8-runtime-and-boundary-adoption",
+      "plan": "m8-universal-wbc-producer-and-20260720-0646",
+      "phase": "execute",
+      "semantic_checkpoint": {
+        "plan_state": "finalized",
+        "latest_failure": null,
+        "completed_task": "T26",
+        "pending_task": "T27",
+        "t27_artifact": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m8-universal-wbc-producer-and-20260720-0646/execute_batch_27_output.json",
+        "t27_artifact_bytes": 399,
+        "t27_status": "pending_empty_output",
+        "t27_artifact_timestamp_utc": "2026-07-20T21:34:36.095235Z",
+        "event_cursor": 828,
+        "event_timestamp_utc": "2026-07-20T21:42:10.723769Z",
+        "runner_pid": 121675,
+        "tmux_alive": true,
+        "profile": "partnered-5",
+        "branch": "megaplan/custody-control-plane/m8-runtime-and-boundary-adoption",
+        "head": "3c146f9e1937fa085d8a1fa589db27ca2a45018c",
+        "worktree_dirty": true
+      },
+      "current_blocker_objective": "Preserve all dirty M8/T27 work and recover through a supported no-reset path until T27 produces meaningful output; the prior canonical marker route reset the milestone checkout and must not be repeated unchanged.",
+      "runtime_attestation": {
+        "expected_revision": "f7f096701ae3df9925e584620d9c7ac39224338a",
+        "verified_import": "/workspace/arnold-engine-running-f7f0967/arnold_pipelines/megaplan/__init__.py",
+        "status": "passed_for_marker_runtime"
+      },
+      "non_regression": {
+        "amendment_revision": "28d54763c6b7e3181fbd3441cf9a0ec1c5ee4981",
+        "chain_spec_sha256": "63f15c2df351c9629fe04bb66e11ea8d0a09689b2dc260c83600998b4bd70b2d",
+        "execution_bundle_sha256": "699c10f2677eab2dda3a602bba03c7e27072130339f5c25ac18e18103f6be989",
+        "northstar_sha256": "315ed6ba4db2323958448db2ec7aa81fa5ddbc140bc05823ec0de322e78c5f45",
+        "m5_sha256": "2e8f3f96fd360d6d5cab2a5c2ba5f8dde728d0ff576572f7296f6436cd2491b1",
+        "m5a_sha256": "9a337ca44fd83e0e43bbb371232bcab5d414f20706cf676f15c63256b7f82ae6",
+        "m6_sha256": "3fea24d7120fb6dd97a0a876caff200bd9d2847d6fcae37dcb69a63b1b8ec66e",
+        "status": "passed"
+      },
+      "agent_assessment": {
+        "assessment_at_utc": "2026-07-20T21:42:36Z",
+        "candidates": [
+          {
+            "run_id": "subagent-20260720-193054-5b0373d2",
+            "manifest": "/workspace/arnold-engine-running-e894/.megaplan/plans/resident-subagents/subagent-20260720-193054-5b0373d2/manifest.json",
+            "declared_description": "Fix provider fallback and safely recover the stopped Custody chain.",
+            "match": {
+              "session": "explicit_linkage",
+              "workspace": "linked_through_custody_recovery_receipt",
+              "blocker_objective": "provider_timeout_and_safe_recovery"
+            },
+            "lifecycle_status": "completed",
+            "substantive_evidence": {
+              "kind": "verified_source_commit_and_tests",
+              "path": "/workspace/arnold-engine-running-e894/.megaplan/plans/resident-subagents/subagent-20260720-193054-5b0373d2/result.md",
+              "sha256": "5addf6e3f43cdc9c1f38d6c008e15982dff2577be7cee1dae3459cba659c2702",
+              "timestamp_utc": "2026-07-20T19:51:37.370912Z",
+              "evidence_age_seconds": 6659
+            },
+            "continuing_owner": false
+          },
+          {
+            "run_id": "subagent-20260720-212230-092134bf",
+            "manifest": "/workspace/arnold/.megaplan/plans/resident-subagents/subagent-20260720-212230-092134bf/manifest.json",
+            "manifest_sha256": "322e9d2857ae4c53d265230f36a16ffda014fb6b119ca6902aab4c0c8527603e",
+            "declared_description": "Preserve Custody T27 work and recover the chain past T27.",
+            "match": {
+              "session": "exact",
+              "workspace": "exact_in_declared_goal",
+              "blocker_objective": "exact_no_reset_t27_recovery"
+            },
+            "lifecycle_status": "running",
+            "substantive_evidence": {
+              "kind": "committed_tested_no_reset_recovery_and_live_supported_resume",
+              "path": "/workspace/arnold-custody-no-reset-runtime-f7f0967",
+              "commit": "be0fea686ca544dd487ceb75cbeca09f43e735ee",
+              "timestamp_utc": "2026-07-20T21:33:33Z",
+              "evidence_age_seconds": 543,
+              "verification": "4 passed, 34 deselected; exact marker resume returned runner_started=true and no_push=true"
+            },
+            "continuing_owner": true,
+            "target_chain_recovery_proven": false,
+            "target_chain_recovery_reason": "The runner and T27 model call are live, but execute_batch_27_output.json still contains an empty pending T27 update."
+          },
+          {
+            "run_id": "subagent-20260720-212749-3fd542af",
+            "manifest": "/workspace/arnold/.megaplan/plans/resident-subagents/subagent-20260720-212749-3fd542af/manifest.json",
+            "manifest_sha256": "fd93de249669acd81e1668529650dae2412d0472f95abef90cecd9a250572956",
+            "declared_description": "Run the revised three-hour fixer immediately.",
+            "match": {
+              "session": "schedule_scope_only",
+              "workspace": "schedule_scope_only",
+              "blocker_objective": "direct_prompt_explicitly_defers_to_active_custody_owner"
+            },
+            "lifecycle_status": "interrupted",
+            "substantive_evidence": {
+              "kind": "none_for_target_repair",
+              "path": "/workspace/arnold/.megaplan/plans/resident-subagents/subagent-20260720-212749-3fd542af/manifest.json",
+              "timestamp_utc": "2026-07-20T21:33:36.120959Z",
+              "evidence_age_seconds": 540
+            },
+            "continuing_owner": false
+          }
+        ],
+        "classification": "defer_to_agent",
+        "decision": "skip_duplicate_repair_and_do_not_cancel_or_take_over_source_changes",
+        "rationale": "The exact Custody owner has fresh substantive source/test evidence and has started the preservation-safe exact-marker recovery on the correct pinned lineage.",
+        "uncertainty": "Target-chain recovery is not yet proven because T27 remains pending with empty output.",
+        "occupies_one_at_a_time_slot": true
+      },
+      "post_assessment_proof": {
+        "intervention_by_this_occurrence": "none",
+        "repair_owner_progress": "supported_no_push_recovery_running",
+        "target_chain_recovered": false,
+        "work_preserved": true
+      }
+    },
+    {
+      "session": "withings-health-sync-20260719",
+      "workspace": "/workspace/withings-health-sync-20260719/Pumpernickel",
+      "spec": "/workspace/withings-health-sync-20260719/Pumpernickel/.megaplan/initiatives/withings-health-integration/chain.yaml",
+      "marker": "/workspace/.megaplan/cloud-sessions/withings-health-sync-20260719.json",
+      "health": "progressing",
+      "milestone": "m1",
+      "plan": "secure-provider-foundation-20260719-2014",
+      "phase": "review_rework_cycle",
+      "semantic_checkpoint": {
+        "plan_state": "finalized",
+        "latest_failure": null,
+        "latest_review_result": "needs_rework",
+        "latest_review_timestamp_utc": "2026-07-20T21:41:10Z",
+        "event_cursor": 3222,
+        "event_timestamp_utc": "2026-07-20T21:42:22.133839Z",
+        "runner_pid": 11289,
+        "tmux_alive": true,
+        "profile": "withings-deepseek-recovery",
+        "branch": "epic/withings-health/m1",
+        "head": "6f40cc35c8c2c199939f812666ca4298e9e87d65",
+        "worktree_dirty": true
+      },
+      "current_blocker_objective": "Continue the live review/rework cycle without changing profile, resetting the dirty worktree, or publishing; the newest evidence is review feedback, not a bwrap or authentication failure.",
+      "runtime_attestation": {
+        "expected_revision": "97df7a05240f36c7a85a2048de412ba9bf6a2ede",
+        "verified_import": "/workspace/arnold-engine-running-97df7a0/arnold_pipelines/megaplan/__init__.py",
+        "trusted_container": true,
+        "status": "passed"
+      },
+      "agent_assessment": {
+        "assessment_at_utc": "2026-07-20T21:42:36Z",
+        "candidates": [],
+        "classification": "healthy_no_repair",
+        "decision": "leave_healthy_chain_untouched",
+        "rationale": "The exact runner and tmux session are alive, events are fresh, and the plan advanced through execute and a second review cycle during this occurrence.",
+        "uncertainty": "M1 remains incomplete and the latest review still requests rework.",
+        "occupies_one_at_a_time_slot": false
+      },
+      "post_assessment_proof": {
+        "intervention_by_this_occurrence": "none",
+        "substantive_progress_kind": "execute_to_review_phase_transition",
+        "target_chain_progressing": true,
+        "milestone_completed": false
+      }
+    },
+    {
+      "session": "superpom-reflections-20260719",
+      "workspace": "/workspace/superpom-reflections-20260719/Pumpernickel",
+      "spec": "/workspace/superpom-reflections-20260719/Pumpernickel/.megaplan/initiatives/superpom-reflections/chain.yaml",
+      "marker": "/workspace/.megaplan/cloud-sessions/superpom-reflections-20260719.json",
+      "health": "blocked",
+      "milestone": "m4-hardening-ship",
+      "plan": "m4-product-hardening-and-ship-20260720-0926",
+      "phase": "execute_blocked",
+      "semantic_checkpoint": {
+        "plan_state": "blocked",
+        "latest_failure_kind": "execution_blocked",
+        "blocked_task": "T24",
+        "phase_result_timestamp_utc": "2026-07-20T19:29:25.775946Z",
+        "event_cursor": 7461,
+        "event_timestamp_utc": "2026-07-20T19:29:27.011318Z",
+        "process_alive": false,
+        "tmux_alive": false,
+        "profile": "partnered-5",
+        "branch": "megaplan/m3-retrieval-context-and-20260720-0743",
+        "head": "dd0254b2e663fdc09ca1fd6f24dbe7548009091a",
+        "worktree_dirty": true
+      },
+      "current_blocker_objective": "Correct current-entry semantics so correction-only exact search returns the corrected entry and corrected entries receive embeddings, preserve the existing M4 work, then rerun focused staging evidence without deployment.",
+      "runtime_attestation": {
+        "expected_revision": "e894881275e7d6587ee888928ce088af71ae64e9",
+        "verified_import": "/workspace/arnold-engine-running-e894/arnold_pipelines/megaplan/__init__.py",
+        "status": "passed_for_observation_no_relaunch"
+      },
+      "agent_assessment": {
+        "assessment_at_utc": "2026-07-20T21:42:36Z",
+        "candidates": [],
+        "classification": "repair_without_candidate",
+        "decision": "observe_only_due_global_single_repair_slot",
+        "rationale": "No active resident-managed run explicitly owns the exact corrected-entry blocker. The active exact Custody owner occupies the globally exclusive repair slot, so no parallel Superpom repair was started.",
+        "uncertainty": "none_about_owner; the product-data blocker remains actionable",
+        "occupies_one_at_a_time_slot": false
+      },
+      "post_assessment_proof": {
+        "intervention_by_this_occurrence": "none",
+        "newest_precise_failure": "Current-entry queries still treat supersedes_entry_id IS NULL as current, returning the pre-correction entry for correction-only exact search and leaving corrected entries with zero embedding rows.",
+        "target_chain_recovered": false,
+        "work_preserved": true
+      }
+    }
+  ],
+  "verification": {
+    "canonical_inventory_read": true,
+    "candidate_manifests_and_artifacts_reread": true,
+    "marker_runtime_attestations_passed": true,
+    "custody_non_regression_hashes_passed": true,
+    "profiles_preserved": true,
+    "target_chain_recovery_distinguished_from_agent_progress": true
+  },
+  "constraints": {
+    "remote_push": false,
+    "pr_merge": false,
+    "deployment": false,
+    "resident_restart": false,
+    "force_operation": false,
+    "arbitrary_process_signal": false,
+    "profile_mutation": false,
+    "schedule_mutation": false
+  }
+}
