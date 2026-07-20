@@ -2727,6 +2727,39 @@ def _recover_completed_gate_artifact_after_failure(plan_dir: Path | None) -> boo
     if not (custody_mtime <= signals_mtime <= gate_mtime):
         return False
 
+    # Replan intentionally reuses the plan directory, so a passing gate.json
+    # can belong to an older planning epoch.  Adopting that stale artifact
+    # skips the gate that must evaluate the newly written critique and leaves
+    # the workflow cursor at critique -> gate while state has advanced to
+    # gated.  Fail closed unless the candidate gate artifact is at least as
+    # fresh as the latest successful critique artifact.  If a gate worker
+    # crashed before writing a new artifact, rerunning gate is safer than
+    # manufacturing a transition from an older epoch.
+    history = state_data.get("history")
+    if isinstance(history, list):
+        latest_critique = next(
+            (
+                entry
+                for entry in reversed(history)
+                if isinstance(entry, dict)
+                and entry.get("step") == "critique"
+                and entry.get("result") == "success"
+            ),
+            None,
+        )
+        if isinstance(latest_critique, dict):
+            critique_output = latest_critique.get("output_file")
+            if isinstance(critique_output, str) and critique_output:
+                critique_path = plan_dir / Path(critique_output).name
+                try:
+                    if (
+                        (plan_dir / "gate.json").stat().st_mtime_ns
+                        < critique_path.stat().st_mtime_ns
+                    ):
+                        return False
+                except OSError:
+                    return False
+
     def _patch(current: dict[str, Any]) -> bool:
         current["current_state"] = STATE_GATED
         current.pop("active_step", None)
