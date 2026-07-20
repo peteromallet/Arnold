@@ -303,6 +303,50 @@ def test_managed_launch_rejects_oversized_task_before_creating_run(tmp_path) -> 
     assert not (tmp_path / ".megaplan/plans/resident-subagents").exists()
 
 
+def test_scheduled_standalone_dm_manifest_has_no_reply_or_source_custody(
+    tmp_path, monkeypatch
+) -> None:
+    class _Process:
+        pid = 4321
+
+    monkeypatch.setattr(subagent_module.subprocess, "Popen", lambda *args, **kwargs: _Process())
+    result = asyncio.run(
+        launch_subagent_task(
+            ResidentConfig(model_name="gpt-test"),
+            task="inspect scheduled state",
+            project_dir=str(tmp_path),
+            request_id="occ_standalone_1",
+            launch_origin={"applicability": "not_applicable", "source_kind": "schedule"},
+            schedule_context={
+                "schema_version": "arnold-resident-schedule-occurrence-v1",
+                "schedule_id": "sched_standalone_dm",
+                "schedule_revision": 1,
+                "generation": 1,
+                "occurrence_id": "occ_standalone_1",
+                "occurrence_key": "sha256:test",
+                "nominal_at": "2026-07-20T08:00:00+00:00",
+                "authorization_digest": "sha256:auth",
+                "pinned_definition_digest": "sha256:def",
+                "delivery": {"mode": "standalone", "route_ref": "discord:dm:42"},
+            },
+        )
+    )
+
+    manifest = json.loads(Path(result.manifest_path).read_text())
+    assert manifest["launch_provenance"]["applicability"] == "not_applicable"
+    assert manifest["discord_delivery_target"] == {
+        "transport": "discord",
+        "conversation_key": "discord:dm:42",
+        "mode": "standalone",
+    }
+    assert "discord_origin" not in manifest
+    assert "source_record_id" not in manifest
+    assert manifest["completion_delivery"]["destination"] == {
+        "conversation_key": "discord:dm:42"
+    }
+    assert "reply_target" not in manifest["completion_delivery"]
+
+
 def test_codex_background_launch_resolves_resident_message_record_to_discord_id(
     tmp_path, monkeypatch
 ) -> None:

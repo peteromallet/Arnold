@@ -686,46 +686,74 @@ class ResidentRuntime:
         provenance = manifest.get("launch_provenance")
         if not isinstance(provenance, Mapping):
             raise RuntimeError("managed completion has no immutable launch provenance")
-        source_record_id = str(provenance.get("source_record_id") or "")
-        conversation_id = str(provenance.get("resident_conversation_id") or "")
-        source_message = self.store.load_message(source_record_id)
-        conversation = self.store.load_resident_conversation(conversation_id)
-        if source_message is None or conversation is None:
-            raise RuntimeError("managed completion source message or conversation is unavailable")
-        if source_message.conversation_id != conversation.id:
-            raise RuntimeError("managed completion provenance does not match the source conversation")
-        expected_reply = str(provenance.get("reply_to_message_id") or "")
-        if not expected_reply or source_message.discord_message_id != expected_reply:
-            raise RuntimeError("managed completion provenance does not match the inbound reply target")
+        standalone_target = manifest.get("discord_delivery_target")
+        is_standalone = (
+            provenance.get("applicability") == "not_applicable"
+            and isinstance(standalone_target, Mapping)
+            and standalone_target.get("mode") == "standalone"
+        )
+        source_message = None
+        if is_standalone:
+            route = str(standalone_target.get("conversation_key") or "")
+            conversation = self.store.get_resident_conversation_by_key(
+                transport="discord", conversation_key=route
+            )
+            if conversation is None:
+                raise RuntimeError("managed completion standalone conversation is unavailable")
+            source_text = (
+                "Scheduled standalone task; the immutable managed-run manifest and original "
+                "delegated prompt are the authority. There is no inbound user request or reply target."
+            )
+        else:
+            source_record_id = str(provenance.get("source_record_id") or "")
+            conversation_id = str(provenance.get("resident_conversation_id") or "")
+            source_message = self.store.load_message(source_record_id)
+            conversation = self.store.load_resident_conversation(conversation_id)
+            if source_message is None or conversation is None:
+                raise RuntimeError("managed completion source message or conversation is unavailable")
+            if source_message.conversation_id != conversation.id:
+                raise RuntimeError("managed completion provenance does not match the source conversation")
+            expected_reply = str(provenance.get("reply_to_message_id") or "")
+            if not expected_reply or source_message.discord_message_id != expected_reply:
+                raise RuntimeError("managed completion provenance does not match the inbound reply target")
+            source_text = source_message.content
 
         hot_context = await self.profile.load_hot_context(conversation.id)
-        hot_context["current_request"] = {
-            "authority": "persisted inbound record triggering the delegated run",
-            "source_record_ids": [source_message.id],
-            "query_relationship": (
-                dict(manifest["query_relationship"])
-                if isinstance(manifest.get("query_relationship"), Mapping)
-                else None
-            ),
-        }
+        hot_context["current_request"] = (
+            {
+                "authority": "immutable scheduled managed-run prompt",
+                "schedule_occurrence": manifest.get("schedule_occurrence"),
+                "source_record_ids": [],
+            }
+            if is_standalone
+            else {
+                "authority": "persisted inbound record triggering the delegated run",
+                "source_record_ids": [source_message.id],
+                "query_relationship": (
+                    dict(manifest["query_relationship"])
+                    if isinstance(manifest.get("query_relationship"), Mapping)
+                    else None
+                ),
+            }
+        )
         if isinstance(hot_context.get("context_root"), dict):
             hot_context["context_root"]["intent_packs"] = ["delegation", "conversation"]
         prompt_for = getattr(self.profile, "system_prompt_for", None)
         profile_prompt = (
-            prompt_for(source_message.content)
+            prompt_for(source_text)
             if callable(prompt_for)
             else self.profile.system_prompt()
         )
         system_prompt = (
             profile_prompt
             + "\n\n"
-            + _authoritative_current_request_records_prompt(
-                [
-                    {
-                        "source_record_id": source_message.id,
-                        "content": source_message.content,
-                    }
-                ]
+            + (
+                "Authoritative current scheduled task: no inbound source record exists. "
+                "Use only the immutable managed-run manifest and delegated prompt."
+                if is_standalone
+                else _authoritative_current_request_records_prompt(
+                    [{"source_record_id": source_message.id, "content": source_message.content}]
+                )
             )
             + "\n\n"
             + _timezone_instruction_from_hot_context(hot_context)
@@ -751,7 +779,7 @@ class ResidentRuntime:
         else:
             turn = self.store.create_turn(
                 epic_id=conversation.active_epic_id,
-                triggered_by_message_ids=[source_message.id],
+                triggered_by_message_ids=[] if is_standalone else [source_message.id],
                 prompt_snapshot={
                     "system_prompt": system_prompt,
                     "message_count": 1,
@@ -772,7 +800,12 @@ class ResidentRuntime:
         verification_prompt = _managed_completion_verification_prompt(
             manifest_path=manifest_path,
             manifest=manifest,
-            source_message=source_message.content,
+            source_message=source_text,
+            source_label=(
+                "Authoritative scheduled task (no inbound request or reply target)"
+                if is_standalone
+                else "Authoritative original user request (preserve its requirements)"
+            ),
         )
         # Completion verification is correlated to one immutable delegation.
         # Conversation history may contain newer user commands (for example a
@@ -1672,6 +1705,7 @@ def _managed_completion_verification_prompt(
     manifest_path: Path,
     manifest: Mapping[str, Any],
     source_message: str,
+    source_label: str = "Authoritative original user request (preserve its requirements)",
 ) -> str:
     def resolved_path(field: str, fallback: str) -> str:
         path = Path(str(manifest.get(field) or fallback))
@@ -1735,7 +1769,7 @@ def _managed_completion_verification_prompt(
         f"{relationship_context}"
         f"{verification_context}"
         f"{dependency_context}"
-        "Authoritative original user request (preserve its requirements):\n"
+        f"{source_label}:\n"
         f"{source_message[:12000]}"
     )
 

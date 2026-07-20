@@ -222,6 +222,66 @@ class _AcceptedOutbound:
         message.metadata["discord_message_ids"] = [self.message_id]
 
 
+def test_scheduled_standalone_completion_delivers_plain_dm_without_reply_metadata(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / ".megaplan/plans/resident-subagents/subagent-standalone"
+    run_dir.mkdir(parents=True)
+    result_path = run_dir / "result.md"
+    result_path.write_text("worker claim", encoding="utf-8")
+    manifest_path = run_dir / "manifest.json"
+    manifest_path.write_text(json.dumps({
+        "schema_version": "arnold-resident-agent-run-v1",
+        "run_kind": "resident_delegated_agent",
+        "custodian": "arnold.megaplan.resident",
+        "run_id": "subagent-standalone",
+        "status": "completed",
+        "created_at": "2026-07-20T08:00:00+00:00",
+        "project_dir": str(tmp_path),
+        "result_path": str(result_path),
+        "launch_provenance": {
+            "schema_version": "arnold-resident-delegation-provenance-v1",
+            "applicability": "not_applicable",
+            "transport": "non_discord",
+            "source_kind": "schedule",
+        },
+        "discord_delivery_target": {
+            "transport": "discord",
+            "conversation_key": "discord:dm:42",
+            "mode": "standalone",
+        },
+        "completion_delivery": {
+            "transport": "discord",
+            "delivery_mode": "standalone",
+            "status": "pending",
+            "attempt_count": 0,
+            "destination": {"conversation_key": "discord:dm:42"},
+            "payload": {
+                "content": VERIFIED_SUMMARY,
+                "result_kind": "resident_verified_summary",
+                "verification_outcome": "success",
+            },
+        },
+        "resident_completion_turn": {
+            "status": "completed",
+            "verification_outcome": "success",
+        },
+    }), encoding="utf-8")
+    outbound = _AcceptedOutbound()
+
+    result = asyncio.run(sweep_managed_agent_deliveries(
+        outbound=outbound, project_root=tmp_path, workspace_root=None
+    ))
+
+    assert result.delivered == 1
+    assert outbound.sent[0].conversation_key == "discord:dm:42"
+    assert "discord_reply_to_message_id" not in outbound.sent[0].metadata
+    assert "discord_processing_message_ids" not in outbound.sent[0].metadata
+    persisted = json.loads(manifest_path.read_text())
+    assert persisted["completion_delivery"]["delivery_evidence"]["delivery_mode"] == "plain"
+    assert "reply_target" not in persisted["completion_delivery"]
+
+
 def test_dependency_failed_owner_delivers_truthful_partial_fallback_exactly_once(
     tmp_path: Path,
 ) -> None:

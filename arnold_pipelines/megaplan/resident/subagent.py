@@ -936,6 +936,27 @@ def _discord_origin(
     return origin
 
 
+def _standalone_schedule_discord_target(
+    schedule_context: Mapping[str, Any] | None,
+    provenance: Mapping[str, Any],
+) -> dict[str, str] | None:
+    """Resolve a schedule-owned plain DM without manufacturing reply custody."""
+
+    if not isinstance(schedule_context, Mapping):
+        return None
+    delivery = schedule_context.get("delivery")
+    if not isinstance(delivery, Mapping) or delivery.get("mode") != "standalone":
+        return None
+    route = str(delivery.get("route_ref") or "").strip()
+    if not route.startswith("discord:dm:"):
+        return None
+    if provenance.get("applicability") != "not_applicable":
+        raise DelegationProvenanceError(
+            "standalone schedule delivery requires explicitly not_applicable launch origin"
+        )
+    return {"transport": "discord", "conversation_key": route, "mode": "standalone"}
+
+
 def _canonical_launch_provenance(
     value: Mapping[str, Any] | None,
     *,
@@ -3572,6 +3593,9 @@ def launch_managed_subagent_detached(
             separators=(",", ":"),
         ).encode()
     ).hexdigest()
+    standalone_delivery_target = _standalone_schedule_discord_target(
+        normalized_schedule_context, provenance
+    )
     # Discord launch identity is owned by the inbound source record.  A model
     # or compatibility caller may still provide request_id, but it cannot
     # sever custody or turn the same inbound request into duplicate workers.
@@ -3965,6 +3989,37 @@ def launch_managed_subagent_detached(
                     ),
                 }
             ],
+        }
+    elif standalone_delivery_target is not None:
+        manifest["discord_delivery_target"] = standalone_delivery_target
+        manifest["completion_delivery"] = {
+            "transport": "discord",
+            "delivery_mode": "standalone",
+            "status": (
+                "pending" if delivery_policy.startswith("deliver_") else "suppressed"
+            ),
+            "attempt_count": 0,
+            "custody_id": manifest["custody_id"],
+            "outbox_id": stable_identity(
+                "discord-outbox", run_id, standalone_delivery_target["conversation_key"]
+            ),
+            "aggregation_key": aggregation_key,
+            "aggregation_role": aggregation_role,
+            "idempotency_key": f"resident-subagent-completion:{run_id}",
+            "destination": {
+                "conversation_key": standalone_delivery_target["conversation_key"],
+            },
+            "state_history": [{
+                "status": (
+                    "pending" if delivery_policy.startswith("deliver_") else "suppressed"
+                ),
+                "at": manifest["created_at"],
+                "evidence": (
+                    "standalone_outbox_committed_before_launch"
+                    if delivery_policy.startswith("deliver_")
+                    else "intentional_delivery_suppression_recorded"
+                ),
+            }],
         }
     else:
         manifest["completion_delivery"] = {
@@ -5427,6 +5482,33 @@ def _repair_manifest_delivery_provenance(manifest: dict[str, Any]) -> bool:
                 return True
             return False
     project_root = str(manifest.get("project_dir") or "").strip() or None
+    standalone_target = manifest.get("discord_delivery_target")
+    if isinstance(standalone_target, Mapping):
+        delivery = dict(manifest.get("completion_delivery") or {})
+        provenance = manifest.get("launch_provenance")
+        route = str(standalone_target.get("conversation_key") or "").strip()
+        valid = (
+            standalone_target.get("mode") == "standalone"
+            and route.startswith("discord:dm:")
+            and isinstance(provenance, Mapping)
+            and provenance.get("applicability") == "not_applicable"
+            and delivery.get("transport") == "discord"
+            and delivery.get("delivery_mode") == "standalone"
+            and not manifest.get("source_record_id")
+            and not manifest.get("discord_origin")
+            and not delivery.get("reply_target")
+        )
+        if valid:
+            return False
+        delivery.update({
+            "status": "failed",
+            "last_error": "Standalone Discord delivery custody is malformed",
+            "last_error_class": "InvalidStandaloneDeliveryTarget",
+            "last_error_category": "invalid_delivery_target",
+            "updated_at": _utc_now(),
+        })
+        manifest["completion_delivery"] = delivery
+        return True
     raw_origin = manifest.get("discord_origin")
     existing_provenance: dict[str, Any] | None = None
     if isinstance(manifest.get("launch_provenance"), Mapping):
@@ -5755,7 +5837,14 @@ def _delivery_claim(
         provenance_changed = _repair_manifest_delivery_provenance(manifest)
         delivery = manifest.get("completion_delivery")
         origin = manifest.get("discord_origin")
-        if not isinstance(delivery, dict) or not isinstance(origin, dict):
+        standalone_target = manifest.get("discord_delivery_target")
+        is_standalone = (
+            isinstance(standalone_target, Mapping)
+            and standalone_target.get("mode") == "standalone"
+        )
+        if not isinstance(delivery, dict) or (
+            not isinstance(origin, dict) and not is_standalone
+        ):
             if provenance_changed:
                 _atomic_json(manifest_path, manifest)
             return None
@@ -5784,7 +5873,7 @@ def _delivery_claim(
             manifest["completion_delivery"] = delivery
             _atomic_json(manifest_path, manifest)
             return None
-        if provenance.get("source_record_id") != manifest.get("source_record_id"):
+        if not is_standalone and provenance.get("source_record_id") != manifest.get("source_record_id"):
             delivery.update(
                 {
                     "status": "failed",
@@ -5857,9 +5946,17 @@ def _delivery_claim(
         if status not in _TERMINAL_STATUSES:
             return None
 
-        normalized_origin = _discord_origin(
-            origin,
-            project_root=str(manifest.get("project_dir") or "") or None,
+        normalized_origin = (
+            {
+                "transport": "discord",
+                "conversation_key": str(standalone_target["conversation_key"]),
+                "delivery_mode": "standalone",
+            }
+            if is_standalone
+            else _discord_origin(
+                origin,
+                project_root=str(manifest.get("project_dir") or "") or None,
+            )
         )
         if normalized_origin is None:
             delivery.update(
@@ -5876,7 +5973,7 @@ def _delivery_claim(
             manifest["completion_delivery"] = delivery
             _atomic_json(manifest_path, manifest)
             return None
-        if normalized_origin != origin:
+        if not is_standalone and normalized_origin != origin:
             manifest["discord_origin"] = normalized_origin
 
         outbox_payload = delivery.get("payload")
@@ -6207,8 +6304,12 @@ def _finish_delivery(
     with _delivery_lock(manifest_path):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         delivery = dict(manifest.get("completion_delivery") or {})
-        origin = dict(manifest.get("discord_origin") or {})
-        expected_conversation_key = str(origin.get("conversation_key") or "")
+        target = dict(
+            manifest.get("discord_origin")
+            or manifest.get("discord_delivery_target")
+            or {}
+        )
+        expected_conversation_key = str(target.get("conversation_key") or "")
         evidence = _normalized_discord_delivery_evidence(
             delivery_evidence,
             expected_conversation_key=expected_conversation_key,
@@ -6662,14 +6763,6 @@ async def sweep_managed_agent_deliveries(
         result_kind = str(payload.get("result_kind") or "missing_result")
         metadata: dict[str, Any] = {
             "managed_agent_run_id": manifest.get("run_id") or manifest_path.parent.name,
-            "discord_reply_to_message_id": origin["reply_to_message_id"],
-            # The originating resident turn added this marker after durable
-            # custody.  Terminal outbox delivery removes it before applying
-            # the existing completion reaction, including after restart.
-            "discord_processing_message_ids": [origin["reply_to_message_id"]],
-            "discord_processing_turn_id": str(
-                dict(manifest.get("launch_provenance") or {}).get("resident_turn_id") or ""
-            ),
             "completion_delivery": True,
             "timezone_name": str(
                 dict(manifest.get("launch_provenance") or {}).get("timezone_name") or "UTC"
@@ -6681,6 +6774,22 @@ async def sweep_managed_agent_deliveries(
                 "launch_provenance": manifest.get("launch_provenance"),
             },
         }
+        reply_to_message_id = str(origin.get("reply_to_message_id") or "").strip()
+        if reply_to_message_id:
+            metadata.update({
+                "discord_reply_to_message_id": reply_to_message_id,
+                # The originating resident turn added this marker after durable
+                # custody. Terminal outbox delivery removes it after restart.
+                "discord_processing_message_ids": [reply_to_message_id],
+                "discord_processing_turn_id": str(
+                    dict(manifest.get("launch_provenance") or {}).get("resident_turn_id") or ""
+                ),
+            })
+        else:
+            metadata["discord_delivery_evidence"] = {
+                "delivery_mode": "plain",
+                "authoritative_conversation_key": origin["conversation_key"],
+            }
         # Fake outbound sinks remain usable for deterministic delivery tests,
         # while the production Discord boundary independently reclassifies
         # durable manifest context immediately before the network send.

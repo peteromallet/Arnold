@@ -325,6 +325,7 @@ def test_managed_launch_copies_occurrence_context_and_reconciles_terminal(
     assert receipt.launched == 1
     assert captured["schedule_context"]["occurrence_id"].startswith("occ_")
     assert captured["launch_origin"] == {"applicability": "not_applicable"}
+    assert "delivery" not in captured["schedule_context"]
     projection = service.repo.occurrences(row.schedule_id)[0]
     assert projection.run_id == "subagent-test"
     manifest.write_text(json.dumps({"status": "completed", "delivery": {"status": "delivered"}}))
@@ -332,6 +333,45 @@ def test_managed_launch_copies_occurrence_context_and_reconciles_terminal(
     projection = service.repo.occurrences(row.schedule_id)[0]
     assert projection.state == "terminal"
     assert projection.delivery_state == "delivered"
+
+
+def test_standalone_dm_schedule_carries_destination_without_reply_custody(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = ScheduleService(tmp_path, project_root=tmp_path)
+    row = definition(
+        schedule_id="sched_standalone_dm",
+        operation="managed_launch",
+        kind="resident_managed_agent",
+        bounds={"max_occurrences": 1},
+    )
+    route = "discord:dm:42"
+    row = row.model_copy(update={
+        "authorization": row.authorization.model_copy(update={"route_ref": route}),
+        "delivery": row.delivery.model_copy(update={"route_ref": route}),
+    })
+    service.create(row, idempotency_key="standalone-dm")
+    captured: dict = {}
+    manifest = tmp_path / "standalone-manifest.json"
+
+    async def fake_launch(*args, **kwargs):
+        captured.update(kwargs)
+        manifest.write_text(json.dumps({"status": "launching"}))
+        return SimpleNamespace(
+            run_id="subagent-standalone", manifest_path=str(manifest), status="launching"
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.resident.subagent.launch_subagent_task", fake_launch
+    )
+    receipt = asyncio.run(service.run_due_once(now=NOW, worker_id="launcher"))
+
+    assert receipt.launched == 1
+    assert captured["launch_origin"] == {"applicability": "not_applicable"}
+    assert captured["schedule_context"]["delivery"] == {
+        "mode": "standalone",
+        "route_ref": route,
+    }
 
 
 def test_managed_schedule_infers_hermes_provider_from_model_spec(
