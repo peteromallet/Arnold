@@ -11,7 +11,7 @@
   "occurrence": {
     "resident_run_id": "subagent-20260720-213334-cd20ad73",
     "started_at_utc": "2026-07-20T21:33:34Z",
-    "assessment_completed_at_utc": "2026-07-20T21:49:23Z",
+    "assessment_completed_at_utc": "2026-07-20T21:52:42Z",
     "one_at_a_time_policy": "serial_interventions_all_targets",
     "intervention_count": 1,
     "intervention_order": ["superpom-reflections-20260719"],
@@ -44,7 +44,7 @@
         "active_worker_pid": 121675,
         "active_worker_model": "gpt-5.4",
         "event_cursor": 840,
-        "last_state_write_at_utc": "2026-07-20T21:48:35.939311Z",
+        "last_state_write_at_utc": "2026-07-20T21:51:46.787641Z",
         "t27_status": "pending",
         "t27_output_is_meaningful": false,
         "target_chain_recovered_claimed": false,
@@ -52,7 +52,7 @@
       },
       "current_blocker_objective": "Preserve the dirty M8 checkout and recover T27 through a no-reset, no-push resume without repeating the destructive marker relaunch.",
       "agent_assessment": {
-        "assessment_at_utc": "2026-07-20T21:49:23Z",
+        "assessment_at_utc": "2026-07-20T21:52:42Z",
         "candidates": [
           {
             "run_id": "subagent-20260720-212230-092134bf",
@@ -74,7 +74,7 @@
               "commit": "be0fea686ca544dd487ceb75cbeca09f43e735ee",
               "commit_timestamp_utc": "2026-07-20T21:33:33Z",
               "latest_semantic_artifact_timestamp_utc": "2026-07-20T21:43:46.592107Z",
-              "evidence_age_seconds": 336
+              "evidence_age_seconds": 535
             }
           },
           {
@@ -118,20 +118,20 @@
       "plan": "secure-provider-foundation-20260719-2014",
       "health": "progressing",
       "semantic_checkpoint": {
-        "plan_state": "finalized",
-        "phase": "execute",
-        "attempt": 7,
-        "phase_started_at_utc": "2026-07-20T21:42:11Z",
-        "active_worker_pid": 11289,
-        "active_worker_model": "gpt-5.4",
-        "phase_result": "review_success",
-        "phase_result_sha256": "4ef7106e88cf759bae202340e10f2c69a236a31fb2ba5843361435af67d244dd",
-        "substantive_progress_kind": "review_to_execute_phase_transition",
-        "phase_end_cursor": 3215,
-        "phase_transition_cursor": 3216,
-        "execute_start_cursor": 3217,
-        "execute_start_at_utc": "2026-07-20T21:42:06.130754Z",
-        "last_process_event_at_utc": "2026-07-20T21:48:45.389276Z",
+        "plan_state": "executed",
+        "phase": "review",
+        "attempt": 3,
+        "phase_started_at_utc": "2026-07-20T21:50:28Z",
+        "chain_pid": 11289,
+        "active_worker_pid": 190540,
+        "active_worker_model": "gpt-5.5",
+        "phase_result": "execute_blocked_by_quality_under_active_review",
+        "phase_result_sha256": "9f3cf47810bece1d6158256d8090694af735faeb1e3adcf305930e95ed71bae5",
+        "substantive_progress_kind": "execute_to_review_phase_transition",
+        "review_start_cursor": 3244,
+        "review_start_at_utc": "2026-07-20T21:50:24.374446Z",
+        "last_process_event_cursor": 3249,
+        "last_process_event_at_utc": "2026-07-20T21:52:13.804496Z",
         "profile": "withings-deepseek-recovery"
       },
       "runtime_attestation": {
@@ -141,7 +141,7 @@
         "status": "passed"
       },
       "agent_assessment": {
-        "assessment_at_utc": "2026-07-20T21:49:23Z",
+        "assessment_at_utc": "2026-07-20T21:52:42Z",
         "candidates": [
           {
             "run_id": "subagent-20260720-202511-9492d3cc",
@@ -156,7 +156,7 @@
         ],
         "classification": "repair_without_candidate",
         "decision": "leave_healthy_chain_untouched",
-        "rationale": "No live target-specific repair owner exists; the exact 97df7a0 chain has fresh review-to-execute semantic progress and a live worker.",
+        "rationale": "No live target-specific repair owner exists; the exact 97df7a0 chain advanced again from execute into an active review phase, with a live chain PID and reviewer subprocess.",
         "uncertainty": "none",
         "occupies_target_repair_slot": false
       }
@@ -182,7 +182,7 @@
       },
       "current_blocker_objective": "Fix append-only corrected-entry current semantics so exact search returns the corrected leaf and the embedding worker can resolve that leaf through v_searchable_content.",
       "agent_assessment": {
-        "assessment_at_utc": "2026-07-20T21:49:23Z",
+        "assessment_at_utc": "2026-07-20T21:52:42Z",
         "candidates": [
           {
             "run_id": "managed-automatic-repair-87faa7cfc28fa0d5622c",
@@ -268,7 +268,7 @@
   },
   "result": {
     "custody": "deferred_to_verified_relevant_owner; live execute resumed; T27 outcome still pending",
-    "withings": "genuinely_progressing after fresh review-to-execute transition",
+    "withings": "genuinely_progressing after fresh execute-to-review transition",
     "superpom": "root source defect fixed and verified; exact staging acceptance blocked by no-deploy boundary",
     "recurring_schedule": "remains active at revision 10"
   }
