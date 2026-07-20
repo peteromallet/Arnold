@@ -79,6 +79,7 @@ _AVAILABILITY_TOKENS = frozenset(
         "timeout",
         "timed_out",
         "worker_timeout",
+        "streaming_timeout",
         "stalled_stream",
         "stream_content_stall",
         "codex_pre_first_byte_stall",
