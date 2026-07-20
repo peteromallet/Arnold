@@ -15,6 +15,10 @@ fixer-infrastructure activity (repair loops, recovery, custody handover) and
 automatic continuation custody (chain advancing to the next milestone without
 acceptance evidence).  This ensures the watchdog escalates on genuine absence
 of accepted progress rather than treating liveness signals as success.
+M7 shadow validation is wired into both ``check_watchdog_dispatch_acceptance_gate``
+and ``assess_watchdog_accepted_progress`` so watchdog subprocess launch and
+escalation paths diagnose stale authority before acting.  Production enforcement
+is always disabled.
 """
 
 from __future__ import annotations
@@ -32,6 +36,15 @@ from arnold_pipelines.megaplan.orchestration.completion_contract import (
     PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
 )
 
+# ── M7 shadow validator import (enforcement always disabled) ────────────────
+try:
+    from arnold_pipelines.megaplan.custody.action_validator import (
+        validate_action_boundary_simple,
+    )
+    _M7_VALIDATOR_AVAILABLE = True
+except ImportError:
+    _M7_VALIDATOR_AVAILABLE = False
+
 __all__ = [
     "BLOCKER_KIND_BY_CALLER",
     "CALLER_KINDS",
@@ -46,12 +59,109 @@ __all__ = [
     "build_audit_input",
     "check_watchdog_dispatch_acceptance_gate",
     "check_wrapper_acceptance_gate",
+    "_shadow_validate_watchdog_boundary",
 ]
 
 # ── typed blocker kinds for watchdog dispatch paths ─────────────────────
 
 WATCHDOG_DISPATCH_BLOCKER_KIND = "watchdog_dispatch_acceptance_gate_closed"
 REPAIR_DISPATCH_BLOCKER_KIND = "repair_dispatch_acceptance_gate_closed"
+
+
+# ── M7 shadow validator helper (T15) ────────────────────────────────────────
+
+
+def _shadow_validate_watchdog_boundary(
+    *,
+    dispatch_kind: str,
+    spec_path: str = "",
+    session_id: str = "",
+) -> dict[str, Any]:
+    """Run the M7 shadow validator during watchdog dispatch gating (non-blocking).
+
+    Builds a best-effort ``CustodyTargetKey`` from the watchdog dispatch context,
+    calls ``validate_action_boundary_simple`` with ``action_type=\"repair\"``
+    (for repair dispatch) or ``action_type=\"dispatch\"`` (for watchdog dispatch),
+    and returns typed conflict/fence/reconcile diagnostics.  Never raises —
+    all errors are captured as diagnostic metadata.
+
+    Production enforcement is always disabled; this is a shadow-only call.
+    """
+    if not _M7_VALIDATOR_AVAILABLE:
+        return {
+            "m7_validator_available": False,
+            "reason": "action_validator module not importable",
+        }
+
+    import hashlib as _hashlib
+
+    try:
+        action_type = "repair" if dispatch_kind == "repair" else "dispatch"
+        target_dict = {
+            "environment": "watchdog",
+            "session": session_id or "unknown",
+            "chain": spec_path or "unknown",
+            "plan_revision": dispatch_kind or "unknown",
+            "phase": "watchdog_dispatch",
+            "task": dispatch_kind or "unknown",
+            "attempt": "1",
+            "normalized_failure_kind": "watchdog_dispatch",
+            "blocker_or_phase_result_hash": _hashlib.sha256(
+                f"{dispatch_kind}:{spec_path}".encode("utf-8")
+            ).hexdigest()[:16],
+            "fence": "0",
+        }
+
+        result = validate_action_boundary_simple(
+            action_type=action_type,
+            target=target_dict,
+            run_authority_grant_id="watchdog-dispatch-grant",
+            coordinator_fence_token=0,
+            wbc_attempt_reference=spec_path or session_id or "unknown",
+        )
+
+        typed_events: list[dict[str, Any]] = []
+        for check in result.checks:
+            outcome = check.outcome.value
+            if outcome == "conflict":
+                typed_events.append({
+                    "event_type": "conflict",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+            elif outcome == "fenced":
+                typed_events.append({
+                    "event_type": "fence",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+            elif outcome in ("stale", "expired"):
+                typed_events.append({
+                    "event_type": "reconcile",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+
+        return {
+            "m7_validator_available": True,
+            "gate_result": result.gate_result.value,
+            "enforcement_enabled": result.enforcement_enabled,
+            "shadow_mode": result.is_shadow,
+            "typed_events": typed_events,
+            "checks_summary": {
+                c.source: c.outcome.value for c in result.checks
+            },
+            "validated_at": result.validated_at,
+        }
+    except Exception as exc:
+        return {
+            "m7_validator_available": True,
+            "error": f"{type(exc).__name__}: {exc}",
+            "typed_events": [],
+        }
 
 
 def check_watchdog_dispatch_acceptance_gate(
@@ -110,6 +220,13 @@ def check_watchdog_dispatch_acceptance_gate(
             "predicate_kind", PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE
         )
         result["blocker_event"] = blocker_event
+
+    # ── M7 shadow validation before watchdog dispatch (T15) ────────────────
+    m7_shadow = _shadow_validate_watchdog_boundary(
+        dispatch_kind=dispatch_kind,
+        spec_path=spec_path,
+    )
+    result["m7_shadow_validation"] = m7_shadow
 
     return result
 
@@ -204,6 +321,10 @@ def assess_watchdog_accepted_progress(
           exists for the prior milestone.
     """
     if not isinstance(snapshot_entry, Mapping) or not snapshot_entry:
+        # ── M7 shadow validation for not-applicable path (T15) ──────────
+        m7_shadow = _shadow_validate_watchdog_boundary(
+            dispatch_kind="watchdog",
+        )
         return {
             "activity_classification": ACTIVITY_CLASSIFICATION_NOT_APPLICABLE,
             "escalate": False,
@@ -212,6 +333,7 @@ def assess_watchdog_accepted_progress(
             "acceptance_state": "not_applicable",
             "fixer_infrastructure_active": False,
             "automatic_continuation_custody": False,
+            "m7_shadow_validation": m7_shadow,
         }
 
     accepted_progress = snapshot_entry.get("accepted_progress")
@@ -327,6 +449,12 @@ def assess_watchdog_accepted_progress(
     else:
         escalation_reason = ""
 
+    # ── M7 shadow validation for escalation path (T15) ────────────────────
+    m7_shadow = _shadow_validate_watchdog_boundary(
+        dispatch_kind="watchdog",
+        session_id=str(snapshot_entry.get("session", "")) if isinstance(snapshot_entry, Mapping) else "",
+    )
+
     return {
         "activity_classification": activity_classification,
         "escalate": escalate,
@@ -335,4 +463,5 @@ def assess_watchdog_accepted_progress(
         "acceptance_state": acceptance_state,
         "fixer_infrastructure_active": fixer_infra_active,
         "automatic_continuation_custody": auto_continuation,
+        "m7_shadow_validation": m7_shadow,
     }

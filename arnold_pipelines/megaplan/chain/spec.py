@@ -26,6 +26,19 @@ from arnold_pipelines.megaplan.auto import (
     ESCALATE_ACTIONS,
 )
 from arnold_pipelines.megaplan._core import resolve_plan_dir
+from arnold_pipelines.megaplan._core.io import (
+    ProjectionCursor,
+    ProjectionCursorMismatchError,
+    ProjectionRecord,
+    append_projection_event,
+    deterministic_projection_replay,
+    latest_projection_cursor,
+    load_projection_history,
+    now_utc,
+    projection_history_path,
+    projection_snapshot_path,
+    rebuild_projection_atomically,
+)
 from arnold_pipelines.megaplan._core.user_config import VALID_VENDORS
 from arnold_pipelines.megaplan.profiles import (
     VALID_CRITIC_CHOICES,
@@ -1806,7 +1819,230 @@ def load_chain_state(
     return best_state
 
 
-def save_chain_state(spec_path: Path, state: ChainState) -> None:
+# ── Chain state projection constants ────────────────────────────────────────
+# M7: Projection adapters for chain state persistence.
+# These are cursor-checked append + atomic rebuild adapters that supplement
+# (not replace) the legacy full-file save.  Legacy readers consume the
+# state.json file directly; new readers should prefer the projection
+# snapshot or replay for cursor-validated reads.
+#
+# OLD-READER / NEW-WRITER METADATA:
+#   - Legacy readers (all callers before M7) use load_chain_state() which
+#     reads state.json directly.  These readers DO NOT validate projection
+#     cursors and accept the file as authority.
+#   - New writers (M7+) supplement each save_chain_state() with a
+#     cursor-checked projection event appended to the history.
+#   - New readers (M7+) can use rebuild_chain_state_projection() or
+#     chain_state_projection_cursor() for cursor-validated reads.
+#   - UNCERTAINTY: Legacy readers have no cursor validation; divergence
+#     between state.json and projection history is only detectable by
+#     the new readers.  Production enforcement remains disabled in M7.
+#   - The projection history is an append-only ledger; it never erases
+#     prior records, even on rebuild.
+
+_CHAIN_PROJECTION_ID = "chain-state"
+_CHAIN_PROJECTION_SCHEMA_VERSION = 1
+
+
+def _chain_projection_dir(spec_path: Path) -> Path:
+    """Return the projection storage directory for chain state events.
+
+    Stores under ``<project_root>/.megaplan/plans/.chains/projections/``.
+    """
+    project_root = _project_root_for_chain_spec(spec_path)
+    return project_root / ".megaplan" / "plans" / ".chains" / "projections"
+
+
+def _record_chain_state_event(
+    spec_path: Path,
+    state: ChainState,
+    *,
+    event_type: str = "state_saved",
+    flock: bool = True,
+) -> ProjectionRecord:
+    """Append a cursor-checked projection event recording the chain state save.
+
+    The event carries the full state payload and a cursor derived from the
+    current chain state file.  This is a shadow-side-effect — it supplements
+    the existing full-file write without replacing it.
+    """
+    projection_dir = _chain_projection_dir(spec_path)
+    state_path = _state_path_for(spec_path)
+
+    # Compute a cursor from the current state file (the accepted-source record)
+    source_cursor = None
+    if state_path.exists():
+        try:
+            source_cursor = _cursor_from_path(state_path)
+        except (FileNotFoundError, OSError):
+            pass
+
+    event_id = _generate_projection_event_id(_CHAIN_PROJECTION_ID, event_type)
+    record = ProjectionRecord(
+        event_type=event_type,
+        event_id=event_id,
+        payload={
+            "schema_version": _CHAIN_PROJECTION_SCHEMA_VERSION,
+            "state": state.to_dict(),
+            "spec_path": str(_storage_identity_for_chain_spec(spec_path)),
+        },
+        occurred_at=now_utc(),
+        cursor=source_cursor,
+        idempotency_key=f"chain-save-{_storage_identity_for_chain_spec(spec_path)}-{event_id}",
+    )
+    return append_projection_event(
+        projection_dir,
+        _CHAIN_PROJECTION_ID,
+        record,
+        source_path=state_path,
+        flock=flock,
+        snapshot_dir=projection_dir,
+    )
+
+
+def rebuild_chain_state_projection(
+    spec_path: Path,
+    *,
+    flock: bool = True,
+) -> dict[str, Any]:
+    """Atomically rebuild the chain state projection from the append-only history.
+
+    Returns a dict with keys:
+      - ``status``: ``\"rebuilt\"`` | ``\"no_history\"`` | ``\"error\"``
+      - ``snapshot_path``: path to the written snapshot (if rebuilt)
+      - ``projection``: the complete projected state (if rebuilt)
+      - ``cursor``: the latest source cursor (if available)
+      - ``record_count``: number of projection records processed
+      - ``diagnostics``: list of diagnostic messages
+
+    The rebuild writes a complete snapshot atomically so consumers see
+    either the full previous version or the full new version.
+    """
+    projection_dir = _chain_projection_dir(spec_path)
+    diagnostics: list[str] = []
+    records = load_projection_history(projection_dir, _CHAIN_PROJECTION_ID)
+    if not records:
+        return {
+            "status": "no_history",
+            "snapshot_path": None,
+            "projection": None,
+            "cursor": None,
+            "record_count": 0,
+            "diagnostics": ["No projection history found — nothing to rebuild"],
+        }
+
+    def _fold_chain_state(
+        acc: dict[str, Any], record: ProjectionRecord
+    ) -> dict[str, Any]:
+        """Fold: last non-empty state payload wins."""
+        state_payload = record.payload.get("state")
+        if isinstance(state_payload, dict):
+            acc.update(state_payload)
+        return acc
+
+    try:
+        projection_data = deterministic_projection_replay(
+            projection_dir, _CHAIN_PROJECTION_ID, fold_fn=_fold_chain_state
+        )
+    except Exception as exc:
+        return {
+            "status": "error",
+            "snapshot_path": None,
+            "projection": None,
+            "cursor": None,
+            "record_count": len(records),
+            "diagnostics": [f"Replay failed: {exc}"],
+        }
+
+    last_cursor = latest_projection_cursor(projection_dir, _CHAIN_PROJECTION_ID)
+    snapshot_path = rebuild_projection_atomically(
+        projection_dir,
+        _CHAIN_PROJECTION_ID,
+        projection_data,
+        cursor=last_cursor,
+    )
+    return {
+        "status": "rebuilt",
+        "snapshot_path": str(snapshot_path),
+        "projection": dict(projection_data),
+        "cursor": last_cursor.to_dict() if last_cursor else None,
+        "record_count": len(records),
+        "diagnostics": diagnostics,
+    }
+
+
+def chain_state_projection_cursor(spec_path: Path) -> ProjectionCursor | None:
+    """Return the latest cursor from the chain state projection history."""
+    projection_dir = _chain_projection_dir(spec_path)
+    return latest_projection_cursor(projection_dir, _CHAIN_PROJECTION_ID)
+
+
+def chain_state_projection_snapshot(spec_path: Path) -> dict[str, Any] | None:
+    """Return the most recent chain state projection snapshot, or None."""
+    projection_dir = _chain_projection_dir(spec_path)
+    snapshot_path = projection_snapshot_path(projection_dir, _CHAIN_PROJECTION_ID)
+    if not snapshot_path.exists():
+        return None
+    try:
+        import json as _json
+
+        return _json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+
+
+def _generate_projection_event_id(projection_id: str, event_type: str) -> str:
+    """Generate a deterministic event ID for projection events."""
+    from datetime import datetime, timezone
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+    seed = f"{projection_id}:{event_type}:{ts}"
+    return f"chain-proj-{hashlib.sha256(seed.encode('utf-8')).hexdigest()[:12]}"
+
+
+def _cursor_from_path(path: Path) -> ProjectionCursor:
+    """Build a ProjectionCursor from the current state of *path*."""
+    resolved = path.resolve()
+    record_count = 0
+    if resolved.exists():
+        try:
+            text = resolved.read_text(encoding="utf-8")
+            lines = [line for line in text.splitlines() if line.strip()]
+            record_count = len(lines)
+        except (FileNotFoundError, OSError):
+            pass
+    from arnold_pipelines.megaplan._core.io import sha256_file
+
+    source_digest = (
+        sha256_file(resolved)
+        if resolved.exists()
+        else "sha256:" + hashlib.sha256(b"").hexdigest()
+    )
+    return ProjectionCursor(
+        source_path=str(resolved),
+        source_record_count=record_count,
+        source_digest=source_digest,
+        last_appended_at=now_utc(),
+    )
+
+
+def save_chain_state(
+    spec_path: Path,
+    state: ChainState,
+    *,
+    _record_projection: bool = True,
+) -> None:
+    """Persist chain state with atomic JSON replacement.
+
+    M7 (shadow): In addition to the legacy full-file atomic write, this
+    function appends a cursor-checked projection event to an append-only
+    history.  The projection event is recorded *after* the state file write
+    succeeds so the source-of-truth file always reflects the committed state.
+
+    Set ``_record_projection=False`` to skip the projection side-effect
+    (used by internal rebuild/repair callers that should not create
+    duplicate records).
+    """
     state_path = _state_path_for(spec_path)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     spec_identity = _storage_identity_for_chain_spec(spec_path)
@@ -1822,10 +2058,37 @@ def save_chain_state(spec_path: Path, state: ChainState) -> None:
     metadata["chain_spec_path"] = str(spec_identity)
     if spec_identity.exists():
         metadata["chain_spec_sha256"] = hashlib.sha256(spec_identity.read_bytes()).hexdigest()
+    # ── M7 old-reader / new-writer metadata ─────────────────────────────
+    # Record the writer identity so that later readers can distinguish
+    # legacy full-file writes from projection-supplemented writes.
+    metadata["_m7_projection_writer"] = True
+    metadata["_m7_projection_id"] = _CHAIN_PROJECTION_ID
+    metadata.setdefault("_m7_projection_first_seen_at", now_utc())
+    # ─────────────────────────────────────────────────────────────────────
     state.metadata = metadata
     tmp = state_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(state.to_dict(), indent=2) + "\n", encoding="utf-8")
     tmp.replace(state_path)
+
+    # ── M7 projection side-effect ────────────────────────────────────────
+    if _record_projection:
+        try:
+            _record_chain_state_event(spec_path, state)
+        except ProjectionCursorMismatchError as exc:
+            # Shadow-mode: projection append failure is logged but never
+            # blocks the write.  The state.json file is the authority;
+            # the projection is supplemental evidence.
+            log.warning(
+                "M7 chain-state projection append blocked by cursor mismatch: %s. "
+                "State file is intact; projection history may need reconciliation.",
+                exc,
+            )
+        except Exception:
+            log.warning(
+                "M7 chain-state projection append failed (non-fatal). "
+                "State file is intact.",
+                exc_info=True,
+            )
 
 
 def _runtime_policy_path_for(spec_path: Path) -> Path:
