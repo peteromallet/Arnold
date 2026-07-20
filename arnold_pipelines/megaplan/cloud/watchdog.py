@@ -15,7 +15,6 @@ fixer-infrastructure activity (repair loops, recovery, custody handover) and
 automatic continuation custody (chain advancing to the next milestone without
 acceptance evidence).  This ensures the watchdog escalates on genuine absence
 of accepted progress rather than treating liveness signals as success.
-
 M7 shadow validation is wired into both ``check_watchdog_dispatch_acceptance_gate``
 and ``assess_watchdog_accepted_progress`` so watchdog subprocess launch and
 escalation paths diagnose stale authority before acting.  Production enforcement

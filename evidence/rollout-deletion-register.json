@@ -1,0 +1,672 @@
+{
+  "schema": "m6.rollout-deletion-register.v1",
+  "generated_at": "2026-07-19T22:34:46.982970+00:00",
+  "generator": "tools/generate_m6_rollout_register.py",
+  "source_evidence": {
+    "finding_prevention_register": "/workspace/custody-control-plane-20260714/Arnold/evidence/finding-prevention-register.json",
+    "unified_authority_research": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+  },
+  "north_star_guard": "Unavailable denominators (SLO baselines, measured p95, productive/replay fractions, cost attribution, compaction time, projection I/O latency) are preserved as UNKNOWN, never 0 or success evidence.",
+  "entry_count": 25,
+  "finding_row_count": 17,
+  "promotion_gate_count": 8,
+  "rows": [
+    {
+      "entry_id": "F01",
+      "entry_kind": "finding_rollout_deletion",
+      "title": "stale repair identity attached T7 evidence to T12",
+      "canonical_owner": "Run Authority",
+      "owner_control": "Run Authority defines attempt/fence identity; repair custody dispatches only an exact tuple `(environment, session, chain, plan_revision, phase, task, attempt, normalized_failure_kind, blocker_or_phase_result_hash, fence)` and supersedes mismatches.",
+      "rollout_gate": "shadow mismatch telemetry must have exact evidence IDs before a repair/worker canary. p95 event-to-accepted-repair is measured in the canary.",
+      "rollback_behavior": "mismatch becomes superseded/quarantined and launches nothing. Delete basename, implicit-latest, and request-only selectors only after zero runtime callers and mixed-version replay proof in M11.",
+      "deletion_gate": "Delete basename, implicit-latest, and request-only selectors only after zero runtime callers and mixed-version replay proof in M11.",
+      "acceptance_proof_summary": "M7 freezes identity and quarantine semantics; M10 enforces dispatch and terminal closure. Captured T7/T12 replay proves cross-binding is impossible and every request/claim/attempt/decision/index ends terminal.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [
+        "M7",
+        "M10"
+      ],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "897c21f5e2a733c28fcc951dc67f3dff41d458d957867109b86b207ca473c754"
+    },
+    {
+      "entry_id": "F02",
+      "entry_kind": "finding_rollout_deletion",
+      "title": "scan-driven recovery added 1h38m44s",
+      "canonical_owner": "WBC",
+      "owner_control": "WBC emits durable block/exit events; repair custody consumes a deduplicated trigger; Run Authority validates current identity/fence. Hourly scan and six-hour Maintenance pass reconcile missed events only.",
+      "rollout_gate": "action-off shadow SLO, then one allowlisted repair/worker canary.",
+      "rollback_behavior": "delivery ambiguity stays pending and scan-recoverable; no duplicate launch. Retire scan-as-primary only after the missed-event corpus and canary both pass.",
+      "deletion_gate": "Retire scan-as-primary only after the missed-event corpus and canary both pass.",
+      "acceptance_proof_summary": "M6A/M8 make block/exit writes durable; M10 runs deterministic lost/duplicate/out-of-order trigger fixtures and a real eligible blocked-run prove p95 under five minutes plus missed-event recovery by the six-hour backstop.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [
+        "M10"
+      ],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "9b40eb2c32485c33a5909ee630090a1f1e3afc0bacff07ff350ece2174d2862b"
+    },
+    {
+      "entry_id": "F03",
+      "entry_kind": "finding_rollout_deletion",
+      "title": "repair results were not adoptable and work replayed",
+      "canonical_owner": "WBC",
+      "owner_control": "WBC stores immutable receipt evidence; Run Authority validates and accepts/quarantines; executor offers a verify-only adoption path.",
+      "rollout_gate": "shadow comparison, captured replay, executor canary.",
+      "rollback_behavior": "no receipt means no adoption, never implicit trust. Remove repair-specific replay shortcuts after zero callers and replay parity.",
+      "deletion_gate": "Remove repair-specific replay shortcuts after zero callers and replay parity.",
+      "acceptance_proof_summary": "M6A/M8 make WBC receipt/attempt evidence durable; M7 joins custody identity; M8A implements verify-only adoption. Valid T7/T12 fixtures skip full replay; any altered contract, tree, test set, or fence rejects adoption and executes normally.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [
+        "M7",
+        "M8A"
+      ],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "48750e194167c8d0a3e213ad6a734f5fee6c3dc3864adc6ada531a962d4b9fb9"
+    },
+    {
+      "entry_id": "F04",
+      "entry_kind": "finding_rollout_deletion",
+      "title": "mutable aliases overwrote attempt history",
+      "canonical_owner": "WBC",
+      "owner_control": "WBC owns append-only attempt-scoped artifacts/events; Run Authority reducer selects accepted attempt; aliases become projections.",
+      "rollout_gate": "dual-write shadow and deterministic replay before enforcement.",
+      "rollback_behavior": "append failure is `persistence_failed`/`indeterminate`; no success. Delete mutable historical writes after old-reader compatibility expiry and zero-writer scan in M11.",
+      "deletion_gate": "Delete mutable historical writes after old-reader compatibility expiry and zero-writer scan in M11.",
+      "acceptance_proof_summary": "M6A supplies the store, M8 adopts review/rework producers, and M10 proves replay. Two review/rework cycles preserve byte-identical attempt 1, monotonic ordinals, causal parents, and deterministic current projection.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [
+        "M6A",
+        "M8",
+        "M10"
+      ],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "b773e4da13a2f73a1a785419552e90cc3813388e0c3df71fd38f35d8ec9c2d9e"
+    },
+    {
+      "entry_id": "F05",
+      "entry_kind": "finding_rollout_deletion",
+      "title": "plan, chain, cloud, repair, and introspection disagreed",
+      "canonical_owner": "Run Authority",
+      "owner_control": "one pure attempt-aware Run Authority reducer; custody supplies coherent evidence; every other view projects reducer cursor/hash and keeps execution, liveness, custody, publication, delivery, and integrity separate.",
+      "rollout_gate": "deterministic replay, action-off shadow, then idle projection canary before any control consumer promotion.",
+      "rollback_behavior": "disagreement emits drift and blocks action. Delete local status classifiers and raw fallback control reads only after M11 zero- reader and forced-rollback proof.",
+      "deletion_gate": "Delete local status classifiers and raw fallback control reads only after M11 zero- reader and forced-rollback proof.",
+      "acceptance_proof_summary": "M9. Captured review-rework input renders `executing attempt 2` everywhere with 100% cursor/hash agreement; torn evidence becomes unknown.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [
+        "M9"
+      ],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "81b6f6ed70b6ac42c65eadf52588d70adfb298cadbe457b1cf8166759b11f993"
+    },
+    {
+      "entry_id": "F06",
+      "entry_kind": "finding_rollout_deletion",
+      "title": "heartbeat projection rewrote a growing journal non-atomically",
+      "canonical_owner": "Observability/projection",
+      "owner_control": "observability owns cursor-checked O(event-size) append and atomic rebuild; authority remains upstream and projections disposable.",
+      "rollout_gate": "review candidate commits, deterministic stress, idle runtime canary, then controlled deployment with installed SHA provenance.",
+      "rollback_behavior": "cursor mismatch rebuilds atomically while the prior complete file remains readable. Remove full-journal rewrite only after rollback and historical-reader compatibility proof.",
+      "deletion_gate": "Remove full-journal rewrite only after rollback and historical-reader compatibility proof.",
+      "acceptance_proof_summary": "M7 lands/proves the writer boundary; M9 proves complete rebuild. At least 10,000 heartbeats yield sequences 0..9999, one rebuild, monotonic valid concurrent reads, zero false stalls, and recorded bytes/time.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [
+        "M7",
+        "M9"
+      ],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "3b80b3cf243ecdc3319319b35d437baa57480fa1aa32d82dff4d223bbf8281f5"
+    },
+    {
+      "entry_id": "F07",
+      "entry_kind": "finding_rollout_deletion",
+      "title": "fully serial DAGs were admitted without feasibility proof",
+      "canonical_owner": "Planner/compiler",
+      "owner_control": "planner/compiler requires a reason per dependency, separates `routing_group`, calculates critical path/width/seriality/turn demand, and rejects unexplained 100% serialization for eight or more tasks.",
+      "rollout_gate": "report-only compiler diagnostics, captured replay, then new-plan canary; existing plans are never silently rewritten.",
+      "rollback_behavior": "infeasible plan returns a typed planning blocker requiring split/replan or explicit authorized exception. Delete implicit dependency/order coupling after corpus parity and zero emitters.",
+      "deletion_gate": "Delete implicit dependency/order coupling after corpus parity and zero emitters.",
+      "acceptance_proof_summary": "M8A. Replaying both finalized plans flags the observed serial chains and produces safe independent waves without changing semantics.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [
+        "M8A"
+      ],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "09ce82fe520f037b5a6703d5de33a43ff5830194541568758a5ae4bb04220c8d"
+    },
+    {
+      "entry_id": "F08",
+      "entry_kind": "finding_rollout_deletion",
+      "title": "high-complexity tasks exhausted fixed worker budgets",
+      "canonical_owner": "Planner/compiler",
+      "owner_control": "planner/compiler splits implementation from proof at complexity >=7 or records an explicit evidence-backed larger budget; executor enforces the compiled ceiling and checkpoint boundaries.",
+      "rollout_gate": "shadow feasibility, replay, then executor canary.",
+      "rollback_behavior": "budget exhaustion opens a typed blocker/checkpoint, never blind retry. Remove uniform-budget fallback after zero callers.",
+      "deletion_gate": "Remove uniform-budget fallback after zero callers.",
+      "acceptance_proof_summary": "M8A. T7/T12 and later complexity-8/9 fixtures either split or fail admission; no partial implementation is discarded when proof budget ends.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [
+        "M8A"
+      ],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "c1adf29b37abeaa7a40a2e1480704c0eb6e069cd80d2e52cf459979653441e22"
+    },
+    {
+      "entry_id": "F09",
+      "entry_kind": "finding_rollout_deletion",
+      "title": "deterministic validation consumed model calls",
+      "canonical_owner": "Planner/compiler",
+      "owner_control": "planner/compiler emits harness validation jobs; executor runs them outside model calls with captured command, environment, output, and hash.",
+      "rollout_gate": "shadow task classification, captured replay, executor canary.",
+      "rollback_behavior": "ambiguous or mutating checks remain explicit model or human tasks; they are not guessed mechanical. Delete validation-only model routing after zero classified callers and parity.",
+      "deletion_gate": "Delete validation-only model routing after zero classified callers and parity.",
+      "acceptance_proof_summary": "M8A. Strategy T10/T12/T15 equivalents make zero model calls and reproduce the same pass/fail semantics.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [
+        "M8A"
+      ],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "3bca20865cdaa84c32852189028d260d035cd974ca0cc6916b9d59f38058613c"
+    },
+    {
+      "entry_id": "F10",
+      "entry_kind": "finding_rollout_deletion",
+      "title": "invalid source refs retried for 2h09m",
+      "canonical_owner": "Executor/launcher",
+      "owner_control": "launcher/runtime packaging validates the ref once, suggests a valid audited ref, caps attempts, and proves detached source/install/runtime SHA equality before start.",
+      "rollout_gate": "fixture and dry-run preflight before any controlled deployment.",
+      "rollback_behavior": "unresolved or divergent ref is a launch blocker. Remove permissive repeated-start paths after installed-runtime provenance canary.",
+      "deletion_gate": "Remove permissive repeated-start paths after installed-runtime provenance canary.",
+      "acceptance_proof_summary": "M8A. Invalid-ref and dirty/divergent-checkout fixtures stop within the configured bounded attempts and never create repeated chain starts.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [
+        "M8A"
+      ],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "a85fdda952e47f0562e37f91425ee18874f0b632035fdab8c4dace71e7944db0"
+    },
+    {
+      "entry_id": "F11",
+      "entry_kind": "finding_rollout_deletion",
+      "title": "provider timeout, invalid summary model, import leakage, and compaction churn",
+      "canonical_owner": "Executor/launcher",
+      "owner_control": "executor/launcher resolves model before dispatch, isolates target/runtime imports, permits at most one repeated 300-second timeout before failover/escalation, and caps compaction at one per turn unless authorized.",
+      "rollout_gate": "shadow counters and worker canary before promotion.",
+      "rollback_behavior": "invalid route/import or exhausted budget is visible terminal/escalated state. Remove ambient unbounded fallbacks after zero use.",
+      "deletion_gate": "Remove ambient unbounded fallbacks after zero use.",
+      "acceptance_proof_summary": "M8A. Empty/invalid model, divergent checkout, import leakage, repeated timeout, and compaction fixtures terminate within bounds with exact reasons and no duplicate effect.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [
+        "M8A"
+      ],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "487a7672d7098099f866390bce360c515b3150b2b8ad5be064fc2004fcf3a09b"
+    },
+    {
+      "entry_id": "F12",
+      "entry_kind": "finding_rollout_deletion",
+      "title": "oversized rework exceeded the five-task ceiling",
+      "canonical_owner": "Planner/compiler",
+      "owner_control": "planner/compiler compiles rework waves; executor enforces the same maximum scope/grant as normal dispatch.",
+      "rollout_gate": "replay then executor canary.",
+      "rollback_behavior": "oversized grant is rejected before worker launch. Delete review-only fanout bypass after zero-call scan.",
+      "deletion_gate": "Delete review-only fanout bypass after zero-call scan.",
+      "acceptance_proof_summary": "M8A. Six-task fixture splits into bounded waves with exact grants and identical accepted output.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [
+        "M8A"
+      ],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "810cb076b78806194cc73afe5410ed78206dd479ca75e2e3bc2aeb7388557a9d"
+    },
+    {
+      "entry_id": "F13",
+      "entry_kind": "finding_rollout_deletion",
+      "title": "repeated normalized budget failures did not stop retries",
+      "canonical_owner": "Executor/launcher",
+      "owner_control": "executor normalizes failure class while retaining exact task/ attempt identity; two equivalent `worker_budget_exhausted` occurrences open a plan circuit requiring split/budget authority.",
+      "rollout_gate": "shadow-only circuits on captured corpus, then executor canary.",
+      "rollback_behavior": "open circuit blocks dispatch and preserves checkpoints. Delete unconditional retry branch after false-positive review.",
+      "deletion_gate": "Delete unconditional retry branch after false-positive review.",
+      "acceptance_proof_summary": "M8A. T7 plus T12 opens the circuit before a third blind retry; unrelated failures do not collide.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [
+        "M8A"
+      ],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "c46e01d9dbd26ab0880226cb6c4b83cdba80dc2e463e15d76f6248ef64e7dc0f"
+    },
+    {
+      "entry_id": "F14",
+      "entry_kind": "finding_rollout_deletion",
+      "title": "productive and replayed time/tokens/cost were not authoritative",
+      "canonical_owner": "Observability/projection",
+      "owner_control": "observability emits queue, session-start, inference, tool, validation, retry-wait, compaction, Git, transition, repair, verify, and replay time plus calls/tokens/dollars and accepted-output deltas; Maintenance analyzes but does not mutate.",
+      "rollout_gate": "shadow telemetry across captured and canary runs before an SLO becomes enforcing.",
+      "rollback_behavior": "missing denominators yield unknown, not zero. Remove raw-total efficiency reports after joined-ledger coverage reaches the M11 gate.",
+      "deletion_gate": "Remove raw-total efficiency reports after joined-ledger coverage reaches the M11 gate.",
+      "acceptance_proof_summary": "M6 freezes unknown baselines/schema; M8A emits executor fields; M9 joins projections. Replays reconcile totals and never label legitimate M4 implementation/review as waste; missing cost has an explicit reason.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [
+        "M6",
+        "M8A",
+        "M9"
+      ],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "564ae22e7897ca45b7f1f1bbe93f1ae5d079a29faa9df39a8458cc072c5abc57"
+    },
+    {
+      "entry_id": "F15",
+      "entry_kind": "finding_rollout_deletion",
+      "title": "custody records and overlaps were left open or contradictory",
+      "canonical_owner": "TransitionWriter/repair custody",
+      "owner_control": "repair custody owns one fenced terminalization transaction or reconciled outbox; Run Authority prevents simultaneous current worker and repair grants for the same subject attempt.",
+      "rollout_gate": "shadow closure audit, repair/worker canary, genuine block test.",
+      "rollback_behavior": "ambiguity remains open/pending and blocks another effect. Delete repair sidecar authority after zero reader/writer proof.",
+      "deletion_gate": "Delete repair sidecar authority after zero reader/writer proof.",
+      "acceptance_proof_summary": "M7 writer/identity contract and M10 fault matrix. Every success, failure, cancellation, supersession, timeout, and escalation closes exactly one custody chain; overlap fixture accepts only one actor.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [
+        "M7",
+        "M10"
+      ],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "87c44c0da2ff663ead919da7baf73f3baf4be9ae127ee5a4b23991aa18871c4b"
+    },
+    {
+      "entry_id": "F16",
+      "entry_kind": "finding_rollout_deletion",
+      "title": "auditor reasons were heuristic and could join unrelated sessions",
+      "canonical_owner": "Observability/projection",
+      "owner_control": "observability gathers exact evidence; Maintenance owns read-only deterministic reasons for normalized consecutive blocks, signature drift, unclosed custody, index mismatch, detection SLO, worker/repair overlap, cross-session joins, projection amplification, full seriality, oversized rework, invalid model, and missing ledger coverage.",
+      "rollout_gate": "report-only shadow and precision review before ticket proposals.",
+      "rollback_behavior": "unknown evidence produces an explicit unknown reason and no repair. Remove old heuristic gather branches after reason parity.",
+      "deletion_gate": "Remove old heuristic gather branches after reason parity.",
+      "acceptance_proof_summary": "M9 reason fixtures fire once with exact evidence IDs and never match a same-basename unrelated session; M10/M11 verify recovery reporting.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [
+        "M9"
+      ],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "98402c4ebb89bd5b7a0da38f79640cacc9b47bb73a0b1f6cccaf4c876cca1dc3"
+    },
+    {
+      "entry_id": "F17",
+      "entry_kind": "finding_rollout_deletion",
+      "title": "mixed source/install/runtime versions could invalidate every proof",
+      "canonical_owner": "WBC",
+      "owner_control": "WBC records code/config/adapter identity; launcher proves it; Run Authority rejects wrong-version claims; observability reports provenance.",
+      "rollout_gate": "no deployment without pinned source and installed/runtime/wrapper receipts.",
+      "rollback_behavior": "mismatch stops launch/promotion and preserves read-only historical adapters. Delete compatibility writers only after mixed-version replay and forced rollback pass.",
+      "deletion_gate": "Delete compatibility writers only after mixed-version replay and forced rollback pass.",
+      "acceptance_proof_summary": "M6 freezes the vector, M8 adopts it, M11 proves old-reader/ new-writer and new-reader/old-run behavior plus source/install/cloud/resident SHA equality in canary/live evidence.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [
+        "M6",
+        "M8",
+        "M11"
+      ],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "0514535b1ebb52422356598263736d90995a5b0d67993df5b49864863005f49f"
+    },
+    {
+      "entry_id": "G01",
+      "entry_kind": "promotion_gate",
+      "title": "Shadow append-only evidence and latency/work telemetry; mutation, enforcement,",
+      "canonical_owner": "Observability/projection",
+      "owner_control": "Shadow append-only evidence and latency/work telemetry; mutation, enforcement, external effects, and deletion remain off.",
+      "rollout_gate": "external effects, and deletion remain off.",
+      "rollback_behavior": "Kill switch disables promotion/effects, not evidence append, reconciliation, observation, or reporting. Rollback retains the new history and projections and cannot restore a legacy authority writer.",
+      "deletion_gate": "Only after mixed-version and forced rollback proof, zero legacy authority readers/writers at static and runtime levels, approved deletion list, compatibility expiry, and content-addressed evidence. Source: §Rollout and promotion gates, gate 8 (Retirement).",
+      "acceptance_proof_summary": "external effects, and deletion remain off.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "5ba88986025cec047c4f63fb33d884dfef03c828a7c346a1d6788e52e2dd23f2"
+    },
+    {
+      "entry_id": "G02",
+      "entry_kind": "promotion_gate",
+      "title": "Replay the captured Transaction Spine and Strategy Roadmap inputs. Results",
+      "canonical_owner": "Executor/launcher",
+      "owner_control": "Replay captured Transaction Spine and Strategy Roadmap inputs; results must be deterministic by content hash, exercise each F01-F17 reason/control, and preserve the productive-versus-avoidable distinction.",
+      "rollout_gate": "must be deterministic by content hash, exercise each F01-F17 reason/control,\n   and preserve the productive-versus-avoidable distinction.",
+      "rollback_behavior": "Kill switch disables promotion/effects, not evidence append, reconciliation, observation, or reporting. Rollback retains the new history and projections and cannot restore a legacy authority writer.",
+      "deletion_gate": "Only after mixed-version and forced rollback proof, zero legacy authority readers/writers at static and runtime levels, approved deletion list, compatibility expiry, and content-addressed evidence. Source: §Rollout and promotion gates, gate 8 (Retirement).",
+      "acceptance_proof_summary": "must be deterministic by content hash, exercise each F01-F17 reason/control,\n   and preserve the productive-versus-avoidable distinction.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "e80d28780caba80a379529e2391b8e89f106c401045416628f6f5c3cd1a45a29"
+    },
+    {
+      "entry_id": "G03",
+      "entry_kind": "promotion_gate",
+      "title": "Idle projection canary",
+      "canonical_owner": "Observability/projection",
+      "owner_control": "Idle projection canary: pinned installed runtime, no active mutation, 10,000-heartbeat/stress proof, valid monotonic concurrent reads, rebuild digest parity, zero false-stall or authority drift.",
+      "rollout_gate": "pinned installed runtime, no active mutation,\n   10,000-heartbeat/stress proof, valid monotonic concurrent reads, rebuild\n   digest parity, zero false-stall or authority drift.",
+      "rollback_behavior": "Kill switch disables promotion/effects, not evidence append, reconciliation, observation, or reporting. Rollback retains the new history and projections and cannot restore a legacy authority writer.",
+      "deletion_gate": "Only after mixed-version and forced rollback proof, zero legacy authority readers/writers at static and runtime levels, approved deletion list, compatibility expiry, and content-addressed evidence. Source: §Rollout and promotion gates, gate 8 (Retirement).",
+      "acceptance_proof_summary": "pinned installed runtime, no active mutation,\n   10,000-heartbeat/stress proof, valid monotonic concurrent reads, rebuild\n   digest parity, zero false-stall or authority drift.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "64ad67bacfad7c4a88eceaf669bf0b3b33af4e5b0b30ac35e2e0fc21d0333ea0"
+    },
+    {
+      "entry_id": "G04",
+      "entry_kind": "promotion_gate",
+      "title": "Planner/executor canary",
+      "canonical_owner": "Planner/compiler",
+      "owner_control": "Planner/executor canary: new plans only, feasibility warnings before reject, deterministic validation and bounded circuits, no rewriting existing plans.",
+      "rollout_gate": "new plans only, feasibility warnings before reject,\n   deterministic validation and bounded circuits, no rewriting existing plans.",
+      "rollback_behavior": "Kill switch disables promotion/effects, not evidence append, reconciliation, observation, or reporting. Rollback retains the new history and projections and cannot restore a legacy authority writer.",
+      "deletion_gate": "Only after mixed-version and forced rollback proof, zero legacy authority readers/writers at static and runtime levels, approved deletion list, compatibility expiry, and content-addressed evidence. Source: §Rollout and promotion gates, gate 8 (Retirement).",
+      "acceptance_proof_summary": "new plans only, feasibility warnings before reject,\n   deterministic validation and bounded circuits, no rewriting existing plans.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "081e5afdc43fd296923bc00609b6af905dbc7f10bc6e0d2abb822fda17f256f4"
+    },
+    {
+      "entry_id": "G05",
+      "entry_kind": "promotion_gate",
+      "title": "Repair/worker canary",
+      "canonical_owner": "TransitionWriter/repair custody",
+      "owner_control": "Repair/worker canary: one allowlisted synthetic or naturally occurring eligible blocker, exact signature/fence, one managed worker, verify-only adoption, terminal custody, independent 5m/1h/6h checkpoints.",
+      "rollout_gate": "one allowlisted synthetic or naturally occurring\n   eligible blocker, exact signature/fence, one managed worker, verify-only\n   adoption, terminal custody, independent 5m/1h/6h checkpoints.",
+      "rollback_behavior": "Kill switch disables promotion/effects, not evidence append, reconciliation, observation, or reporting. Rollback retains the new history and projections and cannot restore a legacy authority writer.",
+      "deletion_gate": "Only after mixed-version and forced rollback proof, zero legacy authority readers/writers at static and runtime levels, approved deletion list, compatibility expiry, and content-addressed evidence. Source: §Rollout and promotion gates, gate 8 (Retirement).",
+      "acceptance_proof_summary": "one allowlisted synthetic or naturally occurring\n   eligible blocker, exact signature/fence, one managed worker, verify-only\n   adoption, terminal custody, independent 5m/1h/6h checkpoints.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "39b45cc872e8f99b41a758ab05f48144585588382c52850e71ca2c2a2f0b6ab7"
+    },
+    {
+      "entry_id": "G06",
+      "entry_kind": "promotion_gate",
+      "title": "Controlled deployment",
+      "canonical_owner": "WBC",
+      "owner_control": "Controlled deployment: record source, installed package, wrapper, config, contract, and running process SHAs; promote cohorts only on zero authoritative divergence and within SLO/error budgets.",
+      "rollout_gate": "record source, installed package, wrapper, config,\n   contract, and running process SHAs; promote cohorts only on zero authoritative\n   divergence and within SLO/error budgets.",
+      "rollback_behavior": "Kill switch disables promotion/effects, not evidence append, reconciliation, observation, or reporting. Rollback retains the new history and projections and cannot restore a legacy authority writer.",
+      "deletion_gate": "Only after mixed-version and forced rollback proof, zero legacy authority readers/writers at static and runtime levels, approved deletion list, compatibility expiry, and content-addressed evidence. Source: §Rollout and promotion gates, gate 8 (Retirement).",
+      "acceptance_proof_summary": "record source, installed package, wrapper, config,\n   contract, and running process SHAs; promote cohorts only on zero authoritative\n   divergence and within SLO/error budgets.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "7de9b41e6296df7512ce7ae2986621ed4d3b4b33f3a80830309e4d4736a37130"
+    },
+    {
+      "entry_id": "G07",
+      "entry_kind": "promotion_gate",
+      "title": "Genuine blocked-run acceptance",
+      "canonical_owner": "Run Authority",
+      "owner_control": "Genuine blocked-run acceptance: deliberately use a real supported run and a genuine eligible blocker to prove durable event to accepted repair/escalation p95, resumed authoritative progress, independent verification, projection agreement, and no duplicate/replayed effect.",
+      "rollout_gate": "deliberately use a real supported run and a\n   genuine eligible blocker—not a mocked status label—to prove durable event to\n   accepted repair/escalation p95, resumed authoritative progress, independent\n   verification, projection agreement, and no duplicate/replayed effect.",
+      "rollback_behavior": "Kill switch disables promotion/effects, not evidence append, reconciliation, observation, or reporting. Rollback retains the new history and projections and cannot restore a legacy authority writer.",
+      "deletion_gate": "Only after mixed-version and forced rollback proof, zero legacy authority readers/writers at static and runtime levels, approved deletion list, compatibility expiry, and content-addressed evidence. Source: §Rollout and promotion gates, gate 8 (Retirement).",
+      "acceptance_proof_summary": "deliberately use a real supported run and a\n   genuine eligible blocker—not a mocked status label—to prove durable event to\n   accepted repair/escalation p95, resumed authoritative progress, independent\n   verification, projection agreement, and no duplicate/replayed effect.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "da39f53cd6e4d66d578402cb8abc18d261bf1489fd17f2988f4d68b237fffef5"
+    },
+    {
+      "entry_id": "G08",
+      "entry_kind": "promotion_gate",
+      "title": "Retirement",
+      "canonical_owner": "WBC",
+      "owner_control": "Retirement: only after mixed-version and forced rollback proof, zero legacy authority readers/writers at static and runtime levels, approved deletion list, compatibility expiry, and content-addressed evidence.",
+      "rollout_gate": "only after mixed-version and forced rollback proof, zero legacy\n   authority readers/writers at static and runtime levels, approved deletion\n   list, compatibility expiry, and content-addressed evidence.",
+      "rollback_behavior": "Kill switch disables promotion/effects, not evidence append, reconciliation, observation, or reporting. Rollback retains the new history and projections and cannot restore a legacy authority writer.",
+      "deletion_gate": "Only after mixed-version and forced rollback proof, zero legacy authority readers/writers at static and runtime levels, approved deletion list, compatibility expiry, and content-addressed evidence. Source: §Rollout and promotion gates, gate 8 (Retirement).",
+      "acceptance_proof_summary": "only after mixed-version and forced rollback proof, zero legacy\n   authority readers/writers at static and runtime levels, approved deletion\n   list, compatibility expiry, and content-addressed evidence.",
+      "evidence_references": [
+        ".megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+      ],
+      "milestone_targets": [],
+      "unavailable_denominators": {
+        "measured_p95": "UNKNOWN",
+        "productive_replay_baseline": "UNKNOWN",
+        "cost_attribution": "UNKNOWN",
+        "compaction_time": "UNKNOWN",
+        "projection_io_latency": "UNKNOWN",
+        "slo_baseline": "UNKNOWN"
+      },
+      "row_hash": "778291a0222768fa09e69969ddc6e63770a604e5c2aa4f5b108843014ccaac91"
+    }
+  ],
+  "global_unknowns": {
+    "productive_replay_token_cost": "UNKNOWN",
+    "productive_replay_token_rationale": "Productive-versus-replayed token/cost baselines are UNKNOWN until joined per-task/attempt/repair receipts exist. Current figures are conservative lower bounds, not SLO baselines. Source: unified-authority-efficiency-prevention-20260714.md §Explicit unknowns and non-goals.",
+    "compaction_time": "UNKNOWN",
+    "compaction_time_rationale": "Exact compaction time and the productive fraction of the 50m20s Strategy GLM turn are UNKNOWN until M8A instrumentation exists. Source: unified-authority-efficiency-prevention-20260714.md §Explicit unknowns and non-goals.",
+    "projection_io_latency": "UNKNOWN",
+    "projection_io_latency_rationale": "Exact production latency caused by projection I/O is UNKNOWN until M9 timing and byte telemetry exists. The 137 GiB estimate demonstrates amplification, not a measured wall-time attribution. Source: unified-authority-efficiency-prevention-20260714.md §Explicit unknowns and non-goals.",
+    "initial_p95": "UNKNOWN",
+    "initial_p95_rationale": "Initial p95 and circuit thresholds are safety policies, not claims about mature cohort distributions. Source: unified-authority-efficiency-prevention-20260714.md §Explicit unknowns and non-goals.",
+    "productive_implementation_fraction": "UNKNOWN",
+    "productive_implementation_fraction_rationale": "Productive-implementation-versus-avoidable-overhead baselines are UNKNOWN until joined ledger coverage with exact task/batch/attempt/repair identities and stage decomposition exists. Source: F14 finding and M6 observe-only contract."
+  },
+  "composite_hash": "460d5bda7c58409de7956198f7d9e7528da564a58d82272d78ab5ba977be3219"
+}
