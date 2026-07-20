@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,7 @@ def test_provider_capability_matrix_is_truthful_and_complete() -> None:
             toolsets="file,web,terminal",
             max_tokens=4096,
             timeout_s=90,
+            timeout_source="trusted_cli",
         )
         for backend in ("codex", "hermes", "claude")
     }
@@ -56,6 +58,22 @@ def test_provider_capability_matrix_is_truthful_and_complete() -> None:
     )
 
 
+def test_unbounded_provider_contract_is_explicit_and_provenanced() -> None:
+    contract = provider_execution_contract(
+        backend="codex",
+        toolsets="file,web,terminal",
+        max_tokens=4096,
+        timeout_s=None,
+    )
+    assert contract["controls"]["timeout_s"] is None
+    assert contract["controls"]["timeout_enforcement"] == "not_configured"
+    assert contract["controls"]["timeout_policy"] == {
+        "mode": "unbounded",
+        "source": "default",
+        "timeout_s": None,
+    }
+
+
 def test_generic_tool_policy_maps_exactly_or_fails_truthfully() -> None:
     assert normalize_toolsets("terminal,file,file") == ("file", "terminal")
     assert claude_tools_for(("file", "web", "terminal")) == (
@@ -65,7 +83,7 @@ def test_generic_tool_policy_maps_exactly_or_fails_truthfully() -> None:
         normalize_toolsets("file,secrets")
     with pytest.raises(ValueError, match="cannot enforce a narrowed generic toolset"):
         provider_execution_contract(
-            backend="codex", toolsets="file", max_tokens=100, timeout_s=30
+            backend="codex", toolsets="file", max_tokens=100, timeout_s=30, timeout_source="trusted_cli"
         )
 
 
@@ -218,7 +236,12 @@ def test_hermes_launcher_hydrates_persisted_history_on_resume(
                 "output_tokens": 2,
             }
 
-    monkeypatch.setattr(launcher, "_load_hermes_env", lambda: None)
+    def load_hermes_env_with_stale_deadline():
+        monkeypatch.setenv("HERMES_API_TIMEOUT", "300")
+        monkeypatch.setenv("HERMES_DEEPSEEK_API_TIMEOUT", "1200")
+
+    monkeypatch.setenv("ARNOLD_RESIDENT_UNBOUNDED_REQUEST", "1")
+    monkeypatch.setattr(launcher, "_load_hermes_env", load_hermes_env_with_stale_deadline)
     monkeypatch.setattr(launcher, "_prefer_legacy_megaplan_distribution", lambda: None)
     monkeypatch.setattr(launcher, "_add_fallback_megaplan_paths", lambda: None)
     monkeypatch.setattr(
@@ -242,3 +265,5 @@ def test_hermes_launcher_hydrates_persisted_history_on_resume(
     ]
     assert json.loads(metadata.read_text())["session_id"] == session_id
     assert "RESUMED" in capsys.readouterr().out
+    assert os.environ["HERMES_API_TIMEOUT"] == "inf"
+    assert os.environ["HERMES_DEEPSEEK_API_TIMEOUT"] == "inf"

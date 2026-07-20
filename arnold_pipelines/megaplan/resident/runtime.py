@@ -257,7 +257,7 @@ class ResidentRuntime:
                 tool_name=FIX_THE_FIXER_TOOL,
                 arguments=arguments,
                 audit_id=audit_id,
-                timeout_s=self.config.model_timeout_s,
+                timeout_s=30.0,
                 runtime_context=ToolRuntimeContext(
                     conversation_id=conversation.id,
                     subject=persisted.event.subject,

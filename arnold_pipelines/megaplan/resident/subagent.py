@@ -2798,6 +2798,35 @@ def _attach_synthesis_owner_material(
         return record
 
 
+def _configured_timeout(value: object) -> float | None:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    return float(value)
+
+
+def _explicit_manifest_timeout(manifest: Mapping[str, Any]) -> float | None:
+    """Return only a positively marked trusted-ingress timeout.
+
+    Markerless legacy manifests carried a latent 600-second default. They are
+    intentionally unbounded so continuation cannot reactivate that old cap.
+    """
+    policy = manifest.get("timeout_policy")
+    if not isinstance(policy, Mapping):
+        return None
+    if policy.get("mode") != "explicit" or policy.get("source") not in {"trusted_cli", "verified_user_request"}:
+        return None
+    timeout_s = _configured_timeout(policy.get("timeout_s"))
+    return timeout_s if timeout_s is not None and timeout_s > 0 else None
+
+
+def _explicit_manifest_timeout_source(manifest: Mapping[str, Any]) -> str | None:
+    return (
+        str(manifest["timeout_policy"]["source"])
+        if _explicit_manifest_timeout(manifest) is not None
+        else None
+    )
+
+
 def follow_up_managed_subagent(
     *,
     run_id: str,
@@ -3114,7 +3143,8 @@ def follow_up_managed_subagent(
                 ),
                 toolsets=str(provider_options.get("toolsets") or "file,web,terminal"),
                 max_tokens=int(provider_options.get("max_tokens") or 65_536),
-                provider_timeout_s=float(provider_options.get("timeout_s") or 600.0),
+                provider_timeout_s=_explicit_manifest_timeout(tip),
+                timeout_source=_explicit_manifest_timeout_source(tip),
                 task_kind=str(tip.get("task_kind") or target.get("task_kind") or "routine"),
                 work_intent=str(
                     tip.get("work_intent")
@@ -3253,7 +3283,8 @@ def launch_managed_subagent_detached(
     reasoning_effort: str = "medium",
     toolsets: str = "file,web,terminal",
     max_tokens: int = 65_536,
-    provider_timeout_s: float = 600.0,
+    provider_timeout_s: float | None = None,
+    timeout_source: str | None = None,
     task_kind: DelegatedTaskKind = DEFAULT_DELEGATED_TASK_KIND,
     work_intent: DelegatedWorkIntent = DEFAULT_DELEGATED_WORK_INTENT,
     mutation_claim: DelegatedMutationClaim = "auto",
@@ -3292,6 +3323,7 @@ def launch_managed_subagent_detached(
         toolsets=toolsets,
         max_tokens=max_tokens,
         timeout_s=provider_timeout_s,
+        timeout_source=timeout_source,
     )
     normalized_toolsets = tuple(provider_contract["controls"]["toolsets"])
     toolsets = ",".join(normalized_toolsets)
@@ -3303,6 +3335,12 @@ def launch_managed_subagent_detached(
             f"delegated task exceeds {MAX_DELEGATED_TASK_CHARS} characters; "
             "store large evidence durably and pass paths/routes"
         )
+    if provider_timeout_s is not None and provider_timeout_s <= 0:
+        raise ValueError("subagent timeout must be positive")
+    if provider_timeout_s is not None and timeout_source not in {"trusted_cli", "verified_user_request"}:
+        raise ValueError("subagent timeout requires trusted ingress provenance")
+    if provider_timeout_s is None and timeout_source is not None:
+        raise ValueError("timeout source requires an explicit timeout")
     if DELEGATION_DELIVERY_INSTRUCTION_HEADER in task:
         raise ValueError(
             "delegated task contains the reserved resident delivery instruction marker"
@@ -3628,7 +3666,8 @@ def launch_managed_subagent_detached(
         reasoning_effort,
         toolsets,
         str(max_tokens),
-        str(provider_timeout_s),
+        str(provider_timeout_s) if provider_timeout_s is not None else "unbounded",
+        timeout_source or "",
         retry_of_run_id or "",
         parent_run_id or "",
         lineage_root_run_id or "",
@@ -3748,6 +3787,11 @@ def launch_managed_subagent_detached(
         "provider_options": {
             "toolsets": toolsets,
             "max_tokens": max_tokens,
+            "timeout_s": provider_timeout_s,
+        },
+        "timeout_policy": {
+            "mode": "explicit" if provider_timeout_s is not None else "unbounded",
+            "source": timeout_source if provider_timeout_s is not None else "default",
             "timeout_s": provider_timeout_s,
         },
         "provider_contract": provider_contract,
@@ -4401,7 +4445,7 @@ def _run_managed_manifest(manifest_path: Path) -> int:
     backend = str(manifest.get("backend") or "codex")
     provider_permission_mode: str | None = None
     provider_options = dict(manifest.get("provider_options") or {})
-    timeout_s = float(provider_options.get("timeout_s") or 600.0)
+    timeout_s = _explicit_manifest_timeout(manifest)
 
     def _interrupt(signum: int, _frame: object) -> None:
         nonlocal interrupted_signal
@@ -4505,14 +4549,14 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                 str(manifest["project_dir"]),
                 "--query-file",
                 str(manifest["prompt_path"]),
-                "--timeout",
-                str(timeout_s),
                 "--output-format",
                 "stream-json",
                 "--verbose",
                 "--tools",
                 claude_tools_for(toolsets),
             ]
+            if timeout_s is not None:
+                argv += ["--timeout", str(timeout_s)]
             if manifest.get("run_mode") == "session_continuation":
                 argv += ["--resume", str(session_id)]
             else:
@@ -4539,6 +4583,12 @@ def _run_managed_manifest(manifest_path: Path) -> int:
             worker_env = environment_with_provenance(worker_provenance)
         if worker_env is None:
             worker_env = os.environ.copy()
+        if backend == "hermes" and timeout_s is None:
+            # Disable Hermes whole-request deadlines while retaining finite
+            # connect/read and no-progress stream-stall safeguards.
+            worker_env["HERMES_API_TIMEOUT"] = "inf"
+            worker_env["HERMES_DEEPSEEK_API_TIMEOUT"] = "inf"
+            worker_env["ARNOLD_RESIDENT_UNBOUNDED_REQUEST"] = "1"
         if backend == "claude":
             worker_env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(
                 int(provider_options.get("max_tokens") or 65_536)
@@ -4573,7 +4623,11 @@ def _run_managed_manifest(manifest_path: Path) -> int:
             manifest["session_dispatch"]["permission_mode"] = provider_permission_mode
         _atomic_json(manifest_path, manifest)
         try:
-            returncode = worker.wait(timeout=timeout_s)
+            returncode = (
+                worker.wait(timeout=timeout_s)
+                if timeout_s is not None
+                else worker.wait()
+            )
         except subprocess.TimeoutExpired:
             worker.terminate()
             try:
@@ -7144,6 +7198,8 @@ async def launch_subagent_task(
     outcome_key: str | None = None,
     delivery_suppression_override_reason: str | None = None,
     toolsets: str | None = None,
+    timeout_s: float | None = None,
+    timeout_source: str | None = None,
     project_dir: str | None = None,
     backend: str = "auto",
     background: bool = True,
@@ -7169,6 +7225,12 @@ async def launch_subagent_task(
     providers use the same durable background manifest and delivery lifecycle;
     old non-Discord callers may still request synchronous Hermes explicitly.
     """
+    if timeout_s is not None and timeout_s <= 0:
+        raise ValueError("subagent timeout must be positive")
+    if timeout_s is not None and timeout_source not in {"trusted_cli", "verified_user_request"}:
+        raise ValueError("subagent timeout requires trusted ingress provenance")
+    if timeout_s is None and timeout_source is not None:
+        raise ValueError("timeout source requires an explicit timeout")
     if len(task) > MAX_DELEGATED_TASK_CHARS:
         raise ValueError(
             f"delegated task exceeds {MAX_DELEGATED_TASK_CHARS} characters; "
@@ -7226,7 +7288,8 @@ async def launch_subagent_task(
             reasoning_effort=selected_effort,
             toolsets=toolsets or config.special_requests_subagent_toolsets,
             max_tokens=config.special_requests_subagent_max_tokens,
-            provider_timeout_s=config.special_requests_subagent_timeout_s,
+            provider_timeout_s=timeout_s,
+            timeout_source=timeout_source,
             task_kind=route.task_kind,
             work_intent=work_intent,
             mutation_claim=mutation_claim,
@@ -7302,9 +7365,11 @@ async def launch_subagent_task(
         query_path = handle.name
     argv += ["--query-file", query_path]
 
-    timeout_s = float(config.special_requests_subagent_timeout_s)
+    effective_timeout_s = timeout_s
     try:
-        completed = await asyncio.to_thread(_run_subprocess, argv, timeout_s)
+        completed = await asyncio.to_thread(
+            _run_subprocess, argv, effective_timeout_s
+        )
     finally:
         try:
             Path(query_path).unlink(missing_ok=True)
@@ -7345,6 +7410,11 @@ def _build_local_seam_parser() -> argparse.ArgumentParser:
         help="Provider override; auto infers from --model and is the default",
     )
     launch.add_argument("--model")
+    launch.add_argument(
+        "--timeout",
+        type=float,
+        help="Optional positive supervisor wall-time limit in seconds",
+    )
     launch.add_argument(
         "--reasoning-effort", choices=sorted(_VALID_DELEGATED_EFFORTS)
     )
@@ -7428,6 +7498,8 @@ def _main(argv: list[str] | None = None) -> int:
                 project_dir=args.project_dir,
                 backend=args.backend,
                 model=args.model,
+                timeout_s=args.timeout,
+                timeout_source="trusted_cli" if args.timeout is not None else None,
                 reasoning_effort=args.reasoning_effort,
                 task_kind=args.task_kind,
                 work_intent=args.work_intent,
@@ -7472,22 +7544,27 @@ if __name__ == "__main__":
     raise SystemExit(_main())
 
 
-def _run_subprocess(argv: list[str], timeout_s: float) -> SubagentResult:
+def _run_subprocess(argv: list[str], timeout_s: float | None) -> SubagentResult:
+    run_kwargs: dict[str, Any] = {
+        "capture_output": True,
+        "text": True,
+        "check": False,
+    }
+    if timeout_s is not None:
+        run_kwargs["timeout"] = timeout_s
     try:
-        completed = subprocess.run(
-            argv,
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            check=False,
-        )
+        completed = subprocess.run(argv, **run_kwargs)
     except subprocess.TimeoutExpired as exc:
         return SubagentResult(
             ok=False,
             final_text="",
             stderr=str(exc),
             returncode=-1,
-            error=f"subagent timed out after {timeout_s:.0f}s",
+            error=(
+                f"subagent timed out after {timeout_s:.0f}s"
+                if timeout_s is not None
+                else "subagent timed out unexpectedly"
+            ),
         )
     final_text = (completed.stdout or "").strip()
     stderr = completed.stderr or ""

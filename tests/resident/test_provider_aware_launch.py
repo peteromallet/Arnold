@@ -326,6 +326,97 @@ def test_managed_worker_dispatches_non_codex_provider_and_captures_result(
         assert captured["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "128"
 
 
+@pytest.mark.parametrize(
+    ("backend", "model"),
+    [
+        ("codex", "gpt-5.6-terra"),
+        ("hermes", "zhipu:glm-5.2"),
+        ("claude", "opus"),
+    ],
+)
+@pytest.mark.parametrize("explicit_timeout_s", [None, 17.0])
+def test_managed_worker_timeout_is_opt_in_for_every_backend(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    backend: str,
+    model: str,
+    explicit_timeout_s: float | None,
+) -> None:
+    manifest_path = _worker_manifest(tmp_path, backend=backend, model=model)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if explicit_timeout_s is not None:
+        manifest["timeout_policy"] = {
+            "mode": "explicit",
+            "source": "trusted_cli",
+            "timeout_s": explicit_timeout_s,
+        }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    captured: dict[str, object] = {"waits": []}
+
+    class _Worker:
+        pid = 225
+
+        def wait(self, timeout=None):
+            captured["waits"].append(timeout)
+            return 0
+
+        def poll(self):
+            return 0
+
+    def fake_popen(argv, **kwargs):
+        captured["argv"] = list(argv)
+        captured["env"] = kwargs.get("env")
+        output = kwargs["stdout"]
+        if backend == "codex":
+            Path(argv[argv.index("--output-last-message") + 1]).write_text(
+                "READY\n", encoding="utf-8"
+            )
+            output.write(
+                (
+                    json.dumps({"type": "thread.started", "thread_id": "019f5d2e-d5da-75f3-a617-4712a1c57cc4"})
+                    + "\n"
+                    + json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "READY"}})
+                    + "\n"
+                ).encode()
+            )
+        elif backend == "hermes":
+            session_id = argv[argv.index("--session-id") + 1]
+            Path(argv[argv.index("--metadata-file") + 1]).write_text(
+                json.dumps({"session_id": session_id, "resolved_model": model, "events": []}),
+                encoding="utf-8",
+            )
+            output.write(b"READY\n")
+        else:
+            session_id = argv[argv.index("--session-id") + 1]
+            output.write(
+                (
+                    json.dumps({"type": "system", "subtype": "init", "session_id": session_id, "model": model})
+                    + "\n"
+                    + json.dumps({"type": "result", "subtype": "success", "session_id": session_id, "is_error": False, "result": "READY"})
+                    + "\n"
+                ).encode()
+            )
+        output.flush()
+        return _Worker()
+
+    monkeypatch.setattr(subagent.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(subagent.os, "geteuid", lambda: 0)
+
+    assert subagent._run_managed_manifest(manifest_path) == 0
+    expected_wait = explicit_timeout_s if explicit_timeout_s is not None else None
+    assert captured["waits"] == [expected_wait]
+    argv = captured["argv"]
+    if backend == "claude":
+        if explicit_timeout_s is None:
+            assert "--timeout" not in argv
+        else:
+            assert argv[argv.index("--timeout") + 1] == str(explicit_timeout_s)
+    if backend == "hermes" and explicit_timeout_s is None:
+        assert captured["env"]["HERMES_API_TIMEOUT"] == "inf"
+        assert captured["env"]["HERMES_DEEPSEEK_API_TIMEOUT"] == "inf"
+        assert captured["env"]["ARNOLD_RESIDENT_UNBOUNDED_REQUEST"] == "1"
+
+
 def test_managed_non_codex_worker_rejects_empty_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -514,6 +514,11 @@ def run(
         query = qpath.read_text(encoding="utf-8")
 
     _load_hermes_env()
+    if os.environ.get("ARNOLD_RESIDENT_UNBOUNDED_REQUEST") == "1":
+        # Apply after dotenv loading so ambient Hermes defaults cannot restore
+        # a whole-request deadline. Transport/progress stall guards remain.
+        os.environ["HERMES_API_TIMEOUT"] = "inf"
+        os.environ["HERMES_DEEPSEEK_API_TIMEOUT"] = "inf"
 
     # Optional cwd change so file tools resolve relative paths the caller expects.
     if project_dir:

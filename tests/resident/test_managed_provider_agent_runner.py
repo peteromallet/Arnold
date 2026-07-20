@@ -358,6 +358,34 @@ def test_hermes_resident_runner_captures_timeout_terminally(
     assert Path(manifest["run_id"]).name == manifest["run_id"]
 
 
+def test_unbounded_root_hermes_command_disables_inherited_request_deadlines(
+    tmp_path: Path,
+) -> None:
+    launcher = tmp_path / "fake_hermes.py"
+    _write_hermes_launcher(launcher)
+    prompt = tmp_path / "prompt.md"
+    prompt.write_text("run without a wall deadline", encoding="utf-8")
+    runner = ManagedProviderCliAgentRunner(
+        ResidentConfig(model_provider="hermes", model_name="zhipu:glm-5.2"),
+        cwd=tmp_path,
+        state_root=tmp_path / "state",
+        hermes_launcher=launcher,
+    )
+
+    _argv, _stdin, env = runner._command(
+        backend="hermes",
+        model="zhipu:glm-5.2",
+        effort=None,
+        paths={"prompt": prompt, "metadata": tmp_path / "metadata.json"},
+        session_id="resident_0123456789abcdef",
+        resume=False,
+    )
+
+    assert env["HERMES_API_TIMEOUT"] == "inf"
+    assert env["HERMES_DEEPSEEK_API_TIMEOUT"] == "inf"
+    assert env["ARNOLD_RESIDENT_UNBOUNDED_REQUEST"] == "1"
+
+
 def test_provider_environment_preserves_absent_provenance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

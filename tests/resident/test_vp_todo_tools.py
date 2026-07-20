@@ -197,6 +197,105 @@ def test_launch_subagent_tool_wraps_dispatcher(tmp_path, monkeypatch) -> None:
     assert captured["work_intent"] == "review"
 
 
+def test_launch_subagent_accepts_exact_timeout_from_immutable_user_message(
+    tmp_path, monkeypatch
+) -> None:
+    profile = _profile(tmp_path)
+    source = profile.store.create_message(
+        epic_id=None,
+        direction="inbound",
+        content="Please use a timeout after 2 minutes for this subagent.",
+        conversation_id="timeout-conversation",
+        discord_message_id="1525300000000000099",
+    )
+    captured: dict = {}
+
+    async def fake_launch(config, **kwargs):
+        captured.update(kwargs)
+        return SubagentResult(ok=True, final_text="did it", stderr="", returncode=0)
+
+    monkeypatch.setattr(profile_module, "launch_subagent_task", fake_launch)
+    token = agent_loop_module._TOOL_RUNTIME_CONTEXT.set(
+        ToolRuntimeContext(
+            conversation_id="timeout-conversation",
+            launch_origin={
+                "applicability": "applicable",
+                "source_kind": "discord_inbound_message",
+                "source_record_id": source.id,
+                "resident_conversation_id": "timeout-conversation",
+            },
+        )
+    )
+    try:
+        result = asyncio.run(
+            profile._launch_subagent(
+                LaunchSubagentInput(
+                    task="bounded task",
+                    description="Run the explicitly bounded task",
+                    timeout_s=120,
+                )
+            )
+        )
+    finally:
+        agent_loop_module._TOOL_RUNTIME_CONTEXT.reset(token)
+
+    assert result.ok is True
+    assert captured["timeout_s"] == 120
+    assert captured["timeout_source"] == "verified_user_request"
+
+
+@pytest.mark.parametrize(
+    ("content", "requested"),
+    [
+        ("Please run this subagent.", 120),
+        ("Please use a timeout of 2 minutes.", 121),
+        ("Use a timeout of 2 minutes and a deadline of 3 minutes.", 120),
+    ],
+)
+def test_launch_subagent_rejects_unverified_or_ambiguous_timeout(
+    tmp_path, monkeypatch, content, requested
+) -> None:
+    profile = _profile(tmp_path)
+    source = profile.store.create_message(
+        epic_id=None,
+        direction="inbound",
+        content=content,
+        conversation_id="timeout-conversation",
+        discord_message_id="1525300000000000100",
+    )
+
+    async def must_not_launch(*args, **kwargs):
+        raise AssertionError("unverified timeout must not launch")
+
+    monkeypatch.setattr(profile_module, "launch_subagent_task", must_not_launch)
+    token = agent_loop_module._TOOL_RUNTIME_CONTEXT.set(
+        ToolRuntimeContext(
+            conversation_id="timeout-conversation",
+            launch_origin={
+                "applicability": "applicable",
+                "source_kind": "discord_inbound_message",
+                "source_record_id": source.id,
+                "resident_conversation_id": "timeout-conversation",
+            },
+        )
+    )
+    try:
+        result = asyncio.run(
+            profile._launch_subagent(
+                LaunchSubagentInput(
+                    task="bounded task",
+                    description="Reject an unverified timeout",
+                    timeout_s=requested,
+                )
+            )
+        )
+    finally:
+        agent_loop_module._TOOL_RUNTIME_CONTEXT.reset(token)
+
+    assert result.ok is False
+    assert "immutable user request" in result.message
+
+
 def test_launch_subagent_tool_propagates_failure(tmp_path, monkeypatch) -> None:
     profile = _profile(tmp_path)
 
@@ -312,6 +411,14 @@ def test_hot_context_exposes_managed_resident_agents(tmp_path, monkeypatch) -> N
     assert context["resident_runtime"]["subagent_launch"]["standard"] == (
         "arnold-managed-agent-run-v2"
     )
+    timeout_policy = context["resident_runtime"]["subagent_launch"][
+        "supervisor_wall_time"
+    ]
+    assert timeout_policy["default"] == "unbounded"
+    assert timeout_policy["optional_parameter"] == "timeout_s"
+    assert "Subagents are unbounded by default" in timeout_policy["guidance"]
+    assert "Omit timeout_s unless the user explicitly asks" in timeout_policy["guidance"]
+    assert "immutable inbound user request" in timeout_policy["validation"]
     policy = context["resident_runtime"]["subagent_launch"]["delegation_policy"]
     assert policy["schema_version"] == "megaplan-resident-delegation-policy-v3"
     assert "independent actionable sub-problems" in policy["preference"]

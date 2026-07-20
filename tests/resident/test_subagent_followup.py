@@ -82,6 +82,11 @@ def _write_run(
             "max_tokens": 32768,
             "timeout_s": 321,
         },
+        "timeout_policy": {
+            "mode": "explicit",
+            "source": "verified_user_request",
+            "timeout_s": 321,
+        },
         "reasoning_effort": "high",
         "task_kind": "architecture",
         "difficulty": 8,
@@ -411,8 +416,9 @@ def test_continuation_worker_resumes_exact_parent_session_and_records_acceptance
             return 0
 
     def fake_codex(argv, **kwargs):
-        captured["argv"] = list(argv)
-        captured["env"] = kwargs["env"]
+        captured.setdefault("argv", list(argv))
+        if "env" in kwargs:
+            captured.setdefault("env", kwargs["env"])
         return _Codex()
 
     monkeypatch.setattr(subagent.subprocess, "Popen", fake_codex)
@@ -816,7 +822,9 @@ def test_live_followup_queues_exact_parent_interrupt_and_retry_is_idempotent(
 
     def fake_popen(*args, **kwargs):
         nonlocal calls
-        calls += 1
+        argv = args[0] if args else ()
+        if "--run-managed" in argv:
+            calls += 1
         return _Supervisor()
 
     monkeypatch.setattr(subagent.subprocess, "Popen", fake_popen)

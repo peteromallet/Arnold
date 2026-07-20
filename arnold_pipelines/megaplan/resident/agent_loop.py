@@ -258,7 +258,7 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
     ) -> None:
         self.config = config
         self.max_tool_calls = max_tool_calls or config.max_tool_calls_per_turn
-        self.tool_timeout_s = tool_timeout_s or config.model_timeout_s
+        self.tool_timeout_s = tool_timeout_s if tool_timeout_s is not None else 30.0
         self._client_override = client_override
         self._model_override = model_override
         if self.max_tool_calls <= 0:
@@ -286,15 +286,22 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
                 }))
             except ModelBudgetError:
                 raise
-            response = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model=model_name,
-                    messages=messages,
-                    tools=openai_tools or None,
-                    tool_choice="auto" if openai_tools else None,
+            request_kwargs: dict[str, Any] = {
+                "model": model_name,
+                "messages": messages,
+                "tools": openai_tools or None,
+                "tool_choice": "auto" if openai_tools else None,
+            }
+            if self.config.model_timeout_s is not None:
+                request_kwargs["timeout"] = self.config.model_timeout_s
+            model_request = client.chat.completions.create(**request_kwargs)
+            response = (
+                await asyncio.wait_for(
+                    model_request,
                     timeout=self.config.model_timeout_s,
-                ),
-                timeout=self.config.model_timeout_s,
+                )
+                if self.config.model_timeout_s is not None
+                else await model_request
             )
             message = response.choices[0].message
             tool_calls = tuple(message.tool_calls or ())
@@ -416,43 +423,46 @@ class CodexCliAgentRunner(DispatchProtocol):
             except FileNotFoundError as exc:
                 raise AgentLoopError("codex CLI is required for resident model_provider=codex") from exc
             communication = asyncio.create_task(proc.communicate(prompt.encode("utf-8")))
-            # Process creation confirms the OS child, not that the CLI entrypoint
-            # has begun executing. Give the accepted process one short scheduling
-            # window before applying the model-response timeout; otherwise very
-            # small configured timeouts can kill it before any invocation evidence
-            # exists, making timeout recovery indistinguishable from no launch.
-            await asyncio.sleep(0.1)
-            completed, _pending = await asyncio.wait(
-                {communication}, timeout=self.config.model_timeout_s
-            )
-            if not completed:
-                timeout_recovered = True
+            if self.config.model_timeout_s is None:
+                stdout, stderr = await communication
+            else:
+                # Process creation confirms the OS child, not that the CLI entrypoint
+                # has begun executing. Give the accepted process one short scheduling
+                # window before applying the explicitly configured model-response
+                # timeout; otherwise very small opt-in values can kill it before any
+                # invocation evidence exists.
+                await asyncio.sleep(min(0.1, self.config.model_timeout_s / 2))
                 completed, _pending = await asyncio.wait(
-                    {communication}, timeout=self.config.model_timeout_recovery_grace_s
+                    {communication}, timeout=self.config.model_timeout_s
                 )
-            if not completed:
-                await _kill_process_group(proc)
-                try:
-                    stdout, stderr = await asyncio.wait_for(
-                        asyncio.shield(communication), timeout=5.0
+                if not completed:
+                    timeout_recovered = True
+                    completed, _pending = await asyncio.wait(
+                        {communication}, timeout=self.config.model_timeout_recovery_grace_s
                     )
-                except (asyncio.TimeoutError, asyncio.CancelledError):
-                    communication.cancel()
-                    await asyncio.gather(communication, return_exceptions=True)
-                    stdout, stderr = b"", b""
-                elapsed_s = perf_counter() - started_at
-                stderr_tail = stderr.decode("utf-8", errors="replace").strip()[-800:]
-                detail = (
-                    f"codex exec exceeded {self.config.model_timeout_s:g}s and same-process "
-                    f"recovery exhausted after {self.config.model_timeout_recovery_grace_s:g}s "
-                    f"(continuations=1, elapsed={elapsed_s:.3f}s, pid={proc.pid}, "
-                    f"stdout_bytes={len(stdout)}, stderr_bytes={len(stderr)}); "
-                    "process group terminated; no invocation replayed"
-                )
-                if stderr_tail:
-                    detail += f"; stderr_tail={stderr_tail}"
-                raise AgentTimeoutError(detail)
-            stdout, stderr = communication.result()
+                if not completed:
+                    await _kill_process_group(proc)
+                    try:
+                        stdout, stderr = await asyncio.wait_for(
+                            asyncio.shield(communication), timeout=5.0
+                        )
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                        communication.cancel()
+                        await asyncio.gather(communication, return_exceptions=True)
+                        stdout, stderr = b"", b""
+                    elapsed_s = perf_counter() - started_at
+                    stderr_tail = stderr.decode("utf-8", errors="replace").strip()[-800:]
+                    detail = (
+                        f"codex exec exceeded {self.config.model_timeout_s:g}s and same-process "
+                        f"recovery exhausted after {self.config.model_timeout_recovery_grace_s:g}s "
+                        f"(continuations=1, elapsed={elapsed_s:.3f}s, pid={proc.pid}, "
+                        f"stdout_bytes={len(stdout)}, stderr_bytes={len(stderr)}); "
+                        "process group terminated; no invocation replayed"
+                    )
+                    if stderr_tail:
+                        detail += f"; stderr_tail={stderr_tail}"
+                    raise AgentTimeoutError(detail)
+                stdout, stderr = communication.result()
             stdout_text = stdout.decode("utf-8", errors="replace")
             stderr_text = stderr.decode("utf-8", errors="replace")
             output.seek(0)
@@ -608,6 +618,9 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
             toolsets=self.config.model_toolsets,
             max_tokens=self.config.model_max_tokens,
             timeout_s=self.config.model_timeout_s,
+            timeout_source=(
+                "trusted_cli" if self.config.model_timeout_s is not None else None
+            ),
         )
         prompt = self._prompt(request, tools, route.backend)
         paths = self._new_run_paths(request.conversation_id)
@@ -803,15 +816,17 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
                 }
             )
             _atomic_json_file(paths["manifest"], manifest)
+            communication = proc.communicate(
+                stdin_payload.encode("utf-8") if stdin_payload is not None else None
+            )
             try:
-                await asyncio.wait_for(
-                    proc.communicate(
-                        stdin_payload.encode("utf-8")
-                        if stdin_payload is not None
-                        else None
-                    ),
-                    timeout=self.config.model_timeout_s,
-                )
+                if self.config.model_timeout_s is None:
+                    await communication
+                else:
+                    await asyncio.wait_for(
+                        communication,
+                        timeout=self.config.model_timeout_s,
+                    )
                 returncode = int(proc.returncode or 0)
             except asyncio.TimeoutError:
                 await _terminate_process_group(proc)
@@ -1060,6 +1075,10 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
             ]
             if resume:
                 argv.append("--resume-session")
+            if self.config.model_timeout_s is None:
+                env["HERMES_API_TIMEOUT"] = "inf"
+                env["HERMES_DEEPSEEK_API_TIMEOUT"] = "inf"
+                env["ARNOLD_RESIDENT_UNBOUNDED_REQUEST"] = "1"
             return argv, None, env
         if backend == "claude":
             if not self.claude_launcher.exists():
@@ -1074,14 +1093,14 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
                 str(self.cwd),
                 "--query-file",
                 str(paths["prompt"]),
-                "--timeout",
-                str(self.config.model_timeout_s),
                 "--output-format",
                 "stream-json",
                 "--verbose",
                 "--tools",
                 claude_tools_for(toolsets),
             ]
+            if self.config.model_timeout_s is not None:
+                argv += ["--timeout", str(self.config.model_timeout_s)]
             argv += ["--resume" if resume else "--session-id", str(session_id)]
             if hasattr(os, "geteuid") and os.geteuid() == 0:
                 argv += ["--permission-mode", "auto"]
@@ -1417,6 +1436,15 @@ def openai_client_from_config(config: ResidentConfig) -> Any:
     )
 
 
+def _openai_transport_timeout() -> Any:
+    """Granular transport timeouts with no total progressing-work deadline."""
+    try:
+        import httpx
+    except ImportError as exc:
+        raise AgentLoopError("httpx is required for resident API calls") from exc
+    return httpx.Timeout(timeout=None, connect=30.0, read=120.0, write=30.0, pool=30.0)
+
+
 def openai_client_for_endpoint(
     *,
     credential_env: str,
@@ -1432,11 +1460,13 @@ def openai_client_for_endpoint(
     api_key = os.getenv(credential_env)
     if not api_key:
         raise ResidentCredentialError(credential_env)
-    kwargs: dict[str, Any] = {"api_key": api_key}
+    kwargs: dict[str, Any] = {
+        "api_key": api_key,
+        "timeout": timeout_s if timeout_s is not None else _openai_transport_timeout(),
+    }
     if base_url:
         kwargs["base_url"] = base_url
     if timeout_s is not None:
-        kwargs["timeout"] = timeout_s
         # The resident owns the outer timeout and user-facing fallback. Avoid
         # SDK retries extending a failed voice-note request beyond that bound.
         kwargs["max_retries"] = 0
@@ -1497,7 +1527,10 @@ def _client_for_model(model_name: str) -> tuple[Any, str]:
         from openai import AsyncOpenAI
     except ImportError as exc:
         raise AgentLoopError("The openai package is required for live resident model turns") from exc
-    client_kwargs: dict[str, Any] = {"api_key": agent_kwargs.get("api_key") or os.getenv("OPENAI_API_KEY")}
+    client_kwargs: dict[str, Any] = {
+        "api_key": agent_kwargs.get("api_key") or os.getenv("OPENAI_API_KEY"),
+        "timeout": _openai_transport_timeout(),
+    }
     base_url = agent_kwargs.get("base_url")
     if base_url:
         client_kwargs["base_url"] = base_url

@@ -163,6 +163,32 @@ def test_empty_stdout_is_failure(monkeypatch) -> None:
     assert result.ok is False
 
 
+def test_model_tool_exposes_optional_user_verified_timeout() -> None:
+    field = profile_module.LaunchSubagentInput.model_fields["timeout_s"]
+    assert field.default is None
+
+
+def test_explicit_timeout_requires_trusted_ingress() -> None:
+    with pytest.raises(ValueError, match="trusted ingress"):
+        subagent_module.launch_managed_subagent_detached(
+            task="bounded",
+            provider_timeout_s=1,
+        )
+
+
+def test_markerless_legacy_timeout_is_unbounded() -> None:
+    legacy = {"provider_options": {"timeout_s": 600}}
+    assert subagent_module._explicit_manifest_timeout(legacy) is None
+    explicit = {
+        "timeout_policy": {
+            "mode": "explicit",
+            "source": "trusted_cli",
+            "timeout_s": 42,
+        }
+    }
+    assert subagent_module._explicit_manifest_timeout(explicit) == 42.0
+
+
 def test_timeout_is_failure(monkeypatch) -> None:
     def raise_timeout(argv, **kw):
         raise _subprocess.TimeoutExpired(cmd=argv, timeout=0.01)

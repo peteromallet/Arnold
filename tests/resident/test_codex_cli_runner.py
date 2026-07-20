@@ -13,10 +13,19 @@ from arnold_pipelines.megaplan.resident.agent_loop import (
     AgentRequest,
     AgentTimeoutError,
     CodexCliAgentRunner,
+    _openai_transport_timeout,
 )
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
 from arnold_pipelines.megaplan.resident.tool_registry import ToolRegistry
 from arnold_pipelines.megaplan.resident.provenance import DELEGATION_CONTEXT_ENV
+
+
+def test_openai_transport_has_stall_guards_without_total_deadline() -> None:
+    timeout = _openai_transport_timeout()
+    assert timeout.connect == 30.0
+    assert timeout.read == 120.0
+    assert timeout.write == 30.0
+    assert timeout.pool == 30.0
 
 
 def test_resident_config_defaults_to_hermes_glm_52() -> None:
@@ -150,7 +159,7 @@ def test_codex_cli_runner_recovers_same_invocation_after_initial_timeout(
         "  shift || true\n"
         "done\n"
         "cat >/dev/null\n"
-        "sleep 0.12\n"
+        "sleep 0.30\n"
         "printf 'recovered resident reply\\n' > \"$output\"\n",
         encoding="utf-8",
     )

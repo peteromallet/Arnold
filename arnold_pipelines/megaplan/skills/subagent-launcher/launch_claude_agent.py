@@ -151,6 +151,9 @@ def run(
     dry_run: bool,
     **command_options,
 ) -> int:
+    if timeout is not None and timeout <= 0:
+        _eprint("error: --timeout must be positive")
+        return 2
     try:
         prompt = read_query(query, query_file)
         cmd = build_claude_command(
@@ -182,15 +185,16 @@ def run(
         "[launch_claude_agent] "
         f"model={resolve_model_selector(model)} cwd={cwd or Path.cwd()}"
     )
+    run_kwargs = {
+        "input": prompt,
+        "text": True,
+        "cwd": cwd,
+        "check": False,
+    }
+    if timeout is not None:
+        run_kwargs["timeout"] = timeout
     try:
-        completed = subprocess.run(
-            cmd,
-            input=prompt,
-            text=True,
-            cwd=cwd,
-            check=False,
-            timeout=timeout,
-        )
+        completed = subprocess.run(cmd, **run_kwargs)
     except subprocess.TimeoutExpired:
         _eprint(f"error: Claude process exceeded --timeout={timeout}s")
         return 124
@@ -208,7 +212,12 @@ def _parser() -> argparse.ArgumentParser:
     prompt.add_argument("--query-file", help="Path to prompt file")
     parser.add_argument("--project-dir", help="Working directory for the Claude process")
     parser.add_argument("--claude-bin", default="claude", help="Claude CLI path/name")
-    parser.add_argument("--timeout", type=float, default=1800, help="Optional process timeout in seconds")
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="Optional positive process timeout in seconds; omitted means no wall-time limit",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print command JSON instead of launching")
 
     parser.add_argument("--agent", help="Claude Code agent name for this session")

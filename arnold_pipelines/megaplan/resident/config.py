@@ -37,7 +37,7 @@ class ResidentConfig(BaseModel):
     model_base_url: str | None = None
     codex_reasoning_effort: str = "low"
     codex_sandbox: str = "workspace-write"
-    model_timeout_s: float = Field(default=120.0, gt=0)
+    model_timeout_s: float | None = Field(default=None, gt=0)
     model_timeout_recovery_grace_s: float = Field(default=60.0, ge=0)
     model_max_tokens: int = Field(default=65_536, gt=0)
     model_toolsets: str = "file,web,terminal"
@@ -77,7 +77,7 @@ class ResidentConfig(BaseModel):
     special_requests_conversation_key: str | None = None
     special_requests_subject_user_id: str | None = None
     special_requests_subagent_toolsets: str = "file,web,terminal"
-    special_requests_subagent_timeout_s: float = Field(default=600.0, gt=0)
+    special_requests_subagent_timeout_s: float | None = Field(default=None, gt=0)
     special_requests_subagent_max_tokens: int = Field(default=65536, gt=0)
     default_timezone: str = "UTC"
     guild_timezone_defaults: dict[str, str] = Field(default_factory=dict)
@@ -118,7 +118,7 @@ class ResidentConfig(BaseModel):
             model_base_url=env.get("MEGAPLAN_RESIDENT_MODEL_BASE_URL") or env.get("OPENAI_BASE_URL"),
             codex_reasoning_effort=env.get("MEGAPLAN_RESIDENT_CODEX_REASONING_EFFORT", "low"),
             codex_sandbox=env.get("MEGAPLAN_RESIDENT_CODEX_SANDBOX", "workspace-write"),
-            model_timeout_s=_env_float(env, "MEGAPLAN_RESIDENT_MODEL_TIMEOUT_S", 120.0),
+            model_timeout_s=None,
             model_timeout_recovery_grace_s=_env_float(
                 env,
                 "MEGAPLAN_RESIDENT_MODEL_TIMEOUT_RECOVERY_GRACE_S",
@@ -206,9 +206,7 @@ class ResidentConfig(BaseModel):
             special_requests_subagent_toolsets=env.get(
                 "MEGAPLAN_RESIDENT_SPECIAL_REQUESTS_SUBAGENT_TOOLSETS", "file,web,terminal"
             ),
-            special_requests_subagent_timeout_s=_env_float(
-                env, "MEGAPLAN_RESIDENT_SPECIAL_REQUESTS_SUBAGENT_TIMEOUT_S", 600.0
-            ),
+            special_requests_subagent_timeout_s=None,
             special_requests_subagent_max_tokens=_env_int(
                 env, "MEGAPLAN_RESIDENT_SPECIAL_REQUESTS_SUBAGENT_MAX_TOKENS", 65536
             ),
@@ -237,6 +235,11 @@ def _env_int(env: dict[str, str], key: str, default: int) -> int:
 def _env_float(env: dict[str, str], key: str, default: float) -> float:
     value = env.get(key)
     return default if value is None or value == "" else float(value)
+
+
+def _env_optional_float(env: dict[str, str], key: str) -> float | None:
+    value = env.get(key)
+    return None if value is None or value.strip() == "" else float(value)
 
 
 def _env_bool(env: dict[str, str], key: str, default: bool) -> bool:
