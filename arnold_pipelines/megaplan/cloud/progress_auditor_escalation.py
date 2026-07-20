@@ -731,7 +731,13 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
     )
     repeated = _integer(deterministic.get("count")) or 0
     exhausted = bool(
-        outcome in {"repair_timeout", "repair_exhausted", "failed", "failure"}
+        outcome in {
+            "repair_timeout",
+            "repair_exhausted",
+            "deterministic_failure",
+            "failed",
+            "failure",
+        }
         or retry_remaining == 0
         or retry_used >= 2
         or repeated >= 3
@@ -739,6 +745,7 @@ def _l1_failure_fingerprint(finding: Mapping[str, Any]) -> dict[str, Any]:
     failed = bool(active_unowned_goal or false_success or missing_manifest or liveness_without_custody or (accepted and exhausted) or outcome in {
         "repair_timeout",
         "repair_exhausted",
+        "deterministic_failure",
         "failed",
         "failure",
     })

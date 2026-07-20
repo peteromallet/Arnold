@@ -138,6 +138,49 @@ def test_context_is_bounded_and_carries_exact_error_and_recent_repairs(tmp_path:
     ]["recover_state"]["allowed_mutations"] == [f"supported_cli:{supported_cli}"]
 
 
+def test_context_exposes_bounded_target_status_paths_to_toolless_investigator(
+    tmp_path: Path,
+) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    subprocess.run(["git", "-C", str(workspace), "config", "user.name", "Test"], check=True)
+    subprocess.run(
+        ["git", "-C", str(workspace), "config", "user.email", "test@example.invalid"],
+        check=True,
+    )
+    tracked = workspace / "app/services/reflections.py"
+    tracked.parent.mkdir(parents=True, exist_ok=True)
+    tracked.write_text("before\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(workspace), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(workspace), "commit", "-qm", "fixture"], check=True)
+    tracked.write_text("after\n", encoding="utf-8")
+    migration = workspace / "migrations/0065_leaf_semantics.sql"
+    migration.parent.mkdir(parents=True, exist_ok=True)
+    migration.write_text("select 1;\n", encoding="utf-8")
+
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+
+    source = next(
+        item for item in context["evidence_sources"] if item["kind"] == "source_tree"
+    )
+    assert source["observed"]["dirty"] is True
+    assert " M app/services/reflections.py" in source["observed"]["status_paths"]
+    assert "?? migrations/0065_leaf_semantics.sql" in source["observed"]["status_paths"]
+    assert source["observed"]["status_paths_truncated"] is False
+    assert len(source["observed"]["status_paths"]) <= 160
+    persisted = tmp_path / "persisted-context.json"
+    repair_investigation._atomic_write(persisted, context)
+    assert persisted.stat().st_size <= MAX_CONTEXT_BYTES
+    assert json.loads(persisted.read_text(encoding="utf-8")) == context
+
+
 def test_historical_recount_recovery_uses_guarded_override_before_chain_start(
     tmp_path: Path,
 ) -> None:
@@ -240,7 +283,7 @@ def test_l1_broker_observation_is_digest_bound_typed_and_bounded(tmp_path: Path)
         build_repair_observation_bundle(context_path)
 
 
-def test_l1_broker_observation_fails_closed_above_48_kib(tmp_path: Path) -> None:
+def test_l1_broker_observation_bounds_large_analysis_context(tmp_path: Path) -> None:
     context = {
         "schema_version": "arnold-repair-investigation-context-v1",
         "context_digest": "",
@@ -264,8 +307,64 @@ def test_l1_broker_observation_fails_closed_above_48_kib(tmp_path: Path) -> None
     _write(context_path, context)
     assert context_path.stat().st_size <= MAX_CONTEXT_BYTES
 
-    with pytest.raises(ValueError, match="brokered repair observations exceed 48 KiB"):
-        build_repair_observation_bundle(context_path)
+    observation = build_repair_observation_bundle(context_path)
+
+    assert len(
+        json.dumps(observation, sort_keys=True, separators=(",", ":")).encode()
+    ) <= 48 * 1024
+    assert observation["analysis_context"]["exact_error"]["message"] == "x" * 600
+
+
+def test_l1_receipt_rejects_absolute_workspace_wide_mutation_scope(
+    tmp_path: Path,
+) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+    receipt = _receipt(context["context_digest"])
+    receipt["handoff"]["allowed_mutations"] = [f"target_workspace:{workspace}"]
+
+    with pytest.raises(ValueError, match="normalized repo-relative path"):
+        validate_investigator_receipt(
+            receipt,
+            expected_context_digest=context["context_digest"],
+            investigation_context=context,
+        )
+
+
+def test_l1_receipt_accepts_exact_repo_relative_target_components(
+    tmp_path: Path,
+) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+    receipt = _receipt(context["context_digest"])
+    receipt["handoff"]["allowed_mutations"] = [
+        "target_workspace:app/services/reflections.py",
+        "target_workspace:migrations/0065_leaf_semantics.sql",
+    ]
+
+    validated = validate_investigator_receipt(
+        receipt,
+        expected_context_digest=context["context_digest"],
+        investigation_context=context,
+    )
+
+    assert validated["handoff"]["allowed_mutations"] == receipt["handoff"][
+        "allowed_mutations"
+    ]
 
 
 def test_external_snapshot_uses_authoritative_chain_pr_number(
@@ -744,12 +843,12 @@ def _receipt(digest: str = "digest-1", *, target_kind: str = "l1_repair_target")
         },
         "safe_repair_target": {
             "kind": "target_workspace",
-            "scope": "/workspace",
+            "scope": "app/services/reflections.py",
             "rationale": "failure is in the target task",
         },
         "handoff": {
             "action": "repair_target",
-            "allowed_mutations": ["target task implementation"],
+            "allowed_mutations": ["target_workspace:app/services/reflections.py"],
             "forbidden_mutations": ["guard weakening"],
         },
         "four_axis": {
@@ -773,6 +872,75 @@ def test_investigator_receipt_is_bound_to_context_and_requires_evidence() -> Non
     assert validated["actual_failure"]["classification"] == "custody_failure"
     with pytest.raises(ValueError, match="context digest disagrees"):
         validate_investigator_receipt(receipt, expected_context_digest="digest-2")
+
+
+def test_l2_source_handoff_rejects_target_application_scope() -> None:
+    receipt = _receipt(target_kind="l2_repair_system")
+    receipt["recommended_action"] = "repair_source"
+    receipt["safe_repair_target"] = {
+        "kind": "arnold_source",
+        "scope": "automatic repair and target ReflectionStore",
+        "rationale": "the investigator misclassified target application code",
+    }
+    receipt["handoff"] = {
+        "action": "repair_source",
+        "allowed_mutations": [
+            "arnold_source:arnold_pipelines/megaplan/cloud/automatic_repair and ReflectionStore"
+        ],
+        "forbidden_mutations": ["audited_workspace"],
+    }
+
+    with pytest.raises(ValueError, match="normalized repo-relative path"):
+        validate_investigator_receipt(receipt, expected_context_digest="digest-1")
+
+
+def test_l2_source_handoff_accepts_bounded_repair_system_components() -> None:
+    receipt = _receipt(target_kind="l2_repair_system")
+    receipt["recommended_action"] = "repair_source"
+    receipt["safe_repair_target"] = {
+        "kind": "arnold_source",
+        "scope": "repair investigation contract and focused tests",
+        "rationale": "the defect is in the L2 source custody validator",
+    }
+    receipt["handoff"] = {
+        "action": "repair_source",
+        "allowed_mutations": [
+            "arnold_source:arnold_pipelines/megaplan/cloud/repair_investigation.py",
+            "arnold_source:tests/cloud/test_repair_investigation.py",
+        ],
+        "forbidden_mutations": ["audited_workspace"],
+    }
+
+    validated = validate_investigator_receipt(
+        receipt, expected_context_digest="digest-1"
+    )
+    assert validated["safe_repair_target"]["kind"] == "arnold_source"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "target_workspace:app/services/reflections.py",
+        "arnold_source:../Pumpernickel/app/services/reflections.py",
+        "arnold_source:app/services/reflections.py",
+    ],
+)
+def test_l2_source_handoff_rejects_non_arnold_components(mutation: str) -> None:
+    receipt = _receipt(target_kind="l2_repair_system")
+    receipt["recommended_action"] = "repair_source"
+    receipt["safe_repair_target"] = {
+        "kind": "arnold_source",
+        "scope": "misclassified target code",
+        "rationale": "must fail closed",
+    }
+    receipt["handoff"] = {
+        "action": "repair_source",
+        "allowed_mutations": [mutation],
+        "forbidden_mutations": ["audited_workspace"],
+    }
+
+    with pytest.raises(ValueError, match="L2 source repair"):
+        validate_investigator_receipt(receipt, expected_context_digest="digest-1")
 
 
 def test_failing_external_guard_rejects_state_recovery_handoff() -> None:
@@ -1332,7 +1500,11 @@ def test_shared_summary_distinguishes_missing_invalid_and_accepted(tmp_path: Pat
     assert summarize_investigation_artifacts({})["status"] == "missing"
     context = tmp_path / "context.json"
     receipt_path = tmp_path / "receipt.json"
-    context_payload = {"schema_version": "arnold-repair-investigation-context-v1", "target_kind": "l1_repair_target"}
+    context_payload = {
+        "schema_version": "arnold-repair-investigation-context-v1",
+        "target_kind": "l1_repair_target",
+        "workspace": "/workspace/demo",
+    }
     context_digest = hashlib.sha256(
         json.dumps(context_payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -1506,6 +1678,13 @@ def test_pathological_meta_context_stays_tiny_and_reference_only(tmp_path: Path)
     observed_kinds = {item["kind"] for item in observation["observations"]}
     assert {"resident_delegation", "source_contract"} <= observed_kinds
     assert observed_kinds <= EVIDENCE_SOURCE_KINDS
+    required = observation["required_receipt_shape"]
+    assert required["safe_repair_target_by_action"]["repair_source"] == [
+        "arnold_source"
+    ]
+    assert "Target application files remain target_workspace" in required[
+        "l2_source_boundary"
+    ]
 
     receipt = _receipt(context["context_digest"], target_kind="l2_repair_system")
     receipt["evidence_sources"] = observation["observations"]

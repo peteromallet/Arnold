@@ -9047,6 +9047,10 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'logger=lambda message: print(f"repair_recurrence: {message}", file=sys.stderr)' in text
     assert "repair_recurrence.atomic_write_json(data_path, payload)" in text
     assert "repair_recurrence.atomic_write_json(progress_path, session_snapshot)" in text
+    assert '"${ARNOLD_REPAIR_L2_REPLAN_EPOCH:-0}" <<\'PY\'' in text
+    assert 'session_snapshot["replan_epoch"] = replan_epoch' in text
+    assert 'if isinstance(attempt.get("recurrence"), dict)' in text
+    assert '"replan_epoch": replan_epoch' in text
     assert "save_repair_data(pathlib.Path(path), payload)" in text
     assert "atomic_write_json(state_path, state)" in text
     assert '"plan_runtime_state"' in text
@@ -10456,6 +10460,61 @@ def test_compute_meta_repair_trigger_skips_stale_launch_failure_after_success(
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "NO_TRIGGER"
+
+
+def test_compute_meta_repair_trigger_routes_first_deterministic_replan_to_l2(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "outcome": "deterministic_failure",
+                "investigation": {
+                    "status": "accepted",
+                    "recommended_action": "replan",
+                },
+                "attempts": [{"attempt_id": 1, "outcome": "replan_required"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    observation = json.dumps(
+        {
+            "authoritative_source": "chain_state",
+            "current_refs": {
+                "current_plan_name": "demo-plan",
+                "chain_current_plan_name": "demo-plan",
+                "plan_current_state": "blocked",
+                "chain_last_state": "blocked",
+            },
+            "plan_state": {"present": True},
+            "chain_state": {"present": True},
+            "active_step_heartbeat": {"active": False},
+        }
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until(
+                "compute_meta_repair_trigger", "dispatch_meta_repair"
+            ),
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                "compute_meta_repair_trigger demo-session "
+                f"{shlex.quote(observation)} stopped"
+            ),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "TRIGGER:l1_custody_failure"
 
 
 def test_compute_meta_repair_trigger_detects_semantic_fingerprint_recurrence(
@@ -14902,7 +14961,9 @@ def test_l2_pathological_evidence_builds_minimal_envelope_and_launches_investiga
         },
         "handoff": {
             "action": "repair_source",
-            "allowed_mutations": ["repair investigation source"],
+            "allowed_mutations": [
+                "arnold_source:arnold_pipelines/megaplan/cloud/repair_investigation.py"
+            ],
             "forbidden_mutations": ["audited workspace"],
         },
         "four_axis": {
@@ -15097,6 +15158,47 @@ def test_meta_repair_wrapper_has_retrigger_verification_policy() -> None:
     assert 'SUCCESS outcome' in text
     assert 'partial_liveness' in text
     assert 'not terminal success' in text
+    assert 'export SESSION="$SESSION"' in text
+    assert 'export REPAIR_LOOP_BIN="$REPAIR_LOOP_BIN"' in text
+    assert text.count('--context "$META_INVESTIGATION_CONTEXT_PATH"') >= 2
+
+
+def test_meta_repair_snapshot_ignores_inherited_foreign_snapshot_custody() -> None:
+    text = _meta_repair_wrapper()
+
+    assert 'ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH="$meta_repair_loop_snapshot"' in text
+    assert 'ARNOLD_META_REPAIR_LOOP_SNAPSHOT_OWNER_PID="$$"' in text
+    assert '"$meta_repair_loop_snapshot_owner_pid" != "$$"' in text
+    assert '"$meta_repair_loop_source" != "$meta_repair_loop_active_snapshot"' in text
+    assert "trap 'rm -f -- \"$ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH\"' EXIT" in text
+
+
+def test_meta_repair_inherited_snapshot_flag_cannot_delete_invoked_wrapper(
+    tmp_path: Path,
+) -> None:
+    source = WRAPPER_DIR / "arnold-meta-repair-loop"
+    invoked = tmp_path / "arnold-meta-repair-loop"
+    invoked.write_bytes(source.read_bytes())
+    invoked.chmod(0o755)
+    foreign_snapshot = tmp_path / "parent-snapshot"
+    foreign_snapshot.write_text("parent custody\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [str(invoked)],
+        env={
+            **os.environ,
+            "ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE": "1",
+            "ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH": str(foreign_snapshot),
+            "ARNOLD_META_REPAIR_LOOP_ORIGIN": "/foreign/parent/wrapper",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 64
+    assert invoked.is_file()
+    assert foreign_snapshot.is_file()
 
 
 def test_meta_repair_wrapper_has_record_persistence() -> None:

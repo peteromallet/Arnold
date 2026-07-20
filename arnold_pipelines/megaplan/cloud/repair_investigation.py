@@ -59,6 +59,88 @@ RECOMMENDED_ACTIONS = frozenset(
 SAFE_REPAIR_TARGET_KINDS = frozenset(
     {"none", "arnold_source", "target_workspace", "plan_state_via_cli", "repair_custody"}
 )
+L2_ARNOLD_SOURCE_COMPONENT_PREFIXES = (
+    "arnold_pipelines/megaplan/cloud",
+    "tests/cloud",
+)
+
+
+def _validate_l2_source_handoff(
+    value: Mapping[str, Any], *, action: str, target_kind: str,
+    allowed_mutations: set[str],
+) -> None:
+    """Keep L2 source authority inside the Arnold repair-system checkout.
+
+    A free-form ``arnold_source:`` label is not custody.  L2 may hand a
+    mutating worker only normalized repo-relative repair-system components;
+    target-application code must remain owned by ordinary L1 repair.
+    """
+
+    if value.get("target_kind") != "l2_repair_system" or action != "repair_source":
+        return
+    if target_kind != "arnold_source":
+        raise ValueError("L2 source repair must target arnold_source")
+    if not allowed_mutations:
+        raise ValueError("L2 source repair must name an Arnold repair-system component")
+    for mutation in allowed_mutations:
+        prefix, separator, component = mutation.partition(":")
+        if prefix != "arnold_source" or not separator:
+            raise ValueError(
+                "L2 source repair mutations must use arnold_source:<repo-relative component>"
+            )
+        if (
+            not component
+            or component.startswith("/")
+            or "\\" in component
+            or any(character.isspace() for character in component)
+        ):
+            raise ValueError("L2 source repair component is not a normalized repo-relative path")
+        parts = component.split("/")
+        if any(part in {"", ".", ".."} for part in parts):
+            raise ValueError("L2 source repair component is not a normalized repo-relative path")
+        if not any(
+            component == allowed or component.startswith(f"{allowed}/")
+            for allowed in L2_ARNOLD_SOURCE_COMPONENT_PREFIXES
+        ):
+            raise ValueError("L2 source repair component is outside Arnold repair-system scope")
+
+
+def _validate_l1_target_handoff(
+    value: Mapping[str, Any], *, action: str, target_kind: str,
+    allowed_mutations: set[str], investigation_context: Mapping[str, Any],
+) -> None:
+    """Reject workspace-wide or free-form L1 mutation grants.
+
+    The investigator may authorize files or bounded repo-relative component
+    directories. An absolute workspace path is target discovery, not a
+    mutation boundary.
+    """
+
+    if value.get("target_kind") != "l1_repair_target" or action != "repair_target":
+        return
+    if target_kind != "target_workspace" or not allowed_mutations:
+        raise ValueError("L1 target repair must name target_workspace components")
+    if len(allowed_mutations) > 32:
+        raise ValueError("L1 target repair names too many mutation components")
+    for mutation in allowed_mutations:
+        prefix, separator, component = mutation.partition(":")
+        if prefix != "target_workspace" or not separator:
+            raise ValueError(
+                "L1 target repair mutations must use target_workspace:<repo-relative component>"
+            )
+        if (
+            not component
+            or component.startswith("/")
+            or "\\" in component
+            or any(character.isspace() for character in component)
+        ):
+            raise ValueError("L1 target repair component is not a normalized repo-relative path")
+        parts = component.split("/")
+        if any(part in {"", ".", ".."} for part in parts):
+            raise ValueError("L1 target repair component is not a normalized repo-relative path")
+    workspace = str(investigation_context.get("workspace") or "").strip()
+    if not workspace or not Path(workspace).is_absolute():
+        raise ValueError("L1 target repair context lacks an absolute target workspace")
 
 
 def _load(path: str | Path | None) -> dict[str, Any]:
@@ -695,6 +777,15 @@ def build_investigation_context(
             "status": goal.get("status"),
         }, authority=6),
     ]
+    target_source_state = _git_observation(Path(workspace), include_status_paths=True)
+    evidence_sources.append(
+        _evidence_source(
+            "source_tree",
+            workspace,
+            target_source_state,
+            authority=5,
+        )
+    )
     if request_path:
         evidence_sources.append(
             _evidence_source("repair_queue", request_path, {
@@ -979,12 +1070,19 @@ def build_investigation_context(
     return context
 
 
-def _git_observation(root: Path) -> dict[str, Any]:
+def _git_observation(
+    root: Path, *, include_status_paths: bool = False
+) -> dict[str, Any]:
     result: dict[str, Any] = {"path": str(root), "head": "", "branch": "", "dirty": None}
+    status_args = [
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all" if include_status_paths else "--untracked-files=no",
+    ]
     for key, args in (
         ("head", ["rev-parse", "HEAD"]),
         ("branch", ["symbolic-ref", "--quiet", "--short", "HEAD"]),
-        ("status", ["status", "--porcelain", "--untracked-files=no"]),
+        ("status", status_args),
     ):
         try:
             proc = subprocess.run(
@@ -997,9 +1095,20 @@ def _git_observation(root: Path) -> dict[str, Any]:
         except (OSError, subprocess.SubprocessError):
             continue
         if proc.returncode == 0:
-            value = proc.stdout.strip()
+            value = (
+                proc.stdout.rstrip("\r\n")
+                if key == "status"
+                else proc.stdout.strip()
+            )
             if key == "status":
                 result["dirty"] = bool(value)
+                if include_status_paths:
+                    # File names are necessary mutation-scope evidence for the
+                    # tool-less investigator. Keep the observation bounded so
+                    # a pathological worktree cannot expand the receipt prompt.
+                    lines = [line[:500] for line in value.splitlines()[:160]]
+                    result["status_paths"] = lines
+                    result["status_paths_truncated"] = len(value.splitlines()) > len(lines)
             else:
                 result[key] = value
     return result
@@ -1698,6 +1807,18 @@ def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
             }
         )
     required_receipt = _common_required_output("l2_repair_system")
+    required_receipt["safe_repair_target_by_action"]["repair_source"] = [
+        "arnold_source"
+    ]
+    required_receipt["handoff_allowed_mutations_by_action"]["repair_source"] = [
+        "arnold_source:arnold_pipelines/megaplan/cloud/<bounded component>",
+        "arnold_source:tests/cloud/<bounded component>",
+    ]
+    required_receipt["l2_source_boundary"] = (
+        "repair_source may name only normalized repo-relative Arnold repair-system "
+        "components under arnold_pipelines/megaplan/cloud or tests/cloud. Target "
+        "application files remain target_workspace work owned by ordinary L1 repair."
+    )
     # Replace the illustrative placeholder with the one current immutable
     # envelope identity. Prior receipts are summarized above without their old
     # digests so the model cannot accidentally bind its response to stale custody.
@@ -1819,7 +1940,9 @@ def build_repair_observation_bundle(context_path: str | Path) -> dict[str, Any]:
             "target_kind": context.get("target_kind"),
             "access_verified": True,
             "analysis_context": {
-                key: context.get(key) for key in analysis_keys if key in context
+                key: _bound_observation_value(context.get(key))
+                for key in analysis_keys
+                if key in context
             },
             "external_guard_policy": (
                 "A failed or pending PR/CI check forbids recover_state only when the "
@@ -1946,9 +2069,22 @@ def validate_investigator_receipt(
     }
     if target_kind not in allowed_targets[action]:
         raise ValueError("investigator action and safe repair target disagree")
+    _validate_l2_source_handoff(
+        value,
+        action=action,
+        target_kind=target_kind,
+        allowed_mutations=allowed_mutations,
+    )
     if isinstance(investigation_context, Mapping):
         if investigation_context.get("context_digest") != expected_context_digest:
             raise ValueError("investigator context digest disagrees")
+        _validate_l1_target_handoff(
+            value,
+            action=action,
+            target_kind=target_kind,
+            allowed_mutations=allowed_mutations,
+            investigation_context=investigation_context,
+        )
         quality_block = investigation_context.get("durable_quality_block")
         if (
             isinstance(quality_block, Mapping)
@@ -2214,7 +2350,13 @@ def summarize_investigation_artifacts(
 def _atomic_write(path: Path, value: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(dict(value), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    # Builders enforce their byte ceilings against canonical compact JSON.
+    # Persist that same representation; pretty-printing after the check can
+    # otherwise turn an accepted 64 KiB context into an oversized transport.
+    temporary.write_text(
+        json.dumps(dict(value), sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
     os.replace(temporary, path)
 
 

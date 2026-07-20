@@ -5149,7 +5149,7 @@ investigation = payload.get("investigation")
 if not isinstance(investigation, dict):
     investigation = {}
 has_l1_custody_failure = bool(
-    repair_outcome == "fixer_infrastructure_failure"
+    repair_outcome in {"fixer_infrastructure_failure", "deterministic_failure"}
     or investigation.get("status") in {"failed", "invalid"}
 )
 needs_human_present = needs_human_path.exists()

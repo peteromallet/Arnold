@@ -26,7 +26,20 @@ set -uo pipefail
 # Bash was waiting on a child.  Pin a syntax-checked per-invocation snapshot;
 # keep the original path only for repository and sibling discovery.
 ARNOLD_META_REPAIR_LOOP_ORIGIN="${ARNOLD_META_REPAIR_LOOP_ORIGIN:-${BASH_SOURCE[0]:-$0}}"
-if [[ "${ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
+meta_repair_loop_source="${BASH_SOURCE[0]:-$0}"
+meta_repair_loop_active_snapshot="${ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH:-}"
+meta_repair_loop_snapshot_owner_pid="${ARNOLD_META_REPAIR_LOOP_SNAPSHOT_OWNER_PID:-}"
+if command -v readlink >/dev/null 2>&1; then
+  meta_repair_loop_source="$(readlink -f "$meta_repair_loop_source" 2>/dev/null || printf '%s' "$meta_repair_loop_source")"
+  if [[ -n "$meta_repair_loop_active_snapshot" ]]; then
+    meta_repair_loop_active_snapshot="$(readlink -f "$meta_repair_loop_active_snapshot" 2>/dev/null || printf '%s' "$meta_repair_loop_active_snapshot")"
+  fi
+fi
+if [[ "${ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" \
+  || -z "$meta_repair_loop_active_snapshot" \
+  || "$meta_repair_loop_snapshot_owner_pid" != "$$" \
+  || "$meta_repair_loop_source" != "$meta_repair_loop_active_snapshot" ]]; then
+  ARNOLD_META_REPAIR_LOOP_ORIGIN="$meta_repair_loop_source"
   meta_repair_loop_snapshot="$(mktemp "${TMPDIR:-/tmp}/arnold-meta-repair-loop.XXXXXXXX")"
   if ! cp -- "$ARNOLD_META_REPAIR_LOOP_ORIGIN" "$meta_repair_loop_snapshot" \
     || ! bash -n "$meta_repair_loop_snapshot"; then
@@ -36,6 +49,8 @@ if [[ "${ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
   fi
   export ARNOLD_META_REPAIR_LOOP_ORIGIN
   export ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE=1
+  export ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH="$meta_repair_loop_snapshot"
+  export ARNOLD_META_REPAIR_LOOP_SNAPSHOT_OWNER_PID="$$"
   exec bash "$meta_repair_loop_snapshot" "$@"
 fi
 ARNOLD_META_REPAIR_LOOP_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"
@@ -598,7 +613,8 @@ EOF
       arnold_pipelines.megaplan.cloud.repair_investigation validate \
       --receipt "$META_INVESTIGATION_RECEIPT_PATH" \
       --context-digest "$META_INVESTIGATION_CONTEXT_DIGEST" \
-      --observation "$META_INVESTIGATION_OBSERVATION_PATH" 2>&1
+      --observation "$META_INVESTIGATION_OBSERVATION_PATH" \
+      --context "$META_INVESTIGATION_CONTEXT_PATH" 2>&1
   )"; then
     printf '%s\n' "$validation_output" >>"$RUN_LOG"
     invalid_receipt_path="${META_INVESTIGATION_RECEIPT_PATH%.json}.invalid-1.json"
@@ -650,7 +666,8 @@ EOF
       arnold_pipelines.megaplan.cloud.repair_investigation validate \
       --receipt "$META_INVESTIGATION_RECEIPT_PATH" \
       --context-digest "$META_INVESTIGATION_CONTEXT_DIGEST" \
-      --observation "$META_INVESTIGATION_OBSERVATION_PATH" >>"$RUN_LOG" 2>&1 || return 1
+      --observation "$META_INVESTIGATION_OBSERVATION_PATH" \
+      --context "$META_INVESTIGATION_CONTEXT_PATH" >>"$RUN_LOG" 2>&1 || return 1
   else
     printf '%s\n' "$validation_output" >>"$RUN_LOG"
   fi
@@ -671,6 +688,9 @@ validated = validate_investigator_receipt(
     expected_context_digest=digest,
     observation_bundle=json.loads(
         pathlib.Path(observation_path).read_text(encoding="utf-8")
+    ),
+    investigation_context=json.loads(
+        pathlib.Path(context_path).read_text(encoding="utf-8")
     ),
 )
 payload["meta_investigation"] = {
@@ -701,7 +721,9 @@ from arnold_pipelines.megaplan.cloud.repair_investigation import validate_invest
 context_path, receipt_path, digest = sys.argv[1:]
 context = json.loads(Path(context_path).read_text(encoding="utf-8"))
 validated = validate_investigator_receipt(
-    json.loads(Path(receipt_path).read_text(encoding="utf-8")), expected_context_digest=digest
+    json.loads(Path(receipt_path).read_text(encoding="utf-8")),
+    expected_context_digest=digest,
+    investigation_context=context,
 )
 recomputed = hashlib.sha256(json.dumps(
     {key: value for key, value in context.items() if key != "context_digest"},
@@ -1387,6 +1409,8 @@ elif command -v codex >/dev/null 2>&1; then
     export MEGAPLAN_REPAIR_PROFILE="$SUBAGENT_PROFILE"
     export ARNOLD_META_REPAIR_COMMIT_ENABLED="$META_REPAIR_COMMIT_ENABLED_VAR"
     export ARNOLD_SRC="$ARNOLD_SRC"
+    export SESSION="$SESSION"
+    export REPAIR_LOOP_BIN="$REPAIR_LOOP_BIN"
     cd "$ARNOLD_SRC" || exit 1
     managed_cmd=(
       python3 -m arnold_pipelines.megaplan.managed_agent run
@@ -1732,7 +1756,7 @@ if [[ "$VERDICT" == FIXED* ]]; then
   else
     log "emitting repair_retriggered and retriggering ordinary repair session=$SESSION"
 
-    RETRIGGER_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_LOOP_BIN" "$WRAPPER_REPO_ROOT" "$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_PATH" "$MARKER_DIR" <<'PY'
+    RETRIGGER_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_LOOP_BIN" "$WRAPPER_REPO_ROOT" "$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_PATH" "$MARKER_DIR" "$META_INVESTIGATION_OBSERVATION_PATH" "$META_INVESTIGATION_CONTEXT_DIGEST" "$META_INVESTIGATION_RECEIPT_PATH" <<'PY'
 import datetime as dt
 import json, os, subprocess, sys
 from pathlib import Path
@@ -1747,6 +1771,7 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     verify_retrigger_success,
 )
 from arnold_pipelines.megaplan.cloud.repair_contract import validate_repair_data
+from arnold_pipelines.megaplan.cloud.repair_goal import reconcile_l2_replan
 from arnold_pipelines.megaplan.managed_agent import (
     ManagedCommandSpec,
     machine_origin_provenance,
@@ -1760,6 +1785,9 @@ workspace_root = Path(sys.argv[3])
 install_sync_event_id = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else ""
 repair_data_path = Path(sys.argv[5])
 marker_dir = Path(sys.argv[6]) if len(sys.argv) > 6 else repair_data_path.parent.parent
+l2_handoff_path = Path(sys.argv[7])
+l2_context_digest = str(sys.argv[8] or "").strip()
+l2_receipt_path = Path(sys.argv[9])
 
 VERIFIER_REJECTION_RETURNCODE = 73
 
@@ -1869,7 +1897,7 @@ try:
 except (OSError, json.JSONDecodeError):
     marker = {}
 workspace = str(marker.get("workspace") or "").strip()
-remote_spec = str(marker.get("remote_spec") or "").strip()
+remote_spec = str(marker.get("remote_spec") or marker.get("spec") or "").strip()
 if workspace:
     retrigger_command.append(workspace)
     if remote_spec:
@@ -1877,7 +1905,31 @@ if workspace:
 parent_run_id = str(os.environ.get("ARNOLD_MANAGED_AGENT_RUN_ID") or "").strip() or None
 request_id = str(os.environ.get("CLOUD_WATCHDOG_REPAIR_REQUEST_ID") or "").strip()
 blocker_id = str(os.environ.get("CLOUD_WATCHDOG_REPAIR_BLOCKER_ID") or "").strip()
-identity_key = f"meta-retrigger:{session}:{parent_run_id or install_sync_event_id}"
+repair_payload = validate_repair_data(repair_data_path)
+repair_goal = repair_payload.get("repair_goal") if isinstance(repair_payload.get("repair_goal"), dict) else {}
+goal_path = str(repair_goal.get("goal_path") or "").strip()
+if not goal_path or not l2_context_digest:
+    raise RuntimeError("source-repair retrigger lacks a durable goal or L2 context digest")
+try:
+    l2_receipt = json.loads(l2_receipt_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    raise RuntimeError("source-repair retrigger lacks its validated L2 receipt") from exc
+replan = reconcile_l2_replan(
+    goal_path,
+    session=session,
+    workspace=workspace,
+    remote_spec=remote_spec,
+    blocker_id=blocker_id or str(repair_payload.get("blocker_id") or "").strip(),
+    context_digest=l2_context_digest,
+    receipt_digest=str(l2_receipt.get("receipt_digest") or "").strip(),
+)
+replan_epoch = int(replan.get("replan_epoch") or 0)
+if replan_epoch <= 0:
+    raise RuntimeError("source-repair retrigger failed to establish an L2 replan epoch")
+os.environ["ARNOLD_REPAIR_L2_HANDOFF_PATH"] = str(l2_handoff_path)
+os.environ["ARNOLD_REPAIR_L2_CONTEXT_DIGEST"] = l2_context_digest
+os.environ["ARNOLD_REPAIR_L2_REPLAN_EPOCH"] = str(replan_epoch)
+identity_key = f"meta-retrigger:{session}:{l2_context_digest}:epoch:{replan_epoch}"
 managed_project = Path(workspace).resolve() if workspace else workspace_root.resolve()
 spec = ManagedCommandSpec(
     run_kind="automatic_repair_retry",
@@ -1904,6 +1956,7 @@ spec = ManagedCommandSpec(
         "cloud_session": session,
         "chain": remote_spec,
         "phase": "meta_repair_retrigger",
+        "replan_epoch": str(replan_epoch),
     },
     parent_run_id=parent_run_id,
     lineage_key=f"repair-retrigger:{request_id or session}",
@@ -1949,6 +2002,7 @@ verification = verify_retrigger_success(
 )
 verification["ordinary_retrigger_run_id"] = run_id
 verification["ordinary_retrigger_manifest_path"] = str(managed_root / "manifest.json")
+verification["l2_replan_epoch"] = replan_epoch
 if lookup_error:
     verification["authoritative_repair_data_error"] = lookup_error
     if retrigger_result.returncode == 0:

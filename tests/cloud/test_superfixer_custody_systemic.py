@@ -161,6 +161,10 @@ def test_meta_wrapper_uses_bounded_broker_without_tool_authority() -> None:
     ).read_text(encoding="utf-8")
     assert 'export ARNOLD_REPAIR_L2_HANDOFF_PATH="$META_INVESTIGATION_OBSERVATION_PATH"' in wrapper
     assert 'export ARNOLD_REPAIR_L2_CONTEXT_DIGEST="$META_INVESTIGATION_CONTEXT_DIGEST"' in wrapper
+    assert 'os.environ["ARNOLD_REPAIR_L2_HANDOFF_PATH"] = str(l2_handoff_path)' in wrapper
+    assert 'os.environ["ARNOLD_REPAIR_L2_CONTEXT_DIGEST"] = l2_context_digest' in wrapper
+    assert 'os.environ["ARNOLD_REPAIR_L2_REPLAN_EPOCH"] = str(replan_epoch)' in wrapper
+    assert 'identity_key = f"meta-retrigger:{session}:{l2_context_digest}:epoch:{replan_epoch}"' in wrapper
     repair_wrapper = Path(
         "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
     ).read_text(encoding="utf-8")
@@ -171,6 +175,8 @@ def test_meta_wrapper_uses_bounded_broker_without_tool_authority() -> None:
     assert '--l2-replan-epoch "${ARNOLD_REPAIR_L2_REPLAN_EPOCH:-0}"' in repair_wrapper
     assert "l2_replan_authorization.verified is true" in repair_wrapper
     assert "never replan solely because the goal was previously unowned" in repair_wrapper
+    assert "pre-epoch deterministic progress token remains unchanged" in repair_wrapper
+    assert "status_paths" in repair_wrapper
     assert '"latest_failure", "workspace_head"' in repair_wrapper
     assert "successor blocker should receive its bounded repair action" in repair_wrapper
     assert "load_json(pathlib.Path(receipt_path), default={})" not in repair_wrapper

@@ -6263,7 +6263,7 @@ repair_recurrence_prepare_attempt() {
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
   failure_context_file="$(mktemp)"
   printf '%s' "$failure_context" > "$failure_context_file"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$failure_context_file" "$iteration" "$requested_model" "$dispatch_model" "$REPAIR_RECURRENCE_MIN_DISPATCHES" "$REPAIR_RECURRENCE_WINDOW_SECS" "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'PY'
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$failure_context_file" "$iteration" "$requested_model" "$dispatch_model" "$REPAIR_RECURRENCE_MIN_DISPATCHES" "$REPAIR_RECURRENCE_WINDOW_SECS" "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" "${ARNOLD_REPAIR_L2_REPLAN_EPOCH:-0}" <<'PY'
 import datetime as dt
 import json
 import pathlib
@@ -6282,6 +6282,7 @@ from arnold_pipelines.megaplan.cloud import repair_recurrence
     window_seconds_raw,
     request_id,
     blocker_id,
+    replan_epoch_raw,
 ) = sys.argv[1:]
 data_path = pathlib.Path(data_path_raw)
 progress_path = pathlib.Path(progress_path_raw)
@@ -6290,6 +6291,9 @@ payload = json.loads(data_path.read_text(encoding="utf-8"))
 try:
     progress_payload = json.loads(progress_path.read_text(encoding="utf-8"))
 except Exception:
+    progress_payload = {}
+replan_epoch = max(int(replan_epoch_raw or 0), 0)
+if int(progress_payload.get("replan_epoch") or 0) != replan_epoch:
     progress_payload = {}
 
 iteration = int(iteration_raw)
@@ -6310,9 +6314,25 @@ session_snapshot = repair_recurrence.update_session_repair_snapshot(
     min_dispatches=min_dispatches,
     window_seconds=window_seconds,
 )
+session_snapshot["replan_epoch"] = replan_epoch
+attempts = payload.get("attempts") if isinstance(payload.get("attempts"), list) else []
+epoch_attempts = [
+    attempt
+    for attempt in attempts
+    if isinstance(attempt, dict)
+    and int(
+        (
+            attempt.get("recurrence")
+            if isinstance(attempt.get("recurrence"), dict)
+            else {}
+        ).get("replan_epoch")
+        or 0
+    )
+    == replan_epoch
+]
 recurrence = repair_recurrence.evaluate_recurrence(
     signature,
-    payload.get("attempts") if isinstance(payload.get("attempts"), list) else [],
+    epoch_attempts,
     session_snapshot,
 )
 attempt_id = int(payload.get("attempt_counter") or 0) + 1
@@ -6335,6 +6355,7 @@ payload["current_recurrence"] = {
     "root_cause_mode": bool(recurrence.get("detected")),
     "request_id": dispatch_request_id,
     "blocker_id": dispatch_blocker_id,
+    "replan_epoch": replan_epoch,
 }
 payload["run_recurrence_detected"] = bool(payload.get("run_recurrence_detected")) or bool(recurrence.get("detected"))
 repair_recurrence.atomic_write_json(data_path, payload)
@@ -6802,7 +6823,7 @@ Bounded authoritative pointers:
 Objective:
 1. Read the bounded context and receipt. Verify their digest-bound identity, provenance, recommended action, safe target, allowed and forbidden mutations, and intended recovery before changing anything.
 2. Act only inside the receipt's mutation scope. Do not independently choose another target. Follow typed evidence pointers only as needed; never copy expanding logs, histories, state blobs, or evidence bundles into prompts or reports.
-3. Preserve all completion, review, safety, authority, and verification guards. If evidence contradicts the receipt or the deterministic progress token repeats, make no mutation and report replan.
+3. Preserve all completion, review, safety, authority, and verification guards. If evidence contradicts the receipt, make no mutation and report replan. A repeated deterministic progress token normally requires replan too; however, when the context contains a verified receipt-bound l2_replan_authorization epoch, repetitions from before that epoch are the baseline the epoch was created to supersede and do not by themselves prohibit the one newly authorized bounded mutation. Replan if the token repeats again within that same epoch after an owner attempt.
 4. Apply the narrowest systemic fix, run the smallest relevant behavior test plus required safety/authority regressions, and write exact commands and results to the report.
 5. $delivery_policy
 6. Do not relaunch, hand-advance, directly edit control-plane state, push without authority, or merge a remote PR. A commit or live process is not success; the wrapper must prove blocker clearance and fresh progress beyond the frozen checkpoint.
@@ -7142,7 +7163,7 @@ Authoritative bounded artifact (the read-only sandbox is rooted at its parent di
 
 Read that artifact. It contains the exact current error, frozen goal checkpoint, process/stage evidence, immutable authorization, queued request identity, and bounded repair history. Treat it as authoritative; inspect only its cited paths when needed and accessible.
 
-Determine the actual failure mechanism and whether the correct target worker must be preserved. Reconcile every evidence source and custody contradiction, state the intended recovery predicate and one safe repair target, and provide an explicit mutation handoff using the required_investigator_output schema embedded in the context. Apply TRACKED/FIXED/INTENT/CONTEXT. A frozen repair checkpoint is the immutable acceptance baseline for an outcome, not a requirement that every successor blocker have the same failure label; when goal/session/plan identity remains consistent, a fresh authoritative successor blocker should receive its bounded repair action under the same goal. Unknown or genuinely conflicting identity/custody, guard-weakening risk, or no safe target must recommend replan. When l2_replan_authorization.verified is true, its receipt-bound epoch resolves the otherwise-unowned repair-custody contradiction for this one L1 cycle: if identity and external guards agree and no runner must be preserved, choose recover_state with the exact supported_cli mutation; never replan solely because the goal was previously unowned. Without that verified authorization, contradictory repair ownership must use replan with safe_repair_target.kind=repair_custody, which names the L2/root-cause target but authorizes no L1 mutation. evidence_sources[].kind must be exactly one of: live_process, session_marker, chain_state, plan_state, phase_result, review_artifact, event_log, chain_log, repair_data, repair_queue, repair_goal, meta_repair, source_tree, source_contract, resident_delegation, automatic_system, external_state. historical_failure_recovery is analysis embedded in the authoritative plan_state context, not an evidence kind; cite its details under plan_state. prior_repairs_considered must remain a non-empty JSON array of non-empty strings; use ["none"] when there are no prior repairs, never the string "none". Do not edit files, change plan state, kill/restart processes, weaken guards, or launch another mutating owner. Return ONLY one JSON object matching schema_version="arnold-repair-investigator-receipt-v2".
+Determine the actual failure mechanism and whether the correct target worker must be preserved. Reconcile every evidence source and custody contradiction, state the intended recovery predicate and one safe repair target, and provide an explicit mutation handoff using the required_investigator_output schema embedded in the context. Apply TRACKED/FIXED/INTENT/CONTEXT. Use the source_tree evidence, including bounded status_paths, to cover the exact existing files required for a cohesive target repair; do not invent nonexistent paths, and include an existing forward migration when an already-applied migration cannot safely be edited in place. A frozen repair checkpoint is the immutable acceptance baseline for an outcome, not a requirement that every successor blocker have the same failure label; when goal/session/plan identity remains consistent, a fresh authoritative successor blocker should receive its bounded repair action under the same goal. Unknown or genuinely conflicting identity/custody, guard-weakening risk, or no safe target must recommend replan. When l2_replan_authorization.verified is true, its receipt-bound epoch resolves the otherwise-unowned repair-custody contradiction for this one L1 cycle: if identity and external guards agree and no runner must be preserved, choose recover_state with the exact supported_cli mutation; never replan solely because the goal was previously unowned or because a pre-epoch deterministic progress token remains unchanged before the newly authorized mutation. Without that verified authorization, contradictory repair ownership must use replan with safe_repair_target.kind=repair_custody, which names the L2/root-cause target but authorizes no L1 mutation. evidence_sources[].kind must be exactly one of: live_process, session_marker, chain_state, plan_state, phase_result, review_artifact, event_log, chain_log, repair_data, repair_queue, repair_goal, meta_repair, source_tree, source_contract, resident_delegation, automatic_system, external_state. historical_failure_recovery is analysis embedded in the authoritative plan_state context, not an evidence kind; cite its details under plan_state. prior_repairs_considered must remain a non-empty JSON array of non-empty strings; use ["none"] when there are no prior repairs, never the string "none". Do not edit files, change plan state, kill/restart processes, weaken guards, or launch another mutating owner. Return ONLY one JSON object matching schema_version="arnold-repair-investigator-receipt-v2".
 EOF
   if [[ "$investigator_mode" == "brokered_no_tools" ]]; then
     cat >>"$INVESTIGATOR_PROMPT_PATH" <<EOF

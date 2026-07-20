@@ -24,6 +24,7 @@ from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
     validate_l3_repair_dispatch_context,
     validate_managed_launch,
     verify_recovery,
+    _l1_failure_fingerprint,
 )
 
 
@@ -684,6 +685,25 @@ def test_open_pr_does_not_hide_blocked_unowned_active_repair_goal() -> None:
     assert gate["progress"]["fresh"] is False
     assert gate["progress"]["liveness_sources"] == ["events", "chain_log"]
     assert gate["evidence_sources"]["external_state"]["intentional_wait"] is False
+
+
+def test_deterministic_replan_is_an_l1_failure_without_retry_exhaustion() -> None:
+    failure = _l1_failure_fingerprint(
+        {
+            "repair_data_summary": {"outcome": "deterministic_failure"},
+            "repair_custody_summary": {
+                "retry_budget": {
+                    "claim_retries_used": 0,
+                    "claim_retries_remaining": 3,
+                }
+            },
+            "deterministic_retry_evidence": {"count": 1},
+            "reasons": [],
+        }
+    )
+
+    assert failure["outcome"] == "deterministic_failure"
+    assert failure["failed"] is True
 
 
 def test_preserve_live_goal_does_not_create_unowned_goal_failure() -> None:
