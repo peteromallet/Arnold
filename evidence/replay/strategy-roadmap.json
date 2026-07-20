@@ -1,6 +1,6 @@
 {
-  "composite_hash": "3c8f5a359af90a930c2ac228ea78d9d88d39cfce5d0e15f0eb046759b7795bef",
-  "generated_at": "2026-07-19T20:22:50.809889+00:00",
+  "composite_hash": "0c3342e3d2b5de9fa001368de272e264c0410712ca7276eb125472c37af9d853",
+  "generated_at": "2026-07-19T22:34:46.811797+00:00",
   "generator": "tools/generate_m6_replay_fixtures.py",
   "limitations": {
     "compaction_and_productive_baselines_unknown": {
@@ -39,7 +39,7 @@
     "handoff_context": "e68f0fb995c8d3d16eec2ba278e8ed1d8db94bf2f5b2629095e8f56533507f48",
     "incident_data": "e2f6a59d92bf02c880812c9a82bf07dfb99db6ff42d32ae16c4e0f33d2c14331",
     "initiative_artifacts": "ac4270256654130f53405657304e0e4754767fe78d102694c38c513be0268a6f",
-    "repair_data": "68158895c9f31411cc22a4da403048366bf938cf3c425a9a3de9a805cfe823cd"
+    "repair_data": "385b4a89b78690cc2f9384a5a721b23b97fc9b934b1f436de905c6aa67233489"
   },
   "sections": {
     "compaction_baseline": {
@@ -138,7 +138,7 @@
       "source_directory": ".megaplan/initiatives/repository-strategy-roadmap"
     },
     "repair_data": {
-      "content_hash": "03242b903e0a257f547ea6fbad95f3f091fea612eec7c8db04ec49518767752c",
+      "content_hash": "1b38e0339c32b76ab7602432a9651e38ffaa29583562c6aaf7276587de6ebc54",
       "incident_summaries": [
         {
           "decision_count": 4,
