@@ -54,6 +54,13 @@ VP_TODO_SCHEDULE_PROMPT = (
     "Run the established report-only VP special-request todo audit through the "
     "resident orchestrator turn. This schedule grants no additional task authority."
 )
+PINNED_E894_BABYSITTER_SCHEDULE_ID = "sched_pinned_e894_epics_babysit_3h"
+PINNED_E894_PROFILE_GUARD_REVISION = 6
+PINNED_E894_SUPERPOM_PROFILE = "partnered-5"
+PINNED_E894_PROFILE_PRESERVATION_GUARD = (
+    "Preserve the existing configured profile. Do not select, replace, or otherwise "
+    "switch profiles. You may observe and report profile evidence but must not mutate it."
+)
 UPCOMING_HORIZON_HOURS = 12
 UPCOMING_HOT_LIMIT = 8
 
@@ -382,6 +389,15 @@ class ScheduleDefinition(BaseModel):
             raise ValueError("target work_intent exceeds the immutable authorization grant")
         if self.delivery.route_ref != self.authorization.route_ref:
             raise ValueError("delivery route must exactly match the authorized route")
+        if (
+            self.schedule_id == PINNED_E894_BABYSITTER_SCHEDULE_ID
+            and self.revision >= PINNED_E894_PROFILE_GUARD_REVISION
+            and PINNED_E894_PROFILE_PRESERVATION_GUARD not in self.target.prompt
+        ):
+            raise ValueError(
+                "the pinned-e894 babysitter prompt must preserve configured profiles "
+                "and forbid profile switching"
+            )
         self.created_at = _utc(self.created_at)
         self.updated_at = _utc(self.updated_at)
         if self.quota.maximum_schedule_lifetime:

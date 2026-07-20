@@ -12,6 +12,10 @@ import pytest
 
 from arnold_pipelines.megaplan.resident.schedules import (
     AuthorizationGrant,
+    PINNED_E894_BABYSITTER_SCHEDULE_ID,
+    PINNED_E894_PROFILE_GUARD_REVISION,
+    PINNED_E894_PROFILE_PRESERVATION_GUARD,
+    PINNED_E894_SUPERPOM_PROFILE,
     ScheduleDefinition,
     ScheduleService,
     VP_TODO_SCHEDULE_ID,
@@ -490,6 +494,24 @@ def test_authorization_and_prompt_tampering_fail_validation() -> None:
     payload["target"]["work_intent"] = "execution"
     with pytest.raises(ValueError, match="exceeds"):
         ScheduleDefinition.model_validate(payload)
+
+
+def test_pinned_e894_babysitter_requires_partnered_5_profile_preservation() -> None:
+    """The babysitter may report profile evidence but cannot switch the chain profile."""
+
+    assert PINNED_E894_SUPERPOM_PROFILE == "partnered-5"
+    payload = definition().model_dump(mode="json", by_alias=True)
+    payload["schedule_id"] = PINNED_E894_BABYSITTER_SCHEDULE_ID
+    payload["revision"] = PINNED_E894_PROFILE_GUARD_REVISION
+    with pytest.raises(ValueError, match="forbid profile switching"):
+        ScheduleDefinition.model_validate(payload)
+
+    prompt = payload["target"]["prompt"] + "\n\n" + PINNED_E894_PROFILE_PRESERVATION_GUARD
+    payload["target"]["prompt"] = prompt
+    payload["target"]["prompt_digest"] = "sha256:" + hashlib.sha256(prompt.encode()).hexdigest()
+    guarded = ScheduleDefinition.model_validate(payload)
+
+    assert PINNED_E894_PROFILE_PRESERVATION_GUARD in guarded.target.prompt
 
 
 def test_cli_create_list_run_and_occurrence_projection(tmp_path: Path) -> None:
