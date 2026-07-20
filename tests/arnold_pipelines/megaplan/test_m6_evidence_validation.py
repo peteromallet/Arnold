@@ -379,7 +379,7 @@ class TestGlobalUnknowns:
 
     def test_non_rationale_values_are_unknown(self) -> None:
         """All baseline/denominator global unknowns must be 'UNKNOWN'.
-        
+
         Status-reporting fields (like prerequisite_overall_status,
         wbc_ancestry_coherent) are allowed to be PASS/INCOHERENT/BLOCKED
         since they reflect actual verification results.

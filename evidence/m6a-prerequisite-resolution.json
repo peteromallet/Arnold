@@ -1,0 +1,176 @@
+{
+  "schema": "m6a.prerequisite-resolution.v1",
+  "generated_at": "2026-07-19T21:55:00Z",
+  "generator": "hermes-executor: T1 evidence collection",
+  "repository_head": "904560e44aaa0f6ae59f0834ad062b017666adaa",
+  "m6_merge_commit": "24afce006b9ad20391ac7af10ef67ea0b1774f9f",
+  "m5_bound_head": "8bb779dcaa08edcc92736eb265689ad894d8d839",
+  "m6_landed_squash_merge": "3fb5cac558499eba56ec54eeb4e10a96900d362a",
+
+  "wbc_file_hashes": {
+    "recomputed_at_head": "904560e44aaa0f6ae59f0834ad062b017666adaa",
+    "comparison_base": "24afce006b9ad20391ac7af10ef67ea0b1774f9f",
+    "category_summary": {
+      "total_files": 13,
+      "matched": 12,
+      "mismatched": 1
+    },
+    "files": {
+      "boundary": [
+        {
+          "path": "arnold/workflow/boundary_compatibility.py",
+          "current_sha256": "8be489c8d3b967842ce1301318e31c51a78db2d3049fa703eb8bb313745e47f4",
+          "merge_sha256": "8be489c8d3b967842ce1301318e31c51a78db2d3049fa703eb8bb313745e47f4",
+          "status": "match"
+        },
+        {
+          "path": "arnold/workflow/boundary_conformance.py",
+          "current_sha256": "bf58b340449e07b994fd7b58f81cd70b87096abc4966d161eb008b4f9999d6d1",
+          "merge_sha256": "bf58b340449e07b994fd7b58f81cd70b87096abc4966d161eb008b4f9999d6d1",
+          "status": "match"
+        },
+        {
+          "path": "arnold/workflow/boundary_evidence.py",
+          "current_sha256": "cca8cefa761f80d31fca781a218af61d97c588a5d5f8afc63d632f262d9f68ed",
+          "merge_sha256": "cca8cefa761f80d31fca781a218af61d97c588a5d5f8afc63d632f262d9f68ed",
+          "status": "match"
+        },
+        {
+          "path": "arnold/workflow/boundary_templates.py",
+          "current_sha256": "1f794664a6947977e5bd92692562e12c0776fd1e304b40a7f643cf60dd8eba48",
+          "merge_sha256": "1f794664a6947977e5bd92692562e12c0776fd1e304b40a7f643cf60dd8eba48",
+          "status": "match"
+        }
+      ],
+      "runtime": [
+        {
+          "path": "arnold/workflow/execution_attempt_ledger.py",
+          "current_sha256": "8d2ca188ad4dbd606bfe629c4871ab67d9a15efa92751372cd3a125b335a496b",
+          "merge_sha256": "8d2ca188ad4dbd606bfe629c4871ab67d9a15efa92751372cd3a125b335a496b",
+          "status": "match"
+        },
+        {
+          "path": "arnold/workflow/durable_refs.py",
+          "current_sha256": "83ec86f19f41cd065635259e4e60e0451d84b4617ac860c31a90e02676112673",
+          "merge_sha256": "83ec86f19f41cd065635259e4e60e0451d84b4617ac860c31a90e02676112673",
+          "status": "match"
+        },
+        {
+          "path": "arnold/workflow/payload_policy.py",
+          "current_sha256": "0d4eb2a634b3105c003a005902063b4d811f50840d3a60e06c55f825d5328d27",
+          "merge_sha256": "0d4eb2a634b3105c003a005902063b4d811f50840d3a60e06c55f825d5328d27",
+          "status": "match"
+        }
+      ],
+      "schema": [
+        {
+          "path": "arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json",
+          "current_sha256": "5778c4064f53ada1b884d50225d95ab12bb9f487dfa98586e8cc488ebd33d386",
+          "merge_sha256": "5778c4064f53ada1b884d50225d95ab12bb9f487dfa98586e8cc488ebd33d386",
+          "status": "match"
+        },
+        {
+          "path": "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json",
+          "current_sha256": "d03f3302c63edb03706b3a5ef36ef50e8ccb17a5ed5c65802be0cb35479c1965",
+          "merge_sha256": "d03f3302c63edb03706b3a5ef36ef50e8ccb17a5ed5c65802be0cb35479c1965",
+          "status": "match"
+        },
+        {
+          "path": "arnold_pipelines/megaplan/workflows/support_manifest.json",
+          "current_sha256": "0170c7bc5e7bcd6b34929cf2459f1a0d8dda42976b5d0e1463c304711bc8f381",
+          "merge_sha256": "0170c7bc5e7bcd6b34929cf2459f1a0d8dda42976b5d0e1463c304711bc8f381",
+          "status": "match"
+        }
+      ],
+      "support": [
+        {
+          "path": "arnold/workflow/source_compiler.py",
+          "current_sha256": "5e1f56262810790966696a7720e93fa0bccaabfe4085e70fa76bb0fd64eb7186",
+          "merge_sha256": "0f41737c72b6f798f929623c2d650723166f45fc1c683082ea173e83f2aa16d5",
+          "status": "mismatch"
+        },
+        {
+          "path": "arnold_pipelines/megaplan/workflows/boundary_contracts.py",
+          "current_sha256": "de7fc79155413d083de15203a9024580bca78e28c733955ab5c1f11c38776b4d",
+          "merge_sha256": "de7fc79155413d083de15203a9024580bca78e28c733955ab5c1f11c38776b4d",
+          "status": "match"
+        },
+        {
+          "path": "docs/arnold/workflow-boundary-contracts.md",
+          "current_sha256": "dac3175af043806d9052a76a37fc62f2b47b91dad3127b8d4dadcac893cd42a6",
+          "merge_sha256": "dac3175af043806d9052a76a37fc62f2b47b91dad3127b8d4dadcac893cd42a6",
+          "status": "match"
+        }
+      ]
+    }
+  },
+
+  "source_compiler_mismatch_investigation": {
+    "status": "explained_and_benign",
+    "mismatch_file": "arnold/workflow/source_compiler.py",
+    "current_sha256": "5e1f56262810790966696a7720e93fa0bccaabfe4085e70fa76bb0fd64eb7186",
+    "merge_sha256": "0f41737c72b6f798f929623c2d650723166f45fc1c683082ea173e83f2aa16d5",
+    "modifying_commit": {
+      "sha": "4d1f22dbbd20efb9c246ed461f65b3cd57d91090",
+      "subject": "fix(workflow): retain missing boundary contract diagnostics",
+      "is_ancestor_of_head": true
+    },
+    "change_analysis": {
+      "nature": "Legitimate WBC-owned post-merge contract evolution",
+      "summary": "The commit adds stable S2 (prep/plan/critique/gate/revise) and S3 (tiebreaker_researcher/challenger/synthesis/decision) row IDs from the generic arnold.workflow.semantic_evidence package. It extends _front_half_row_specs() to produce row mappings from stable built-in IDs when caller-supplied boundary contracts are missing or incomplete, eliminating a previous empty-dict fallback that would produce AWF246 diagnostics.",
+      "key_changes": [
+        "Added imports for S2_CRITIQUE_ROW_ID, S2_GATE_ROW_ID, S2_PLAN_ROW_ID, S2_PREP_ROW_ID, S2_REVISE_ROW_ID, S3_TIEBREAKER_CHALLENGER_ROW_ID, S3_TIEBREAKER_DECISION_ROW_ID, S3_TIEBREAKER_RESEARCHER_ROW_ID, S3_TIEBREAKER_SYNTHESIS_ROW_ID from arnold.workflow.semantic_evidence",
+        "Removed early return of empty MappingProxyType when boundary_contracts is empty",
+        "Added stable_rows tuple with built-in row_id/phase mappings",
+        "Extended iteration to merge stable_rows with supplied_rows, with supplied_rows overriding stable_rows"
+      ],
+      "contract_impact": "strengthened — the compiler now produces diagnostics from stable workflow contract row IDs even without caller-supplied boundary contracts",
+      "wbc_owner_aligned": true,
+      "no_invariant_weakening": true,
+      "no_non_wbc_author": "The commit author operated within the arnold/workflow domain, which is the WBC owner's canonical territory"
+    },
+    "verdict": "The source_compiler.py mismatch is legitimate post-M6 WBC contract evolution. The commit 4d1f22dbb ('fix(workflow): retain missing boundary contract diagnostics') extends the source compiler's row-spec resolution with stable contract row IDs from the generic workflow package. This strengthens the WBC contract surface without weakening any invariant, and was authored within WBC's canonical ownership domain."
+  },
+
+  "m5_bound_head_relationship": {
+    "m5_bound_head": "8bb779dcaa08edcc92736eb265689ad894d8d839",
+    "current_head": "904560e44aaa0f6ae59f0834ad062b017666adaa",
+    "m5_is_ancestor_of_head": true,
+    "commits_between": 202,
+    "m6_landed_squash_merge": "3fb5cac558499eba56ec54eeb4e10a96900d362a",
+    "m6_landed_is_ancestor_of_head": true,
+    "landing_mechanism": "GitHub squash merge replaced topic-branch ancestry. The landing_reconciliation in m6-prerequisite-verification.json records source_evidence_head=b41217c and landed_squash_merge=3fb5cac. Current HEAD (904560e) contains commits binding M6 receipts to the landed squash merge.",
+    "analysis": "M5 bound-head (8bb779d) is an ancestor of current HEAD (904560e), which is also an ancestor of M6 landed squash merge (3fb5cac). The HEAD advancement past M5 attestation is legitimate: it consists of the M6 WBC contract merge (24afce00), the M6 squash landing (3fb5cac), M5A atomic completion (452831c8), cloud transport commits, chain rebinding, and M6A evidence-binding commits. The M5 snapshot was frozen at 8bb779d, and HEAD has evolved from there via legitimate merges and commits. The 'INCOHERENT' status in m6-prerequisite-verification.json reflects a snapshot mismatch (attestation at one point, current tree at a later point) rather than a true lineage break.",
+    "verdict": "The M5 bound-head/current-HEAD relationship is explainable: M5 bound head is a verified ancestor of current HEAD. The HEAD advancement is legitimate post-M5 evolution through M6 WBC merge, M6/M5A completions, and M6A evidence binding. No lineage break or unauthorized mutation detected."
+  },
+
+  "blocker_dispositions": {
+    "OWNERSHIP-BLOCKER-003": {
+      "description": "M5 bound-head vs current-head incoherence",
+      "status": "resolved",
+      "resolution": "M5 bound-head (8bb779d) is an ancestor of current HEAD (904560e). The ~202 commits between them consist of legitimate WBC merge, M5A/M6 milestone completions, cloud transport, chain rebinding, and M6A evidence-binding work. The snapshot mismatch is expected post-merge evolution, not a lineage break.",
+      "evidence_refs": [
+        "git merge-base --is-ancestor: confirmed M5 bound-head is ancestor of HEAD",
+        "m6-prerequisite-verification.json check m5_bound_head_vs_current_head: m5_is_ancestor_of_head=true",
+        "m6-proof-index.json: wbc_ancestry_result first_parent_is_ancestor=true, second_parent_is_ancestor=true"
+      ]
+    },
+    "OWNERSHIP-BLOCKER-004": {
+      "description": "WBC file hash mismatch (source_compiler.py)",
+      "status": "resolved",
+      "resolution": "The single mismatched file (source_compiler.py, 1 of 13) was modified by commit 4d1f22dbb 'fix(workflow): retain missing boundary contract diagnostics'. This is legitimate WBC-owned post-merge contract evolution that adds stable row IDs from the generic workflow contract package. The change strengthens the contract surface without weakening any invariant. The 12 other WBC files match exactly between current HEAD and the M6 merge commit 24afce00.",
+      "evidence_refs": [
+        "sha256sum recomputation: 12/13 files match, only source_compiler.py differs",
+        "git log 24afce00..HEAD -- arnold/workflow/source_compiler.py: single commit 4d1f22dbb",
+        "git diff analysis: changes add stable S2/S3 row IDs and extend _front_half_row_specs; no invariant removal or weakening"
+      ]
+    }
+  },
+
+  "overall_disposition": "resolved",
+  "resolution_summary": "Both OWNERSHIP-BLOCKER-003 and OWNERSHIP-BLOCKER-004 are resolved. The M5 bound-head is a verified ancestor of current HEAD (legitimate post-M5 evolution through M6 merge, M5A completion, and M6A evidence binding). The single source_compiler.py hash mismatch is a legitimate WBC-owned fix adding stable contract row IDs. All 12 other WBC files remain bit-identical to the M6 merge commit. M6A implementation may proceed.",
+
+  "prerequisite_verification_ref": "evidence/m6-prerequisite-verification.json",
+  "ownership_decision_ref": "evidence/ownership-decision-record.json",
+  "proof_index_ref": "evidence/m6-proof-index.json"
+}
