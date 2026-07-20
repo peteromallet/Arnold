@@ -3393,6 +3393,7 @@ def test_watchdog_allows_concurrent_repairs_for_different_sessions(tmp_path: Pat
             _extract_wrapper_function("kimi_operator_running"),
             _extract_wrapper_function("repair_loop_busy_state"),
             _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
+            _extract_wrapper_function("confirm_managed_agent_dispatch"),
             _extract_wrapper_function("dispatch_kimi_repair"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
@@ -3643,6 +3644,7 @@ def test_watchdog_kimi_dispatch_emits_incident_dispatch_statuses(tmp_path: Path)
             _extract_wrapper_function("kimi_operator_running"),
             _extract_wrapper_function("repair_loop_busy_state"),
             _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
+            _extract_wrapper_function("confirm_managed_agent_dispatch"),
             _extract_wrapper_function("dispatch_kimi_repair"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_dir)!r}",
@@ -3653,6 +3655,9 @@ def test_watchdog_kimi_dispatch_emits_incident_dispatch_statuses(tmp_path: Path)
             f"SRC_DIR={str(REPO_ROOT)!r}",
             """
 log() { printf '%s\n' "$*" >> "$LOG"; }
+repair_loop_busy_state() {
+  if [[ -f "$(kimi_dispatch_marker_path "$1")" ]]; then echo same_session; else echo none; fi
+}
 dispatch_kimi_repair demo-session __WORKSPACE__ /tmp/spec.yaml
 echo "first:${REPAIR_DISPATCH_RESULT:-unset}"
 sleep 0.2
@@ -3674,6 +3679,12 @@ fi
     assert [payload["outcome"] for payload in dispatch_payloads] == ["dispatched", "busy"]
     assert {payload["type"] for payload in payloads} >= {"claim.acquired", "repair_attempt"}
     assert dispatch_payloads[0]["decision"]["repair_actor"] == "immediate_repair"
+    marker_fields = (marker_dir / "demo-session.kimi-dispatch").read_text().strip().split("\t")
+    assert marker_fields[:2] == ["arnold-dispatch-marker-v2", "managed_agent"]
+    managed_run_id, managed_manifest_path = marker_fields[3:5]
+    managed = json.loads(Path(managed_manifest_path).read_text(encoding="utf-8"))
+    assert managed["run_id"] == managed_run_id
+    assert managed["launch_provenance"]["origin_kind"] == "watchdog_repair"
 
 
 def test_watchdog_meta_dispatch_emits_incident_statuses(tmp_path: Path) -> None:
@@ -4698,66 +4709,15 @@ def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace()
 
 def test_supervise_exhaustion_queues_repair_request() -> None:
     text = _wrapper("arnold-supervise")
-    helper = (REPO_ROOT / "arnold_pipelines/megaplan/cloud/supervise.py").read_text(
-        encoding="utf-8"
-    )
 
     assert "queue_repair_request()" in text
-    assert "enqueue_supervisor_repair_request" in text
-    assert 'source="arnold_supervise_exit"' in helper
-    assert '"failure_kind": "supervised_run_exhausted"' in helper
+    assert 'source="arnold_supervise_exit"' in text
+    assert '"failure_kind": "supervised_run_exhausted"' in text
     assert "non-quota retries exhausted" in text
     assert "exit_with_repair_request" in text
     assert "SUPERVISE_SESSION" in text
     assert "SUPERVISE_WORKSPACE" in text
     assert "SUPERVISE_REMOTE_SPEC" in text
-
-
-def test_supervise_deterministic_binding_failure_does_not_retry(tmp_path: Path) -> None:
-    command = tmp_path / "binding-drift"
-    command.write_text(
-        "#!/usr/bin/env bash\n"
-        "printf '%s\\n' \"{\\\"success\\\":false,\\\"error\\\":\\\"chain_execution_binding_drift\\\",\\\"message\\\":\\\"active_errors=['editable_runtime_import_root_mismatch']\\\"}\"\n"
-        "exit 1\n",
-        encoding="utf-8",
-    )
-    command.chmod(command.stat().st_mode | stat.S_IXUSR)
-    env = dict(os.environ)
-    env.update(
-        {
-            "PYTHONPATH": f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}",
-            "MEGAPLAN_SUPERVISOR_SOURCE": str(REPO_ROOT),
-            "ARNOLD_AUTONOMY": "1",
-            "ARNOLD_REPAIR_TRIGGER_ENABLED": "1",
-            "ARNOLD_SUPERVISE_LOG": str(tmp_path / "supervise.log"),
-        }
-    )
-
-    result = subprocess.run(
-        ["bash", str(WRAPPER_DIR / "arnold-supervise"), "binding", str(command)],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-        timeout=10,
-    )
-
-    assert result.returncode == 1
-    assert "refusing retry spin" in result.stdout
-    assert (
-        "chain_execution_binding_drift;"
-        "active_errors=editable_runtime_import_root_mismatch"
-    ) in result.stdout
-    assert "error retry" not in result.stdout
-
-
-def test_repair_loop_accepts_explicit_scoped_attested_runtime() -> None:
-    text = _wrapper("arnold-repair-loop")
-
-    assert (
-        'ARNOLD_SRC="${ARNOLD_REPAIR_RUNTIME_SRC:-'
-        '${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"'
-    ) in text
 
 
 def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
@@ -5754,7 +5714,12 @@ tmux() {
     assert "DISPATCH" not in result.stderr
     assert "REPAIR" not in result.stderr
     assert "TMUX_NEW" in result.stderr
-    assert (marker_dir / "demo-session.kimi-dispatch").exists()
+    mechanical_marker = (marker_dir / "demo-session.kimi-dispatch").read_text().rstrip("\n").split("\t")
+    assert mechanical_marker[:2] == [
+        "arnold-dispatch-marker-v2",
+        "deterministic_relaunch",
+    ]
+    assert mechanical_marker[3:] == ["", ""]
 
 
 def test_watchdog_chain_session_is_not_short_circuited_by_done_plan_state(tmp_path: Path) -> None:
@@ -7214,11 +7179,25 @@ def test_watchdog_log_redacts_stdout_and_log_file(tmp_path: Path) -> None:
     assert "bearer-secret-token-value" not in log_path.read_text(encoding="utf-8")
 
 
-def test_watchdog_needs_human_discord_dm_is_primary_delivery(tmp_path: Path) -> None:
+def test_watchdog_needs_human_launches_resident_diagnostic_instead_of_bare_dm(
+    tmp_path: Path,
+) -> None:
+    diagnostic_helper = tmp_path / "arnold-human-review-diagnostic"
+    diagnostic_helper.write_text(
+        "#!/usr/bin/env bash\n"
+        "payload=''\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  if [[ \"$1\" == --payload-file ]]; then payload=\"$2\"; shift 2; else shift; fi\n"
+        "done\n"
+        f"cp \"$payload\" {str(tmp_path / 'diagnostic-payload.json')!r}\n"
+        "printf '%s\\n' '{\"ok\":true,\"status\":\"launched\",\"run_id\":\"subagent-20260714-120000-abcdef12\",\"manifest_path\":\"/tmp/manifest.json\",\"state_path\":\"/tmp/state.json\",\"fallback_delivery_required\":false}'\n",
+        encoding="utf-8",
+    )
+    diagnostic_helper.chmod(diagnostic_helper.stat().st_mode | stat.S_IXUSR)
     dm_helper = tmp_path / "arnold-discord-dm"
     dm_helper.write_text(
         "#!/usr/bin/env bash\n"
-        f"cat > {str(tmp_path / 'dm-payload.json')!r}\n"
+        f"cat > {str(tmp_path / 'dm-called.json')!r}\n"
         "printf '%s\\n' '{\"ok\": true, \"message_count\": 1}'\n",
         encoding="utf-8",
     )
@@ -7234,7 +7213,10 @@ def test_watchdog_needs_human_discord_dm_is_primary_delivery(tmp_path: Path) -> 
         [
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             f"LOG={str(log_path)!r}",
+            f"MARKER_DIR={str(tmp_path / 'markers')!r}",
+            f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
             f"DISCORD_DM_BIN={str(dm_helper)!r}",
+            f"HUMAN_REVIEW_DIAGNOSTIC_BIN={str(diagnostic_helper)!r}",
             "REPORT_WEBHOOK='https://example.test/watchdog'",
             """
 report_item() {
@@ -7257,14 +7239,66 @@ PLAN_STATUS_PUSHED_COMMITS='abc123def456, fedcba654321'
 
     result = _run_watchdog_shell(script, path_prefix=tmp_path)
     assert result.returncode == 0, result.stderr
-    payload = json.loads((tmp_path / "dm-payload.json").read_text(encoding="utf-8"))
+    payload = json.loads((tmp_path / "diagnostic-payload.json").read_text(encoding="utf-8"))
     assert payload["title"] == "Megaplan needs human review - demo-session"
     assert payload["plan"]["tiers_tried"] == ["deepseek:flash", "codex:gpt-5.4", "codex:gpt-5.5"]
     assert payload["plan"]["pushed_commit_shas"] == ["abc123def456", "fedcba654321"]
     assert any(field["label"] == "Tiers tried" and field["joiner"] == " -> " for field in payload["fields"])
+    assert not (tmp_path / "dm-called.json").exists()
     report = report_path.read_text(encoding="utf-8")
-    assert "\tnotify\tdiscord_dm_sent\tneeds-human Discord DM delivered\t" in report
+    assert "\tnotify\tdiagnostic_agent_launched\t" in report
     assert "needs-human webhook delivered" not in log_path.read_text(encoding="utf-8")
+
+
+def test_watchdog_needs_human_launch_failure_sends_truthful_actionable_fallback(
+    tmp_path: Path,
+) -> None:
+    diagnostic_helper = tmp_path / "arnold-human-review-diagnostic"
+    diagnostic_helper.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' '{\"ok\":false,\"status\":\"launch_failed\",\"error\":\"resident supervisor unavailable\",\"state_path\":\"\",\"fallback_delivery_required\":true}'\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    diagnostic_helper.chmod(diagnostic_helper.stat().st_mode | stat.S_IXUSR)
+    dm_helper = tmp_path / "arnold-discord-dm"
+    dm_helper.write_text(
+        "#!/usr/bin/env bash\n"
+        f"cat > {str(tmp_path / 'dm-payload.json')!r}\n"
+        "printf '%s\\n' '{\"ok\":true,\"channel_id\":\"34\",\"message_ids\":[\"999\"],\"message_count\":1}'\n",
+        encoding="utf-8",
+    )
+    dm_helper.chmod(dm_helper.stat().st_mode | stat.S_IXUSR)
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            f"LOG={str(log_path)!r}",
+            f"MARKER_DIR={str(tmp_path / 'markers')!r}",
+            f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
+            f"DISCORD_DM_BIN={str(dm_helper)!r}",
+            f"HUMAN_REVIEW_DIAGNOSTIC_BIN={str(diagnostic_helper)!r}",
+            "REPORT_WEBHOOK=''",
+            "report_item() { printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' \"$1\" \"$2\" \"$3\" \"$4\" \"$5\" \"$6\" \"$7\" >> \"$1\"; }",
+            "log() { printf '%s\\n' \"$*\" >> \"$LOG\"; }",
+            "PLAN_STATUS_PLAN_NAME='demo-plan'",
+            "PLAN_STATUS_FAILURE_KIND='iteration_cap'",
+            "PLAN_STATUS_FAILURE_MESSAGE='bounded repair exhausted'",
+            f"notify_needs_human {str(report_path)!r} demo-session /tmp/ws /tmp/spec.yaml chain stopped 'manual_review halt'",
+        ]
+    )
+
+    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+    assert result.returncode == 0, result.stderr
+    payload = json.loads((tmp_path / "dm-payload.json").read_text(encoding="utf-8"))
+    assert payload["diagnostic_launch"] == {
+        "status": "failed",
+        "error": "resident supervisor unavailable",
+    }
+    assert "diagnostic launch failed" in payload["title"].lower()
+    assert "do not assume an agent exists" in payload["next_action"]
+    assert "discord_dm_sent" in report_path.read_text(encoding="utf-8")
 
 
 def test_watchdog_needs_human_fixture_workspace_cannot_reach_delivery(tmp_path: Path) -> None:
@@ -13041,6 +13075,8 @@ def _build_meta_dispatch_script(
     override_kimi_operator: str | None = None,
 ) -> str:
     """Build a shell script exercising dispatch_meta_repair with stubbed dependencies."""
+    source_dir = marker_dir.parent / "managed-source"
+    source_dir.mkdir(parents=True, exist_ok=True)
     lines: list[str] = [
         _LOG_STUB,
         _REDACT_INLINE_STUB,
@@ -13052,6 +13088,7 @@ def _build_meta_dispatch_script(
         _extract_wrapper_function("repair_loop_busy_state"),
         _extract_wrapper_function("check_meta_repair_recursion_guard"),
         _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
+        _extract_wrapper_function("confirm_managed_agent_dispatch"),
         _extract_wrapper_function("dispatch_meta_repair"),
         _extract_wrapper_function("kimi_dispatch_marker_path"),
         _extract_wrapper_function("kimi_pgid_path"),
@@ -13066,13 +13103,14 @@ def _build_meta_dispatch_script(
 
     lines += [
         f"MARKER_DIR={str(marker_dir)!r}",
-        """SRC_DIR=/workspace/arnold""",
+        f"SRC_DIR={str(source_dir)!r}",
         f"""LOG={str(log_path) if log_path else '/dev/null'}""",
         "WRAPPER_REPO_ROOT=/workspace/arnold",
         f"META_REPAIR_BIN={meta_repair_bin!r}",
         f"META_REPAIR_ENABLED_FLAG={meta_repair_enabled}",
         f"REPAIR_DATA_DIR={str(marker_dir)!r}/repair-data",
         f"PYTHONPATH={str(REPO_ROOT)!r}",
+        "repair_loop_busy_state() { echo none; }",
     ]
     if extra_lines:
         lines.extend(extra_lines)
@@ -13098,7 +13136,7 @@ def test_meta_repair_dispatch_missing_binary(tmp_path: Path) -> None:
         report_path,
         meta_repair_bin="/nonexistent/meta-repair-loop",
         extra_lines=[
-            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r}",
+            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r} test_trigger",
             'DISPATCH_EXIT=$?',
             'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
             'echo "EXIT=$DISPATCH_EXIT"',
@@ -13132,7 +13170,7 @@ def test_meta_repair_dispatch_disabled_flag(tmp_path: Path) -> None:
         meta_repair_bin=str(fake_bin),
         meta_repair_enabled="0",
         extra_lines=[
-            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r}",
+            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r} test_trigger",
             'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
         ],
     )
@@ -13162,7 +13200,7 @@ def test_meta_repair_dispatch_enabled_success(tmp_path: Path) -> None:
         report_path,
         meta_repair_bin=str(fake_bin),
         extra_lines=[
-            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r}",
+            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r} test_trigger",
             'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
         ],
     )
@@ -13187,6 +13225,11 @@ def test_meta_repair_dispatch_enabled_success(tmp_path: Path) -> None:
     # Verify the dispatch marker was written
     dispatch_path = marker_dir / "demo-session.meta-dispatch"
     assert dispatch_path.exists(), f"dispatch marker not created at {dispatch_path}"
+    marker_fields = dispatch_path.read_text().rstrip("\n").split("\t")
+    assert marker_fields[:2] == ["arnold-dispatch-marker-v2", "managed_agent"]
+    managed = json.loads(Path(marker_fields[4]).read_text(encoding="utf-8"))
+    assert managed["run_id"] == marker_fields[3]
+    assert managed["launch_provenance"]["origin_kind"] == "watchdog_meta_repair"
     # Verify report was emitted
     assert report_path.exists(), f"report not created"
     report_content = report_path.read_text(encoding="utf-8")
@@ -13254,7 +13297,7 @@ def test_meta_repair_dispatch_busy_skip(tmp_path: Path) -> None:
         meta_repair_bin=str(fake_bin),
         override_kimi_operator="""kimi_operator_running() { return 0; }""",
         extra_lines=[
-            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r}",
+            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r} test_trigger",
             'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
         ],
     )
@@ -13303,7 +13346,7 @@ def test_meta_repair_dispatch_recursive_skip(tmp_path: Path) -> None:
         report_path,
         meta_repair_bin=str(fake_bin),
         extra_lines=[
-            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r}",
+            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r} test_trigger",
             'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
         ],
     )
@@ -13355,7 +13398,7 @@ def test_meta_repair_dispatch_ignores_launch_failure_record(tmp_path: Path) -> N
         report_path,
         meta_repair_bin=str(fake_bin),
         extra_lines=[
-            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r}",
+            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r} test_trigger",
             'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
         ],
     )
@@ -13470,7 +13513,7 @@ def test_meta_repair_dispatch_logs_are_redacted(tmp_path: Path) -> None:
         meta_repair_bin=str(fake_bin),
         log_path=str(log_path),
         extra_lines=[
-            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r}",
+            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r} test_trigger",
         ],
     )
 

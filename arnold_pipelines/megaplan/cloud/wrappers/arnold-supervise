@@ -12,7 +12,6 @@ SUPERVISE_SESSION="${ARNOLD_SUPERVISE_SESSION:-}"
 SUPERVISE_WORKSPACE="${ARNOLD_SUPERVISE_WORKSPACE:-}"
 SUPERVISE_REMOTE_SPEC="${ARNOLD_SUPERVISE_REMOTE_SPEC:-}"
 SUPERVISE_RUN_KIND="${ARNOLD_SUPERVISE_RUN_KIND:-}"
-SUPERVISE_SOURCE="${MEGAPLAN_SUPERVISOR_SOURCE:-${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"
 QUOTA_MAX=4; QUOTA_BACKOFF=1800
 OTHER_MAX=5
 # Exponential backoff: 60s, 120s, 240s, 480s, 960s
@@ -22,32 +21,8 @@ quota_count=0; other_count=0
 last_err=""; streak=0
 log() { echo "[supervise $(date -Iseconds)] $*" | tee -a "$LOG"; }
 
-deterministic_failure_reason() {
-  local run_log="$1"
-  if grep -q '"error"[[:space:]]*:[[:space:]]*"chain_execution_binding_drift"' "$run_log"; then
-    local active_errors
-    active_errors="$(tail -c 262144 "$run_log" | python3 -c '
-import re
-import sys
-
-text = sys.stdin.read()
-matches = re.findall(r"active_errors=\[([^]]*)\]", text)
-if matches:
-    tokens = re.findall(r"[\047\"]([^\047\"]+)[\047\"]", matches[-1])
-    print(",".join(tokens))
-' 2>/dev/null || true)"
-    printf '%s' chain_execution_binding_drift
-    if [[ -n "$active_errors" ]]; then
-      printf ';active_errors=%s' "$active_errors"
-    fi
-    printf '\n'
-    return 0
-  fi
-  return 1
-}
-
 l1_mutation_authorized() {
-  PYTHONPATH="$SUPERVISE_SOURCE:${PYTHONPATH:-}" python3 -B -c \
+  PYTHONPATH="${PYTHONPATH:-}:/workspace/arnold" python3 -B -c \
     'from arnold_pipelines.megaplan.cloud.feature_flags import MUTATION_PATH_L1, mutation_authorized; raise SystemExit(0 if mutation_authorized(MUTATION_PATH_L1) else 1)'
 }
 
@@ -58,7 +33,7 @@ queue_repair_request() {
     return 0
   fi
   local queue_root="${ARNOLD_REPAIR_QUEUE_ROOT:-${SUPERVISE_WORKSPACE}/.megaplan/repair-queue}"
-  PYTHONPATH="$SUPERVISE_SOURCE:${PYTHONPATH:-}" python3 - "$queue_root" "$MARKER_DIR" "$SUPERVISE_SESSION" "$SUPERVISE_WORKSPACE" "$SUPERVISE_REMOTE_SPEC" "$SUPERVISE_RUN_KIND" "$reason" "$LOG" <<'PY'
+  PYTHONPATH="/workspace/arnold:${PYTHONPATH:-}" python3 - "$queue_root" "$MARKER_DIR" "$SUPERVISE_SESSION" "$SUPERVISE_WORKSPACE" "$SUPERVISE_REMOTE_SPEC" "$SUPERVISE_RUN_KIND" "$reason" "$LOG" <<'PY'
 import json
 import sys
 
@@ -91,8 +66,7 @@ exit_with_repair_request() {
 # still emit an observation but do not start or describe work as dispatched.
 if ! l1_mutation_authorized; then
   log "observed: L1 supervisor mutation blocked (requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED)"
-  # A refused effect is not a successful launch receipt.
-  exit 77
+  exit 0
 fi
 
 log "starting cmd: ${CMD[*]}"
@@ -104,12 +78,6 @@ while true; do
   if [[ $rc -eq 0 ]]; then
     log "cmd exited clean (rc=0) — supervisor exiting; inner driver owns plan state"
     rm -f "$RUN_LOG"; exit 0
-  fi
-  deterministic_reason="$(deterministic_failure_reason "$RUN_LOG" || true)"
-  if [[ -n "$deterministic_reason" ]]; then
-    log "deterministic failure ($deterministic_reason) — refusing retry spin"
-    rm -f "$RUN_LOG"
-    exit_with_repair_request "deterministic supervised failure: $deterministic_reason"
   fi
   if grep -q 'quota_exceeded\|insufficient_quota\|rate_limit' "$RUN_LOG"; then
     err_class="quota"

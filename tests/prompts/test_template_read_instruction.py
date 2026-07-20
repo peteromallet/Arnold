@@ -54,22 +54,6 @@ def test_gate_prompt_pairs_template_path_with_exact_read_file_call(tmp_path: Pat
     assert "If you cannot supply that exact non-empty path, do not call `read_file`." in prompt
 
 
-def test_gate_prompt_distinguishes_north_star_and_critique_severities(
-    tmp_path: Path,
-) -> None:
-    state = _minimal_state(tmp_path)
-    plan_dir = tmp_path / "plan"
-
-    prompt = _gate_prompt(state, plan_dir, root=tmp_path)
-
-    severity_block = prompt[prompt.index("Severities:") : prompt.index("Severity sources:")]
-    assert '"blocking"' in severity_block
-    assert '"advisory"' in severity_block
-    assert "] only." in severity_block
-    assert "These are North Star action labels, not critique flag severities" in prompt
-    assert "never use `significant`, `likely-significant`, `minor`" in prompt
-
-
 def test_critique_evaluator_prompt_pairs_template_path_with_exact_read_file_call(
     tmp_path: Path,
 ) -> None:

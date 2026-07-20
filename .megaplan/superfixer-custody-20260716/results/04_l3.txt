@@ -1,0 +1,64 @@
+## L3 Progress-Auditor Verdict: `custody-control-plane-20260714`
+
+### TRACKED / FIXED / INTENT / CONTEXT
+
+| Axis | Finding |
+|------|---------|
+| **TRACKED** | Accepted/dispatched repair requests with no claim/attempt: `_superfixer_cycle_evidence` (wrapper:3646) sets `l1_failed = bool(accepted_unclaimed or stale_l1)`. Test `test_superfixer_cycle_detects_wbc_accepted_unclaimed_exhaustion` (test_progress_auditor.py:135) proves `claim_count=0, attempt_count=0, accepted_unclaimed` → `actionable=True`. `_l1_failure_fingerprint` (escalation:372-377) catches `accepted and exhausted`. |
+| **FIXED** | Stale nonterminal custody & dead-runner detection: `runner_dead` (wrapper:3670) conjunctively requires dead `tmux_live` + `dead_active_step/explicit_stopped/watchdog_stopped`. `incomplete_chain` gates on `_chain_state_looks_nonterminal`. Test coverage exists. |
+| **CONTEXT** | L2 misdiagnosis + nonzero ordinary retrigger: `_l2_failure_fingerprint` (escalation:400-432) only detects false_success via reason tokens (`"false_fixed_l2"` etc.) from `_l2_fix_vs_resolver_drift_finding` (six_hour_auditor:644), which requires the brief to claim `recovered` first. If L2 misdiagnosed and the retrigger happened but didn't advance, the brief never declares recovery → drift detection never fires. Gap: no `installed_freshness` check comparing deployed wrapper SHA vs. L2 fix SHA. |
+| **INTENT** | `classify_true_stall` (escalation:435-538) correctly gates on `intent_allowed` via `_MACHINE_ACTION_STATES` and blocks on `intentional_pause_or_human_gate`. Human-gated sessions (`HUMAN_ACTION_REQUIRED`, `PAUSED`, `awaiting_human`) are intentionally excluded. |
+
+### Retroactive Detection (a–c)
+
+**(a) Historical same-phase failure recounted on multiple polls after later successes:** **GAP.** `_deterministic_retry_evidence` (wrapper:2113) and `_deterministic_phase_history_evidence` (wrapper:2152) only count events within the 6h audit window cutoff. If a gate failure at 18:00 succeeded at 18:30 and the auditor runs at 01:00 (7h later), the failure aged out. Watchdog recounting of the failure across polls won't be surfaced unless `prior_watchdog_report_refs` matched `stopped/dead/progress_stall` — not `"failed then recovered"`. L3 would **not** detect this.
+
+**(b) Accepted/dispatched repair requests with no claim/attempt:** **DETECTED** — see TRACKED above.
+
+**(c) L2 misdiagnosis + nonzero ordinary retrigger:** **PARTIALLY DETECTED.** If the retrigger happened but the chain didn't advance, `incomplete_chain` + `l1_failed` + `absent_or_stale_l2` could trigger via superfixer cycle if L2 evidence is stale. But if L2 evidence exists and is fresh (even misdiagnosed), `absent_or_stale_l2 = False` → blocks `actionable`. The `false_success` drift detection requires the brief projection to first claim recovery — a bootstrapping gap.
+
+### Source/Test Gaps
+
+1. **`_l2_failure_fingerprint`** has no `recursion_guard_blocked` signal (identified in prior audit at superfixer-custody-20260715/results/07-l3-retroactive.txt:39).
+2. **`_l2_fix_vs_resolver_drift_finding`** requires `shipped_fix == "fixed"` AND `install_freshness == "fresh"` (six_hour_auditor:669) — both placeholders must be populated, creating a chicken-and-egg with misdiagnosis detection.
+3. **No `installed_freshness` comparison** between deployed wrapper SHA and L2 fix commit SHA anywhere in the auditor pipeline.
+4. **Audit-window cutoff** (`_deterministic_retry_evidence` L2113) uses `cutoff` from `cutoff = dt.datetime.now() - dt.timedelta(hours=window_h)` — historical same-phase failures across windows are invisible.
+
+### Deterministic Fixture
+
+```python
+def test_l3_detects_l2_misdiagnosis_with_retrigger_no_advance():
+    """L2 claimed FIXED, committed, retriggered L1 — but chain never advanced."""
+    finding = {
+        "session": "custody-control-plane",
+        "repair_data_summary": {"outcome": "retriggered_no_advance"},
+        "meta_repair_summary": {
+            "should_dispatch": True,
+            "shipped_fix": "fixed",
+            "installed_freshness": False,  # committed but never deployed
+        },
+        "repair_custody_summary": {
+            "accepted_unclaimed_request_ids": [],
+            "claim_count": 1,
+            "attempt_count": 1,
+            "retry_budget": {"claim_retries_used": 1},
+        },
+        "deterministic_superfixer_evidence": {
+            "actionable": True,
+            "absent_or_stale_l2": True,
+            "runner_dead": True,
+            "chain_incomplete": True,
+        },
+        "chain_state_summary": {
+            "current": {"last_state": "blocked", "chain_complete": False}
+        },
+        "resolver_state": {"canonical_state": "MACHINE_ACTION_REQUIRED"},
+    }
+    gate = classify_true_stall(finding)
+    # Without fix: l2.failed=True only if missing/failed_launch/false_success
+    # With installed_freshness check: installed_freshness=False → l2.failed=True
+    assert gate["eligible"] is True
+    assert "l2_backstop_failure_not_proven" not in gate.get("blocks", [])
+```
+
+This fixture captures all three gaps in one test: L2 shipped a fix that was never installed, L1 was retriggered but didn't advance, and the auditor lacked the freshness signal to classify L2 as failed.

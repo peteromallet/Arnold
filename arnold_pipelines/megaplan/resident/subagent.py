@@ -1,4 +1,9 @@
-"""Resident-owned provider-neutral delegated-agent lifecycle tracking."""
+"""Resident-owned delegated-agent dispatch and durable lifecycle tracking.
+
+Normal resident delegation uses a detached Codex supervisor with a canonical
+manifest, streaming log, and final-result file.  The older synchronous Hermes
+launcher remains available only when callers explicitly select it.
+"""
 
 from __future__ import annotations
 
@@ -23,25 +28,18 @@ import uuid
 from pathlib import Path
 from typing import Any, Literal
 
-from arnold.agent.contracts import AgentSpec, format_agent_spec
-from arnold.agent.routing import ManagedAgentRoute, resolve_managed_agent_route
+from agentbox.redaction import redact_text
 from arnold_pipelines.megaplan.managed_agent import (
     ACTIVE_STATUSES as SHARED_ACTIVE_STATUSES,
     MANAGED_AGENT_CUSTODIAN,
     MANAGED_AGENT_SCHEMA,
     is_managed_manifest,
     managed_run_roots,
+    validate_automatic_managed_manifest,
     observed_status as shared_observed_status,
 )
 
 from .config import ResidentConfig
-from .delivery_status import (
-    DELIVERY_STATUS_SCHEMA,
-    build_delivery_attention,
-    build_delivery_projection,
-    delivery_policy_for_launch,
-    infer_outcome_contract,
-)
 from .provenance import (
     DelegationProvenanceError,
     discord_origin_projection,
@@ -49,23 +47,6 @@ from .provenance import (
     normalize_delegation_provenance,
     provenance_from_environment,
     stable_identity,
-)
-from .provider_runtime import (
-    PROVIDER_TELEMETRY_SCHEMA,
-    claude_tools_for,
-    collect_provider_evidence,
-    normalize_toolsets,
-    provider_execution_contract,
-    reserve_session_id,
-    valid_session_id,
-    write_normalized_events,
-)
-from .request_summary import (
-    REQUEST_DESCRIPTION_MAX_CHARS,
-    canonical_request_description,
-    content_with_request_summary,
-    current_request_summary_line,
-    source_request_fallback_line,
 )
 from .query_relationship import relationship_from_environment_or_project
 
@@ -121,9 +102,8 @@ _MAX_COMPLETION_DELIVERY_CHARS = 7_600
 MAX_DELEGATED_TASK_CHARS = 32_000
 MAX_DELEGATED_PROMPT_CHARS = 40_000
 MAX_FOLLOWUP_MESSAGE_CHARS = 32_000
-MAX_AGENT_DESCRIPTION_CHARS = REQUEST_DESCRIPTION_MAX_CHARS
+MAX_AGENT_DESCRIPTION_CHARS = 180
 FOLLOWUP_SCHEMA = "arnold-resident-agent-followup-v1"
-QUEUED_OWNER_MATERIAL_SCHEMA = "arnold-resident-queued-owner-material-v1"
 AGGREGATION_SCHEMA = "arnold-resident-agent-aggregation-v1"
 AGGREGATION_ROLES = frozenset({"synthesis_delivery_owner", "internal_contributor"})
 DISCORD_FOLLOWUP_WINDOW = timedelta(minutes=15)
@@ -147,12 +127,9 @@ FINAL_SUMMARY_INSTRUCTION = (
     "task-specific instructions above."
 )
 
-# resident/ -> megaplan/ -> skills/subagent-launcher/
+# resident/ -> megaplan/ -> skills/subagent-launcher/launch_hermes_agent.py
 LAUNCHER_PATH = (
     Path(__file__).resolve().parent.parent / "skills" / "subagent-launcher" / "launch_hermes_agent.py"
-)
-CLAUDE_LAUNCHER_PATH = (
-    Path(__file__).resolve().parent.parent / "skills" / "subagent-launcher" / "launch_claude_agent.py"
 )
 
 
@@ -181,15 +158,13 @@ class SubagentFollowupResult:
     target_run_id: str
     parent_run_id: str
     lineage_root_run_id: str
-    continuation_run_id: str | None
+    continuation_run_id: str
     status: str
     evidence_path: str
     message_path: str
-    continuation_manifest_path: str | None
+    continuation_manifest_path: str
     model_session_id: str | None = None
     idempotent_replay: bool = False
-    route: str = "session_continuation"
-    delivery_owner_run_id: str | None = None
 
 
 class SubagentFollowupError(ValueError):
@@ -224,7 +199,6 @@ class ManagedCompletionTurnResult:
     verification_outcome: str
     turn_id: str | None = None
     outbound_message_id: str | None = None
-    request_summary_line: str | None = None
 
 
 class _ProviderAcceptanceEvidenceMissing(RuntimeError):
@@ -298,9 +272,14 @@ def concise_agent_description(description: object, task: str) -> str:
     manifest still has a useful description.
     """
 
-    supplied = canonical_request_description(description)
-    if supplied is not None:
-        return supplied
+    if isinstance(description, str):
+        supplied = " ".join(redact_text(description).split())
+        if len(supplied) > MAX_AGENT_DESCRIPTION_CHARS:
+            raise ValueError(
+                f"agent description exceeds {MAX_AGENT_DESCRIPTION_CHARS} characters"
+            )
+        if supplied:
+            return supplied.rstrip(".") + "."
     # Compatibility callers may predate semantic descriptions.  Never turn a
     # truncated raw task into a fake summary; use an explicit generic fallback.
     return "Handle the delegated resident request."
@@ -376,13 +355,6 @@ def _atomic_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
-
-
-def _atomic_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(content, encoding="utf-8")
     os.replace(temporary, path)
 
 
@@ -480,13 +452,11 @@ def _delivery_prompt(
     task: str,
     timezone_name: str = "UTC",
     *,
-    request_summary_line: str | None = None,
     context_directory: Mapping[str, Any] | None = None,
     query_relationship: Mapping[str, Any] | None = None,
     contributors: list[Mapping[str, Any]] | None = None,
 ) -> str:
     prompt = (
-        f"{request_summary_line or current_request_summary_line(None)}\n\n"
         f"{task.rstrip()}\n\n"
         "[Completion delivery contract]\n"
         "[User-time presentation rule]\n"
@@ -927,11 +897,6 @@ def _transfer_aggregation_delivery_ownership(
         )
         payload["aggregation"] = aggregation
         delivery = payload.get("completion_delivery")
-        execution_contract = payload.get("execution_contract")
-        delivers_independently = (
-            isinstance(execution_contract, Mapping)
-            and execution_contract.get("delivery_policy") == "deliver_independently"
-        )
         if isinstance(delivery, dict) and delivery.get("status") not in {
             "delivered",
             "failed",
@@ -939,7 +904,7 @@ def _transfer_aggregation_delivery_ownership(
             "superseded",
             "suppressed",
             "unknown",
-        } and not delivers_independently:
+        }:
             delivery.update(
                 {
                     "status": "superseded",
@@ -1142,17 +1107,14 @@ def _manifest_session_ids(
     allow_multiple: bool = False,
 ) -> set[str]:
     found: set[str] = set()
-    backend = str(manifest.get("backend") or "codex")
     model_session = manifest.get("model_session")
     if isinstance(model_session, Mapping):
         session_id = str(model_session.get("session_id") or "").strip().lower()
         if session_id:
-            session_provider = str(model_session.get("provider") or backend)
-            if session_provider != backend:
-                raise SubagentFollowupError(
-                    "managed run model session provider conflicts with its backend"
-                )
-            if not valid_session_id(backend, session_id):
+            if not re.fullmatch(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                session_id,
+            ):
                 raise SubagentFollowupError("managed run has a malformed model session id")
             found.add(session_id)
     log_path = Path(str(manifest.get("log_path") or manifest_path.parent / "run.log"))
@@ -1160,22 +1122,14 @@ def _manifest_session_ids(
         log_text = log_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         log_text = ""
-    if backend == "codex":
-        raw_path = Path(
-            str(manifest.get("provider_raw_output_path") or manifest_path.parent / "provider.raw.jsonl")
-        )
-        try:
-            log_text += "\n" + raw_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            pass
-        # Only the first CLI header/event owns this run. Later tool output may
-        # quote another run's log and must not become ownership evidence.
-        text_matches = _CODEX_SESSION_RE.findall(log_text)
-        json_matches = _CODEX_JSON_SESSION_RE.findall(log_text)
-        if text_matches:
-            found.add(text_matches[0].lower())
-        elif json_matches:
-            found.add(json_matches[0].lower())
+    # Only the first CLI header/event owns this run. Later tool output may quote
+    # another run's log verbatim and must not become session-ownership evidence.
+    text_matches = _CODEX_SESSION_RE.findall(log_text)
+    json_matches = _CODEX_JSON_SESSION_RE.findall(log_text)
+    if text_matches:
+        found.add(text_matches[0].lower())
+    elif json_matches:
+        found.add(json_matches[0].lower())
     if len(found) > 1 and not allow_multiple:
         raise SubagentFollowupError("managed run exposes multiple model session ids")
     return found
@@ -1244,7 +1198,6 @@ def _compatible_followup_provenance(
 
 
 def _session_owner_lineage(
-    provider: str,
     session_id: str,
     *,
     roots: tuple[Path, ...],
@@ -1274,7 +1227,7 @@ def _session_owner_lineage(
                         "model session id has ambiguous malformed ownership evidence"
                     )
                 continue
-            if session_id in ids and str(payload.get("backend") or "codex") == provider:
+            if session_id in ids:
                 if len(ids) > 1:
                     raise SubagentFollowupError(
                         "model session id appears in a multi-session managed run"
@@ -1294,321 +1247,18 @@ def _followup_result(
         target_run_id=str(record["target_run_id"]),
         parent_run_id=str(record["parent_run_id"]),
         lineage_root_run_id=str(record["lineage_root_run_id"]),
-        continuation_run_id=(
-            str(record["continuation_run_id"])
-            if record.get("continuation_run_id")
-            else None
-        ),
+        continuation_run_id=str(record["continuation_run_id"]),
         status=str(record.get("status") or "continuation_started"),
         evidence_path=str(record["evidence_path"]),
         message_path=str(record["message_path"]),
-        continuation_manifest_path=(
-            str(record["continuation_manifest_path"])
-            if record.get("continuation_manifest_path")
-            else None
-        ),
+        continuation_manifest_path=str(record["continuation_manifest_path"]),
         model_session_id=(
             str(record["model_session_id"])
             if record.get("model_session_id")
             else None
         ),
         idempotent_replay=idempotent_replay,
-        route=str(record.get("route") or "session_continuation"),
-        delivery_owner_run_id=(
-            str(record["delivery_owner_run_id"])
-            if record.get("delivery_owner_run_id")
-            else None
-        ),
     )
-
-
-def _existing_synthesis_owner(
-    *,
-    run_id: str,
-    target: Mapping[str, Any],
-    rows: Mapping[str, tuple[Path, dict[str, Any]]],
-    target_provenance: Mapping[str, Any],
-) -> tuple[Path, dict[str, Any]] | None:
-    """Resolve the existing synthesis owner without changing ownership.
-
-    A queued all-success successor is a control-plane owner, not a resumable
-    model-session tip.  Once it is running, material may still be preserved in
-    that same owner's durable inbox without interrupting it or launching a
-    continuation.  Both routes require mutual proof of aggregation key,
-    synthesis group, contributor edge, lineage, and immutable Discord custody.
-    """
-
-    target_aggregation = target.get("aggregation")
-    if not isinstance(target_aggregation, Mapping):
-        return None
-    target_role = str(target_aggregation.get("role") or "")
-    owner_run_id = str(target_aggregation.get("delivery_owner_run_id") or "")
-    if target_role == "synthesis_delivery_owner":
-        owner_run_id = run_id
-    elif target_role != "internal_contributor":
-        return None
-    if not _RUN_ID_RE.fullmatch(owner_run_id) or owner_run_id not in rows:
-        return None
-
-    owner_path, owner = rows[owner_run_id]
-    if str(owner.get("status") or "") not in {"queued", "running"}:
-        return None
-    owner_aggregation = owner.get("aggregation")
-    queue = owner.get("queue")
-    if not isinstance(owner_aggregation, Mapping) or not isinstance(queue, Mapping):
-        return None
-    if (
-        owner_aggregation.get("role") != "synthesis_delivery_owner"
-        or str(owner_aggregation.get("delivery_owner_run_id") or "") != owner_run_id
-        or owner_aggregation.get("key") != target_aggregation.get("key")
-        or owner_aggregation.get("synthesis_group")
-        != target_aggregation.get("synthesis_group")
-    ):
-        raise SubagentFollowupError(
-            "queued synthesis owner aggregation custody conflicts with target lineage"
-        )
-    predecessor_ids = queue.get("predecessor_run_ids")
-    if not isinstance(predecessor_ids, list):
-        predecessor_id = str(queue.get("predecessor_run_id") or "")
-        predecessor_ids = [predecessor_id] if predecessor_id else []
-    if run_id != owner_run_id and run_id not in predecessor_ids:
-        raise SubagentFollowupError(
-            "queued synthesis owner does not depend on the targeted contributor"
-        )
-    contributors = owner_aggregation.get("contributors")
-    contributor_ids = {
-        str(item.get("run_id") or "")
-        for item in contributors
-        if isinstance(item, Mapping)
-    } if isinstance(contributors, list) else set()
-    if run_id != owner_run_id and run_id not in contributor_ids:
-        raise SubagentFollowupError(
-            "queued synthesis owner lacks the targeted contributor receipt"
-        )
-    owner_provenance = owner.get("launch_provenance")
-    if not isinstance(owner_provenance, Mapping):
-        raise SubagentFollowupError("queued synthesis owner has no canonical provenance")
-    _compatible_followup_provenance(target_provenance, owner_provenance)
-    delivery = owner.get("completion_delivery")
-    if isinstance(delivery, Mapping) and str(delivery.get("status") or "") in {
-        "delivered",
-        "failed",
-        "superseded",
-        "suppressed",
-    }:
-        raise SubagentFollowupError(
-            "queued synthesis owner no longer has pending delivery custody"
-        )
-    return owner_path, owner
-
-
-def _attach_synthesis_owner_material(
-    *,
-    target_run_id: str,
-    lineage_root_run_id: str,
-    owner_path: Path,
-    owner: Mapping[str, Any],
-    message: str,
-    message_path: Path,
-    evidence_path: Path,
-    followup_id: str,
-    selector: str,
-    message_sha256: str,
-    caller_provenance: Mapping[str, Any],
-    caller_sha256: str,
-    query_relationship: Mapping[str, Any] | None,
-    existing: Mapping[str, Any] | None,
-) -> dict[str, Any]:
-    """Atomically bind new material to the existing delivery owner's inbox."""
-
-    owner_run_id = str(owner.get("run_id") or owner_path.parent.name)
-    lock_path = owner_path.parent / ".queue-transition.lock"
-    with lock_path.open("a+b") as queue_handle:
-        fcntl.flock(queue_handle.fileno(), fcntl.LOCK_EX)
-        current = _read_managed_resident_manifest(owner_path)
-        owner_status = str(current.get("status") or "")
-        if owner_status not in {"queued", "running"}:
-            raise SubagentFollowupError(
-                "synthesis owner left the attachable state before material was committed"
-            )
-        route = (
-            "queued_synthesis_owner"
-            if owner_status == "queued"
-            else "running_synthesis_owner_inbox"
-        )
-        aggregation = current.get("aggregation")
-        queue = current.get("queue")
-        if (
-            not isinstance(aggregation, Mapping)
-            or aggregation.get("role") != "synthesis_delivery_owner"
-            or str(aggregation.get("delivery_owner_run_id") or "") != owner_run_id
-            or not isinstance(queue, dict)
-        ):
-            raise SubagentFollowupError(
-                "queued synthesis owner custody changed before material was committed"
-            )
-
-        if existing is not None:
-            if (
-                existing.get("route") != route
-                or existing.get("delivery_owner_run_id") != owner_run_id
-            ):
-                raise SubagentFollowupError(
-                    "existing follow-up receipt is not bound to this synthesis owner"
-                )
-            if existing.get("status") == "accepted":
-                return dict(existing)
-
-        prompt_path = Path(str(current.get("prompt_path") or "prompt.md"))
-        if not prompt_path.is_absolute():
-            prompt_path = owner_path.parent / prompt_path
-        prompt_path = prompt_path.resolve()
-        try:
-            prompt_path.relative_to(owner_path.parent.resolve())
-        except ValueError as exc:
-            raise SubagentFollowupError(
-                "queued synthesis owner prompt escapes its managed run directory"
-            ) from exc
-        try:
-            prompt = prompt_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise SubagentFollowupError(
-                "queued synthesis owner prompt is unavailable"
-            ) from exc
-        prompt_sha256_before = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-        recorded_prompt_sha256 = str(current.get("prompt_sha256") or "")
-        recovering_prepared = bool(
-            existing is not None
-            and existing.get("route") == route
-            and existing.get("status") == "prepared"
-            and existing.get("prompt_sha256_after") == prompt_sha256_before
-        )
-        if (
-            recorded_prompt_sha256
-            and recorded_prompt_sha256 != prompt_sha256_before
-            and not recovering_prepared
-        ):
-            raise SubagentFollowupError(
-                "queued synthesis owner prompt checksum changed before attachment"
-            )
-
-        material_header = (
-            "[Synthesis-owner material — canonical follow-up]\n"
-            f"- schema: {QUEUED_OWNER_MATERIAL_SCHEMA}\n"
-            f"- receipt_id: {followup_id}\n"
-            f"- source_target_run_id: {target_run_id}\n"
-            f"- delivery_owner_run_id: {owner_run_id}\n"
-            f"- message_sha256: {message_sha256}\n"
-            "- instruction: consume this material during synthesis; preserve existing "
-            "single-delivery ownership and predecessor gates\n\n"
-        )
-        material_block = material_header + message.rstrip() + "\n"
-        if material_block not in prompt:
-            updated_prompt = prompt.rstrip() + "\n\n" + material_block
-        else:
-            updated_prompt = prompt
-        if len(updated_prompt) > MAX_DELEGATED_PROMPT_CHARS:
-            raise SubagentFollowupError(
-                "queued synthesis owner prompt would exceed the managed prompt limit"
-            )
-        prompt_sha256_after = hashlib.sha256(
-            updated_prompt.encode("utf-8")
-        ).hexdigest()
-        accepted_at = str(
-            (existing or {}).get("accepted_at") or _utc_now()
-        )
-        original_prompt_sha256 = str(
-            (existing or {}).get("prompt_sha256_before") or prompt_sha256_before
-        )
-        record: dict[str, Any] = {
-            "schema_version": FOLLOWUP_SCHEMA,
-            "followup_id": followup_id,
-            "target_run_id": target_run_id,
-            "parent_run_id": owner_run_id,
-            "lineage_root_run_id": lineage_root_run_id,
-            "delivery_owner_run_id": owner_run_id,
-            "route": route,
-            "message_path": str(message_path),
-            "message_sha256": message_sha256,
-            "idempotency_key": selector,
-            "requester_provenance": dict(caller_provenance),
-            "requester_provenance_sha256": caller_sha256,
-            "query_relationship": (
-                dict(query_relationship)
-                if isinstance(query_relationship, Mapping)
-                else None
-            ),
-            "parent_status_at_acceptance": owner_status,
-            "launch_visibility": (
-                "included_before_worker_launch"
-                if owner_status == "queued"
-                else "durable_owner_inbox_requires_process_observation"
-            ),
-            "status": "prepared",
-            "accepted_at": accepted_at,
-            "updated_at": accepted_at,
-            "evidence_path": str(evidence_path),
-            "continuation_run_id": None,
-            "continuation_manifest_path": None,
-            "prompt_path": str(prompt_path),
-            "prompt_sha256_before": original_prompt_sha256,
-            "prompt_sha256_after": prompt_sha256_after,
-            "state_history": [
-                {
-                    "status": "prepared",
-                    "at": accepted_at,
-                    "evidence": "synthesis_owner_material_prepared_under_queue_lock",
-                }
-            ],
-        }
-        _atomic_text(message_path, message.rstrip() + "\n")
-        _atomic_json(evidence_path, record)
-        if updated_prompt != prompt:
-            _atomic_text(prompt_path, updated_prompt)
-
-        inbound_material = list(queue.get("inbound_material") or [])
-        receipt_ref = {
-            "schema_version": QUEUED_OWNER_MATERIAL_SCHEMA,
-            "followup_id": followup_id,
-            "target_run_id": target_run_id,
-            "message_path": str(message_path),
-            "message_sha256": message_sha256,
-            "evidence_path": str(evidence_path),
-            "accepted_at": accepted_at,
-        }
-        matching = [
-            item
-            for item in inbound_material
-            if isinstance(item, Mapping) and item.get("followup_id") == followup_id
-        ]
-        if matching and dict(matching[0]) != receipt_ref:
-            raise SubagentFollowupError(
-                "queued synthesis owner already has conflicting material receipt"
-            )
-        if not matching:
-            inbound_material.append(receipt_ref)
-        queue["inbound_material"] = inbound_material[-20:]
-        queue["updated_at"] = accepted_at
-        current["queue"] = queue
-        current["prompt_sha256"] = prompt_sha256_after
-        current["updated_at"] = accepted_at
-        _atomic_json(owner_path, current)
-
-        record["status"] = "accepted"
-        record["state_history"] = list(record["state_history"]) + [
-            {
-                "status": "accepted",
-                "at": accepted_at,
-                "evidence": (
-                    "material_bound_to_existing_queued_synthesis_owner_prompt"
-                    if owner_status == "queued"
-                    else "material_bound_to_existing_running_synthesis_owner_inbox"
-                ),
-                "delivery_owner_run_id": owner_run_id,
-            }
-        ]
-        _atomic_json(evidence_path, record)
-        return record
 
 
 def follow_up_managed_subagent(
@@ -1721,14 +1371,7 @@ def follow_up_managed_subagent(
                     "idempotency key is already bound to different follow-up content or custody"
                 )
             existing = loaded
-            if existing.get("continuation_run_id") or (
-                existing.get("route") in {
-                    "queued_synthesis_owner",
-                    "running_synthesis_owner_inbox",
-                }
-                and existing.get("status") == "accepted"
-                and existing.get("delivery_owner_run_id")
-            ):
+            if existing.get("continuation_run_id"):
                 return _followup_result(existing, idempotent_replay=True)
 
         rows = _lineage_manifests(root, lineage_root_run_id)
@@ -1756,41 +1399,6 @@ def follow_up_managed_subagent(
                 raise SubagentFollowupError(
                     "managed model session lineage contains an orphaned continuation"
                 )
-
-        lineage_backends = {
-            str(payload.get("backend") or "codex") for _, payload in rows.values()
-        }
-        if len(lineage_backends) != 1:
-            raise SubagentFollowupError(
-                "managed model session lineage crosses provider boundaries"
-            )
-
-        synthesis_owner = _existing_synthesis_owner(
-            run_id=run_id,
-            target=target,
-            rows=rows,
-            target_provenance=target_provenance,
-        )
-        if synthesis_owner is not None:
-            owner_path, owner = synthesis_owner
-            record = _attach_synthesis_owner_material(
-                target_run_id=run_id,
-                lineage_root_run_id=lineage_root_run_id,
-                owner_path=owner_path,
-                owner=owner,
-                message=message,
-                message_path=message_path,
-                evidence_path=evidence_path,
-                followup_id=followup_id,
-                selector=selector,
-                message_sha256=message_sha256,
-                caller_provenance=caller_provenance,
-                caller_sha256=caller_sha256,
-                query_relationship=query_relationship,
-                existing=existing,
-            )
-            return _followup_result(record, idempotent_replay=False)
-
         tip_path, tip = _lineage_tip(rows)
         parent_run_id = str(
             (existing or {}).get("parent_run_id")
@@ -1821,18 +1429,6 @@ def follow_up_managed_subagent(
                 f"target lineage tip has unsafe non-continuable status: {parent_status}"
             )
 
-        parent_model_session = tip.get("model_session")
-        if (
-            not parent_live
-            and isinstance(parent_model_session, Mapping)
-            and str(parent_model_session.get("state") or "")
-            in {"reserved_unconfirmed", "unavailable"}
-        ):
-            raise SubagentFollowupError(
-                "terminal target provider session persistence is unconfirmed; "
-                "exact continuation is unavailable"
-            )
-
         parent_session_ids = _manifest_session_ids(tip_path, tip)
         model_session_id = next(iter(parent_session_ids), None)
         if model_session_id is None:
@@ -1841,8 +1437,7 @@ def follow_up_managed_subagent(
                 "recoverable persistent model session"
             )
         if model_session_id is not None:
-            provider = str(tip.get("backend") or target.get("backend") or "codex")
-            owner = _session_owner_lineage(provider, model_session_id, roots=roots)
+            owner = _session_owner_lineage(model_session_id, roots=roots)
             if owner is not None and owner != lineage_root_run_id:
                 raise SubagentFollowupError("model session is owned by another managed-run lineage")
 
@@ -1882,12 +1477,8 @@ def follow_up_managed_subagent(
         else:
             record = existing
 
-        provider = str(tip.get("backend") or target.get("backend") or "codex")
-        provider_options = dict(
-            tip.get("provider_options") or target.get("provider_options") or {}
-        )
         try:
-            continuation = launch_managed_subagent_detached(
+            continuation = launch_codex_subagent_detached(
                 task=message,
                 description=(
                     f"Follow up on {str(tip.get('description') or target.get('description')).rstrip('.')}"
@@ -1900,18 +1491,9 @@ def follow_up_managed_subagent(
                     or project_root
                 ),
                 model=str(tip.get("model") or target.get("model") or "gpt-5.6-terra"),
-                model_spec=str(
-                    tip.get("model_spec")
-                    or target.get("model_spec")
-                    or f"{provider}:{tip.get('model') or target.get('model')}"
-                ),
-                backend=provider,
                 reasoning_effort=str(
                     tip.get("reasoning_effort") or target.get("reasoning_effort") or "medium"
                 ),
-                toolsets=str(provider_options.get("toolsets") or "file,web,terminal"),
-                max_tokens=int(provider_options.get("max_tokens") or 65_536),
-                provider_timeout_s=float(provider_options.get("timeout_s") or 600.0),
                 task_kind=str(tip.get("task_kind") or target.get("task_kind") or "routine"),
                 difficulty=int(tip.get("difficulty") or target.get("difficulty") or 4),
                 route_class="resident_followup_continuation",
@@ -1966,18 +1548,13 @@ def follow_up_managed_subagent(
         return _followup_result(record, idempotent_replay=False)
 
 
-def launch_managed_subagent_detached(
+def launch_codex_subagent_detached(
     *,
     task: str,
     description: str | None = None,
     project_dir: str | None = None,
     model: str = "gpt-5.6-terra",
-    model_spec: str | None = None,
-    backend: str = "codex",
     reasoning_effort: str = "medium",
-    toolsets: str = "file,web,terminal",
-    max_tokens: int = 65_536,
-    provider_timeout_s: float = 600.0,
     task_kind: DelegatedTaskKind = DEFAULT_DELEGATED_TASK_KIND,
     difficulty: int = DEFAULT_DELEGATED_DIFFICULTY,
     route_class: str = "routine",
@@ -1994,29 +1571,12 @@ def launch_managed_subagent_detached(
     query_relationship: Mapping[str, Any] | None = None,
     aggregation_role: str = "synthesis_delivery_owner",
     synthesis_group: str | None = None,
-    outcome_contract: str | None = None,
-    outcome_key: str | None = None,
-    delivery_suppression_override_reason: str | None = None,
-    schedule_context: Mapping[str, Any] | None = None,
 ) -> SubagentResult:
-    """Launch a durable, fully-permissioned provider worker managed by Arnold.
+    """Launch a durable, fully-permissioned Codex worker managed by Arnold.
 
     The supervisor process owns the manifest transitions and durable output, so
     the Discord resident can return immediately without losing lifecycle state.
     """
-    if backend not in {"hermes", "codex", "claude"}:
-        raise ValueError(f"unsupported durable managed-agent backend: {backend}")
-    provider_contract = provider_execution_contract(
-        backend=backend,
-        toolsets=toolsets,
-        max_tokens=max_tokens,
-        timeout_s=provider_timeout_s,
-    )
-    normalized_toolsets = tuple(provider_contract["controls"]["toolsets"])
-    toolsets = ",".join(normalized_toolsets)
-    provider_session_id = continued_session_id or reserve_session_id(backend)
-    if provider_session_id and not valid_session_id(backend, provider_session_id):
-        raise ValueError(f"invalid {backend} managed-agent session id")
     if len(task) > MAX_DELEGATED_TASK_CHARS:
         raise ValueError(
             f"delegated task exceeds {MAX_DELEGATED_TASK_CHARS} characters; "
@@ -2039,21 +1599,6 @@ def launch_managed_subagent_detached(
         raise ValueError("synthesis_group must be a stable 1..80 character identifier")
     if aggregation_role == "internal_contributor" and synthesis_group is None:
         raise ValueError("internal_contributor launches require an explicit synthesis_group")
-    resolved_outcome_contract, outcome_contract_authority = infer_outcome_contract(
-        task=task,
-        description=agent_description,
-        task_kind=task_kind,
-        aggregation_role=aggregation_role,
-        explicit=outcome_contract,
-    )
-    delivery_policy = delivery_policy_for_launch(
-        aggregation_role=aggregation_role,
-        outcome_contract=resolved_outcome_contract,
-        suppression_override_reason=delivery_suppression_override_reason,
-    )
-    normalized_outcome_key = str(outcome_key or "").strip() or None
-    if normalized_outcome_key is not None and len(normalized_outcome_key) > 160:
-        raise ValueError("outcome_key exceeds 160 characters")
     if query_relationship is None and is_discord:
         query_relationship = relationship_from_environment_or_project(
             str(provenance.get("source_record_id") or "") or None,
@@ -2084,30 +1629,6 @@ def launch_managed_subagent_detached(
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
-    normalized_schedule_context = (
-        json.loads(json.dumps(dict(schedule_context), sort_keys=True, default=str))
-        if isinstance(schedule_context, Mapping)
-        else None
-    )
-    if normalized_schedule_context is not None:
-        if (
-            normalized_schedule_context.get("schema_version")
-            != "arnold-resident-schedule-occurrence-v1"
-        ):
-            raise ValueError(
-                "schedule_context requires the resident schedule occurrence v1 schema"
-            )
-        if not normalized_schedule_context.get("occurrence_key"):
-            raise ValueError("schedule_context requires an immutable occurrence_key")
-        if len(json.dumps(normalized_schedule_context, sort_keys=True)) > 16_384:
-            raise ValueError("schedule_context exceeds the bounded manifest allowance")
-    schedule_context_digest = hashlib.sha256(
-        json.dumps(
-            normalized_schedule_context,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()
     # Discord launch identity is owned by the inbound source record.  A model
     # or compatibility caller may still provide request_id, but it cannot
     # sever custody or turn the same inbound request into duplicate workers.
@@ -2124,22 +1645,12 @@ def launch_managed_subagent_detached(
         agent_description,
         aggregation_role,
         synthesis_group or "",
-        resolved_outcome_contract,
-        normalized_outcome_key or "",
-        str(delivery_suppression_override_reason or "").strip(),
         relationship_digest,
-        backend,
-        model_spec or f"{backend}:{model}",
-        reasoning_effort,
-        toolsets,
-        str(max_tokens),
-        str(provider_timeout_s),
         retry_of_run_id or "",
         parent_run_id or "",
         lineage_root_run_id or "",
         continued_session_id or "",
         followup_id or "",
-        schedule_context_digest,
     )
     launch_lock = root / ".launch.lock"
     launch_handle = launch_lock.open("a+b")
@@ -2181,27 +1692,19 @@ def launch_managed_subagent_detached(
     manifest_path = run_dir / "manifest.json"
     log_path = run_dir / "run.log"
     result_path = run_dir / "result.md"
-    provider_raw_output_path = run_dir / "provider.raw"
-    provider_metadata_path = run_dir / "provider-metadata.json"
-    provider_events_path = run_dir / "events.jsonl"
     context_directory = _delegated_context_directory(
         project_root=project_root,
         provenance=provenance,
     )
-    request_summary_line = current_request_summary_line(agent_description)
     prompt = _delivery_prompt(
         task,
         str(provenance.get("timezone_name") or "UTC"),
-        request_summary_line=request_summary_line,
         context_directory=context_directory,
         query_relationship=query_relationship,
         contributors=contributors,
     )
     prompt_path.write_text(prompt, encoding="utf-8")
     result_path.touch()
-    log_path.touch()
-    provider_raw_output_path.touch()
-    provider_events_path.touch()
     if aggregation_role == "synthesis_delivery_owner":
         _transfer_aggregation_delivery_ownership(
             root,
@@ -2214,55 +1717,24 @@ def launch_managed_subagent_detached(
         "run_kind": MANAGED_RUN_KIND,
         "custodian": MANAGED_RUN_CUSTODIAN,
         "run_id": run_id,
-        "backend": backend,
+        "backend": "codex",
         "model": model,
-        "model_spec": model_spec or f"{backend}:{model}",
-        "provider_route": {
-            "backend": backend,
-            "runtime_model": model,
-            "model_spec": model_spec or f"{backend}:{model}",
-        },
         "reasoning_effort": reasoning_effort,
-        "provider_options": {
-            "toolsets": toolsets,
-            "max_tokens": max_tokens,
-            "timeout_s": provider_timeout_s,
-        },
-        "provider_contract": provider_contract,
         "task_kind": task_kind,
         "description": agent_description,
-        "request_summary_line": request_summary_line,
         "difficulty": difficulty,
         "route_class": route_class,
-        "sandbox": (
-            "danger-full-access"
-            if backend == "codex"
-            else "provider-permission-policy"
-            if backend == "claude"
-            else "inherited-full-machine-access"
-        ),
+        "sandbox": "danger-full-access",
         "project_dir": str(project_root),
         "manifest_path": str(manifest_path),
         "prompt_path": str(prompt_path),
         "log_path": str(log_path),
         "full_log_path": str(log_path),
         "result_path": str(result_path),
-        "provider_raw_output_path": str(provider_raw_output_path),
-        "provider_metadata_path": str(provider_metadata_path),
-        "provider_events_path": str(provider_events_path),
-        "telemetry": {
-            "schema_version": PROVIDER_TELEMETRY_SCHEMA,
-            "status": "pending",
-            "normalized_events_path": str(provider_events_path),
-            "raw_output_path": str(provider_raw_output_path),
-            "raw_stream_contract": provider_contract["capabilities"]["raw_stream"],
-            "raw_streams_are_provider_specific": True,
-        },
         "task_sha256": task_digest,
         "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         "context_directory": context_directory,
         "launch_idempotency_key": launch_key,
-        "schedule_occurrence": normalized_schedule_context,
         "correlation_id": provenance.get("correlation_id") or run_id,
         "custody_id": provenance.get("custody_id") or stable_identity("resident-custody", run_id),
         "launch_provenance": provenance,
@@ -2277,25 +1749,6 @@ def launch_managed_subagent_detached(
             ),
             "delivery_target_source_record_id": provenance.get("source_record_id"),
             "contributors": contributors,
-        },
-        "execution_contract": {
-            "schema_version": DELIVERY_STATUS_SCHEMA,
-            "outcome_contract": resolved_outcome_contract,
-            "outcome_contract_authority": outcome_contract_authority,
-            "outcome_key": normalized_outcome_key or task_digest,
-            "delivery_policy": delivery_policy,
-            "delivery_suppression_override_reason": (
-                str(delivery_suppression_override_reason or "").strip() or None
-            ),
-        },
-        "lifecycle": {
-            "schema_version": DELIVERY_STATUS_SCHEMA,
-            "work": {"status": "launching", "worker_completed": False},
-            "delivery": {
-                "status": "pending" if delivery_policy.startswith("deliver_") else "suppressed",
-                "policy": delivery_policy,
-            },
-            "request": {"status": "in_progress", "request_delivered": False},
         },
         "status": "launching",
         "created_at": created_at,
@@ -2322,17 +1775,6 @@ def launch_managed_subagent_detached(
         manifest["run_mode"] = "session_continuation"
     if continued_session_id:
         manifest["continued_session_id"] = continued_session_id
-    if provider_session_id:
-        manifest["model_session"] = {
-            "provider": backend,
-            "session_id": provider_session_id,
-            "lineage_root_run_id": lineage_root_run_id or run_id,
-            "state": "continuing" if continued_session_id else "reserved",
-            "persistence": "durable",
-            "resume_semantics": "exact_session",
-            "evidence": "resident_reserved_before_provider_process_start",
-            "recorded_at": created_at,
-        }
     if parent_manifest_path:
         manifest["parent_manifest_path"] = str(Path(parent_manifest_path).resolve())
         manifest["continuation_wait"] = {
@@ -2357,7 +1799,7 @@ def launch_managed_subagent_detached(
             "transport": "discord",
             "status": (
                 "pending"
-                if delivery_policy.startswith("deliver_")
+                if aggregation_role == "synthesis_delivery_owner"
                 else "suppressed"
             ),
             "attempt_count": 0,
@@ -2375,14 +1817,14 @@ def launch_managed_subagent_detached(
                 {
                     "status": (
                         "pending"
-                        if delivery_policy.startswith("deliver_")
+                        if aggregation_role == "synthesis_delivery_owner"
                         else "suppressed"
                     ),
                     "at": manifest["created_at"],
                     "evidence": (
                         "outbox_committed_before_launch"
-                        if delivery_policy.startswith("deliver_")
-                        else "intentional_delivery_suppression_recorded"
+                        if aggregation_role == "synthesis_delivery_owner"
+                        else "internal_contributor_reports_to_synthesis_owner"
                     ),
                 }
             ],
@@ -2395,9 +1837,6 @@ def launch_managed_subagent_detached(
             "custody_id": manifest["custody_id"],
             "evidence": "launch_provenance_explicitly_non_discord",
         }
-    manifest["lifecycle"]["delivery"]["status"] = str(
-        dict(manifest["completion_delivery"]).get("status") or "not_applicable"
-    )
     _atomic_json(manifest_path, manifest)
     # Once the manifest exists, concurrent/restarted callers can return its
     # durable identity without creating a second worker.  Process start is a
@@ -2408,7 +1847,7 @@ def launch_managed_subagent_detached(
         sys.executable,
         "-m",
         "arnold_pipelines.megaplan.resident.subagent_worker",
-        "--run-managed",
+        "--run-codex",
         str(manifest_path),
     ]
     worker_provenance = {**provenance, "root_run_id": run_id} if is_discord else provenance
@@ -2458,16 +1897,6 @@ def launch_managed_subagent_detached(
         pid=process.pid,
         description=agent_description,
     )
-
-
-def launch_codex_subagent_detached(**kwargs: Any) -> SubagentResult:
-    """Compatibility wrapper for existing Codex-only callers and continuations."""
-
-    requested_backend = str(kwargs.pop("backend", "codex"))
-    if requested_backend != "codex":
-        raise ValueError("launch_codex_subagent_detached only accepts backend='codex'")
-    kwargs.setdefault("model_spec", f"codex:{kwargs.get('model', 'gpt-5.6-terra')}")
-    return launch_managed_subagent_detached(backend="codex", **kwargs)
 
 
 def _interrupt_parent_for_followup(
@@ -2571,7 +2000,6 @@ def _await_continuation_parent(
 ) -> tuple[dict[str, Any], str]:
     parent_path = Path(str(manifest.get("parent_manifest_path") or ""))
     parent_run_id = str(manifest.get("parent_run_id") or "")
-    backend = str(manifest.get("backend") or "codex")
     if not parent_path.is_absolute() or parent_path.name != "manifest.json":
         raise SubagentFollowupError("continuation parent manifest path is malformed")
     interrupt_requested = False
@@ -2595,7 +2023,7 @@ def _await_continuation_parent(
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             manifest["continued_session_id"] = session_id
             manifest["model_session"] = {
-                "provider": backend,
+                "provider": "codex",
                 "session_id": session_id,
                 "lineage_root_run_id": manifest.get("lineage_root_run_id"),
                 "evidence": "validated_from_terminal_parent",
@@ -2656,44 +2084,13 @@ def _await_continuation_parent(
         time.sleep(1)
 
 
-def _run_managed_manifest(manifest_path: Path) -> int:
+def _run_codex_manifest(manifest_path: Path) -> int:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     prompt = Path(str(manifest["prompt_path"])).read_text(encoding="utf-8")
     result_path = Path(str(manifest["result_path"]))
-    raw_output_path = Path(
-        str(manifest.get("provider_raw_output_path") or manifest_path.parent / "provider.raw")
-    )
-    metadata_path = Path(
-        str(manifest.get("provider_metadata_path") or manifest_path.parent / "provider-metadata.json")
-    )
-    events_path = Path(
-        str(manifest.get("provider_events_path") or manifest_path.parent / "events.jsonl")
-    )
-    raw_output_path.touch(exist_ok=True)
-    events_path.touch(exist_ok=True)
-    manifest.setdefault("log_path", str(manifest_path.parent / "run.log"))
-    manifest.setdefault("provider_raw_output_path", str(raw_output_path))
-    manifest.setdefault("provider_metadata_path", str(metadata_path))
-    manifest.setdefault("provider_events_path", str(events_path))
-    manifest.setdefault(
-        "telemetry",
-        {
-            "schema_version": PROVIDER_TELEMETRY_SCHEMA,
-            "status": "pending",
-            "normalized_events_path": str(events_path),
-            "raw_output_path": str(raw_output_path),
-            "raw_streams_are_provider_specific": True,
-        },
-    )
-    _atomic_json(manifest_path, manifest)
     worker: subprocess.Popen[bytes] | None = None
-    raw_handle: Any = None
     session_id: str | None = None
     interrupted_signal: int | None = None
-    backend = str(manifest.get("backend") or "codex")
-    provider_permission_mode: str | None = None
-    provider_options = dict(manifest.get("provider_options") or {})
-    timeout_s = float(provider_options.get("timeout_s") or 600.0)
 
     def _interrupt(signum: int, _frame: object) -> None:
         nonlocal interrupted_signal
@@ -2707,35 +2104,10 @@ def _run_managed_manifest(manifest_path: Path) -> int:
     try:
         if manifest.get("run_mode") == "session_continuation":
             manifest, session_id = _await_continuation_parent(manifest_path, manifest)
-        else:
-            model_session = manifest.get("model_session")
-            if isinstance(model_session, Mapping):
-                session_id = str(model_session.get("session_id") or "") or None
-            if session_id is None:
-                session_id = reserve_session_id(backend)
-                if session_id:
-                    manifest["model_session"] = {
-                        "provider": backend,
-                        "session_id": session_id,
-                        "lineage_root_run_id": manifest.get("lineage_root_run_id")
-                        or manifest.get("run_id")
-                        or manifest_path.parent.name,
-                        "state": "reserved",
-                        "persistence": "durable",
-                        "resume_semantics": "exact_session",
-                        "evidence": "legacy_manifest_session_reserved_by_worker",
-                        "recorded_at": _utc_now(),
-                    }
-                    _atomic_json(manifest_path, manifest)
-
-        if backend == "codex" and manifest.get("run_mode") == "session_continuation":
             argv = [
                 "codex",
                 "exec",
                 "resume",
-                "--json",
-                "--skip-git-repo-check",
-                "--dangerously-bypass-approvals-and-sandbox",
                 "-m",
                 str(manifest["model"]),
                 "-c",
@@ -2745,12 +2117,10 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                 session_id,
                 prompt,
             ]
-        elif backend == "codex":
+        else:
             argv = [
                 "codex",
                 "exec",
-                "--json",
-                "--skip-git-repo-check",
                 "--sandbox",
                 "danger-full-access",
                 "-m",
@@ -2761,65 +2131,6 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                 str(result_path),
                 prompt,
             ]
-        elif backend == "hermes":
-            if not LAUNCHER_PATH.exists():
-                raise FileNotFoundError(f"hermes launcher not found: {LAUNCHER_PATH}")
-            argv = [
-                sys.executable,
-                str(LAUNCHER_PATH),
-                "--model",
-                str(manifest["model"]),
-                "--toolsets",
-                str(provider_options.get("toolsets") or "file,web,terminal"),
-                "--max-tokens",
-                str(int(provider_options.get("max_tokens") or 65_536)),
-                "--project-dir",
-                str(manifest["project_dir"]),
-                "--query-file",
-                str(manifest["prompt_path"]),
-                "--session-id",
-                str(session_id),
-                "--metadata-file",
-                str(metadata_path),
-            ]
-            if manifest.get("run_mode") == "session_continuation":
-                argv.append("--resume-session")
-        elif backend == "claude":
-            if not CLAUDE_LAUNCHER_PATH.exists():
-                raise FileNotFoundError(f"Claude launcher not found: {CLAUDE_LAUNCHER_PATH}")
-            toolsets = normalize_toolsets(str(provider_options.get("toolsets") or ""))
-            argv = [
-                sys.executable,
-                str(CLAUDE_LAUNCHER_PATH),
-                "--model",
-                str(manifest["model"]),
-                "--project-dir",
-                str(manifest["project_dir"]),
-                "--query-file",
-                str(manifest["prompt_path"]),
-                "--timeout",
-                str(timeout_s),
-                "--output-format",
-                "stream-json",
-                "--verbose",
-                "--tools",
-                claude_tools_for(toolsets),
-            ]
-            if manifest.get("run_mode") == "session_continuation":
-                argv += ["--resume", str(session_id)]
-            else:
-                argv += ["--session-id", str(session_id)]
-            if hasattr(os, "geteuid") and os.geteuid() == 0:
-                provider_permission_mode = "auto"
-                argv += ["--permission-mode", provider_permission_mode]
-            else:
-                provider_permission_mode = "bypassPermissions"
-                argv.append("--dangerously-skip-permissions")
-            effort = str(manifest.get("reasoning_effort") or "")
-            if effort in {"low", "medium", "high", "xhigh", "max"}:
-                argv += ["--effort", effort]
-        else:
-            raise ValueError(f"unsupported managed-agent backend in manifest: {backend}")
         launch_provenance = manifest.get("launch_provenance")
         worker_env = None
         if isinstance(launch_provenance, Mapping):
@@ -2829,18 +2140,10 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                     manifest.get("run_id") or manifest_path.parent.name
                 )
             worker_env = environment_with_provenance(worker_provenance)
-        if worker_env is None:
-            worker_env = os.environ.copy()
-        if backend == "claude":
-            worker_env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(
-                int(provider_options.get("max_tokens") or 65_536)
-            )
-        raw_handle = raw_output_path.open("wb")
         worker = subprocess.Popen(
             argv,
             cwd=str(manifest["project_dir"]),
             stdin=subprocess.DEVNULL,
-            stdout=raw_handle,
             env=worker_env,
         )
         # Reload before updating so the supervisor PID written by the launch
@@ -2850,111 +2153,35 @@ def _run_managed_manifest(manifest_path: Path) -> int:
         manifest.update({"worker_started_at": worker_started_at, "worker_pid": worker.pid})
         manifest["session_dispatch"] = {
             "status": "accepted",
-            "mode": (
-                "resume" if manifest.get("run_mode") == "session_continuation" else "new"
-            ),
+            "mode": "resume" if session_id else "new",
             "session_id": session_id,
             "accepted_at": worker_started_at,
             "evidence": (
-                f"{backend}_resume_process_started"
-                if manifest.get("run_mode") == "session_continuation"
-                else f"{backend}_session_process_started"
+                "codex_resume_process_started"
+                if session_id
+                else "codex_session_process_started"
             ),
         }
-        if provider_permission_mode is not None:
-            manifest["session_dispatch"]["permission_mode"] = provider_permission_mode
         _atomic_json(manifest_path, manifest)
-        try:
-            returncode = worker.wait(timeout=timeout_s)
-        except subprocess.TimeoutExpired:
-            worker.terminate()
-            try:
-                worker.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                worker.kill()
-                worker.wait()
-            returncode = 124
-        raw_handle.close()
-        raw_handle = None
-
-        # Preserve the byte-exact provider stdout separately, then copy it into
-        # run.log with an explicit provider-specific envelope. Stderr already
-        # streams directly to run.log through the resident supervisor.
-        print(f"\n[managed-provider-raw begin backend={backend} path={raw_output_path}]", flush=True)
-        try:
-            with raw_output_path.open("rb") as source:
-                while chunk := source.read(1024 * 1024):
-                    binary_stdout = getattr(sys.stdout, "buffer", None)
-                    if binary_stdout is not None:
-                        binary_stdout.write(chunk)
-                    else:
-                        sys.stdout.write(chunk.decode("utf-8", errors="replace"))
-            sys.stdout.flush()
-        except OSError as exc:
-            print(f"[managed-provider-raw unavailable: {exc.__class__.__name__}]", flush=True)
-        print(f"\n[managed-provider-raw end backend={backend}]", flush=True)
-
-        evidence = collect_provider_evidence(
-            backend=backend,
-            raw_output_path=raw_output_path,
-            metadata_path=metadata_path,
-            expected_session_id=session_id,
-            returncode=returncode,
-            diagnostics_path=Path(
-                str(manifest.get("log_path") or manifest_path.parent / "run.log")
-            ),
-        )
-        write_normalized_events(events_path, evidence.events)
-        if backend in {"hermes", "claude"} and evidence.final_text:
-            _atomic_text(result_path, evidence.final_text.rstrip() + "\n")
+        returncode = worker.wait()
+        # Codex writes the final response to result_path while its complete
+        # stream is inherited by the supervisor and appended to run.log.
         result_path.touch(exist_ok=True)
-        if evidence.failure_category and returncode == 0:
-            returncode = 1
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        resolved_session_id = evidence.session_id
-        if returncode == 0 and not resolved_session_id:
-            if manifest.get("schema_version") == MANAGED_RUN_SCHEMA:
-                returncode = 1
-                evidence = evidence.__class__(
-                    session_id=None,
-                    final_text=evidence.final_text,
-                    events=evidence.events,
-                    usage=evidence.usage,
-                    failure_category="session_identity_missing",
-                    failure_message="provider completed without a recoverable session identity",
-                )
-            else:
-                manifest["model_session"] = {
-                    "provider": backend,
-                    "state": "unavailable",
-                    "persistence": "unknown_legacy_record",
-                    "resume_semantics": "unavailable",
-                    "evidence": "legacy_manifest_did_not_capture_session_identity",
-                    "recorded_at": _utc_now(),
-                }
-        if resolved_session_id:
+        observed_session_ids = _manifest_session_ids(manifest_path, manifest)
+        if session_id:
+            observed_session_ids.add(session_id)
+        if len(observed_session_ids) == 1:
+            resolved_session_id = next(iter(observed_session_ids))
             manifest["model_session"] = {
-                "provider": backend,
+                "provider": "codex",
                 "session_id": resolved_session_id,
                 "lineage_root_run_id": manifest.get("lineage_root_run_id")
                 or manifest.get("run_id")
                 or manifest_path.parent.name,
-                "state": "persisted" if returncode == 0 else "reserved_unconfirmed",
-                "persistence": "durable" if returncode == 0 else "requested_unconfirmed",
-                "resume_semantics": "exact_session",
-                "evidence": f"managed_{backend}_raw_stream_and_dispatch",
+                "evidence": "managed_codex_worker_log_and_dispatch",
                 "recorded_at": _utc_now(),
             }
-        telemetry = dict(manifest.get("telemetry") or {})
-        telemetry.update(
-            {
-                "status": "captured",
-                "normalized_event_count": len(evidence.events),
-                "usage": dict(evidence.usage),
-                "updated_at": _utc_now(),
-            }
-        )
-        manifest["telemetry"] = telemetry
         manifest.update(
             {
                 "status": "completed" if returncode == 0 else "failed",
@@ -2963,48 +2190,17 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                 "terminal_outcome": "completed" if returncode == 0 else "failed",
             }
         )
-        if returncode != 0:
-            category = evidence.failure_category or "provider_error"
-            message = evidence.failure_message or f"provider exited with status {returncode}"
-            manifest["error"] = f"managed {backend} worker failed: {category}"
-            manifest["failure"] = {
-                "category": category,
-                "message": message,
-                "returncode": returncode,
-                "raw_output_path": str(raw_output_path),
-                "log_path": str(manifest["log_path"]),
-                "captured_at": manifest["finished_at"],
-            }
         manifest["updated_at"] = manifest["finished_at"]
         history = list(manifest.get("status_history") or [])
         history.append(
             {
                 "status": manifest["status"],
                 "at": manifest["finished_at"],
-                "evidence": f"managed_{backend}_worker_waited",
+                "evidence": "managed_codex_worker_waited",
                 "returncode": returncode,
             }
         )
         manifest["status_history"] = history[-100:]
-        lifecycle = dict(manifest.get("lifecycle") or {})
-        lifecycle.update(
-            {
-                "schema_version": DELIVERY_STATUS_SCHEMA,
-                "work": {
-                    "status": "worker_completed" if returncode == 0 else "worker_failed",
-                    "worker_completed": returncode == 0,
-                },
-                "delivery": {
-                    "status": str(dict(manifest.get("completion_delivery") or {}).get("status") or "not_applicable"),
-                    "policy": dict(manifest.get("execution_contract") or {}).get("delivery_policy"),
-                },
-                "request": {
-                    "status": "awaiting_delivery" if returncode == 0 else "request_blocked",
-                    "request_delivered": False,
-                },
-            }
-        )
-        manifest["lifecycle"] = lifecycle
         _atomic_json(manifest_path, manifest)
         return returncode
     except BaseException as exc:
@@ -3020,9 +2216,8 @@ def _run_managed_manifest(manifest_path: Path) -> int:
         manifest.update(
             {
                 "status": status,
-                "error": f"managed {backend} worker failed",
+                "error": "managed Codex worker failed",
                 "error_class": exc.__class__.__name__,
-                "error_message": str(exc),
                 "finished_at": _utc_now(),
                 "terminal_outcome": status,
             }
@@ -3034,7 +2229,7 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                 {
                     "status": "failed",
                     "failed_at": manifest["finished_at"],
-                    "evidence": f"{backend}_process_not_accepted",
+                    "evidence": "codex_session_process_not_accepted",
                     "error_class": exc.__class__.__name__,
                 }
             )
@@ -3044,31 +2239,9 @@ def _run_managed_manifest(manifest_path: Path) -> int:
             {
                 "status": status,
                 "at": manifest["finished_at"],
-                "evidence": f"managed_{backend}_supervisor_exception",
+                "evidence": "managed_codex_supervisor_exception",
             }
         )
-        lifecycle = dict(manifest.get("lifecycle") or {})
-        lifecycle.update(
-            {
-                "schema_version": DELIVERY_STATUS_SCHEMA,
-                "work": {"status": f"worker_{status}", "worker_completed": False},
-                "delivery": {
-                    "status": str(dict(manifest.get("completion_delivery") or {}).get("status") or "not_applicable"),
-                    "policy": dict(manifest.get("execution_contract") or {}).get("delivery_policy"),
-                },
-                "request": {"status": "request_blocked", "request_delivered": False},
-            }
-        )
-        manifest["lifecycle"] = lifecycle
-        telemetry = dict(manifest.get("telemetry") or {})
-        telemetry.update(
-            {
-                "status": "failed",
-                "error_class": exc.__class__.__name__,
-                "updated_at": manifest["finished_at"],
-            }
-        )
-        manifest["telemetry"] = telemetry
         manifest["status_history"] = history[-100:]
         if interrupted_signal is not None:
             manifest["signal"] = interrupted_signal
@@ -3078,16 +2251,8 @@ def _run_managed_manifest(manifest_path: Path) -> int:
             return 128 + interrupted_signal
         return 1
     finally:
-        if raw_handle is not None:
-            raw_handle.close()
         for signum, handler in prior_handlers.items():
             signal.signal(signum, handler)
-
-
-def _run_codex_manifest(manifest_path: Path) -> int:
-    """Compatibility entry point for historical Codex worker invocations."""
-
-    return _run_managed_manifest(manifest_path)
 
 
 def _pid_matches_manifest(pid: int, manifest_path: Path) -> bool:
@@ -3428,15 +2593,6 @@ def _repair_manifest_delivery_provenance(manifest: dict[str, Any]) -> bool:
 
 
 def _delivery_request_identity(manifest: Mapping[str, Any]) -> tuple[str, ...] | None:
-    execution_contract = manifest.get("execution_contract")
-    if (
-        isinstance(execution_contract, Mapping)
-        and execution_contract.get("delivery_policy") == "deliver_independently"
-    ):
-        return (
-            "independent_result",
-            str(manifest.get("run_id") or manifest.get("launch_idempotency_key") or "unknown"),
-        )
     aggregation = manifest.get("aggregation")
     if isinstance(aggregation, Mapping) and aggregation.get("key"):
         return "aggregation_key", str(aggregation["key"])
@@ -3491,71 +2647,11 @@ def _newer_delivery_run(
     return newest[1] if newest is not None else None
 
 
-def _authoritative_request_from_manifest(manifest: Mapping[str, Any]) -> str | None:
-    """Load the exact inbound source only for an explicitly labeled fallback."""
-
-    provenance = manifest.get("launch_provenance")
-    if not isinstance(provenance, Mapping):
-        return None
-    source_record_id = str(provenance.get("source_record_id") or "")
-    conversation_id = str(provenance.get("resident_conversation_id") or "")
-    discord_message_id = str(provenance.get("reply_to_message_id") or "")
-    if not _RESIDENT_MESSAGE_ID_RE.fullmatch(source_record_id):
-        return None
-    roots: list[Path] = []
-    configured_root = str(os.environ.get("MEGAPLAN_RESIDENT_STORE_ROOT") or "").strip()
-    if configured_root:
-        roots.append(Path(configured_root).expanduser().resolve())
-    project_dir = str(manifest.get("project_dir") or "").strip()
-    if project_dir:
-        roots.append(Path(project_dir).resolve() / ".megaplan" / "resident")
-    contents: set[str] = set()
-    for root in dict.fromkeys(roots):
-        try:
-            record = json.loads(
-                (root / "messages" / f"{source_record_id}.json").read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError, TypeError):
-            continue
-        if (
-            not isinstance(record, Mapping)
-            or str(record.get("id") or "") != source_record_id
-            or str(record.get("direction") or "") != "inbound"
-            or str(record.get("conversation_id") or "") != conversation_id
-            or str(record.get("discord_message_id") or "") != discord_message_id
-        ):
-            continue
-        content = record.get("content")
-        if isinstance(content, str):
-            contents.add(content)
-    return next(iter(contents)) if len(contents) == 1 else None
-
-
-def _completion_payload_with_request_summary(
+def _completion_payload(
     manifest: Mapping[str, Any],
     payload: Mapping[str, Any],
-    *,
-    summary_line: str | None = None,
 ) -> dict[str, Any]:
-    semantic_description = canonical_request_description(manifest.get("description"))
-    authority = "managed_manifest_semantic_description"
-    canonical_line = current_request_summary_line(semantic_description)
-    if semantic_description is None:
-        canonical_line = source_request_fallback_line(
-            _authoritative_request_from_manifest(manifest)
-        )
-        authority = "immutable_inbound_source_fallback"
-    stored_line = manifest.get("request_summary_line")
-    if isinstance(stored_line, str) and stored_line == canonical_line:
-        canonical_line = stored_line
-    if summary_line != canonical_line:
-        summary_line = canonical_line
-    rendered, line = content_with_request_summary(
-        payload.get("content"),
-        summary_line=summary_line,
-        max_chars=_MAX_COMPLETION_DELIVERY_CHARS,
-        trusted_summary_line=True,
-    )
+    rendered = str(payload.get("content") or "").strip()
     relationship = manifest.get("query_relationship")
     if (
         isinstance(relationship, Mapping)
@@ -3569,18 +2665,12 @@ def _completion_payload_with_request_summary(
             "current follow-up and delivery target "
             f"{current.get('discord_message_id') or current.get('source_record_id') or 'unknown'}."
         )
-        first, separator, rest = rendered.partition("\n")
-        rendered = (
-            f"{first}\n{reference_line}{separator}{rest}"
-            if separator
-            else f"{first}\n{reference_line}"
-        )[:_MAX_COMPLETION_DELIVERY_CHARS]
+        rendered = f"{reference_line}\n\n{rendered}" if rendered else reference_line
+    rendered = rendered[:_MAX_COMPLETION_DELIVERY_CHARS]
     return {
         **dict(payload),
         "content": rendered,
         "content_sha256": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
-        "request_summary_line": line,
-        "request_summary_authority": authority,
     }
 
 
@@ -3735,36 +2825,11 @@ def _delivery_claim(
                 content,
                 str(launch_provenance.get("timezone_name") or "UTC"),
             )
-            delivery["payload"] = _completion_payload_with_request_summary(manifest, {
+            delivery["payload"] = _completion_payload(manifest, {
                 "content": content,
                 "result_kind": result_kind,
                 "materialized_at": now.isoformat(),
             })
-        elif (
-            outbox_payload.get("request_summary_authority")
-            not in {
-                "managed_manifest_semantic_description",
-                "immutable_inbound_source_fallback",
-                "immutable_inbound_source_record",
-            }
-            or not isinstance(outbox_payload.get("request_summary_line"), str)
-            or str(outbox_payload.get("content") or "").partition("\n")[0]
-            != outbox_payload.get("request_summary_line")
-        ):
-            # Never mutate a previously frozen/retried payload into a different
-            # provider message. New materialization always writes this contract.
-            delivery.update(
-                {
-                    "status": "failed",
-                    "last_error": "Discord delivery failed: durable payload lacks request-summary first line",
-                    "last_error_class": "InvalidCompletionPayload",
-                    "last_error_category": "invalid_completion_payload",
-                    "updated_at": now.isoformat(),
-                }
-            )
-            manifest["completion_delivery"] = delivery
-            _atomic_json(manifest_path, manifest)
-            return None
 
         attempt = int(delivery.get("attempt_count") or 0) + 1
         if attempt > _DELIVERY_MAX_ATTEMPTS:
@@ -3889,7 +2954,7 @@ def _finish_completion_turn(
         )
     with _delivery_lock(manifest_path):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        payload = _completion_payload_with_request_summary(
+        payload = _completion_payload(
             manifest,
             {
                 "content": safe_text,
@@ -3898,7 +2963,6 @@ def _finish_completion_turn(
                 "resident_turn_id": result.turn_id,
                 "materialized_at": now.isoformat(),
             },
-            summary_line=result.request_summary_line,
         )
         safe_text = str(payload["content"])
         completion = dict(manifest.get("resident_completion_turn") or {})
@@ -3949,7 +3013,7 @@ def _retry_completion_turn(manifest_path: Path, *, now: datetime, exc: Exception
                 f"run {run_id} after bounded retries. The verification outcome is unknown, and the "
                 "delegated terminal result is not being treated as proof; operator inspection is required."
             )
-            payload = _completion_payload_with_request_summary(
+            payload = _completion_payload(
                 manifest,
                 {
                     "content": content,
@@ -4054,32 +3118,6 @@ def _finish_delivery(
         )
         delivery.pop("claim_state", None)
         manifest["completion_delivery"] = delivery
-        aggregation = manifest.get("aggregation")
-        role = (
-            str(aggregation.get("role") or "synthesis_delivery_owner")
-            if isinstance(aggregation, Mapping)
-            else "synthesis_delivery_owner"
-        )
-        lifecycle = dict(manifest.get("lifecycle") or {})
-        lifecycle.update(
-            {
-                "schema_version": DELIVERY_STATUS_SCHEMA,
-                "work": {"status": "worker_completed", "worker_completed": True},
-                "delivery": {
-                    "status": "delivered",
-                    "policy": dict(manifest.get("execution_contract") or {}).get("delivery_policy"),
-                },
-                "request": {
-                    "status": (
-                        "request_delivered"
-                        if role == "synthesis_delivery_owner"
-                        else "independent_result_delivered_request_open"
-                    ),
-                    "request_delivered": role == "synthesis_delivery_owner",
-                },
-            }
-        )
-        manifest["lifecycle"] = lifecycle
         _atomic_json(manifest_path, manifest)
 
 
@@ -4468,7 +3506,6 @@ def list_managed_resident_agents(
     project_root: str | Path = ".",
     workspace_root: str | Path | None = "/workspace",
     recent_limit: int = 10,
-    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Build the unified managed-agent view used by resident hot context.
 
@@ -4477,25 +3514,6 @@ def list_managed_resident_agents(
     repairs are intentionally not manufactured into this view.
     """
     roots = _managed_run_roots(project_root=project_root, workspace_root=workspace_root)
-
-    manifest_index: dict[str, tuple[Path, Mapping[str, Any]]] = {}
-    for root in sorted(roots):
-        if not root.is_dir():
-            continue
-        for manifest_path in sorted(root.glob("*/manifest.json")):
-            try:
-                candidate = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError, TypeError):
-                continue
-            if not isinstance(candidate, dict):
-                continue
-            schema = candidate.get("schema_version")
-            if schema != LEGACY_MANAGED_RUN_SCHEMA and not is_managed_manifest(candidate):
-                continue
-            if schema != LEGACY_MANAGED_RUN_SCHEMA and candidate.get("run_kind") != MANAGED_RUN_KIND:
-                continue
-            run_id = str(candidate.get("run_id") or manifest_path.parent.name)
-            manifest_index.setdefault(run_id, (manifest_path, candidate))
 
     rows: list[dict[str, Any]] = []
     for root in sorted(roots):
@@ -4512,21 +3530,27 @@ def list_managed_resident_agents(
                 continue
             persisted_status = str(payload.get("status") or "unknown")
             pid = payload.get("pid")
+            run_kind = str(payload.get("run_kind") or MANAGED_RUN_KIND)
+            evidence_class = "canonical"
             if schema == MANAGED_RUN_SCHEMA:
                 observed_status, live = shared_observed_status(payload, manifest_path)
+                if run_kind.startswith("automatic_"):
+                    try:
+                        validate_automatic_managed_manifest(
+                            payload,
+                            manifest_path=manifest_path,
+                        )
+                    except (TypeError, ValueError):
+                        evidence_class = "legacy_noncanonical"
+                        observed_status = "noncanonical_legacy"
+                        live = False
             else:
+                evidence_class = "legacy_compatibility"
                 process_matches = isinstance(pid, int) and _pid_matches_manifest(pid, manifest_path)
                 live = persisted_status in _ACTIVE_STATUSES and process_matches
                 observed_status = persisted_status
                 if persisted_status in _ACTIVE_STATUSES and not process_matches:
                     observed_status = "interrupted"
-
-            projection = build_delivery_projection(
-                manifest=payload,
-                manifest_path=manifest_path,
-                observed_status=observed_status,
-                manifest_index=manifest_index,
-            )
 
             def artifact_path(field: str, fallback: str) -> str:
                 raw = payload.get(field) or fallback
@@ -4538,7 +3562,8 @@ def list_managed_resident_agents(
             rows.append(
                 {
                     "run_id": payload.get("run_id") or manifest_path.parent.name,
-                    "run_kind": payload.get("run_kind") or MANAGED_RUN_KIND,
+                    "run_kind": run_kind,
+                    "evidence_class": evidence_class,
                     "status": observed_status,
                     "persisted_status": persisted_status,
                     "live": live,
@@ -4548,7 +3573,6 @@ def list_managed_resident_agents(
                     "reasoning_effort": payload.get("reasoning_effort"),
                     "task_kind": payload.get("task_kind"),
                     "description": payload.get("description"),
-                    "request_summary_line": payload.get("request_summary_line"),
                     "difficulty": payload.get("difficulty"),
                     "route_class": payload.get("route_class"),
                     "request_id": payload.get("request_id"),
@@ -4562,6 +3586,9 @@ def list_managed_resident_agents(
                     "created_at": payload.get("created_at"),
                     "started_at": payload.get("started_at"),
                     "finished_at": payload.get("finished_at"),
+                    # A provider may persist this immutable measurement on the
+                    # manifest.  Do not synthesize it from logs or limits.
+                    "usage": payload.get("usage"),
                     "manifest_path": str(manifest_path.resolve()),
                     "full_log_path": artifact_path(
                         "full_log_path", str(payload.get("log_path") or "run.log")
@@ -4579,8 +3606,6 @@ def list_managed_resident_agents(
                     "links": payload.get("links"),
                     "query_relationship": payload.get("query_relationship"),
                     "aggregation": payload.get("aggregation"),
-                    "execution_contract": projection["execution_contract"],
-                    "status_projection": projection,
                 }
             )
     rows.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
@@ -4588,9 +3613,6 @@ def list_managed_resident_agents(
     recent = [row for row in rows if not row["live"]][:max(0, recent_limit)]
     delivery_status_counts: dict[str, int] = {}
     terminal_delivery_status_counts: dict[str, int] = {}
-    work_status_counts: dict[str, int] = {}
-    request_status_counts: dict[str, int] = {}
-    projections: dict[str, Mapping[str, Any]] = {}
     for row in rows:
         delivery = row.get("completion_delivery")
         status = (
@@ -4599,26 +3621,10 @@ def list_managed_resident_agents(
             else "not_applicable"
         )
         delivery_status_counts[status] = delivery_status_counts.get(status, 0) + 1
-        projection = dict(row.get("status_projection") or {})
-        projections[str(row["run_id"])] = projection
-        work_status = str(dict(projection.get("work") or {}).get("status") or "unknown")
-        request_status = str(dict(projection.get("request") or {}).get("status") or "unknown")
-        work_status_counts[work_status] = work_status_counts.get(work_status, 0) + 1
-        request_status_counts[request_status] = request_status_counts.get(request_status, 0) + 1
         if row["status"] in _TERMINAL_STATUSES:
             terminal_delivery_status_counts[status] = (
                 terminal_delivery_status_counts.get(status, 0) + 1
             )
-    attention = build_delivery_attention(
-        manifest_index=manifest_index,
-        projections=projections,
-        now=now or datetime.now(timezone.utc),
-    )
-    legacy_delivery_attention_count = sum(
-        count
-        for status, count in terminal_delivery_status_counts.items()
-        if status in {"pending", "retry_pending", "failed", "unknown"}
-    )
     return {
         "schema_version": MANAGED_RUN_SCHEMA,
         "scope": "unified resident and automatic-repair managed agents",
@@ -4629,10 +3635,11 @@ def list_managed_resident_agents(
         "recent_count": len(recent),
         "delivery_status_counts": delivery_status_counts,
         "terminal_delivery_status_counts": terminal_delivery_status_counts,
-        "work_status_counts": work_status_counts,
-        "request_status_counts": request_status_counts,
-        "attention": attention,
-        "delivery_attention_count": legacy_delivery_attention_count + len(attention),
+        "delivery_attention_count": sum(
+            count
+            for status, count in terminal_delivery_status_counts.items()
+            if status in {"pending", "retry_pending", "failed", "unknown"}
+        ),
     }
 
 
@@ -4643,12 +3650,9 @@ async def launch_subagent_task(
     description: str | None = None,
     aggregation_role: str = "synthesis_delivery_owner",
     synthesis_group: str | None = None,
-    outcome_contract: str | None = None,
-    outcome_key: str | None = None,
-    delivery_suppression_override_reason: str | None = None,
     toolsets: str | None = None,
     project_dir: str | None = None,
-    backend: str = "auto",
+    backend: str = "codex",
     background: bool = True,
     model: str | None = None,
     reasoning_effort: str | None = None,
@@ -4658,90 +3662,52 @@ async def launch_subagent_task(
     launch_origin: Mapping[str, Any] | None = None,
     retry_of_run_id: str | None = None,
     query_relationship: Mapping[str, Any] | None = None,
-    schedule_context: Mapping[str, Any] | None = None,
 ) -> SubagentResult:
     """Dispatch ``task`` through the resident-owned delegated-agent seam.
 
-    The model/agent spec selects Hermes, Codex, or Claude when ``backend`` is
-    ``"auto"``.  Explicit compatible overrides remain supported.  All three
-    providers use the same durable background manifest and delivery lifecycle;
-    old non-Discord callers may still request synchronous Hermes explicitly.
+    Managed Codex is the canonical resident path.  ``backend="hermes"`` is an
+    explicit compatibility mode for old synchronous callers; its stdout carries
+    the final response and it does not claim the managed lifecycle schema.
     """
     if len(task) > MAX_DELEGATED_TASK_CHARS:
         raise ValueError(
             f"delegated task exceeds {MAX_DELEGATED_TASK_CHARS} characters; "
             "store large evidence durably and pass paths/routes"
         )
-    route = route_delegated_task(task_kind=task_kind, difficulty=difficulty)
-    provider_route: ManagedAgentRoute = resolve_managed_agent_route(
-        backend=backend,
-        model=model,
-        default_backend="codex",
-        default_models={
-            "codex": route.model,
-            "hermes": config.subagent_model_name,
-            "claude": "opus",
-        },
-    )
-    selected_effort = reasoning_effort or provider_route.effort or route.reasoning_effort
-    if selected_effort not in _VALID_DELEGATED_EFFORTS:
-        raise ValueError(
-            "reasoning_effort must be one of "
-            f"{', '.join(sorted(_VALID_DELEGATED_EFFORTS))}; got {selected_effort!r}"
-        )
-    resolved_model_spec = provider_route.model_spec
-    if provider_route.backend in {"codex", "claude"} and (
-        provider_route.effort is not None or reasoning_effort is not None
-    ):
-        resolved_model_spec = format_agent_spec(
-            AgentSpec(
-                agent=provider_route.backend,
-                model=provider_route.model,
-                effort=selected_effort,
+    if backend == "codex":
+        if not background:
+            raise ValueError(
+                "Codex resident subagents must use background=True for durable lifecycle tracking"
             )
-        )
-
-    if background:
-        launch_kwargs = dict(
+        route = route_delegated_task(task_kind=task_kind, difficulty=difficulty)
+        selected_effort = reasoning_effort or route.reasoning_effort
+        if selected_effort not in _VALID_DELEGATED_EFFORTS:
+            raise ValueError(
+                "reasoning_effort must be one of "
+                f"{', '.join(sorted(_VALID_DELEGATED_EFFORTS))}; got {selected_effort!r}"
+            )
+        return launch_codex_subagent_detached(
             task=task,
             description=description,
             aggregation_role=aggregation_role,
             synthesis_group=synthesis_group,
-            outcome_contract=outcome_contract,
-            outcome_key=outcome_key,
-            delivery_suppression_override_reason=delivery_suppression_override_reason,
             project_dir=project_dir,
-            model=provider_route.model,
-            model_spec=resolved_model_spec,
+            model=model or route.model,
             reasoning_effort=selected_effort,
-            toolsets=toolsets or config.special_requests_subagent_toolsets,
-            max_tokens=config.special_requests_subagent_max_tokens,
-            provider_timeout_s=config.special_requests_subagent_timeout_s,
             task_kind=route.task_kind,
             difficulty=route.difficulty,
             route_class=(
                 "explicit_override"
-                if model is not None or reasoning_effort is not None or backend != "auto"
+                if model is not None or reasoning_effort is not None
                 else route.route_class
             ),
             request_id=request_id,
             launch_origin=launch_origin,
             retry_of_run_id=retry_of_run_id,
             query_relationship=query_relationship,
-            schedule_context=schedule_context,
         )
-        if provider_route.backend == "codex":
-            return launch_codex_subagent_detached(**launch_kwargs)
-        return launch_managed_subagent_detached(
-            backend=provider_route.backend,
-            **launch_kwargs,
-        )
-
-    if provider_route.backend != "hermes" or backend == "auto":
-        raise ValueError(
-            "non-Hermes resident subagents and inferred provider routes require "
-            "background=True for durable lifecycle tracking"
-        )
+    if backend != "hermes":
+        raise ValueError(f"unsupported subagent backend: {backend}")
     compatibility_provenance = _canonical_launch_provenance(
         launch_origin,
         project_root=Path(project_dir or Path.cwd()).resolve(),
@@ -4758,7 +3724,7 @@ async def launch_subagent_task(
         sys.executable,
         str(LAUNCHER_PATH),
         "--model",
-        provider_route.model,
+        config.subagent_model_name,
         "--toolsets",
         toolsets or config.special_requests_subagent_toolsets,
         "--max-tokens",
@@ -4804,7 +3770,7 @@ def _build_local_seam_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="action", required=True)
     launch = sub.add_parser(
         "launch",
-        help="Launch a durable provider-aware agent, inheriting resident delegation provenance",
+        help="Launch a durable Codex agent, inheriting resident delegation provenance",
     )
     task_source = launch.add_mutually_exclusive_group(required=True)
     task_source.add_argument("--task")
@@ -4820,12 +3786,6 @@ def _build_local_seam_parser() -> argparse.ArgumentParser:
     )
     launch.add_argument("--synthesis-group")
     launch.add_argument("--project-dir")
-    launch.add_argument(
-        "--backend",
-        default="auto",
-        choices=("auto", "hermes", "codex", "claude", "chatgpt", "shannon"),
-        help="Provider override; auto infers from --model and is the default",
-    )
     launch.add_argument("--model")
     launch.add_argument(
         "--reasoning-effort", choices=sorted(_VALID_DELEGATED_EFFORTS)
@@ -4875,8 +3835,6 @@ def _local_followup_message(args: argparse.Namespace) -> str:
 def _main(argv: list[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     # Private worker compatibility; deliberately absent from the public parser.
-    if len(raw) == 2 and raw[0] == "--run-managed":
-        return _run_managed_manifest(Path(raw[1]))
     if len(raw) == 2 and raw[0] == "--run-codex":
         return _run_codex_manifest(Path(raw[1]))
     args = _build_local_seam_parser().parse_args(raw)
@@ -4892,7 +3850,6 @@ def _main(argv: list[str] | None = None) -> int:
                 aggregation_role=args.aggregation_role,
                 synthesis_group=args.synthesis_group,
                 project_dir=args.project_dir,
-                backend=args.backend,
                 model=args.model,
                 reasoning_effort=args.reasoning_effort,
                 task_kind=args.task_kind,

@@ -69,7 +69,7 @@ This is an observe-only milestone sized to no more than two weeks.
 - Enumerate every rollout cohort, kill switch, promotion owner, rollback owner,
   legacy deletion authority, and genuine blocked-run acceptance precondition.
 - Resolve PC/program-counter/parity/control-plane ownership only through
-  repository evidence and a committed, machine-verifiable ownership-decision record.
+  repository evidence or the explicit approval record.
 
 ## Out of scope
 
@@ -144,8 +144,8 @@ or notification mutation. Preserve immutable resident delegation provenance.
   acceptance proof, rollout gate, rollback behavior, and deletion gate.
 - Baselines never coerce missing time/tokens/cost to zero or classify Strategy
   M4's productive implementation/review as avoidable orchestration.
-- The ownership-decision record validates against the locked decisions and has
-  no unresolved policy/owner fields, or M6A and later implementation remain blocked.
+- The approval record is accepted with all policy/owner questions resolved, or
+  M6A and later implementation remain blocked.
 
 ## Touchpoints
 
@@ -178,7 +178,7 @@ exact contract/version bundle,
   proof index, residual zero-exemption matrix, generated WBC boundary inventory,
   controlled-writer/reader registries,
 captured replay corpus, work-ledger/SLO schema, rollout/deletion register,
-fixtures, accepted ownership-decision record, and an empty unresolved-blocker list.
+fixtures, accepted approval record, and an empty unresolved-blocker list.
 
 M6 hands substrate gaps to M6A and all producer adoption rows to M8; it does not
 misclassify those gaps as Custody ownership.

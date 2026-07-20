@@ -14,7 +14,7 @@ import time
 from typing import Any, Literal, Mapping, Sequence
 from urllib.parse import urlparse
 
-from pydantic import Field, field_validator
+from pydantic import Field
 
 from agentbox.redaction import redact_text
 from agentbox.reset_notifications import list_reset_notifications
@@ -53,11 +53,6 @@ from arnold_pipelines.megaplan.layout import (
 
 from .auth import ActionKind, AuthorizationSubject, ConfirmationManager, ResidentAuthorizer, StoreBackedConfirmationManager
 from .agent_loop import current_tool_runtime_context
-from .fix_the_fixer import (
-    FIX_THE_FIXER_TOOL,
-    render_fix_the_fixer_goal,
-    validate_fix_the_fixer_target,
-)
 from .cloud import (
     CloudCliBackend,
     CloudOperation,
@@ -85,7 +80,6 @@ from .reply_chain import (
     decode_reply_cursor,
     reply_chain_page,
 )
-from .request_summary import current_request_summary_line
 from .query_relationship import correlate_semantic_follow_up
 from .status_tree import (
     DEFAULT_NODE_LIMIT,
@@ -102,7 +96,7 @@ from .context_tree import (
     search_context,
 )
 
-MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v8"
+MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v9"
 # The watchdog refreshes the snapshot roughly hourly; tolerate up to two ticks
 # of staleness before treating broad status as degraded.
 _SNAPSHOT_MAX_AGE_S = 2 * 60 * 60
@@ -256,6 +250,49 @@ def _vp_todo_hot_context(path: Path) -> dict[str, Any]:
     }
 
 
+def _authoritative_todo_launch_origin(
+    store: Store,
+    item: Mapping[str, Any],
+) -> tuple[Mapping[str, Any] | None, str | None]:
+    """Resolve scheduled delegation only from an immutable inbound source record."""
+
+    provenance = item.get("launch_provenance")
+    if not isinstance(provenance, Mapping):
+        return None, "missing_launch_provenance"
+    if provenance.get("applicability") != "applicable":
+        return None, "launch_provenance_not_applicable"
+    source_record_id = str(provenance.get("source_record_id") or "").strip()
+    conversation_id = str(
+        provenance.get("resident_conversation_id")
+        or provenance.get("conversation_id")
+        or ""
+    ).strip()
+    if not source_record_id or not conversation_id:
+        return None, "incomplete_launch_provenance"
+    source = store.load_message(source_record_id)
+    if (
+        source is None
+        or source.direction != "inbound"
+        or source.conversation_id != conversation_id
+    ):
+        return None, "source_record_missing_or_mismatched"
+    conversation = store.load_resident_conversation(conversation_id)
+    if conversation is None:
+        return None, "source_conversation_missing"
+    reply_target = str(
+        provenance.get("reply_to_message_id")
+        or provenance.get("discord_message_id")
+        or ""
+    ).strip()
+    if not source.discord_message_id or source.discord_message_id != reply_target:
+        return None, "discord_reply_target_mismatch"
+    if conversation.conversation_key != str(
+        provenance.get("conversation_key") or ""
+    ):
+        return None, "source_conversation_identity_mismatch"
+    return provenance, None
+
+
 def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
     """Keep lifecycle orientation in hot context without embedding manifests."""
 
@@ -273,7 +310,6 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
                 "model",
                 "task_kind",
                 "description",
-                "request_summary_line",
                 "difficulty",
                 "task_excerpt",
                 "created_at",
@@ -283,8 +319,6 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
                 "parent_run_id",
                 "query_relationship",
                 "aggregation",
-                "execution_contract",
-                "status_projection",
             )
             if row.get(key) is not None
         } | {
@@ -318,9 +352,6 @@ def _compact_resident_agents(value: Mapping[str, Any]) -> dict[str, Any]:
         "recent_preview_limit": _RESIDENT_AGENT_RECENT_LIMIT,
         "delivery_status_counts": value.get("delivery_status_counts", {}),
         "terminal_delivery_status_counts": value.get("terminal_delivery_status_counts", {}),
-        "work_status_counts": value.get("work_status_counts", {}),
-        "request_status_counts": value.get("request_status_counts", {}),
-        "attention": list(value.get("attention") or [])[:8],
         "delivery_attention_count": value.get("delivery_attention_count", 0),
     }
 
@@ -738,6 +769,13 @@ class FailTodoItemInput(ToolInput):
     reason: str = ""
 
 
+class ReconcileTodoItemInput(ToolInput):
+    id: str
+    canonical_run_id: str
+    evidence: str
+    resolution: str
+
+
 class AddTodoItemInput(ToolInput):
     task: str
     when: str = ""
@@ -749,15 +787,6 @@ class GetTimezonePreferenceInput(ToolInput):
 
 class SetTimezonePreferenceInput(ToolInput):
     timezone_name: str
-
-
-class FixTheFixerInput(ToolInput):
-    target: str
-
-    @field_validator("target")
-    @classmethod
-    def _non_empty_exact_target(cls, value: str) -> str:
-        return validate_fix_the_fixer_target(value)
 
 
 class LaunchSubagentInput(ToolInput):
@@ -775,8 +804,8 @@ class LaunchSubagentInput(ToolInput):
     ] = Field(
         default="synthesis_delivery_owner",
         description=(
-            "Aggregation role only. Use internal_contributor for work consumed by a later owner; "
-            "delivery is resolved separately from the outcome contract."
+            "Use internal_contributor for reviewer/worker runs that must never reply to Discord; "
+            "launch exactly one synthesis_delivery_owner last to consolidate their durable results."
         ),
     )
     synthesis_group: str | None = Field(
@@ -785,28 +814,6 @@ class LaunchSubagentInput(ToolInput):
         description=(
             "Stable explicit batch id shared by internal contributors and their one synthesis "
             "owner. Omit for an independently deliverable launch."
-        ),
-    )
-    outcome_contract: Literal[
-        "analytical_fragment", "independently_meaningful_execution", "synthesis_result"
-    ] | None = Field(
-        default=None,
-        description=(
-            "Explicit result contract. Independently meaningful execution contributors retain "
-            "truthful terminal delivery even when they also feed a synthesis owner."
-        ),
-    )
-    outcome_key: str | None = Field(
-        default=None,
-        max_length=160,
-        description="Stable subject key used to detect unrelated all-success fan-in.",
-    )
-    delivery_suppression_override_reason: str | None = Field(
-        default=None,
-        max_length=500,
-        description=(
-            "Explicit durable reason nondelivery is intended for an independently meaningful "
-            "internal contributor. Omit to preserve truthful independent delivery."
         ),
     )
     follow_up_to_source_record_id: str | None = Field(
@@ -821,7 +828,7 @@ class LaunchSubagentInput(ToolInput):
     difficulty: int = Field(default=4, ge=1, le=10)
     toolsets: str | None = None
     project_dir: str | None = None
-    backend: str = "auto"
+    backend: str = "codex"
     background: bool = True
     model: str | None = None
     reasoning_effort: Literal["minimal", "low", "medium", "high", "xhigh", "max"] | None = None
@@ -886,6 +893,9 @@ class MegaplanResidentProfile:
         default=None, init=False, repr=False
     )
     _snapshot_refresh_started_at: float = field(default=0.0, init=False, repr=False)
+    _snapshot_refresh_lock: Any = field(
+        default_factory=threading.Lock, init=False, repr=False
+    )
     _context_source_cache: dict[str, dict[str, Any]] = field(
         default_factory=dict, init=False, repr=False
     )
@@ -925,12 +935,12 @@ class MegaplanResidentProfile:
             "`add_todo_item` (optionally a `when` condition, e.g. 'once epic <id> is done'); use "
             "`read_todo_list` to show what's queued. In conversation you add and read items — a "
             "scheduled sweep picks up pending items and executes them with the resident-owned "
-            "`launch_subagent` provider-aware managed lifecycle. Hot context's `vp_special_requests_todos` "
+            "`launch_subagent` managed Codex lifecycle. Hot context's `vp_special_requests_todos` "
             "is only a bounded pending-item orientation summary: a pending item with a `when` "
             "condition is not known to be due until you verify that condition. Use its stable item "
             "IDs when referring to previewed work, and call `read_todo_list` with no arguments "
             "whenever you need the full list (including retained failed items). For normal "
-            "delegated work, keep its defaults (`backend=auto`, `background=true`) and report "
+            "delegated work, keep its defaults (`backend=codex`, `background=true`) and report "
             "the returned durable paths. "
             "Always classify delegated work with `task_kind` and D1-D10 `difficulty`. Use Luna/low "
             "only for bounded lookup, extraction, or mechanical D1-D3 work; routine coding, "
@@ -940,8 +950,8 @@ class MegaplanResidentProfile:
             "non-secret reply provenance and the terminal sweep automatically replies to that exact "
             "message with the subagent's concise final summary. Delivery state and evidence are visible "
             "in `resident_agents`; surface retry, failed, or unknown delivery states honestly. "
-            "Before every managed launch, write one genuinely semantic description and reuse it as "
-            "the canonical request header. Judge whether the current request is a high-confidence "
+            "Before every managed launch, write one genuinely semantic description as its durable "
+            "human-readable label. Judge whether the current request is a high-confidence "
             "semantic follow-up to an earlier authoritative inbound record; when it is, pass that "
             "exact msg_* id plus a short rationale in follow_up_to_source_record_id and "
             "follow_up_rationale. Omit both when independent or uncertain—nearby text and lexical "
@@ -1029,10 +1039,7 @@ class MegaplanResidentProfile:
     def system_prompt_for(self, request_text: str | None) -> str:
         packs = classify_intent_packs(request_text)
         rendered = "\n".join(f"[{name}] {POLICY_PACKS[name]}" for name in packs)
-        return (
-            f"{current_request_summary_line(None)}\n"
-            f"{_resident_core_prompt()}\nSelected policy packs:\n{rendered}"
-        )
+        return f"{_resident_core_prompt()}\nSelected policy packs:\n{rendered}"
 
     async def load_hot_context(self, conversation_id: str) -> dict[str, Any]:
         async def bounded_live_cloud() -> dict[str, Any] | None:
@@ -1089,24 +1096,12 @@ class MegaplanResidentProfile:
             "resident_runtime": {
                 "model_provider": self.config.model_provider,
                 "model": self.config.model_name,
-                "managed_provider_controls": {
-                    "toolsets": self.config.model_toolsets,
-                    "max_tokens": self.config.model_max_tokens,
-                    "timeout_s": self.config.model_timeout_s,
-                    "session_scope": "durable resident conversation",
-                    "evidence": (
-                        "prompt.md/result.md/run.log/provider.raw/events.jsonl/manifest.json"
-                    ),
-                },
                 "codex_reasoning_effort": self.config.codex_reasoning_effort,
                 "codex_sandbox": self.config.codex_sandbox,
                 "codex_machine_access": (
                     "full machine access; Codex CLI is launched with danger-full-access"
-                    if self.config.model_provider == "codex"
-                    and self.config.codex_sandbox == "danger-full-access"
+                    if self.config.codex_sandbox == "danger-full-access"
                     else f"Codex CLI sandbox: {self.config.codex_sandbox}"
-                    if self.config.model_provider == "codex"
-                    else "not applicable to the selected resident provider"
                 ),
                 # P0 visibility: surface the build-vs-read decision so a resident
                 # that silently fell to cache mode (lost MEGAPLAN_TRUSTED_CONTAINER
@@ -1143,9 +1138,6 @@ class MegaplanResidentProfile:
                 "subagent_launch": {
                     "standard": MANAGED_RUN_SCHEMA,
                     "delegation_policy": delegation_policy_hot_context(),
-                    "backend": "auto",
-                    "providers": ["hermes", "codex", "claude"],
-                    "provider_routing": "model spec inferred; explicit compatible override allowed",
                     "codex_sandbox": "danger-full-access",
                     "stdin": "sealed",
                     "lifecycle": "detached with durable manifest, log, and result",
@@ -1399,6 +1391,25 @@ class MegaplanResidentProfile:
             return _sanitize_stale_snapshot(snapshot, degraded_reason), degraded_reason
         return snapshot, None
 
+    def refresh_cloud_status_snapshot(self) -> bool:
+        """Synchronously rebuild and persist the canonical local snapshot.
+
+        Callers that need the result for the current response must run this in
+        a worker thread.  Unlike the ordinary hot-context scheduler, this
+        method is intentionally unthrottled: every call with local markers
+        performs a rebuild.  The lock serializes concurrent foreground and
+        background writers without coalescing away a requested rebuild.
+        """
+
+        if not status_snapshot.has_local_markers():
+            return False
+        with self._snapshot_refresh_lock:
+            snapshot = status_snapshot.build_cloud_status_snapshot()
+            status_snapshot.write_cloud_status_snapshot(
+                snapshot, path=self.config.status_snapshot_path
+            )
+        return True
+
     def _schedule_cloud_status_snapshot_refresh(self) -> None:
         if not status_snapshot.has_local_markers():
             return
@@ -1412,10 +1423,7 @@ class MegaplanResidentProfile:
 
         def refresh() -> None:
             try:
-                snapshot = status_snapshot.build_cloud_status_snapshot()
-                status_snapshot.write_cloud_status_snapshot(
-                    snapshot, path=self.config.status_snapshot_path
-                )
+                self.refresh_cloud_status_snapshot()
             except Exception:
                 # Hot context already carries the degraded cached fallback.  The
                 # watchdog remains the canonical periodic refresh owner.
@@ -1485,9 +1493,9 @@ class MegaplanResidentProfile:
             ToolRegistration("set_timezone_preference", "Set the current Discord user's durable IANA timezone preference. The update applies on the next message.", "write", SetTimezonePreferenceInput, ToolResult, self._set_timezone_preference),
             ToolRegistration("complete_todo_item", "Mark a to-do item done and clear it from the list; pass a short result summary.", "write", CompleteTodoItemInput, ToolResult, self._complete_todo_item),
             ToolRegistration("fail_todo_item", "Mark a to-do item failed (retained for retry); pass the reason.", "write", FailTodoItemInput, ToolResult, self._fail_todo_item),
+            ToolRegistration("reconcile_todo_item", "Resolve a pending launch intent as superseded by an already-existing canonical run. Requires the stable run id, durable evidence location, and reconciliation reason; never use task-text overlap alone.", "write", ReconcileTodoItemInput, ToolResult, self._reconcile_todo_item),
             ToolRegistration("add_todo_item", "Append a new pending item to the VP to-do list. Optional `when` is a natural-language condition the agent checks before executing (e.g. 'once epic <id> is done').", "write", AddTodoItemInput, ToolResult, self._add_todo_item),
-            ToolRegistration(FIX_THE_FIXER_TOOL, "Launch exactly one durable D10/high mutation-authorized meta-fixer for one non-empty epic/session target. The rendered goal composes superfixer-debug internally and inherits the active Discord provenance and authorization envelope.", "write", FixTheFixerInput, ToolResult, self._fix_the_fixer),
-            ToolRegistration("launch_subagent", "Launch a provider-aware resident-managed agent through Hermes, Codex, or Claude with one durable manifest, concise one-line description, full log, and result path. The model spec selects its compatible provider when backend=auto; explicit mismatches fail before launch. Multiple launches for one logical query have one newest synthesis/delivery owner; prior runs become internal contributors.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
+            ToolRegistration("launch_subagent", "Launch a resident-managed Codex agent with a durable manifest, concise one-line description, full log, and result path. Multiple launches for one logical query have one newest synthesis/delivery owner; prior runs become internal contributors. Legacy synchronous Hermes requires an explicit backend override.", "write", LaunchSubagentInput, ToolResult, self._launch_subagent),
         )
         for registration in registrations:
             self.tool_registry.register(registration)
@@ -2700,6 +2708,24 @@ class MegaplanResidentProfile:
             return _fail("todo item not found", id=payload.id)
         return _ok("todo item marked failed (retained)", item=vp_todo.public_item(failed))
 
+    def _reconcile_todo_item(self, payload: ReconcileTodoItemInput) -> ToolResult:
+        try:
+            resolved = vp_todo.supersede_item(
+                self._todo_path(),
+                payload.id,
+                canonical_run_id=payload.canonical_run_id,
+                evidence=payload.evidence,
+                resolution=payload.resolution,
+            )
+        except ValueError as exc:
+            return _fail(str(exc), id=payload.id)
+        if resolved is None:
+            return _fail("todo item not found", id=payload.id)
+        return _ok(
+            "todo launch intent reconciled to canonical run",
+            item=vp_todo.public_item(resolved),
+        )
+
     def _add_todo_item(self, payload: AddTodoItemInput) -> ToolResult:
         task = payload.task.strip()
         if not task:
@@ -2721,12 +2747,8 @@ class MegaplanResidentProfile:
             return _fail("task is required")
         if not payload.description or not payload.description.strip():
             return _fail("a purpose-built semantic description is required")
-        runtime_context = current_tool_runtime_context()
-        launch_origin = runtime_context.launch_origin if runtime_context is not None else None
-        if (
-            (not isinstance(launch_origin, Mapping) or launch_origin.get("applicability") == "not_applicable")
-            and payload.request_id
-        ):
+        todo_item = None
+        if payload.request_id:
             todo_item = next(
                 (
                     item
@@ -2735,8 +2757,71 @@ class MegaplanResidentProfile:
                 ),
                 None,
             )
-            if todo_item is not None and isinstance(todo_item.get("launch_provenance"), dict):
-                launch_origin = todo_item["launch_provenance"]
+            if todo_item is not None and todo_item["task"].strip() != task:
+                return _fail(
+                    "todo request_id task does not match the authoritative todo task",
+                    id=payload.request_id,
+                )
+        runtime_context = current_tool_runtime_context()
+        launch_origin = runtime_context.launch_origin if runtime_context is not None else None
+        source_kind = (
+            str(launch_origin.get("source_kind") or "")
+            if isinstance(launch_origin, Mapping)
+            else ""
+        )
+        if (
+            source_kind in {"scheduled_turn", "mixed_scheduler_discord_burst"}
+            and todo_item is None
+        ):
+            return _fail(
+                "scheduled delegation requires request_id for an exact retained todo item",
+                request_id=payload.request_id,
+                delegation_allowed=False,
+                escalation_required=True,
+            )
+        current_origin_is_authoritative = (
+            isinstance(launch_origin, Mapping)
+            and launch_origin.get("applicability") == "applicable"
+        )
+        if (
+            not current_origin_is_authoritative
+            and todo_item is not None
+        ):
+            launch_origin, diagnostic_code = _authoritative_todo_launch_origin(
+                self._store(), todo_item
+            )
+            if diagnostic_code is not None:
+                diagnostic_id = deterministic_idempotency_key(
+                    "resident-vp-todo-launch-custody-failure",
+                    payload.request_id,
+                    todo_item.get("updated_at"),
+                    diagnostic_code,
+                )
+                self._store().log_system_event(
+                    level="warn",
+                    category="system",
+                    event_type="resident_vp_todo_launch_custody_failure",
+                    message=(
+                        "Scheduled VP to-do delegation denied without authoritative "
+                        "inbound request evidence"
+                    ),
+                    details={
+                        "diagnostic_id": diagnostic_id,
+                        "diagnostic_code": diagnostic_code,
+                        "todo_item_id": payload.request_id,
+                        "todo_updated_at": todo_item.get("updated_at"),
+                        "delegation_allowed": False,
+                        "escalation_required": True,
+                    },
+                    idempotency_key=diagnostic_id,
+                )
+                return _fail(
+                    "scheduled todo delegation lacks authoritative inbound request evidence",
+                    diagnostic_id=diagnostic_id,
+                    diagnostic_code=diagnostic_code,
+                    todo_item_id=payload.request_id,
+                    escalation_required=True,
+                )
         query_relationship = None
         if (
             isinstance(launch_origin, Mapping)
@@ -2770,11 +2855,6 @@ class MegaplanResidentProfile:
             description=payload.description,
             aggregation_role=payload.aggregation_role,
             synthesis_group=payload.synthesis_group,
-            outcome_contract=payload.outcome_contract,
-            outcome_key=payload.outcome_key,
-            delivery_suppression_override_reason=(
-                payload.delivery_suppression_override_reason
-            ),
             toolsets=payload.toolsets,
             project_dir=payload.project_dir,
             backend=payload.backend,
@@ -2794,6 +2874,23 @@ class MegaplanResidentProfile:
                 message=result.error or "subagent failed",
                 data={"returncode": result.returncode, "stderr": result.stderr[:1000]},
             )
+        todo_resolution = None
+        if todo_item is not None and result.run_id:
+            evidence = str(result.manifest_path or "").strip()
+            if not evidence:
+                return _fail(
+                    "canonical managed run lacks manifest evidence; todo remains pending",
+                    run_id=result.run_id,
+                )
+            try:
+                todo_resolution = vp_todo.delegate_item(
+                    self._todo_path(),
+                    todo_item["id"],
+                    canonical_run_id=result.run_id,
+                    evidence=evidence,
+                )
+            except ValueError as exc:
+                return _fail(str(exc), run_id=result.run_id, id=todo_item["id"])
         return ToolResult(
             ok=True,
             message=("subagent launched" if result.status == "running" else "subagent completed"),
@@ -2807,57 +2904,9 @@ class MegaplanResidentProfile:
                 "result_path": result.result_path,
                 "pid": result.pid,
                 "description": result.description,
-            },
-        )
-
-    async def _fix_the_fixer(self, payload: FixTheFixerInput) -> ToolResult:
-        runtime_context = current_tool_runtime_context()
-        launch_origin = (
-            runtime_context.launch_origin if runtime_context is not None else None
-        )
-        if (
-            runtime_context is None
-            or not isinstance(runtime_context.subject, AuthorizationSubject)
-            or not isinstance(launch_origin, Mapping)
-            or launch_origin.get("applicability") != "applicable"
-            or launch_origin.get("source_kind") != "discord_inbound_message"
-        ):
-            return _fail(
-                "fix-the-fixer requires one current authorized Discord invocation; "
-                "internal, scheduled, completion, and recursively executing goal contexts cannot relaunch it",
-                recursion_guard=True,
-                delegation_allowed=False,
-            )
-        result = await self._launch_subagent(
-            LaunchSubagentInput(
-                task=render_fix_the_fixer_goal(payload.target),
-                description="Repair the failed fixer and its missed backstop",
-                aggregation_role="synthesis_delivery_owner",
-                task_kind="root_cause",
-                difficulty=10,
-                backend="codex",
-                background=True,
-            )
-        )
-        return ToolResult(
-            ok=result.ok,
-            message=(
-                "fix-the-fixer meta-fixer launched"
-                if result.ok
-                else result.message or "fix-the-fixer launch failed"
-            ),
-            data={
-                **result.data,
-                "command": FIX_THE_FIXER_TOOL,
-                "target": payload.target,
-                "composes": "superfixer-debug",
-                "requested_route": {
-                    "task_kind": "root_cause",
-                    "difficulty": 10,
-                    "reasoning_effort": "high",
-                    "work_intent": "execution",
-                    "mutation_claim": "git_backed",
-                },
+                "todo_resolution": (
+                    vp_todo.public_item(todo_resolution) if todo_resolution is not None else None
+                ),
             },
         )
 

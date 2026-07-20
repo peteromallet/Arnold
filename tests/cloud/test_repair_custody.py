@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -201,6 +202,91 @@ def test_advisory_sidecar_canonical_label_does_not_create_repair_custody(
     assert durable_repair_active(projection) is False
 
 
+def test_custody_projection_exposes_coalescing_without_durable_owner(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    queue_root = _queue_root(tmp_path)
+    first = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "",
+            "blocked_task_id": "T1",
+        },
+        target={"plan_dir": "/tmp/plan"},
+        root_cause_hint="first observation",
+        created_at="2026-07-14T00:00:00Z",
+    )
+    duplicate = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="six_hour_auditor",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "",
+            "blocked_task_id": "T1",
+        },
+        target={"plan_dir": "/tmp/plan"},
+        root_cause_hint="second observation",
+        created_at="2026-07-14T00:10:00Z",
+    )
+    assert first["status"] == "queued"
+    assert duplicate["status"] == "coalesced"
+
+    projection = project_repair_custody(
+        plan_state=_plan_state(),
+        current_target=_current_target(),
+        queue_root=queue_root,
+        repair_data_dir=repair_data_dir,
+    )
+
+    assert projection["active_claim_request_ids"] == []
+    assert projection["attempts"] == []
+    assert projection["coalesced_without_live_owner"] == [
+        {
+            "request_id": duplicate["request"]["request_id"],
+            "related_request_id": first["request"]["request_id"],
+            "created_at": duplicate["decision"]["created_at"],
+            "path": duplicate["decision"]["_path"],
+        }
+    ]
+    repair_requests.write_dispatch_attempt(
+        queue_root,
+        request_id=first["request"]["request_id"],
+        blocker_id=blocker_id_for_fingerprint(_fingerprint()),
+        actor="repair-trigger",
+        repair_layer="l1",
+        command="arnold-repair-loop",
+        child_pid=1234,
+        managed_run_id="managed-run-1",
+        managed_manifest_path="/tmp/managed-run-1/manifest.json",
+        created_at="2026-07-14T00:11:00Z",
+    )
+
+    owned = project_repair_custody(
+        plan_state=_plan_state(),
+        current_target=_current_target(),
+        queue_root=queue_root,
+        repair_data_dir=repair_data_dir,
+    )
+
+    assert owned["coalesced_without_live_owner"] == []
+
+
 def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcomes(
     tmp_path: Path,
 ) -> None:
@@ -314,6 +400,8 @@ def test_custody_projection_reads_immutable_queue_dispatch_attempt(
         repair_layer="l1",
         command="managed repair",
         child_pid=4242,
+        managed_run_id="managed-1",
+        managed_manifest_path="/durable/managed-1/manifest.json",
     )
 
     projection = project_repair_custody(
@@ -360,6 +448,17 @@ def test_custody_projection_uses_managed_execution_as_formal_attempt(
     request_id = queued["request"]["request_id"]
     expected_blocker_id = blocker_id_for_fingerprint(_fingerprint())
     manifest_path = managed_dir / "manifest.json"
+    stdin_path = managed_dir / "stdin.bin"
+    stdin_path.write_bytes(b"x")
+    provenance = {
+        "schema_version": "arnold-machine-origin-provenance-v1",
+        "applicability": "not_applicable",
+        "transport": "automatic_system",
+        "origin_kind": "watchdog_repair",
+        "origin_id": request_id,
+        "component": "test_repair_custody",
+        "trigger_id": request_id,
+    }
     manifest_path.write_text(
         json.dumps(
             {
@@ -371,6 +470,25 @@ def test_custody_projection_uses_managed_execution_as_formal_attempt(
                 "terminal_outcome": "completed",
                 "created_at": "2026-07-04T01:05:00Z",
                 "updated_at": "2026-07-04T01:06:00Z",
+                "task_kind": "autonomous",
+                "difficulty": 8,
+                "model": "control-plane",
+                "route_class": "test",
+                "backend": "repair-loop",
+                "log_path": str(managed_dir / "run.log"),
+                "result_path": str(managed_dir / "result.json"),
+                "launch_contract_sha256": "a" * 64,
+                "launch_provenance": provenance,
+                "provenance_sha256": hashlib.sha256(
+                    json.dumps(provenance, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest(),
+                "stdin": {
+                    "kind": "sealed_file",
+                    "sealed": True,
+                    "path": str(stdin_path),
+                    "sha256": hashlib.sha256(b"x").hexdigest(),
+                    "size_bytes": 1,
+                },
                 "links": {
                     "repair_request_id": request_id,
                     "blocker_id": expected_blocker_id,

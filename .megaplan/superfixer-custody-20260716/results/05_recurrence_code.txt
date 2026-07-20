@@ -1,0 +1,64 @@
+Here is the complete trace, focused on the narrowest regression vectors:
+
+---
+
+## Core Implementation (`auto.py`)
+
+**`_latest_meaningful_history_failure`** — L1559–1574  
+Scans `state.json` history in reverse, returns the first entry with `result ∈ {error, failed, failure, blocked}` **or** any non-empty message.  
+**Bug 1 (supersede blind):** A later same-phase success is invisible — if history is `[finalize:failed, finalize:success]`, the reversed scan hits `finalize:success` first but skips it (success isn't a failure), then returns `finalize:failed`. The old failure is never superseded.
+
+**Bug 2 (message false-positive):** The clause `or message` (L1572) means a success entry with any message text triggers a return, polluting the signature.
+
+**`_normalize_failure_message`** — L1553–1556  
+Collapses whitespace, truncates to 500 chars.
+
+**`_repeated_failure_signature`** — L1577–1615  
+Guards on `next_step == "revise"` only (L1589). Reads `state.json` fresh each call (L1591), hashes `{state, next_step, step, result, message}`.
+
+---
+
+## Driver Loop (`drive`, L3755+)
+
+**Initialization** — L3802–3803: `repeated_failure_signature = None`, `count = 0`.
+
+**Per-iteration check** — L4114–4173:
+```python
+repeat = _repeated_failure_signature(plan_dir, status)   # L4114
+if repeat["hash"] == repeated_failure_signature:          # L4117
+    repeated_failure_signature_count += 1                 # L4118
+else:
+    repeated_failure_signature = str(repeat["hash"])      # L4120
+    repeated_failure_signature_count = 1                  # L4121
+if count >= max_repeated_failure_signatures:              # L4122-4125
+    # bail to repair                                    # L4127-4173
+```
+
+**Repeated-poll recount:** The signature derives from the *latest history failure* (a persisted artifact in `state.json`), not from a per-attempt counter. If the plan is stuck in `revise` across N poll iterations with the same history content, each poll produces the identical hash and increments the counter — the count reflects poll frequency, not genuine retry attempts. A single failure event can trigger the circuit breaker purely through polling cadence.
+
+**Supersede failure:** If the plan autonomously recovers (e.g., revise produces a fix, execute succeeds, `state.json` appends a success entry), the *next* poll still finds the old failure in history (the success after it is skipped by `_latest_meaningful_history_failure`), computes the same hash, and continues counting toward the cap.
+
+---
+
+## Narrowest Regression Cases
+
+1. **Poll-frequency false positive:** Plan with `state.json` history ending in `[gate:failed]`, `next_step="revise"`, `max_repeated_failure_signatures=3`. Three poll iterations with no state change → blocked with `repeated_failure_signature` reason after just one actual failure.
+
+2. **Same-phase success ignored:** Plan history `[finalize:failed("missing selectors"), finalize:success]`, `next_step="revise"` (for an unrelated later phase). The old `finalize:failed` is returned, hashed, and counted despite being superseded.
+
+---
+
+## Sibling Implementations
+
+**No source-level siblings exist** in `arnold_pipelines/`. The directories `watchdog/`, `L1/`, `L2/`, `L3/` do not exist in this repo. The only related aggregation is:
+
+- **`plan_repository.py` L458–467** (`load_plan`): Scans history in reverse for `result == "failed"` to populate `latest_failure` on the `Plan` model. Same supersede-blind pattern — a success after a failure is invisible.
+
+- **Cloud-side embedded programs** (referenced in test fixtures only, e.g. `test_watchdog_wrappers.py` L13290) consume `repeated_failure_signature` as a `kind` label from the plan's `latest_failure` field; they do not reimplement the history-scanning logic.
+
+---
+
+## Relevant Test (`test_auto_recover_blocked.py`)
+
+- **L796–873** (`test_drive_blocks_when_observed_cursor_disagrees_with_forward_projection`): Exercises the driver with `max_repeated_failure_signatures=3` but the test's history has only one failure event and the plan is blocked by a cursor mismatch before the signature breaker fires — it does **not** cover the poll-recount or supersede scenarios.
+- **L361–434** (`test_drive_breaks_repeated_control_invalid_transition`): Covers `invalid_transition_signature` (parallel mechanism), but not `_repeated_failure_signature`.

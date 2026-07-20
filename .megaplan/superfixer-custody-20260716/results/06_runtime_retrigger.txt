@@ -1,0 +1,94 @@
+## Reconciled Superfixer Runtime & Safe Retrigger Procedure for `custody-control-plane-20260714`
+
+### 1. Installed Runtime Source/Revision (Reconciled)
+
+| Layer | Path | HEAD | Branch | Notes |
+|---|---|---|---|---|
+| **Intended** (hot-env, final overlay) | `/workspace/arnold-consolidation-20260714` | `c267920b67` | `consolidate/arnold-runtime-activation-20260714` | 47 dirty tracked files |
+| **Live watchdog** (actual) | `/workspace/.megaplan/repository-strategy-roadmap-supervisor-source` | `14912c118` | `editible-install` | **Stale** — predates repair fixes |
+| **Clean runtime mirror** (chain relaunch) | `/workspace/arnold-runtime-c267920b6719` | `c267920b67` | `consolidate/arnold-runtime-activation-20260714` | Clean checkout |
+| **Project worktree** (dirty, unrelated) | `/workspace/arnold` | `72f7eec32` | `editible-install` | Do not use |
+
+**Source reconciliation gap:** The live watchdog resolved to `repository-strategy-roadmap-supervisor-source` at `14912c118` (started Jul 15 before the hot-env's final custody-control-plane overlay was written). The hot-env file has conflicting mid-file layers; the final block (lines tagged "custody-control-plane superfixer activation 2026-07-15") correctly points to `arnold-consolidation-20260714` with `CLOUD_WATCHDOG_SYNC_ENABLED=0`.
+
+**Env proof:**
+```
+MEGAPLAN_RUNTIME_SRC=/workspace/arnold-consolidation-20260714
+MEGAPLAN_SUPERVISOR_SOURCE=/workspace/arnold-consolidation-20260714
+MEGAPLAN_SUPERVISOR_PYTHON=/workspace/.megaplan/supervisor-python/runtimes/.../bin/python3
+MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED=1
+```
+The watchdog's `/proc/2008962/environ` confirms staleness: `PYTHONPATH=/workspace/.megaplan/repository-strategy-roadmap-supervisor-source`, `CLOUD_WATCHDOG_ARNOLD_SRC=/workspace/.megaplan/repository-strategy-roadmap-supervisor-source`.
+
+### 2. Supported Narrow Refresh/Retrigger Commands
+
+From `/usr/local/bin/arnold-watchdog` and the repair contract:
+
+- **`refresh_editable_install()`** (line 2066) — syncs cloud runtime wrappers, validates import readiness. Triggered by watchdog sweep when `CLOUD_WATCHDOG_SYNC_ENABLED=1`.
+- **`sync_cloud_source()`** — git fetch + ff-only pull + skill sync against `SYNC_BRANCH`.
+- **`default_chain_relaunch_command()`** (line 4218) — generates the chain-relaunch script embedded in the marker. Validates source, does `pip install -e`, runs `python -m arnold_pipelines.megaplan chain start --spec ... --project-dir ...`.
+- **Repair trigger:** `/usr/local/bin/arnold-repair-trigger` (Python, shebang `#!/workspace/.megaplan/supervisor-python/current/bin/python3`) — scans `/workspace/.megaplan/repair-queue/requests/` and dispatches `arnold-repair-loop`.
+- **Superfixer dispatch:** `repair_contract.py` `DISPATCH_INTENT_BROKEN_SUPERFIXER` → Codex investigation of watchdog/repair-trigger/auditor on the editable install.
+
+### 3. Safe Ordered Procedure
+
+**Step 1 — Reconcile hot-env (no restart):**
+Remove conflicting mid-file legacy overrides from `/workspace/.cloud-hot-env`. Retain only the final custody-control-plane block:
+```
+export MEGAPLAN_RUNTIME_SRC=/workspace/arnold-consolidation-20260714
+export CLOUD_WATCHDOG_ARNOLD_SRC=/workspace/arnold-consolidation-20260714
+export MEGAPLAN_META_ARNOLD_SRC=/workspace/arnold-consolidation-20260714
+export MEGAPLAN_AUDIT_ARNOLD_SRC=/workspace/arnold-consolidation-20260714
+export MEGAPLAN_SUPERVISOR_SOURCE=/workspace/arnold-consolidation-20260714
+export CLOUD_WATCHDOG_SYNC_ENABLED=0
+```
+**Receipt path:** `/workspace/.cloud-hot-env` mtime.
+
+**Step 2 — Verify target revision:**
+```bash
+cd /workspace/arnold-consolidation-20260714
+git rev-parse HEAD  # must be c267920b6719fb35636e1da0071b5863ec5b2a0c
+git branch --show-current  # must be consolidate/arnold-runtime-activation-20260714
+```
+**Receipt path:** `git rev-parse HEAD` output matched against expected.
+
+**Step 3 — Align clean runtime mirror:**
+```bash
+cd /workspace/arnold-runtime-c267920b6719
+git fetch origin consolidate/arnold-runtime-activation-20260714
+git checkout consolidate/arnold-runtime-activation-20260714
+git reset --hard origin/consolidate/arnold-runtime-activation-20260714
+```
+**Receipt path:** `/workspace/arnold-runtime-c267920b6719` HEAD after reset.
+
+**Step 4 — Narrow watchdog source rebind (no kill):**
+Update the watchdog's running env by writing the reconciled hot-env. The watchdog's `SRC_DIR` resolves from `MEGAPLAN_RUNTIME_SRC → CLOUD_WATCHDOG_ARNOLD_SRC → /workspace/arnold` (line 130). On the next hourly sweep, the watchdog re-sources `/workspace/.cloud-hot-env` (line 31–35) and will pick up `arnold-consolidation-20260714`. Verify with:
+```bash
+# After sweep, check the python3 subprocess env:
+strings /proc/$(pgrep -f 'arnold-watchdog' | head -1)/environ | grep CLOUD_WATCHDOG_ARNOLD_SRC
+```
+**Receipt path:** `/proc/<watchdog_pid>/environ` `CLOUD_WATCHDOG_ARNOLD_SRC` value. Also `/workspace/.megaplan/status/watchdog.supervisor-runtime-failure.json` must NOT appear.
+
+**Step 5 — Retrigger ordinary repair (not manual launch):**
+Write a repair request marker or invoke the repair trigger directly against the stuck session:
+```bash
+/usr/local/bin/arnold-repair-trigger --session custody-control-plane-20260714
+```
+This dispatches the ordinary L1 repair loop sourced from the now-reconciled `arnold-consolidation-20260714`. The repair loop reads the blocker from `/workspace/.megaplan/cloud-sessions/repair-data/custody-control-plane-20260714.repair-data.json`, claims it, and attempts fix.
+
+**Receipt path:** `/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.repair-verdict.json` with `outcome != "no_verdict"` and same `blocker_id`.
+
+**Step 6 — Prove ordinary fixer (not manual) claimed and advanced:**
+a) `repair-verdict.json` shows `outcome: "repair_applied_..."` with a `blocker_id` matching the current blocker
+b) Plan `state.json` shows `current_state != "blocked"` or `iteration > 3` or `latest_failure` cleared/changed
+c) `chain-health.progress.json` shows `plan_signal_liveness != "stalled"` or `stuck_ticks` reset
+d) The watchdog report `/workspace/watchdog-report.json` shows `operator != "blocked_recovery_not_resolved"` for the session
+
+**Receipt paths:**
+- `/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.repair-verdict.json`
+- `/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m6-exact-contract-and-20260716-1303/state.json`
+- `/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.chain-health.progress.json`
+
+### 4. Blocker Shape (for verification)
+
+`latest_failure.kind = "repeated_failure_signature"` — `enum_mismatch at /north_star_actions/2/severity: value must be one of ['blocking', 'advisory']`, repeated 3×. The last gate recommended `ITERATE` (5 residual plan-quality findings, none structural). The circuit breaker tripped at 3 repetitions despite the gate making legitimate progress. The fixed Superfixer must prove a later same-phase success supersedes an older failure, and repeated polling cannot recount one historical failure as new — then retrigger the ordinary chain relaunch via the watchdog's `resolve_relaunch_command()` path.

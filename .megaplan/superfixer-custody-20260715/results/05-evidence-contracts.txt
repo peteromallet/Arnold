@@ -1,0 +1,57 @@
+Now I have enough coverage across all nine defect categories. Here is the ranked audit.
+
+---
+
+## Sibling Defect Audit — `fd77238018`
+
+### Rank 1 (P0) — Bounded Evidence Transport: TOCTOU + Unbounded Read
+**`repair_investigation.py:61-82` (`_file_reference`)**
+File is read unbounded (`iter(lambda: handle.read(1024*1024), b"")`) before post-read `fstat`. A writer swapping identical-size content between the two `fstat` calls evades detection entirely — `st_size` matches, and `st_mtime_ns` granularity may not change on some filesystems. No max-size guard; a multi-GB artifact is hashed into memory. This is the evidence-ingestion boundary for all custody decisions.
+
+### Rank 2 (P0) — Idempotency: Orphaned `.claim` Files Break Writes Permanently
+**`repair_requests.py:767-784` (`_write_once_json`)**
+Crash between `os.close(fd)` (line 775) and `path.exists()` (line 777) leaks the `.claim` lock file. The `finally` block only unlinks on the success path; a crash after close but before the check leaves the claim file orphaned, making the target path permanently unwritable — no cleanup daemon exists. This is the single-write guarantee for every repair request marker.
+
+### Rank 3 (P0) — Executor Capability Fallback: Shell Injection in System Commands
+**`repair_runner.py:97`**
+```python
+if first in {"rm", "kill"}:
+    return ["/bin/bash", "-c", " ".join(parts)], cwd, False
+```
+`shlex.split(command)` on line 78 preserves quoting, but the re-join with spaces on line 97 flattens it. A caller-controlled `command` containing `$(...)` or backticks achieves arbitrary shell execution through the `rm`/`kill` path — the allowlist of subcommands is meant to be safe.
+
+### Rank 4 (P1) — Blocker Identity Drift: Divergent Evidence → Different `blocker_id`
+**`repair_contract.py:338-397` (`blocker_fingerprint_from_evidence`)**
+`_first_non_empty` picks the first non-empty value across `plan_state`, `current_target`, and `problem_signature` independently per field. The same failure observed through different evidence paths (e.g., watchdog vs. supervisor) produces different `blocker_id` hashes, fragmenting the custody projection and enabling duplicate repair dispatches for what is logically one blocker.
+
+### Rank 5 (P1) — Stale Repair Data Compaction: Active Repairs Classified Stale
+**`repair_contract.py:3947-3981` (`detect_stale_repair_data`)**
+Only checks `completed_at` / `last_success_at`. An actively running repair (`outcome=REPAIRING`) has neither timestamp, so the function returns `(True, "repair data has no completion or success timestamp")`. `detect_no_verdict_artifact` catches REPAIRING separately, but consumers calling `detect_stale_repair_data` independently will prune active repair data.
+
+### Rank 6 (P1) — Typed Pointer Validation: Zero-Byte Evidence Refs Allowed
+**`repair_investigation.py:643`**
+```python
+if not isinstance(ref.get("size_bytes"), int) or int(ref["size_bytes"]) < 0:
+```
+The `>= 0` check permits 0-byte evidence references. A corrupted or truncated artifact that happens to be empty passes validation, masquerading as valid evidence in the custody chain.
+
+### Rank 7 (P1) — Read/Hash Preflight: No Pre-Read Size Check
+**`repair_investigation.py:61-82` (`_file_reference`)**
+The function hashes the entire file before any size validation. The `size_bytes` field is populated from the *post-read* `fstat`. A pathological 4GB evidence file is fully hashed before the context-bounds check, creating a DoS vector at the investigation entry point. A pre-read `st_size > MAX_CONTEXT_BYTES` guard is missing.
+
+### Rank 8 (P2) — Idempotency: TOCTOU Duplicate Request Windows
+**`repair_requests.py:238-249` (`enqueue_repair_request`)**
+`find_pending_by_signature` (line 238) and `_write_once_json` (line 249) are not atomic. Two concurrent enqueuers with identical signatures both pass the pending check, then the second hits the `FileExistsError` path and is misclassified as "coalesced" — indistinguishable from a genuine first-write collision.
+
+### Rank 9 (P2) — Blocker Identity Drift: `None` vs `""` Type Confusion
+**`repair_contract.py:527-533` (`project_repair_custody`)**
+```python
+blocker_id = blocker_id_for_fingerprint(request_fingerprint) or ""  # line 527 — always str
+...
+if blocker_id is None and request_blocker_id ...  # line 532 — always False
+```
+`blocker_id` is unconditionally coerced to `str` via `or ""`. The `is None` guard in the per-request loop is dead code. The intended fallback path that would adopt the first request's blocker identity never executes, silently dropping custody affiliation for sessions whose fingerprint produces an empty id.
+
+---
+
+**Summary**: The three P0 defects (TOCTOU evidence swap, orphaned claim files, shell injection) represent adversarial regressions exploitable at the custody boundary. P1 identity-drift and stale-detection bugs cause operational fragmentation under normal multi-watchdog concurrency. P2 findings are edge-case robustness gaps that would surface under production load.

@@ -1,0 +1,55 @@
+## Security Verdict: **FAIL — Conditional**
+
+### Summary
+
+The commit `fd77238018` correctly hardens the L2 launch envelope from an evidence-inlining model to a reference-only, read-only, digest-bound contract. However, examining the **full L1/L2 launch and receipt chain** plus cross-cutting authorization surfaces reveals four concrete vulnerabilities that a fallback executor can exploit.
+
+---
+
+### Findings
+
+**1. BrokerClient fallback crosses authorization boundaries (CRITICAL)**
+`arnold/security/broker_client.py:62-63` — When broker mode is disabled, `evaluate_action()` delegates to `fallback_policy.evaluate()`, which defaults to a permissive `SecurityPolicy` that ALLOWs non-force pushes. If the broker sidecar is unreachable, **every covered action** (force push, branch delete, PR merge) falls through to a local policy that never requires approval. This is the opposite of fail-closed.
+
+**2. L2 envelope's `arnold_source` handoff authorizes direct chain advancement**
+`repair_investigation.py:625-628` — The authorization allows `arnold_source` as a handoff target. An investigator can recommend `repair_source` → `arnold_source`, and a same-authority executor (running under the same custody) could mutate the Arnold source tree, directly advancing the chain. No manifest-hash or source-custody re-check gates this.
+
+**3. Stale receipt replay is unchecked**
+`validate_investigator_receipt` binds receipt to `context_digest`, but there is **no monotonic nonce, timestamp freshness check, or sequence number** to prevent replay of a valid-but-stale receipt. The `summarize_investigation_artifacts` path re-validates the digest but never checks temporal staleness.
+
+**4. Sandbox bypass via unset ContextVar**
+`arnold/agent/tools/sandbox.py:53` — `SANDBOX_CWD` defaults to `None`. If the sandbox activation context fails to set it, `get_sandbox_cwd()` returns `None`, and downstream callers that don't independently enforce `project_dir` allow writes/exec outside any sandbox root.
+
+---
+
+### Recommended Narrowest Fallback
+
+**Same-authority executor fallback**: Require a `manifest_hash` re-check before any `arnold_source` handoff execution. The fallback executor must:
+1. Re-derive source custody (`git rev-parse HEAD`, dirty check) at handoff time
+2. Compare against the envelope's `source_custody.head` digest
+3. Require clean worktree (`dirty=False`)
+4. Reject execution if any mismatch
+
+### Required Fail-Closed Checks
+
+| # | Check | Location |
+|---|-------|----------|
+| 1 | `BrokerClient.evaluate_action()` → `fail_closed_result()` when broker unreachable (never fall through to permissive local policy) | `broker_client.py:74-76` |
+| 2 | Sandboxed tool wrappers must **raise** when `SANDBOX_CWD` is `None`, not silently skip validation | `sandbox.py` callers |
+| 3 | Receipt validation must reject receipts older than a configurable max-age threshold | `validate_investigator_receipt` |
+| 4 | `arnold_source` handoff must re-verify source custody head matches envelope before any mutation | `repair_investigation.py` executor path |
+| 5 | `GovernorState.check()` must enforce `node_budget <= manifest_budget` strictly (node never elevates caps) | `governor.py:92-117` |
+
+### Negative Tests Required
+
+- `test_broker_unreachable_fails_closed_to_deny_not_allow` — broker socket missing → DENY
+- `test_sandbox_cwd_none_raises_on_write` — unset ContextVar → SandboxViolation
+- `test_stale_receipt_rejected_by_max_age` — receipt older than threshold → ValueError
+- `test_arnold_source_handoff_rejected_on_dirty_worktree` — dirty source → rejected
+- `test_governor_node_budget_cannot_exceed_manifest` — node budget > manifest → BudgetExceeded
+
+---
+
+### Verdict
+
+The L2 envelope minimization is **structurally sound** as a reference-only contract. But the surrounding authorization, sandbox, and receipt-replay surfaces are **not fail-closed at the integration seams**. A same-authority fallback executor that reuses the `BrokerClient` fallback path, operates with unset sandbox CWD, or replays stale receipts can weaken sandboxing, cross authorization boundaries, and advance the chain. **Do not deploy the fallback executor without the five checks above.**

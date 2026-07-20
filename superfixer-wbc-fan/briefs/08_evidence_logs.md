@@ -1,0 +1,3 @@
+Use the full megaplan-cloud skill at `/workspace/arnold/arnold_pipelines/megaplan/data/_codex_skills/megaplan-cloud/SKILL.md`; investigate only.
+
+Resolve the target from canonical status, then triangulate the current chain log, L1 repair-data, managed automatic-repair logs, Kimi goal-operator artifacts, L2 meta logs, watchdog archives, and latest L3 audit logs for `workflow-boundary-contracts-corrective-20260710`. Extract the true causal sequence around the S3 stop and recovery, distinguish historical gate spin from the current T18 failure, and identify missing/contradictory terminal records. Return a timestamped sequence under 500 words.

@@ -1,0 +1,133 @@
+I now have complete visibility across all layers. Here is the full audit.
+
+---
+
+## Read-Only Audit Report
+
+### 1. PRIMARY BUG: `TypeError` in `_attempt_summary` → `build_investigation_context`
+
+**File**: `/workspace/arnold-consolidation-20260714/arnold_pipelines/megaplan/cloud/repair_investigation.py`  
+**Function**: `_attempt_summary` (lines 64–84), called by `build_investigation_context` at line 323
+
+**Root cause** — line 81:
+```python
+"validation": [_text(item, 1000) for item in (report.get("validation") or [])[-8:]],
+```
+
+The `or []` short-circuit **only fires when `report.get("validation")` is falsy** (`None`, `""`, `[]`, `{}`, `0`, `False`). If a dev-fix agent writes `"validation": {"status": "passed", "tests": [...]}` (a **non-empty dict**), then `report.get("validation")` is truthy, `or []` does **not** trigger, and `[-8:]` is applied to a dict — raising `TypeError: unhashable type: 'slice'`.
+
+Identical sibling risk at **lines 78–79**:
+```python
+"what_tried": [
+    _text(item, 1000)
+    for item in (value.get("dev_summary") or report.get("what_tried") or [])[-8:]
+],
+```
+Same pattern: if `dev_summary` or `what_tried` is a non-empty dict/string (truthy but not sliceable-as-list), the same TypeError fires.
+
+**Trigger chain**:
+1. A dev-fix model writes a report with `"validation"` as a dict shape (perfectly reasonable — many models output structured validation objects)
+2. The repair-loop wrapper persists it at `dev_report.validation` (line 4394)
+3. Next repair iteration calls `build_investigation_context`
+4. Line 323: `"prior_repairs": [_attempt_summary(item) for item in attempts[-max_prior_attempts:]]`
+5. `_attempt_summary` hits the dict with `[-8:]` → **TypeError**
+6. Context build fails → `run_repair_investigator_turn` sets `fixer_infrastructure_failure` (lines 6184–6188)
+7. `require_investigation_before_mutation` fails closed (correctly), but repair loop is dead
+
+---
+
+### 2. SIBLING UNSAFE ASSUMPTIONS
+
+| # | File:Line | Pattern | Risk |
+|---|-----------|---------|------|
+| **S1** | `repair_investigation.py:78-79` | `(value.get("dev_summary") or report.get("what_tried") or [])[-8:]` | Identical dict-slice TypeError |
+| **S2** | `repair_investigation.py:306-309` | `"exact_error": current.get("latest_failure") or (phase_result if ...) or frozen_checkpoint.get("latest_failure") or {}` | If `current.get("latest_failure")` is a truthy string, it passes through unguarded as `exact_error` — downstream code like `context["exact_error"]["message"]` (line 114 in tests) would then fail. Low probability (controlled by `capture_checkpoint`) but no formal guard |
+| **S3** | `repair_investigation.py:60-61` | `_text(value: object, limit: int = 4000) -> str:` → `return str(value or "")[:limit]` | When `value` is a dict, `str(value)` produces `"{'key': 'val'}"` — this is silently accepted. In the `_attempt_summary` list comprehension `[_text(item, 1000) for item in ...]`, this means a non-dict `item` inside what should be a list of strings gets stringified. Purely cosmetic unless downstream code tries to parse the string back as structured data |
+
+---
+
+### 3. FALSE-SUCCESS / BACKSTOP GAPS
+
+| # | Layer | File:Line | Gap |
+|---|-------|-----------|-----|
+| **G1** | L1 repair-loop | `arnold-repair-loop:6184-6188` | When context build fails, outcome is set to `fixer_infrastructure_failure`. This is a *repair outcome*, not a *no-repair* outcome. The L3 auditor at line 3451–3454 treats outcomes like `"complete"`, `"repair_timeout"`, `"repair_exhausted"` as L1 activity — `fixer_infrastructure_failure` is **not** in that set, so this gap is actually closed. However, if any prior iteration **did** produce a terminal outcome before the TypeErrors started, the auditor sees `repair_without_valid_investigation` and flags it correctly. **Verdict: auditor correctly detects this, but the fixer_infrastructure_failure outcome consumes repair budget without producing evidence.**
+| **G2** | L3 auditor | `arnold-progress-auditor:3444-3475` | `_investigation_handoff_reason` checks `investigation.get("status") != "accepted"`. If the crash corrupted repair_data so badly that the `investigation` key is absent (not just `"status": "failed"`), then `summarize_investigation_artifacts` returns `"status": "missing"` — which is `!= "accepted"` → detection works. **But** if repair_data was written before context build started (`"investigation": {"status": "failed", ...}` was persisted), then the on-disk context file may be missing and `summarize_investigation_artifacts` would return `"missing"` → also detected. **Verdict: gap is narrow — only if repair_data is fully lost would the auditor see neither activity nor investigation evidence.**
+| **G3** | L2 meta-repair | `arnold-meta-repair-loop:362-440` | L2 investigation uses `build_meta_investigation_context`, which does **not** call `_attempt_summary` and is not affected by this bug. However, L2 fires on L1 failure. If L1 failed due to this TypeError, L2 triggers, consumes 2hr budget, but the underlying `dev_report.validation` data is still malformed. L2 cannot fix the data — it can only fix code. **Verdict: wasted L2 budget on unfixable data problem.**
+| **G4** | Test coverage | `test_repair_investigation.py:27-99` | `_fixture` creates attempts with `"dev_summary": [f"prior action {index}"]` (line 68) but never populates `dev_report.validation` with a non-list shape. No test exercises the TypeError path. **Verdict: missing test for the exact failure mode.**
+
+---
+
+### 4. COMPLETE CANDIDATE FILE/FUNCTION/TEST LIST
+
+| Candidate | Path | Lines | Role |
+|-----------|------|-------|------|
+| `_attempt_summary` | `arnold_pipelines/megaplan/cloud/repair_investigation.py` | 64–84 | Bug site — two unsafe `or []` + `[-8:]` patterns |
+| `build_investigation_context` | same file | 204–356 | Caller at line 323; also S2 at 306–309 |
+| `_text` | same file | 60–61 | Silent dict→str coercion (S3) |
+| `_fixture` | `tests/cloud/test_repair_investigation.py` | 27–99 | Missing malformed-validation test data |
+| `test_context_is_bounded_and_carries_exact_error_and_recent_repairs` | same file | 102–121 | Exercises `_attempt_summary` but only with list-shape data |
+| `run_repair_investigator_turn` | `arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop` | 6171–6280 | Context build failure handling (G1) |
+| `_investigation_handoff_reason` | `arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor` | 3444–3475 | Auditor detection logic (G2) |
+| `run_meta_repair_investigation` | `arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop` | 362–440 | L2 investigation (G3) |
+| `summarize_investigation_artifacts` | `arnold_pipelines/megaplan/cloud/repair_investigation.py` | 592–674 | Shared L1/L2/L3 investigation health — correctly handles `"missing"`/`"invalid"`/`"accepted"` |
+
+---
+
+### 5. SMALLEST FAIL-CLOSED FIX DESIGN
+
+**Change one function**: `_attempt_summary` in `repair_investigation.py`, lines 64–84.
+
+**Design principle**: Coerce non-list values to `[]` before slicing, so malformed shapes are silently treated as "no evidence" rather than crashing. This is fail-closed: no wrong evidence leaks through, and the context still builds successfully (just with empty validation/what_tried fields).
+
+**Exact fix** (replace lines 77–81):
+
+```python
+# BEFORE (lines 77-81):
+        "what_tried": [
+            _text(item, 1000)
+            for item in (value.get("dev_summary") or report.get("what_tried") or [])[-8:],
+        ],
+        "validation": [_text(item, 1000) for item in (report.get("validation") or [])[-8:]],
+
+# AFTER:
+        "what_tried": [
+            _text(item, 1000)
+            for item in (
+                value.get("dev_summary")
+                if isinstance(value.get("dev_summary"), list)
+                else report.get("what_tried")
+                if isinstance(report.get("what_tried"), list)
+                else []
+            )[-8:]
+        ],
+        "validation": [
+            _text(item, 1000)
+            for item in (
+                report.get("validation")
+                if isinstance(report.get("validation"), list)
+                else []
+            )[-8:]
+        ],
+```
+
+**Why this preserves authority/review guards**:
+- No new exceptions raised — context still builds
+- No schema changes — output shape is identical for valid inputs
+- No widening of accepted evidence — non-list validation/what_tried is discarded, never reinterpreted
+- `_text()` already stringifies items safely — no new failure mode introduced
+- The `"prior_repairs"` list is informational/narrative evidence for the investigator, not an authorization gate — omitting validation items from a prior attempt is strictly less risky than crashing the entire investigation
+
+**Bonus guard** (optional, same function): Add an `isinstance` check on the `exact_error` fallback at lines 306–309 to ensure non-dict truthy values are caught:
+
+```python
+# Line 306-309 could add:
+        "exact_error": (
+            current.get("latest_failure")
+            if isinstance(current.get("latest_failure"), Mapping)
+            else phase_result if phase_result_blocked else {}
+        ) or frozen_checkpoint.get("latest_failure") or {},
+```
+
+This prevents a truthy string `latest_failure` from being used as a dict downstream.
+
+**Corresponding test**: Add to `test_repair_investigation.py` a test case where `_fixture` (or a new fixture) produces an attempt with `dev_report.validation` as a dict and `dev_report.what_tried` as a dict, confirming that `build_investigation_context` succeeds and the malformed fields appear as empty lists in `prior_repairs`.

@@ -31,15 +31,13 @@ class ResidentConfig(BaseModel):
     allowed_channel_ids: tuple[str, ...] = Field(default_factory=tuple)
     allowed_user_ids: tuple[str, ...] = Field(default_factory=tuple)
     admin_user_ids: tuple[str, ...] = Field(default_factory=tuple)
-    model_provider: str = "hermes"
-    model_name: str = "zhipu:glm-5.2"
+    model_provider: str = "codex"
+    model_name: str = "gpt-5.6-sol"
     model_api_key_env: str | None = None
     model_base_url: str | None = None
     codex_reasoning_effort: str = "low"
     codex_sandbox: str = "workspace-write"
     model_timeout_s: float = Field(default=120.0, gt=0)
-    model_max_tokens: int = Field(default=65_536, gt=0)
-    model_toolsets: str = "file,web,terminal"
     max_prompt_chars: int = Field(default=700_000, gt=0)
     voice_transcription_enabled: bool = True
     voice_transcription_provider: Literal["groq", "openai", "resident"] = "groq"
@@ -111,17 +109,13 @@ class ResidentConfig(BaseModel):
             allowed_channel_ids=_split_csv(env.get("MEGAPLAN_RESIDENT_ALLOWED_CHANNELS")),
             allowed_user_ids=_split_csv(env.get("MEGAPLAN_RESIDENT_ALLOWED_USERS") or arnold_user_whitelist),
             admin_user_ids=_split_csv(env.get("MEGAPLAN_RESIDENT_ADMIN_USERS") or arnold_user_whitelist),
-            model_provider=env.get("MEGAPLAN_RESIDENT_MODEL_PROVIDER", "hermes"),
-            model_name=env.get("MEGAPLAN_RESIDENT_MODEL", "zhipu:glm-5.2"),
+            model_provider=env.get("MEGAPLAN_RESIDENT_MODEL_PROVIDER", "codex"),
+            model_name=env.get("MEGAPLAN_RESIDENT_MODEL", "gpt-5.6-sol"),
             model_api_key_env=env.get("MEGAPLAN_RESIDENT_MODEL_API_KEY_ENV"),
             model_base_url=env.get("MEGAPLAN_RESIDENT_MODEL_BASE_URL") or env.get("OPENAI_BASE_URL"),
             codex_reasoning_effort=env.get("MEGAPLAN_RESIDENT_CODEX_REASONING_EFFORT", "low"),
             codex_sandbox=env.get("MEGAPLAN_RESIDENT_CODEX_SANDBOX", "workspace-write"),
             model_timeout_s=_env_float(env, "MEGAPLAN_RESIDENT_MODEL_TIMEOUT_S", 120.0),
-            model_max_tokens=_env_int(env, "MEGAPLAN_RESIDENT_MODEL_MAX_TOKENS", 65_536),
-            model_toolsets=env.get(
-                "MEGAPLAN_RESIDENT_MODEL_TOOLSETS", "file,web,terminal"
-            ),
             max_prompt_chars=_env_int(env, "MEGAPLAN_RESIDENT_MAX_PROMPT_CHARS", 700_000),
             voice_transcription_enabled=_env_bool(
                 env,

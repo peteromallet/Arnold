@@ -1,0 +1,47 @@
+---
+
+## Forensic Verdict: custody-control-plane-20260714
+
+### Observation path: **works**
+
+All six custody sources are readable and triangulated without mutation.
+
+---
+
+### Ground truth (timestamps in UTC)
+
+| Source | Path | Key state |
+|---|---|---|
+| **Live ps** | — | **No chain runner process.** Only watchdog (3380477), Discord resident (3905517), and two repair subagents (subagent-20260714-233550, subagent-20260714-233926). |
+| **tmux** | — | 4 sessions: `agent`, `heartbeat`, `megaplan-resident-discord`, `watchdog` (created 20:28). No custody-control-plane session. |
+| **Marker** | `/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.json` | `status: "running"`, `launch_outcome.code: "success"`, `observed_at: 2026-07-14T21:47:40.775856Z`, `identity_digest: 5d243fc6b4` |
+| **Chain** | `…/plans/.chains/chain-1e998199f544.json` | `last_state: "failed"`, `pr_number: 250`, `pr_state: "open"`, `branch_head: 93edf3ab7`, `ground_truth_reconciliation.reconciled_at: 2026-07-14T22:48:20Z` |
+| **Plan state** | `…/plans/m5-run-authority-receipt-20260714-1428/state.json` | `current_state: "failed"`, `iteration: 3`, `resume_cursor.phase: "execute"` |
+| **Git** | `/workspace/custody-control-plane-20260714/Arnold` | Branch `megaplan/custody-control-plane/m5-run-authority-receipt-reconciliation-and-retirement`, HEAD `112340e43`, dirty (incident-ledger `.events.seq` + `events.jsonl`) |
+| **PR** | `gh pr view 250` | Failed (no token); chain confirms `state: "open"` |
+
+---
+
+### Contradictions found
+
+**1. Marker claims `running` — chain runner is dead.**  
+Marker `launch_outcome.status: "running"` (line 105). Zero live chain processes. The chain runner exited after hitting `chain_execution_binding_drift` during its 21:47:40Z launch attempt. It was never restarted. The cloud-chain log ends with only `"resuming existing plan..."` — no further sync events.
+
+**2. Drift-field reporting disagreement (same error class, different diagnosis).**  
+- **Marker log** (line 99): `drift_fields=["chain_spec_sha256"]; active_errors=[]` — from launch at ~21:47:40Z.  
+- **Chain ground-truth** (line 355): `drift_fields=[]; active_errors=["editable_runtime_import_root_mismatch"]` — from gate callback at 22:44:52Z.  
+- **Plan state** (line 2348): `drift_fields=[]; active_errors=["editable_runtime_import_root_mismatch"]` — from execute callback at 23:04:49Z.
+
+The chain and plan state agree with each other (`editable_runtime_import_root_mismatch`), but disagree with the marker's original capture (`chain_spec_sha256`). The two rebind events at 21:40:28Z and 21:41:53Z may have narrowed the drift diagnosis, but the marker was never updated to reflect the corrected error field.
+
+**3. Plan executor continued after chain runner died.**  
+Plan state history shows: gate at 22:44:51Z (success) → gate at 22:50:26Z (success) → finalize at 22:53:32Z (success) → execute at 23:04:47Z (blocked) → `phase_callback_failed` at 23:04:49Z. The plan executor advanced through 3 phases after the chain runner stopped, hitting the same binding-drift error in the post-execute callback — the chain sync never recovered.
+
+**4. Operator resume at 22:48:13Z restored `failed` but did not restart the chain runner.**  
+Actor `codex-custody-recovery` only restored the plan state marker; the chain sync process itself was never relaunched.
+
+---
+
+### Verdict
+
+**The session is in a split-brain state.** The marker file is stale (`running` with no live process). The plan engine advanced to iteration 3, phase `execute`, then failed at 23:04:49Z with `chain_execution_binding_drift` — the immutable execution binding's `editable_runtime_import_root_mismatch` prevents chain state sync. The chain runner died at 21:47:40Z and was never revived. Two repair subagents are currently active (since 23:35/23:39) investigating root cause. PR #250 remains open. No mutation is needed for this read-only assessment.

@@ -1,0 +1,28 @@
+## **FALSE SUCCESS: PRESENT**
+
+### Canonical Cloud Status
+The `custody-control-plane-20260714` cloud chain launched plan `m5-run-authority-receipt-20260714-1428` at **14:28:16 UTC** (chain log line 407). The plan completed execute phase nominally (`result: "success"`, state.json line 458), but its own evidence proves the outcome is substantively failed.
+
+### Key Discrepancies
+
+| Artifact | Claims | Reality |
+|---|---|---|
+| **state.json** (plan) | `current_state: "blocked"`, `iteration: 2` | Not "done" |
+| **completion_verdict.json** (M1/M2/M3) | `accepted: false` (all three) | Brief required `accepted: true` |
+| **final-attestation.json** (T21, 17:30Z) | `retirement_status: "blocked"`, `divergence_count: 3` | Zero-divergence gate not met |
+| **chain state** (chain-21fa156d252d.json) | `last_state: "done"`, `current_milestone_index: 3` | Chain claims completion |
+| **`.retired` marker** | `exists: false` (removed during rework) | Prematurely created, then deleted |
+
+### Blocker Evidence
+
+1. **Plan `latest_failure`** (state.json, 2026-07-14T18:04:22Z): `"review_quality_blocked_unknown"` — review rework budget exhausted with unresolved quality blockers, including: "The three regenerated milestone receipts are not accepted", "Canonical chain verification is still divergent", "Retirement and final attestation remain blocked."
+
+2. **final-attestation.json `unresolved_evidence`** lists four categories: `cross_checkout_drift`, `receipts_not_accepted`, `chain_verification_divergence`, `retired_marker_removed`.
+
+3. **Scoped suite exit code=2** with 7 collection errors (final-attestation.json line 78-91) — structural fixes exist in local checkout but `compute_verdict()` subprocess uses editable install at `/workspace/arnold-custody-delivery-20260714/`, which lacks fixes.
+
+4. **runtime-posture.json** (15:11:38Z) updated contract/backstop modes to `"enforce"`, but receipts remained `accepted: false` — enforcement was a preflight requirement per the brief.
+
+### Verdict
+
+**FALSE SUCCESS** — The pipeline execute phase returned procedural success, but the plan's own state is `blocked`, all three milestone receipts remain `accepted: false`, zero-divergence not achieved, `.retired` removed, and four categories of unresolved evidence are self-documented. The committed chain state's `done` status contradicts the actual receipt/verification evidence still on disk.

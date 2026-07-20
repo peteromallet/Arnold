@@ -28,7 +28,7 @@ repair-request-queue  ARNOLD_REPAIR_REQUEST_QUEUE   1 (on)     Persist observe-o
 repair-trigger        ARNOLD_REPAIR_TRIGGER_ENABLED 1 (on)     L1 path gate;
                                                                 mutation still
                                                                 requires autonomy.
-autonomy              ARNOLD_AUTONOMY               1 (on)     Enable autonomous
+autonomy              ARNOLD_AUTONOMY               0 (off)    Enable autonomous
                                                                 trigger / meta /
                                                                 auditor actions.
 meta-repair           ARNOLD_META_REPAIR_ENABLED    1 (on)     L2 path gate;
@@ -153,13 +153,13 @@ def escalation_ledger_enabled() -> bool:
 def autonomy_enabled() -> bool:
     """Return ``True`` when autonomous trigger / meta / auditor actions are permitted.
 
-    Controlled by ``ARNOLD_AUTONOMY`` — defaults to ON (``"1"``).
+    Controlled by ``ARNOLD_AUTONOMY`` — defaults to OFF (``"0"``).
 
     When disabled, trigger dispatch, meta-launch decisions, and auditor
     autonomous intervention are all suppressed.  Only observe-only evidence
     capture is allowed.
     """
-    return _is_enabled("ARNOLD_AUTONOMY", True)
+    return _is_enabled("ARNOLD_AUTONOMY", False)
 
 
 def repair_trigger_enabled() -> bool:
@@ -207,15 +207,6 @@ def meta_repair_commit_enabled() -> bool:
     operators can disable commits while leaving meta-repair diagnostics running.
     """
     return _is_enabled("ARNOLD_META_REPAIR_COMMIT_ENABLED", True)
-
-
-def meta_repair_push_enabled() -> bool:
-    """Return ``True`` only when meta-repair may perform an external push.
-
-    ``ARNOLD_META_REPAIR_PUSH_ENABLED`` defaults off. A local commit grant must
-    never silently authorize a remote effect.
-    """
-    return _is_enabled("ARNOLD_META_REPAIR_PUSH_ENABLED", False)
 
 
 def audit_autofix_commit_enabled() -> bool:
@@ -319,11 +310,6 @@ def meta_repair_commit_on() -> bool:
     return meta_repair_commit_enabled()
 
 
-def meta_repair_push_on() -> bool:
-    """Alias for :func:`meta_repair_push_enabled`."""
-    return meta_repair_push_enabled()
-
-
 def audit_autofix_commit_on() -> bool:
     """Alias for :func:`audit_autofix_commit_enabled`."""
     return audit_autofix_commit_enabled()
@@ -341,8 +327,6 @@ __all__ = [
     "escalation_ledger_on",
     "meta_repair_commit_enabled",
     "meta_repair_commit_on",
-    "meta_repair_push_enabled",
-    "meta_repair_push_on",
     "meta_repair_enabled",
     "meta_repair_mutation_authorized",
     "meta_repair_on",

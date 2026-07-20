@@ -1,0 +1,62 @@
+{
+  "schema_version": "arnold-superfixer-runtime-retrigger-receipt-v1",
+  "recorded_at": "2026-07-16T19:33:45Z",
+  "session": "custody-control-plane-20260714",
+  "plan": "m6-exact-contract-and-20260716-1303",
+  "installed_runtime": {
+    "source": "/workspace/arnold-superfixer-custody-fix-20260716",
+    "source_revision": "fd085c4ad8638e4bd19aeef37e6a17c17a297341",
+    "fingerprint": "35eac22366633e653e1f626b7539501f0545c644e6d6237cb08d960a8398707d",
+    "prepared_at": "2026-07-16T19:16:06.213120+00:00",
+    "wrapper_sha256": {
+      "arnold-watchdog": "43d0c75cc0d211adb800d859c0e18ed2072f0eb86a8e95abf497c6be4b2013da",
+      "arnold-repair-trigger": "423cbc5d063a594fabca9cd9284eb8e11d578cc6353580115bf7e6d1b17ab2c5",
+      "arnold-repair-loop": "d4ce19b6e1a9da6266d9560015814784a46b4cd2d74649139d261ba70092ab14",
+      "arnold-meta-repair-loop": "1efe5c5b60f4443e97e7be3724d002cb59487b5740b51b588e23f421ad6801f1",
+      "arnold-progress-auditor": "bff6f09b172e5c6d199a550fa1ccb55fc1a32544fe8a70c5af1347100b45769f",
+      "arnold-supervisor-runtime": "8f0abb8400807893e463218106eae7c902716ced4120cfecf8559df6992bb036",
+      "arnold-supervisor-runtime-lib": "c720ee654619e05f18b06f98033507c712af64cdeeff82a30d08751ae8f100ea"
+    },
+    "l2_child_boundary": {
+      "environment": "MEGAPLAN_META_REPAIR_LOOP_BIN=/usr/local/bin/arnold-repair-loop",
+      "reconciled_watchdog_pane": "%117",
+      "reconciled_watchdog_pid": 2772542,
+      "restarted_at": "2026-07-16T19:33:02+00:00"
+    }
+  },
+  "ordinary_retrigger": {
+    "watchdog_dispatch_at": "2026-07-16T19:16:35+00:00",
+    "l2_run_id": "managed-automatic-meta-repair-cdb5c0468ce87e2ee31a",
+    "l2_investigator_run_id": "managed-automatic-research-subagent-96401c169c07c691b2c6",
+    "l1_run_id": "managed-automatic-repair-retry-07f580755497277bb852",
+    "l1_investigator_run_id": "managed-automatic-research-subagent-1d8e8930745f4483a55b",
+    "l1_receipt_digest": "3583cf1841ab37643d23cb0742b32551c92b2be2d5d016fe48472b29c896f7c1",
+    "recovery_action": "guarded recover-blocked CLI followed by ordinary chain start",
+    "no_direct_state_edit": true,
+    "no_hand_advance": true,
+    "no_duplicate_runner": true
+  },
+  "authoritative_outcome": {
+    "override_recorded_at": "2026-07-16T19:20:11Z",
+    "from_state": "blocked",
+    "to_state": "critiqued",
+    "latest_failure_cleared": true,
+    "iteration_before": 3,
+    "iteration_after": 4,
+    "fresh_history": {
+      "step": "revise",
+      "timestamp": "2026-07-16T19:29:15Z",
+      "result": "success",
+      "output_file": "plan_v4.md",
+      "artifact_hash": "sha256:12746d9d9e16b58e0c646984156b7751f57bfcfd92978c6380a48100d18bf9bb"
+    },
+    "observed_state_at": "2026-07-16T19:33:14+00:00",
+    "current_state": "planned",
+    "chain_last_state": "critiqued",
+    "active_step": "critique_evaluator",
+    "active_worker_pid": 2733453,
+    "watchdog_decision": "no_action; live target preserved",
+    "status": "recovered_and_advancing"
+  },
+  "l3_retroactive_receipt": "/workspace/arnold/.megaplan/superfixer-custody-20260716/l3-retroactive-receipt.json"
+}

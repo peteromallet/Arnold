@@ -54,11 +54,6 @@ Scope is no more than two weeks.
   signature drift, unclosed custody, index mismatch, detection-SLO breach,
   executor/repair overlap, cross-session joins, projection amplification, full
   seriality, oversized rework, invalid model, and missing ledger coverage.
-- Canonically normalize structured quality-status families (`fail`, `failed`,
-  `failed: <detail>`, and `error: <detail>`) without discarding their commands,
-  criterion IDs, hashes, or exact occurrence identity. A legacy
-  `human_required`/unknown projection that disagrees with deterministic source
-  evidence emits drift and cannot suppress repair eligibility or escalation.
 
 ## Out of scope
 
@@ -73,22 +68,6 @@ freshness, lag, and uncertainty. RunAuthorityView, CanonicalRunState, custody,
 status, and receipt projections are visibly non-authoritative as bearer tokens
 and have no route back into dispatch, repair, retry, completion, cancellation,
 publication, or delivery.
-
-## Implemented adjacent slice: review/rework presentation
-
-Source commit `07f428d361f63c465b0dafaca9783585efeaa4b9` implements the
-current artifact-backed presentation semantics across the shared status
-projection, cloud snapshot/formatter, resident hot context/status tree, CLI,
-and `/whats-cooking`. An active execute after `needs_rework` is presented as
-`reworking`; active review is `reviewing`; pending rework is `needs_rework`;
-and full task weight is labeled plan bookkeeping rather than acceptance.
-Approved idle-finalized and genuinely completed states retain precedence.
-
-The focused status/resident verification recorded 170 passing tests, with
-Python compilation and `git diff --check` also passing. This is an adjacent M9
-consumer-consistency slice, not M9 completion: it does not claim the later WBC,
-Run Authority, custody-cursor, rebuildability, or rollout evidence required by
-this brief.
 
 ## Open questions
 
@@ -139,10 +118,6 @@ disabled during shadow comparison and fault testing.
 - Each deterministic reason fixture fires exactly once with exact evidence IDs;
   an idle pinned-runtime projection canary has zero false stalls and rebuild
   digest parity before control consumers are promoted.
-- Replaying the captured M5 review artifact classifies its structured failed
-  criteria deterministically at every canonical consumer, reports the legacy
-  unknown/human-required view as drift, and never treats parser loss as proof
-  that no eligible blocker event exists.
 - Generated reader inventory has zero unapproved raw authority reader and every
   expiring compatibility projection is non-authoritative.
 - Every consumer row in `research/wbc-boundary-adoption-matrix.md` uses the
@@ -184,30 +159,6 @@ projection schemas/builders/digests, reader registry, freshness/lag policy,
 drift and deterministic-reason evidence, joined latency/work ledger, observer-
 purity proof, false-liveness fixtures, compatibility expiry map, and rollout
 shadow/idle-canary comparisons.
-
-## F01–F17 amendment contract
-
-This milestone is the primary owner for F05, F14, and F16; it supplies F06
-consumer/rebuild acceptance and R3's joined telemetry. M7 owns the F06 writer,
-and M10 owns recovery/effect policy.
-
-- **Prerequisite:** accepted M8 producer registry, M8A exact-identity work
-  events, and M6A query/migration/data-policy interfaces.
-- **First safe action:** with positive control actions disabled, delete and
-  rebuild fixture projections, then shadow-compare every registered consumer on
-  the same owner-source cursor vector.
-- **Deliverables:** `evidence/m9-f01-f17-consumer-cutover.json`, generated reader
-  inventory, reducer/cursor comparison, projection digests and stress metrics,
-  joined productive/replayed ledger, pure exact-evidence reason fixtures,
-  compatibility expiry map, and idle-canary evidence.
-- **Acceptance evidence:** 100% cursor/hash agreement, deterministic rebuild,
-  10,000-heartbeat monotonic reads with zero false stalls, observer purity,
-  forged-projection authorization rejection, once-only exact auditor reasons,
-  same-basename isolation, and totals reconciled or explicitly unavailable.
-- **Component-versus-wiring safeguard:** reducer/views, projection writer,
-  status slices, event types, and cost fragments remain components until all
-  supported consumers use the exact cursor/query API and raw fallbacks cannot
-  grant positive authority.
 
 ## Profile rationale
 

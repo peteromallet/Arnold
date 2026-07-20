@@ -141,36 +141,11 @@ legacy authoritative writer or erases a quarantined attempt.
 ## Handoff and dependencies
 
 Dependency: accepted M6 proof/ownership bundle, completed M6A substrate, and
-machine-verifiable ownership-decision record. Handoff to
+approval record. Handoff to
 M8: controlled-writer/adaptor registry, fence/idempotency/partial-persistence
 conformance, immutable attempt and repair-receipt contracts, projection append/
 atomic-rebuild and idle-canary proof, compatibility expiry map, reconciliation
 runbook, and proof that no new authority/lifecycle owner was introduced.
-
-## F01–F17 amendment contract
-
-This milestone is the primary implementation owner for F01 and F15, adopts the
-F06 projection-writer boundary, binds F03 receipt identity, and supplies R1's
-Custody half. M10 owns effect/recovery acceptance; M9 owns projection consumers.
-
-- **Prerequisite:** accepted M6A store/API, migrations, exact-version queries,
-  and empty substrate-blocker list at the protected M6 vector.
-- **First safe action:** keep gates/effects off and generate
-  `evidence/m7-occurrence-writer-terminal-map.json` from the controlled-writer
-  registry, showing every F01 occurrence field, F15 terminal/outbox edge, F06
-  writer/reader provenance, and current Run Authority/Custody reread boundary.
-- **Deliverables:** versioned occurrence/lease/epoch schemas, shared action
-  validator, immutable repair receipt, controlled-writer and terminal maps,
-  append/atomic-rebuild adapter, compatibility expiry map, and reconciliation
-  runbook.
-- **Acceptance evidence:** T7/T12 cross-binding rejection, one-actor concurrent
-  fault matrix, all terminal outcomes joinable, stale fence/epoch and old-host
-  rejection, deterministic rebuild, and 10,000-heartbeat concurrent-reader
-  proof at an exact installed revision.
-- **Component-versus-wiring safeguard:** existing repair IDs, claims, grants,
-  custody events, and projection code are precursors. No row is accepted until
-  the shared validator and terminal transaction are wired across every
-  registered M7 writer; M8 still owns universal producer adoption.
 
 ## Profile rationale
 

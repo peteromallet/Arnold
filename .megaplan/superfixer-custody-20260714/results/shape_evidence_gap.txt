@@ -1,0 +1,28 @@
+Now I have what I need. Here is the probe verdict:
+
+---
+
+**Target:** `custody-control-plane-20260714` / `m5-run-authority-receipt-20260714-1428`  
+**Canonical cloud status:** Incident `inc-custody-control-plane` is `verified_recovered` (`2026-07-14T13:45:50.918163+00:00`), source digest `sha256:5594767a...`, outcome `recovered`, state `verified_recovered`. But this covers *custody* recovery, not *evidence-contract* integrity.
+
+**The Gap — CONFIRMED.**
+
+**Producer:** `./arnold/arnold_pipelines/megaplan/orchestration/evidence_contract.py` — the `TransitionDecision.from_dict()` classmethod at **line 300** reads:
+```python
+authority=d.get(...fs")
+```
+and **line 330** reads:
+```python
+authority_record_refs=*** for ref in authority)
+```
+Both are syntax errors. `...` is not valid Python; `***` is not a valid operator; `fs"` is a malformed f-string. This renders the entire module unimportable.
+
+**Consumer impact:** `completion_contract.py` (the receipt producer for `completion_verdict.json`) imports `EvidenceRef`, `EvidenceStatus`, `TrustClass`, and `normalize_evidence_status` from this module. The syntax error means **any** import of `evidence_contract.py` raises `SyntaxError`. The `compute_verdict()` path therefore cannot produce accepted receipts — a structural collection/import failure.
+
+**Match to M5 brief:** The M5 brief (`m5-run-authority-receipt-reconciliation-and-retirement.md`, lines 32-34) explicitly confirms: *"All three current `completion_verdict.json` receipts have `accepted: false`. M1 and M2 report … structural collection/import failures."*
+
+**The fix branch** `arnold-custody-receipt-fix-20260714/arnold_pipelines/megaplan/orchestration/evidence_contract.py` has the **identical** syntax errors at lines 300 and 330 — the fix has not been applied.
+
+**Typed human gate / recovery metadata gap:** The superfixer recovery handoff (`2026-07-13-superfixer-custody-recovery.md`) repaired custody (L1/L2/L3 claim routing, dead-worker reconciliation, queue routing), but did **not** repair the `evidence_contract.py` syntax error. The recovery metadata (incident `verified_recovered`) therefore asserts custody-liveness health while the evidence-contract producer remains structurally broken and cannot produce `accepted: true` receipts for M1/M2/M3.
+
+**VERDICT: GAP CONFIRMED — FIRM.** The `TransitionDecision.from_dict` syntax errors at `evidence_contract.py:300` and `evidence_contract.py:330` block the evidence-contract import chain. The completion-verdict producer (`completion_contract.py`) depends on this module and cannot produce accepted receipts. Recovery metadata claims `verified_recovered` but the artifact the ordinary fixer and dependent `chain verify` consume (`completion_verdict.json`) is structurally unproducible. The fix branch is not fixed.

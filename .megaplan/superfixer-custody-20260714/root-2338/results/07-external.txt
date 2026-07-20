@@ -1,0 +1,38 @@
+## Read-Only State Check: custody-control-plane-20260714
+
+### Repositories
+- **`/workspace/arnold`** — `peteromallet/Arnold`, on `main` (`b764651308`), heavily dirty working tree (development in progress).
+- **`/workspace/custody-control-plane-20260714/Arnold`** — same origin, on `megaplan/custody-control-plane/m5-run-authority-receipt-reconciliation-and-retirement` at `112340e43`.
+
+### Key SHAs and Provenance
+
+| Ref | SHA | Role |
+|-----|-----|------|
+| `origin/editible-install` | **`2a660fa26b`** | Remote-only, 39 commits past local |
+| `editible-install` (local) | **`616d5bb839`** | Local tip; ancestor of deployed path |
+| `custody-control-plane-delivery-20260714` | `3315a3a621` | Delivery branch (child of `616d5bb`) |
+| chain.yaml `intended_initiative_revision` | **`b3539e803f`** | Ancestor of custody M5 HEAD |
+| custody M5 HEAD | **`112340e43`** | Current work in custody sub-repo |
+| `checkpoint/cloud-editible-install-dirty-20260713` | `4291bf630e` | Cloud deployment snapshot (ancestor of `616d5bb`) |
+| `main` | `b764651308` | Unrelated lineage |
+
+### Lineage (ancestor → descendant)
+```
+a8d417c (durable checkpoint)
+ → 4291bf6 (dirty checkpoint)
+  → 616d5bb (local editible-install) ← deployed base
+   ├→ 3315a3a (custody-delivery tip)
+   ├→ b3539e8 (intended_initiative_revision)
+   │   └→ 112340e (custody M5 HEAD)
+   └→ 2a660fa (origin/editible-install) ← 39 commits, DIVERGENT
+```
+
+### Findings & Contradictions
+
+1. **Source revision deployed to editable runtime/wrappers: `616d5bb839`** ("Preserve refresh-verified runtime through cloud hot env"). This is the local `editible-install` tip. It is the merge-base of the custody-control-plane delivery branch, the custody M5 branch, AND `origin/editible-install`. The checkpoint branches (`4291bf6`, `a8d417c`) are its ancestors, representing earlier cloud deployment states.
+
+2. **`2a660fa` is NOT live.** It exists ONLY as `origin/editible-install` — 39 commits ahead of `616d5bb`, not contained in any local branch, not in `custody-control-plane-delivery`, and not an ancestor of the custody M5 branch. It is a pushed-but-unlanded divergent head.
+
+3. **Contradiction:** `origin/editible-install` at `2a660fa` ("Restore bound runtime repair custody") presents 39 commits that are absent from the actual deployed path (`616d5bb` → delivery/M5). The custody-control-plane chain requires `require_editable_runtime_match: true` with `intended_initiative_revision: b3539e803f`, which descends from `616d5bb` — not `2a660fa`. If any cloud runtime were pointed at `2a660fa`, it would fail the chain's runtime-match gate.
+
+4. **PR/CI gate:** `gh` is **not authenticated** — cannot confirm PR #250 or CI status. The chain.yaml specifies `merge_policy: review`, `review_policy: {clean_milestone_pr: manual}`, and `require_clean_base: true`, confirming PR/CI is architecturally a real gate in the custody-control-plane lifecycle. Whether PR 250 specifically exists or is passing cannot be verified without authentication.

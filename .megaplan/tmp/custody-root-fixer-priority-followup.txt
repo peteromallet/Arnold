@@ -1,0 +1,9 @@
+Priority correction from the current operator request:
+
+1. Treat critique-ledger-bigbang-20260716 as intentionally and durably paused. Do not resume it, advance it, or spend repair capacity on it. Evidence at 2026-07-17 17:44:37 UTC shows its plan state/display state/execution state are all paused, with no active phase or step, but the status projection says repairing because an automated repair was dispatched. Determine why a durably paused session admitted or retained that repair dispatch, stop/cancel only that erroneous repair through supported control seams if it is still live, and verify the session remains durably paused and no repair process is acting on it.
+
+2. Put execution priority on custody-control-plane-20260714 M6. Continue the already-authorized root-fixer mission: repair the fixer/backstop failure, retrigger ordinary recovery, and prove the actual M6 chain advances beyond its stale critiqued/inactive gate state. Do not merely diagnose. Use force-proceed only if the state machine permits it and evidence warrants it; do not weaken guards or hand-edit state.
+
+3. Return durable evidence for both outcomes: exact control receipt/process disposition for Critique Ledger, refreshed status showing it paused and non-repairing, and before/after Custody chain state with real accepted movement. If blocked by an approval gate, identify the exact gate and evidence.
+
+This follow-up supersedes lower-priority work within this run but does not expand authority to push, deploy, restart, or mutate remote/default branches.

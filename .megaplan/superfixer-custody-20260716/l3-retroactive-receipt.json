@@ -1,0 +1,42 @@
+{
+  "schema_version": "arnold-superfixer-l3-retroactive-receipt-v1",
+  "recorded_at": "2026-07-16T19:17:37Z",
+  "session": "custody-control-plane-20260714",
+  "plan": "m6-exact-contract-and-20260716-1303",
+  "source_state": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m6-exact-contract-and-20260716-1303/state.json",
+  "auditor_source": "/workspace/arnold-superfixer-custody-fix-20260716/arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor",
+  "auditor_sha256": "bff6f09b172e5c6d199a550fa1ccb55fc1a32544fe8a70c5af1347100b45769f",
+  "installed_auditor_sha256": "bff6f09b172e5c6d199a550fa1ccb55fc1a32544fe8a70c5af1347100b45769f",
+  "detector": "_superseded_repeated_failure_evidence",
+  "evidence": {
+    "historical_failure_recount": true,
+    "historical_failure_step": "gate",
+    "historical_failure_index": 8,
+    "historical_failure_timestamp": "2026-07-16T15:30:03Z",
+    "later_same_phase_successes": [
+      {
+        "history_index": 9,
+        "timestamp": "2026-07-16T15:32:13Z",
+        "artifact_hash": "sha256:19db3a7ed3de1b7f7420eb81e0d0e89114a87ee581dcddf6982213f7361aed05"
+      },
+      {
+        "history_index": 12,
+        "timestamp": "2026-07-16T15:43:07Z",
+        "artifact_hash": "sha256:aa0b9813c1fd6cb25e5403484616ff794d4c307a999e44ba93d3853bf540a6d4"
+      },
+      {
+        "history_index": 15,
+        "timestamp": "2026-07-16T15:58:02Z",
+        "artifact_hash": "sha256:3dd4bd330e5ee0f75ac26d95505ab07627c4dd31214196fdeb401d4ad8c28a99"
+      }
+    ],
+    "reported_repeat_count": 3
+  },
+  "deterministic_reason": "historical_failure_recount: repeated_failure_signature references one historical gate failure at history index 8 that was superseded by later same-phase success at index 15; fix auto repeated-failure occurrence tracking and retrigger ordinary repair",
+  "repair_context": {
+    "root_cause": "one historical failure occurrence was repeatedly polled and recounted after later same-phase successes",
+    "required_change": "supersede an older same-phase failure after success and key retries by stable occurrence identity",
+    "ordinary_retrigger": "watchdog -> L2 meta-repair -> L1 repair -> guarded recover-blocked -> chain start"
+  },
+  "status": "passed"
+}

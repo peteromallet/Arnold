@@ -46,7 +46,6 @@ from arnold_pipelines.megaplan.profiles.policy import (
 )
 from arnold_pipelines.megaplan.replan_state import (
     REPLAN_STATE_KEYS_TO_CLEAR,
-    blocked_gate_requests_replan,
     reset_replan_loop_state,
 )
 from arnold_pipelines.megaplan.fallback_chains import decode_phase_model_value, select_fallback_spec
@@ -1235,10 +1234,7 @@ class PlanningControlBinding:
         if action == "replan":
             allowed = {STATE_GATED, STATE_FINALIZED, STATE_CRITIQUED, STATE_FAILED}
             current_state = state["current_state"]
-            if current_state not in allowed and not blocked_gate_requests_replan(
-                state,
-                blocked_state=STATE_BLOCKED,
-            ):
+            if current_state not in allowed:
                 raise CliError(
                     "invalid_transition",
                     f"replan requires state {', '.join(sorted(allowed))}, got '{current_state}'",

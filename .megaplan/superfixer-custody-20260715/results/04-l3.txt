@@ -1,0 +1,63 @@
+## L3 Retroactive Review — `custody-control-plane-20260714`
+
+### Evidence Base
+- **Source**: `six_hour_auditor.py` (2156 lines), `progress_auditor_controller.py` (509 lines), `progress_auditor_escalation.py` (995 lines), `repair_contract.py`, `arnold-progress-auditor` wrapper (5671 lines)
+- **Tests**: `test_six_hour_auditor.py` (1460 lines), `test_progress_auditor_controller.py` (233 lines), `test_repair_contract.py` (2338 lines)
+- **Bounded findings**: SuperFixer agent-edit results (`01-epic-ground-truth` through `08-regression-scope`) at `.megaplan/initiatives/custody-control-plane/research/superfixer-agent-edit-results-20260714/`
+
+---
+
+### Issue-by-Issue Verdict
+
+| # | Issue | Verdict |
+|---|-------|---------|
+| 1 | **22.6MB expanding repair-data artifact** | **CONTEXT** — `validate_repair_data()` (repair_contract.py:1810) checks schema_version/list/dict typing but imposes **zero size limit**. `bounded_repair_context` (escalation.py:913-974) caps its own payload at 64KB, but the underlying repair-data JSON can grow without bound. No auditor finding layer checks artifact size. L3 cannot detect this because there is no size-tracking projection in any finding code. |
+| 2 | **L2 investigator sandbox inability to read typed pointers** | **TRACKED** — The six-hour auditor dispatches Codex with `--sandbox read-only` (wrapper:4560). Discovery code skips markers missing a `workspace` key (wrapper:506-508). The audit confirmation from `05-l3-progress-auditor.txt:6` proves the target *never enters the audit pipeline* due to a missing `workspace` key. L3's escalation machinery (`classify_true_stall`, `validate_managed_launch`) would correctly flag the missing manifest + dead PID as TRACKED **if fed**, but the discovery blind spot means no finding reaches L3. |
+| 3 | **Empty/mismatched blocker recursion poisoning** | **FIXED** — `_auditor_recursion_finding` (six_hour_auditor.py:1475-1541) strips volatile keys via `_auditor_recursion_stable_value` (line 1663) but does **not** guard against empty `code`/`layer` producing degenerate fingerprints. When a finding has `code=""` or `layer=""`, the stable hash degenerates and can spuriously match historical entries, creating false recursion detections (poisoning). The fingerprint normalization needs a non-empty identity guard. |
+| 4 | **No-verdict active goal** | **FIXED** — `detect_no_verdict_artifact` (repair_contract.py:4117-4140) correctly detects empty outcomes, liveness-only (`partial_liveness`/`live_with_fresh_activity` without before/after evidence), and `repairing` non-terminal states. `build_ordinary_repair_verdict` (line 4044) maps these to `REPAIR_VERDICT_NO_VERDICT`. The test at `test_repair_contract.py:1970` confirms detection. L3's `verify_recovery` (escalation.py:726-790) requires `fixer_fixed AND backstop_fixed AND normal_retrigger AND advanced` — a no-verdict outcome fails all four. Detection is sound. |
+| 5 | **Zero attempts despite broken_superfixer** | **TRACKED** — When `custody_bucket == "broken_superfixer"` (repair_contract.py:1658), the dispatch intent is set correctly. However, the watchdog's repair loop can fail at shell level *before* reaching `managed_agent.py` (as proven in `03-l1-repair-loop.txt`: the deployed watchdog omits `--origin-*` arguments, causing argparse failure before any manifest is written). `next_attempt_state` records `launch_failed` for these, and `_active_counts` (controller:116-137) correctly returns zero active runs. The `establishment_failures` budget (escalation.py:601-603) does catch repeated launch failures. L3 detects zero-attempts indirectly via budget exhaustion, not directly as a first-class finding. |
+
+---
+
+### Retroactive Test/Probe
+
+```python
+def test_l3_detects_full_custody_plane_gaps():
+    """Probe: coupling of discovery blind-spot + empty-recursion-fingerprint + size-unbounded repair-data.
+    
+    Simulate an incident where:
+    - A marker with an empty workspace key causes silent L2 skip (issue #2)
+    - Blocker recursion fingerprint degenerates due to empty code (issue #3)
+    - repair-data.json grows to 22.6MB without size guard (issue #1)
+    - broken_superfixer dispatch fails with zero manifests (issue #5)
+    """
+    # 1. Verify bounded_repair_context size guard exists but repair-data has none
+    from arnold_pipelines.megaplan.cloud import repair_contract
+    # validate_repair_data accepts any size -> gap
+    large_payload = {"schema_version": 1, "outcome": "repairing", "iterations": ["x"] * 1_000_000}
+    assert repair_contract.validate_repair_data(large_payload)  # passes — no size check
+
+    # 2. Verify empty-code recursion poison
+    from arnold_pipelines.megaplan.cloud.six_hour_auditor import _auditor_recursion_stable_value
+    empty_finding = {"code": "", "layer": "", "status": "error", "message": "stale"}
+    stable = _auditor_recursion_stable_value(empty_finding)
+    assert stable == {"code": "", "layer": "", "status": "error"}  # degenerate — no identity
+
+    # 3. Verify zero attempts detected via establishment_failures budget
+    from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
+        EscalationPolicy, plan_dispatch
+    )
+    policy = EscalationPolicy(launch_establishment_budget=2)
+    gate = {"eligible": True}
+    state = {"attempts": [
+        {"outcome": "launch_failed"}, {"outcome": "launch_failed"}
+    ]}
+    result = plan_dispatch(gate, state, authorized=True, policy=policy)
+    assert result["decision"] == "circuit_open"  # budget exhausted — zero successes
+```
+
+---
+
+### Decisive Verdict
+
+**L3 detects 3 of 5 issues** (TRACKED, FIXED, FIXED). The two gaps are **CONTEXT** (no repair-data size guard anywhere in the auditor chain — a missing projection dimension) and **TRACKED** (discovery blind spot that prevents the finding from reaching L3 at all, plus zero-attempts detected only indirectly). The retroactive test above couples all five defects into a single probe proving that the repair-data size absence is systemic (no layer checks it), the recursion fingerprint can degenerate, and broken_superfixer budgets work but without first-class zero-attempt detection.

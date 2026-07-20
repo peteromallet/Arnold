@@ -4525,6 +4525,17 @@ def _reconcile_chain_from_ground_truth(
 ) -> ChainState:
     """Derive the chain cursor from plan state.json and live GitHub PR state."""
 
+    from arnold_pipelines.megaplan.chain.execution_binding import (
+        assert_execution_binding,
+    )
+
+    assert_execution_binding(
+        spec_path,
+        state,
+        operation="chain reconciliation",
+        allow_unbound_new=True,
+    )
+
     labels_to_index = {
         milestone.label: index for index, milestone in enumerate(spec.milestones)
     }
@@ -5335,6 +5346,13 @@ def run_chain(
     chain_spec.validate_paths(spec, root, spec_path=spec_path)
     _preflight_agent_backends(spec, writer=writer)
     state = chain_spec.load_chain_state(spec_path)
+    from arnold_pipelines.megaplan.chain.execution_binding import (
+        bind_execution_identity,
+    )
+
+    # Bind before the first state save or milestone initialization. Existing
+    # progressed state without a launch binding is refused by the loader.
+    bind_execution_identity(spec_path, state)
     from arnold_pipelines.megaplan.chain.operator_pause import is_paused
 
     if is_paused(state):
@@ -6058,6 +6076,20 @@ def run_chain(
                         root, spec_path, branch=milestone.branch, pr_number=None
                     )
                     state = chain_spec.load_chain_state(spec_path)
+                from arnold_pipelines.megaplan.chain.source_admission import (
+                    admit_milestone_source,
+                )
+
+                # Earliest safe universal milestone boundary: the base and
+                # milestone branch are current, but no plan has been created.
+                admit_milestone_source(
+                    root=root,
+                    spec_path=spec_path,
+                    spec=spec,
+                    state=state,
+                    milestone=milestone,
+                    milestone_index=idx,
+                )
                 eff_profile = state.profile_bumps.get(milestone.label) or milestone.profile
                 eff_robustness = (
                     state.robustness_bumps.get(milestone.label)
@@ -6652,7 +6684,12 @@ def _clear_stale_closed_pr_state(
     return state
 
 
-def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
+def format_chain_status(
+    spec: ChainSpec,
+    state: ChainState,
+    *,
+    spec_path: Path | None = None,
+) -> dict[str, Any]:
     completed_labels = {
         entry.get("label")
         for entry in state.completed
@@ -6711,6 +6748,12 @@ def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
     if state.pr_number is not None:
         summary["pr_number"] = state.pr_number
         summary["pr_state"] = state.pr_state
+    if spec_path is not None:
+        from arnold_pipelines.megaplan.chain.execution_binding import (
+            execution_binding_report,
+        )
+
+        summary["execution_binding"] = execution_binding_report(spec_path, state)
     return summary
 
 
@@ -6740,6 +6783,16 @@ def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
     if summary.get("pr_number"):
         writer(
             f"Current PR: #{summary['pr_number']} ({summary.get('pr_state') or 'unknown'})\n"
+        )
+    binding = summary.get("execution_binding")
+    if isinstance(binding, dict) and binding.get("required"):
+        expected = binding.get("expected") or {}
+        active = binding.get("active") or {}
+        writer(
+            "Execution binding: "
+            f"{binding.get('status')} "
+            f"expected={str(expected.get('bundle_sha256') or 'missing')[:12]} "
+            f"active={str(active.get('bundle_sha256') or 'missing')[:12]}\n"
         )
     # Sync section (branch/PR sync state)
     sync = summary.get("sync") or {}
@@ -6856,6 +6909,16 @@ def build_chain_parser(subparsers: Any) -> None:
     status_parser.add_argument(
         "--spec", required=True, help="Path to the chain spec YAML"
     )
+
+    reconcile_source_parser = chain_sub.add_parser(
+        "reconcile-source",
+        help="Register a content-addressed canonical source update for a future milestone",
+    )
+    reconcile_source_parser.add_argument("--spec", required=True)
+    reconcile_source_parser.add_argument("--project-dir", required=False)
+    reconcile_source_parser.add_argument("--milestone", required=True)
+    reconcile_source_parser.add_argument("--authoritative-source", required=True)
+    reconcile_source_parser.add_argument("--reason", required=True)
     status_parser.add_argument(
         "--project-dir",
         required=False,
@@ -7055,6 +7118,42 @@ def run_chain_cli(
         )
         return 0
 
+    if action == "reconcile-source":
+        try:
+            spec = chain_spec.load_spec(spec_path)
+            chain_state = chain_spec.load_chain_state(
+                spec_path,
+                verify_execution_binding=False,
+            )
+            from arnold_pipelines.megaplan.chain.source_admission import (
+                require_milestone_source_update,
+            )
+
+            requirement = require_milestone_source_update(
+                spec_path=spec_path,
+                state=chain_state,
+                spec=spec,
+                milestone_label=args.milestone,
+                authoritative_source=Path(args.authoritative_source).expanduser().resolve(),
+                reason=args.reason,
+            )
+            chain_spec.save_chain_state(spec_path, chain_state)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "reconcile-source",
+                    "requirement": requirement,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
     if action == "override":
         set_prereq = getattr(args, "set_prerequisite_policy", None)
         set_valid = getattr(args, "set_validation_policy", None)
@@ -7102,14 +7201,19 @@ def run_chain_cli(
                 missing_anchor_ack_override=getattr(args, "missing_anchor_ack", None),
             )
             chain_spec.validate_paths(spec, root, spec_path=spec_path)
-            chain_state = chain_spec.load_chain_state(spec_path)
+            # Status must remain observable during drift. It reports expected
+            # versus active identity without normalizing or adopting either.
+            chain_state = chain_spec.load_chain_state(
+                spec_path,
+                verify_execution_binding=False,
+            )
         except CliError as exc:
             return _emit_error(exc)
         if anchor_requirement.warning:
             writer(f"[chain] WARNING: {anchor_requirement.warning}\n")
         runtime_overrides = chain_spec.load_runtime_policy(spec_path)
         effective_policy = chain_spec.effective_chain_policy(spec, runtime_overrides)
-        summary = format_chain_status(spec, chain_state)
+        summary = format_chain_status(spec, chain_state, spec_path=spec_path)
         _write_chain_status_pretty(summary, writer=writer)
         payload = {
             "success": True,

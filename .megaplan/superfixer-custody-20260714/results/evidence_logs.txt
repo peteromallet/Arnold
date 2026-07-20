@@ -1,0 +1,91 @@
+Here is the complete evidence report.
+
+---
+
+## Read-Only Evidence Probe: `custody-control-plane-20260714` / `m5-run-authority-receipt-20260714-1428`
+
+### 1. Canonical Cloud Status
+
+**Path:** `/workspace/custody-control-plane-20260714/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-custody-control-plane.json`
+
+| Field | Value |
+|---|---|
+| `state` | `verified_recovered` |
+| `outcome` | `recovered` |
+| `generated_at` | `2026-07-14T13:45:50.918163+00:00` |
+| `latest_actor` | `repair_system` |
+| `summary_text` | `repair-data outcome=live_with_fresh_activity kind=chain` |
+
+### 2. M5 Plan Execution State
+
+**Path:** `/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m5-run-authority-receipt-20260714-1428/state.json`
+
+| Field | Value |
+|---|---|
+| `current_state` | **`blocked`** |
+| `iteration` | 2 |
+| `latest_failure.recorded_at` | `2026-07-14T18:04:22Z` |
+| `latest_failure.kind` | `review_quality_blocked_unknown` |
+| `latest_failure.suggested_action` | `Collect structured deterministic evidence before selecting a recovery action.` |
+
+**Phase result** (`phase_result.json`):
+- `exit_kind`: `blocked_by_quality`
+- 11 unresolved blockers including: M1/M2/M3 green suites still have collection/import errors; 3 receipts not accepted; canonical chain verification divergent (3 divergences); stale manifest digests; retirement blocked
+
+### 3. Chain Verification (batch_16)
+
+**Path:** `/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m5-run-authority-receipt-20260714-1428/execute_batches/batch_16/chain_verify_raw.json`
+
+```
+verified_count: 3
+divergence_count: 3
+m1-foundation: accepted=false, landed_diff mismatch (62 unclaimed paths)
+m2-enforcement: accepted=false, landed_diff mismatch (57 unclaimed paths)  
+m3-consumers:  accepted=false, landed_diff mismatch (3 unclaimed paths)
+```
+
+### 4. Repair-Loop Log
+
+**Path:** `/workspace/custody-control-plane-20260714/Arnold/.megaplan/cloud-chain-superfixer-repair-custody.log`
+
+**Final line (line 490):** `[2026-07-08T02:34:31Z] retirement: duplicate initiative superseded by custody-control-plane; chain merge_policy set to review to disable unattended merges; retirement complete.`
+
+### 5. Watchdog
+
+**Path:** `/workspace/custody-control-plane-20260714/Arnold/.megaplan/watchdog-run-logs/megaplan-live-watchdog-supervisor.outcome.json`
+
+- `status`: `stalled`, `final_state`: `planned`, 7 iterations
+- **Deterministic failure:** `ModuleNotFoundError: No module named 'megaplan'` at `parallel_critique.py:325` — repeated identically across 5 critique attempts
+- **Partnered5-codex variant** (separate file): same stall pattern, `critique_evaluator_failed: Codex writable root overlaps the engine root`
+- **Direct-deepseek variant**: stalled at `critiqued`, `engine_write_isolation_unverified`
+
+### 6. Progress Auditor
+
+**Path:** `/workspace/custody-control-plane-20260714/Arnold/.megaplan/cloud-chain-progress-auditor-stage-metrics.log`
+
+- Only 107 lines of pip-install/bootstrap; chain state `absent`; zero plan execution recorded.
+
+### 7. Meta-Repair
+
+No dedicated log in target workspace; `meta_repair.py` appears only as a diff artifact in chain verification (unclaimed file in M1/M2 commits).
+
+### 8. Repeated Deterministic Signature Count: `deepseek-v4-pro`
+
+| Source | Count |
+|---|---|
+| `state.json` (plan config + tier models) | **86** |
+| Watchdog outcome (critique internal_error traces) | **5** |
+| Partnered5-codex watchdog outcome | **1** |
+| 29 JSON files in plan directory contain the string | — |
+| **Aggregate across target plan+watchdog** | **~92** |
+| Chain log (custody-control-plane) | **0** |
+
+### 9. Critical Log-to-State Contradictions
+
+1. **Temporal inversion:** Incident ledger claims `verified_recovered` at `13:45:50` — then M5 plan enters `blocked` at `18:04:22`, over 4 hours later. "Recovered" pre-dates the actual failure.
+
+2. **Completion contract posture:** `state.json` records `completion_contract_mode: "shadow"` and `full_suite_backstop_mode: "shadow"`. The M5 brief (lines 113–115) explicitly mandates: *"Before M5 execution, the operator must durably record completion-contract and full-suite-backstop enforcement... `off`, `shadow`, or `warn` is not an admissible execution posture."*
+
+3. **Chain verify vs incident:** Chain verify shows 3/3 rejected, 3 divergences. Incident ledger claims `recovered`. Both cannot be true.
+
+4. **Three unaccepted receipts remain:** No `completion_verdict.json` with `accepted: true` exists for any Run Authority milestone.

@@ -428,6 +428,20 @@ def _enforce_approval_gate(
 
 def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="execute") as (plan_dir, state):
+        from arnold_pipelines.megaplan.planning.source_binding import (
+            assert_canonical_source_current,
+        )
+
+        try:
+            assert_canonical_source_current(
+                plan_dir,
+                state,
+                operation="finalized plan execution admission",
+            )
+        except CliError:
+            # The fail-closed receipt and its state index must survive denial.
+            save_state_merge_meta(plan_dir, state)
+            raise
         # Entry dispatch and approval gating are decided by typed policy
         # outcomes; the handler only translates those outcomes into legacy
         # CliErrors / state mutations (see execute.policy).

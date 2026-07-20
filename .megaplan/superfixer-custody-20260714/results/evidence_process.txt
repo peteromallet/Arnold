@@ -1,0 +1,37 @@
+## Evidence Probe: custody-control-plane-20260714 / m5-run-authority-receipt-20260714-1428
+
+**UTC observation time:** 2026-07-14T18:41:00Z
+
+### Canonical Cloud Status
+- **Provider:** SSH (`159.69.51.216`, container `megaplan-cloud-agent`). AWS/EC2 metadata unreachable (expected).
+- **Session marker:** `/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.json` — records `launch_outcome: success`, `status: running`, but **last updated 17:21Z** (stale by ~80 min).
+- **Chain-health progress:** `last_state: blocked`, `plan_signal_liveness: stalled`, `plan_signal_reason: last event 1639s ago`, `stuck_ticks: 1`. Contradicts the marker's `running` status.
+
+### L1 — Live Process Evidence
+
+| PID | Command | Start (UTC) | Elapsed | STAT | Assessment |
+|-----|---------|-------------|---------|------|------------|
+| 2655474 | `reconcile_evidence.py run-current-suite` | 18:24:46 | 16:22 | Ss+ (sleep) | **Supervisor shell** — waiting on child pytest. Launched by Codex subagent PID 1063762 (the 13:43 synthesis agent). |
+| 2655478 | `pytest --tb=no -q --no-header -rA` | 18:24:46 | 16:22 | Ss (sleep) | **GENUINELY PROGRESSING** — log at ~86%, 146 lines of test output, progress file shows 900s+ elapsed with growing output. Full-suite backstop per SD5. |
+| 2683762 | pytest worker `test_repair_loop_classifies_re0` | ~18:39 | ~2 min | R (running when observed) | Active test worker confirming forward progress. |
+
+**Verdict:** The pytest suite is genuinely alive and progressing — not a stale guard. The parent `reconcile_evidence.py` is a legitimate supervisor waiting for completion. However, the **plan engine itself** (`m5-run-authority-receipt-20260714-1428`) has `active_step: null`, `plan_has_live_activity: false` — it considers itself finalized/failed.
+
+### L2 — Meta-Repair
+- `megaplan-maintenance` chain: **operator-paused** since 2026-07-11T10:39:43Z (capacity pause).
+- `custody-control-plane-20260714.repair-loop.pid.guard`: exists but **empty** (no active repair PID).
+- Repair data file points to a **different, stale session** (`custody-control-plane-240c2cca`, July 8).
+- **No active L2 repair for this session.**
+
+### L3 — Progress Auditor / Watchdog
+- Watchdog (PID 1819505, started 01:00Z, running) tracks the session: `tracked`, `session_alive: true`, but reports chain as `blocked` with `plan_has_live_activity: false`.
+
+### Key Contradictions
+1. **Session marker vs. chain-health:** Marker claims `running/launch_success`; chain-health reports `blocked/stalled`.
+2. **Plan finality vs. live pytest:** The plan engine is finished/failed (review.json: 6/11 must-pass criteria FAILED — receipts not accepted, 3 divergences, `.retired` absent, `retirement_status: blocked`), yet the reconcile script's full-suite pytest is still running under the Codex subagent from pts/2.
+3. **final-attestation.json** confirms 4 unresolved evidence categories (`cross_checkout_drift`, `receipts_not_accepted`, `chain_verification_divergence`, `retired_marker_removed`).
+4. **L2 repair gap:** No active meta-repair; maintenance chain paused since July 11.
+5. **Supervisor dependency:** The only live progress (pytest) depends on parent Codex subagent PID 1063762 — if that Codex session terminates, the reconcile chain dies with it.
+
+### Bottom Line
+One genuinely progressing artifact exists (full-suite pytest at 86%), but the custody chain itself is **blocked with failed review criteria and no active plan-engine step**. The live work is a subprocess of an external Codex agent, not the chain runner. L2/L3 repair layers are absent or stale. The session is **not dead, but stalled at a legitimate evidence gate** — receipts remain unaccepted, divergences unresolved, and `.retired` marker unplaceable until the suite run and its reconciliation succeed.

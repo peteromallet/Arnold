@@ -704,6 +704,63 @@ def _attempt_is_after_epoch(
     return when > epoch
 
 
+def classify_fixer_infrastructure_failure(
+    attempt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Separate a repair-worker launch failure from its target blocker.
+
+    The plan signature describes the target failure, so it cannot show that an
+    L1 child failed before crossing the managed-agent boundary.  Preserve that
+    causal distinction for read-only audit and recurrence accounting.
+    """
+
+    item = _as_dict(attempt)
+    for phase, prefix in (("dev", "dev"), ("kimi", "kimi")):
+        evidence = _as_dict(item.get(f"{prefix}_launch_evidence"))
+        returncode = _as_int(
+            evidence.get("returncode")
+            if evidence.get("returncode") not in (None, "")
+            else item.get(f"{prefix}_turn_rc")
+        )
+        run_id = _as_text(
+            evidence.get("managed_run_id")
+            or item.get(
+                "managed_agent_run_id"
+                if phase == "dev"
+                else "kimi_managed_agent_run_id"
+            )
+        )
+        error_class = _as_text(evidence.get("error_class"))
+        kind = _as_text(evidence.get("kind"))
+        stderr_tail = _as_text(evidence.get("stderr_tail"))
+        contract_text = " ".join((kind, error_class, stderr_tail)).lower()
+        contract_signal = any(
+            token in contract_text
+            for token in (
+                "launch_contract",
+                "managedagentnooutput",
+                "machine launch provenance",
+                "required arguments",
+                "unrecognized arguments",
+                "invalid choice",
+            )
+        )
+        missing_managed_launch = returncode in {2, 64} and not run_id
+        if not (contract_signal or missing_managed_launch):
+            continue
+        return {
+            "detected": True,
+            "phase": phase,
+            "kind": kind or "managed_launch_contract_failure",
+            "returncode": returncode,
+            "managed_run_id": run_id,
+            "error_class": error_class,
+            "stderr_tail": stderr_tail[-1200:],
+            "attempt_id": _as_int(item.get("attempt_id")),
+        }
+    return {"detected": False}
+
+
 def evaluate_recurrence(
     current_signature: Mapping[str, Any],
     attempts: list[Mapping[str, Any]] | None,

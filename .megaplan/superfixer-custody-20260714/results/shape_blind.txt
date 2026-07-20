@@ -1,0 +1,34 @@
+## BLIND FIXER Probe: PRESENT (L1 inlining gap), ABSENT (system correctly bypassed repair)
+
+### Canonical Cloud Status
+
+**Session:** `custody-control-plane-20260714`  
+**Plan:** `m5-run-authority-receipt-20260714-1428`  
+**Watchdog verdict (2026-07-14T18:33:56Z):** `review_quality_blocked_unknown` → routed to `needs-human` Discord DM. **Not dispatched to repair.**
+
+### Real Review Error (ground truth)
+
+| Artifact | Path | Key Content |
+|---|---|---|
+| `state.json` | `/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m5-run-authority-receipt-20260714-1428/state.json` | `latest_failure.kind: "review_quality_blocked_unknown"`, 11 blockers: 6 failed must-criteria (M1=16 collection errors, M2=15, M3=7; receipts `accepted: false`; `divergence_count: 3`; stale manifest digests; retirement blocked; attestation incomplete), 5 unresolved rework items |
+| `review.json` | same dir, hash `sha256:587b481c...` | 12 criteria; 6 fail, 2 pass-with-caution, 4 pass; detailed evidence per criterion |
+
+### What L1 Repair Requests Inlined
+
+| Request ID | Created | Failure Kind | Phase | Root Cause |
+|---|---|---|---|---|
+| `d321f53...` | 2026-07-14T16:33:34Z | `phase_callback_failed` | `execute` | `root_cause_hint_hash` (redacted) |
+| `1a92251...` | 2026-07-14T17:20:13Z | `phase_callback_failed` | `review` | `root_cause_hint_hash` (redacted) |
+
+**Neither request contains:** `review_quality_blocked_unknown`, the 11 blockers, collection-error counts, must-criteria verdicts, or any review.json evidence. The `root_cause_hint_hash` uses `sha256(redact_payload(root_cause_hint))` — the actual root cause was redacted before hashing, providing zero transport of mechanism.
+
+### What L2/L3 Received
+
+- **L2:** No repair-data exists for `custody-control-plane-20260714` in `/workspace/.megaplan/cloud-sessions/repair-data/`. Stale `custody-control-plane.repair-data.json` belongs to `custody-control-plane-240c2cca` (2026-07-08, different plan). L2 never invoked.
+- **L3:** No entry in repair-data index. No progress-auditor dispatch.
+
+### Transport Mechanism
+
+The watchdog correctly detected `review_quality_blocked_unknown` at 18:33:56Z and bypassed automated repair → `needs-human` Discord DM. The L1 requests that exist (from earlier lifecycle failures at 16:33 and 17:20) used hollow `phase_callback_failed` signatures with redacted root-cause hashes. If any fixer had consumed those requests, it would have been **blind** — the real review errors (11 specific blockers, collection failures, must-criteria evidence) were never inlined. But the system's correct classification of the final state as `manual_review` meant no fixer was dispatched.
+
+**Verdict:** BLIND FIXER — **PRESENT** as an L1 inlining defect (hollow signatures + redacted root-cause hash), but **ABSENT** as an active failure because the watchdog correctly bypassed repair and routed to human review.

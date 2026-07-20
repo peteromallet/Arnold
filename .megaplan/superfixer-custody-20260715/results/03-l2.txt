@@ -1,0 +1,68 @@
+I now have all evidence. Let me compile the verdict.
+
+---
+
+## L2 Review: custody-control-plane-20260714 — Root-Cause Verdict
+
+**Runtime verified:** `fd77238018` (head of `arnold-consolidation-20260714`, commit "Minimize L2 investigator launch envelope"). Match confirmed.
+
+### Evidence Assembly
+
+The 4,688-byte L2 investigation envelope (schema `arnold-meta-repair-investigation-envelope-v2`, digest `4f717408…`) carries typed artifact references — a 22.7 MB repair-data blob, a 22.5 KB session marker, a 102 KB repair goal, chain/plan state, event log, chain log, and the 1,382-byte `needs-human` record. The 2,722-byte investigator receipt reports `status: blocked` — the read-only executor never opened a single authoritative artifact.
+
+Three prior meta-repair records exist for this session in `repair-data/meta/`:
+
+| Record | Trigger | Outcome |
+|---|---|---|
+| `34941d34` | `model_tool_launch_failure` | `commit_custody_failed` |
+| `ecf80350` | `persistent_recurring_retry` | `commit_custody_failed` |
+| `meta_repair_verdict` | (verdict wrapper) | `commit_custody_failed` |
+
+All three carry `diagnosis: "NO_FIX — Meta-repair mutation is not authorized"` and `commit_custody.accepted: false` — none ever deployed a fix.
+
+---
+
+### Root Cause
+
+**Two independent failures at the L2 repair-system layer, neither of which is a design-intent flaw:**
+
+#### 1. Artifact-read sandbox preflight/fallback (INTENT → fail)
+
+The `arnold-meta-repair-loop` wrapper (line 418) dispatches the L2 investigator as:
+```
+codex exec --skip-git-repo-check --sandbox read-only … -
+```
+The `--sandbox read-only` flag uses **bubblewrap** (`bwrap`) for namespace isolation. On this host, the kernel denies unprivileged user-namespace creation. The sandbox cannot initialize — codex fails before opening any artifact reference. The investigator receipt confirms: `"observed_error": "bwrap: No permissions to create new namespace…"`.
+
+The `build_meta_investigation_context()` function in `repair_investigation.py` (lines 439–588) builds a perfectly valid reference-only envelope with SHA-256 hashes and absolute paths for every artifact. But **the wrapper never preflights whether the read-only executor can actually open those paths**. There is no fallback to a Python-native or non-bwrap read-only reader. The preflight gap means the L2 investigator is handed perfect custody context it cannot consume.
+
+#### 2. Blocker-scoped recursion poisoning (TRACKED → fail)
+
+`meta_repair_policy.py` `check_meta_repair_recursion()` (lines 91–180) accepts `blocker_id` to scope recursion detection to a single blocker episode. But the wrapper (line 231) invokes it as:
+```bash
+"${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}"
+```
+When this env var is unset — which it is for the `needs-human` record (its own `blocker_id: ""`) — `blocker_id` is the empty string. The guard's blocker filter (`if blocker_id and …`) is a no-op, and **all historical session records count against the same budget**.
+
+Three `commit_custody_failed` records accumulate. The retry-budget logic (`_MAX_COMMIT_CUSTODY_FAILURE_RETRIES = 2`) correctly separates commit-custody failures, but with 3 such records (`3 >= 2`), they all merge into `matching_ids`, exceeding `max_meta_repair_attempts=1`. The session is permanently poisoned — no meta-repair will ever launch again for `custody-control-plane-20260714`, regardless of future blocker episodes.
+
+---
+
+### Four-Axis Verdict
+
+| Axis | Verdict | Rationale |
+|---|---|---|
+| **TRACKED** | **fail** | Investigator self-reports `authoritative_artifacts_read: false`, `hashes_verified: false`. Artifacts were referenced but never tracked. |
+| **FIXED** | **fail** | The system remains broken at two layers. `needs-human` escalation is correct as backstop, but no fix has been applied. |
+| **INTENT** | **pass** | Design is sound: read-only L2 envelope, typed references, receipt contract, recursion guard, bounded handoff. |
+| **CONTEXT** | **fail** | Dual failure: (a) bubblewrap sandbox can't open the context; (b) empty `blocker_id` disables blocker-scoping, causing cross-episode budget poisoning. |
+
+---
+
+### Required Tests
+
+1. **`test_l2_investigator_sandbox_preflight`** — Before dispatching `codex exec --sandbox read-only`, invoke `bwrap --version` or attempt a trivial `bwrap --ro-bind /dev/null /dev/null true`. On failure, route to a Python-native fallback executor (`python3 -c "open(path).read()"`) that verifies every artifact SHA-256 before investigation custody transfers.
+
+2. **`test_recursion_guard_blocker_scope_with_empty_blocker_id`** — When `blocker_id=""`, the guard MUST NOT collapse all session records into one budget. Either require a non-empty `blocker_id` for metered counting, or partition `commit_custody_failed` records by their trigger signature so that a repaired commit-custody path doesn't remain permanently banned.
+
+3. **`test_meta_investigation_context_artifact_open_preflight`** — `build_meta_investigation_context()` already computes SHA-256 for every evidence ref. Add an explicit pre-open + re-hash step in the build phase (or a `--preflight` mode) that confirms every referenced path is readable and hash-stable before writing the envelope, failing closed if any artifact is inaccessible.

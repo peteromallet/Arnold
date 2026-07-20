@@ -1,0 +1,5 @@
+Read-only forensic verdict. Do not edit files, launch/restart processes, claim repairs, or mutate git/external state.
+
+Target session: custody-control-plane-20260714. Canonical source is /workspace/arnold-custody-runtime at revision 50b5d26fc4a560121909c77451574620ac9a165e. Installed wrappers are /usr/local/bin/arnold-{watchdog,repair-trigger,repair-loop,meta-repair-loop,progress-auditor}. Authoritative artifacts are under /workspace/.megaplan and /workspace/custody-control-plane-20260714/Arnold.
+
+Diagnose observation health first, then reconcile all six evidence sources in this order: live process, marker JSON, chain JSON, plan state, logs/repair artifacts, external PR/CI. Focus on the historical interval around 2026-07-15T00:04Z when repair-verdict recorded partial_liveness/no_verdict and the current interval. Explain how a fresh/active plan heartbeat could coexist with a stopped chain runner, unclaimed repair custody, and empty repair_request_id/blocker_id links. Classify the first broken layer and one of TRACKED/FIXED/INTENT/CONTEXT. Return a decisive evidence-led verdict under 700 words with exact artifact paths/timestamps. Do not expose secrets.

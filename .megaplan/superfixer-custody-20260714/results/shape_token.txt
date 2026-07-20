@@ -1,0 +1,32 @@
+Here is the definitive failure-shape verdict:
+
+---
+
+## TOKEN DRIFT / UNREACHABLE RECOVERY — Verdict
+
+### Writer
+**`/workspace/arnold/arnold_pipelines/megaplan/handlers/review.py:1049-1058`**
+
+The review handler bifurcates at rework-budget exhaustion:
+```python
+deterministic = bool(deterministic_evidence)
+"kind": "quality_gate_blocked" if deterministic else "review_quality_blocked_unknown"
+```
+
+M5's final review at `2026-07-14T18:04:22Z` had **zero** `deterministic_evidence` entries → `deterministic=False` → the handler wrote `review_quality_blocked_unknown` into `state.json` `latest_failure.kind`.
+
+### Readers (all three MISS the token)
+
+| Consumer | Path | Token Set | Has `review_quality_blocked_unknown`? |
+|---|---|---|---|
+| **Repair contract** | `repair_contract.py:666-669` | `{"quality_gate_blocked", "deterministic_quality_blocked"}` | **NO** — falls through to 3-attempt generic branch |
+| **Implementation-block classifier** | `classifiers.py:78-90` | `_IMPLEMENTATION_BLOCK_TOKENS` | **NO** — never classified as machine-actionable |
+| **Decision contract** | `decision_contract.py:44-54` | `MACHINE_REPAIRABLE_FAILURE_KINDS` | **NO** — excluded from auto-repair eligibility |
+
+### Confirming the gap
+
+`review_quality_blocked_unknown` appears **exactly once** in all `arnold_pipelines` source: the writer at `review.py:1058`. It appears in **zero** consumer token sets across `repair_contract.py`, `classifiers.py`, and `decision_contract.py`. No typed gate (`TypedHumanGate`) maps to it. The watchdog log at `18:33:56Z` confirms it surfaces only as `manual_review halt`.
+
+### Firm Verdict
+
+**TOKEN DRIFT: PRESENT, BY DESIGN — RECOVERY: UNREACHABLE, ALSO BY DESIGN.** The token is intentionally absent from all machine-repair dispatch branches. The design note at `2026-07-11-systemic-recovery-contract-fix.md:10` codifies this: *"Unstructured blocks persist `review_quality_blocked_unknown` and do not auto-mutate."* This is not a bug — it is an explicit non-deterministic escape hatch that requires human intervention. However, the consequence is that **no automated recovery path exists** for this token: L1 sees it but cannot act (no machine-repairable classification), L2 never engaged (stale session name in repair-data), and the watchdog correctly halts with `manual_review`. The token fulfills its contract — it prevents blind auto-repair on ambiguous evidence — but the session is genuinely deadlocked until a human clears the block.

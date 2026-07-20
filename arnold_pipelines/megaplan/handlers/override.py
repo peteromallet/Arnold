@@ -82,10 +82,7 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
     atomic_write_phase_result,
     read_phase_result,
 )
-from arnold_pipelines.megaplan.replan_state import (
-    blocked_gate_requests_replan,
-    reset_replan_loop_state,
-)
+from arnold_pipelines.megaplan.replan_state import reset_replan_loop_state
 from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effort_emit_failure, _write_gate_json
 
 
@@ -541,6 +538,18 @@ def _handle_routed_override(
     state: PlanState,
     args: argparse.Namespace,
 ) -> StepResponse:
+    if args.override_action == "replan":
+        from arnold_pipelines.megaplan.planning.source_binding import (
+            reconcile_canonical_source_for_replan,
+        )
+
+        reason = (
+            getattr(args, "reason", None)
+            or getattr(args, "note", None)
+            or "Re-entering planning loop"
+        )
+        reconcile_canonical_source_for_replan(plan_dir, state, reason=reason)
+        save_state_merge_meta(plan_dir, state)
     transition = ControlTransition(
         op="override",
         target_id=args.override_action,
@@ -1119,10 +1128,7 @@ def _override_replan(
 ) -> StepResponse:
     allowed = {STATE_GATED, STATE_FINALIZED, STATE_CRITIQUED, STATE_FAILED}
     previous_state = state["current_state"]
-    if previous_state not in allowed and not blocked_gate_requests_replan(
-        state,
-        blocked_state=STATE_BLOCKED,
-    ):
+    if previous_state not in allowed:
         raise CliError(
             "invalid_transition",
             f"replan requires state {', '.join(sorted(allowed))}, got '{previous_state}'",
@@ -1144,6 +1150,15 @@ def _override_replan(
     )
     if args.note:
         _append_to_meta(state, "notes", {"timestamp": timestamp, "note": args.note})
+    from arnold_pipelines.megaplan.planning.source_binding import (
+        reconcile_canonical_source_for_replan,
+    )
+
+    source_reconciliation = reconcile_canonical_source_for_replan(
+        plan_dir,
+        state,
+        reason=reason,
+    )
     reset_replan_loop_state(state, target_state=STATE_PLANNED)
     save_state_merge_meta(plan_dir, state)
     try:
@@ -1164,6 +1179,8 @@ def _override_replan(
         "plan_file": str(plan_file),
         "message": f"Edit {plan_file.name} to incorporate your changes, then run the next step.",
     }
+    if source_reconciliation is not None:
+        response["canonical_source_binding"] = source_reconciliation
     return response
 
 

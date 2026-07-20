@@ -199,8 +199,6 @@ def test_agentbox_operator_profile_selected_by_config_and_discord_cli(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.delenv("MEGAPLAN_RESIDENT_MODEL_PROVIDER", raising=False)
-    monkeypatch.delenv("MEGAPLAN_RESIDENT_MODEL", raising=False)
     parser = argparse.ArgumentParser()
     _register_resident_subcommands(parser)
     args = parser.parse_args(
@@ -230,12 +228,9 @@ def test_agentbox_operator_profile_selected_by_config_and_discord_cli(
 
     assert config.profile == "agentbox_operator"
     assert dry_run["profile"] == "agentbox_operator"
-    assert dry_run["model_provider"] == "hermes"
-    assert dry_run["model"] == "zhipu:glm-5.2"
     assert isinstance(selected, AgentBoxOperatorProfile)
     assert ResidentConfig().profile == "megaplan"
-    assert ResidentConfig().model_provider == "hermes"
-    assert ResidentConfig().model_name == "zhipu:glm-5.2"
+    assert ResidentConfig().model_provider == "codex"
     assert env_config.profile == "agentbox_operator"
 
 

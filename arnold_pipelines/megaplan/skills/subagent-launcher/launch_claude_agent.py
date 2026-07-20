@@ -82,15 +82,10 @@ def build_claude_command(
     settings: Optional[str] = None,
     fallback_model: Optional[str] = None,
     output_format: str = "text",
-    verbose: bool = False,
-    session_id: Optional[str] = None,
-    resume: Optional[str] = None,
     bare: bool = False,
     dangerously_skip_permissions: bool = False,
-    no_session_persistence: bool = False,
+    no_session_persistence: bool = True,
 ) -> list[str]:
-    if session_id and resume:
-        raise ValueError("--session-id and --resume are mutually exclusive")
     cmd = [
         claude_bin,
         "--print",
@@ -125,12 +120,6 @@ def build_claude_command(
         cmd += ["--settings", settings]
     if fallback_model:
         cmd += ["--fallback-model", fallback_model]
-    if verbose:
-        cmd.append("--verbose")
-    if session_id:
-        cmd += ["--session-id", session_id]
-    if resume:
-        cmd += ["--resume", resume]
     if no_session_persistence:
         cmd.append("--no-session-persistence")
     if bare:
@@ -223,16 +212,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--setting-sources", help="Comma-separated Claude setting sources")
     parser.add_argument("--settings", help="Settings file path or JSON")
     parser.add_argument("--fallback-model", help="Optional Claude CLI fallback model list")
-    session = parser.add_mutually_exclusive_group()
-    session.add_argument("--session-id", help="Persistent UUID for a new Claude session")
-    session.add_argument("--resume", help="Resume an existing persistent Claude session UUID")
     parser.add_argument("--output-format", default="text", choices=["text", "json", "stream-json"])
-    parser.add_argument("--verbose", action="store_true", help="Request full Claude event output")
-    parser.add_argument(
-        "--no-session-persistence",
-        action="store_true",
-        help="Disable persistence explicitly; managed launches do not use this",
-    )
+    parser.add_argument("--keep-session", dest="no_session_persistence", action="store_false")
     parser.add_argument("--bare", action="store_true")
     parser.add_argument("--dangerously-skip-permissions", action="store_true")
     return parser

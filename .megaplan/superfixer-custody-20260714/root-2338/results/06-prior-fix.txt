@@ -1,0 +1,52 @@
+## Adversarial Review: `2a660fa26` — "Restore bound runtime repair custody"
+
+### What it fixes (verified)
+
+Three distinct bugs, all correctly diagnosed:
+
+1. **False-positive import-root drift (execution_binding.py).** A shared supervisor interpreter can expose `direct_url.json` for a *different* editable Arnold checkout, producing the error `editable_runtime_import_root_mismatch`. The new guard `_bound_import_root_covers_editable_metadata_mismatch` accepts this specific case when `expected.import_root == expected.editable_root == active.import_root` (all resolve to the same path via `Path.resolve(strict=False)`). The error set must be *exactly* `{"editable_runtime_import_root_mismatch"}` — no additional errors are forgiven. This is appropriately narrow.
+
+2. **Meta-repair verdict poisoning the recursion guard (meta_repair_policy.py).** `meta_repair_verdict.json` (contract `repair.meta_complete.1`, boundary `meta_repair_completion`) is a companion artifact of a canonical attempt, not a second attempt. The old code counted it, exhausting the bounded commit-custody retry. The `_is_completion_companion` filter correctly skips it.
+
+3. **Dispatch-attempt custody stuck as RUNNING (repair_contract.py).** The most impactful fix. In `project_repair_custody`, dispatch attempts were hardcoded as `ATTEMPT_STATE_RUNNING` / `REPAIRING` regardless of the managed-run manifest's actual terminal status. The new `_queue_dispatch_attempt_observation` reads the manifest, maps `observed_status` (reserved/launching/running/completed/cancelled/superseded) to attempt states, and surfaces `terminal_outcome`. Falls back safely to the legacy default on any missing/mismatched/unreadable manifest.
+
+### Guard analysis — does it weaken any runtime/custody/completion guard?
+
+**No.** All three changes tighten rather than loosen:
+
+- The binding guard *adds* a narrow exception, not a removal. It still rejects actual import-root divergence (test `test_bound_import_root_does_not_cover_actual_import_drift`).
+- The recursion guard *removes* a false positive, not a genuine recursion signal.
+- The custody observation *adds* fidelity, reducing false-RUNNING states that could mask terminal outcomes.
+
+**Minor concern:** `Path.resolve(strict=False)` on the editable-root check follows symlinks and normalizes paths. On systems where the bound import root and the active import root reside on different mount points that happen to resolve identically (e.g., bind mounts, overlayfs), this could produce an unintended match. The test only covers `tmp_path` — a single-filesystem case — so this remains unexercised.
+
+### Test coverage vs. the overly-broad editable runtime drift family
+
+Two new binding tests:
+
+| Test | Scenario | Verdict |
+|------|----------|---------|
+| `test_bound_import_root_outweighs_unrelated_global_editable_metadata` | editable_root differs but import_root matches bound | `match` ✓ |
+| `test_bound_import_root_does_not_cover_actual_import_drift` | import_root genuinely differs | `drift` ✓ |
+
+**Missing coverage:** No test where `editable_runtime_import_root_mismatch` is accompanied by *additional* errors (should correctly reject). No test for the `Path.resolve` edge case noted above. No test for incomplete/missing expected-runtime fields. The two tests cover the happy-path and the rejection-of-genuine-drift, but the error-set boundary (`len(errors) == 1` requirement) is only implicitly tested.
+
+Two new custody/projection tests cover the terminal-manifest path and the verdict-is-not-a-second-attempt path. No test for a manifest file that has gone missing between dispatch and observation, or a manifest with a mismatched `run_id`.
+
+### Sibling gaps
+
+**repair_contract.py — `project_repair_custody`:** The other attempt sources (`_attempts_from_snapshot`, `_managed_attempts_from_snapshot`, `_attempts_from_sidecar`) already compute real states. The dispatch-attempt path was the lone holdout. **No sibling gap remains in the attempt-state pipeline.**
+
+**meta_repair_policy.py:** The `_is_completion_companion` guard is correctly placed before all other filters (session match, `_is_unrecordable_launch_failure`, outcome-based bucketing). The verdict artifact cannot leak into `commit_custody_failure_ids` or `matching_ids`. **No sibling gap.**
+
+**L3 wrappers (arnold-watchdog, arnold-repair-trigger):** Both consume `project_repair_custody` → `classify_repair_dispatch`, so the terminal-state fix propagates automatically. However, no integration test verifies the end-to-end flow: a terminal failed dispatch attempt → `CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING` → watchdog re-enqueue or escalation decision. The existing test stops at asserting the bucket and terminal flag.
+
+**Repair requests/wrappers:** The `bound_import_root_match` field is added to the binding report output but has zero consumers. No L3 wrapper, status snapshot, or auditor reads this field. It's dead signal.
+
+### Missing operational/deploy/retrigger work
+
+1. **No backfill/migration.** Existing dispatch-attempt records with terminal managed runs will self-correct on next custody projection read (lazy repair), but there's no proactive sweep.
+2. **No retrigger policy for terminal-but-unsuccessful.** The new test asserts `CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING` for a failed managed attempt. What triggers the *next* attempt? The commit adds observation but no automated re-dispatch logic for this case.
+3. **No monitoring.** A previously "permanently RUNNING" attempt flipping to "failed" is a new observable event with no alerting path.
+4. **`bound_import_root_match` is orphaned.** Added to the report schema, exposed in JSON, consumed by nothing.
+5. **No deployment gate test.** No smoke test that exercises the full custody loop with a real (or mock) managed manifest in the queue-root directory structure.

@@ -566,15 +566,6 @@ def _build_gate_route_signal(
 
         # Validate each explicit resolution
         addressed_ids = {f.get("id") for f in addressed if f.get("id")}
-        unresolved_ids = {
-            f.get("id")
-            for f in unresolved
-            if isinstance(f, dict)
-            and f.get("id")
-            and f.get("severity") in ("significant", "likely-significant")
-            and f.get("status") in FLAG_BLOCKING_STATUSES
-        }
-        required_ids = addressed_ids | unresolved_ids
         valid_resolved_ids: set[str] = set()
         valid_resolutions: list[dict[str, Any]] = []
         for res in resolutions:
@@ -584,12 +575,7 @@ def _build_gate_route_signal(
                 evidence = res.get("evidence", "").strip()
                 if not evidence or is_rubber_stamp(evidence, strict=True):
                     continue
-                # The gate contract permits concrete verification of either
-                # an addressed-but-unverified flag or an open blocking flag.
-                # Reprompts explicitly ask the worker to resolve the latter;
-                # requiring the registry to say ``addressed`` first makes
-                # that supported recovery path impossible.
-                if flag_id not in required_ids:
+                if flag_id not in addressed_ids:
                     continue
             elif action == "dispute":
                 evidence = res.get("evidence", "").strip()

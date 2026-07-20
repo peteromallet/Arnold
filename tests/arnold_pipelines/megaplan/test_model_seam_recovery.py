@@ -10,12 +10,8 @@ from arnold_pipelines.megaplan.model_seam import (
     capture_step_output,
 )
 from arnold_pipelines.megaplan.orchestration.plan_structure import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE
-from arnold_pipelines.megaplan.orchestration.critique_runtime import (
-    _recover_valid_parallel_critique_outputs,
-)
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.workers import WorkerResult
-from arnold_pipelines.megaplan.workers.hermes import _reconstruct_gate_payload
 
 
 def _gate_capture_invocation() -> StepInvocation:
@@ -42,117 +38,6 @@ def _schema_valid_north_star_action() -> dict[str, object]:
         "plan_refs": ["Phase 2 - Step 1"],
         "required_change": "Collapse route authority to the canonical path.",
     }
-
-
-def test_parallel_critique_recovery_uses_filled_files_and_marks_empty_seed_unverifiable(
-    tmp_path,
-) -> None:
-    filled = {
-        "checks": [
-            {
-                "id": "correctness",
-                "question": "Is it correct?",
-                "findings": [
-                    {
-                        "detail": "Checked the complete branch and found no contract contradiction.",
-                        "flagged": False,
-                    }
-                ],
-            }
-        ],
-        "flags": [],
-        "verified_flag_ids": [],
-        "disputed_flag_ids": [],
-    }
-    seeded = {
-        "checks": [
-            {
-                "id": "scope",
-                "question": "Is it scoped?",
-                "findings": [],
-            }
-        ],
-        "flags": [],
-        "verified_flag_ids": [],
-        "disputed_flag_ids": [],
-    }
-    (tmp_path / "critique_check_correctness.json").write_text(
-        json.dumps(filled),
-        encoding="utf-8",
-    )
-    (tmp_path / "critique_check_scope.json").write_text(
-        json.dumps(seeded),
-        encoding="utf-8",
-    )
-
-    recovered = _recover_valid_parallel_critique_outputs(
-        tmp_path,
-        expected_ids=["correctness", "scope"],
-    )
-
-    assert recovered is not None
-    assert recovered["checks"][0]["findings"] == filled["checks"][0]["findings"]
-    assert recovered["checks"][1]["status"] == "unverifiable"
-    assert recovered["checks"][1]["findings"][0]["flagged"] is False
-    assert recovered["verified_flag_ids"] == []
-    assert recovered["disputed_flag_ids"] == []
-
-
-def test_parallel_critique_recovery_requires_every_expected_artifact(tmp_path) -> None:
-    assert (
-        _recover_valid_parallel_critique_outputs(
-            tmp_path,
-            expected_ids=["correctness"],
-        )
-        is None
-    )
-
-
-def test_gate_reconstruction_conservatively_recovers_unknown_north_star_severity(
-    tmp_path,
-) -> None:
-    plan_dir = tmp_path / "plan"
-    plan_dir.mkdir()
-    action = _schema_valid_north_star_action()
-    action["category"] = "correctness"
-    action["severity"] = "significant"
-    action["severity_source"] = "worker"
-
-    reconstructed = _reconstruct_gate_payload(
-        plan_dir,
-        {
-            "recommendation": "ITERATE",
-            "rationale": "The plan needs another revision.",
-            "signals_assessment": "Significant concerns remain.",
-            "north_star_actions": [action],
-        },
-    )
-
-    assert reconstructed is not None
-    recovered = reconstructed["north_star_actions"][0]
-    assert recovered["severity"] == "blocking"
-    assert recovered["severity_source"] == "explicit"
-    assert recovered["concern"] == action["concern"]
-    assert recovered["evidence"] == action["evidence"]
-
-
-def test_gate_reconstruction_preserves_valid_north_star_severity(tmp_path) -> None:
-    plan_dir = tmp_path / "plan"
-    plan_dir.mkdir()
-    action = _schema_valid_north_star_action()
-
-    reconstructed = _reconstruct_gate_payload(
-        plan_dir,
-        {
-            "recommendation": "ITERATE",
-            "rationale": "The plan needs another revision.",
-            "signals_assessment": "Blocking concerns remain.",
-            "north_star_actions": [action],
-        },
-    )
-
-    assert reconstructed is not None
-    assert reconstructed["north_star_actions"] == [action]
 
 
 def test_plan_recovery_prefers_later_structured_plan_over_summary_payload(

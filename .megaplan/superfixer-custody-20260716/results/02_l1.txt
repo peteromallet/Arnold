@@ -1,0 +1,22 @@
+## Verdict: TRACKED/FIXED/INTENT/CONTEXT
+
+### TRACKED: Partial
+Watchdog correctly detected the stall (decision=`broken_superfixer`, `custody:blocked-relaunch-failure`, `repair:stale` per superfixer-custody-20260715 watchdog-sight). The watchdog's `_superfixer_cycle_evidence` correctly computes `accepted_unclaimed` as actionable. But the observation path itself was blind: chain runner dead since ~21:47Z Jul 14 while plan executor continued independently through gate→finalize→execute→`chain_execution_binding_drift` (root-2338/01-observation.txt lines 27-42). The marker stayed stale at `running` with zero live processes.
+
+### FIXED: No
+Four commits landed on `editible-install` Jul 14 evening (78f68642, 5c5932f4, 98c56727, e910b289) — fixed the review-handler token gap and restored `quality_gate_blocked`/`deterministic_quality_blocked` to the L1 whitelist. But `2a660fa26b` ("Restore bound runtime repair custody") exists only on `origin/editible-install`, 39 commits diverged from the deployed base `616d5bb839` — **never deployed** (root-2338/07-external.txt lines 32-36). The chain's `require_editable_runtime_match: true` gate would reject it anyway. The fixes addressed the Jul 14 incident class but the current m6 blocker is a *new* failure shape the deployed runtime cannot see.
+
+### INTENT: Correct, structurally unreachable
+`_classify_repair_dispatch_canonical` at `repair_contract.py:913-966` has the correct `_has_terminality_contradiction` bypass (line 930) — when incomplete milestones exist (`completed < total`), it should reopen custody to L1 dispatch (line 943-954). But this path is **never reached** because `classify_completed` runs first in the ordered classifier chain (`classifiers.py:736`, position 1) and produces `CanonicalState.COMPLETED` via the `real_work_complete` heuristic branch (lines 443-451). The dispatch classifier then takes the early `COMPLETED→TERMINAL` return at line 955 before terminality-contradiction can intervene.
+
+### CONTEXT: Missing at two seams
+1. **`classify_completed`/`real_work_complete` (`classifiers.py:443-451`):** No guard for active repair custody. The heuristic fires on `changed_file_count > 0` + stale chain label + not live + no implementation block — but never checks `ctx.has_active_repair`. The stale m5-era dead claim's `owner.json` (dead PID) still satisfies `_has_durable_repair_custody` (lines 194-226), which only checks `active_requests ∩ active_claims` — no PID-liveness validation. `inspect_repair_lock()` can detect stale owners but no projection-pipeline caller uses it (queue audit, seam #4).
+
+2. **Claim-liveness dead zone (`repair_contract.py:594-602`):** Custody projection reads claim `owner.json` statically. Dead claims persist indefinitely, locking the queue. New m6 requests are accepted but `durable_repair_active()` returns false (`active_request_ids ∩ active_claim_ids` is empty), and the COMPLETED state blocks the terminality-contradiction path that would otherwise reopen dispatch.
+
+### First Broken Mechanism
+**`classify_completed` → `real_work_complete` branch** in `classifiers.py:443-451`. This is the root cause: it overrides authority completion with a file-change heuristic that ignores active repair custody, producing COMPLETED which the dispatch classifier converts to TERMINAL. This blocks all new claims.
+
+### Source/Test Targets
+- **Source:** `classifiers.py:443-451` — add `and not ctx.has_active_repair` guard to `real_work_complete` condition; `classifiers.py:194-226` (`_has_durable_repair_custody`) — add PID-liveness check via `inspect_repair_lock()`; `repair_contract.py:594-602` — filter dead claims in projection.
+- **Tests:** `tests/cloud/test_repair_custody.py:205-275` — add stale-claim-owner (dead PID) fixture verifying `active_claim_request_ids` excludes dead claims; new test for `classify_completed` with `has_active_repair=True` asserting no false COMPLETED; new integration test for `real_work_complete` + incomplete milestones → L1 dispatch (not TERMINAL).

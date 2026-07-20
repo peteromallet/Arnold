@@ -1,0 +1,14 @@
+Act as the sole synthesis and delivery owner for a read-only architecture/research investigation. The user believes the prior critique-loop recommendation may be imposing a technical lineage/schema solution when the recurring critiques may primarily be a context failure. Critically evaluate that hypothesis and design the strongest context-driven solution that trusts the language models to reason, while retaining only the minimum deterministic machinery needed for reliable custody.
+
+Start from the prior durable audit run subagent-20260716-194149-a83b43da and its indexed Megaplan Maintenance research artifact. Inspect the actual M6 critique, critique-evaluator, revision, and gate artifacts across all available iterations, plus the relevant prompt/runtime code at the pinned target revision. Separate evidence, inference, and missing telemetry.
+
+Answer concretely:
+
+1. Which recurring findings are best explained by missing, stale, fragmented, or poorly framed context in individual critiquers, the critique evaluator, reviser, or gate?
+2. What context does each role currently receive, what is absent, and where is context lost between stages or iterations?
+3. Could the critique evaluator (or a dedicated context-curator subagent it launches) synthesize a compact evolving briefing that tells later critiquers: areas already examined, dispositions and rationale, evidence that satisfied an issue, accepted constraints/tradeoffs, revisit triggers, unresolved tensions, and promising directions—without forbidding independent rediscovery?
+4. Compare at least three designs: (a) context-curator/evaluator subagent with natural-language memory, (b) two-pass blind critique then history-aware reconciliation, and (c) structured semantic-lineage/state machinery. Include hybrids. Assess anchoring, premature closure, context-window pressure, hallucinated closure, semantic recurrence detection, implementation complexity, and model autonomy.
+5. Propose the least technical viable intervention first: prompts, stage ordering, context packaging, subagent roles, and bounded memory summaries. State exactly what deterministic checks remain necessary and why.
+6. Define a shadow experiment using preserved M6 artifacts: success metrics, comparison groups, failure criteria, and how to distinguish better context from model/profile effects.
+
+Do not modify source, chain state, services, schedules, or runtime. You may update or add a canonical research document only if the resident workflow explicitly treats that as part of research delivery; cite raw run/artifact evidence and index it under the closest existing initiative rather than creating a new initiative. Deliver one concise user-facing synthesis automatically, clearly stating what is proven versus hypothesized and recommending the next reversible step. Do not merely repeat the previous audit's technical proposal; challenge it.

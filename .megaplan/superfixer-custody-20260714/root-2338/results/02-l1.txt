@@ -1,0 +1,44 @@
+## Forensic Verdict: L1 Ordinary Repair — custody-control-plane-20260714
+
+### First Concrete L1 Failure
+
+**File**: `arnold_pipelines/megaplan/cloud/handlers/review.py` — `_deterministic_review_block_evidence`
+**Evidence**: The review artifact at `m5-run-authority-receipt-20260714-1428/state.json` recorded `current_state=blocked`, failure `review_quality_blocked_unknown`, review custody hash `sha256:587b481c...`. The artifact contained detailed status strings like `"failed: ..."` but the handler accepted only exact `"fail"`, `"failed"`, or `"error"`. Detailed statuses were **dropped**, producing no blocker identity.
+
+**Second, compounding defect**: Merge commit `cbe69337...` stripped `quality_gate_blocked` and `deterministic_quality_blocked` from the L1 repairable-token whitelist. The one-attempt deterministic-quality path existed but was **unreachable** — the token whitelist gap made it invisible to `_is_known_repairable_shape()` at `repair_contract.py:3256`.
+
+### TRACKED: Partial
+
+Watchdog produced accepted request `84134d62...` at `18:33:55Z` (session marker at `/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.json`, line 21), but it lacked blocker/task identity and remained **unclaimed**. Queue artifact: `/workspace/.megaplan/repair-queue/requests/84134d62...`. No attempt was recorded until post-fix retrigger at `19:07:18Z`.
+
+### FIXED: No
+
+No L1 worker existed. The repair attempt at `20260714T190718Z` (`c7dde511...`) was the **first and only** L1 attempt for this session. It launched managed run `managed-automatic-repair-6927a5c43ce698a84241` (manifest at `/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/resident-subagents/managed-automatic-repair-6927a5c43ce698a84241/manifest.json`).
+
+### INTENT: Present but unreachable
+
+`_classify_repair_dispatch_canonical` at `repair_contract.py:891` contains the correct L1 dispatch path for `REAL_IMPLEMENTATION_BLOCK` / `RETRYABLE_EXECUTION_BLOCK` (line 1005-1043). But without the whitelisted failure tokens, the resolver could not reach `CanonicalState.REAL_IMPLEMENTATION_BLOCK`. The bounded one-attempt policy remained intact but was gated behind a token it could not match.
+
+### CONTEXT: Missing — Token Drift Proven
+
+1. **Review handler gap** (`handlers/review.py`): Only `{"fail","failed","error"}` matched; `"failed: ..."` did not. Evidence: investigation report lines 54-59.
+
+2. **Token whitelist regression**: The merge that should have carried forward `quality_gate_blocked` and `deterministic_quality_blocked` lost both. The `_is_known_repairable_shape` function at `repair_contract.py:3290-3296` requires `failure_kind` in `{"blocked_recovery_not_resolved","execution_blocked","no_next_step_state_mapping_failure"}` — none of which matched.
+
+### Key Behavioral Assessments
+
+| Test | Verdict | Evidence |
+|------|---------|----------|
+| **Stale custody marker** | Handled correctly — no marker existed; the failure was fresh | Investigation report §1 |
+| **Claimant liveness** | No claimant to test — request was accepted but unclaimed | Queue attempt `c7dde511...`, status=`"launched"` not `"claimed"` |
+| **Request coalescing** | Failed — `durable_repair_active()` at line 2800 returned false because `active_request_ids & active_claim_ids` was empty | `repair_contract.py:2820` |
+| **Autonomy gates** | Held correctly — review rework budget 2 exhausted; path stopped instead of spinning | Investigation report §"deterministic spin" |
+| **Token/state drift** | **CONFIRMED** — token whitelist gap + review handler mismatch | Lines 55-59 of investigation report |
+| **False-success** | Absent — no attempt made; plan/review correctly contradicted prior execute success | `state=verified_recovered` but only after manual override |
+| **Deterministic retry** | Functioned post-fix — attempt 3 succeeded (provenance `repair_loop_worker`), but attempt 1 failed on missing provenance, attempt 2 on model launch | Investigation report lines 150-170 |
+| **Circuit-breaker** | Held — L2 correctly recorded `NO_FIX` and denied mutation | Investigation report lines 66-69 |
+| **Process liveness** | No chain runner, phase worker, L1/L2 worker owned target; watchdog only live process | Investigation report line 14-17 |
+
+### Root Cause
+
+The **two-part** L1 pre-dispatch failure: (1) review handler dropped detailed `"failed: ..."` statuses, producing no blocker identity, and (2) the token whitelist lost `quality_gate_blocked`/`deterministic_quality_blocked`, making the remaining one-attempt path invisible. The incident was ultimately marked `verified_recovered` but only after supervisor-level source fixes (4 commits on `editible-install`) and a manual `quality-gate resolve --resolution fixed` override — the ordinary L1 path never autonomously recovered.

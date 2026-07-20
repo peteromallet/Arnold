@@ -4,7 +4,8 @@ Canonical initiative for Megaplan maintenance research, watchdog supervision, sa
 
 The chain-referenced milestone briefs under `briefs/` are canonical. Architecture decisions live under `decisions/`, evidence syntheses under `research/`, and operator handoffs under `handoff/`.
 
-## Resident-managed scheduling
+## Research index
 
-- [Flexible resident-managed scheduling implementation and operator handoff](handoff/flexible-resident-managed-scheduling-implementation-20260716.md) — durable definitions, immutable occurrences, managed-agent launch custody, lifecycle, recovery, quotas, and observability.
-- Canonical requirements: [flexible resident-managed subagent scheduling architecture](research/flexible-resident-managed-subagent-scheduling-architecture-20260716.md).
+- [L3 “repair the repairer” prompt recommendations](research/l3-repair-the-repairer-prompt-recommendations-20260716.md) — canonical evidence comparison of resident run `subagent-20260716-170615-ea341358` with the current L3/L2 generation pathway; research and staged recommendations only.
+- [Flexible resident-managed subagent scheduling architecture](research/flexible-resident-managed-subagent-scheduling-architecture-20260716.md) — evidence-led specification for one-shot, recurring, calendar, and event-triggered resident-managed Codex work; research only, with no execution authority.
+- [Resident six-hour and daily architecture synthesis](research/resident-six-hour-and-daily-architecture-synthesis-20260711.md) — shared maintenance control-plane findings for the six-hour unblocker and daily auditor.

@@ -83,8 +83,12 @@ def test_megaplan_resident_tool_catalog_exposes_initiatives_policy(tmp_path: Pat
     assert ".megaplan/initiatives/<slug>/" in prompt
     assert "Never create planning docs directly under .megaplan/briefs" in prompt
     assert "search initiatives by rough slug/title/description first" in prompt
-    assert "Default to `launch_subagent` for any user-requested execution work" in prompt
-    assert "make that tool call before replying" in prompt
+    assert "independent actionable sub-problems" in prompt
+    assert "one clear owner per sub-problem" in prompt
+    assert "explanation, review, status" in prompt
+    assert "trivial or non-independent fragments" in prompt
+    assert "authorization boundaries" in prompt
+    assert "returned durable run ID" in prompt
     assert "Do not babysit normal delegated work or Megaplan/cloud chains" in prompt
     assert "Babysitting should be exceptionally rare" in prompt
     assert "Use `progress.display_state` as its canonical status label" in prompt

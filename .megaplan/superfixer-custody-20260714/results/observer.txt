@@ -1,0 +1,56 @@
+Here is the read-only forensic probe result.
+
+---
+
+**OBSERVATION: HEALTHY** — the observation surface is live, consensus across all evidence layers, and no masquerade risk detected.
+
+---
+
+### Canonical command — executed 2026-07-14 18:39:01 UTC
+
+```
+python -P -m arnold_pipelines.megaplan cloud status --all --compact \
+  --cloud-yaml /workspace/arnold/.megaplan/initiatives/runauthority-epic/cloud.yaml
+```
+
+**Result**: 2 running, 1 repairing, 0 blocked, 0 attention, 4 complete.  
+Target session `custody-control-plane-20260714` → **blocked** (`review_quality_blocked_unknown`, `needs_human`). Plan `m5-run-authority-receipt-20260714-1428` at `current_state: blocked`, iteration 2, PR #250 open, policy `merge_policy: review` + `auto_approve: false`.
+
+Active evidence process: `reconcile_evidence.py run-current-suite` (pid 2655474, up since ~18:24 UTC). Three resident codex subagents are concurrently investigating the same failure (superfixer debug + epic counterfactual + synthesis).
+
+---
+
+### PATH / PYTHONPATH / import origin
+
+| Artifact | Value |
+|---|---|
+| **python** | `/root/.pyenv/versions/3.11.11/bin/python` (3.11.11) |
+| **PYTHONPATH** | `/workspace/arnold-consolidation-20260714:` |
+| **`arnold_pipelines.megaplan.__file__`** | `/workspace/arnold-consolidation-20260714/arnold_pipelines/megaplan/__init__.py` |
+| **cloud.yaml `src_path`** | `/workspace/arnold` |
+| **Additional sys.path entries** | `/workspace`, `/workspace/arnold-custody-runtime` |
+
+**Import origin ≠ cloud.yaml `src_path`**: The live import resolves from `arnold-consolidation-20260714` (PYTHONPATH), NOT `/workspace/arnold`. The resident runtime revision is `2a5c263df865`. This is an *expected* discrepancy for this box — the resident runtime pins a consolidation worktree, and the `cloud.yaml`'s `megaplan.src_path` is the project worktree not the runtime engine. The status observer is internally consistent (uses `PYTHONSAFEPATH=1` and its own engine resolution).
+
+---
+
+### Container/workspace visibility
+
+- **Container**: `megaplan-cloud-agent` (SSH target 159.69.51.216:22)
+- **Target workspace**: `/workspace/custody-control-plane-20260714/Arnold` — exists, populated, `.megaplan/` structure intact
+- **Session marker**: `/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.json` — `should_run: true`, `remote_spec` resolves to the correct chain.yaml
+- **Chain state**: `last_state: blocked`, `completion_contract_mode: shadow`, `full_suite_backstop_mode: shadow` (M5 brief requires enforced mode — this is a known gate failure, not a stale observation)
+- **tmux**: No dedicated session for this chain; watchdog session is alive
+
+---
+
+### No stale/failed masquerade risk
+
+No evidence of a stale observer masquerading as a missing session or wrong state:
+
+- The `status` command's JSON output timestamp (2026-07-14T18:39:01Z) is fresh, within seconds of invocation.
+- The custody contract (`custody.blocked_relaunch.1`) correctly fingerprints zero live runner processes and the `needs_human` watchdog status.
+- The chain JSON, plan state.json, and session marker are all mutually consistent on `blocked`.
+- The `remote_spec` in the marker resolves to the real chain.yaml — no `workspace_missing` or `spec_missing` diagnostic.
+- A live `reconcile_evidence.py` process confirms the plan is genuinely active, not orphaned.
+- The `runauthority-epic-cloud` session (separate) correctly shows `complete` — no cross-session shadowing.

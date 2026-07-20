@@ -1,0 +1,1 @@
+Act as contributor 1 in a four-agent dependency-chain test. Choose exactly one random, ordinary English word. Record it clearly in your durable result as `WORD_1: <word>`. Do not message the user and do not modify the repository.

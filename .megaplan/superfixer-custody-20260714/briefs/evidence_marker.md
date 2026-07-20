@@ -1,0 +1,1 @@
+Read-only evidence-level probe. Target custody-control-plane-20260714. Use canonical cloud status first, then inspect marker JSON and sibling health/repair projections under /workspace/.megaplan/cloud-sessions, including mtimes and relevant fields. Do not trust derived labels. No writes. Return <=300 words with exact paths/timestamps and contradictions/staleness.

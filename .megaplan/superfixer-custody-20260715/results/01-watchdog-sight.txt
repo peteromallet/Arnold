@@ -1,0 +1,28 @@
+Now I have all six evidence sources triangulated. Let me synthesize the verdict.
+
+---
+
+## Verdict: `custody-control-plane-20260714`
+
+### Watchdog/Detection Classification
+
+**TRACKED — YES.** The watchdog correctly tracks this session. Compact status confirms `decision=broken_superfixer`, `custody:blocked-relaunch-failure`, `repair:stale`. The watchdog report accurately overrides the stale session marker (which claims `running` from ~12:00Z) with `alive_sessions: 0`. Per SKILL.md §119-134, the watchdog's classification is authoritative over raw marker/tmux state — and it's correct here.
+
+**FIXED — NO.** Commit `1322b318` (pushed 14:54Z July 15) patched the T24 regression (missing `_repair_loop_acceptance_gate` in wrapper-function extraction), but the review fingerprint `75f9680fb983…` remains uncleared in plan state. `latest_failure_cleared: false`. The chain was never relaunched. PR #255 remains open, unmerged. No semantic progress since the 13:51Z review failure. The fix is code-only — the plan engine has not re-validated.
+
+**INTENT — CORRECT, STALLED.** The watchdog correctly classified this as `broken_superfixer` — meaning L1/L2 repair cannot recover it. But the repair pipeline failed: `request/claim/attempt=1/0/0` — one request was accepted, zero claims made. The repair loop degraded across two iterations (iter1: fix pushed but couldn't clear fingerprint; iter2: crashed with context-build failure at 15:12Z). The durable repair goal `repair-goal-570fda…` remains active but unserviced.
+
+**CONTEXT — GAP AT CLAIM BOUNDARY.** The watchdog has sufficient context to *detect* the stall (correct `broken_superfixer`, correct `blocked-relaunch-failure`). The gap is at the repair *dispatch* seam: the request was accepted at ~18:33Z July 14 but never claimed by any repair worker. The claim mechanism failed silently — the request sat unclaimed while two ad-hoc repair iterations operated outside the formal custody contract.
+
+### Contradictions (UTC mtimes)
+
+| # | Contradiction | Resolution |
+|---|--------------|------------|
+| **C1** | Session marker `status: running, session_alive: true` (mtime ~12:00Z) vs. zero OS processes, watchdog `alive_sessions: 0` (15:13Z) | **Marker is stale.** Watchdog is authoritative per SKILL.md. |
+| **C2** | Fix commit `1322b318` pushed 14:54Z vs. plan `state.json` still `blocked` with `latest_failure.recorded_at: 13:51Z` | **Code fixed, plan never revalidated.** No relaunch occurred. |
+| **C3** | Repair request created ~18:33Z Jul 14, `claim=0, attempt=0` vs. two repair iterations (14:45Z, 15:12Z Jul 15) that pushed code and crashed | **Dispatch gap.** Iterations operated outside the formal request/claim contract. |
+| **C4** | Watchdog `decision=broken_superfixer` vs. L2/L3 backstops not engaging (L2 never invoked for this session; L3 audit predates the failure) | **Cadence gap.** L3's next cycle was hours away; L2 had no failed L1 attempt to escalate. |
+
+### Decisive Conclusion
+
+The session is **blocked with a code-fix pushed but semantically uncleared**. M5 (PR #250) is merged; M5A (PR #255) is stalled at review with the T24 fingerprint unresolved. The watchdog *detects* this correctly but the repair dispatch chain is broken at the claim boundary — requests are accepted but never picked up. The `broken_superfixer` classification is accurate: this requires operator intervention to relaunch the chain against the patched branch so review can re-execute and clear the fingerprint. No mutation needed — just a fresh `cloud chain` relaunch against the existing workspace.

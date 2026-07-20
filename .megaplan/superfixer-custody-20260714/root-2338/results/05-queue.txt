@@ -1,0 +1,65 @@
+## Repair Request Lifecycle Audit: Custody-Control-Plane (20260714)
+
+### Architecture Summary (Trace)
+
+**Writers** (`.megaplan/repair-queue/` + lock dirs):
+- `repair_requests.enqueue_repair_request()` writes `requests/<id>.json` + `decisions/<ts>-<id>.json`; coalesces via `problem_signature_key` hash identity (first-wins, no duplicate dispatch). `arnold_pipelines/megaplan/cloud/repair_requests.py:173-267`
+- `repair_requests.write_dispatch_attempt()` writes immutable `attempts/<ts>-<id>.json` proof records. `repair_requests.py:466-500+`
+- `repair_lock.acquire_repair_lock()` writes `active-claims/<blocker_hash>.lock/` (atomic `mkdir`) + `owner.json` (PID/command/started_at). `repair_lock.py:146-196`
+- Plan state writes at two competing paths: `_core/state.py:840` (locked) vs `auto.py:4093` (unlocked atomic-rename) — **GAP #1** read-coherence risk.
+
+**Readers** (projection pipeline):
+- `resolve_current_target()` → `NormalizedEvidence` → `ResolverContext.build()` → ordered `ORDERED_CLASSIFIERS` → `CanonicalRunState`
+- `project_repair_custody()` reads queue requests/decisions/attempts + claim locks + repair-data sidecars → `RepairCustodyProjection`
+- `classify_repair_dispatch()` consumes both → `RepairDispatchDecision`
+- Dispatch wiring enforced at: `_classify_repair_dispatch_canonical()` (hard gate when `canonical_run_state` is present, `repair_contract.py:891-1116`), fallback to `_classify_repair_dispatch_legacy()` only when no canonical state AND no `event_plan_dir`.
+
+---
+
+### Failure Sequence: Stale Claim → False Completed → Dead Custody
+
+1. **Claim made**: `acquire_repair_lock` creates `active-claims/<blocker_hash>.lock/owner.json` with live PID. `repair_requests.py:128-133`
+2. **Repair process dies**: PID exits; lock dir remains; `owner.json` persists.
+3. **Plan advances to terminal-ish state**: Files changed > 0, chain labels `failed`/`no_next_step` (stale).
+4. **Resolver fires `classify_completed`, `real_work_complete` branch**: `classifiers.py:443-451` — `changed_file_count > 0` + stale chain label + `not is_live` + no implementation block → `COMPLETED, confidence="medium"`. **This overrides authority completion with a heuristic.**
+5. **Dispatch classifier sees `COMPLETED` → `TERMINAL`**: `repair_contract.py:933-944` returns `DISPATCH_DECISION_TERMINAL` with no claim-liveness cross-check.
+6. **Custody projection still reports active claim**: `repair_contract.py:594-602` reads `owner.json` statically — never validates PID liveness. `active_claim_request_ids` shows dead claim as active.
+7. **Result**: System declares recovery successful while a dead repair claim locks the queue. No re-dispatch triggers because `COMPLETED` blocks all repair paths. Claim dir rots until manual intervention.
+
+---
+
+### Concrete Code Seams Needing Change
+
+| # | Location | Gap |
+|---|----------|-----|
+| 1 | `repair_contract.py:594-602` | Claim-owner read is static; should call `inspect_repair_lock()` or at minimum `os.kill(pid, 0)` to filter dead claims from `active_claim_request_ids`. |
+| 2 | `classifiers.py:443-451` | `real_work_complete` branch has no guard for active (stale-PID) repair custody. Should check `ctx.has_active_repair` before overriding stale chain labels with `COMPLETED`. |
+| 3 | `repair_contract.py:933-944` | `COMPLETED→TERMINAL` dispatch skips claim-liveness validation entirely. Should cross-check `durable_repair_active()` or `active_claim_request_ids` liveness before terminalizing. |
+| 4 | `repair_lock.py:77-143` | `inspect_repair_lock()` detects stale owners correctly (PID liveness, timeout, process mismatch), but **no caller in the projection pipeline uses it**. The lock inspection is only used at acquisition time. |
+| 5 | `classifiers.py:194-226` | `_has_durable_repair_custody()` checks `active_requests ∩ active_claims` and non-terminal attempt records but never validates claim-owner PID liveness. A dead claim with matching request_id passes this check. |
+
+### Tests Needing Change
+
+| Test File | Test | Gap |
+|-----------|------|-----|
+| `tests/cloud/test_repair_custody.py:205-275` | `test_custody_projection_keeps_request_decisions_separate_from_attempt_outcomes` | No stale-claim-owner (dead PID) fixture. Should add a variant where owner PID is dead but `owner.json` exists, verifying `active_claim_request_ids` excludes it. |
+| `tests/cloud/test_repair_custody.py:278-333` | `test_custody_projection_reads_immutable_queue_dispatch_attempt` | No claim-liveness cross-check. |
+| `tests/cloud/test_cloud_status_custody.py:199-218` | `test_cloud_status_exposes_repairing_bucket_without_changing_effective_status` | Doesn't exercise the `classify_completed` `→real_work_complete` branch with a stale claim present. |
+| `tests/cloud/test_meta_repair_trigger_custody.py` | All tests | No fixture for the "dead claim + files changed + stale chain label → false COMPLETED" path. |
+| No test exists | Stale-claim-owner liveness in projection | Must add a test proving that `project_repair_custody` excludes claims whose PID is not live (requires `is_pid_live` probe injection into the projection, or a new `_is_claim_live()` helper). |
+
+### State Token Vocabulary
+
+**Canonical states** (`CanonicalState` enum, `model.py:18-36`): `RUNNING`, `PAUSED`, `REPAIRING`, `RETRYABLE_EXECUTION_BLOCK`, `REAL_IMPLEMENTATION_BLOCK`, `HUMAN_ACTION_REQUIRED`, `COMPLETED`, `STALE_DERIVED_STATE`, `BROKEN_STATE_MACHINE`, `UNKNOWN`
+
+**Custody buckets** (`repair_contract.py:127-147`): `repairing`, `repairable_not_repairing`, `human_required`, `paused`, `broken_superfixer`
+
+**Dispatch decisions** (`repair_contract.py:297-320`): `dispatch_l1_repair`, `repairing`, `human_required`, `broken_superfixer`, `no_action`, `terminal`
+
+**Request statuses** (`repair_contract.py:83-103`): `accepted`, `coalesced`, `stale`, `superseded`, `dispatched`
+
+**Attempt states** (`repair_contract.py:105-125`): `claimed`, `running`, `succeeded`, `failed`, `cancelled`
+
+**Blocker fingerprint V1** (`repair_contract.py:169-190`): `schema_version`, `current_state`, `retry_strategy`, `failure_kind`, `phase_or_step`, `milestone_or_plan`, `blocked_task_id`, `target_fingerprint`
+
+**ARNOLD_AUTONOMY gates**: The dispatch classifier (`_classify_repair_dispatch_canonical`) is the hard enforcement point. `MECHANICAL_BLOCKER` verdicts are never human gates (SD3, `classifiers.py:567-569`). `PAUSED` forbids all recovery. `COMPLETED` blocks dispatch unconditionally (the bug surface). `UNKNOWN` defaults to `broken_superfixer` when resolver enforcement is active.

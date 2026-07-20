@@ -1,0 +1,31 @@
+## L2 Meta-Repair Audit: `custody-control-plane-20260714`
+
+### TRACKED / FIXED / INTENT / CONTEXT
+
+**TRACKED — Partial.** The watchdog correctly dispatched `managed-automatic-meta-repair-f99bd14efdd854d23249` (pid 2413595, 2026-07-16T16:56:33Z) with trigger `persistent_recurring_retry`, session `custody-control-plane-20260714`, and blocker `blocker:v2:023b4ef008e27428040f1d2d7305d9b2b04c66f67864448ef921626d50e2aa55`. The investigation subagent `managed-automatic-research-subagent-2ecff6d901481d059e74` was durably accepted (digest `fc8235887e26d17665aac172bdff104283651d64a83248eee0711b70c309ffb9`). However, the blocker identity was stale — bound to the critique-phase `duplicate FLAG-001` failure resolved hours earlier, not the active gate-phase `repeated_failure_signature` (`enum_mismatch at /north_star_actions/2/severity`, signature `2b383974...`).
+
+**FIXED — No.** Exit 77, `status: failed`. The run logged "L2 replan effects blocked by master-plus-path authorization gate." No code mutation, deployment, or L1 retrigger occurred. The `result.json` confirms `returncode: 77, terminal_outcome: failed`.
+
+**INTENT — Correct, misdirected.** L2 correctly classified itself as a retry of `managed-automatic-meta-repair-6878849ac2527f1208ba` and parented against L1 run `managed-automatic-repair-07e3baf89d5f256e5abf`. But the repair request `844ad06e9a0dd0bd2af37b53e5c8f4021b9117adfae2b8d4756164281450bdd2` was generated at 13:35:03Z for the third critique failure — before the plan had progressed through successful critique (14:21/14:34), gate (15:30), revise (15:35), critique (15:40), gate (15:43), revise (15:47), and the final gate failure (15:58). L2 investigated a resolved problem.
+
+**CONTEXT — Stale.** The `needs-human` escalation from 2026-07-15T20:20Z (`/workspace/.megaplan/cloud-sessions/repair-data/meta/needs-human-custody-control-plane-20260714.json`) flagged RECURSION with empty `blocker_id` and three historical records (`34941d34`, `ecf80350`, `meta_repair_verdict`). The new meta-repair's recursion guard checked against blocker `023b4ef...` and found zero matches — because the guard keyed on the stale blocker, not the updated plan failure. No `meta_investigation` artifact was persisted under `/workspace/.megaplan/cloud-sessions/repair-data/meta/`.
+
+---
+
+### How Missing PR Metadata Displaced the Actual Blocker
+
+The session marker (`/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.json`) captured `milestone_boundary_evidence` with M5 at PR 250 "open" and M5A at PR 255 "open," but **M6 had no `pr_number` or `pr_state`** — only `tip_ref`, `branch_head`, and `pr_head`. Meanwhile, the chain state (`/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/.chains/chain-1e998199f544.json`) shows M5 as PR 250 **merged**, M5A as local-only (no PR), and M6 at PR 275 **open**.
+
+This gap caused the watchdog's repair-trigger (watchdog.log line 113880) to classify L1 mutation as `l1_mutation_not_authorized` with `custody_bucket: repairable_not_repairing`. The mutation-authorization gate in `repair_contract.py` (`/workspace/arnold-consolidation-20260714/arnold_pipelines/megaplan/cloud/repair_contract.py`) requires PR state to determine whether a review-gate is live. Without it, the watchdog defaulted to treating the problem as a PR-gate authorization issue — not the actual structural gate failure (`repeated_failure_signature` on `enum_mismatch`). The L2 meta-repair inherited this misdiagnosis, operating on stale blocker identity while the real blocker (gate-contract enum validation) went unaddressed.
+
+### Safe-Mutation Handoff: Invalid
+
+No valid handoff exists. The research subagent `managed-automatic-research-subagent-2ecff6d901481d059e74` was accepted but produced no receipt or report artifact. The meta-repair exited 77 because: (a) the Codex master-plus-path authorization gate denied mutation (`commit_allowed=false`); (b) the blocker identity was stale relative to the live plan state; (c) the `meta_investigation` envelope (`require_meta_investigation_before_mutation` in the meta-repair-loop wrapper, `/workspace/arnold-safe-mechanical-20260715/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop` line 750) was never satisfied.
+
+### Narrow Fix Required
+
+1. **Evidence freshness check in watchdog dispatch** (`arnold-watchdog`, around `dispatch_meta_repair`): Before dispatching L2, compare the repair request's `problem_signature`/`blocker_id` against the current plan's `latest_failure.signature`. If they differ and plan `latest_failure.recorded_at` postdates the request's `accepted_at`, suppress L2 and derive a fresh request.  
+
+2. **Prompt injection**: The meta-repair investigation prompt (assembled by `build_meta_investigation_context` in `/workspace/arnold-safe-mechanical-20260715/arnold_pipelines/megaplan/cloud/repair_investigation.py`) must include the current plan's `latest_failure` block — phase, signature, and message — not only the historical repair request's stale `problem_signature`.
+
+3. **Detection in L3 auditor**: Add an `installed_freshness` check in `_superfixer_cycle_evidence` or `_l2_failure_fingerprint` comparing the deployed wrapper SHA against the meta-repair output commit SHA. Currently, fresh meta-repair evidence (even exit-77) suppresses escalation at the `l2_backstop_failure_not_proven` gate — a session can remain stuck indefinitely with L2 evidence present but ineffective.

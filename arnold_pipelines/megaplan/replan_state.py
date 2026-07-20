@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, MutableMapping
+from collections.abc import MutableMapping
 from typing import Any
 
 REPLAN_META_KEYS_TO_CLEAR: tuple[str, ...] = (
@@ -12,21 +12,6 @@ REPLAN_STATE_KEYS_TO_CLEAR: tuple[str, ...] = (
     "latest_failure",
     "resume_cursor",
 )
-
-
-def blocked_gate_requests_replan(
-    state: Mapping[str, Any],
-    *,
-    blocked_state: str,
-) -> bool:
-    """Return whether a blocked gate explicitly requested another plan iteration."""
-
-    if state.get("current_state") != blocked_state:
-        return False
-    last_gate = state.get("last_gate")
-    if not isinstance(last_gate, Mapping):
-        return False
-    return str(last_gate.get("recommendation") or "").upper() == "ITERATE"
 
 
 def reset_replan_loop_state(

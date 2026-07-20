@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# arnold-progress-auditor — periodic Codex-orchestrated DeepSeek-backed plan progress audit.
+# arnold-progress-auditor — deterministic gather/report with an explicitly gated Codex review phase.
 #
 # Host-side systemd oneshot (megaplan-progress-audit.service, every 6h via
 # megaplan-progress-audit.timer). When invoked on the host it docker-execs into
@@ -13,11 +13,8 @@
 #     (plan_v*.md count/sizes, iteration/attempt progression, gate verdicts,
 #     critique trend, events.ndjson growth, progress_stall flags from
 #     /workspace/watchdog-report.json)
-#   * for plans with suspicious signals, dispatch Codex as the top-level audit
-#     orchestrator; Codex then reads the subagent-launcher skill and deploys
-#     DeepSeek research subagents (provider=deepseek, model
-#     deepseek:deepseek-v4-pro) via the existing subagent-launcher/megaplan
-#     dispatch contract
+#   * for plans with suspicious signals, optionally dispatch one read-only
+#     Codex reviewer only when the explicit mutation/agentic-phase gate permits
 #   * write /workspace/audit-reports/<ts>-audit.{json,md}, append one line to
 #     /workspace/audit-report.log
 #
@@ -83,7 +80,7 @@ REPORT_LOG="${MEGAPLAN_AUDIT_REPORT_LOG:-/workspace/audit-report.log}"
 WATCHDOG_REPORT="${MEGAPLAN_AUDIT_WATCHDOG_REPORT:-/workspace/watchdog-report.json}"
 ARNOLD_SRC="${MEGAPLAN_AUDIT_ARNOLD_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
 DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
-LAUNCHER="${MEGAPLAN_AUDIT_LAUNCHER:-/root/.claude/skills/subagent-launcher/launch_hermes_agent.py}"
+LAUNCHER="${MEGAPLAN_AUDIT_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
 AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"
 SUBAGENT_TIMEOUT="${MEGAPLAN_AUDIT_SUBAGENT_TIMEOUT_SECS:-900}"
 SUBAGENT_MAX_TOKENS="${MEGAPLAN_AUDIT_SUBAGENT_MAX_TOKENS:-8192}"
@@ -98,6 +95,8 @@ AUDIT_GITHUB_LABELS="${MEGAPLAN_AUDIT_GITHUB_LABELS:-incident-control-plane,pers
 RECOVERY_ENABLED="${MEGAPLAN_AUDIT_RECOVERY_ENABLED:-1}"
 RECOVERY_SYNC_ENABLED="${MEGAPLAN_AUDIT_RECOVERY_SYNC_ENABLED:-0}"
 WATCHDOG_BIN="${MEGAPLAN_AUDIT_WATCHDOG_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog}"
+REPAIR_TRIGGER_BIN="${MEGAPLAN_AUDIT_REPAIR_TRIGGER_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"
+ESCALATION_STATE_ROOT="${MEGAPLAN_AUDIT_ESCALATION_STATE_ROOT:-/workspace/.megaplan/progress-auditor-escalations}"
 
 # Legacy direct DeepSeek launcher contract retained here for watchdog contract
 # tests and operator reference:
@@ -369,6 +368,12 @@ run_recovery_sweep() {
   local after_path="$GATHER_DIR/recovery-after.json"
   local watchdog_rc=0
   capture_recovery_snapshot "$before_path"
+  if [[ "$AUDIT_MUTATION_AUTHORIZED_FLAG" != "1" ]]; then
+    log "report-only audit: skipping watchdog recovery sweep because mutation is not authorized"
+    capture_recovery_snapshot "$after_path"
+    assemble_recovery_evidence "$before_path" "$after_path" 0 0
+    return 0
+  fi
   case "${RECOVERY_ENABLED,,}" in
     0|false|no|off)
       log "recovery sweep disabled by MEGAPLAN_AUDIT_RECOVERY_ENABLED"
@@ -581,6 +586,7 @@ fi
 # Build per-plan evidence + decide which need a research subagent.
 python3 - "$WORKLIST" "$GATHER_DIR" "$AUDIT_WINDOW_HOURS" "$ARNOLD_SRC" "$stall_summary" <<'PY'
 import datetime as dt
+import hashlib
 import json
 import os
 import pathlib
@@ -607,7 +613,96 @@ from arnold_pipelines.megaplan.cloud.auditor_external_evidence import (
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
 from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records
-from arnold_pipelines.megaplan.cloud.repair_escalation import stranded_replan_reason
+try:
+    from arnold_pipelines.megaplan.cloud.repair_recurrence import (
+        classify_fixer_infrastructure_failure,
+    )
+except ImportError:
+    # Source-overlay audits may temporarily run against an older installed
+    # module. Preserve the causal distinction instead of dropping the launch
+    # failure from evidence.
+    def classify_fixer_infrastructure_failure(attempt):
+        item = attempt if isinstance(attempt, dict) else {}
+        for phase, prefix in (("dev", "dev"), ("kimi", "kimi")):
+            evidence = item.get(f"{prefix}_launch_evidence")
+            evidence = evidence if isinstance(evidence, dict) else {}
+            raw_rc = evidence.get("returncode", item.get(f"{prefix}_turn_rc"))
+            try:
+                returncode = int(raw_rc)
+            except (TypeError, ValueError):
+                returncode = None
+            run_id = str(
+                evidence.get("managed_run_id")
+                or item.get(
+                    "managed_agent_run_id"
+                    if phase == "dev"
+                    else "kimi_managed_agent_run_id"
+                )
+                or ""
+            ).strip()
+            kind = str(evidence.get("kind") or "").strip()
+            error_class = str(evidence.get("error_class") or "").strip()
+            stderr_tail = str(evidence.get("stderr_tail") or "").strip()
+            contract_text = " ".join((kind, error_class, stderr_tail)).lower()
+            contract_signal = any(
+                token in contract_text
+                for token in (
+                    "launch_contract",
+                    "managedagentnooutput",
+                    "machine launch provenance",
+                    "required arguments",
+                    "unrecognized arguments",
+                    "invalid choice",
+                )
+            )
+            if not (contract_signal or (returncode in {2, 64} and not run_id)):
+                continue
+            try:
+                attempt_id = int(item.get("attempt_id"))
+            except (TypeError, ValueError):
+                attempt_id = None
+            return {
+                "detected": True,
+                "phase": phase,
+                "kind": kind or "managed_launch_contract_failure",
+                "returncode": returncode,
+                "managed_run_id": run_id,
+                "error_class": error_class,
+                "stderr_tail": stderr_tail[-1200:],
+                "attempt_id": attempt_id,
+                "classifier_source": "auditor_overlay_fallback",
+            }
+        return {"detected": False, "classifier_source": "auditor_overlay_fallback"}
+try:
+    from arnold_pipelines.megaplan.managed_agent import (
+        is_managed_manifest,
+        normalize_machine_origin_provenance,
+    )
+except ImportError:
+    # Source-overlay tests and a temporarily skewed deployed checkout may not
+    # contain the new helper yet.  Keep gathering deterministic, but validate
+    # the same narrow contract locally and report disagreement rather than
+    # granting launch evidence.
+    def is_managed_manifest(value):
+        return (
+            isinstance(value, dict)
+            and value.get("schema_version") == "arnold-managed-agent-run-v2"
+            and value.get("custodian") == "arnold.megaplan.managed_agent"
+        )
+
+    def normalize_machine_origin_provenance(value):
+        if not isinstance(value, dict):
+            raise ValueError("machine launch provenance must be an object")
+        if value.get("schema_version") != "arnold-machine-origin-provenance-v1":
+            raise ValueError("machine launch provenance schema is unsupported")
+        if value.get("applicability") != "not_applicable":
+            raise ValueError("machine provenance applicability is invalid")
+        if value.get("transport") != "automatic_system":
+            raise ValueError("machine provenance transport is invalid")
+        for field in ("origin_kind", "origin_id", "component", "trigger_id"):
+            if not isinstance(value.get(field), str) or not value[field].strip():
+                raise ValueError(f"machine provenance {field} is missing")
+        return dict(value)
 try:
     from arnold_pipelines.megaplan.cloud.repair_contract import project_repair_custody
 except ImportError:
@@ -637,7 +732,6 @@ except ImportError:
     def iter_repair_decisions(_queue_root, *, include_malformed=False):
         return []
 import arnold_pipelines.megaplan.cloud.six_hour_auditor as six_hour_auditor
-import arnold_pipelines.megaplan.incident.summaries as incident_summaries
 from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 
 MAX_CROSS_REF_ITEMS = 3
@@ -650,9 +744,6 @@ META_RUN_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_META_RUN_DIR", "/work
 COMMIT_SOURCE_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_COMMIT_SOURCE_DIR", arnold_src))
 REPAIR_QUEUE_ROOT = validate_queue_root(
     os.environ.get("ARNOLD_REPAIR_QUEUE_ROOT", "/workspace/.megaplan/repair-queue")
-)
-REPAIR_GOAL_MARKER_DIR = pathlib.Path(
-    os.environ.get("CLOUD_WATCHDOG_MARKER_DIR", "/workspace/.megaplan/cloud-sessions")
 )
 COMMIT_SOURCE_PATHS = (
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog",
@@ -944,6 +1035,21 @@ def _meta_record_is_launch_failure(path):
     if not isinstance(payload, dict):
         return False
     outcome = str(payload.get("outcome") or "")
+    diagnosis = str(payload.get("diagnosis") or "")
+    verification = payload.get("post_retrigger_verification")
+    verification = verification if isinstance(verification, dict) else {}
+    if (
+        outcome in {"commit_custody_failed", "model_tool_launch_failure"}
+        or "mutation is not authorized" in diagnosis.lower()
+        or (
+            outcome in {"NO_FIX", "UNKNOWN"}
+            and verification.get("accepted") is not True
+            and not payload.get("changes")
+            and not payload.get("tests")
+            and not payload.get("retrigger_command")
+        )
+    ):
+        return True
     if outcome and outcome not in {"UNKNOWN", "NO_FIX"} and not outcome.startswith("Codex meta-repair orchestrator returned no output"):
         return False
     haystacks = [
@@ -1628,6 +1734,92 @@ def _chain_state_summary(workspace, plan):
         current = summaries[0] if summaries else {}
     return {"current": current, "all": summaries}
 
+def _accepted_event_receipt(events_path):
+    events = _load_events(events_path)
+    accepted = None
+    accepted_index = None
+    recent_kind_counts = {}
+    for index, event in enumerate(events, start=1):
+        kind = str(event.get("kind") or event.get("event_type") or "").strip().lower()
+        when = _event_timestamp(event)
+        if when is not None and when >= cutoff:
+            recent_kind_counts[kind or "unknown"] = recent_kind_counts.get(kind or "unknown", 0) + 1
+        if kind == "plan_finished" or (kind == "phase_end" and _successful_event(event)):
+            accepted = event
+            accepted_index = index
+    if not isinstance(accepted, dict):
+        return {
+            "present": False,
+            "seq": None,
+            "digest": "",
+            "event": {},
+            "age_min": None,
+            "recent_kind_counts": recent_kind_counts,
+        }
+    seq = _event_seq(accepted)
+    if seq is None:
+        seq = accepted_index
+    accepted_at = _event_timestamp(accepted)
+    return {
+        "present": True,
+        "seq": seq,
+        "digest": hashlib.sha256(
+            json.dumps(accepted, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        ).hexdigest(),
+        "event": _event_excerpt(accepted),
+        "age_min": int((now - accepted_at).total_seconds() // 60) if accepted_at else None,
+        "recent_kind_counts": recent_kind_counts,
+    }
+
+def _chain_health_progress_summary(session):
+    marker_dir = pathlib.Path(
+        os.environ.get("MEGAPLAN_AUDIT_MARKER_DIR", "/workspace/.megaplan/cloud-sessions")
+    )
+    path = marker_dir / f"{session}.chain-health.progress.json"
+    payload = _load_json(path)
+    if not isinstance(payload, dict) or not payload:
+        return {"present": False, "path": str(path)}
+    return {
+        "present": True,
+        "path": str(path),
+        "updated_at": payload.get("updated_at"),
+        "last_state": payload.get("last_state"),
+        "current_plan_name": payload.get("current_plan_name"),
+        "current_milestone_index": payload.get("current_milestone_index"),
+        "completed_count": payload.get("completed_count"),
+        "milestone_count": payload.get("milestone_count"),
+        "no_advance_ticks": payload.get("no_advance_ticks"),
+        "stuck_ticks": payload.get("stuck_ticks"),
+        "plan_has_live_activity": payload.get("plan_has_live_activity"),
+        "plan_signal_liveness": payload.get("plan_signal_liveness"),
+        "plan_signal_reason": payload.get("plan_signal_reason"),
+    }
+
+def _sha256_file(path):
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+def _auditor_wrapper_runtime_summary():
+    source_path = pathlib.Path(arnold_src) / "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor"
+    installed_path = pathlib.Path(
+        os.environ.get(
+            "MEGAPLAN_AUDIT_INSTALLED_WRAPPER",
+            "/usr/local/bin/arnold-progress-auditor",
+        )
+    )
+    source_sha = _sha256_file(source_path)
+    installed_sha = _sha256_file(installed_path)
+    return {
+        "source_path": str(source_path),
+        "source_sha256": source_sha,
+        "installed_path": str(installed_path),
+        "installed_sha256": installed_sha,
+        "installed_matches_source": bool(source_sha and installed_sha and source_sha == installed_sha),
+        "comparison_available": bool(source_sha and installed_sha),
+    }
+
 def _metadata_excerpt(metadata):
     if not isinstance(metadata, dict):
         return {}
@@ -1738,6 +1930,20 @@ def _repair_data_summary(session):
     iterations = payload.get("iterations") if isinstance(payload, dict) else []
     if not isinstance(iterations, list):
         iterations = []
+    fixer_infrastructure_failures = [
+        classify_fixer_infrastructure_failure(item)
+        for item in attempts[-8:]
+        if isinstance(item, dict)
+    ]
+    fixer_infrastructure_failures = [
+        item for item in fixer_infrastructure_failures if item.get("detected")
+    ]
+    latest_attempt = attempts[-1] if attempts and isinstance(attempts[-1], dict) else {}
+    latest_fixer_infrastructure_failure = classify_fixer_infrastructure_failure(
+        latest_attempt
+    )
+    if not latest_fixer_infrastructure_failure.get("detected"):
+        latest_fixer_infrastructure_failure = {}
     summarized_iterations = []
     failure_signatures = {}
     for item in iterations[-8:]:
@@ -1801,6 +2007,11 @@ def _repair_data_summary(session):
             or (payload.get("attempt_ids") if isinstance(payload, dict) and isinstance(payload.get("attempt_ids"), list) else [])
         ),
         "repair_run_count": payload.get("repair_run_count") if isinstance(payload, dict) else None,
+        "managed_agent_run_id": payload.get("managed_agent_run_id") if isinstance(payload, dict) else "",
+        "managed_agent_manifest_path": payload.get("managed_agent_manifest_path") if isinstance(payload, dict) else "",
+        "managed_agent_runs": payload.get("managed_agent_runs") if isinstance(payload, dict) and isinstance(payload.get("managed_agent_runs"), list) else [],
+        "fixer_infrastructure_failures": fixer_infrastructure_failures,
+        "latest_fixer_infrastructure_failure": latest_fixer_infrastructure_failure,
         "iteration_count": len(iterations),
         "iterations": summarized_iterations,
         "repeated_failure_signatures": repeated[:6],
@@ -1850,8 +2061,11 @@ def _repair_custody_summary(session, plan_state, current_target):
     return {
         "queue_root": str(REPAIR_QUEUE_ROOT),
         "blocker_id": projection.get("blocker_id") or "",
+        "custody_bucket": projection.get("custody_bucket") or "",
         "active_request_ids": projection.get("active_request_ids") or [],
+        "active_claim_request_ids": projection.get("active_claim_request_ids") or [],
         "accepted_unclaimed_request_ids": projection.get("accepted_unclaimed_request_ids") or [],
+        "coalesced_without_live_owner": projection.get("coalesced_without_live_owner") or [],
         "request_status_counts": projection.get("request_status_counts") or {},
         "claim_count": projection.get("claim_count") or 0,
         "attempt_count": projection.get("attempt_count") or 0,
@@ -1859,6 +2073,7 @@ def _repair_custody_summary(session, plan_state, current_target):
         "claim_alert_request_ids": projection.get("claim_alert_request_ids") or [],
         "retry_budget": projection.get("retry_budget") or {},
         "terminal_outcomes": projection.get("terminal_outcomes") or [],
+        "attempts": projection.get("attempts") or [],
         "malformed_request_count": len(malformed_requests),
         "malformed_decision_count": len(malformed_decisions),
         "malformed_request_paths": [item.get("path") for item in malformed_requests[:3]],
@@ -3068,6 +3283,75 @@ def _repair_data_ghost_running_reason(ev):
         )
     return ""
 
+def _canonical_launch_disagreement_reason(ev):
+    repair = ev.get("repair_data_summary") if isinstance(ev, dict) else {}
+    custody = ev.get("repair_custody_summary") if isinstance(ev, dict) else {}
+    repair = repair if isinstance(repair, dict) else {}
+    custody = custody if isinstance(custody, dict) else {}
+    watchdog_refs = ev.get("prior_watchdog_report_refs") if isinstance(ev, dict) else []
+    watchdog_statuses = {
+        str(item.get("matched_status") or "").strip().lower()
+        for item in (watchdog_refs if isinstance(watchdog_refs, list) else [])
+        if isinstance(item, dict)
+    }
+    active_claim = (
+        str(repair.get("outcome") or "").strip().lower()
+        in {"running", "repairing", "in_progress", "active"}
+        or bool(watchdog_statuses & {"repair_dispatched", "repair_running", "meta_repair"})
+        or str(custody.get("custody_bucket") or "") == "repairing"
+    )
+    attempts = custody.get("attempts") if isinstance(custody.get("attempts"), list) else []
+    queue_attempts = [
+        item for item in attempts
+        if isinstance(item, dict) and item.get("source") == "repair_queue_dispatch_attempt"
+    ]
+    references = []
+    for item in queue_attempts:
+        raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
+        references.append(
+            {
+                "request_id": item.get("request_id") or raw.get("request_id"),
+                "blocker_id": item.get("blocker_id") or raw.get("blocker_id"),
+                "run_id": raw.get("managed_run_id"),
+                "manifest_path": raw.get("managed_manifest_path"),
+                "attempt_path": item.get("path"),
+            }
+        )
+    if active_claim and not references:
+        return "agent_claim_without_canonical_manifest: repair/dispatched label has no linked queue attempt"
+    for ref in references:
+        if not ref["run_id"] or not ref["manifest_path"]:
+            return (
+                "legacy_direct_agent_launch: repair attempt lacks managed run/manifest linkage "
+                f"attempt={ref.get('attempt_path') or 'unknown'}"
+            )
+        manifest = _load_json(pathlib.Path(str(ref["manifest_path"])))
+        try:
+            provenance = normalize_machine_origin_provenance(manifest.get("launch_provenance") or {})
+        except Exception:
+            return (
+                "managed_run_link_disagreement: managed manifest has missing/invalid machine origin "
+                f"run={ref['run_id']} manifest={ref['manifest_path']}"
+            )
+        links = manifest.get("links") if isinstance(manifest.get("links"), dict) else {}
+        if (
+            not is_managed_manifest(manifest)
+            or manifest.get("run_id") != ref["run_id"]
+            or links.get("repair_request_id") != ref["request_id"]
+            or links.get("blocker_id") != ref["blocker_id"]
+            or provenance.get("transport") != "automatic_system"
+        ):
+            return (
+                "managed_run_link_disagreement: attempt, manifest, request, blocker, or origin disagree "
+                f"run={ref['run_id']} manifest={ref['manifest_path']}"
+            )
+        if manifest.get("status") in {"completed", "failed", "interrupted", "cancelled", "superseded", "unknown"} and active_claim:
+            return (
+                "managed_run_lifecycle_disagreement: repair label is active but canonical run is terminal "
+                f"run={ref['run_id']} status={manifest.get('status')}"
+            )
+    return ""
+
 def _repair_complete_incomplete_chain_reason(ev):
     """Surface the L1 false-success shape as a deterministic L3 finding."""
     repair = ev.get("repair_data_summary") if isinstance(ev, dict) else {}
@@ -3106,6 +3390,142 @@ def _green_with_recent_repair_churn_reason(ev):
         return (
             "green_with_recent_repair_churn: recent repair/meta-repair artifacts exist "
             f"while chain state is non-terminal last_state={chain_current.get('last_state') or 'unknown'}"
+        )
+    return ""
+
+def _liveness_without_acceptance_progress_reason(ev):
+    counts = ev.get("recent_event_kind_counts") if isinstance(ev, dict) else {}
+    counts = counts if isinstance(counts, dict) else {}
+    liveness_writes = sum(
+        int(counts.get(kind) or 0)
+        for kind in ("llm_token_heartbeat", "state_written", "cost_recorded", "heartbeat")
+    )
+    acceptance = ev.get("acceptance_progress") if isinstance(ev, dict) else {}
+    acceptance = acceptance if isinstance(acceptance, dict) else {}
+    chain_current = (ev.get("chain_state_summary") or {}).get("current") if isinstance(ev.get("chain_state_summary"), dict) else {}
+    repair = ev.get("repair_data_summary") if isinstance(ev.get("repair_data_summary"), dict) else {}
+    health = ev.get("chain_health_progress") if isinstance(ev.get("chain_health_progress"), dict) else {}
+    repeated_no_advance = bool(
+        int(health.get("no_advance_ticks") or 0) >= 2
+        or int(health.get("stuck_ticks") or 0) >= 2
+        or int(repair.get("iteration_count") or 0) >= 1
+    )
+    accepted_age = acceptance.get("accepted_event_age_min")
+    accepted_stale = accepted_age is None or int(accepted_age) >= 60
+    if (
+        liveness_writes >= 3
+        and repeated_no_advance
+        and accepted_stale
+        and _chain_state_looks_nonterminal(chain_current)
+    ):
+        return (
+            "liveness_without_acceptance_progress: fresh heartbeat/state/cost artifacts "
+            f"({liveness_writes}) coexist with no accepted phase/milestone receipt; "
+            f"completed={chain_current.get('completed_count') or 0} "
+            f"milestone_index={chain_current.get('current_milestone_index')} "
+            f"no_advance_ticks={health.get('no_advance_ticks')} stuck_ticks={health.get('stuck_ticks')}"
+        )
+    return ""
+
+def _meta_record_no_verdict_reason(ev):
+    meta = ev.get("meta_repair_summary") if isinstance(ev, dict) else {}
+    meta = meta if isinstance(meta, dict) else {}
+    if meta.get("should_dispatch") and int(meta.get("failed_meta_record_count") or 0) > 0:
+        return (
+            "meta_record_no_verdict: meta-repair is required but its record has no accepted "
+            f"verdict/retrigger evidence (bad_records={meta.get('failed_meta_record_count')})"
+        )
+    return ""
+
+def _meta_repair_launch_failure_reason(ev):
+    meta = ev.get("meta_repair_summary") if isinstance(ev, dict) else {}
+    meta = meta if isinstance(meta, dict) else {}
+    if meta.get("should_dispatch") and int(meta.get("failed_meta_run_count") or 0) > 0:
+        return (
+            "meta_repair_launch_failure: meta-repair is required but run logs show "
+            f"launch/no-output failure (bad_run_logs={meta.get('failed_meta_run_count')})"
+        )
+    return ""
+
+def _stale_unclaimed_repair_custody_reason(ev):
+    custody = ev.get("repair_custody_summary") if isinstance(ev, dict) else {}
+    custody = custody if isinstance(custody, dict) else {}
+    chain_current = (ev.get("chain_state_summary") or {}).get("current") if isinstance(ev.get("chain_state_summary"), dict) else {}
+    unclaimed = custody.get("accepted_unclaimed_request_ids") or []
+    budget = custody.get("retry_budget") if isinstance(custody.get("retry_budget"), dict) else {}
+    exhausted = budget.get("alert_required") is True or bool(custody.get("claim_alert_request_ids"))
+    if unclaimed and exhausted and _chain_state_looks_nonterminal(chain_current):
+        return (
+            "stale_unclaimed_repair_custody: accepted repair requests have no claim or attempt "
+            f"after retry exhaustion request_ids={','.join(str(item) for item in unclaimed[:5])}"
+        )
+    return ""
+
+def _queue_coalesced_without_live_owner_reason(ev):
+    custody = ev.get("repair_custody_summary") if isinstance(ev, dict) else {}
+    custody = custody if isinstance(custody, dict) else {}
+    chain_current = (ev.get("chain_state_summary") or {}).get("current") if isinstance(ev.get("chain_state_summary"), dict) else {}
+    if not _chain_state_looks_nonterminal(chain_current):
+        return ""
+    records = custody.get("coalesced_without_live_owner") or []
+    budget = custody.get("retry_budget") if isinstance(custody.get("retry_budget"), dict) else {}
+    custody_exhausted = budget.get("alert_required") is True or bool(
+        custody.get("claim_alert_request_ids")
+    )
+    stale_records = []
+    for record in records if isinstance(records, list) else []:
+        if not isinstance(record, dict):
+            continue
+        created_at = str(record.get("created_at") or "").strip()
+        try:
+            created = dt.datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            age_min = int((now - created.astimezone(dt.timezone.utc)).total_seconds() // 60)
+        except (TypeError, ValueError):
+            age_min = None
+        if custody_exhausted or age_min is None or age_min >= 5:
+            stale_records.append((record, age_min))
+    if stale_records:
+        record, age_min = stale_records[0]
+        return (
+            "queue_coalesced_without_live_owner: duplicate repair request was coalesced "
+            "onto an owner with no durable claim or nonterminal attempt "
+            f"owner_request_id={record.get('related_request_id') or 'unknown'} "
+            f"age_min={age_min if age_min is not None else 'unknown'}"
+        )
+    return ""
+
+def _deterministic_failure_exhaustion_reason(ev):
+    repair = ev.get("repair_data_summary") if isinstance(ev, dict) else {}
+    repair = repair if isinstance(repair, dict) else {}
+    if repair.get("latest_fixer_infrastructure_failure"):
+        return ""
+    chain_current = (ev.get("chain_state_summary") or {}).get("current") if isinstance(ev.get("chain_state_summary"), dict) else {}
+    repeated = repair.get("repeated_failure_signatures") or []
+    repeated = repeated if isinstance(repeated, list) else []
+    strongest = next(
+        (item for item in repeated if isinstance(item, dict) and int(item.get("count") or 0) >= 3),
+        None,
+    )
+    if strongest and _chain_state_looks_nonterminal(chain_current):
+        return (
+            "deterministic_failure_exhaustion: identical repair failure repeated "
+            f"{strongest.get('count')}x without new evidence or a circuit breaker; "
+            f"signature={str(strongest.get('signature') or '')[:240]}"
+        )
+    return ""
+
+def _installed_wrapper_drift_reason(ev):
+    runtime = ev.get("auditor_wrapper_runtime") if isinstance(ev, dict) else {}
+    runtime = runtime if isinstance(runtime, dict) else {}
+    chain_current = (ev.get("chain_state_summary") or {}).get("current") if isinstance(ev.get("chain_state_summary"), dict) else {}
+    if (
+        runtime.get("comparison_available") is True
+        and runtime.get("installed_matches_source") is False
+        and _chain_state_looks_nonterminal(chain_current)
+    ):
+        return (
+            "installed_wrapper_drift: running arnold-progress-auditor does not match canonical source "
+            f"source_sha256={runtime.get('source_sha256')} installed_sha256={runtime.get('installed_sha256')}"
         )
     return ""
 
@@ -3204,6 +3624,11 @@ def _superfixer_cycle_evidence(ev):
     accepted_unclaimed = accepted_unclaimed if isinstance(accepted_unclaimed, list) else []
     retry_budget = custody.get("retry_budget") if isinstance(custody.get("retry_budget"), dict) else {}
     repair_outcome = str(repair.get("outcome") or "").strip().lower()
+    fixer_infrastructure_failure = (
+        repair.get("latest_fixer_infrastructure_failure")
+        if isinstance(repair.get("latest_fixer_infrastructure_failure"), dict)
+        else {}
+    )
     repair_age = repair.get("mtime_age_min")
     stale_l1 = (
         repair_outcome in {"repair_timeout", "repair_exhausted"}
@@ -3218,7 +3643,9 @@ def _superfixer_cycle_evidence(ev):
         custody.get("malformed_decision_count") or 0
     )
     unknown_evidence = bool(custody.get("projection_error") or malformed_count)
-    l1_failed = bool(accepted_unclaimed or stale_l1)
+    l1_failed = bool(
+        accepted_unclaimed or stale_l1 or fixer_infrastructure_failure.get("detected")
+    )
 
     active = ev.get("active_step_liveness") if isinstance(ev, dict) else {}
     active = active if isinstance(active, dict) else {}
@@ -3278,6 +3705,12 @@ def _superfixer_cycle_evidence(ev):
         "retry_budget": retry_budget,
         "repair_outcome": repair_outcome,
         "repair_age_min": repair_age,
+        "fixer_infrastructure_failure": fixer_infrastructure_failure,
+        "failure_domain": (
+            "fixer_infrastructure"
+            if fixer_infrastructure_failure.get("detected")
+            else "chain_or_custody"
+        ),
         "runner_dead": runner_dead,
         "dead_active_step": dead_active_step,
         "tmux_live_status": tmux_process.get("live_status"),
@@ -3309,6 +3742,15 @@ def _stale_l1_l2_cycle_reason(ev):
         )
     if not evidence.get("actionable"):
         return ""
+    infrastructure = evidence.get("fixer_infrastructure_failure")
+    if isinstance(infrastructure, dict) and infrastructure.get("detected"):
+        return (
+            "stale_l1_l2_cycle: fixer infrastructure failed before target repair; "
+            f"kind={infrastructure.get('kind')} phase={infrastructure.get('phase')} "
+            f"returncode={infrastructure.get('returncode')} "
+            f"managed_run_id={infrastructure.get('managed_run_id') or 'missing'}; "
+            "the unchanged chain blocker is context, not the deterministic-breaker cause"
+        )
     return (
         "stale_l1_l2_cycle: incomplete chain has a stopped/dead runner and "
         "accepted-unclaimed, exhausted, stale, or malformed L1 custody with no current L2 evidence; "
@@ -3376,11 +3818,11 @@ def _normalize_engine_tree_evidence(value, *, repo_root, workspace_root):
         normalized["import_consumers"] = impacted_consumers if isinstance(impacted_consumers, list) else []
     return normalized
 
-def _collect_external_ci_health(repo_root):
+def _collect_external_ci_health(repo_root, *, pr_number=None):
     if not repo_root.is_dir():
         return _ci_health_unavailable(repo_root, reason="repo_context_unavailable")
     try:
-        payload = collect_ci_health(repo_root, base_branch="main")
+        payload = collect_ci_health(repo_root, base_branch="main", pr_number=pr_number)
     except Exception as exc:
         return _ci_health_unavailable(
             repo_root,
@@ -3539,6 +3981,9 @@ def _plan_evidence(entry):
     }
     chain_log = _chain_log_summary(workspace_path, session, entry)
     chain_state = _chain_state_summary(workspace_path, plan)
+    accepted_event = _accepted_event_receipt(events_path)
+    chain_health_progress = _chain_health_progress_summary(session)
+    wrapper_runtime = _auditor_wrapper_runtime_summary()
     repair_data = _repair_data_summary(session)
     cross_refs = _collect_related_artifact_refs(workspace_path, plan, session, repair_data)
     active = state.get("active_step") or {}
@@ -3629,7 +4074,12 @@ def _plan_evidence(entry):
         repair_data,
         run_kind,
     )
-    audit_input = six_hour_auditor.build_audit_input(session, root=workspace_path, now=_now_iso())
+    audit_input = six_hour_auditor.build_audit_input(
+        session,
+        root=workspace_path,
+        now=_now_iso(),
+        persist=False,
+    )
     incident_brief = audit_input.get("brief") if isinstance(audit_input.get("brief"), dict) else {}
     incident_projection = audit_input.get("incident") if isinstance(audit_input.get("incident"), dict) else {}
     problem_projection = audit_input.get("problem") if isinstance(audit_input.get("problem"), dict) else {}
@@ -3641,7 +4091,10 @@ def _plan_evidence(entry):
     )
     resolver_state = _resolve_resolver_state_payload(current_target)
     repair_custody = _repair_custody_summary(session, state, current_target)
-    ci_health = _collect_external_ci_health(repo_root)
+    ci_health = _collect_external_ci_health(
+        workspace_path,
+        pr_number=chain_current.get("pr_number") if isinstance(chain_current, dict) else None,
+    )
     engine_tree = _collect_external_engine_tree(repo_root, workspace_path)
     projection_input = audit_input.get("projection_input") if isinstance(audit_input.get("projection_input"), dict) else {}
     projection_input = {
@@ -3656,7 +4109,6 @@ def _plan_evidence(entry):
     }
     incident_audit = {}
     if incident_brief.get("found"):
-        incident_summaries.write_projection_summaries(projections=audit_input.get("projections"), root=workspace_path)
         audit_request = dict(audit_input)
         audit_request.update(projection_input)
         audit_request["projection_input"] = projection_input
@@ -3717,6 +4169,8 @@ def _plan_evidence(entry):
         "session_header": session_header,
         "chain_log": chain_log,
         "chain_state_summary": chain_state,
+        "chain_health_progress": chain_health_progress,
+        "auditor_wrapper_runtime": wrapper_runtime,
         "repair_data_summary": repair_data,
         "repair_custody_summary": repair_custody,
         "plan_latest_failure": plan_latest_failure,
@@ -3736,6 +4190,21 @@ def _plan_evidence(entry):
         "plan_v_sizes": sizes,
         "events_size": events_size,
         "events_mtime_age_min": int((now.timestamp() - events_mtime) // 60) if events_mtime else None,
+        "state_digest": hashlib.sha256(state_path.read_bytes()).hexdigest(),
+        "accepted_event_seq": accepted_event.get("seq"),
+        "accepted_event_digest": accepted_event.get("digest"),
+        "accepted_event": accepted_event.get("event"),
+        "recent_event_kind_counts": accepted_event.get("recent_kind_counts") or {},
+        "acceptance_progress": {
+            "advanced": bool(
+                accepted_event.get("present")
+                and isinstance(accepted_event.get("age_min"), int)
+                and accepted_event.get("age_min") < 60
+                and str(state.get("current_state") or "").strip().lower()
+                not in {"blocked", "failed", "awaiting_human", "awaiting_human_verify"}
+            ),
+            "accepted_event_age_min": accepted_event.get("age_min"),
+        },
         "deterministic_retry_evidence": deterministic_retry,
         "last_gate_recommendation": last_gate.get("recommendation"),
         "last_gate_score": scores[-1] if scores else None,
@@ -3832,6 +4301,13 @@ for entry in plans:
     run_kind = ((ev.get("session_header") or {}).get("kind") or "chain")
     chain_current = (ev.get("chain_state_summary") or {}).get("current") or {}
     chain_last_state = chain_current.get("last_state")
+    authoritative_plan = str(chain_current.get("current_plan_name") or "").strip()
+    finding_state = str(ev.get("current_state") or "").strip().lower()
+    completed_shadow = bool(
+        finding_state in {"done", "complete", "completed", "finalized"}
+        and authoritative_plan
+        and authoritative_plan != str(ev.get("plan") or "").strip()
+    )
     if run_kind == "chain" and chain_last_state in ("awaiting_human", "pr_closed", "missing_base_ref", "blocked"):
         corroboration.append(
             f"chain last_state={chain_last_state} current_plan={chain_current.get('current_plan_name') or 'unknown'}"
@@ -3853,32 +4329,48 @@ for entry in plans:
     if repeated_failures:
         corroboration.append(f"repair data repeats same failure signature {repeated_failures[0].get('count')}x")
     meta_summary = ev.get("meta_repair_summary") or {}
+    session_reasons = []
     if meta_summary.get("missing_meta_run_evidence"):
         meta_gap_reason = f"meta-repair trigger {meta_summary.get('trigger')} has no meta record or run log"
-        reasons.append(meta_gap_reason)
-    if meta_summary.get("failed_meta_run_evidence"):
-        reasons.append(
-            f"meta-repair trigger {meta_summary.get('trigger')} has only failed launch/no-output evidence "
-            f"(bad_records={meta_summary.get('failed_meta_record_count')} bad_run_logs={meta_summary.get('failed_meta_run_count')})"
-        )
+        session_reasons.append(meta_gap_reason)
     for deterministic_reason in (
+        _meta_record_no_verdict_reason(ev),
+        _meta_repair_launch_failure_reason(ev),
         _watchdog_chain_health_disagreement_reason(ev),
         _repair_data_ghost_running_reason(ev),
+        _canonical_launch_disagreement_reason(ev),
         _repair_complete_incomplete_chain_reason(ev),
-        _active_step_ghost_worker_reason(ev),
-        _deterministic_retry_exhaustion_reason(ev),
-        _workflow_cursor_mismatch_reason(ev),
         _green_with_recent_repair_churn_reason(ev),
+        _stale_unclaimed_repair_custody_reason(ev),
+        _queue_coalesced_without_live_owner_reason(ev),
+        _deterministic_failure_exhaustion_reason(ev),
         _stale_l1_l2_cycle_reason(ev),
-        stranded_replan_reason(
-            marker_dir=REPAIR_GOAL_MARKER_DIR,
-            session=str(ev.get("session") or ""),
-            plan_name=str(ev.get("plan") or ""),
-            blocker_id=str((ev.get("repair_custody_summary") or {}).get("blocker_id") or ""),
-        ),
     ):
         if deterministic_reason:
-            reasons.append(deterministic_reason)
+            session_reasons.append(deterministic_reason)
+    if not completed_shadow:
+        wrapper_drift = _installed_wrapper_drift_reason(ev)
+        if wrapper_drift:
+            session_reasons.append(wrapper_drift)
+        for deterministic_reason in (
+            _active_step_ghost_worker_reason(ev),
+            _deterministic_retry_exhaustion_reason(ev),
+            _workflow_cursor_mismatch_reason(ev),
+            _liveness_without_acceptance_progress_reason(ev),
+        ):
+            if deterministic_reason:
+                reasons.append(deterministic_reason)
+    else:
+        reasons = []
+        corroboration = []
+        soft_corroboration = []
+        ev["suppression"] = {
+            "reason": "completed_plan_shadow_plan_local_evidence_suppressed",
+            "authoritative_plan": authoritative_plan,
+            "authoritative_chain_path": chain_current.get("path"),
+            "authoritative_chain_state": chain_current.get("last_state"),
+        }
+    reasons.extend(session_reasons)
     unresolved_actions = (ev.get("user_action_context") or {}).get("unresolved_user_actions") or []
     if (run_kind == "plan" or chain_last_state == "awaiting_human") and unresolved_actions:
         ids = ",".join(str(item.get("id")) for item in unresolved_actions[:5])
@@ -3904,6 +4396,8 @@ for entry in plans:
             "incident_projection": ev.get("incident_projection"),
             "problem_projection": ev.get("problem_projection"),
             "incident_audit": ev.get("incident_audit"),
+            "suppression": ev.get("suppression"),
+            "auditor_wrapper_runtime": ev.get("auditor_wrapper_runtime"),
             "source_refs": ev.get("source_refs"),
         })
         continue
@@ -4047,8 +4541,8 @@ FINDING_COUNT="$(python3 -c 'import json,sys; print(len((json.load(open(sys.argv
 
 log "suspicious_plans=$FINDING_COUNT stall_flags=$stall_summary"
 
-# For each suspicious plan, dispatch Codex as the audit orchestrator. Codex is
-# instructed to read the subagent-launcher skill, deploy a DeepSeek research
+# For each suspicious plan, dispatch Codex as the audit orchestrator. Codex then reads the subagent-launcher skill
+# and may use bounded DeepSeek research subagents for independent review;
 # subagent (partnered-5, provider=deepseek, model=deepseek:deepseek-v4-pro),
 # and return concise evidence-based findings. Codex stdout is what feeds the
 # existing report-writer path below.
@@ -4119,7 +4613,7 @@ PY
 
 dispatch_one() {
   local gather_file="$1"
-  local plan workspace reasons kind receipt_root dispatch_id child_pid rc
+  local plan workspace reasons kind receipt_root dispatch_id child_pid rc run_id_file managed_run_id managed_manifest
   plan="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['plan'])" "$gather_file")"
   workspace="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['workspace'])" "$gather_file")"
   reasons="$(python3 -c "import json,sys; print('; '.join(json.load(open(sys.argv[1]))['reasons']))" "$gather_file")"
@@ -4216,17 +4710,10 @@ Evaluate these questions in order:
   outcome timestamps, chain state advancement, and active-step heartbeat. Any
   mismatch or stale repair-data trigger is pipeline friction, even if the user
   chain is still progressing.
-- When META_REPAIR_FAILURE is present, deploy Codex/DeepSeek/Hermes subagents
-  through the subagent-launcher skill for independent log review, wrapper/source
-  tracing, and a bounded fix proposal. Pass each subagent the concrete paths
-  above plus the session, repair-data path, meta-record path(s), and latest
-  watchdog/audit report path. Synthesize their findings, patch Arnold repair
-  code, commit/push when enabled, then relaunch arnold-meta-repair-loop for the same session
-  so it can relaunch ordinary repair.
-- Trust the subagents' judgment on the repair implementation. Give them the
-  evidence, constraints, and desired invariant, then let them choose the patch.
-  Do not over-prescribe the implementation or downgrade to report-only when
-  commit/push is enabled.
+- The periodic audit reviewer is read-only and must not claim it launched
+  DeepSeek/Hermes children, patched source, committed, pushed, or relaunched a
+  repairer. Return a typed repair request; the central repair authority owns
+  any subsequent mutation or managed child launch.
 - The desired outcome is that the next watchdog/auditor cycle can repair the
   class of failures automatically. Do not patch the running workspace merely to
   make this one session green when the repairer is the broken component.
@@ -4313,22 +4800,7 @@ EOF
       return 0
     }
     log "dispatching Codex audit plan=$plan codex_model=$AUDIT_CODEX_MODEL deepseek_model=$DEEPSEEK_MODEL profile=$SUBAGENT_PROFILE"
-    # Truth is based on the attempt, not on whether the shell managed to exec
-    # Codex or whether Codex eventually returned output.
-    AUDIT_LAUNCH_ATTEMPTED=1
-    launch_attempted=1
-    python3 - "$gather_file" "$receipt_root" "$dispatch_id" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-payload = json.loads(path.read_text(encoding="utf-8"))
-payload["codex_launch_attempted"] = True
-payload["dispatch_receipt_root"] = sys.argv[2]
-payload["dispatch_id"] = sys.argv[3]
-path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-PY
+    run_id_file="$GATHER_DIR/managed-run-${plan}.id"
     (
       cd "$workspace" &&
       if [[ -f /workspace/.cloud-hot-env ]]; then
@@ -4340,10 +4812,33 @@ PY
       export PYENV_VERSION=3.11.11
       export MEGAPLAN_DEFAULT_PROFILE="$SUBAGENT_PROFILE"
       export MEGAPLAN_REPAIR_PROFILE="$SUBAGENT_PROFILE"
-      timeout "$CODEX_TIMEOUT" codex exec \
-        --sandbox read-only \
-        -c model="$AUDIT_CODEX_MODEL" \
-        - < "$brief"
+      python3 -m arnold_pipelines.megaplan.managed_agent run \
+        --run-kind automatic_progress_audit_agent \
+        --identity-key "progress-audit:${TS}:${plan}:${dispatch_id}" \
+        --project-dir "$workspace" \
+        --task-kind review \
+        --difficulty 8 \
+        --model "$AUDIT_CODEX_MODEL" \
+        --reasoning-effort high \
+        --route-class periodic_progress_audit_read_only \
+        --backend codex \
+        --command-display "periodic progress audit agent $plan" \
+        --origin-kind periodic_progress_auditor \
+        --origin-id "$TS" \
+        --origin-component arnold-progress-auditor \
+        --trigger-id "$dispatch_id" \
+        --run-id-file "$run_id_file" \
+        --stdin-file "$brief" \
+        --require-output \
+        --link "audit_cycle=$TS" \
+        --link "audit_finding=$plan" \
+        --link "dispatch_id=$dispatch_id" \
+        --link "phase=periodic_progress_audit" \
+        -- timeout "$CODEX_TIMEOUT" codex exec \
+          --sandbox read-only \
+          -c model="$AUDIT_CODEX_MODEL" \
+          -c model_reasoning_effort=high \
+          -
     ) > "$resp_path" 2>"$GATHER_DIR/resp-${plan}.err" &
     child_pid=$!
     if ! record_audit_dispatch_started "$receipt_root" "$dispatch_id"; then
@@ -4358,8 +4853,58 @@ PY
     fi
     redact_file_in_place "$resp_path"
     redact_file_in_place "$GATHER_DIR/resp-${plan}.err"
+    managed_run_id="$(cat "$run_id_file" 2>/dev/null || true)"
+    managed_manifest="$workspace/.megaplan/plans/resident-subagents/$managed_run_id/manifest.json"
+    if PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$gather_file" "$receipt_root" "$dispatch_id" "$managed_run_id" "$managed_manifest" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.managed_agent import (
+    MANAGED_AGENT_CUSTODIAN,
+    MANAGED_AGENT_SCHEMA,
+    validate_automatic_managed_manifest,
+)
+
+gather, receipt_root, dispatch_id, run_id, manifest_name = sys.argv[1:]
+manifest_path = Path(manifest_name)
+try:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    validate_automatic_managed_manifest(manifest, manifest_path=manifest_path)
+except Exception:
+    raise SystemExit(1)
+if not (
+    run_id
+    and manifest.get("schema_version") == MANAGED_AGENT_SCHEMA
+    and manifest.get("custodian") == MANAGED_AGENT_CUSTODIAN
+    and manifest.get("run_id") == run_id
+    and (manifest.get("links") or {}).get("dispatch_id") == dispatch_id
+    and isinstance(manifest.get("stdin"), dict)
+    and manifest["stdin"].get("sealed") is True
+    and manifest.get("launch_contract_sha256")
+):
+    raise SystemExit(1)
+started = any(item.get("status") == "running" for item in manifest.get("status_history") or [])
+payload_path = Path(gather)
+payload = json.loads(payload_path.read_text(encoding="utf-8"))
+payload["codex_launch_attempted"] = started
+payload["managed_agent_run_id"] = run_id
+payload["managed_agent_manifest_path"] = str(manifest_path)
+payload["managed_agent_status"] = manifest.get("status")
+payload["dispatch_receipt_root"] = receipt_root
+payload["dispatch_id"] = dispatch_id
+payload_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+raise SystemExit(0 if started else 2)
+PY
+    then
+      AUDIT_LAUNCH_ATTEMPTED=1
+      launch_attempted=1
+    else
+      log "six-hour audit canonical launch evidence unavailable plan=$plan run=${managed_run_id:-missing}"
+      launch_attempted=0
+    fi
     if [[ ! -s "$resp_path" ]]; then
-      echo "Codex audit orchestrator returned no output (timed out or failed to launch DeepSeek research subagents); see audit log." > "$resp_path"
+      echo "Codex audit agent returned no durable output; inspect the canonical managed run." > "$resp_path"
     fi
   else
     log "codex CLI missing; skipping dispatch for $plan"
@@ -4374,8 +4919,8 @@ gather, resp, model, launch_attempted = sys.argv[1:5]
 data = json.load(open(gather))
 text = redact_text(open(resp, encoding="utf-8").read().strip())
 data["codex_launch_attempted"] = launch_attempted == "1"
-data["deepseek_model"] = model
-data["deepseek_response"] = text
+data["requested_research_model"] = model
+data["agent_response"] = text
 data["hypothesis"] = text
 with open(gather, "w", encoding="utf-8") as h:
     json.dump(data, h, indent=2, sort_keys=True)
@@ -4384,14 +4929,13 @@ PY
 
 record_incident_audits() {
   local findings_path="$1"
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$findings_path" "$GATHER_DIR" "$AUDIT_GITHUB_REPO" "$AUDIT_GITHUB_REPO_PATH" "$AUDIT_GITHUB_LABELS" "$REPAIR_QUEUE_ROOT" <<'PY'
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$findings_path" "$GATHER_DIR" "$AUDIT_GITHUB_REPO" "$AUDIT_GITHUB_REPO_PATH" "$AUDIT_GITHUB_LABELS" <<'PY'
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-from arnold_pipelines.megaplan.cloud.six_hour_auditor import enqueue_audit_repair_request
 from arnold_pipelines.megaplan.cloud.github_sync import (
     GitHubSyncConfig,
     sync_persistent_problems,
@@ -4420,7 +4964,6 @@ gather_dir = Path(sys.argv[2])
 explicit_repo = sys.argv[3].strip()
 explicit_repo_path = sys.argv[4].strip()
 labels = tuple(item.strip() for item in sys.argv[5].split(",") if item.strip())
-queue_root = Path(sys.argv[6])
 data = json.loads(findings_path.read_text(encoding="utf-8"))
 findings = data.get("findings") if isinstance(data.get("findings"), list) else []
 green_checks = data.get("green_checks") if isinstance(data.get("green_checks"), list) else []
@@ -4640,7 +5183,6 @@ def _event_evidence(item):
 
 audited = {}
 workspaces_for_sync = {}
-requests_enqueued = set()
 for item in findings + green_checks:
     if not isinstance(item, dict):
         continue
@@ -4650,10 +5192,6 @@ for item in findings + green_checks:
     problem_projection = item.get("problem_projection") if isinstance(item.get("problem_projection"), dict) else {}
     incident_id = incident_audit.get("incident_id") or incident_brief.get("incident_id")
     workspace = item.get("workspace")
-    request_key = (workspace, item.get("session"), item.get("plan"))
-    if workspace and request_key not in requests_enqueued:
-        enqueue_audit_repair_request(item, queue_root=queue_root)
-        requests_enqueued.add(request_key)
     if not incident_id or not workspace:
         continue
     key = (workspace, incident_id)
@@ -4741,7 +5279,46 @@ else
   log "autofix observed but mutation blocked; skipping Codex dispatch for findings=$N_FINDINGS"
 fi
 
-record_incident_audits "$GATHER_DIR/findings.json"
+if [[ "$AUDIT_MUTATION_AUTHORIZED_FLAG" == "1" ]]; then
+  record_incident_audits "$GATHER_DIR/findings.json"
+else
+  log "report-only audit: skipping incident-event and GitHub-sync writes"
+fi
+
+# Explicit effect phase. Deterministic gather/report above never creates repair
+# custody. This controller is pure when authority is absent; when authorized it
+# can enqueue only a coherent true-stall receipt and delegates launch/claiming
+# to the canonical central trigger.
+L3_ESCALATION_RESULT="$(
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
+    "$GATHER_DIR/findings.json" \
+    "$ESCALATION_STATE_ROOT" \
+    "$REPAIR_QUEUE_ROOT" \
+    "$AUDIT_MUTATION_AUTHORIZED_FLAG" \
+    "$REPAIR_TRIGGER_BIN" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.progress_auditor_controller import run_file_controller
+
+findings, state_root, queue_root, authorized, trigger = sys.argv[1:6]
+result = run_file_controller(
+    Path(findings),
+    state_root=Path(state_root),
+    queue_root=Path(queue_root),
+    authorized=authorized == "1",
+    trigger_argv=[trigger],
+)
+summary = result.get("l3_escalation_summary") or {}
+print(json.dumps({
+    "authorized": bool(summary.get("authorized")),
+    "evaluated": int(summary.get("evaluated") or 0),
+    "dispatched": int(summary.get("dispatched") or 0),
+}, sort_keys=True))
+PY
+)" || L3_ESCALATION_RESULT='{"authorized":false,"evaluated":0,"dispatched":0,"controller_error":true}'
+log "l3_escalation=$L3_ESCALATION_RESULT"
 
 # Final report assembly: JSON + Markdown + one-line log append.
 python3 - "$GATHER_DIR/findings.json" "$JSON_OUT" "$MD_OUT" "$REPORT_LOG" "$TS" "$AUDIT_MUTATION_AUTHORIZED_FLAG" "$AUDIT_LAUNCH_ATTEMPTED" "$RECOVERY_EVIDENCE" "$AUDIT_CODEX_MODEL" <<'PY'
@@ -4752,12 +5329,22 @@ import os
 import pathlib
 import sys
 
+try:
+    from arnold_pipelines.megaplan.managed_agent import validate_automatic_managed_manifest
+except ImportError:
+    validate_automatic_managed_manifest = None
+
 findings_path, json_out, md_out, log_path, ts = sys.argv[1:6]
 autofix_authorized = len(sys.argv) > 6 and sys.argv[6] == "1"
 launch_attempted = len(sys.argv) > 7 and sys.argv[7] == "1"
 recovery_evidence_path = sys.argv[8]
 codex_model = sys.argv[9]
 data = json.load(open(findings_path, encoding="utf-8"))
+l3_escalation_summary = (
+    data.get("l3_escalation_summary")
+    if isinstance(data.get("l3_escalation_summary"), dict)
+    else {"authorized": autofix_authorized, "evaluated": 0, "dispatched": 0, "items": []}
+)
 try:
     recovery_sweep = json.load(open(recovery_evidence_path, encoding="utf-8"))
 except Exception:
@@ -4775,9 +5362,48 @@ for i, f in enumerate(findings):
     resp_path = os.path.join(os.path.dirname(findings_path), f"finding-{i}.json")
     if os.path.exists(resp_path):
         f.update(json.load(open(resp_path, encoding="utf-8")))
-launch_attempted = launch_attempted or any(
-    bool(f.get("codex_launch_attempted")) for f in findings if isinstance(f, dict)
-)
+canonical_agent_runs = []
+for finding in findings:
+    if not isinstance(finding, dict):
+        continue
+    run_id = str(finding.get("managed_agent_run_id") or "")
+    manifest_path = pathlib.Path(str(finding.get("managed_agent_manifest_path") or ""))
+    if not run_id or not str(manifest_path):
+        continue
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if validate_automatic_managed_manifest is None:
+            continue
+        validate_automatic_managed_manifest(manifest, manifest_path=manifest_path)
+    except Exception:
+        continue
+    provenance = manifest.get("launch_provenance") if isinstance(manifest.get("launch_provenance"), dict) else {}
+    links = manifest.get("links") if isinstance(manifest.get("links"), dict) else {}
+    stdin_contract = manifest.get("stdin") if isinstance(manifest.get("stdin"), dict) else {}
+    if not (
+        manifest.get("schema_version") == "arnold-managed-agent-run-v2"
+        and manifest.get("custodian") == "arnold.megaplan.managed_agent"
+        and manifest.get("run_id") == run_id
+        and manifest.get("run_kind") == "automatic_progress_audit_agent"
+        and provenance.get("schema_version") == "arnold-machine-origin-provenance-v1"
+        and provenance.get("applicability") == "not_applicable"
+        and provenance.get("transport") == "automatic_system"
+        and provenance.get("origin_kind") == "periodic_progress_auditor"
+        and all(provenance.get(field) for field in ("origin_id", "component", "trigger_id"))
+        and stdin_contract.get("sealed") is True
+        and manifest.get("launch_contract_sha256")
+        and links.get("audit_finding") == finding.get("plan")
+    ):
+        continue
+    started = any(item.get("status") == "running" for item in manifest.get("status_history") or [])
+    canonical_agent_runs.append({
+        "run_id": run_id,
+        "manifest_path": str(manifest_path),
+        "status": manifest.get("status"),
+        "model": manifest.get("model"),
+        "started": started,
+    })
+launch_attempted = bool(canonical_agent_runs) and any(item["started"] for item in canonical_agent_runs)
 dispatch_receipts = []
 for finding in findings:
     if not isinstance(finding, dict):
@@ -4792,11 +5418,10 @@ for finding in findings:
     except Exception:
         continue
     dispatch_receipts.append(receipt)
-    launch_attempted = launch_attempted or receipt.get("subprocess_started") is True
 resolved_models = sorted({
-    str(receipt.get("resolved_runtime_model"))
-    for receipt in dispatch_receipts
-    if receipt.get("subprocess_started") is True and receipt.get("resolved_runtime_model")
+    str(run.get("model"))
+    for run in canonical_agent_runs
+    if run.get("started") and run.get("model")
 })
 resolved_runtime_model = resolved_models[0] if len(resolved_models) == 1 else None
 
@@ -4816,7 +5441,11 @@ green_checks = [
             "plan_v_count",
             "last_gate_recommendation",
             "last_gate_score",
+            "suppression",
+            "auditor_wrapper_runtime",
+            "source_refs",
         )
+        if key in item
     }
     for item in green_checks
     if isinstance(item, dict)
@@ -4907,7 +5536,19 @@ data_quality = {
         "findings_available": bool(findings),
         "green_checks_available": bool(green_checks),
     },
+    "canonical_launch_disagreements": [],
 }
+if any(receipt.get("subprocess_started") is True for receipt in dispatch_receipts) and not canonical_agent_runs:
+    data_quality["canonical_launch_disagreements"].append(
+        "legacy dispatch receipt claims subprocess start without a canonical managed-agent manifest"
+    )
+if any(
+    isinstance(finding, dict) and finding.get("codex_launch_attempted") is True
+    for finding in findings
+) and not canonical_agent_runs:
+    data_quality["canonical_launch_disagreements"].append(
+        "auditor finding claims model launch without a canonical managed-agent manifest"
+    )
 for stage in STAGE_NAMES:
     bucket = stage_metrics_data.get(stage)
     if isinstance(bucket, dict) and bucket.get("missing_evidence", 0) > 0:
@@ -4919,25 +5560,64 @@ for stage in STAGE_NAMES:
 
 # A launch attempt permanently falsifies report-only, even when exec/timeout
 # failed and no response was produced.
+l3_items = [
+    item
+    for item in l3_escalation_summary.get("items") or []
+    if isinstance(item, dict)
+]
+l3_runs = [
+    {
+        "run_id": item.get("managed_run_id"),
+        "manifest_path": item.get("managed_manifest_path"),
+        "audit_escalation_id": item.get("escalation_id"),
+        "session": item.get("session"),
+    }
+    for item in l3_items
+    if item.get("repair_dispatched") is True
+    and item.get("managed_run_id")
+    and item.get("managed_manifest_path")
+]
+repair_dispatched = bool(l3_runs)
 dispatch_summary = {
-    "mode": "autofix_attempted" if launch_attempted else "report_only",
+    "mode": "autofix_attempted" if (launch_attempted or repair_dispatched) else "report_only",
     "autofix_enabled": autofix_authorized,
-    "repair_dispatched": False,
-    "model_dispatched": launch_attempted,
+    "repair_dispatched": repair_dispatched,
+    "model_dispatched": bool(launch_attempted or repair_dispatched),
     "deepseek_dispatched": False,
-    "meta_repair_dispatched": False,
-    "codex_dispatched": launch_attempted,
+    "meta_repair_dispatched": repair_dispatched,
+    "codex_dispatched": bool(launch_attempted or repair_dispatched),
     "resolved_runtime_model": resolved_runtime_model,
     "dispatch_receipt_count": len(dispatch_receipts),
+    "managed_agent_run_count": len(canonical_agent_runs),
+    "managed_agent_runs": canonical_agent_runs,
+    "repair_agent_runs": l3_runs,
     "git_commit_performed": False,
     "file_edit_performed": False,
     "rationale": (
-        "A Codex launch was attempted; report-only is false regardless of launch outcome."
+        "A canonical D9 root-cause repair was durably dispatched for a policy-authorized true stall."
+        if repair_dispatched
+        else "A Codex launch was attempted; report-only is false regardless of launch outcome."
         if launch_attempted
         else "Autofix mutation blocked; report-only mode confirmed. No repair, model, "
         "meta-repair, git commit, or file-edit dispatch occurred."
     ),
 }
+
+auditor_runtime_receipt = next(
+    (
+        item.get("auditor_wrapper_runtime")
+        for item in findings + green_checks
+        if isinstance(item, dict) and isinstance(item.get("auditor_wrapper_runtime"), dict)
+    ),
+    {
+        "source_path": "",
+        "source_sha256": "",
+        "installed_path": "",
+        "installed_sha256": "",
+        "installed_matches_source": False,
+        "comparison_available": False,
+    },
+)
 
 payload = {
     "schema_version": 1,
@@ -4956,6 +5636,8 @@ payload = {
     "coverage": coverage,
     "data_quality": data_quality,
     "dispatch_summary": dispatch_summary,
+    "auditor_runtime_receipt": auditor_runtime_receipt,
+    "l3_escalation_summary": l3_escalation_summary,
     "dispatch_receipts": dispatch_receipts,
     "root_cause_patterns": data.get("root_cause_patterns") or {
         "repeated_failure_signatures": [],

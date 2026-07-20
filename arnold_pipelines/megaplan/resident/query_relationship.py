@@ -18,11 +18,9 @@ from typing import Any
 from arnold_pipelines.megaplan.schemas import Message, ResidentConversation
 from agentbox.redaction import redact_text
 
-from .request_summary import canonical_request_description
-
-
 QUERY_RELATIONSHIP_SCHEMA = "arnold-resident-query-relationship-v1"
 MAX_AUTHORITATIVE_MESSAGES = 200
+MAX_SEMANTIC_DESCRIPTION_CHARS = 180
 
 
 def _utc_now() -> str:
@@ -55,6 +53,19 @@ def _bounded_rationale(value: object) -> str:
     if len(normalized) > 300:
         raise ValueError("semantic follow-up rationale exceeds 300 characters")
     return normalized
+
+
+def _bounded_description(value: object) -> str:
+    """Bound internal relationship metadata without creating an output contract."""
+
+    normalized = " ".join(redact_text(str(value or "")).split())
+    if not normalized:
+        raise ValueError("semantic request description is required")
+    if len(normalized) > MAX_SEMANTIC_DESCRIPTION_CHARS:
+        raise ValueError(
+            f"semantic request description exceeds {MAX_SEMANTIC_DESCRIPTION_CHARS} characters"
+        )
+    return normalized.rstrip(".") + "."
 
 
 def _relationship_root(record: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
@@ -251,9 +262,7 @@ def correlate_semantic_follow_up(
     author, conversation, ordering, or existing-relationship conflicts.
     """
 
-    description = canonical_request_description(semantic_description)
-    if description is None:
-        raise ValueError("semantic request description is required")
+    description = _bounded_description(semantic_description)
     current = store.load_message(current_source_record_id)
     if (
         current is None

@@ -37,11 +37,6 @@ for M6A's transactional WBC store and M8's universal producer adoption.
   normalized failure kind, blocker/phase-result hash, managed-worker identity,
   Run Authority grant/fence, lease owner/host/process-birth identity, and custody
   epoch immediately before claim and effect.
-- Admit explicitly approved deterministic quality-block families, including the
-  captured review-budget-exhausted occurrence, through the same exact-signature
-  repair allowlist. If classification or L1 launch fails, persist that failed
-  launch as an occurrence and route it to bounded meta-repair/reconciliation;
-  “L1 never launched” may not disappear before the six-hour backstop.
 - Exercise cross-host acquisition, renewal, orderly transfer, expired-owner
   reclaim, network delay, host death, and restarted process/PID reuse. The old
   epoch must be durably fenced before the new host can perform an effect.
@@ -119,11 +114,6 @@ evidence, reconciliation, and verification.
 - Captured T7/T12 and same-basename fixtures cannot cross-bind; duplicate, late, lost, and out-of-
   order triggers launch at most one current managed repair or remain visibly
   pending for reconciliation.
-- The captured M5 `failed: <detail>` review block launches at most one approved
-  L1 attempt with machine provenance. Parser loss, dispatch incompatibility,
-  and launcher failure each produce a durable failed occurrence that reaches
-  bounded L2 or typed human escalation; no layer may report success merely
-  because the child process was absent.
 - Shadow and repair/worker canary measurements prove p95 from durable eligible
   blocker event to accepted repair or typed escalation is under five minutes.
   A deliberately missed event is recovered by the six-hour backstop.
@@ -162,32 +152,6 @@ event-driven SLO and missed-event proof, exact-signature and terminal-custody
 evidence, independent verification and recurrence evidence, repair/worker
 canary/kill-switch/rollback proof, genuine-block candidate, and the evidence-
 backed list of legacy paths eligible for retirement.
-
-## F01–F17 amendment contract
-
-This milestone supplies end-to-end acceptance for F01, F02, F04, F15, and F16
-under failure/replay, plus the effect/recovery portions of R1 and R3. It consumes
-the owned M6A/M7/M8/M9 contracts and creates no parallel ledger or queue.
-
-- **Prerequisite:** accepted M9 views/joined ledger, M8 exact producer traces,
-  M7 occurrence/lease/epoch/terminal contract, and M6A durable history.
-- **First safe action:** produce and run
-  `evidence/m10-f01-f17-fault-matrix.json` entirely action-off with fakes,
-  covering every persistence, trigger, retry, handoff, verification, and replay
-  edge before any separately approved canary.
-- **Deliverables:** exhaustive fault/replay receipts, event→request→claim→terminal
-  SLO join, terminal-custody closure report, cross-host transfer/reclaim proof,
-  exact-signature isolation, independent verification/recurrence evidence,
-  missed-event reconciliation, kill switch, rollback, and genuine-block
-  candidate package.
-- **Acceptance evidence:** no duplicate effect/false closure, one current actor,
-  every outcome terminal or typed indeterminate, T7/T12 and same-basename
-  isolation, denominated p95 <5m or typed escalation, six-hour recovery of a
-  missed event, and no self-verification.
-- **Component-versus-wiring safeguard:** enqueue hooks, watchdogs, requests,
-  leases, typed reasons, and focused tests do not prove recovery. Acceptance
-  requires the exact installed runtime and joined occurrence lifecycle; real
-  effects remain unauthorized unless separately approved.
 
 ## Profile rationale
 

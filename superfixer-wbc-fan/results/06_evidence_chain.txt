@@ -1,0 +1,30 @@
+Here is the audit of `.megaplan/plans/.chains/*.json` for `workflow-boundary-contracts-corrective-20260710`, resolved from canonical status (`repairing`, plan `s3-megaplan-boundary-coverage-20260713-1934`, 2/4 complete, 73% progress, runner live, repair decision=repairing at request/claim/attempt=1/0/1).
+
+---
+
+**Chain files (3 total):**
+
+| File | mtime | Bytes | Role |
+|---|---|---|---|
+| `chain-06e4c6966e36.json` | 2026-07-14T00:06 | 40,816 | **Current** WBC chain |
+| `chain-5733397cf1e9.json` | 2026-07-11T14:33 | 33,225 | **Historical** runauthority-epic chain |
+| `full_suite_baseline.json` | 2026-07-13T19:34 | 2,413 | s2 baseline (13 failing tests at `0211937e`) |
+
+**Current chain (06e4c6966e36) truth:**
+- `current_milestone_index`: **2** — matches canonical `completed=2/4` (s1: `c1-contract-reality-20260711-1433`, s2: `s2-contract-foundation-and-20260713-1544`; both `done`)
+- `current_plan_name`: `s3-megaplan-boundary-coverage-20260713-1934`
+- `last_state`: **`finalized`** — yet plan S3 `state.json` records active_step in `execute` (worker PID 1004788, started 2026-07-14T00:31:09Z, Hermes/DeepSeek-v4-pro)
+- `target_base_ref`: `432760d13abb69a32a77e7bb1e79c1136d4ce533`
+- `ground_truth_reconciliation`: reconciled 2026-07-14T00:06:18Z as `finalized`, `active_step=null` — **stale within 25 min** when execute relaunched
+
+**Historical chain (5733397cf1e9) — the landmine:**
+- Belongs to **`runauthority-epic`** initiative (project_root=`/workspace/runauthority-epic-cloud/Arnold`, chain_spec=`runauthority-epic/chain.yaml`)
+- `current_milestone_index=3`, `last_state=done`, 3 completed milestones with merged PRs #207/#210/#212
+- `target_base_ref`: `710a4609d53c78038e39f9167c09487912da5ba2` (≠ current chain base)
+
+**Contradictions:**
+1. **Cross-initiative pollution**: `chain-5733397cf1e9.json` is a different initiative sharing the same `.chains/` directory. Any tool reading all `*.json` without filtering by `chain_spec_path`/`project_root` will confuse `last_state=done` + 3 merged PRs with the current WBC chain's 2-milestone, repairing state.
+2. **State lag**: chain JSON `last_state=finalized` and reconciliation at 00:06:18Z predate the active execute step at 00:31:09Z. Plan `state.json` never updated `current_state` to reflect the new execute launch — the chain believes it's finalized while a live worker executes.
+3. **Repair evidence**: `watchdog_repair_state_mismatch_clears` (2026-07-13T15:06:58) cleared `blocked→executed` for c1; `operator_resume` at 16:05:32 by `superfixer-custody-recovery` restored from `critiqued`. Plan meta records a stale-state-clear at 00:02:49 for orphaned active_step — yet a new execute step appeared at 00:31:09, indicating the repair didn't address the root cause.
+
+**Recovery verdict**: Chain JSON supports recovery (custody clear, operator resume, reconciliation machinery intact), but the `finalized`/live-execute schism means any repair/auditor artifact trusting `last_state=finalized` will wrongly treat the chain as complete. The historical `chain-5733397cf1e9.json` must be filtered by chain identity to avoid false-completion signals.

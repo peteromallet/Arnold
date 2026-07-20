@@ -1,0 +1,286 @@
+{
+  "aggregation": {
+    "contributors": [],
+    "delivery_owner_run_id": "subagent-20260716-185232-e15c7338",
+    "delivery_target_source_record_id": "msg_dfab6b2b7c55",
+    "key": "resident-synthesis-group-9c452c2b4a675518c10c116d",
+    "role": "internal_contributor",
+    "schema_version": "arnold-resident-agent-aggregation-v1",
+    "superseded_at": "2026-07-16T18:52:32.205149+00:00",
+    "synthesis_group": "msg_dfab6b2b7c55-fresh-four-word-proof"
+  },
+  "backend": "codex",
+  "completion_delivery": {
+    "aggregation_key": "resident-synthesis-group-9c452c2b4a675518c10c116d",
+    "aggregation_role": "internal_contributor",
+    "attempt_count": 0,
+    "custody_id": "discord-custody-4359b3b486d004742c452a0a",
+    "idempotency_key": "resident-subagent-completion:subagent-20260716-185232-22726cfd",
+    "outbox_id": "discord-outbox-e9a56e9fe024483d16f9889d",
+    "reply_target": {
+      "conversation_key": "discord:dm:301463647895683072",
+      "message_id": "1527380307983204512",
+      "source_record_id": "msg_dfab6b2b7c55"
+    },
+    "state_history": [
+      {
+        "at": "2026-07-16T18:52:32.202583+00:00",
+        "evidence": "internal_contributor_reports_to_synthesis_owner",
+        "status": "suppressed"
+      }
+    ],
+    "status": "suppressed",
+    "transport": "discord"
+  },
+  "completion_verification": {
+    "basis": {
+      "mutation_claim": "none",
+      "task_kind": "mechanical",
+      "work_intent": "execution"
+    },
+    "classification": "applicable_non_mutating_success",
+    "git_custody": "not_applicable",
+    "schema_version": "arnold-resident-completion-verification-v1",
+    "status": "success"
+  },
+  "completion_verification_contract": {
+    "applicability": "applicable",
+    "basis": {
+      "mutation_claim": "none",
+      "task_kind": "mechanical",
+      "work_intent": "execution"
+    },
+    "git_custody_requirement": "not_applicable",
+    "result_requirement": "worker_exit_zero",
+    "schema_version": "arnold-resident-completion-verification-v1"
+  },
+  "context_directory": {
+    "project_equals_runtime_source": false,
+    "project_worktree": "/workspace/arnold/.megaplan/proofs/nonmutating-chain-31d72c3a85",
+    "resident_conversation_id": "rconv_85a1c2bfd5f1",
+    "resident_runtime_revision": "31d72c3a85e20c0a76a1d5d96df2d7ce84d77ecb",
+    "resident_runtime_source": "/workspace/arnold-resident-nonmutating-verification-fix-20260716",
+    "routes": {
+      "context_root": "python -P -m arnold_pipelines.megaplan resident context --node root --store-root \"$MEGAPLAN_RESIDENT_STORE_ROOT\"",
+      "context_search": "python -P -m arnold_pipelines.megaplan resident context-search --scope '<scope>' --query '<query>' --store-root \"$MEGAPLAN_RESIDENT_STORE_ROOT\"",
+      "reply_ancestry": "python -P -m arnold_pipelines.megaplan resident read-reply-chain --cursor '<cursor>' --store-root \"$MEGAPLAN_RESIDENT_STORE_ROOT\"",
+      "targeted_context": "python -P -m arnold_pipelines.megaplan resident context --node '<node_id>' --store-root \"$MEGAPLAN_RESIDENT_STORE_ROOT\""
+    }
+  },
+  "correlation_id": "discord-corr-4359b3b486d004742c452a0a",
+  "created_at": "2026-07-16T18:52:32.202583+00:00",
+  "custodian": "arnold.megaplan.managed_agent",
+  "custody_id": "discord-custody-4359b3b486d004742c452a0a",
+  "delegation_delivery_instruction": {
+    "resolved_mutation_claim": "none",
+    "resolved_work_intent": "execution",
+    "schema_version": "arnold-resident-delegation-delivery-instruction-v1",
+    "sha256": "adc5578da11ab094cbb476ff3cd7a0d9ee0d10fb03e1d0bb9f85a151870646b1"
+  },
+  "description": "Choose fresh proof word three.",
+  "difficulty": 2,
+  "discord_origin": {
+    "channel_id": "1451308037074714654",
+    "conversation_id": "rconv_85a1c2bfd5f1",
+    "conversation_key": "discord:dm:301463647895683072",
+    "correlation_id": "discord-corr-4359b3b486d004742c452a0a",
+    "custody_id": "discord-custody-4359b3b486d004742c452a0a",
+    "dm_user_id": "301463647895683072",
+    "guild_id": null,
+    "message_id": "1527380307983204512",
+    "reply_target_source_record_id": "msg_dfab6b2b7c55",
+    "reply_to_message_id": "1527380307983204512",
+    "thread_id": null,
+    "timezone_name": "UTC",
+    "transport": "discord"
+  },
+  "finished_at": "2026-07-16T18:52:54.600290+00:00",
+  "full_log_path": "/workspace/arnold/.megaplan/proofs/nonmutating-chain-31d72c3a85/.megaplan/plans/resident-subagents/subagent-20260716-185232-22726cfd/run.log",
+  "launch_idempotency_key": "resident-launch-69e19e90ed2b85bcc7866756",
+  "launch_provenance": {
+    "applicability": "applicable",
+    "channel_id": "1451308037074714654",
+    "conversation_key": "discord:dm:301463647895683072",
+    "correlation_id": "discord-corr-4359b3b486d004742c452a0a",
+    "custody_id": "discord-custody-4359b3b486d004742c452a0a",
+    "discord_message_id": "1527380307983204512",
+    "dm_user_id": "301463647895683072",
+    "guild_id": null,
+    "reply_to_message_id": "1527380307983204512",
+    "resident_conversation_id": "rconv_85a1c2bfd5f1",
+    "resident_turn_id": "turn_dfb0ed69ecad",
+    "root_run_id": "subagent-20260716-182504-0c5bd301",
+    "schema_version": "arnold-resident-delegation-provenance-v1",
+    "source_kind": "discord_inbound_message",
+    "source_record_id": "msg_dfab6b2b7c55",
+    "thread_id": null,
+    "timezone_name": "UTC",
+    "transport": "discord"
+  },
+  "lineage_key": "resident-session-lineage-7347c0927b93cb52ff3a8568",
+  "lineage_root_run_id": "subagent-20260716-185232-0ada2fe4",
+  "log_path": "/workspace/arnold/.megaplan/proofs/nonmutating-chain-31d72c3a85/.megaplan/plans/resident-subagents/subagent-20260716-185232-22726cfd/run.log",
+  "manifest_path": "/workspace/arnold/.megaplan/proofs/nonmutating-chain-31d72c3a85/.megaplan/plans/resident-subagents/subagent-20260716-185232-22726cfd/manifest.json",
+  "model": "gpt-5.6-luna",
+  "model_session": {
+    "evidence": "managed_codex_worker_log_and_dispatch",
+    "lineage_root_run_id": "subagent-20260716-185232-0ada2fe4",
+    "provider": "codex",
+    "recorded_at": "2026-07-16T18:52:54.600214+00:00",
+    "session_id": "019f6c46-3019-7b93-aa04-140e3ca52e09"
+  },
+  "mutation_claim": "none",
+  "parent_run_id": "subagent-20260716-185232-bd11d7f0",
+  "pid": 2643586,
+  "project_dir": "/workspace/arnold/.megaplan/proofs/nonmutating-chain-31d72c3a85",
+  "prompt_path": "/workspace/arnold/.megaplan/proofs/nonmutating-chain-31d72c3a85/.megaplan/plans/resident-subagents/subagent-20260716-185232-22726cfd/prompt.md",
+  "prompt_sha256": "67e762bc643512132391004b07e5b70f3bf5cfdf8097b43048fe9cc8c720e3c4",
+  "query_relationship": {
+    "aggregation_owner": {
+      "discord_message_id": "1527380307983204512",
+      "source_content_sha256": "7f94bcb4715291e2ab8df2dcb41601ed58bc2afaee55f380699906d72f475eca",
+      "source_record_id": "msg_dfab6b2b7c55"
+    },
+    "authority": "authoritative_conversation_records_and_immutable_discord_provenance",
+    "classification": "independent",
+    "classification_basis": "no_authoritative_reply_relationship",
+    "classified_at": "2026-07-16T18:24:03.849907+00:00",
+    "conversation_id": "rconv_85a1c2bfd5f1",
+    "current_request": {
+      "discord_message_id": "1527380307983204512",
+      "source_content_sha256": "7f94bcb4715291e2ab8df2dcb41601ed58bc2afaee55f380699906d72f475eca",
+      "source_record_id": "msg_dfab6b2b7c55"
+    },
+    "delivery_owner": {
+      "discord_message_id": "1527380307983204512",
+      "source_content_sha256": "7f94bcb4715291e2ab8df2dcb41601ed58bc2afaee55f380699906d72f475eca",
+      "source_record_id": "msg_dfab6b2b7c55"
+    },
+    "evidence_path": "/workspace/arnold/.megaplan/resident/query_relationships/msg_dfab6b2b7c55.json",
+    "records_inspected": 200,
+    "records_limit": 200,
+    "root_request": {
+      "discord_message_id": "1527380307983204512",
+      "source_content_sha256": "7f94bcb4715291e2ab8df2dcb41601ed58bc2afaee55f380699906d72f475eca",
+      "source_record_id": "msg_dfab6b2b7c55"
+    },
+    "schema_version": "arnold-resident-query-relationship-v1"
+  },
+  "queue": {
+    "ancestor_run_ids": [
+      "subagent-20260716-185232-bd11d7f0",
+      "subagent-20260716-185232-0ada2fe4"
+    ],
+    "attempt_count": 1,
+    "attention": "none",
+    "authored_prompt": {
+      "description": "Choose fresh proof word three.",
+      "sha256": "59e9c1cab2d96622a6b07ef43b45de6d5471dc4706720c0977ecebf0147734d6",
+      "size_chars": 191
+    },
+    "created_at": "2026-07-16T18:52:32.202583+00:00",
+    "launch_claimed_at": "2026-07-16T18:52:45.869452+00:00",
+    "max_launch_attempts": 3,
+    "predecessor_references": [
+      {
+        "artifact_type": "manifest",
+        "content_inlined": false,
+        "path": "/workspace/arnold/.megaplan/proofs/nonmutating-chain-31d72c3a85/.megaplan/plans/resident-subagents/subagent-20260716-185232-bd11d7f0/manifest.json",
+        "run_id": "subagent-20260716-185232-bd11d7f0",
+        "schema_version": "arnold-resident-subagent-reference-v1"
+      },
+      {
+        "artifact_type": "result",
+        "content_inlined": false,
+        "path": "/workspace/arnold/.megaplan/proofs/nonmutating-chain-31d72c3a85/.megaplan/plans/resident-subagents/subagent-20260716-185232-bd11d7f0/result.md",
+        "run_id": "subagent-20260716-185232-bd11d7f0",
+        "schema_version": "arnold-resident-subagent-reference-v1"
+      },
+      {
+        "artifact_type": "log",
+        "content_inlined": false,
+        "path": "/workspace/arnold/.megaplan/proofs/nonmutating-chain-31d72c3a85/.megaplan/plans/resident-subagents/subagent-20260716-185232-bd11d7f0/run.log",
+        "run_id": "subagent-20260716-185232-bd11d7f0",
+        "schema_version": "arnold-resident-subagent-reference-v1"
+      }
+    ],
+    "predecessor_run_id": "subagent-20260716-185232-bd11d7f0",
+    "predecessor_run_ids": [
+      "subagent-20260716-185232-bd11d7f0"
+    ],
+    "predecessor_states": [
+      {
+        "attention": "ready",
+        "result_state": "valid",
+        "run_id": "subagent-20260716-185232-bd11d7f0",
+        "status": "completed"
+      }
+    ],
+    "predecessor_status": "completed",
+    "schema_version": "arnold-resident-subagent-queue-v1",
+    "state": "running",
+    "successor_run_id": "subagent-20260716-185232-22726cfd",
+    "supervisor_started_at": "2026-07-16T18:52:45.873116+00:00",
+    "trigger_policy": "on_predecessor_success",
+    "updated_at": "2026-07-16T18:52:45.873129+00:00"
+  },
+  "queue_links": {
+    "schema_version": "arnold-resident-subagent-queue-v1",
+    "successor_omitted_count": 0,
+    "successor_run_ids": [
+      "subagent-20260716-185232-e15c7338"
+    ],
+    "updated_at": "2026-07-16T18:52:32.205149+00:00"
+  },
+  "reasoning_effort": "low",
+  "request_id": "msg_dfab6b2b7c55",
+  "resident_conversation_id": "rconv_85a1c2bfd5f1",
+  "result_path": "/workspace/arnold/.megaplan/proofs/nonmutating-chain-31d72c3a85/.megaplan/plans/resident-subagents/subagent-20260716-185232-22726cfd/result.md",
+  "returncode": 0,
+  "route_class": "queued_successor",
+  "run_id": "subagent-20260716-185232-22726cfd",
+  "run_kind": "resident_delegated_agent",
+  "sandbox": "danger-full-access",
+  "schema_version": "arnold-managed-agent-run-v2",
+  "session_dispatch": {
+    "accepted_at": "2026-07-16T18:52:46.853370+00:00",
+    "evidence": "codex_session_process_started",
+    "mode": "new",
+    "session_id": null,
+    "status": "accepted"
+  },
+  "source_record_id": "msg_dfab6b2b7c55",
+  "started_at": "2026-07-16T18:52:45.873116+00:00",
+  "status": "completed",
+  "status_history": [
+    {
+      "at": "2026-07-16T18:52:32.202583+00:00",
+      "evidence": "successor_committed_waiting_for_predecessor_terminal_evidence",
+      "status": "queued"
+    },
+    {
+      "at": "2026-07-16T18:52:45.869452+00:00",
+      "attempt": 1,
+      "evidence": "all_predecessors_terminal_success_and_results_validated",
+      "status": "launching"
+    },
+    {
+      "at": "2026-07-16T18:52:45.873129+00:00",
+      "evidence": "resident_supervisor_started",
+      "status": "running"
+    },
+    {
+      "at": "2026-07-16T18:52:54.600290+00:00",
+      "evidence": "managed_codex_worker_waited",
+      "returncode": 0,
+      "status": "completed"
+    }
+  ],
+  "task_kind": "mechanical",
+  "task_sha256": "59e9c1cab2d96622a6b07ef43b45de6d5471dc4706720c0977ecebf0147734d6",
+  "terminal_outcome": "completed",
+  "updated_at": "2026-07-16T18:52:54.600290+00:00",
+  "work_intent": "execution",
+  "worker_pid": 2643587,
+  "worker_started_at": "2026-07-16T18:52:46.853370+00:00"
+}

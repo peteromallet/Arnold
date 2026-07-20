@@ -1007,109 +1007,18 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
 
 def _recover_valid_critique_output(plan_dir: Path, *, expected_ids: list[str]) -> dict[str, Any] | None:
     output_path = plan_dir / "critique_output.json"
-    if output_path.exists():
-        payload = read_json(output_path)
-        payload = _normalize_critique_payload_for_recovery(payload)
-        try:
-            audit_step_payload("critique", payload)
-        except ModelStructuralAuditError:
-            pass
-        else:
-            invalid_checks = _critique_check_validator()(payload, expected_ids=expected_ids)
-            if not invalid_checks:
-                return _filter_critique_payload_to_expected_checks(
-                    payload,
-                    expected_ids=expected_ids,
-                )
-    return _recover_valid_parallel_critique_outputs(
-        plan_dir,
-        expected_ids=expected_ids,
-    )
-
-
-def _recover_valid_parallel_critique_outputs(
-    plan_dir: Path,
-    *,
-    expected_ids: list[str],
-) -> dict[str, Any] | None:
-    """Rebuild a failed reducer result from its canonical per-check artifacts.
-
-    Parallel workers are instructed to fill ``critique_check_<id>.json``. Some
-    agent seams return the reducer sentinel ``parallel`` instead of the filled
-    payload even though those files are valid. Empty seed templates are not
-    accepted as clean checks: they become explicit unverifiable findings.
-    """
-
-    checks: list[dict[str, Any]] = []
-    flags_by_id: dict[str, dict[str, Any]] = {}
-    verified_ids: list[str] = []
-    disputed_ids: list[str] = []
-    for check_id in expected_ids:
-        check_path = plan_dir / f"critique_check_{check_id}.json"
-        if not check_path.exists():
-            return None
-        try:
-            check_payload = read_json(check_path)
-        except (OSError, ValueError, TypeError):
-            return None
-        raw_checks = check_payload.get("checks")
-        if not isinstance(raw_checks, list):
-            return None
-        matching = [
-            item
-            for item in raw_checks
-            if isinstance(item, dict) and item.get("id") == check_id
-        ]
-        if len(matching) != 1:
-            return None
-        check = dict(matching[0])
-        findings = check.get("findings")
-        if not isinstance(findings, list):
-            return None
-        if not findings and not check.get("unverifiable_reason"):
-            reason = (
-                "parallel critique worker left its seeded check without "
-                "finding evidence"
-            )
-            check["status"] = "unverifiable"
-            check["unverifiable_reason"] = reason
-            check["findings"] = [
-                {"detail": f"unverifiable: {reason}", "flagged": False}
-            ]
-        checks.append(check)
-        raw_flags = check_payload.get("flags")
-        if isinstance(raw_flags, list):
-            for flag in raw_flags:
-                if not isinstance(flag, dict):
-                    continue
-                flag_id = flag.get("id")
-                if isinstance(flag_id, str) and flag_id:
-                    flags_by_id[flag_id] = flag
-        for source, destination in (
-            (check_payload.get("verified_flag_ids"), verified_ids),
-            (check_payload.get("disputed_flag_ids"), disputed_ids),
-        ):
-            if isinstance(source, list):
-                for flag_id in source:
-                    if isinstance(flag_id, str) and flag_id not in destination:
-                        destination.append(flag_id)
-
-    disputed_set = set(disputed_ids)
-    payload = {
-        "checks": checks,
-        "flags": list(flags_by_id.values()),
-        "verified_flag_ids": [
-            flag_id for flag_id in verified_ids if flag_id not in disputed_set
-        ],
-        "disputed_flag_ids": disputed_ids,
-    }
+    if not output_path.exists():
+        return None
+    payload = read_json(output_path)
+    payload = _normalize_critique_payload_for_recovery(payload)
     try:
         audit_step_payload("critique", payload)
     except ModelStructuralAuditError:
         return None
-    if _critique_check_validator()(payload, expected_ids=expected_ids):
+    invalid_checks = _critique_check_validator()(payload, expected_ids=expected_ids)
+    if invalid_checks:
         return None
-    return payload
+    return _filter_critique_payload_to_expected_checks(payload, expected_ids=expected_ids)
 
 
 def _filter_critique_payload_to_expected_checks(

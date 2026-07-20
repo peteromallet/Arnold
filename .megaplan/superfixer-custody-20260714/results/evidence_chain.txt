@@ -1,0 +1,45 @@
+---
+
+## Evidence Probe: `custody-control-plane-20260714`
+
+### Chain Files Found (3)
+
+| File | Path | mtime (UTC) |
+|------|------|-------------|
+| `chain-21fa156d252d.json` | `/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/.chains/chain-21fa156d252d.json` | 2026-07-14 15:13:15 |
+| `chain-1e998199f544.json` | *(same dir)* | **2026-07-14 18:04:57** |
+| `chain-f8cbe7abbe5f.json` | *(same dir)* | 2026-07-14 16:04:36 |
+
+---
+
+### Chain `21fa156d252d` — Cloud `runauthority-epic` (canonical, done)
+
+- **`current_milestone_index`: 3**, **`last_state`: `"done"`**, no current plan (null).
+- **`completed`**: m1-foundation (PR#207 merged), m2-enforcement (PR#210 merged), m3-consumers (PR#212 merged). Full-suite backstop shadow-failed but non-blocking.
+- **`completion_contract_mode`: `"enforce"`**, **`full_suite_backstop_mode`: `"enforce"`** — escalated from `"shadow"` via `m5_posture_update` at `2026-07-14T15:11:38Z`.
+- **`retired_marker_present`: `false`** — no `.retired` file exists in the runauthority-epic initiative directory.
+
+### Chain `1e998199f544` — Active `custody-control-plane` (BLOCKED)
+
+- **`current_milestone_index`: 0**, **`last_state`: `"blocked"`**.
+- **`current_plan_name`: `"m5-run-authority-receipt-20260714-1428"`**, PR#250 open.
+- **`completed`: []** — no milestones finished.
+- **`dirty_flag`: true**, **`sync_state`: `"dirty"`**.
+- **Heartbeat/active_step**: phase `"review"`, agent `codex:gpt-5.5`, attempt 3, started `2026-07-14T17:22:54Z`, last liveness `17:24:36Z`.
+- **Blocker**: `ground_truth_reconciliation.latest_failure` at `17:20:13Z` — `"immutable chain execution binding is drift; drift_fields=['runtime']; active_errors=['editable_runtime_import_root_mismatch']"`. Execution binding runtime is `/workspace/arnold-custody-delivery-20260714` but execution_environment engine_root is `/workspace/arnold-custody-runtime`.
+
+### Chain `f8cbe7abbe5f` — Copy of cloud `runauthority-epic`
+
+- Identical to `21fa156d252d` except **lacks `m5_posture_update`** — no enforcement escalation recorded.
+
+---
+
+### Contradictions
+
+1. **PR state split**: `chain-21fa156d252d.json` milestone m3-consumers declares `pr_state: "merged"` (line 72) but `ground_truth_reconciliation.pr_state: "open"` (line 157). Milestone-level says merged, reconciliation says open — canonical truth is ambiguous.
+
+2. **Enforce posture without retirement**: `chain-21fa156d252d` has `completion_contract_mode: "enforce"` and `full_suite_backstop_mode: "enforce"` yet `retired_marker_present: false`. The m5 posture update escalated modes before the .retired marker was placed — the chain claims enforcement for an unretired initiative.
+
+3. **Runtime drift blocks m5 sprint**: `chain-1e998199f544` is blocked by `editable_runtime_import_root_mismatch` between `/workspace/arnold-custody-delivery-20260714` (binding) and `/workspace/arnold-custody-runtime` (environment). The gate passed (PROCEED), but execution cannot resume without explicit operator-authorized rebind.
+
+4. **Dirty workspace while blocked**: `dirty_flag: true` with `last_state: "blocked"` — uncommitted changes exist on a chain that cannot advance.

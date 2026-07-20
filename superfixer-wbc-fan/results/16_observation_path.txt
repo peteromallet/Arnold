@@ -1,0 +1,45 @@
+Now I have all the data. Here is the probe result:
+
+---
+
+## `can I even see?` — `workflow-boundary-contracts-corrective-20260710`
+
+**Verdict: FAIL** (degraded observation path, at-risk import chain)
+
+### Roots / Revisions / Fingerprints
+
+| Layer | Value |
+|---|---|
+| **Local HEAD** | `29516b6dc0643aee8d043e07de5094f806b17555` ("Unify resident semantic request correlation") |
+| **Box run_revision** | `42c185977e702102923f2546850fc8c08cad6025c9560b1dc39c8bafe0ecea9a` |
+| **cloud.yaml `megaplan.ref`** | `editible-install` (branch, unpinned) |
+| **Marker identity_digest** | `bb7024decf` |
+| **Plan fingerprint** | `42c185977e7…` (matching run_revision) |
+
+### PATH / PYTHONPATH / Import Origin
+
+`sys.path[2]` = `/workspace/arnold` → import resolves to local source (`/workspace/arnold/arnold_pipelines/__init__.py`). **However**, `sys.path[7]` = `/workspace/workflow-boundary-contracts-corrective-20260710/Arnold/.megaplan/runtime/editable-engine` — injected by the `.pth` at `/root/.pyenv/versions/3.11.11/lib/python3.11/site-packages/_editable_impl_arnold.pth` (3 duplicate lines) and `direct_url.json`. This is a **stale leftover from a prior cloud-chain editable-install sync** (SKILL.md gotcha #7). The local import currently wins by path-ordering, but the `.pth` points to a box workspace that doesn't exist locally.
+
+### Clean Runtime Mirror
+
+**No.** The editable-install metadata (`_editable_impl_arnold.pth`, `direct_url.json`) is pinned to the WBC session's `editable-engine` path, not the local checkout. The local working tree is **dirty** — 49 files changed, 3240 insertions, 465 deletions — diverging from HEAD `29516b6dc0`.
+
+### Canonical Status Operation
+
+**PASS.** `cloud status --all` works via `cloud-local-observer`. Reports WBC session correctly: `[repairing]`, 2/4 milestones, 74% epic / 94% plan, runner live, repair dispatch `1/0/1`. All shadow projections resolve.
+
+### Container / On-box Reachability
+
+**FAIL.** Direct SSH to `159.69.51.216` — `Permission denied (publickey,password)`. `cloud exec` — same failure. The observer path works, but **direct box access is severed**.
+
+### Clock / Timestamp Sanity
+
+**PASS.** Local clock `2026-07-14T00:37Z` matches status generation `00:36:44Z`. Marker mtime `Jul 13 16:05` is 8.5h stale but expected (not rewritten live). Latest plan activity `00:34:33Z` is fresh.
+
+### Stale / Mismatched Code Risk
+
+**ACTIVE.** The `.pth`/`direct_url.json` metadata is divorced from local reality. If `/workspace/arnold` drops from `sys.path` or the `.pth` takes precedence, all imports would target the WBC session's editable-engine — a non-local path. Box revision (`42c185977e7`) ≠ local HEAD (`29516b6dc0`). Any local `cloud chain` launch would push the local dirty tree as `editible-install`, overwriting the box's revision.
+
+### Concurrent Wrapper Deployment
+
+**Observed.** Local modifications to `arnold-kimi-goal-operator` and `arnold-meta-repair-loop` wrappers are uncommitted in the working tree.

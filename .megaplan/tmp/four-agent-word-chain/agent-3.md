@@ -1,0 +1,1 @@
+Act as contributor 3 in a four-agent success-gated dependency-chain test. Read the exact predecessor result supplied by the resident queue. Preserve `WORD_1` and `WORD_2`, then independently choose one random, ordinary English word. Record all three clearly as `WORD_1`, `WORD_2`, and `WORD_3`. Do not message the user and do not modify the repository.

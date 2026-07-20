@@ -1,0 +1,74 @@
+Here is the complete read-only evidence probe:
+
+---
+
+## M5 Run Authority Receipt — Evidence Probe
+
+**Plan path:** `/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m5-run-authority-receipt-20260714-1428`
+
+### Canonical Cloud Status
+
+The `cloud.yaml` at `.megaplan/initiatives/runauthority-epic/cloud.yaml` references `chain_session: runauthority-epic-all-codex` — **the duplicate session**, not the canonical `runauthority-epic-cloud`. The prep dossier (line 37) explicitly documents this identity mismatch. The canonical session control record is `/workspace/.megaplan/cloud-sessions/runauthority-epic-cloud.json` with `chain_slug: runauthority-epic`, `identity_digest: d58c26ea91`. The `chain-21fa156d252d.json` was copied from cloud to local, updated to `completion_contract_mode: enforce` / `full_suite_backstop_mode: enforce` (confirmed present at line 125). However, `chain-f8cbe7abbe5f.json` (derived by `load_chain_state()` from the initiative chain.yaml) also exists with identical enforce mode — a dual-chain-state contradiction flagged in critique as unverifiable (complexity 7).
+
+### State Transition Timeline (state.json `history[]`)
+
+| # | Step | UTC Timestamp | Result | Duration |
+|---|------|--------------|--------|----------|
+| 0 | init | 2026-07-14T14:28:16 | success | 0ms |
+| 1 | prep | 2026-07-14T14:41:31 | success | 791s |
+| 2 | plan v1 | 2026-07-14T14:46:14 | success | 263s |
+| 3 | critique v1 | 2026-07-14T14:51:24 | success (3 flags) | 240s |
+| 4 | gate v1 | 2026-07-14T14:52:18 | **PROCEED** | 45s |
+| 5 | finalize v1 | 2026-07-14T14:57:09 | **error** (baseline scope) | 281s |
+| 6 | revise → v2 | 2026-07-14T14:59:42 | success | 132s |
+| 7 | critique v2 | 2026-07-14T15:05:27 | success (3 flags) | 219s |
+| 8 | gate v2 | 2026-07-14T15:07:07 | **PROCEED** | 91s |
+| 9 | finalize v2 | 2026-07-14T15:11:38 | success | 244s |
+| 10 | execute (21 batches) | 2026-07-14T16:33:32 | success (user_approved) | 4898s |
+| 11 | execute (adopt override) | 2026-07-14T16:35:48 | success | 0ms |
+| **12** | **review #1** | **2026-07-14T16:42:46** | **needs_rework** | 378s |
+| 13 | execute rework (1 batch) | 2026-07-14T16:58:43 | blocked | 914s |
+| 14 | execute (adopt override) | 2026-07-14T16:59:18 | success | 0ms |
+| **15** | **review #2** | **2026-07-14T17:20:12** | **needs_rework** | 318s |
+| **16** | **review #3** | **2026-07-14T18:04:22** | **→ BLOCKED** | 334s |
+
+**Last genuine state transition:** review #3 at `2026-07-14T18:04:22Z`, session `019f61c8-00f4-7d82-ab8b-a70d41e07baf` (codex reviewer, gpt-5.5), artifact `review.json` hash `sha256:587b481cba37d751e37bc0fd243377bb78cc1c6a8ae1b6c7e518182254fa0c43`.
+
+### Manual-Review Halt Mechanism
+
+The halt is `latest_failure.kind: "review_quality_blocked_unknown"` with message: **"review rework budget exhausted with unresolved quality blockers"**. The runtime envelope specifies `retry_budget: 3`. After 2 `needs_rework` verdicts (reviews #1, #2), the third review escalated to `result: blocked` rather than issuing another rework cycle. The blocker ID is `quality:review:54a20faf7810c886fb004e79d9e2fe81fcd14aa5a86a93bf4525f84116fd08ff`. The resume cursor is `{phase: review, retry_strategy: manual_review}` — requiring operator intervention.
+
+**11 unresolved blockers** enumerated in `latest_failure.metadata.blocking_reasons`:
+- 6 failed must-criteria (green suites, accepted receipts, zero-divergence verification, proof/manifest digests, .retired marker, final attestation)
+- 5 unresolved rework items (collection errors M1/M2/M3, receipts not accepted, chain divergence, stale manifest digests, retirement blocked)
+
+### Concrete Contradictions
+
+1. **Gate vs. Review**: `last_gate.recommendation: PROCEED` with `"No blocking flags exist across any category"` and zero significant flags — yet review found 6 of 11 must-criteria failing and 5 rework items blocking. Gate passed at 15:07:07Z; review blocked at 18:04:22Z.
+
+2. **Cloud session identity**: `cloud.yaml` → `runauthority-epic-all-codex` (duplicate). Prep dossier confirms canonical is `runauthority-epic-cloud` with identity digest `d58c26ea91`. Critique flagged this as unverifiable (complexity 7).
+
+3. **Dual chain state**: `chain-21fa156d252d.json` (enforce, from T1 copy) vs. `chain-f8cbe7abbe5f.json` (enforce, derived by `load_chain_state()`). Both exist with enforce modes, creating unresolved verification ambiguity.
+
+4. **Receipt digests**: M5 handoff `completion-manifest.json` records M1 receipt digest `bc1cf762...` but current file hashes to `a14ee898...`; M2 expects `ce7d0c13...` but hashes to `97c04366...`. The canonical initiative manifest resolves correctly — only the M5 handoff is stale.
+
+5. **Execute override**: The rework execution block at 16:58:43Z produced only 1 batch (not 21) with `result: blocked`, then was adopted via override at 16:59:18Z with message "adopted complete execution artifact after worker failure" — reusing the original 21-batch execution hash `sha256:732d4eaaf773d6883b5e68dd2be262fca5a8132e88f20fe20e3f33020c657fdb`.
+
+### Budgets
+
+- **Total cost**: $3.23 USD
+- **Prep tokens**: 8,870,452 (8,781,966 prompt + 88,486 completion), $0.32
+- **codex_planner**: 45,247 tokens ($0.55 + $0.41)
+- **codex_critique_evaluator**: 227,373 tokens
+- **codex_finalizer**: 253,253 tokens ($1.02)
+- **Execute**: 21 batches, 256 commands run, $0.77 + $0.12 (rework)
+- **Review**: 3 cycles, cost unavailable (codex gpt-5.5, pricing marked "unavailable")
+- **Retry budget**: 3/3 exhausted — plan blocked at `retry_strategy: manual_review`
+
+### Reviewer Verdict Summary (21 tasks, 21 sense checks)
+
+- **8 tasks pass** (T1–T5 posture/mirror/attestation/provider/selections, T9 reducer, T10 M1 phase, T18 tombstone)
+- **2 tasks pass with caution** (T11 M2 phase, T12 M3 phase — nonexistent expanded SHAs in phase_result)
+- **11 tasks need rework** (T6/T7/T8 suite collection errors 16/15/7; T13/T14/T15 receipts accepted=false; T16 divergence_count=3; T17 stale manifest; T19 partial validation; T20/T21 retirement/attestation blocked)
+- **Review_verdict**: `needs_rework` on reviews #1/#2, escalated to `blocked` on #3
+- **Outcome**: `{result: blocked, state: blocked, route_signal: blocked, next_step: null}`

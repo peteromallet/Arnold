@@ -1,0 +1,26 @@
+## L1 Verdict: **FIXED** (stale-custody recovery) with **CONTEXT** systemic defects
+
+### Primary Finding
+
+The plan `m5a-atomic-fail-closed-20260715-0149` has recovered to state **executed** with `latest_failure_cleared: true` (investigation context at 19:41Z). Attempt 15 fixed the deterministic source defect at commit `1322b318e`, and attempt 16 cleared the quality blocker via the supported recovery CLI. However, **repair custody did not atomically reconcile**: the repair goal `goal-be9c803900e485470237` remains frozen on the superseded `quality_gate_blocked` checkpoint (`a7aabcf9`), producing `custody_status: contradictory` — the frozen goal failure differs from the current (cleared) plan failure.
+
+### Deterministic Defects Found
+
+| Category | Finding |
+|---|---|
+| **Stale state** | Repair goal active against a cleared failure. The plan advanced to executed but the goal was never closed. Re-dispatch risks targeting a superseded checkpoint. |
+| **Direct-chain guard weakening** | `completion_contract_mode: "shadow"` persisted throughout execution despite the milestone's `prep_direction` explicitly requiring "Treat default shadow completion/backstop modes as a preflight blocker and record **enforce mode** before execution." All 35 atomic-transaction tasks were implemented, but the chain never promoted the mode. The milestone's foundational invariant (fail-closed atomic completion) was bypassed. |
+| **Missing receipts** | 4 pending tasks (T16, T18, T19, T33) in `execute_batch_1_output.json` despite all 35 finalize tasks being done. Finalize-tracking and execute-batch-tracking diverged. |
+| **Idempotency gap** | Repair-goal lifecycle has no closed-loop reconciliation detecting plan-level recovery outside the repair loop. The goal stays active indefinitely after the failure it tracked is cleared. |
+
+### Sibling Systemic Defects
+
+1. **Repair-goal stale-freeze**: The goal checkpoint model lacks a liveness refresh — goal remains frozen on the original checkpoint even after plan state advances, creating contradictory custody and blocking goal-gated successor admission.
+
+2. **Completion-mode default weakening**: The chain runner accepts `completion_contract_mode: "shadow"` silently for a milestone whose `prep_direction` declares shadow-mode a preflight blocker. The preflight blocker is stated in prose but not enforced by the runner — the mode must be explicitly promoted before execution begins.
+
+3. **Execute-batch/finalize tracking divergence**: The finalize phase completed 35/35 tasks but execute_batch tracking still shows 4 pending. The batch-output write did not cascade to mark dependent tasks done after their dependencies resolved during finalize.
+
+### Recommendation
+
+Close the stale repair goal, promote `completion_contract_mode` to `enforce`, and re-run the acceptance boundary against the landed commit before the chain can admit M6. The implementation exists (T1-T35 done); the guard configuration never activated it.

@@ -1,0 +1,56 @@
+base_branch: main
+anchors:
+  north_star: NORTHSTAR.md
+milestones:
+- label: m1-strategy-contract
+  idea: .megaplan/initiatives/repository-strategy-roadmap/briefs/m1-strategy-contract.md
+  branch: megaplan/repository-strategy-roadmap/m1-strategy-contract
+  profile: partnered-5
+  vendor: codex
+  robustness: full
+  notes: 'D8, difficulty 5/5: this freezes the authoritative grammar and projection
+    boundary; a locally plausible mistake could create a second source of truth.'
+- label: m2-lifecycle-integration
+  idea: .megaplan/initiatives/repository-strategy-roadmap/briefs/m2-lifecycle-integration.md
+  branch: megaplan/repository-strategy-roadmap/m2-lifecycle-integration
+  profile: partnered-5
+  vendor: codex
+  robustness: full
+  notes: 'D8, difficulty 5/5: identity, promotion, and completion relationships span
+    file and store backends and must preserve history without ID reuse.'
+- label: m3-operator-ergonomics
+  idea: .megaplan/initiatives/repository-strategy-roadmap/briefs/m3-operator-ergonomics.md
+  branch: megaplan/repository-strategy-roadmap/m3-operator-ergonomics
+  profile: partnered-5
+  vendor: codex
+  robustness: full
+  notes: D8, difficulty 4/5; partnered-5 retained by default because CLI mutations
+    must remain lossless and cannot quietly bypass the authority contract.
+- label: m4-migration-compatibility
+  idea: .megaplan/initiatives/repository-strategy-roadmap/briefs/m4-migration-compatibility.md
+  branch: megaplan/repository-strategy-roadmap/m4-migration-compatibility
+  profile: partnered-5
+  vendor: codex
+  robustness: full
+  notes: 'D8, difficulty 5/5: mixed-version and legacy identity handling can pass
+    green-path tests while corrupting references or breaking rebuildability.'
+- label: m5-adoption-conformance
+  idea: .megaplan/initiatives/repository-strategy-roadmap/briefs/m5-adoption-conformance.md
+  branch: megaplan/repository-strategy-roadmap/m5-adoption-conformance
+  profile: partnered-5
+  vendor: codex
+  robustness: full
+  notes: D8, difficulty 4/5; partnered-5 retained to judge end-to-end authority and
+    lifecycle conformance across documentation, CLI, and repository adoption.
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  robustness: full
+  phase_timeout: 10800
+  auto_approve: true
+  on_escalate: abort
+  max_iterations: 60
+  poll_sleep: 8.0

@@ -1,0 +1,48 @@
+---
+
+## Forensic Probe: `custody-control-plane-20260714` / `m5-run-authority-receipt-20260714-1428`
+
+### 1. Canonical Cloud Status
+
+- **Incident summary**: `/workspace/custody-control-plane-20260714/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-custody-control-plane.json`
+  - `outcome: "recovered"`, `state: "verified_recovered"`, `generated_at: 2026-07-14T13:45:50.918163+00:00`
+  - Source digest: `sha256:5594767a…` — this is a *prior* recovery verdict, not the current M5 blockage.
+- **Plan state**: `./custody-control-plane-20260714/Arnold/.megaplan/plans/m5-run-authority-receipt-20260714-1428/state.json`
+  - `current_state: "blocked"`, `iteration: 2`, `created_at: 2026-07-14T14:28:16Z`
+  - Lifecycle: init → prep(14:41:31Z) → plan(v1,14:46:14Z) → critique → gate(PROCEED) → **finalize(error,14:57:09Z)** → revise(v2,14:59:42Z) → critique → gate(PROCEED) → finalize(success,15:11:38Z) → execute(success,16:33:32Z) → **review → blocked(18:04:22Z)**
+  - `completion_contract_mode: "shadow"`, `full_suite_backstop_mode: "shadow"`
+
+### 2. Failure Mechanism
+
+**Recorded at** `2026-07-14T18:04:22Z`, `kind: "review_quality_blocked_unknown"`:
+> "review rework budget exhausted with unresolved quality blockers"
+
+Blocking reasons (from `metadata.blocking_reasons`, lines 1270–1281):
+1. M1/M2/M3 green suites still have collection/import errors
+2. Three regenerated milestone receipts not accepted
+3. Canonical chain verification still divergent
+4. Generated M5 completion manifest contains stale receipt digests
+5. Retirement and final attestation blocked
+
+The **root mechanism**: The plan launched with `completion_contract_mode: "shadow"` and `full_suite_backstop_mode: "shadow"` — the M5 brief (line 113) unambiguously states: *"`off`, `shadow`, or `warn` is not an admissible execution posture for this proof sprint; a default shadow status is a preflight blocker, not a waiver."* The chain driver allowed `shadow` past preflight, the execute phase produced outputs without enforce-gated backstop validation, and the review phase failed closed.
+
+### 3. L3 Progress-Auditor Inspection
+
+- **Wrapper**: `./custody-control-plane-20260714/Arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor` (5671 lines). Runs every 6h via `megaplan-progress-audit.timer`, docker-execs into container, discovers workspaces from markers/tmux/activity.
+- **Classifier layers** (`six_hour_auditor.py`): `project_progress`, `watchdog`, `immediate_repair`, `meta_repair`, `install_sync`, `github_sync`, `live_process`, **`stale_claim`**, **`missing_evidence`**, `recurrence`, `reconciler`, `resolver_confidence`, `resolver_semantics`, `semantic_custody`, `auditor_recursion`, `ci_health`, `engine_tree`.
+- **Stage-metrics log**: `./custody-control-plane-20260714/Arnold/.megaplan/cloud-chain-progress-auditor-stage-metrics.log` — only an install refresh at `2026-07-04T13:57:34+00:00`, no actual audit data, no findings.
+- **Audit reports**: None exist for this session (`/workspace/audit-reports/` empty).
+- **Repair dispatch**: The L3 `progress_auditor_controller` evaluates `true_stall` conditions, enqueues through central repair authority (line 5010–5038). Only when `AUDIT_MUTATION_AUTHORIZED_FLAG=1`.
+
+### 4. Four-Axis Verdict
+
+| Axis | Finding |
+|------|---------|
+| **TRACKED** | **Not yet.** The plan reached `blocked` at 18:04:22Z — only ~36 min ago as of 18:40Z. The 6-hour auditor has **not yet had its window**. No session marker was reaped, no audit report exists for this plan. The incident ledger shows a *prior* `recovered` verdict from 13:45Z (before M5 launched at 14:28Z). |
+| **FIXED** | **No.** No repair dispatch evidence. The L3 controller at lines 5010–5038 shows `l3_escalation` logic for `true_stall` → enqueue repair, but this has not triggered. The M5 plan sits blocked with `retry_strategy: "manual_review"`. |
+| **INTENT** | **Yes — L3 is designed for this class.** The `stale_claim`, `missing_evidence`, and `resolver_semantics` layers would detect a blocked plan with exhausted review budget. The `semantic_custody` layer could identify the completion-contract/shadow-mode mismatch if the Codex subagent reads the M5 brief's enforce requirement. The L3's repair-path (line 110–153 of six_hour_auditor.py) routes `stale_l1_l2_cycle` → `deep_superfixer_repair`. |
+| **CONTEXT** | **Partial.** L3 would see: `current_state=blocked`, `latest_failure=review_quality_blocked_unknown`, iteration exhaustion, and the blocking reasons. But the **root mechanism** — `completion_contract_mode: "shadow"` silently bypassing the M5 brief's hard `enforce` requirement — is a **config/preflight failure** that L3's deterministic layers don't explicitly pattern-match. The Codex subagent *could* discover this by reading `state.json` config fields against the M5 brief, but this is a semantic judgment beyond the deterministic classifier chain. L3 is not blind to the stall, but it is **one layer removed from the root config error**. |
+
+### 5. Key Distinction
+
+**"Has not yet had its 6h window" vs. blindness:** This is the former. The failure occurred at 18:04Z; the next audit sweep (assuming the timer fires on-schedule from the last known activity at ~13:57Z on 2026-07-04 for the stage-metrics chain) may be hours away. L3 is not blind — its `stale_claim`/`missing_evidence`/`resolver_confidence` layers would surface the blocked plan. But the **root config cause** (shadow→enforce mismatch) requires the Codex subagent to cross-reference `state.json` config against the M5 brief's locked decision at line 112–115 — a semantic correlation the deterministic layers alone won't make. **Safe repair carrying the root mechanism** is therefore *probable but not guaranteed* without the human-gated dispatch path that L3's `progress_auditor_controller` requires.

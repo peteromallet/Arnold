@@ -29,6 +29,11 @@ from typing import Any
 
 MANAGED_AGENT_SCHEMA = "arnold-managed-agent-run-v2"
 MANAGED_AGENT_CUSTODIAN = "arnold.megaplan.managed_agent"
+MACHINE_ORIGIN_SCHEMA = "arnold-machine-origin-provenance-v1"
+MACHINE_ORIGIN_ENV = "ARNOLD_MANAGED_AGENT_ORIGIN"
+MANAGED_DIFFICULTY_CEILING_ENV = "ARNOLD_MANAGED_AGENT_DIFFICULTY_CEILING"
+RESIDENT_DELEGATION_ENV = "ARNOLD_RESIDENT_DELEGATION_CONTEXT"
+SEALED_STDIN_PLACEHOLDER = "@managed-stdin@"
 LEGACY_RESIDENT_SCHEMA = "arnold-resident-agent-run-v1"
 LEGACY_RESIDENT_CUSTODIAN = "arnold.megaplan.resident"
 DEFAULT_RUN_ROOT = Path(".megaplan/plans/resident-subagents")
@@ -42,7 +47,28 @@ AUTOMATIC_RUN_KINDS = frozenset(
         "automatic_meta_repair",
         "automatic_meta_repair_worker",
         "automatic_repair_retry",
+        "automatic_progress_audit_agent",
+        "automatic_root_cause_repair",
+        "automatic_watchdog_source_repair",
+        "automatic_legacy_fixer",
+        "automatic_research_subagent",
     }
+)
+MACHINE_ORIGIN_KINDS = frozenset(
+    {
+        "watchdog_repair",
+        "watchdog_meta_repair",
+        "watchdog_source_repair",
+        "repair_loop_worker",
+        "meta_repair_worker",
+        "meta_repair_retrigger",
+        "periodic_progress_auditor",
+        "legacy_fixer_wrapper",
+        "managed_parent_agent",
+    }
+)
+_PROVENANCE_SAFE = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:/-"
 )
 
 
@@ -63,6 +89,127 @@ def atomic_write_manifest(path: Path, payload: Mapping[str, Any]) -> None:
 def stable_managed_run_id(run_kind: str, identity_key: str) -> str:
     digest = hashlib.sha256(f"{run_kind}\0{identity_key}".encode("utf-8")).hexdigest()[:20]
     return f"managed-{run_kind.replace('_', '-')}-{digest}"
+
+
+def _provenance_text(value: object, *, field: str, required: bool = True) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        if required:
+            raise ValueError(f"machine launch provenance {field} is required")
+        return None
+    if len(text) > 240 or any(character not in _PROVENANCE_SAFE for character in text):
+        raise ValueError(f"machine launch provenance {field} is malformed")
+    return text
+
+
+def normalize_machine_origin_provenance(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the explicit non-Discord origin of an automatic agent launch."""
+
+    if not isinstance(value, Mapping):
+        raise ValueError("machine launch provenance must be an object")
+    allowed = {
+        "schema_version",
+        "applicability",
+        "transport",
+        "origin_kind",
+        "origin_id",
+        "component",
+        "trigger_id",
+    }
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise ValueError(f"machine launch provenance contains unknown fields: {unknown}")
+    schema = str(value.get("schema_version") or MACHINE_ORIGIN_SCHEMA)
+    if schema != MACHINE_ORIGIN_SCHEMA:
+        raise ValueError("machine launch provenance schema is unsupported")
+    if str(value.get("applicability") or "not_applicable") != "not_applicable":
+        raise ValueError("automatic machine origin cannot claim Discord applicability")
+    if str(value.get("transport") or "automatic_system") != "automatic_system":
+        raise ValueError("automatic machine origin transport must be automatic_system")
+    origin_kind = _provenance_text(value.get("origin_kind"), field="origin_kind")
+    if origin_kind not in MACHINE_ORIGIN_KINDS:
+        raise ValueError(f"machine launch provenance origin_kind is unsupported: {origin_kind}")
+    normalized = {
+        "schema_version": MACHINE_ORIGIN_SCHEMA,
+        "applicability": "not_applicable",
+        "transport": "automatic_system",
+        "origin_kind": origin_kind,
+        "origin_id": _provenance_text(value.get("origin_id"), field="origin_id"),
+        "component": _provenance_text(value.get("component"), field="component"),
+        "trigger_id": _provenance_text(value.get("trigger_id"), field="trigger_id"),
+    }
+    return normalized
+
+
+def machine_origin_provenance(
+    *, origin_kind: str, origin_id: str, component: str, trigger_id: str
+) -> dict[str, Any]:
+    return normalize_machine_origin_provenance(
+        {
+            "origin_kind": origin_kind,
+            "origin_id": origin_id,
+            "component": component,
+            "trigger_id": trigger_id,
+        }
+    )
+
+
+def validate_automatic_managed_manifest(
+    value: Mapping[str, Any],
+    *,
+    manifest_path: Path | None = None,
+    verify_stdin: bool = True,
+) -> dict[str, Any]:
+    """Validate evidence required before an automatic run can support a claim."""
+
+    if not is_managed_manifest(value):
+        raise ValueError("automatic managed manifest schema or custodian is invalid")
+    run_kind = str(value.get("run_kind") or "")
+    if run_kind not in AUTOMATIC_RUN_KINDS:
+        raise ValueError("automatic managed manifest run kind is invalid")
+    run_id = str(value.get("run_id") or "").strip()
+    if not run_id:
+        raise ValueError("automatic managed manifest run id is missing")
+    if manifest_path is not None and manifest_path.parent.name != run_id:
+        raise ValueError("automatic managed manifest path does not match run id")
+    provenance = normalize_machine_origin_provenance(value.get("launch_provenance") or {})
+    provenance_digest = hashlib.sha256(
+        json.dumps(provenance, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    if value.get("provenance_sha256") != provenance_digest:
+        raise ValueError("automatic managed provenance digest disagrees")
+    contract_digest = str(value.get("launch_contract_sha256") or "")
+    if len(contract_digest) != 64 or any(character not in "0123456789abcdef" for character in contract_digest):
+        raise ValueError("automatic managed launch contract digest is invalid")
+    for field in ("task_kind", "model", "route_class", "backend", "log_path", "result_path"):
+        if not str(value.get(field) or "").strip():
+            raise ValueError(f"automatic managed manifest {field} is missing")
+    difficulty = value.get("difficulty")
+    if not isinstance(difficulty, int) or not 1 <= difficulty <= 10:
+        raise ValueError("automatic managed manifest difficulty is invalid")
+    stdin_contract = value.get("stdin")
+    if not isinstance(stdin_contract, Mapping) or stdin_contract.get("sealed") is not True:
+        raise ValueError("automatic managed stdin contract is not sealed")
+    stdin_kind = stdin_contract.get("kind")
+    if stdin_kind == "devnull":
+        if stdin_contract.get("size_bytes") != 0:
+            raise ValueError("automatic managed devnull stdin size is invalid")
+    elif stdin_kind == "sealed_file":
+        stdin_path = Path(str(stdin_contract.get("path") or ""))
+        stdin_digest = str(stdin_contract.get("sha256") or "")
+        stdin_size = stdin_contract.get("size_bytes")
+        if not stdin_path.is_absolute() or len(stdin_digest) != 64 or not isinstance(stdin_size, int):
+            raise ValueError("automatic managed sealed stdin descriptor is invalid")
+        if verify_stdin:
+            try:
+                stdin_bytes = stdin_path.read_bytes()
+            except OSError as exc:
+                raise ValueError("automatic managed sealed stdin is unavailable") from exc
+            if len(stdin_bytes) != stdin_size or hashlib.sha256(stdin_bytes).hexdigest() != stdin_digest:
+                raise ValueError("automatic managed sealed stdin disagrees with manifest")
+    else:
+        raise ValueError("automatic managed stdin kind is invalid")
+    return dict(value)
 
 
 def _append_status(
@@ -178,13 +325,16 @@ class ManagedCommandSpec:
     route_class: str
     backend: str
     command_display: str
+    launch_provenance: Mapping[str, Any]
     links: Mapping[str, Any]
     parent_run_id: str | None = None
     retry_of_run_id: str | None = None
     lineage_key: str | None = None
     run_root: Path | None = None
     stdin_path: Path | None = None
+    require_output: bool = False
     tee_output: bool = True
+    child_difficulty_ceiling: int | None = None
 
 
 def _root_for(spec: ManagedCommandSpec) -> Path:
@@ -194,6 +344,49 @@ def _root_for(spec: ManagedCommandSpec) -> Path:
 
 def _command_hash(argv: Sequence[str]) -> str:
     return hashlib.sha256(json.dumps(list(argv), separators=(",", ":")).encode()).hexdigest()
+
+
+def _stdin_bytes(spec: ManagedCommandSpec) -> bytes | None:
+    if spec.stdin_path is None:
+        return None
+    return spec.stdin_path.read_bytes()
+
+
+def _launch_contract(
+    spec: ManagedCommandSpec, *, provenance: Mapping[str, Any], stdin_bytes: bytes | None
+) -> dict[str, Any]:
+    child_ceiling = _effective_child_difficulty_ceiling(spec)
+    return {
+        "run_kind": spec.run_kind,
+        "identity_key": spec.identity_key,
+        "project_dir": str(spec.project_dir.resolve()),
+        "command_sha256": _command_hash(spec.argv),
+        "task_kind": spec.task_kind,
+        "difficulty": spec.difficulty,
+        "model": spec.model,
+        "reasoning_effort": spec.reasoning_effort,
+        "route_class": spec.route_class,
+        "backend": spec.backend,
+        "launch_provenance": dict(provenance),
+        "stdin_sha256": hashlib.sha256(stdin_bytes).hexdigest() if stdin_bytes is not None else None,
+        "stdin_size_bytes": len(stdin_bytes) if stdin_bytes is not None else 0,
+        "links": dict(spec.links),
+        "parent_run_id": spec.parent_run_id,
+        "retry_of_run_id": spec.retry_of_run_id,
+        "lineage_key": spec.lineage_key,
+        "require_output": spec.require_output,
+        "authority": {
+            "root_difficulty": spec.difficulty,
+            "child_difficulty_ceiling": child_ceiling,
+            "inherited_ceiling": _inherited_difficulty_ceiling(),
+        },
+    }
+
+
+def _contract_hash(contract: Mapping[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(dict(contract), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def _latest_lineage_run(root: Path, lineage_key: str, current_run_id: str) -> str | None:
@@ -210,7 +403,13 @@ def _latest_lineage_run(root: Path, lineage_key: str, current_run_id: str) -> st
     return max(candidates)[1] if candidates else None
 
 
-def _new_manifest(spec: ManagedCommandSpec, manifest_path: Path) -> dict[str, Any]:
+def _new_manifest(
+    spec: ManagedCommandSpec,
+    manifest_path: Path,
+    *,
+    provenance: Mapping[str, Any],
+    stdin_bytes: bytes | None,
+) -> dict[str, Any]:
     run_id = manifest_path.parent.name
     created_at = utc_now()
     retry_of = spec.retry_of_run_id
@@ -218,6 +417,9 @@ def _new_manifest(spec: ManagedCommandSpec, manifest_path: Path) -> dict[str, An
         retry_of = _latest_lineage_run(manifest_path.parent.parent, spec.lineage_key, run_id)
     result_path = manifest_path.parent / "result.json"
     log_path = manifest_path.parent / "run.log"
+    sealed_stdin_path = manifest_path.parent / "stdin.bin"
+    launch_contract = _launch_contract(spec, provenance=provenance, stdin_bytes=stdin_bytes)
+    child_ceiling = _effective_child_difficulty_ceiling(spec)
     payload: dict[str, Any] = {
         "schema_version": MANAGED_AGENT_SCHEMA,
         "custodian": MANAGED_AGENT_CUSTODIAN,
@@ -229,6 +431,12 @@ def _new_manifest(spec: ManagedCommandSpec, manifest_path: Path) -> dict[str, An
         "route_class": spec.route_class,
         "task_kind": spec.task_kind,
         "difficulty": spec.difficulty,
+        "authority": {
+            "root_difficulty": spec.difficulty,
+            "child_difficulty_ceiling": child_ceiling,
+            "inherited_ceiling": _inherited_difficulty_ceiling(),
+            "self_escalation_allowed": False,
+        },
         "project_dir": str(spec.project_dir.resolve()),
         "manifest_path": str(manifest_path.resolve()),
         "log_path": str(log_path.resolve()),
@@ -236,7 +444,25 @@ def _new_manifest(spec: ManagedCommandSpec, manifest_path: Path) -> dict[str, An
         "result_path": str(result_path.resolve()),
         "launch_idempotency_key": spec.identity_key,
         "command_display": spec.command_display,
+        "execution_kind": "agentic" if spec.require_output else "managed_controller",
+        "output_required": spec.require_output,
         "command_sha256": _command_hash(spec.argv),
+        "launch_contract_sha256": _contract_hash(launch_contract),
+        "launch_provenance": dict(provenance),
+        "provenance_sha256": hashlib.sha256(
+            json.dumps(dict(provenance), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
+        "stdin": (
+            {
+                "kind": "sealed_file",
+                "sealed": True,
+                "path": str(sealed_stdin_path.resolve()),
+                "sha256": hashlib.sha256(stdin_bytes).hexdigest(),
+                "size_bytes": len(stdin_bytes),
+            }
+            if stdin_bytes is not None
+            else {"kind": "devnull", "sealed": True, "size_bytes": 0}
+        ),
         "links": dict(spec.links),
         "lineage_key": spec.lineage_key,
         "parent_run_id": spec.parent_run_id,
@@ -258,6 +484,16 @@ def _new_manifest(spec: ManagedCommandSpec, manifest_path: Path) -> dict[str, An
 
 
 def reserve_managed_command(spec: ManagedCommandSpec) -> tuple[Path, dict[str, Any], bool]:
+    if spec.run_kind not in AUTOMATIC_RUN_KINDS:
+        raise ValueError(f"unsupported automatic managed run kind: {spec.run_kind}")
+    if not 1 <= spec.difficulty <= 10:
+        raise ValueError("difficulty must be D1-D10")
+    _effective_child_difficulty_ceiling(spec)
+    provenance = normalize_machine_origin_provenance(spec.launch_provenance)
+    stdin_bytes = _stdin_bytes(spec)
+    expected_contract = _contract_hash(
+        _launch_contract(spec, provenance=provenance, stdin_bytes=stdin_bytes)
+    )
     root = _root_for(spec)
     root.mkdir(parents=True, exist_ok=True)
     run_id = stable_managed_run_id(spec.run_kind, spec.identity_key)
@@ -269,9 +505,23 @@ def reserve_managed_command(spec: ManagedCommandSpec) -> tuple[Path, dict[str, A
             payload = json.loads(manifest_path.read_text(encoding="utf-8"))
             if payload.get("launch_idempotency_key") != spec.identity_key:
                 raise RuntimeError(f"managed run identity collision: {run_id}")
+            if payload.get("launch_contract_sha256") != expected_contract:
+                raise RuntimeError(f"managed run launch contract changed for identity: {run_id}")
             return manifest_path, payload, False
         run_dir.mkdir(parents=False, exist_ok=False)
-        payload = _new_manifest(spec, manifest_path)
+        if stdin_bytes is not None:
+            sealed_path = run_dir / "stdin.bin"
+            descriptor = os.open(sealed_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(stdin_bytes)
+                handle.flush()
+                os.fsync(handle.fileno())
+        payload = _new_manifest(
+            spec,
+            manifest_path,
+            provenance=provenance,
+            stdin_bytes=stdin_bytes,
+        )
         atomic_write_manifest(manifest_path, payload)
         Path(str(payload["result_path"])).touch()
         Path(str(payload["log_path"])).touch()
@@ -338,7 +588,13 @@ def _emit_attempt(manifest: Mapping[str, Any]) -> tuple[str, str] | None:
         "repair_request_id": links.get("repair_request_id"),
         "blocker_id": links.get("blocker_id"),
     }]
-    actor = "meta_repair" if str(manifest.get("run_kind") or "").startswith("automatic_meta") else "immediate_repair"
+    run_kind = str(manifest.get("run_kind") or "")
+    actor = (
+        "meta_repair"
+        if run_kind.startswith("automatic_meta")
+        or run_kind == "automatic_root_cause_repair"
+        else "immediate_repair"
+    )
     claim_event = incident_bridge.append_managed_repair_claim(
         incident_id=incident_id,
         claim_id=f"managed:{manifest.get('run_id')}",
@@ -372,7 +628,10 @@ def _emit_attempt(manifest: Mapping[str, Any]) -> tuple[str, str] | None:
         links={"managed_agent": str(manifest.get("manifest_path"))},
         root=str(manifest.get("project_dir") or "."),
     )
-    if manifest.get("run_kind") == "automatic_meta_repair":
+    if manifest.get("run_kind") in {
+        "automatic_meta_repair",
+        "automatic_root_cause_repair",
+    }:
         attempt_event = incident_bridge.append_meta_repair_attempt(**kwargs)
     else:
         attempt_event = incident_bridge.append_immediate_repair_attempt(**kwargs)
@@ -385,6 +644,11 @@ def _emit_attempt(manifest: Mapping[str, Any]) -> tuple[str, str] | None:
 
 
 def _write_result(manifest: Mapping[str, Any]) -> None:
+    log_path = Path(str(manifest["log_path"]))
+    try:
+        log_bytes = log_path.read_bytes()
+    except OSError:
+        log_bytes = b""
     result = {
         "schema_version": 1,
         "run_id": manifest.get("run_id"),
@@ -394,6 +658,8 @@ def _write_result(manifest: Mapping[str, Any]) -> None:
         "returncode": manifest.get("returncode"),
         "finished_at": manifest.get("finished_at"),
         "error_class": manifest.get("error_class"),
+        "output_sha256": hashlib.sha256(log_bytes).hexdigest(),
+        "output_size_bytes": len(log_bytes),
     }
     path = Path(str(manifest["result_path"]))
     atomic_write_manifest(path, result)
@@ -494,13 +760,61 @@ def _run_managed_command_locked(
             manifest["incident_claim_event_id"], manifest["incident_attempt_event_id"] = emitted
             atomic_write_manifest(manifest_path, manifest)
         env = os.environ.copy()
+        # Automatic agents have machine custody.  A chain marker may carry a
+        # Discord envelope for a later explicit reply, but it is not launch
+        # authority for this internal child and must not leak into its process.
+        inherited_resident = env.pop(RESIDENT_DELEGATION_ENV, None)
+        if inherited_resident:
+            try:
+                inherited_payload = json.loads(inherited_resident)
+                from arnold_pipelines.megaplan.resident.provenance import (
+                    normalize_delegation_provenance,
+                )
+
+                normalized_inherited = normalize_delegation_provenance(inherited_payload)
+            except Exception as exc:
+                raise RuntimeError("automatic launch inherited malformed resident provenance") from exc
+            manifest["upstream_custody"] = normalized_inherited
+            manifest["upstream_custody_sha256"] = hashlib.sha256(
+                json.dumps(
+                    normalized_inherited, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest()
+            atomic_write_manifest(manifest_path, manifest)
+        env[MACHINE_ORIGIN_ENV] = json.dumps(
+            manifest["launch_provenance"], sort_keys=True, separators=(",", ":")
+        )
         env["ARNOLD_MANAGED_AGENT_RUN_ID"] = str(manifest["run_id"])
         env["ARNOLD_MANAGED_AGENT_MANIFEST"] = str(manifest_path)
+        env[MANAGED_DIFFICULTY_CEILING_ENV] = str(
+            _mapping_int(manifest.get("authority"), "child_difficulty_ceiling")
+            or spec.difficulty
+        )
         if spec.run_kind == "automatic_repair" and env.get("CLOUD_WATCHDOG_REPAIR_REQUEST_ID"):
             env["CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID"] = str(os.getpid())
-        child_stdin = spec.stdin_path.open("rb") if spec.stdin_path is not None else subprocess.DEVNULL
+        stdin_contract = manifest.get("stdin")
+        sealed_stdin = (
+            Path(str(stdin_contract.get("path")))
+            if isinstance(stdin_contract, Mapping) and stdin_contract.get("kind") == "sealed_file"
+            else None
+        )
+        if sealed_stdin is not None:
+            observed_stdin = sealed_stdin.read_bytes()
+            if hashlib.sha256(observed_stdin).hexdigest() != stdin_contract.get("sha256"):
+                raise RuntimeError("sealed managed-agent stdin failed integrity verification")
+            child_stdin = sealed_stdin.open("rb")
+        else:
+            child_stdin = subprocess.DEVNULL
+        worker_argv = [
+            item.replace(SEALED_STDIN_PLACEHOLDER, str(sealed_stdin))
+            if sealed_stdin is not None
+            else item
+            for item in spec.argv
+        ]
+        if any(SEALED_STDIN_PLACEHOLDER in item for item in worker_argv):
+            raise RuntimeError("managed stdin placeholder used without sealed stdin")
         child = subprocess.Popen(
-            list(spec.argv),
+            worker_argv,
             cwd=str(spec.project_dir),
             stdin=child_stdin,
             stdout=subprocess.PIPE,
@@ -509,7 +823,7 @@ def _run_managed_command_locked(
         )
         if spec.stdin_path is not None:
             child_stdin.close()
-        raw_cmdline = b"\0".join(os.fsencode(item) for item in spec.argv) + b"\0"
+        raw_cmdline = b"\0".join(os.fsencode(item) for item in worker_argv) + b"\0"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["worker_pid"] = child.pid
         manifest["worker_start_ticks"] = _pid_start_ticks(child.pid)
@@ -535,24 +849,35 @@ def _run_managed_command_locked(
         returncode = child.wait()
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         control_terminal = str(manifest.get("status") or "")
+        log_size = Path(str(manifest["log_path"])).stat().st_size
+        no_output = spec.require_output and returncode == 0 and log_size == 0
         terminal = (
             control_terminal
             if control_terminal in {"cancelled", "superseded"}
             else (
                 "interrupted"
                 if interrupted is not None
-                else ("completed" if returncode == 0 else "failed")
+                else ("completed" if returncode == 0 and not no_output else "failed")
             )
         )
-        _append_status(manifest, terminal, evidence="worker_process_waited", returncode=returncode)
-        manifest["returncode"] = returncode
+        effective_returncode = 74 if no_output else returncode
+        _append_status(
+            manifest,
+            terminal,
+            evidence="worker_process_no_output" if no_output else "worker_process_waited",
+            returncode=effective_returncode,
+        )
+        manifest["returncode"] = effective_returncode
         manifest["terminal_outcome"] = terminal
         manifest["finished_at"] = utc_now()
+        if no_output:
+            manifest["error"] = "managed agent produced no durable output"
+            manifest["error_class"] = "ManagedAgentNoOutput"
         if interrupted is not None:
             manifest["signal"] = interrupted
         atomic_write_manifest(manifest_path, manifest)
         _write_result(manifest)
-        return returncode
+        return effective_returncode
     except BaseException as exc:
         if child is not None and child.poll() is None:
             child.terminate()
@@ -621,6 +946,47 @@ def _parse_links(values: Sequence[str]) -> dict[str, Any]:
     return links
 
 
+def _inherited_difficulty_ceiling() -> int | None:
+    raw = str(os.environ.get(MANAGED_DIFFICULTY_CEILING_ENV) or "").strip()
+    if not raw:
+        return None
+    try:
+        ceiling = int(raw)
+    except ValueError as exc:
+        raise ValueError("inherited managed-agent difficulty ceiling is malformed") from exc
+    if not 1 <= ceiling <= 10:
+        raise ValueError("inherited managed-agent difficulty ceiling must be D1-D10")
+    return ceiling
+
+
+def _effective_child_difficulty_ceiling(spec: ManagedCommandSpec) -> int:
+    requested = spec.child_difficulty_ceiling
+    if requested is None:
+        requested = spec.difficulty
+    if not 1 <= requested <= 10:
+        raise ValueError("child difficulty ceiling must be D1-D10")
+    if requested > spec.difficulty:
+        raise ValueError("child difficulty ceiling cannot exceed root difficulty")
+    inherited = _inherited_difficulty_ceiling()
+    if inherited is not None and spec.difficulty > inherited:
+        raise ValueError("managed child difficulty exceeds inherited root ceiling")
+    if inherited is not None and requested > inherited:
+        raise ValueError("managed child ceiling exceeds inherited root ceiling")
+    return requested
+
+
+def _mapping_int(value: object, key: str) -> int | None:
+    if not isinstance(value, Mapping):
+        return None
+    raw = value.get(key)
+    if isinstance(raw, bool):
+        return None
+    try:
+        return int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m arnold_pipelines.megaplan.managed_agent")
     sub = parser.add_subparsers(dest="action", required=True)
@@ -631,16 +997,22 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--run-root")
     run.add_argument("--task-kind", required=True)
     run.add_argument("--difficulty", type=int, required=True)
+    run.add_argument("--child-difficulty-ceiling", type=int)
     run.add_argument("--model", required=True)
     run.add_argument("--reasoning-effort", required=True)
     run.add_argument("--route-class", required=True)
     run.add_argument("--backend", required=True)
     run.add_argument("--command-display", required=True)
+    run.add_argument("--origin-kind", choices=sorted(MACHINE_ORIGIN_KINDS), required=True)
+    run.add_argument("--origin-id", required=True)
+    run.add_argument("--origin-component", required=True)
+    run.add_argument("--trigger-id", required=True)
     run.add_argument("--parent-run-id")
     run.add_argument("--retry-of-run-id")
     run.add_argument("--lineage-key")
     run.add_argument("--run-id-file")
     run.add_argument("--stdin-file")
+    run.add_argument("--require-output", action="store_true")
     run.add_argument("--link", action="append", default=[])
     run.add_argument("command", nargs=argparse.REMAINDER)
     transition = sub.add_parser("transition")
@@ -680,12 +1052,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         route_class=args.route_class,
         backend=args.backend,
         command_display=args.command_display,
+        launch_provenance=machine_origin_provenance(
+            origin_kind=args.origin_kind,
+            origin_id=args.origin_id,
+            component=args.origin_component,
+            trigger_id=args.trigger_id,
+        ),
         links=_parse_links(args.link),
         parent_run_id=args.parent_run_id,
         retry_of_run_id=args.retry_of_run_id,
         lineage_key=args.lineage_key,
         run_root=Path(args.run_root).resolve() if args.run_root else None,
         stdin_path=Path(args.stdin_file).resolve() if args.stdin_file else None,
+        require_output=args.require_output,
+        child_difficulty_ceiling=args.child_difficulty_ceiling,
     )
     return run_managed_command(
         spec,
@@ -705,14 +1085,22 @@ __all__ = [
     "LEGACY_RESIDENT_SCHEMA",
     "MANAGED_AGENT_CUSTODIAN",
     "MANAGED_AGENT_SCHEMA",
+    "MACHINE_ORIGIN_KINDS",
+    "MACHINE_ORIGIN_ENV",
+    "MANAGED_DIFFICULTY_CEILING_ENV",
+    "MACHINE_ORIGIN_SCHEMA",
+    "SEALED_STDIN_PLACEHOLDER",
     "ManagedCommandSpec",
     "TERMINAL_STATUSES",
     "atomic_write_manifest",
     "is_managed_manifest",
     "managed_run_roots",
+    "machine_origin_provenance",
+    "normalize_machine_origin_provenance",
     "observed_status",
     "reserve_managed_command",
     "run_managed_command",
     "stable_managed_run_id",
     "transition_terminal",
+    "validate_automatic_managed_manifest",
 ]

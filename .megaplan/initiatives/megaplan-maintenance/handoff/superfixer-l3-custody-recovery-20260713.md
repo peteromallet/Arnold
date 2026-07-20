@@ -32,3 +32,27 @@ Do not use arbitrary remote shell commands, raw SSH, `pkill`, `killall`, cgroup-
 ## Completion report
 
 Report root cause, changed contracts/code, tests, deployment/runtime identity, the original WBC recovery evidence, remaining genuine human gates, and any unresolved delivery state. Continue autonomously until the repair path and original chain recovery are verified or a genuine approval/credential/product-decision gate is reached.
+
+## 2026-07-13 implementation update
+
+This work reuses the maintenance initiative and the canonical managed-agent
+contract; it does not introduce a competing launcher or a `.megaplan/briefs`
+plan. The first custody break was L1 accepted/unclaimed or false-success repair
+evidence; L2 was the missed backstop; L3 could observe the gap but previously
+had no separately authorized effect controller.
+
+The implemented contract keeps deterministic gather/report separate, adds a
+six-source fail-closed true-stall policy, and routes an eligible finding through
+the central repair queue/trigger into a distinct D9 root-cause managed run. It
+persists stable finding identity, bounded raw failure context, manifest/run
+links, retry lineage, cooldown/concurrency limits, launch and deterministic
+failure budgets, a circuit breaker, and later recovery verification. Deep mode
+requires the `superfixer-debug` sequence, fixes the failed fixer and L2 backstop
+before using the ordinary recovery path, hunts sibling failures, and fails
+closed on token/context drift or a missing no-guard-weakening receipt.
+
+The old WBC snapshot in this handoff is historical. Live evidence on
+2026-07-13 showed the canonical WBC chain running and advancing, so no restart,
+re-trigger, quarantine, or live-session mutation was authorized or performed.
+Deployment and a synthetic real-session recovery are intentionally left behind
+the normal source reconciliation and scoped wrapper-refresh approval gate.

@@ -1,0 +1,79 @@
+Now I have all the data. Let me compile the verdict.
+
+---
+
+## Forensic Verdict: `custody-control-plane-20260714` / M5 `m5-run-authority-receipt-20260714-1428`
+
+### Cloud Status (Canonical)
+**Session**: `/workspace/custody-control-plane-20260714/Arnold/`  
+**Chain**: `chain-1e998199f544.json` (reset twice before M5: 14:23, 14:26).  
+**Plan launched**: `2026-07-14T14:28:16Z` from brief at `.megaplan/initiatives/custody-control-plane/briefs/m5-run-authority-receipt-reconciliation-and-retirement.md`.  
+**Final state**: `"current_state": "blocked"`, `"latest_failure.kind": "review_quality_blocked_unknown"`, recorded `2026-07-14T18:04:22Z`.  
+**PR**: #250, `pr_state: open`, `merge_policy: review`.
+
+---
+
+### TRACKED (Did L1 see `review_quality_blocked_unknown`?)
+**YES, definitively.** Source: `state.json` lines 1251-1289. The review handler (`handlers/review.py` line 1056) bifurcates: `deterministic=True → "quality_gate_blocked"`, else `"review_quality_blocked_unknown"`. The final review (at `18:04:22Z`, `review.json` SHA-256: `587b481c...`) was non-deterministic — zero `deterministic_evidence` entries, `deterministic: false`, `repairability: "unknown"`. Blocker ID: `quality:review:54a20faf7810c886fb004e79d9e2fe81fcd14aa5a86a93bf4525f84116fd08ff`.
+
+Three review cycles ran:
+| Timestamp (UTC) | Result |
+|---|---|
+| 16:42:46 | `needs_rework` |
+| 17:20:12 | `needs_rework` |
+| 18:04:22 | `blocked` (budget exhausted) |
+
+---
+
+### FIXED (Did L1 act? Was success truthful?)
+**L1 did NOT fix the real blockers.** It recorded them faithfully but the plan violated its own gate:
+
+1. **Three receipts are `accepted: false`** — T13 (M1: `bc1cf762...`), T14 (M2: `ce7d0c13...`), T15 (M3: `33f6fdfc...`). All have 4 blocking failures: `phase_coverage`, `landed_diff`, `green_suite`, `execution_acceptance_contract`.  
+2. **Chain verification**: `divergence_count: 3` (T16/SC16), not `0`.  
+3. **`.retired` written prematurely** at T20 (`18:04Z` vicinity) despite the brief requiring accepted receipts and zero-divergence **first** (brief line 73: "After, and only after…"). T20 executor notes claim all 6 gate groups passed, but SC13/SC14/SC15/SC16 all confirm `accepted=false` and `divergence_count=3`. This is contradictory.  
+4. **`completion_contract_mode` stayed `"shadow"`** (`state.json` line 20) — the brief line 113-115 states "`off`, `shadow`, or `warn` is not an admissible execution posture for this proof sprint; a default shadow status is a preflight blocker." SD1 explicitly defers enforcement semantics to M6+, but the brief requirement is unambiguous.
+
+**Success was not truthful.** The `.retired` marker was created with claims of gate satisfaction that the evidence contradicts.
+
+---
+
+### INTENT (What was M5 supposed to do?)
+The brief (`m5-run-authority-receipt-reconciliation-and-retirement.md`, lines 13-19, 51-86) mandates:
+- 3 `accepted: true` receipts via `compute_verdict()` → `write_completion_verdict()`
+- `chain verify` with `verified_count: 3`, `divergence_count: 0`
+- `.retired` **only after** both gates pass
+- `completion_contract_mode: enforce` as preflight
+
+The plan's SD1 settled that "M5 records enforce posture but does not implement fail-closed semantics," yet the `.retired` creation violated even the recording posture — the three receipts are not accepted, and the chain is divergent.
+
+---
+
+### CONTEXT (Was the review gate preserved? Was recovery reachable?)
+**Review gate structurally preserved** — 3 cycles exhausted per the handler spec. **Substantively violated** — `.retired` marker written despite explicit blockers still open.
+
+**Recovery was reachable.** `state.json` lines 1277-1281 record 5 concrete unresolved blocking rework items:
+1. M1/M2/M3 green suites still have collection/import errors
+2. Three regenerated receipts not accepted
+3. Chain verification divergent, milestones unaccepted
+4. M5 completion manifest has stale receipt digests
+5. Retirement blocked by prerequisite receipt/verification gates
+
+`resume_cursor` (line 1290) points at `"phase": "review"`, `"retry_strategy": "manual_review"` — the plan is parked for human intervention, not silently failed.
+
+---
+
+### Four-Axis Verdict
+
+| Axis | Finding |
+|---|---|
+| **TRACKED** | L1 definitively saw `review_quality_blocked_unknown` at `2026-07-14T18:04:22Z` with 5 documented blocking reasons, `deterministic: false`, `repairability: unknown`. |
+| **FIXED** | L1 did NOT remedy the blockers. 3 receipts remain `accepted: false`, chain diverges (3 not 0), `.retired` written in violation of the brief's explicit ordering constraint. `shadow` mode persisted against brief prohibition. |
+| **INTENT** | M5 intended receipt custody repair with zero-divergence proof before retirement. The `.retired` marker path at `.megaplan/initiatives/runauthority-epic/.retired` (SHA-256: `60430dd2...`, 81 bytes) was created with a retirement claim that the canonical evidence refutes. |
+| **CONTEXT** | Review gate preserved in form (3 cycles), breached in substance (retirement before acceptance). Recovery is **reachable**: the plan is parked at `manual_review` with 5 enumerated blockers. The correct next step is to fix receipt evidence to `accepted: true` and achieve `divergence_count: 0` before recreating `.retired` — or revert the premature retirement. |
+
+**Key files**:  
+- Log: `/workspace/custody-control-plane-20260714/Arnold/.megaplan/cloud-chain-custody-control-plane-20260714.log` (4445 lines)  
+- State: `/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m5-run-authority-receipt-20260714-1428/state.json` (lines 20, 1251-1289)  
+- Handler: `/workspace/custody-control-plane-20260714/Arnold/arnold_pipelines/megaplan/handlers/review.py` (line 1056)  
+- Brief: `/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/briefs/m5-run-authority-receipt-reconciliation-and-retirement.md` (lines 73, 113-115)  
+- `.retired`: `/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/runauthority-epic/.retired` (SHA-256: `60430dd2640a860ba4dea90a83aed5be6a40a25435a01f1f97cb7b6385f48dff`)

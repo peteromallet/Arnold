@@ -1,0 +1,40 @@
+## Forensic Verdict: L2 Meta-Repair for `custody-control-plane-20260714`
+
+### Post-23:00 Activity — Code Fix Only, No Live L1 Retrigger
+
+Three commits landed on `origin/editible-install` after 23:00 UTC on 2026-07-14:
+
+| Commit | Time (UTC) | Description |
+|---|---|---|
+| `799cfe2dfd` | 23:01:17 | "Fail closed on ambiguous strategy authorities" — hardens strategy CLI layout and `strategy.md` docs |
+| `fef9f8db2f` | 23:04:55 | "Keep strategy init inside fresh project root" — guards against root contamination |
+| `2a660fa26b` | 23:29:20 | "Restore bound runtime repair custody" — the substantive L2 commit |
+
+**Commit `2a660fa26b` is exclusively a code fix.** It modifies six files (+281/−6 lines) across three domains: (a) `meta_repair_policy.py` — filters `meta_repair_verdict.json` companion artifacts from recursion counting; (b) `execution_binding.py` — adds `rebind_execution_identity()` with content-addressed chain rebinding, `_bound_import_root_covers_editable_metadata_mismatch` to accept the editible-install import root despite unrelated global metadata, and `_future_source_reconciliation_is_safe` for milestone-future drift; (c) `repair_contract.py` — adds legacy `review_quality_blocked_unknown`→deterministic-quality upgrade path with hash-bound review evidence, `_queue_dispatch_attempt_observation` for managed-run manifest reconciliation, and `_legacy_review_quality_block_evidence` for authoritative sibling review artifact inspection. Tests accompany all changes. **No live session retriggering, no watchdog restart, no L1 custody creation occurred during the 23:00–23:30 window.**
+
+The actual L1/L2 retriggering happened **hours earlier** (19:05–19:43 UTC). The only L2 meta-repair run — `managed-automatic-meta-repair-c6cc2f02ef1fcbc8254f` at 19:16:44Z — classified the trigger as `model_tool_launch_failure` and returned verdict `NO_FIX` because the Codex master-plus-path mutation gate denied authorization (`commit_allowed=false push_allowed=false`). The L1 ordinary repair worker (`managed-automatic-repair-retry-6651d8e32ac3f26ce440`, 19:18:44Z) successfully retriggered with provenance, committed compatibility shim `f8464e3059` at 19:25:59Z, cleared the quality blocker, and advanced the plan to `executed` with review attempt 4 live by 19:43:36Z.
+
+---
+
+### Four-Axis Evaluation
+
+| Axis | Verdict |
+|---|---|
+| **TRACKED** | **Partial.** L2 eventually saw the incident (managed run at 19:16:44Z linked to blocker `848e4a41...`, request `84134d62...`, session `custody-control-plane-20260714`). But the original watchdog dispatch path returned before L2 trigger evaluation — the `manual_review_dispatch_status_env` branch dispatched L1 at line ~1480 and returned at ~1506 without ever calling `compute_meta_repair_trigger`. L2 was structurally blind to the pre-dispatch L1 custody failure. |
+| **FIXED** | **No.** The 19:16Z L2 run classified the failure as `model_tool_launch_failure`, the Codex authorization gate blocked mutation, and the verdict was `NO_FIX`. The 23:29Z commit added infrastructure (execution rebinding, import-root tolerance, companion-artifact filtering) but did not fix the root cause: the watchdog's L2 trigger evaluation dead zone. |
+| **INTENT** | **Correct but unreached.** `classify_repair_system_failure` defines `l1_custody_failure` (trigger type 7) with a sound decision tree. The recursion guard, evidence loading, and prompt assembly are intact. But none of this was exercised for the actual L1 custody failure because the watchdog never reached the L2 evaluation point. |
+| **CONTEXT** | **Present but unused.** The legacy compatibility shim in `repair_contract.py` (`_with_legacy_review_blocked_task_id`, `_legacy_review_quality_block_evidence`) can upgrade a `review_quality_blocked_unknown` request to `quality_gate_blocked` using hash-bound sibling review artifacts — exactly the evidence the live session holds. But this path requires the watchdog to first reach L2 evaluation, which it doesn't. |
+
+---
+
+### Why L2 Failed to Catch/Close L1
+
+**Root cause: a watchdog control-flow dead zone.** The `manual_review_dispatch_status_env` function (lines ~1286–1519) dispatches L1 repair at line ~1453, projects custody at ~1480, classifies the dispatch at ~1506, and **returns at ~1518 — without ever calling `compute_meta_repair_trigger`**. The only code path that evaluates L2 is `emit_current_needs_human_sidecar` (line ~1207), gated behind a `needs-human` marker file check at line 1218. When L1 enters the machine-repairable branch, the `needs-human` marker is absent, so L2 is never consulted.
+
+This is the **exact defect documented** in `.megaplan/initiatives/workflow-boundary-contracts/handoff/superfixer-custody-recovery-20260713.md:20–22`: *"the watchdog's manual-review machine-repairable branch dispatched L1 before loading request and blocker identity. It also returned before evaluating the L2 trigger."*
+
+**Secondary: the L2 that did run lacked mutation authority.** When L2 was manually triggered at 19:16Z, the Codex dispatch was blocked by the master-plus-path authorization gate (`commit_allowed=false`), producing `NO_FIX`. Even if L2 had correctly classified `l1_custody_failure`, it could not have committed a fix without a separate authorization escalation.
+
+**Tertiary: the bounded repair budget was already consumed.** By 23:00Z, the ordinary L1 repair had already used its one deterministic-quality attempt, exhausted the review rework budget (3 cycles), and the plan sat at `executed` with live review in progress. Any later L2 intervention would have been a post-hoc code hardening, not a live custody rescue.
+
+**Key artifacts**: Managed run manifest at `/workspace/.megaplan/repository-strategy-roadmap-supervisor-source/.megaplan/plans/resident-subagents/managed-automatic-meta-repair-c6cc2f02ef1fcbc8254f/manifest.json`; run log confirms `verdict=NO_FIX`; investigation report at `.megaplan/superfixer-custody-20260714/investigation-report.md` §§45–98 details the pre-dispatch blind spot and provenance defects.

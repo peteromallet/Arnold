@@ -1,0 +1,78 @@
+## Retroactive Recurrence Review — L3 Classification at fd77238018
+
+### Evidence Timeline Trace
+
+The four timestamps form a chain through the custody stack:
+
+**T1: 20:18:38Z — L1 deterministic failure.** The watchdog/repair-loop has exhausted retries (outcome `repair_exhausted` or `failed`). In `_l1_failure_fingerprint` (progress_auditor_escalation.py:358–445), this sets `l1.failed = True` via the `exhausted` branch: `retry_used >= 2` or `repeated >= 3` or outcome in `{repair_timeout, repair_exhausted, failed, failure}`.
+
+**T2: 20:20:51Z — Recursion needs-human.** `check_meta_repair_recursion` in `meta_repair_policy.py:91` fires because existing meta-repair records for this session ≥ `max_meta_repair_attempts` (default 1). The guard **blocks** L2 dispatch and recommends `NEEDS_HUMAN` escalation. This is a correct safety mechanism — but the downstream fingerprint doesn't recognize it.
+
+**T3: 20:21:22Z — Bounded L2 context.** Meta-repair gathers bounded evidence. The `meta_repair_summary` contains the recursion verdict but no `failed_launch` count (because no launch was attempted).
+
+**T4: 20:25:24Z — Blocked investigator receipt.** `repair_investigation.py` cannot complete because the chain is in an unreachable state — the recursion guard has walled off the path.
+
+### What Current L3 Would Classify and Dispatch
+
+`classify_true_stall` (line 483) walks the custody axes:
+
+1. **`_l1_failure_fingerprint`**: `failed = True` (deterministic exhaustion proven). ✓
+2. **`_l2_failure_fingerprint`** (line 448–480):
+   - `due = True` (because `l1.failed = True`)
+   - `failed_launch = False` (no launches were attempted — recursion guard prevented them)
+   - `missing = False` (meta evidence exists, it just says "recursion blocked")
+   - `false_success = False`
+   - **∴ `l2.failed = False`**
+
+3. Because `l2.failed = False`, the block list gains `"l2_backstop_failure_not_proven"` (line 570).
+
+4. **Result**: `eligible = False`, `decision = "report_only"`. **No L3 dispatch occurs.** The six-hour auditor produces a finding but the escalation gate stays closed.
+
+### Blindness / Misdiagnosis
+
+The `_l2_failure_fingerprint` has a **false-negative blind spot**: it only recognizes L2 failure through `failed_launch` (a launch was tried and failed), `missing` (evidence absent), or `false_success` (lied about fixing). A **correctly functioning recursion guard** — one that prevents redundant dispatch — triggers *none* of these signals. L2 is effectively blocked yet the fingerprint reports `l2.failed = False`, causing L3 to stand down.
+
+The recursion guard at T2 (20:20:51) is a *successful safety mechanism*, but from L3's perspective it looks identical to "L2 hasn't tried yet." The problem-8f475cf8e677 ledger entry confirms this pattern: "meta-repair recursion guard blocked dispatch" with `status=open` and `occurrence_count=3`.
+
+### Smallest Systemic Repair
+
+Add a `recursion_guard_blocked` signal to the L2 failure fingerprint in `progress_auditor_escalation.py` line 448–480. The meta-repair summary must carry `recursion_guard_blocked: true` when `check_meta_repair_recursion` fires, and `_l2_failure_fingerprint` must treat it as failure:
+
+```python
+# In _l2_failure_fingerprint, after line 469:
+recursion_blocked = meta.get("recursion_guard_blocked") is True
+failed = bool(due and (failed_launch or missing or false_success or recursion_blocked))
+```
+
+This is one boolean, zero new dependencies, and preserves the recursion guard's safety while closing the L3 visibility gap.
+
+### Test Fixture
+
+In `tests/cloud/test_progress_auditor.py`, a single parametrized case:
+
+```python
+def test_l2_recursion_guard_unblocks_l3_true_stall():
+    finding = {
+        "session": "custody-control-plane",
+        "plan": "s4",
+        "current_state": "blocked",
+        "repair_data_summary": {"outcome": "repair_exhausted"},
+        "meta_repair_summary": {
+            "recursion_guard_blocked": True,
+            "should_dispatch": False,
+        },
+        "deterministic_superfixer_evidence": {"actionable": True},
+        "chain_state_summary": {
+            "current": {"last_state": "blocked", "chain_complete": False}
+        },
+        "resolver_state": {"canonical_state": "MACHINE_ACTION_REQUIRED"},
+    }
+    gate = classify_true_stall(finding)
+    # Without fix: gate["eligible"] is False, blocks include "l2_backstop_failure_not_proven"
+    # With fix: gate["eligible"] is True, decision == "true_stall"
+    assert gate["eligible"] is True
+    assert gate["decision"] == "true_stall"
+    assert gate["custody_walk"]["L2"]["failure"]["recursion_blocked"] is True
+```
+
+This proves the fix converts a false-negative `report_only` into a warranted `true_stall` when L2 is recursion-blocked, without weakening the guard itself.

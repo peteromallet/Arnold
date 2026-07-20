@@ -61,10 +61,6 @@ expansion, or declaring legitimate implementation/review time waste.
 - Budget exhaustion creates a typed checkpoint/blocker. Two equivalent
   normalized `worker_budget_exhausted` occurrences open a plan circuit before a
   third blind retry, while exact task/attempt identity remains preserved.
-- Review-cycle exhaustion uses the same bounded-circuit discipline. Structured
-  status families such as `failed: <detail>` retain their deterministic command,
-  criterion, and artifact evidence instead of collapsing to unknown merely
-  because a legacy parser expected the exact token `failed`.
 - Invalid ref/model/import/provenance and exhausted timeout/compaction/rework
   budgets fail visibly. Ambient or implicit fallback cannot bypass the circuit.
 - Repair adoption is verify-only and never trusts a receipt label or rewrites
@@ -106,10 +102,6 @@ backed, and cannot grant authority outside the compiled plan.
   six-task rework fixtures converge within configured bounds with exact reasons.
 - Two normalized budget failures open the plan circuit before a third retry;
   unrelated failure signatures do not collide.
-- Captured `review_quality_blocked_unknown` evidence with `failed: <detail>`
-  rows normalizes to one exact deterministic quality-block signature, preserves
-  its commands and artifact hashes, and stops at the configured review budget;
-  malformed or genuinely unstructured rows remain typed unknown.
 - Valid T7/T12-style repair receipts use verify-only adoption and avoid full
   replay; altered revision/task/tree/test/fence fixtures quarantine and execute
   normally.
@@ -152,31 +144,6 @@ Do not put DAG feasibility or executor policy in the generic authority kernel;
 do not increase a model/turn budget automatically to make a plan pass; do not
 convert review or high-volume productive code changes into avoidable cost; do
 not let a validation classifier execute arbitrary unreviewed effects.
-
-## F01–F17 amendment contract
-
-This milestone is the sole primary owner for F03 and F07–F13, emits F14 work
-events, and implements R2. It extends existing Megaplan seams; it does not create
-another compiler, validation declaration, splitter, retry framework, authority,
-or custody contract.
-
-- **Prerequisite:** accepted M8 adopter/runtime proof, M7 immutable receipt and
-  attempt identities, and content-addressed Transaction/Strategy/rework corpus.
-- **First safe action:** run one report-only suite over the captured corpus using
-  existing `task_feasibility.py`, `validation_jobs`, suite runner,
-  `split_oversized_batches`, source admission, and circuit primitives. Record
-  every missing consumer without rewriting a historical or live plan.
-- **Deliverables:** `evidence/m8a-f01-f17-executor-wiring.json`, deterministic
-  corpus reports, compiler/executor wiring, validation receipts, 5+1 rework
-  evidence, per-class circuit receipts, verify-only repair-adoption receipts,
-  and exact F14 work-class events.
-- **Acceptance evidence:** safe DAG admission, complexity split/budget proof,
-  zero-model deterministic validation, bounded invalid-ref/provider/import/
-  compaction/rework cases, no third equivalent budget launch, no circuit
-  collision, and drift-negative verify-only adoption at the pinned runtime.
-- **Component-versus-wiring safeguard:** focused tests or component presence are
-  not acceptance. Each F03/F07–F13 row must name the real compiler/executor call
-  site and captured runtime trace; enforcement starts only on new canary plans.
 
 ## Profile rationale
 

@@ -1,0 +1,29 @@
+## EVIDENCE-CONTRACT GAP: **YES**
+
+### First failed producer-consumer edge
+
+**`repair-progress.json` → canonical status aggregator (classification label)**
+
+- **Producer** (L1 repair dispatch, `2026-07-14T00:02:35Z`): Wrote `/workspace/.megaplan/cloud-sessions/workflow-boundary-contracts-corrective-20260710.repair-progress.json` with `liveness: stalled` (genuine 8560s event gap captured at 00:03:26), `decision=repairing`, `request/claim/attempt=1/0/1`, `custody_unavailable`.
+- **Consumer** (canonical status at `2026-07-14T00:33:32Z`): Trusts repair-progress for recovery classification → `permitted: no_action`, `custody_unavailable`, producing status `[repairing]`. Runner is **live** (heartbeat_age 67s), chain-health shows `progressing`, and PID guard (`repair-loop.pid.guard`, 0 bytes, mtime Jul 13 23:47) proves no repair process runs.
+
+The snapshot captured a legitimate stall window (00:03–00:20) but was **never refreshed** when runner PID 1004788 resumed at 00:20:16. No contract requires repair-progress re-evaluation against current plan liveness before classification consumption.
+
+### Recovery never updated repair-progress/incident projections
+
+Incident ledger frozen at **seq 474** (`outcome=stopped`, `next_expected_event=watchdog.dispatch`). Auditor `20260713T193411Z` flags `DRIFT_DETECTED` — watchdog reported `session already alive` at 18:41/19:35, but zero reconciliation events. `problem-3bc7a5eaa27e` remains open (46 occurrences, zero fix commits). Repair-data (`/workspace/.megaplan/cloud-sessions/repair-data/workflow-boundary-contracts-corrective-20260710.repair-data.json`) tracks obsolete C1 (`milestone_or_plan: c1-contract-reality-20260711-1433`, `outcome: repairing`, 25 runs) while S3 is live.
+
+### Stale conclusions baked into downstream auditor/queue
+
+L3 dispatch at 19:48Z (`request_id: 17854062a3cf...`) has `deterministic_superfixer_evidence: {}` (empty), `status: dispatched`, `layer: reconciler`, consuming stale seq-474 incident projection. The auditor cannot produce actionable evidence because repair-progress never refreshed.
+
+### Sibling evidence
+
+| Artifact | Path | Status | Timestamp |
+|---|---|---|---|
+| Chain-health | `...cloud-sessions/...chain-health.progress.json` | `progressing` | Jul 14 00:25 |
+| State (S3) | `.../plans/s3-.../state.json` | live PID 1004788, heartbeat_age 67s | Jul 14 00:33 |
+| Marker | `...cloud-sessions/...json` | 8h stale mtime | Jul 13 16:05 |
+| PID guard | `...repair-loop.pid.guard` | **0 bytes, empty** | Jul 13 23:47 |
+| Incident | `inc-workflow-boundary-contracts-corrective-20260710` | seq 474, `stopped`, unreconciled | — |
+| Auditor | `/workspace/audit-reports/20260713T193411Z-audit.md` | `DRIFT_DETECTED`, repair data 110min old | Jul 13 19:34 |

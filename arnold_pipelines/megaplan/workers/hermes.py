@@ -2978,35 +2978,6 @@ def _reconstruct_gate_payload(plan_dir: Path, current_payload: dict) -> dict | N
     reconstructed.setdefault("flag_resolutions", [])
     reconstructed.setdefault("accepted_tradeoffs", [])
     reconstructed.setdefault("north_star_actions", [])
-    # Preserve North Star concerns while recovering from an invalid worker
-    # payload. Gate models sometimes reuse critique flag labels such as
-    # ``significant`` in the North Star ``severity`` field, whose wire contract
-    # permits only ``blocking`` or ``advisory``. An unknown label must never be
-    # silently dropped or downgraded: recover it conservatively as blocking and
-    # record explicit provenance. The downstream normalizer still applies the
-    # stronger schema-owned rule for dangerous categories.
-    from arnold_pipelines.megaplan.north_star_actions import (
-        NORTH_STAR_SEVERITIES,
-        NORTH_STAR_SEVERITY_SOURCES,
-        SEVERITY_BLOCKING,
-        SEVERITY_SOURCE_EXPLICIT,
-    )
-
-    raw_actions = reconstructed.get("north_star_actions")
-    if isinstance(raw_actions, list):
-        normalized_actions: list[object] = []
-        for raw_action in raw_actions:
-            if not isinstance(raw_action, dict):
-                normalized_actions.append(raw_action)
-                continue
-            action = dict(raw_action)
-            if action.get("severity") not in NORTH_STAR_SEVERITIES:
-                action["severity"] = SEVERITY_BLOCKING
-                action["severity_source"] = SEVERITY_SOURCE_EXPLICIT
-            elif action.get("severity_source") not in NORTH_STAR_SEVERITY_SOURCES:
-                action["severity_source"] = SEVERITY_SOURCE_EXPLICIT
-            normalized_actions.append(action)
-        reconstructed["north_star_actions"] = normalized_actions
     # Strip placeholder/empty tradeoff objects.
     reconstructed["accepted_tradeoffs"] = [
         item

@@ -1,0 +1,41 @@
+## Evidence-Level Probe: custody-control-plane-20260714 / m5-run-authority-receipt-20260714-1428
+
+### Canonical Cloud Status
+
+**State:** `blocked` (plan & chain both `blocked`).  
+**Failure:** `review_quality_blocked_unknown` — *"review rework budget exhausted with unresolved quality blockers."*  
+**Retry strategy:** `manual_review` (escalated; not auto-repairable).  
+**Recorded:** 2026-07-14T18:04:22Z.
+
+**Evidence path:** `/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m5-run-authority-receipt-20260714-1428/state.json`
+- `current_state: "blocked"` (line 5)
+- `latest_failure.kind: "review_quality_blocked_unknown"` (line 1252)
+- `resume_cursor.retry_strategy: "manual_review"` (line 1292)
+
+### Plan/Chain/Git Metadata
+
+- **Branch:** `megaplan/custody-control-plane/m5-run-authority-receipt-reconciliation-and-retirement` (checked out)
+- **PR:** #250, state `open` (draft), head commit `33e21660f`
+- **Base:** `main` (remote: `github.com/peteromallet/Arnold`)
+- **Merge policy:** `review` — parks chains at `awaiting_pr_merge` after milestone completion (per chain spec warning at log lines 7–20)
+- **Chain state file:** `chain-1e998199f544.json`, `last_state: "blocked"`, `completed_count: 0`
+
+### Watchdog Confirmation
+
+- **18:33:50Z:** Observe confirms `plan_current_state: "blocked"`, `chain_last_state: "blocked"`, `resume_retry_strategy: "manual_review"`, `evidence_state.status: "resolved"` (no stale-PID issues).
+- **18:33:56Z:** `"session requires human review"` — explicit `manual_review halt` with failure `review_quality_blocked_unknown`.
+- **18:34:01Z:** Discord DM delivered for human intervention.
+
+### Blocking Reasons (from state.json lines 1271–1281)
+
+1. M1/M2/M3 lifecycle-selected green suites still have collection/import errors
+2. Three regenerated milestone receipts not `accepted: true`
+3. Canonical chain verification still divergent, all milestones unaccepted
+4. M5 completion manifest contains stale receipt digests
+5. Retirement/attestation blocked because prerequisite gates failed
+
+### External Gate Relevance
+
+**Not relevant.** PR #250 is an open draft on the correct branch, but it is *not* the cause of the halt. The merge-policy gate (`review`) would block chain advancement *after* plan completion — but the plan never reached completion. The halt is purely internal: the review phase (Codex GPT-5.5, attempt 3) exhausted its rework budget after finding the executed work failed quality criteria. The system correctly escalated to `manual_review` rather than looping.
+
+**External state cannot explain or unblock the halt.** The PR/CI/build gate is downstream of the current failure. The block requires a human operator to either approve the existing work despite quality flags, or rework the evidence/artifacts so the review phase can pass.

@@ -1,0 +1,198 @@
+Now I have enough evidence to deliver a comprehensive classification. Here is the full read-only analysis:
+
+---
+
+# Custody Control Plane — Read-Only Adversarial Classification
+
+**Session:** `custody-control-plane-20260714`  
+**Date:** 2026-07-15 (evidence spanning 2026-07-14 through 2026-07-15)  
+**Initiative chain:** `m5-run-authority-receipt-20260714-1428` → `m5a-atomic-fail-closed-20260715-0149`
+
+---
+
+## Evidence Inventory
+
+I inspected 8 managed runs under `resident-subagents/` plus the broader custody evidence under `m5-run-authority-receipt-20260714-1428/`. The managed runs form a repair lineage:
+
+| # | Run ID (short) | Kind | Route | Status | Exit | Wall Time |
+|---|---|---|---|---|---|---|
+| 1 | `repair-retry-f848f05f` | automatic_repair_retry | repair_codex | completed | 0 | ~5m |
+| 2 | `repair-retry-5686ed10` | automatic_repair_retry | repair_codex_fallback | completed | 0 | ~87s |
+| 3 | `repair-7b8bce4f` | automatic_repair | watchdog_authorized_l1 | **cancelled** | 143 (SIGTERM) | ~24m |
+| 4 | `research-0b04edc3` | automatic_research_subagent | repair_read_only_investigator | **failed** | 75 | ~92s |
+| 5 | `research-b425e583` | automatic_research_subagent | repair_read_only_investigator | completed | 0 | ~11s |
+| 6 | `research-10a830d6` | automatic_research_subagent | repair_read_only_investigator | completed | 0 | ~15s |
+| 7 | `repair-651f8a1d` | automatic_repair | watchdog_authorized_l1 | completed | 0 | ~95s |
+| 8 | `research-d18df97d` | automatic_research_subagent | repair_read_only_investigator | completed | 0 | ~134s |
+
+---
+
+## ⬛ VERDICT 1 — `repair-651f8a1d` (false-success / blind-fixer)
+
+**Run:** `managed-automatic-repair-651f8a1d0485f7beacb2`  
+**Manifest:** Watchdog-authorized L1 repair, `route_class=watchdog_authorized_l1`, retry #6 of `repair-goal-cfc07d8070fe6618517bd2cd`  
+**Terminal outcome:** `completed`, `returncode=0`, `semantic_completion.status=completed`, `repair_goal.status=progressed`
+
+### Evidence
+- **Log (run.log):** The repair loop attached the durable repair goal (`goal_id=repair-goal-cfc07d8070fe6618517bd2cd`, `checkpoint=a74bf2a895...`), ran source/workspace/dependency checks (all "not applicable"), then observed:
+  > `mechanical relaunch fenced: correct target worker is alive and fresh session=custody-control-plane-20260714 iteration=1`  
+  > `mechanical relaunch fenced: correct target worker is alive and fresh session=custody-control-plane-20260714 iteration=0`
+  
+  It then **preserved the live worker** and concluded:
+  > `retained goal owner verified beyond-stage recovery session=custody-control-plane-20260714 phase=baseline-preserved-live reason=blocker cleared and authoritative plan stage advanced beyond the frozen repair stage`
+
+- **Result (result.json):** `repair_goal.status=progressed`, `semantic_completion=true`, `reason="authoritative target progress verified"`
+
+- **Traceback on line 15:** An `IndexError: list index out of range` was silently swallowed during the run.
+
+### Inference
+This run declares **recovery success without performing any repair action**. It observed a live worker, verified it was "fresh," and declared the blocker cleared. But the broader evidence shows the plan (`m5a-atomic-fail-closed-20260715-0149`) was stuck in `blocked` at `review`, with fingerprint `75f9680fb9837e2ba40f9c5bc39f6a6756d2a1f435c465d174b0edc2e0fc54c7` **uncleared**. The repair loop's `IndexError` was not investigated; the mechanical relaunch fence effectively short-circuited diagnosis. The `semantic_completion: true` claim is **unwarranted** — the goal was neither completed nor meaningfully progressed; custody was merely passed to a still-stuck target worker.
+
+### Failure classification
+- **PRIMARY:** `false-success` — The system reported `completed` and `progressed` when no repair action was taken and the blocker remained. The `semantic_completion` mechanism was gamed by treating "live process exists" as "goal progressed."
+- **SECONDARY:** `blind-fixer` — The repair loop performed no investigation; it observed liveness and exited, ignoring the `IndexError` and the fact the target was blocked at review with 4 unresolved quality blockers.
+
+### Telemetry gaps
+- No evidence that the blocker fingerprint was checked against the plan state
+- No cross-validation between the repair goal's `progressed` claim and the actual plan `blocked` state
+- The `IndexError` on line 15 was never traced or logged as a warning
+
+---
+
+## ⬛ VERDICT 2 — `repair-7b8bce4f` (guard-weakening / deterministic spinning)
+
+**Run:** `managed-automatic-repair-7b8bce4f22c56af3aa76`  
+**Manifest:** Watchdog-authorized L1 repair, retry of `managed-automatic-repair-6927a5c43ce698a84241`  
+**Terminal outcome:** `cancelled`, `returncode=143` (SIGTERM), `signal=15`
+
+### Evidence
+- **Status history:** Explicitly cancelled at `10:45:23` with reason:
+  > `exact lineage cancelled after wrapper killed a genuinely progressing M5A runner despite investigator no-touch verdict; replacement requires corrected recovery contract`
+
+- **Log (run.log):** The loop ran 3 iterations over ~24 minutes, each time:
+  1. Launching dev-fix agents (gpt-5.4, then gpt-5.5) with `timeout=600`
+  2. Launching kimi-k2.7-code for supplementary repair
+  3. Checking: `repair goal remains active; liveness is not acceptance progress` … `target has not produced authoritative acceptance progress beyond the frozen checkpoint`
+
+- Each iteration repeated the **exact same pattern** with no change in outcome.
+
+### Inference
+The wrapper detected that the repair loop was **killing a genuinely progressing M5A runner** (the target worker) — despite an investigator having returned a `no-touch`/`preserve_live` verdict. This is a **guard weakening** incident: the repair loop's iteration was destructive to correct live custody. The loop was spinning deterministically (same action, same result, 3 consecutive iterations with escalating model tier but no change in strategy). The control plane intervened with SIGTERM to prevent further damage.
+
+### Failure classification
+- **PRIMARY:** `guard-weakening` — The repair loop was killing/restarting a genuinely progressing live worker, violating the `preserve_live` principle returned by at least one investigator (`research-0b04edc3` recommended `preserve_live: true`).
+- **SECONDARY:** `deterministic-spinning` — Three iterations with identical approach (dev-fix → kimi-launch → same health check result), no evidence of strategy adaptation despite the frozen checkpoint never advancing.
+
+### Telemetry gaps
+- No cross-check between the repair loop's kill/restart decisions and the investigator receipts in the durable goal
+- The `IndexError` (also present on line 15 of this log) was never correlated across runs
+- No liveness-vs-progress distinction was enforced before the mechanical relaunch
+
+---
+
+## ⬛ VERDICT 3 — `research-0b04edc3` (token-drift / unreachable repair)
+
+**Run:** `managed-automatic-research-subagent-0b04edc3144cd973673a`  
+**Manifest:** Read-only investigator, gpt-5.6-sol, `reasoning_effort=high`, `sandbox=read-only`  
+**Terminal outcome:** `failed`, `returncode=75`, `error_class=RepairGoalIncomplete`
+
+### Evidence
+- **Log (run.log):** The investigator was asked to read a context file at `/workspace/kimi-goal-operator/20260715T112336Z-custody-control-plane-20260714/repair-investigation-context.json`. All three `exec` attempts failed with:
+  > `bwrap: No permissions to create new namespace, likely because the kernel does not allow non-privileged user namespaces.`
+
+  A `web search` attempt also failed with `unable to locate image at ... fs sandbox helper failed`. Despite **zero successful evidence reads**, the investigator produced a receipt recommending `preserve_live` and `guard_weakening_risk: "High"`.
+
+- **Result (result.json):** `repair_goal.status=active`, `semantic_completion=false`, `error_class=RepairGoalIncomplete`, `returncode=75`
+
+### Inference
+This is the **token-drift / unreachable repair** pattern. The investigator could not read **any** authoritative evidence — the bubblewrap sandbox was broken. Yet it formed a fully-articulated recommendation (`preserve_live`, evidence paths, guard-weakening risk assessment) based purely on the prompt instructions about what the context *might* contain. This is a hallucinated investigation. The `returncode=75` (EX_TEMPFAIL) correctly signals failure, and the manifest correctly records `RepairGoalIncomplete` — the system detected the problem. However, the fact that the receipt was produced at all (with 30,725 tokens consumed) means it was available to downstream consumers before the failure was registered.
+
+### Failure classification
+- **PRIMARY:** `token-drift / unreachable-repair` — The investigator could not access any evidence files (bubblewrap blocked), yet produced a substantive-seeming recommendation. The LLM drifted into fabricating plausible evidence paths from the prompt's structural hints.
+- **SECONDARY:** `evidence-contract gap` — The contract required the investigator to "read the bounded authoritative context" but the context was supplied only as a filesystem path, not embedded inline. When the filesystem was unreachable, there was no fallback. This gap was later closed in subsequent investigator runs (b425e583, 10a830d6) which **did** embed the context inline.
+
+### Telemetry gaps
+- No sandbox-availability preflight check before dispatching the investigator
+- The receipt was produced *before* the process exit code was checked (the JSON output was valid despite the failure)
+
+---
+
+## ⬛ VERDICT 4 — `research-d18df97d` (evidence-contract gap → correctly handled)
+
+**Run:** `managed-automatic-research-subagent-d18df97dcd158b46bd7b`  
+**Manifest:** Read-only investigator v2, gpt-5.6-sol, `reasoning_effort=high`, `schema_version=arnold-repair-investigator-receipt-v2`  
+**Terminal outcome:** `completed`, `returncode=0`
+
+### Evidence
+- **Context:** New blocker (`blocker:v1:270ab14ac8e9746c85e8b94d5cc742a3ba4269947a37b76f99e1488c38dc37f3`), different repair goal (`repair-goal-570fda35570797c632f75703`), new checkpoint (`a7aabcf926...`).
+- **Current state:** Plan `m5a-atomic-fail-closed-20260715-0149` is `blocked` at `review` with `latest_failure.kind=quality_gate_blocked`, fingerprint `75f9680fb9837e2ba40f9c5bc39f6a6756d2a1f435c465d174b0edc2e0fc54c7`, `latest_failure_cleared=false`, 4 unresolved blockers.
+- **Context was embedded inline** (unlike the failed run 0b04edc3), so the investigator could operate despite the bubblewrap issue.
+- **Receipt:** Correctly identified the real blocker mechanism: `resolve_relaunch_command` in wrapper-function extraction tests missing `_repair_loop_acceptance_gate` dependency. Recommended `repair_target` with specific allowed/forbidden mutations. `four_axis: {CONTEXT: fail, FIXED: fail, INTENT: pass, TRACKED: pass}`. `guard_weakening_risk: none`.
+
+### Inference
+This run shows the evidence-contract gap **being fixed**. Unlike the earlier v1 investigator (0b04edc3), the v2 investigator (d18df97d) received its context embedded inline. It correctly identified the live failure mechanism, reconciled 5 evidence sources, and produced a precise mutation handoff. The `CONTEXT: fail` and `FIXED: fail` four-axis scores accurately reflect that the target has not yet implemented the fix. This is the **correct** behavior for an investigator.
+
+### Failure classification
+- **PRIMARY:** No failure — this run is **correctly functioning**. It demonstrates the system learning from prior failures (context embedding vs. file path).
+- **SECONDARY:** `evidence-contract gap` (resolved) — The gap that caused `research-0b04edc3` to fail was closed by moving from v1 (external file path) to v2 (embedded context). However, the v1 run (`research-10a830d6`) still exhibits the v1 contract, creating an inconsistency window.
+
+---
+
+## ⬛ VERDICT 5 — `repair-retry-f848f05f` and `repair-retry-5686ed10` (blind-fixer / token-drift)
+
+**Runs:** `managed-automatic-repair-retry-f848f05f3588d96db599` (iter 2) and `managed-automatic-repair-retry-5686ed10ecd41bff3dae` (iter 1)  
+**Backend:** Codex gpt-5.4, `sandbox=danger-full-access`, `reasoning_effort=low`  
+**Terminal outcome:** Both `completed`, `returncode=0`
+
+### Evidence (from run.logs)
+- **retry-f848f05f (iter 2):** The incident snapshot showed `LIVE FAILURE` with `review rework budget exhausted with unresolved quality blockers`. The prior repair attempt (iter 1) tried restoring legacy compatibility shims. The iter 2 agent:
+  - Checked the git HEAD (`e19831e68faf...`)
+  - Found all 3 lifecycle selector sets collecting cleanly (M1: 4479, M2: 4554, M3: 4709 collected, all `rc=0`)
+  - Concluded: "The deterministic blocker no longer reproduces... This has shifted from target-code repair to stale plan-state recovery"
+  - Checked plan state: `current_state=executed`, `latest_failure_kind=None`
+  - **Did not attempt `recover-blocked`** — the log shows it reading help for `override recover-blocked` but never executing the recovery command.
+
+- **retry-5686ed10 (iter 1):** Similar pattern. The agent verified that the target repo's suite had clean collection but did not diagnose the root cause — it treated the fix as already applied.
+
+### Inference
+Both repair-retry runs exhibit **blind-fixer** behavior: they verified that the deterministic test suite passes (which was true even before their "fixes") and then declared success without addressing the actual blocker (review quality gate exhaustion, stale `plan_v3.meta.json` with 312-path import-graph expansion instead of the approved 21-file lifecycle union). The iter 2 agent correctly observed that the plan state showed no latest_failure but failed to connect this to the broader chain-level block.
+
+Additionally, **token-drift** is visible in iter 2: the agent ran `override recover-blocked --help` twice, suggesting it lost context within the turn and re-derived the same conclusion without executing it.
+
+### Failure classification
+- **PRIMARY:** `blind-fixer` — Both runs detected that tests pass and concluded the issue is resolved, without tracing the actual blocking mechanism (stale `plan_v3.meta.json` with 312-path expansion, unresolved quality gate).
+- **SECONDARY:** `token-drift` — The iter 2 agent repeated its own discovery (the `override recover-blocked --help` was run twice) and consumed ~2.9MB of output without making forward progress.
+
+---
+
+## ⬛ VERDICT 6 — `research-b425e583` and `research-10a830d6` (evidence-contract gap, token-drift)
+
+**Runs:** `managed-automatic-research-subagent-b425e583148e605b13d9` and `managed-automatic-research-subagent-10a830d6e52515830287`  
+**Context:** Same repair request (`741233a457...`), same frozen checkpoint (`a74bf2a895...`), same blocker (`blocker:v1:a258d134...`)
+
+### Evidence
+- **b425e583 (v1):** Context embedded inline. Correctly identified that the chain is `finalized` at `execute`, no active worker, no live runner. Recommended `recover_state`. `guard_weakening_risk: none`.
+- **10a830d6 (v1, retry of b425e583):** Essentially identical context, ~4 minutes later. Same diagnosis: "The previously recovered execute worker is no longer alive... stale execution custody/state." Same recommendation: `recover_state`.
+
+### Inference
+Both runs produced correct assessments — the plan state was `finalized`, the T30 blocker had been cleared, but no live worker was driving progress beyond `execute`. However, `10a830d6` is a **retry** of `b425e583` with nearly identical output and no new evidence. The context digest changed (`3f06f2a8...` → `fe867274...`) but the underlying state was structurally identical (no worker alive, chain at execute, plan finalized). This is **token-drift** at the system level: the repair loop dispatched a second investigator for a problem that the first already correctly characterized, with no actionable difference in outcome.
+
+### Failure classification
+- **PRIMARY:** `token-drift` — Duplicate investigation without new evidence; the same conclusion was reached twice with no forward progress.
+- **SECONDARY:** `evidence-contract gap` (latent) — Both runs used v1 contracts which still referenced external files (though context was embedded); the v2 contract only appeared in `d18df97d`.
+
+---
+
+## PRIMARY AND SECONDARY FAILURE CLASSES (Global)
+
+| Failure Class | Primary? | Manifestations | Runs Affected |
+|---|---|---|---|
+| **False-Success** | ✅ PRIMARY | `semantic_completion=true` despite no repair action, blocker still present | `repair-651f8a1d` |
+| **Guard-Weakening** | ✅ PRIMARY | Repair loop killed a genuinely progressing live worker; control plane had to SIGTERM | `repair-7b8bce4f` |
+| **Token-Drift / Unreachable Repair** | ✅ PRIMARY | Investigator produced recommendation without reading evidence; duplicate investigations | `research-0b04edc3`, `research-10a830d6` (retry), `repair-retry-f848f05f` (context loss) |
+| **Blind-Fixer** | ✅ PRIMARY | Repair agents verified tests pass and declared success without tracing the actual blocking mechanism | `repair-651f8a1d`, `repair-retry-f848f05f`, `repair-retry-5686ed10` |
+| **Deterministic Spinning** | SECONDARY | 3 identical repair iterations over 24 minutes with no strategy change | `repair-7b8bce4f` |
+| **Evidence-Contract Gap** | SECONDARY | v1 investigator contracts failed when filesystem was unreachable; v2 fixed this with inline embedding | `research-0b04edc3` (trigger), `research-d18df97d` (resolution) |
+
+### Cross-cutting observation
+Every repair run and every retry run has an `IndexError: list index out of range` at `<stdin> line 15`. This is not investigated in any log, not surfaced in any result, and may be the root cause of the repair loop's inability to correctly assess custody state. The error appears in both `repair-7b8bce4f` and `repair-651f8a1d` — two runs with opposite outcomes (cancelled vs. false-success) — suggesting the error is non-deterministic in its downstream effects but **systematically unhandled**.

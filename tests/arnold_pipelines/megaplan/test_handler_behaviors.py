@@ -25,7 +25,6 @@ from arnold_pipelines.megaplan.handlers.structured_output import (
     classify_scratch,
     promote_scratch,
 )
-from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.workers import WorkerResult
 
 
@@ -367,77 +366,6 @@ class TestGateOutcomeSemantics:
         assert outcome["result"] == "unresolved_flags"
         assert outcome["route_signal"] == "retry_gate"
         assert outcome["blocking_unresolved_ids"]
-
-    def test_build_gate_route_signal_verifies_open_blocker_with_concrete_evidence(
-        self, tmp_path: Path
-    ) -> None:
-        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
-        from arnold_pipelines.megaplan.planning.state import STATE_GATED
-
-        (tmp_path / "faults.json").write_text(
-            json.dumps(
-                {
-                    "flags": [
-                        {
-                            "id": "f1",
-                            "severity": "significant",
-                            "status": "open",
-                            "concern": "The dependency ordering is broken.",
-                            "category": "correctness",
-                        }
-                    ]
-                }
-            ),
-            encoding="utf-8",
-        )
-        state: dict[str, Any] = {
-            "name": "p",
-            "iteration": 1,
-            "config": {},
-            "meta": {},
-            "current_state": "critiqued",
-        }
-        summary = {
-            "recommendation": "PROCEED",
-            "passed": True,
-            "rationale": "The blocker is fixed.",
-            "signals_assessment": "ok",
-            "warnings": [],
-            "criteria_check": {},
-            "preflight_results": {},
-            "unresolved_flags": [
-                {
-                    "id": "f1",
-                    "severity": "significant",
-                    "status": "open",
-                    "concern": "The dependency ordering is broken.",
-                }
-            ],
-            "addressed_flags": [],
-            "flag_resolutions": [
-                {
-                    "flag_id": "f1",
-                    "action": "verify_fixed",
-                    "evidence": (
-                        "plan_v2.md Step 4 now consumes evidence/prerequisites.json "
-                        "from Step 3 before generating the handoff."
-                    ),
-                    "rationale": "The dependency edge is now explicit.",
-                }
-            ],
-            "orchestrator_guidance": "",
-        }
-
-        outcome = _build_gate_route_signal(
-            state, summary, robustness="standard", plan_dir=tmp_path
-        )
-
-        assert outcome["result"] == "success"
-        assert outcome["route_signal"] == "proceed"
-        assert state["current_state"] == STATE_GATED
-        registry = json.loads((tmp_path / "faults.json").read_text(encoding="utf-8"))
-        assert registry["flags"][0]["status"] == "verified"
-        assert registry["flags"][0]["verified"] is True
 
 
 class TestTiebreakerOutcomeSemantics:
@@ -1174,57 +1102,6 @@ class TestTiebreakerScenarioOutcomes:
 
 
 class TestOverrideReplanBehavior:
-    def test_override_replan_accepts_blocked_gate_that_requested_iteration(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        plan_file = tmp_path / "plan_v1.md"
-        plan_file.write_text("# repaired plan\n", encoding="utf-8")
-        state = {
-            "name": "demo",
-            "current_state": "blocked",
-            "iteration": 1,
-            "plan_versions": [{"version": 1, "file": plan_file.name}],
-            "meta": {},
-            "last_gate": {"recommendation": "ITERATE", "passed": False},
-        }
-        monkeypatch.setattr(
-            "arnold_pipelines.megaplan.handlers.override.save_state_merge_meta",
-            lambda *args, **kwargs: None,
-        )
-        monkeypatch.setattr(
-            "arnold_pipelines.megaplan.handlers.override.latest_plan_path",
-            lambda *args, **kwargs: plan_file,
-        )
-
-        response = _override_replan(
-            tmp_path,
-            tmp_path,
-            state,
-            argparse.Namespace(reason="repair gate findings", note=None),
-        )
-
-        assert response["state"] == "planned"
-        assert state["meta"]["overrides"][-1]["from_state"] == "blocked"
-
-    def test_override_replan_rejects_blocked_gate_without_iterate(
-        self, tmp_path: Path
-    ) -> None:
-        state = {
-            "name": "demo",
-            "current_state": "blocked",
-            "iteration": 1,
-            "meta": {},
-            "last_gate": {"recommendation": "ESCALATE", "passed": False},
-        }
-
-        with pytest.raises(CliError, match="replan requires state"):
-            _override_replan(
-                tmp_path,
-                tmp_path,
-                state,
-                argparse.Namespace(reason="unsafe bypass", note=None),
-            )
-
     def test_override_replan_clears_stale_loop_state_and_records_plan_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

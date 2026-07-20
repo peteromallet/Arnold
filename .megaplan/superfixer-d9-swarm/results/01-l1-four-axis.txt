@@ -1,0 +1,38 @@
+Now I have all the evidence. Here is the evidence-only verdict:
+
+---
+
+**VERDICT: TRACKED — L1 repair is instrumented but all automatic repair runs fail-closed; durable repair goal remains active.**
+
+---
+
+**First Broken Axis:** The `repair-loop` wrapper script itself. `resolve_relaunch_command` calls `_repair_loop_acceptance_gate`, an undefined helper not covered by wrapper-function extraction tests — causing the repair relaunch to exit `command not found`.
+
+---
+
+**Exact Cited Paths & Timestamps:**
+
+| Run ID | Path | Created | Finished | Status | Returncode |
+|---|---|---|---|---|---|
+| `managed-automatic-repair-adfdf05b9439add60836` | `/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/resident-subagents/managed-automatic-repair-adfdf05b9439add60836/manifest.json` | `2026-07-15T14:45:44.968Z` | `2026-07-15T14:54:34.819Z` | **failed** | 1 |
+| `managed-automatic-repair-retry-24dbffcdc0a34906df02` | `…/managed-automatic-repair-retry-24dbffcdc0a34906df02/manifest.json` | `2026-07-15T14:49:03.355Z` | `2026-07-15T14:53:13.900Z` | **completed** | 0 |
+| `managed-automatic-repair-b5369eef0c019e9aead1` | `…/managed-automatic-repair-b5369eef0c019e9aead1/manifest.json` | `2026-07-15T15:08:52.869Z` | `2026-07-15T15:09:38.328Z` | **failed** | 1 |
+| `managed-automatic-repair-579f224dcfb24204852d` | `…/managed-automatic-repair-579f224dcfb24204852d/manifest.json` | `2026-07-15T15:12:44.262Z` | `2026-07-15T15:13:31.421Z` | **failed** | 1 |
+
+- **adfdf** (L1 trigger, `repair_trigger_l1`): ~9min runtime, returned 1.
+- **retry-24db** (Codex dev-fix child, `repair_codex`, model `gpt-5.6-sol`, parent=`adfdf`): ~4min, returned 0 — but `semantic_completion=false`; goal not satisfied.
+- **b5369eef** (watchdog retry `:retry:2`, `watchdog_authorized_l1`): ~45s, returned 1 — near-instant crash.
+- **579f** (watchdog retry `:retry:3`, `watchdog_authorized_l1`, current managed-run-id): ~47s, returned 1 — near-instant crash.
+
+**Plan state:** `m5a-atomic-fail-closed-20260715-0149`, `current_state=blocked`, `phase=review`.
+**Phase result:** `/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m5a-atomic-fail-closed-20260715-0149/phase_result.json` — `exit_kind: blocked_by_quality`, 4 unresolved blockers (3 opaque must-criterion failures + 1 explicit `resolve_relaunch_command` → `_repair_loop_acceptance_gate: command not found`).
+**Repair goal:** `repair-goal-570fda35570797c632f75703`, status `active`, `semantic_completion=false`.
+**Request:** `1a81943551e8c538e254141ddec55094978cbdbe4d872858db426f74d483510f`, `failure_kind=quality_gate_blocked`, `blocked_task_id=T24`.
+
+---
+
+**Missing Telemetry:**
+
+1. **b5369eef and 579f crash root cause** — both failed in <50s (vs. adfdf's ~9min). Their `run.log` files exist but the specific error causing instant exit is not surfaced in manifests or results.
+2. **Why retry-24db (Codex, rc=0) didn't satisfy the goal** — manifest says `semantic_completion=false` with generic "worker lifecycle completion does not complete the durable repair goal." The 850KB Codex output (output_sha256 in result.json) was not inspected; what the model actually did/fixed is opaque at this telemetry layer.
+3. **Three opaque must-criterion failures** — phase_result lists them only as `"failed must-criterion: must criterion"` with no diagnostic content, blocker IDs, or evidence references — making targeted repair impossible without human review.

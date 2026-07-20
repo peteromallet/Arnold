@@ -1,0 +1,77 @@
+## Investigation Report: `custody-control-plane-20260714` — 2026-07-15T14:45Z–15:13Z
+
+---
+
+### CONTEXT (What Failed at L1)
+
+The chain `custody-control-plane-20260714`, executing plan `m5a-atomic-fail-closed-20260715-0149` (milestone index 1 of ~5, epic 20%), hit a **quality-gate block** during the `execute` phase. The plan reached `finalized` state (progress-history lines 492-498, 11:34Z-12:04Z), briefly flipped to `executed` (12:04Z, line 498), then fell back to `blocked` by 14:06Z (line 501). The chain log shows `"execute blocked by quality gates — retrying (1/1)"` and `"execute failed — escalate-up streak 1/2"`.
+
+**L1 repair was triggered**: at **14:45:45Z** via `arnold-repair-trigger` (repair_layer `l1`, request_id `1a819435…`, attempt_id `800e8ee8…`). The launch was recorded as `status: "launched"`.
+
+**L1 verdict** (captured at **15:13:20Z**): `outcome: "fixer_infrastructure_failure"`, `verdict_kind: "no_verdict"`, reason: `"durable repair goal remains active at the captured frozen checkpoint"`. **L1 never completed a verdict** — it was still running when evidence was frozen.
+
+---
+
+### L2 — Meta-Repair: **TRACKED** | **NOT FIXED** | **INTENT: repair orchestration loop**
+
+| Attribute | Finding |
+|-----------|---------|
+| **Last meta dispatch** | 2026-07-14T23:33:46Z (`managed-automatic-meta-repair-6aa69a6378…`) |
+| **Meta verdict** | 2026-07-14T23:34:07Z — `outcome: "commit_custody_failed"`, `verdict_kind: "no_fix"` |
+| **Trigger reason** | `"persistent_recurring_retry"` |
+| **During 14:45-15:13Z** | **No meta-repair dispatch occurred** |
+| **Tracked?** | Yes — the meta-dispatch marker exists, meta verdict is on file, auditor references it |
+| **Fixed?** | No — the meta verdict returned `no_fix` with `commit_custody_failed`, and no additional meta run fired during the window |
+
+**Evidence paths:**
+- Marker: `/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.meta-dispatch` (line 1: dispatch at 2026-07-14T23:33:46Z)
+- Verdict: `/workspace/.megaplan/cloud-sessions/repair-data/meta/meta_repair_verdict.json` (outcome: `commit_custody_failed`, evidence_timestamp: `2026-07-14T23:34:07Z`)
+- Meta records (3 total): `/workspace/.megaplan/cloud-sessions/repair-data/meta/ecf80350-…`, `24dc6871-…`, etc.
+
+**Why L2 failed to catch L1:** Meta-repair had already fired ~15h earlier (July 14 23:33Z) with a `no_fix` verdict. The audit reports at both 07:35Z and 13:35Z on July 15 show `meta-repair: trigger "none"`, `should_dispatch: "False"`. The meta-repair policy (`meta_repair_policy.py`) had already exhausted its recurring-retry cycle and did not re-trigger during the 14:45-15:13Z window. **The meta-repair layer had already given up on this session before the new L1 failure manifested.**
+
+---
+
+### L3 — Progress-Auditor: **TRACKED** | **NOT FIXED** | **INTENT: detect and escalate**
+
+| Attribute | Finding |
+|-----------|---------|
+| **Last audit before window** | 2026-07-15T07:35:09Z (window: 01:35Z–07:35Z) |
+| **Audit covering near-window** | 2026-07-15T13:35:09Z (window: 07:35Z–13:35Z) |
+| **14:45-15:13Z window** | **No audit ran during this period** (next audit expected ~19:35Z) |
+| **Closest audit findings** | 13:35Z audit: custody `"running" → preserve_live_no_duplicate`, 11 findings, `outcome: "escalated"` |
+| **Tracked?** | Yes — the 13:35Z audit identified: `reconciler recurrence`, `repair_without_valid_investigation`, `agent_claim_without_canonical_manifest`, `green_with_recent_repair_churn`, `repair_dispatch_during_preserve_live` |
+| **Fixed?** | No — the 13:35Z audit ran **before** the 14:45Z failure and classified the chain as `running`/`preserve_live_no_duplicate`. The 6h audit cadence means the next audit at ~19:35Z is the first that could see this window's failure. |
+
+**Evidence paths:**
+- Audit 07:35Z: `/workspace/audit-reports/20260715T073509Z-audit.md` — custody `running → preserve_live_no_duplicate`, `repair_attempts=40`, `meta_repair_attempts=25`
+- Audit 13:35Z: `/workspace/audit-reports/20260715T133509Z-audit.md` — custody `running → preserve_live_no_duplicate`, `repair_attempts=65`, `meta_repair_attempts=25`
+- Auditor evidence: `/workspace/audit-reports/20260715T133509Z-auditor-evidence.json` — `outcome: "escalated"`, `repair_dispatch_count: 1`, `finding_count: 11`
+- Cloud status: `/workspace/.megaplan/status/cloud-status.json` (15:23Z) — custody `blocked-relaunch-failure`, `activity_phase: "attention"`
+
+**Why L3 failed to catch L1:** The auditor runs on a **6-hour cadence**. The 13:35Z audit window (07:35–13:35Z) ended **~70 minutes before** the L1 failure at 14:45Z. At 13:35Z the chain was `executed`/`preserve_live` — the block hadn't happened yet. The next audit (~19:35Z) would be the first to observe this incident. **This is a cadence-gap, not a detection failure.**
+
+---
+
+### EVIDENCE / INFERENCE / MISSING TELEMETRY
+
+**Evidence (direct):**
+- L1 repair attempt: `/workspace/.megaplan/repair-queue/attempts/20260715T144545Z-800e8ee8….json` — repair_layer `l1`, status `launched`, created_at `14:45:45Z`
+- L1 verdict: `/workspace/.megaplan/cloud-sessions/repair-data/custody-control-plane-20260714.repair-verdict.json` — `fixer_infrastructure_failure`, `no_verdict`, timestamp `15:13:20Z`
+- L2 marker/verdict: `/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.meta-dispatch` + `meta/meta_repair_verdict.json` — last dispatched 23:33Z Jul 14, `no_fix`
+- L3 audits: `/workspace/audit-reports/20260715T073509Z-audit.md`, `/workspace/audit-reports/20260715T133509Z-audit.md`
+- Repair progress: `/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.repair-progress.json` — `current_state: "blocked"`, `no_advance_dispatches` at `14:48:57Z`
+- Watchdog: `/workspace/watchdog-report.json` — reports `repair_dispatched` with `repair_goal_owner_missing` for custody-control-plane (archive: `20260715T151323Z`)
+- Progress history: `/workspace/.megaplan/status/progress-history.jsonl` lines 501-505 — custody `blocked` 14:06Z→15:12Z
+
+**Inference:**
+- L2 meta-repair had already exhausted its trigger policy (`persistent_recurring_retry` → `no_fix`) ~15h earlier; the new L1 failure landed in a gap between meta-repair cycles
+- L3 auditor would have caught this in the next cycle (~19:35Z) but was architecturally blind during the window due to its 6h cadence
+- The `merge_policy: "review"` warning in the chain log (line 98 of custody-control-plane-20260714.json) suggests the chain may be parked at `awaiting_pr_merge`, contributing to the block
+
+**Missing telemetry:**
+- No **real-time L1 repair completion** — only `launched` status, no final success/failure from the repair loop itself within the window
+- No **inter-audit escalation** — nothing between 13:35Z audit and the 14:45Z failure trigger
+- No **L2 re-trigger policy** activation — the meta-repair policy did not detect the new L1 failure as warranting a fresh meta cycle
+- No `/workspace/watchdog-report.json` entry timestamped within the exact 14:45-15:13Z window (archive at 15:13:23Z captures the aftermath)
+- **Installed wrappers** (`/workspace/arnold-consolidation-20260714/arnold_pipelines/megaplan/cloud/`) and **source wrappers** (`meta_repair_policy.py`, `repair_contract.py`) were not modified to address this gap

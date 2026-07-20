@@ -1,0 +1,47 @@
+## Evidence Report: `custody-control-plane-20260714`
+
+### Canonical Marker
+**`/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.json`**
+- **mtime**: `2026-07-14T17:21:49.868Z` (frozen since launch)
+- `session`: `custody-control-plane-20260714`, `chain_slug`: `custody-control-plane`, `identity_digest`: `34369cb69a`
+- `run_kind`: `chain`, `should_run`: `true`, `allow_human_gates`: `true`
+- `launch_outcome.code`: `success`, `launch_outcome.status`: `running`
+- `started_at`: `2026-07-14T17:21:49.143Z`, `observed_at`: `2026-07-14T17:21:49.835Z`
+- Milestone: `m5-run-authority-receipt-reconciliation-and-retirement` (index 0/9), plan `m5-run-authority-receipt-20260714-1428`, PR #250 open
+- Watchdog: `tracked`, workspace `/workspace/custody-control-plane-20260714/Arnold`, all present
+
+### Chain-Health Progress
+**`/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.chain-health.progress.json`**
+- **mtime**: `2026-07-14T18:33:52.221Z` (latest file, ~72 min after marker)
+- `last_state`: **`blocked`**, `chain_complete`: `false`
+- `plan_signal_liveness`: **`stalled`**, reason: `"last event 1639s ago"` (~27 min)
+- `stuck_ticks`: 1, `no_advance_ticks`: 0
+- `plan_has_active_step`: `false`, `plan_has_in_flight_llm`: `false`, `plan_has_live_activity`: `false`
+
+### Events Journal
+**`/workspace/.megaplan/cloud-sessions/repair-data.d/events/events.jsonl`** (lines 17, 19):
+- `2026-07-14T15:27:31.212Z` — health:`alive`, outcome:`partial_liveness`, plan:`""` (empty)
+- `2026-07-14T16:29:32.139Z` — health:`alive`, outcome:`partial_liveness`, plan:`""` (empty)
+
+### Escalation
+**`/workspace/.megaplan/cloud-sessions/repair-data/escalations/escalations.jsonl`** (seq 216-217):
+- `esc-eff0052e38c8c7ed` opened `2026-07-14T18:33:58.734Z`, verdict `AMBIGUOUS_BLOCKER`, plan `m5-run-authority-receipt-20260714-1428`
+- Delivered to Discord DM `301463647895683072` at `18:34:00.725Z`
+- References `needs_human_path`: `/workspace/.megaplan/cloud-sessions/repair-data/custody-control-plane-20260714.needs-human.json` — **file does not exist on disk**
+
+### Chain State
+**`/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/.chains/chain-1e998199f544.json`**
+- **mtime**: `2026-07-14T18:04:57.467Z` — stale by ~29 min vs. health check
+
+### Contradictions & Staleness
+
+| # | Finding |
+|---|---|
+| **1** | Marker says `status: running`; chain-health says `last_state: blocked`, `plan_signal_liveness: stalled` (no event for 1639s). |
+| **2** | Two events (15:27, 16:29) both **predate** the marker's `started_at` (17:21) — impossible for a fresh launch; suggests stale or mis-scoped events. |
+| **3** | Events have empty `plan_name` (`""`), yet marker and health both reference `m5-run-authority-receipt-20260714-1428`. |
+| **4** | Escalation references `needs-human.json` path that **does not exist** — delivered successfully referencing a phantom file. |
+| **5** | Chain state file (18:04) is 29 min stale vs. health check (18:33) — no state advancement since that time. |
+| **6** | Identity digest `34369cb69a` ≠ old complete session `240c2cca67` (from `/complete/custody-control-plane.json`) — distinct session, not a continuation. |
+
+**Summary**: The custody-control-plane chain is **stalled/blocked**, producing no live activity for ~27 min, with an escalation fired but referencing a nonexistent needs-human file. The marker JSON is frozen at launch time (17:21) and hasn't been updated to reflect the blocked reality captured by the health projection (18:33).

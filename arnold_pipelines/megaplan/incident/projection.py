@@ -34,11 +34,20 @@ _VOLATILE_TOKEN_RE = re.compile(
 )
 
 
-def rebuild_projections(root: Path | None = None) -> dict[str, Any]:
-    """Rebuild deterministic incident/problem projections from ``events.jsonl``."""
+def rebuild_projections(
+    root: Path | None = None,
+    *,
+    persist: bool = True,
+) -> dict[str, Any]:
+    """Rebuild deterministic incident/problem projections from ``events.jsonl``.
+
+    ``persist=False`` keeps evaluator-style callers read-only while returning
+    the same in-memory projection documents.
+    """
     workspace_root = Path.cwd() if root is None else Path(root)
     ledger_dir = workspace_root / _INCIDENT_LEDGER_DIR
-    ledger_dir.mkdir(parents=True, exist_ok=True)
+    if persist:
+        ledger_dir.mkdir(parents=True, exist_ok=True)
     events_path = ledger_dir / _EVENTS_FILE
 
     raw_scan = _scan_raw_lines(events_path)
@@ -95,8 +104,9 @@ def rebuild_projections(root: Path | None = None) -> dict[str, Any]:
             key=lambda item: (item["problem_id"], item["last_seen_seq"], item["first_seen_seq"]),
         ),
     }
-    _write_projection(ledger_dir / _INCIDENTS_FILE, incidents_doc)
-    _write_projection(ledger_dir / _PROBLEMS_FILE, problems_doc)
+    if persist:
+        _write_projection(ledger_dir / _INCIDENTS_FILE, incidents_doc)
+        _write_projection(ledger_dir / _PROBLEMS_FILE, problems_doc)
     return {
         "incidents": incidents_doc,
         "problems": problems_doc,
@@ -970,6 +980,8 @@ def build_brief(
     id_or_session: str,
     root: Path | None = None,
     now: str | None = None,
+    *,
+    persist: bool = True,
 ) -> dict[str, Any]:
     """Build a bounded incident brief, resolved by incident or session id.
 
@@ -990,7 +1002,7 @@ def build_brief(
         When omitted no ``deadline_status`` key is emitted.
     """
     workspace_root = Path.cwd() if root is None else Path(root)
-    projections = rebuild_projections(workspace_root)
+    projections = rebuild_projections(workspace_root, persist=persist)
 
     # ── resolve incident ────────────────────────────────────────────
     incident = _resolve_incident(projections, id_or_session)

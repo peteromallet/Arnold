@@ -1,0 +1,53 @@
+Now I have all the evidence needed. Here is the complete custody reconciliation.
+
+---
+
+## Custody Reconciliation: `custody-control-plane-20260714`
+
+### Contradiction Table (timestamp-ordered)
+
+| # | Source A | Source B | Contradiction | Timestamp | Resolution |
+|---|----------|----------|---------------|-----------|------------|
+| **C1** | `cloud-sessions/…json` `launch_outcome.status: "running"`, `session_alive: true` | `process list` empty; `runner_pid_live: false`; `worker_pid_live: false` | Session marker claims alive/running but no OS process exists | Marker: 12:00:04 / Watchdog: 15:13:23 | **Marker is stale.** Watchdog report confirms `alive_sessions: 0`. The session JSON was last written at launch verification and never updated. No live runner. |
+| **C2** | `chain-1e998199f544.json` `completed[0].pr_state: "merged"` (PR #250) | `chain-…json` `milestone_boundary_evidence.m5….pr_state: "open"` (PR #250) | Completed list says M5 merged; boundary evidence says open | Chain state on disk | **Completed list is authoritative.** The `milestone_boundary_evidence` block is a stale snapshot; the `completed` array is the reconciled truth. M5 is merged. |
+| **C3** | `m5a state.json` `last_gate.recommendation: "PROCEED"`, `passed: true` | `m5a state.json` `latest_failure.kind: "quality_gate_blocked"`, `phase: "review"` | Plan passed its quality gate but is now blocked at review | Gate: 02:13:43 / Failure: 13:51:23 | **Not a true contradiction.** Gate (pre-execute) and review (post-execute) are separate phases. The gate was clean; the review found a regression introduced during execution. |
+| **C4** | `incident-ledger` `state: "verified_recovered"`, `outcome: "recovered"` (13:36:30) | `m5a state.json` `current_state: "blocked"`, `latest_failure.recorded_at: 13:51:23` | Incident ledger says recovered, but plan is currently blocked | Incident: 13:36 / Failure: 13:51 | **Temporal — different epochs.** The incident recovery was for an earlier failure. The current blocked state (T24 regression at review) is a *new* failure that occurred ~15 min after the incident marked recovered. |
+| **C5** | Repair iteration 1 (14:45) pushed fix commit `1322b318` for T24 | Repair iteration 2 (15:12) failed with "context build failed" | First repair succeeded in pushing a fix; second repair couldn't even build context | 14:54 / 15:13 | **Repair loop degraded.** Iteration 1 pushed the T24 fix but couldn't clear the review fingerprint. Iteration 2's investigation crashed before doing any work. Durable repair goal remains active. |
+| **C6** | Operator log: "Fixed and pushed… commit `1322b318`" | Operator log: "The chain was not relaunched. Semantic recovery still requires the wrapper to clear the review fingerprint" | Fix pushed but chain not advanced | 14:54 | **Fix landed but acceptance not re-proven.** The code fix is on the branch but the review blocker fingerprint (`quality:review:5694…`) is unresolved — the chain still sees the old blocked state. |
+
+---
+
+### Authoritative Current Conclusion
+
+**Session**: `custody-control-plane-20260714`  
+**Workspace**: `/workspace/custody-control-plane-20260714/Arnold`  
+**Runtime**: `/workspace/arnold-custody-runtime` @ `2f2f5971`
+
+| Question | Answer | Proof |
+|----------|--------|-------|
+| **T24 cleared?** | **Code fix pushed, but NOT semantically cleared.** Commit `1322b318` on branch `megaplan/custody-control-plane/m5a-atomic-fail-closed-milestone-completion` fixes the `_repair_loop_acceptance_gate` extraction regression. But the review fingerprint `quality:review:5694199d…` is still unresolved — the chain has not re-run review to clear it. The repair loop itself stated: "target has not satisfied blocker-clearance, fresh-progress, and beyond-stage recovery evidence." | `state.json:latest_failure.blocker_ids`, operator log L6126 |
+| **Runner live?** | **NO.** No OS process exists. `runner_pid_live: false`, `worker_pid_live: false`, `active_worker.fresh: false`. Watchdog confirms `alive_sessions: 0`. | Process list empty; repair-investigation-context.json L46-50; watchdog tail |
+| **Fresh progress?** | **NO.** Plan state `blocked` since 13:51:23. Last activity was the review that failed. The pushed fix (14:54) is unvalidated by the chain. Subsequent repair attempts (15:12) crashed. No pipeline has re-executed review, gate, or any post-review phase. | `plan_state_age_seconds: 3294+` (from 14:46 snapshot); `latest_failure_cleared: false` |
+| **Beyond-stage advancement proven?** | **NO.** `current_milestone_index: 1` (m5a). M5 (index 0, PR #250) is merged and completed. M5A has never advanced past `blocked`. The completed array has exactly 1 entry (M5). M6+ are gated on M5A acceptance. | `chain-1e998199f544.json:completed[]`, `current_milestone_index: 1`, `last_state: "blocked"` |
+
+### Chain State Summary
+
+```
+Milestone 0: M5  — DONE (PR #250, merged) ✓
+Milestone 1: M5A — BLOCKED at review (PR #255, open) ✗
+  ├─ prep:    success  2026-07-15T02:00
+  ├─ plan:    success  2026-07-15T02:04
+  ├─ critique:success  2026-07-15T02:11 (2 flags)
+  ├─ gate:    PROCEED  2026-07-15T02:13
+  ├─ finalize:success  2026-07-15T02:33
+  ├─ execute: error    2026-07-15T05:15 (stall)
+  ├─ execute: blocked  2026-07-15T05:42 (batch 15)
+  ├─ execute: blocked  2026-07-15T08:46 (batches 15-19+)
+  └─ review:  BLOCKED  2026-07-15T13:51 (T24 regression)
+       └─ repair-iter1: fix pushed 14:54 (1322b318) — not revalidated
+       └─ repair-iter2: crashed    15:13 — context build failed
+Milestone 2: M6  — GATED (requires M5A acceptance)
+Milestones 3-9: — GATED
+```
+
+**Verdict**: The session is **blocked with an active but failing repair loop**. M5 is complete and merged. M5A passed all pre-execution phases cleanly, executed partially, but failed at review due to a deterministic T24 regression (missing `_repair_loop_acceptance_gate` in wrapper-function extraction). A fix was pushed at 14:54 but the chain has not been relaunched to clear the review fingerprint, and the second repair attempt at 15:12 crashed. The durable repair goal (`repair-goal-570fda35570797c632f75703`) remains active. No runner is live. No fresh progress has been made since 13:51. Beyond-stage advancement (M6+) is not proven.
