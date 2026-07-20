@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -2279,6 +2280,13 @@ class TestAutoExecuteRecovery:
                     "current_state": "critiqued",
                     "active_step": {"phase": "gate"},
                     "iteration": 2,
+                    "history": [
+                        {
+                            "step": "critique",
+                            "result": "success",
+                            "output_file": "critique_v2.json",
+                        }
+                    ],
                     "meta": {},
                 }
             )
@@ -2287,6 +2295,7 @@ class TestAutoExecuteRecovery:
         )
         custody_path = plan_dir / "critique_custody_v2.json"
         custody_path.write_text('{"admitted": true}\n', encoding="utf-8")
+        (plan_dir / "critique_v2.json").write_text("{}\n", encoding="utf-8")
         from arnold_pipelines.megaplan._core import sha256_file
 
         (plan_dir / "gate_signals_v2.json").write_text(
@@ -2374,6 +2383,83 @@ class TestAutoExecuteRecovery:
         assert _recover_completed_gate_artifact_after_failure(plan_dir) is False
         state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
         assert state["current_state"] == "critiqued"
+
+    def test_stale_gate_artifact_is_not_adopted_after_replan(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.auto import (
+            _recover_completed_gate_artifact_after_failure,
+        )
+        from arnold_pipelines.megaplan._core import sha256_file
+
+        plan_dir = tmp_path / ".megaplan" / "plans" / "p"
+        plan_dir.mkdir(parents=True)
+        custody_path = plan_dir / "critique_custody_v2.json"
+        custody_path.write_text('{"admitted": true}\n', encoding="utf-8")
+        (plan_dir / "gate_signals_v2.json").write_text(
+            json.dumps(
+                {
+                    "critique_custody": {
+                        "receipt": custody_path.name,
+                        "receipt_sha256": sha256_file(custody_path),
+                        "admitted": True,
+                        "loss_count": 0,
+                    }
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        gate_path = plan_dir / "gate.json"
+        gate_path.write_text(
+            json.dumps(
+                {
+                    "recommendation": "PROCEED",
+                    "passed": True,
+                    "unresolved_flags": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "critique_v2.json").write_text("{}\n", encoding="utf-8")
+        os.utime(custody_path, ns=(1_000_000_000, 1_000_000_000))
+        os.utime(
+            plan_dir / "gate_signals_v2.json",
+            ns=(2_000_000_000, 2_000_000_000),
+        )
+        os.utime(gate_path, ns=(3_000_000_000, 3_000_000_000))
+        os.utime(
+            plan_dir / "critique_v2.json",
+            ns=(4_000_000_000, 4_000_000_000),
+        )
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "current_state": "critiqued",
+                    "iteration": 2,
+                    "history": [
+                        {
+                            "step": "critique",
+                            "result": "success",
+                            "output_file": "critique_v2.json",
+                        }
+                    ],
+                    "meta": {},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        assert gate_path.stat().st_mtime_ns < (
+            plan_dir / "critique_v2.json"
+        ).stat().st_mtime_ns
+        assert _recover_completed_gate_artifact_after_failure(plan_dir) is False
+
+        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        assert state["current_state"] == "critiqued"
+        assert "gate_artifact_recovery" not in state["meta"]
 
     def test_non_proceed_gate_artifact_is_not_adopted_after_worker_failure(
         self, tmp_path: Path
