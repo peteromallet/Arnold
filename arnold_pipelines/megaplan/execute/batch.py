@@ -12,7 +12,15 @@ from typing import Any, Callable, Iterable, Mapping
 
 from arnold.workflow.boundary_evidence import AuthorityRecord, BoundaryOutcome, BoundaryReceipt
 import arnold_pipelines.megaplan.workers as worker_module
-from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
+from arnold_pipelines.megaplan.fallback_chains import (
+    classify_retryability,
+    configured_fallback_chain_for_phase,
+    fallback_observability_fields,
+    is_retryable_classification,
+    normalize_fallback_spec_list,
+    provider_family,
+    select_fallback_spec,
+)
 from arnold_pipelines.megaplan.feature_flags import calibration_query_route_on
 from arnold_pipelines.megaplan.receipts.writer import write_boundary_receipt
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
@@ -136,10 +144,12 @@ from arnold_pipelines.megaplan.resolution_contract import (
 )
 from arnold_pipelines.megaplan.resolutions import effective_user_action_resolutions
 from arnold_pipelines.megaplan.types import (
+    AgentMode,
     CliError,
     MOCK_ENV_VAR,
     PlanState,
     StepResponse,
+    parse_agent_spec,
 )
 from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.run_authority import ContractError
@@ -987,6 +997,234 @@ def _resolve_tier_spec(
     resolved = worker_module.resolve_agent_mode(phase, tier_args)
     resolved_model = resolved.resolved_model if hasattr(resolved, "resolved_model") else None
     return resolved.agent, resolved.mode, resolved_model if resolved_model is not None else resolved.model
+
+
+def _execute_configured_specs(
+    args: argparse.Namespace,
+    *,
+    selected_tier_spec: str | None,
+    default_spec: str,
+) -> tuple[str, ...]:
+    """Recover the ordered chain hidden behind a tier's selected scalar."""
+
+    tier_models = getattr(args, "tier_models", None)
+    execute_tiers = tier_models.get("execute") if isinstance(tier_models, dict) else None
+    if selected_tier_spec is not None and isinstance(execute_tiers, dict):
+        for raw_tier, raw_value in execute_tiers.items():
+            try:
+                specs = normalize_fallback_spec_list(
+                    raw_value,
+                    path=f"tier_models.execute.{raw_tier}",
+                )
+            except (TypeError, ValueError):
+                continue
+            if specs[0] == selected_tier_spec:
+                return specs
+
+    configured = configured_fallback_chain_for_phase(
+        getattr(args, "phase_model", None),
+        "execute",
+    )
+    if configured is not None and configured.selected() == default_spec:
+        return configured.specs
+    return (default_spec,)
+
+
+@dataclass(frozen=True, slots=True)
+class _ExecuteWorkspaceFingerprint:
+    head: str | None
+    entries: tuple[tuple[str, str], ...]
+    status: str = ""
+    error: str | None = None
+
+
+def _capture_execute_workspace_fingerprint(root: Path) -> _ExecuteWorkspaceFingerprint:
+    """Capture enough git state to prove a failed executor made no source change."""
+
+    snapshot, snapshot_error = _capture_git_status_snapshot_recursive(root)
+    try:
+        head_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        status_result = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return _ExecuteWorkspaceFingerprint(
+            None,
+            tuple(sorted(snapshot.items())),
+            error=snapshot_error or f"git_fingerprint_failed:{type(exc).__name__}",
+        )
+    head = head_result.stdout.strip() if head_result.returncode == 0 else None
+    error = snapshot_error
+    if head is None:
+        error = error or "git_head_unavailable"
+    if status_result.returncode != 0:
+        error = error or "git_status_unavailable"
+    return _ExecuteWorkspaceFingerprint(
+        head,
+        tuple(sorted(snapshot.items())),
+        status_result.stdout,
+        error,
+    )
+
+
+def _run_execute_worker_with_configured_fallback(
+    *,
+    root: Path,
+    plan_dir: Path,
+    state: PlanState,
+    args: argparse.Namespace,
+    agent: str,
+    mode: str,
+    refreshed: bool,
+    model: str | None,
+    effort: str | None,
+    resolved_model: str | None,
+    prompt_override: str | None,
+    configured_specs: tuple[str, ...],
+    batch_number: int,
+) -> tuple[WorkerResult, str, str, bool]:
+    """Advance execute only after a retryable, side-effect-free provider outage."""
+
+    attempted_specs: list[str] = [configured_specs[0]]
+    failed_reasons: list[str] = []
+    fallback_trigger: str | None = None
+    current_agent = agent
+    current_mode = mode
+    current_refreshed = refreshed
+    current_model = model
+    current_effort = effort
+    current_resolved_model = resolved_model
+
+    for attempt_index, selected_spec in enumerate(configured_specs):
+        if attempt_index:
+            current_agent, current_mode, current_model = _resolve_tier_spec(
+                args,
+                selected_spec,
+            )
+            current_effort = parse_agent_spec(selected_spec).effort
+            current_resolved_model = current_model
+            current_refreshed = True
+
+        before = _capture_execute_workspace_fingerprint(root)
+        rendered_prompt = _render_execute_prompt_for_dispatch(
+            agent=current_agent,
+            state=state,
+            plan_dir=plan_dir,
+            root=root,
+            model=current_model,
+            resolved_model=current_resolved_model,
+            prompt_override=prompt_override,
+        )
+        resolved = AgentMode(
+            agent=current_agent,
+            mode=current_mode,
+            refreshed=current_refreshed,
+            model=current_model,
+            effort=current_effort,
+            resolved_model=current_resolved_model,
+        )
+        try:
+            return worker_module.run_step_with_worker(
+                "execute",
+                state,
+                plan_dir,
+                args,
+                root=root,
+                resolved=resolved,
+                prompt_override=rendered_prompt,
+                worker_options={"_suppress_ambient_agent_fallback": True},
+                ledger_step_label=f"batch_{batch_number}",
+                ledger_selected_spec=selected_spec,
+                ledger_configured_specs=configured_specs,
+                ledger_attempt_index=attempt_index,
+                ledger_attempted_specs=attempted_specs,
+                ledger_failed_attempt_reasons=failed_reasons,
+                ledger_fallback_trigger=fallback_trigger,
+            )
+        except CliError as error:
+            classification = classify_retryability(
+                {
+                    "code": error.code,
+                    "message": str(error),
+                    "status_code": error.extra.get("status_code"),
+                    "retryable": error.extra.get("retryable"),
+                }
+            )
+            next_index = attempt_index + 1
+            if (
+                next_index >= len(configured_specs)
+                or not is_retryable_classification(classification)
+                or provider_family(configured_specs[next_index])
+                == provider_family(selected_spec)
+            ):
+                raise
+            after = _capture_execute_workspace_fingerprint(root)
+            if before.error or after.error or before != after:
+                raise CliError(
+                    "execute_fallback_unsafe",
+                    "Retryable execute provider failure could not be handed off "
+                    "because the workspace was changed or could not be proven unchanged.",
+                    extra={
+                        "failed_spec": selected_spec,
+                        "next_spec": configured_specs[next_index],
+                        "failure_class": classification,
+                        "before_error": before.error,
+                        "after_error": after.error,
+                    },
+                ) from error
+            failed_reasons.append(classification)
+            fallback_trigger = classification
+            attempted_specs.append(configured_specs[next_index])
+            next_agent, next_mode, next_model = _resolve_tier_spec(
+                args,
+                configured_specs[next_index],
+            )
+            from arnold_pipelines.megaplan.workers._impl import (
+                _patch_active_step_fallback_metadata,
+            )
+
+            _patch_active_step_fallback_metadata(
+                plan_dir,
+                state,
+                {
+                    "configured_specs": configured_specs,
+                    "attempt_index": next_index,
+                    "attempted_specs": tuple(attempted_specs),
+                    "failed_attempt_reasons": tuple(failed_reasons),
+                    "fallback_trigger": fallback_trigger,
+                },
+                agent=next_agent,
+                mode=next_mode,
+                model=next_model,
+            )
+            active_step = state.get("active_step")
+            if isinstance(active_step, dict):
+                active_step.update(
+                    fallback_observability_fields(
+                        configured_specs,
+                        attempt_index=next_index,
+                        attempted_specs=attempted_specs,
+                        failed_attempt_reasons=failed_reasons,
+                        fallback_trigger=fallback_trigger,
+                    )
+                )
+                active_step.update(
+                    {"agent": next_agent, "mode": next_mode, "model": next_model}
+                )
+
+    raise AssertionError("configured execute fallback loop exhausted unexpectedly")
 
 
 def _task_to_global_batch_number_map(
@@ -2238,6 +2476,7 @@ def _run_and_merge_batch(
     batches_total: int,
     quality_config: dict[str, Any],
     routing_record: dict[str, Any] | None = None,
+    configured_specs: tuple[str, ...] | None = None,
     capture_git_status_snapshot_fn: Callable[
         [Path], tuple[dict[str, str], str | None]
     ] = _capture_git_status_snapshot,
@@ -2251,28 +2490,16 @@ def _run_and_merge_batch(
     else:
         before_snapshot, before_error = capture_git_status_snapshot_fn(project_dir)
         before_line_counts = capture_before_line_counts(project_dir, before_snapshot.keys())
-    # Pass a full AgentMode (with effort + resolved_model) rather than a bare
-    # 4-tuple. The 4-tuple form drops both fields downstream, which causes
-    # ``run_codex_step`` to be invoked with ``model=None`` / ``effort=None`` and
-    # leads to the codex CLI hanging at startup. See diagnostic
-    # /tmp/codex_wedge_diagnostic.md.
-    from arnold_pipelines.megaplan.types import AgentMode as _AgentMode
-    am_for_worker = _AgentMode(
+    selected_default_spec = format_selected_spec(agent, model, effort) or agent
+    configured_specs = configured_specs or (selected_default_spec,)
+    selected = parse_agent_spec(configured_specs[0])
+    am_for_worker = AgentMode(
         agent=agent,
         mode=mode,
         refreshed=refreshed,
-        model=model,
-        effort=effort,
-        resolved_model=resolved_model if resolved_model is not None else model,
-    )
-    rendered_prompt_override = _render_execute_prompt_for_dispatch(
-        agent=agent,
-        state=state,
-        plan_dir=plan_dir,
-        root=root,
-        model=model,
-        resolved_model=resolved_model,
-        prompt_override=prompt_override,
+        model=selected.model,
+        effort=selected.effort,
+        resolved_model=resolved_model if resolved_model is not None else selected.model,
     )
     # M8A Step 13 — Verify-only repair adoption at the execute action
     # boundary.  Runs BEFORE repair/worker dispatch.  Rereads current Run
@@ -2336,14 +2563,29 @@ def _run_and_merge_batch(
             model_actual=(resolved_model or model), skipped_replay=True
         )
     else:
-        worker, agent, mode, refreshed = worker_module.run_step_with_worker(
-            "execute",
-            state,
-            plan_dir,
-            args,
+        worker, agent, mode, refreshed = _run_execute_worker_with_configured_fallback(
             root=root,
-            resolved=am_for_worker,
-            prompt_override=rendered_prompt_override,
+            plan_dir=plan_dir,
+            state=state,
+            args=args,
+            agent=agent,
+            mode=mode,
+            refreshed=refreshed,
+            model=model,
+            effort=effort,
+            resolved_model=resolved_model if resolved_model is not None else model,
+            prompt_override=prompt_override,
+            configured_specs=configured_specs,
+            batch_number=batch_number,
+        )
+        selected = parse_agent_spec(configured_specs[worker.attempt_index])
+        am_for_worker = AgentMode(
+            agent=agent,
+            mode=mode,
+            refreshed=refreshed,
+            model=selected.model,
+            effort=selected.effort,
+            resolved_model=worker.model_actual or selected.model,
         )
     maybe_run_channel_shadow(
         root=root,
@@ -3125,6 +3367,11 @@ def handle_execute_one_batch(
             batches_total=batches_total,
             quality_config=quality_config,
             routing_record=routing_record,
+            configured_specs=_execute_configured_specs(
+                args,
+                selected_tier_spec=tier_spec_raw,
+                default_spec=format_selected_spec(agent, model, effort) or agent,
+            ),
             capture_git_status_snapshot_fn=_capture_git_status_snapshot,
         )
     except CliError as error:
@@ -5051,6 +5298,14 @@ def handle_execute_auto_loop(
                 batches_total=batches_total_for_observation,
                 quality_config=quality_config,
                 routing_record=routing_record,
+                configured_specs=_execute_configured_specs(
+                    args,
+                    selected_tier_spec=batch_tier_spec,
+                    default_spec=(
+                        format_selected_spec(batch_agent, batch_model, effort)
+                        or batch_agent
+                    ),
+                ),
                 capture_git_status_snapshot_fn=_capture_git_status_snapshot,
             )
         except CliError as error:
