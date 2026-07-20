@@ -1,0 +1,1111 @@
+{
+  "authority_increasing_writers": [
+    "ra-06",
+    "ra-28",
+    "ra-37",
+    "custody-03",
+    "custody-05",
+    "custody-07",
+    "custody-11"
+  ],
+  "blocker_reasons": [
+    "M6 prerequisite coherence incomplete — residual surface inventory not yet accepted",
+    "M6A operational WBC store/API not yet landed — WBC is schema-only",
+    "M6 ownership decision record not yet machine-verified",
+    "M7 production gates and mutating effects remain disabled per SD2",
+    "Run Authority grant/coordinator-fence contract landed but M7 validator is shadow-only"
+  ],
+  "effects_enabled": false,
+  "f01_repair_occurrence_fields": [
+    "environment",
+    "session",
+    "chain",
+    "plan_revision",
+    "phase",
+    "task",
+    "attempt",
+    "normalized_failure_kind",
+    "blocker_or_phase_result_hash",
+    "fence"
+  ],
+  "field_join": [
+    {
+      "field": "environment",
+      "missing_reason": null,
+      "notes": "",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "F01_REPAIR_OCCURRENCE_TUPLE"
+    },
+    {
+      "field": "session",
+      "missing_reason": null,
+      "notes": "",
+      "owner": "Run Authority",
+      "present_in_m7": true,
+      "source": "F01_REPAIR_OCCURRENCE_TUPLE"
+    },
+    {
+      "field": "chain",
+      "missing_reason": null,
+      "notes": "",
+      "owner": "Run Authority",
+      "present_in_m7": true,
+      "source": "F01_REPAIR_OCCURRENCE_TUPLE"
+    },
+    {
+      "field": "plan_revision",
+      "missing_reason": null,
+      "notes": "",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "F01_REPAIR_OCCURRENCE_TUPLE"
+    },
+    {
+      "field": "phase",
+      "missing_reason": null,
+      "notes": "",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "F01_REPAIR_OCCURRENCE_TUPLE"
+    },
+    {
+      "field": "task",
+      "missing_reason": null,
+      "notes": "",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "F01_REPAIR_OCCURRENCE_TUPLE"
+    },
+    {
+      "field": "attempt",
+      "missing_reason": null,
+      "notes": "",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "F01_REPAIR_OCCURRENCE_TUPLE"
+    },
+    {
+      "field": "normalized_failure_kind",
+      "missing_reason": null,
+      "notes": "",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "F01_REPAIR_OCCURRENCE_TUPLE"
+    },
+    {
+      "field": "blocker_or_phase_result_hash",
+      "missing_reason": null,
+      "notes": "",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "F01_REPAIR_OCCURRENCE_TUPLE"
+    },
+    {
+      "field": "fence",
+      "missing_reason": null,
+      "notes": "",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "F01_REPAIR_OCCURRENCE_TUPLE"
+    },
+    {
+      "field": "current_state",
+      "missing_reason": null,
+      "notes": "Required V1 field; must be non-empty string.",
+      "owner": "Run Authority",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V1"
+    },
+    {
+      "field": "retry_strategy",
+      "missing_reason": null,
+      "notes": "Required V1 field; must be non-empty string.",
+      "owner": "Run Authority",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V1"
+    },
+    {
+      "field": "failure_kind",
+      "missing_reason": null,
+      "notes": "Required V1 field; must be non-empty string.",
+      "owner": "Run Authority",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V1"
+    },
+    {
+      "field": "phase_or_step",
+      "missing_reason": null,
+      "notes": "Required V1 field; must be non-empty string.",
+      "owner": "Run Authority",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V1"
+    },
+    {
+      "field": "milestone_or_plan",
+      "missing_reason": null,
+      "notes": "Required V1 field; must be non-empty string.",
+      "owner": "Run Authority",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V1"
+    },
+    {
+      "field": "blocked_task_id",
+      "missing_reason": null,
+      "notes": "Required V1 field; must be non-empty string.",
+      "owner": "Run Authority",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V1"
+    },
+    {
+      "field": "target_fingerprint",
+      "missing_reason": null,
+      "notes": "Required V1 field; must be non-empty string.",
+      "owner": "Run Authority",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V1"
+    },
+    {
+      "field": "acceptance_transaction_id",
+      "missing_reason": null,
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "WBC",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "acceptance_snapshot_hash",
+      "missing_reason": null,
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "WBC",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "predicate_kind",
+      "missing_reason": null,
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "Run Authority",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "predicate_evidence_kind",
+      "missing_reason": null,
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "Run Authority",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "predicate_summary",
+      "missing_reason": null,
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "Run Authority",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "evidence_refs",
+      "missing_reason": null,
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "Run Authority",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "safe_recovery_action",
+      "missing_reason": null,
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "Run Authority",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "recovery_action",
+      "missing_reason": null,
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "Run Authority",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "expected_hash",
+      "missing_reason": null,
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "Run Authority",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "observed_hash",
+      "missing_reason": null,
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "Run Authority",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "runtime_identity",
+      "missing_reason": "Deferred to M8A",
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "Run Authority",
+      "present_in_m7": false,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "source_commit_ref",
+      "missing_reason": "Deferred to M8A",
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "Run Authority",
+      "present_in_m7": false,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "custody_owner",
+      "missing_reason": "Custody contract not yet landed (T3)",
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "Custody",
+      "present_in_m7": false,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "custody_epoch",
+      "missing_reason": "Custody contract not yet landed (T3)",
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "Custody",
+      "present_in_m7": false,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "retry_count",
+      "missing_reason": null,
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "retry_cap",
+      "missing_reason": null,
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "predecessor_blocker_id",
+      "missing_reason": null,
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "predecessor_fingerprint_hash",
+      "missing_reason": null,
+      "notes": "Optional V2 field; defaults to empty string when absent.",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "BLOCKER_FINGERPRINT_V2"
+    },
+    {
+      "field": "failure_kind",
+      "missing_reason": null,
+      "notes": "From repair_recurrence.PROBLEM_SIGNATURE_FIELDS.",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "PROBLEM_SIGNATURE_FIELDS"
+    },
+    {
+      "field": "current_state",
+      "missing_reason": null,
+      "notes": "From repair_recurrence.PROBLEM_SIGNATURE_FIELDS.",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "PROBLEM_SIGNATURE_FIELDS"
+    },
+    {
+      "field": "phase_or_step",
+      "missing_reason": null,
+      "notes": "From repair_recurrence.PROBLEM_SIGNATURE_FIELDS.",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "PROBLEM_SIGNATURE_FIELDS"
+    },
+    {
+      "field": "milestone_or_plan",
+      "missing_reason": null,
+      "notes": "From repair_recurrence.PROBLEM_SIGNATURE_FIELDS.",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "PROBLEM_SIGNATURE_FIELDS"
+    },
+    {
+      "field": "gate_recommendation",
+      "missing_reason": null,
+      "notes": "From repair_recurrence.PROBLEM_SIGNATURE_FIELDS.",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "PROBLEM_SIGNATURE_FIELDS"
+    },
+    {
+      "field": "blocked_task_id",
+      "missing_reason": null,
+      "notes": "From repair_recurrence.PROBLEM_SIGNATURE_FIELDS.",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "PROBLEM_SIGNATURE_FIELDS"
+    },
+    {
+      "field": "event_signature",
+      "missing_reason": null,
+      "notes": "From repair_recurrence.PROBLEM_SIGNATURE_FIELDS.",
+      "owner": "Custody",
+      "present_in_m7": true,
+      "source": "PROBLEM_SIGNATURE_FIELDS"
+    },
+    {
+      "field": "acceptance_predicate_kind",
+      "missing_reason": "Acceptance predicate signature fields require M6A operational WBC API (deferred to M8).",
+      "notes": "Appended to PROBLEM_SIGNATURE_FIELDS for distinct repair identities.",
+      "owner": "WBC",
+      "present_in_m7": false,
+      "source": "ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS"
+    },
+    {
+      "field": "acceptance_predicate_evidence_kind",
+      "missing_reason": "Acceptance predicate signature fields require M6A operational WBC API (deferred to M8).",
+      "notes": "Appended to PROBLEM_SIGNATURE_FIELDS for distinct repair identities.",
+      "owner": "WBC",
+      "present_in_m7": false,
+      "source": "ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS"
+    },
+    {
+      "field": "acceptance_predicate_summary",
+      "missing_reason": "Acceptance predicate signature fields require M6A operational WBC API (deferred to M8).",
+      "notes": "Appended to PROBLEM_SIGNATURE_FIELDS for distinct repair identities.",
+      "owner": "WBC",
+      "present_in_m7": false,
+      "source": "ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS"
+    },
+    {
+      "field": "acceptance_transaction_id",
+      "missing_reason": "Acceptance predicate signature fields require M6A operational WBC API (deferred to M8).",
+      "notes": "Appended to PROBLEM_SIGNATURE_FIELDS for distinct repair identities.",
+      "owner": "WBC",
+      "present_in_m7": false,
+      "source": "ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS"
+    },
+    {
+      "field": "acceptance_snapshot_hash",
+      "missing_reason": "Acceptance predicate signature fields require M6A operational WBC API (deferred to M8).",
+      "notes": "Appended to PROBLEM_SIGNATURE_FIELDS for distinct repair identities.",
+      "owner": "WBC",
+      "present_in_m7": false,
+      "source": "ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS"
+    },
+    {
+      "field": "acceptance_evidence_refs",
+      "missing_reason": "Acceptance predicate signature fields require M6A operational WBC API (deferred to M8).",
+      "notes": "Appended to PROBLEM_SIGNATURE_FIELDS for distinct repair identities.",
+      "owner": "WBC",
+      "present_in_m7": false,
+      "source": "ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS"
+    },
+    {
+      "field": "safe_recovery_action",
+      "missing_reason": "Acceptance predicate signature fields require M6A operational WBC API (deferred to M8).",
+      "notes": "Appended to PROBLEM_SIGNATURE_FIELDS for distinct repair identities.",
+      "owner": "WBC",
+      "present_in_m7": false,
+      "source": "ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS"
+    },
+    {
+      "field": "recovery_action",
+      "missing_reason": "Acceptance predicate signature fields require M6A operational WBC API (deferred to M8).",
+      "notes": "Appended to PROBLEM_SIGNATURE_FIELDS for distinct repair identities.",
+      "owner": "WBC",
+      "present_in_m7": false,
+      "source": "ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS"
+    },
+    {
+      "field": "chain_identity",
+      "missing_reason": "Requires chain execution binding (M6A).",
+      "notes": "Explicitly marked missing per SD2: production enforcement disabled.",
+      "owner": "Custody",
+      "present_in_m7": false,
+      "source": "M7_MISSING"
+    },
+    {
+      "field": "run_authority_grant_id",
+      "missing_reason": "Requires Run Authority grant acceptance (M5 landed but M7 validator shadow-only).",
+      "notes": "Explicitly marked missing per SD2: production enforcement disabled.",
+      "owner": "Run Authority",
+      "present_in_m7": false,
+      "source": "M7_MISSING"
+    },
+    {
+      "field": "coordinator_fence_token",
+      "missing_reason": "Requires Run Authority coordinator fence (M5 landed but M7 validator shadow-only).",
+      "notes": "Explicitly marked missing per SD2: production enforcement disabled.",
+      "owner": "Run Authority",
+      "present_in_m7": false,
+      "source": "M7_MISSING"
+    },
+    {
+      "field": "wbc_attempt_reference",
+      "missing_reason": "Requires WBC operational attempt ledger (M6A not yet landed).",
+      "notes": "Explicitly marked missing per SD2: production enforcement disabled.",
+      "owner": "WBC",
+      "present_in_m7": false,
+      "source": "M7_MISSING"
+    },
+    {
+      "field": "custody_epoch",
+      "missing_reason": "Requires Custody lease contract (T3/T5).",
+      "notes": "Explicitly marked missing per SD2: production enforcement disabled.",
+      "owner": "Custody",
+      "present_in_m7": false,
+      "source": "M7_MISSING"
+    }
+  ],
+  "gates_enabled": false,
+  "generated_at": "2026-07-20T02:16:28Z",
+  "m7_shadow_mode": true,
+  "production_enforcement_blocked": true,
+  "schema_version": 1,
+  "sha256": "sha256:42fc7f19a0650b2226b5d3d3ee949a618207684c46116a2d09f27fd03c46af81",
+  "writer_surfaces": [
+    {
+      "authority_increasing": false,
+      "category": "execute",
+      "m7_enforcement": "none",
+      "notes": "Read-only projection of execute state.",
+      "owner": "Run Authority",
+      "reader": "PlanRepository.read_artifact_json",
+      "source_class": "state",
+      "surface_id": "ra-01"
+    },
+    {
+      "authority_increasing": false,
+      "category": "execute",
+      "m7_enforcement": "none",
+      "notes": "Read-only finalize projection.",
+      "owner": "Run Authority",
+      "reader": "PlanRepository.read_artifact_json/describe_artifact",
+      "source_class": "finalize",
+      "surface_id": "ra-02"
+    },
+    {
+      "authority_increasing": false,
+      "category": "execute",
+      "m7_enforcement": "none",
+      "notes": "Claim-level batch artifact inspection.",
+      "owner": "Run Authority",
+      "reader": "list_batch_artifacts/PlanRepository.describe_artifact",
+      "source_class": "s4_batch_artifacts",
+      "surface_id": "ra-03"
+    },
+    {
+      "authority_increasing": false,
+      "category": "execute",
+      "m7_enforcement": "none",
+      "notes": "Legacy batch inspection.",
+      "owner": "Run Authority",
+      "reader": "list_batch_artifacts",
+      "source_class": "legacy_batch_artifacts",
+      "surface_id": "ra-04"
+    },
+    {
+      "authority_increasing": false,
+      "category": "execute",
+      "m7_enforcement": "none",
+      "notes": "Auxiliary execution projection.",
+      "owner": "Run Authority",
+      "reader": "PlanRepository.list_artifacts/read_artifact_json",
+      "source_class": "execution_auxiliary",
+      "surface_id": "ra-05"
+    },
+    {
+      "authority_increasing": true,
+      "category": "execute",
+      "m7_enforcement": "shadow_only",
+      "notes": "Decision-level completion verdict; M7 shadow-validates.",
+      "owner": "Run Authority",
+      "reader": "read_typed_completion_verdict",
+      "source_class": "completion_verdict",
+      "surface_id": "ra-06"
+    },
+    {
+      "authority_increasing": false,
+      "category": "repository",
+      "m7_enforcement": "none",
+      "notes": "Observation of plan tree.",
+      "owner": "Run Authority",
+      "reader": "PlanRepository.list_artifact_paths/list_artifacts",
+      "source_class": "plan_tree",
+      "surface_id": "ra-07"
+    },
+    {
+      "authority_increasing": false,
+      "category": "store",
+      "m7_enforcement": "none",
+      "notes": "Claim-level event inspection.",
+      "owner": "Run Authority",
+      "reader": "Store.list_epic_events_for_replay",
+      "source_class": "file_epic_events",
+      "surface_id": "ra-08"
+    },
+    {
+      "authority_increasing": false,
+      "category": "store",
+      "m7_enforcement": "none",
+      "notes": "DB event inspection.",
+      "owner": "Run Authority",
+      "reader": "Store.list_epic_events_for_replay",
+      "source_class": "db_epic_events",
+      "surface_id": "ra-09"
+    },
+    {
+      "authority_increasing": false,
+      "category": "store",
+      "m7_enforcement": "none",
+      "notes": "Observation of telemetry progress.",
+      "owner": "Run Authority",
+      "reader": "Store.events_for_plan/list_progress_events",
+      "source_class": "telemetry_progress",
+      "surface_id": "ra-10"
+    },
+    {
+      "authority_increasing": false,
+      "category": "compatibility",
+      "m7_enforcement": "none",
+      "notes": "Compatibility projection adapter.",
+      "owner": "Run Authority",
+      "reader": "ArnoldStoreAdapter",
+      "source_class": "store_adapter",
+      "surface_id": "ra-11"
+    },
+    {
+      "authority_increasing": false,
+      "category": "authority",
+      "m7_enforcement": "none",
+      "notes": "Evidence-nucleus claim.",
+      "owner": "Run Authority",
+      "reader": "load_evidence_nucleus/authority_decision_for_task",
+      "source_class": "evidence_nucleus",
+      "surface_id": "ra-12"
+    },
+    {
+      "authority_increasing": false,
+      "category": "authority",
+      "m7_enforcement": "none",
+      "notes": "Completion projection.",
+      "owner": "Run Authority",
+      "reader": "authority_decision_for_task/is_task_satisfied",
+      "source_class": "completion_projection",
+      "surface_id": "ra-13"
+    },
+    {
+      "authority_increasing": false,
+      "category": "chain",
+      "m7_enforcement": "none",
+      "notes": "Chain spec loading claim.",
+      "owner": "Run Authority",
+      "reader": "chain.spec.load_spec",
+      "source_class": "spec",
+      "surface_id": "ra-14"
+    },
+    {
+      "authority_increasing": false,
+      "category": "chain",
+      "m7_enforcement": "none",
+      "notes": "Chain state candidate projection.",
+      "owner": "Run Authority",
+      "reader": "chain.spec._state_path_candidates_for",
+      "source_class": "state_candidates",
+      "surface_id": "ra-15"
+    },
+    {
+      "authority_increasing": false,
+      "category": "chain",
+      "m7_enforcement": "none",
+      "notes": "Legacy chain state projection.",
+      "owner": "Run Authority",
+      "reader": "chain.spec._state_path_candidates_for",
+      "source_class": "legacy_state",
+      "surface_id": "ra-16"
+    },
+    {
+      "authority_increasing": false,
+      "category": "chain",
+      "m7_enforcement": "none",
+      "notes": "Chain status projection.",
+      "owner": "Run Authority",
+      "reader": "build_chain_status_snapshot",
+      "source_class": "status",
+      "surface_id": "ra-17"
+    },
+    {
+      "authority_increasing": false,
+      "category": "cloud",
+      "m7_enforcement": "none",
+      "notes": "Session marker claim.",
+      "owner": "Run Authority",
+      "reader": "resolve_current_target/is_canonical_session_marker_path",
+      "source_class": "session_marker",
+      "surface_id": "ra-18"
+    },
+    {
+      "authority_increasing": false,
+      "category": "cloud",
+      "m7_enforcement": "none",
+      "notes": "Current target projection.",
+      "owner": "Run Authority",
+      "reader": "resolve_current_target/normalize_evidence",
+      "source_class": "current_target",
+      "surface_id": "ra-19"
+    },
+    {
+      "authority_increasing": false,
+      "category": "cloud",
+      "m7_enforcement": "none",
+      "notes": "Cloud status snapshot projection.",
+      "owner": "Run Authority",
+      "reader": "load_cloud_status_snapshot",
+      "source_class": "status_snapshot",
+      "surface_id": "ra-20"
+    },
+    {
+      "authority_increasing": false,
+      "category": "cloud",
+      "m7_enforcement": "none",
+      "notes": "Health sidecars projection.",
+      "owner": "Run Authority",
+      "reader": "build_cloud_status_snapshot",
+      "source_class": "health_sidecars",
+      "surface_id": "ra-21"
+    },
+    {
+      "authority_increasing": false,
+      "category": "watchdog",
+      "m7_enforcement": "none",
+      "notes": "Live watchdog snapshot projection.",
+      "owner": "Run Authority",
+      "reader": "watchdog.snapshot.build_snapshot",
+      "source_class": "live_snapshot",
+      "surface_id": "ra-22"
+    },
+    {
+      "authority_increasing": false,
+      "category": "watchdog",
+      "m7_enforcement": "none",
+      "notes": "Persisted watchdog report projection.",
+      "owner": "Run Authority",
+      "reader": "cloud.status_snapshot._load_watchdog_report",
+      "source_class": "persisted_report",
+      "surface_id": "ra-23"
+    },
+    {
+      "authority_increasing": false,
+      "category": "watchdog",
+      "m7_enforcement": "none",
+      "notes": "Watchdog registry read.",
+      "owner": "Run Authority",
+      "reader": "WatchdogRegistry.load semantics (read-only)",
+      "source_class": "registry",
+      "surface_id": "ra-24"
+    },
+    {
+      "authority_increasing": false,
+      "category": "repair",
+      "m7_enforcement": "none",
+      "notes": "Needs-human claim classification.",
+      "owner": "Run Authority",
+      "reader": "resolve_current_target/classify_needs_human_blocker",
+      "source_class": "needs_human",
+      "surface_id": "ra-25"
+    },
+    {
+      "authority_increasing": false,
+      "category": "repair",
+      "m7_enforcement": "none",
+      "notes": "Repair data index projection.",
+      "owner": "Run Authority",
+      "reader": "repair_contract.load_json/read_repair_index",
+      "source_class": "data_index_attempts",
+      "surface_id": "ra-26"
+    },
+    {
+      "authority_increasing": false,
+      "category": "repair",
+      "m7_enforcement": "none",
+      "notes": "Queue request claim inspection.",
+      "owner": "Run Authority",
+      "reader": "iter_repair_requests(include_malformed=True)",
+      "source_class": "queue_requests",
+      "surface_id": "ra-27"
+    },
+    {
+      "authority_increasing": true,
+      "category": "repair",
+      "m7_enforcement": "shadow_only",
+      "notes": "Repair queue decision; M7 shadow-validates.",
+      "owner": "Run Authority",
+      "reader": "iter_repair_decisions(include_malformed=True)",
+      "source_class": "queue_decisions",
+      "surface_id": "ra-28"
+    },
+    {
+      "authority_increasing": false,
+      "category": "repair",
+      "m7_enforcement": "none",
+      "notes": "JSONL sidecar claim.",
+      "owner": "Run Authority",
+      "reader": "repair_contract.read_jsonl_records",
+      "source_class": "jsonl_sidecars",
+      "surface_id": "ra-29"
+    },
+    {
+      "authority_increasing": false,
+      "category": "git",
+      "m7_enforcement": "none",
+      "notes": "Git worktree observation.",
+      "owner": "Run Authority",
+      "reader": "repair_recurrence._probe_git_progress",
+      "source_class": "worktree",
+      "surface_id": "ra-30"
+    },
+    {
+      "authority_increasing": false,
+      "category": "git",
+      "m7_enforcement": "none",
+      "notes": "Chain publication projection.",
+      "owner": "Run Authority",
+      "reader": "captured chain state fields",
+      "source_class": "chain_publication",
+      "surface_id": "ra-31"
+    },
+    {
+      "authority_increasing": false,
+      "category": "git",
+      "m7_enforcement": "none",
+      "notes": "GitHub PR observation.",
+      "owner": "Run Authority",
+      "reader": "repair_recurrence._probe_pr_state",
+      "source_class": "github_pr",
+      "surface_id": "ra-32"
+    },
+    {
+      "authority_increasing": false,
+      "category": "process",
+      "m7_enforcement": "none",
+      "notes": "Process scan observation.",
+      "owner": "Run Authority",
+      "reader": "watchdog.processes.scan_processes",
+      "source_class": "processes",
+      "surface_id": "ra-33"
+    },
+    {
+      "authority_increasing": false,
+      "category": "session",
+      "m7_enforcement": "none",
+      "notes": "Tmux session observation.",
+      "owner": "Run Authority",
+      "reader": "default_liveness_probe/TmuxSession.exists",
+      "source_class": "tmux",
+      "surface_id": "ra-34"
+    },
+    {
+      "authority_increasing": false,
+      "category": "run_state",
+      "m7_enforcement": "none",
+      "notes": "Active-step heartbeat observation.",
+      "owner": "Run Authority",
+      "reader": "resolve_current_target",
+      "source_class": "active_step_heartbeat",
+      "surface_id": "ra-35"
+    },
+    {
+      "authority_increasing": false,
+      "category": "run_state",
+      "m7_enforcement": "none",
+      "notes": "Run-state normalization projection.",
+      "owner": "Run Authority",
+      "reader": "run_state.evidence.normalize_evidence",
+      "source_class": "normalization",
+      "surface_id": "ra-36"
+    },
+    {
+      "authority_increasing": true,
+      "category": "run_state",
+      "m7_enforcement": "shadow_only",
+      "notes": "Run-state resolution decision; M7 shadow-validates.",
+      "owner": "Run Authority",
+      "reader": "run_state.resolver.resolve_run_state",
+      "source_class": "resolution",
+      "surface_id": "ra-37"
+    },
+    {
+      "authority_increasing": false,
+      "category": "events",
+      "m7_enforcement": "none",
+      "notes": "Plan-events observation.",
+      "owner": "Run Authority",
+      "reader": "events schema-compatible read-only parser",
+      "source_class": "plan_events",
+      "surface_id": "ra-38"
+    },
+    {
+      "authority_increasing": false,
+      "category": "wal",
+      "m7_enforcement": "none",
+      "notes": "WAL shadow-state fold projection.",
+      "owner": "WBC",
+      "reader": "observability.fold.fold_events",
+      "source_class": "shadow_state_fold",
+      "surface_id": "wbc-01"
+    },
+    {
+      "authority_increasing": false,
+      "category": "events",
+      "m7_enforcement": "none",
+      "notes": "Events store projection.",
+      "owner": "WBC",
+      "reader": "events_projection.project_events",
+      "source_class": "store_projection",
+      "surface_id": "wbc-02"
+    },
+    {
+      "authority_increasing": false,
+      "category": "journal",
+      "m7_enforcement": "none",
+      "notes": "Journal transaction decision.",
+      "owner": "WBC",
+      "reader": "_core.io journal path helpers/read-only JSON",
+      "source_class": "transactions",
+      "surface_id": "wbc-03"
+    },
+    {
+      "authority_increasing": false,
+      "category": "backend",
+      "m7_enforcement": "none",
+      "notes": "Event-sourced state store backend decision.",
+      "owner": "WBC",
+      "reader": "EventSourcedStateStoreBackend",
+      "source_class": "event_sourced_state_store",
+      "surface_id": "wbc-04"
+    },
+    {
+      "authority_increasing": false,
+      "category": "events",
+      "m7_enforcement": "none",
+      "notes": "Events projection placeholder.",
+      "owner": "WBC",
+      "reader": "events_projection",
+      "source_class": "events_projection",
+      "surface_id": "wbc-05"
+    },
+    {
+      "authority_increasing": false,
+      "category": "custody",
+      "m7_enforcement": "none",
+      "notes": "Report-only provenance map; no production effect.",
+      "owner": "Custody",
+      "reader": "custody.writer_map.generate_writer_map",
+      "source_class": "writer_map",
+      "surface_id": "custody-01"
+    },
+    {
+      "authority_increasing": false,
+      "category": "custody",
+      "m7_enforcement": "shadow_only",
+      "notes": "Schema definitions; no production writes.",
+      "owner": "Custody",
+      "reader": "custody.contracts (T3)",
+      "source_class": "contracts",
+      "surface_id": "custody-02"
+    },
+    {
+      "authority_increasing": true,
+      "category": "custody",
+      "m7_enforcement": "shadow_only",
+      "notes": "Append-only lease history; enforcement blocked until M6/M6A.",
+      "owner": "Custody",
+      "reader": "custody.lease_store (T5)",
+      "source_class": "lease_store",
+      "surface_id": "custody-03"
+    },
+    {
+      "authority_increasing": false,
+      "category": "custody",
+      "m7_enforcement": "shadow_only",
+      "notes": "Durable cross-owner outbox; writes only Custody-owned state.",
+      "owner": "Custody",
+      "reader": "custody.outbox (T7)",
+      "source_class": "outbox",
+      "surface_id": "custody-04"
+    },
+    {
+      "authority_increasing": true,
+      "category": "custody",
+      "m7_enforcement": "shadow_only",
+      "notes": "Conjunctive gate: validates Run Authority grant/fence + Custody lease/epoch + WBC evidence.",
+      "owner": "Custody",
+      "reader": "custody.action_validator.validate_action_boundary (T8)",
+      "source_class": "action_validator",
+      "surface_id": "custody-05"
+    },
+    {
+      "authority_increasing": false,
+      "category": "custody",
+      "m7_enforcement": "shadow_only",
+      "notes": "Cursor-checked projection appends; no authority grant.",
+      "owner": "Custody",
+      "reader": "custody.projections (T16)",
+      "source_class": "projections",
+      "surface_id": "custody-06"
+    },
+    {
+      "authority_increasing": true,
+      "category": "custody",
+      "m7_enforcement": "shadow_only",
+      "notes": "Registry of controlled authority-increasing writers.",
+      "owner": "Custody",
+      "reader": "custody.controlled_writer_registry (T10)",
+      "source_class": "controlled_writer_registry",
+      "surface_id": "custody-07"
+    },
+    {
+      "authority_increasing": false,
+      "category": "custody",
+      "m7_enforcement": "shadow_only",
+      "notes": "Immutable attempt-scoped evidence receipts.",
+      "owner": "Custody",
+      "reader": "custody.receipts (T18)",
+      "source_class": "receipts",
+      "surface_id": "custody-08"
+    },
+    {
+      "authority_increasing": false,
+      "category": "custody",
+      "m7_enforcement": "shadow_only",
+      "notes": "Old-reader/new-writer compatibility bridge.",
+      "owner": "Custody",
+      "reader": "custody.compatibility (T20)",
+      "source_class": "compatibility",
+      "surface_id": "custody-09"
+    },
+    {
+      "authority_increasing": false,
+      "category": "custody",
+      "m7_enforcement": "shadow_only",
+      "notes": "Idle pinned-runtime canary.",
+      "owner": "Custody",
+      "reader": "custody.canary (T21)",
+      "source_class": "canary",
+      "surface_id": "custody-10"
+    },
+    {
+      "authority_increasing": true,
+      "category": "custody",
+      "m7_enforcement": "shadow_only",
+      "notes": "Bypass-proof registry; enforcement blocked until M6/M6A.",
+      "owner": "Custody",
+      "reader": "custody.bypass_proof (T22)",
+      "source_class": "bypass_proof",
+      "surface_id": "custody-11"
+    },
+    {
+      "authority_increasing": false,
+      "category": "projection",
+      "m7_enforcement": "none",
+      "notes": "Derived chain state projections; no authority.",
+      "owner": "Projection",
+      "reader": "chain projections",
+      "source_class": "chain_projection",
+      "surface_id": "proj-01"
+    },
+    {
+      "authority_increasing": false,
+      "category": "projection",
+      "m7_enforcement": "none",
+      "notes": "Derived cloud status projections.",
+      "owner": "Projection",
+      "reader": "cloud projections",
+      "source_class": "cloud_projection",
+      "surface_id": "proj-02"
+    },
+    {
+      "authority_increasing": false,
+      "category": "projection",
+      "m7_enforcement": "none",
+      "notes": "Derived watchdog projections.",
+      "owner": "Projection",
+      "reader": "watchdog projections",
+      "source_class": "watchdog_projection",
+      "surface_id": "proj-03"
+    },
+    {
+      "authority_increasing": false,
+      "category": "observability",
+      "m7_enforcement": "none",
+      "notes": "Pure operator views; never authorizes action.",
+      "owner": "Observability",
+      "reader": "operator views",
+      "source_class": "operator_view",
+      "surface_id": "obs-01"
+    },
+    {
+      "authority_increasing": false,
+      "category": "observability",
+      "m7_enforcement": "none",
+      "notes": "Exact-evidence auditor reasons.",
+      "owner": "Observability",
+      "reader": "auditor reasons",
+      "source_class": "auditor",
+      "surface_id": "obs-02"
+    },
+    {
+      "authority_increasing": false,
+      "category": "maintenance",
+      "m7_enforcement": "none",
+      "notes": "Hourly scan + six-hour reconciliation; never primary dispatch.",
+      "owner": "Maintenance",
+      "reader": "six-hour reconciliation backstop",
+      "source_class": "scan_recovery",
+      "surface_id": "maint-01"
+    },
+    {
+      "authority_increasing": false,
+      "category": "maintenance",
+      "m7_enforcement": "none",
+      "notes": "Read-only efficiency analysis.",
+      "owner": "Maintenance",
+      "reader": "daily read-only efficiency analysis",
+      "source_class": "efficiency_analysis",
+      "surface_id": "maint-02"
+    },
+    {
+      "authority_increasing": false,
+      "category": "domain",
+      "m7_enforcement": "none",
+      "notes": "Domain scheduling, DAG readiness, model routing, task sizing.",
+      "owner": "Domain (Megaplan)",
+      "reader": "Megaplan planner/compiler",
+      "source_class": "planner_compiler",
+      "surface_id": "domain-01"
+    },
+    {
+      "authority_increasing": false,
+      "category": "domain",
+      "m7_enforcement": "none",
+      "notes": "Source/runtime preflight, verify-only adoption, bounded timeout/failover.",
+      "owner": "Domain (Megaplan)",
+      "reader": "executor/launcher",
+      "source_class": "executor_launcher",
+      "surface_id": "domain-02"
+    }
+  ]
+}

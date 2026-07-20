@@ -13,6 +13,7 @@ from arnold_pipelines.megaplan.cloud import repair_investigation
 from arnold_pipelines.megaplan.cloud.repair_investigation import (
     EVIDENCE_SOURCE_KINDS,
     MAX_CONTEXT_BYTES,
+    MAX_OBSERVATION_BUNDLE_BYTES,
     META_REPAIR_INVESTIGATION_ENVELOPE_SCHEMA,
     REPAIR_INVESTIGATOR_RECEIPT_SCHEMA,
     build_meta_investigation_context,
@@ -170,7 +171,9 @@ def test_l1_broker_observation_is_digest_bound_typed_and_bounded(tmp_path: Path)
         build_repair_observation_bundle(context_path)
 
 
-def test_l1_broker_observation_fails_closed_above_48_kib(tmp_path: Path) -> None:
+def test_l1_broker_observation_bounds_oversized_error_without_losing_identity(
+    tmp_path: Path,
+) -> None:
     context = {
         "schema_version": "arnold-repair-investigation-context-v1",
         "context_digest": "",
@@ -194,8 +197,12 @@ def test_l1_broker_observation_fails_closed_above_48_kib(tmp_path: Path) -> None
     _write(context_path, context)
     assert context_path.stat().st_size <= MAX_CONTEXT_BYTES
 
-    with pytest.raises(ValueError, match="brokered repair observations exceed 48 KiB"):
-        build_repair_observation_bundle(context_path)
+    observation = build_repair_observation_bundle(context_path)
+
+    encoded = json.dumps(observation, sort_keys=True, separators=(",", ":")).encode()
+    assert len(encoded) <= MAX_OBSERVATION_BUNDLE_BYTES
+    assert observation["context_digest"] == context["context_digest"]
+    assert observation["analysis_context"]["exact_error"]["message"] == "x" * 600
 
 
 def test_external_snapshot_uses_authoritative_chain_pr_number(

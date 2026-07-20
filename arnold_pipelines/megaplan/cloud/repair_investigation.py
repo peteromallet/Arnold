@@ -1638,7 +1638,9 @@ def build_repair_observation_bundle(context_path: str | Path) -> dict[str, Any]:
             "target_kind": context.get("target_kind"),
             "access_verified": True,
             "analysis_context": {
-                key: context.get(key) for key in analysis_keys if key in context
+                key: _bound_observation_value(context.get(key))
+                for key in analysis_keys
+                if key in context
             },
             "required_receipt_shape": required_receipt,
             "observations": observations,
