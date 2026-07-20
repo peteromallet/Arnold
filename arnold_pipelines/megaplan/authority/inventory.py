@@ -28,7 +28,7 @@ from arnold_pipelines.megaplan.store.plan_repository import PlanRepository
 INVENTORY_SCHEMA_VERSION = 1
 _ROLES = frozenset({"observation", "claim", "decision", "projection"})
 _PRESENCE = frozenset(
-    {"not_configured", "absent", "present_empty", "present", "degraded", "contradictory"}
+    {"not_configured", "absent", "present_empty", "present", "degraded", "contradictory", "shadow_only"}
 )
 _S4_RE = re.compile(r"execute_batches/batch_(\d+)/tasks_([0-9a-f]{12})\.json$")
 _LEGACY_RE = re.compile(r"execution_batch_(\d+)\.json$")
@@ -235,6 +235,82 @@ SOURCE_REGISTRY: tuple[_SourceSpec, ...] = (
     _SourceSpec("journal", "transactions", "decision", "_core.io journal path helpers/read-only JSON"),
     _SourceSpec("backend", "event_sourced_state_store", "decision", "EventSourcedStateStoreBackend"),
 )
+
+# ── Net-new Custody-owned source classes (M7 shadow-only, per SD1) ─────────────
+# These 11 entries are registry additions and never reassign existing
+# Run Authority (38) or WBC (5) ownership rows.
+CUSTODY_SOURCE_REGISTRY: tuple[_SourceSpec, ...] = (
+    _SourceSpec("custody", "writer_map", "projection", "custody.writer_map.generate_writer_map"),
+    _SourceSpec("custody", "contracts", "claim", "custody.contracts (T3)"),
+    _SourceSpec("custody", "lease_store", "decision", "custody.lease_store (T5)"),
+    _SourceSpec("custody", "outbox", "projection", "custody.outbox (T7)"),
+    _SourceSpec("custody", "action_validator", "decision", "custody.action_validator.validate_action_boundary (T8)"),
+    _SourceSpec("custody", "projections", "projection", "custody.projections (T16)"),
+    _SourceSpec("custody", "controlled_writer_registry", "decision", "custody.controlled_writer_registry (T10)"),
+    _SourceSpec("custody", "receipts", "projection", "custody.receipts (T18)"),
+    _SourceSpec("custody", "compatibility", "projection", "custody.compatibility (T20)"),
+    _SourceSpec("custody", "canary", "observation", "custody.canary (T21)"),
+    _SourceSpec("custody", "bypass_proof", "decision", "custody.bypass_proof (T22)"),
+)
+
+# ── Authority-increasing writer dispositions ───────────────────────────────────
+# Maps (category, source_class) → (owner, enforcement) for every writer
+# classified as authority-increasing in the M7 provenance map.  The invariant
+# requires every such writer to be prerequisite-owned, Custody-gated,
+# deferred shadow-only, or retired.
+_AUTHORITY_INCREASING_DISPOSITIONS: Mapping[tuple[str, str], tuple[str, str]] = MappingProxyType({
+    # Run Authority authority-increasing (deferred shadow-only in M7)
+    ("execute", "completion_verdict"): ("Run Authority", "shadow_only"),
+    ("repair", "queue_decisions"): ("Run Authority", "shadow_only"),
+    ("run_state", "resolution"): ("Run Authority", "shadow_only"),
+    # Custody authority-increasing (Custody-gated, deferred shadow-only in M7)
+    ("custody", "lease_store"): ("Custody", "shadow_only"),
+    ("custody", "action_validator"): ("Custody", "shadow_only"),
+    ("custody", "controlled_writer_registry"): ("Custody", "shadow_only"),
+    ("custody", "bypass_proof"): ("Custody", "shadow_only"),
+})
+
+
+def validate_authority_increasing_writers_invariant(
+    source_registry: Iterable[_SourceSpec] = (),
+    custody_registry: Iterable[_SourceSpec] = (),
+) -> tuple[InventoryContradiction, ...]:
+    """Validate that every authority-increasing writer has an allowed disposition.
+
+    Returns contradictions for any writer that is authority-increasing but
+    not prerequisite-owned, Custody-gated, deferred shadow-only, or retired.
+    """
+    contradictions: list[InventoryContradiction] = []
+
+    for spec in (*source_registry, *custody_registry):
+        key = (spec.category, spec.source_class)
+        disposition = _AUTHORITY_INCREASING_DISPOSITIONS.get(key)
+        if disposition is None:
+            continue  # not classified as authority-increasing
+        owner, enforcement = disposition
+        # Every authority-increasing writer must be:
+        #   - prerequisite-owned (Run Authority or WBC)
+        #   - Custody-gated (owner == Custody)
+        #   - deferred shadow-only (enforcement == "shadow_only")
+        #   - retired (enforcement == "retired")
+        allowed = (
+            owner in ("Run Authority", "WBC")
+            or owner == "Custody"
+            or enforcement == "shadow_only"
+            or enforcement == "retired"
+        )
+        if not allowed:
+            contradictions.append(
+                InventoryContradiction(
+                    "authority_increasing_writer_not_allowed",
+                    f"Writer ({spec.category}/{spec.source_class}) is authority-increasing "
+                    f"with owner={owner!r}, enforcement={enforcement!r} — "
+                    f"must be prerequisite-owned, Custody-gated, deferred shadow-only, or retired",
+                    (spec.category + "/" + spec.source_class,),
+                )
+            )
+
+    return tuple(contradictions)
 
 
 def _record(
@@ -935,11 +1011,54 @@ def collect_authority_inventory(
                 reason="configured source is absent" if path is not None else "chain spec path is not configured",
             )
 
-    records = tuple(parents.values()) + tuple(children)
+    # ── Custody-owned source classes (M7 shadow-only, per SD1) ──────────────────
+    # Each Custody source class produces an inventory record with shadow_only
+    # presence.  These are net-new entries; existing Run Authority (38) and
+    # WBC (5) ownership rows are never reassigned.
+    custody_specs = {(item.category, item.source_class): item for item in CUSTODY_SOURCE_REGISTRY}
+    custody_records: list[InventoryRecord] = []
+    for key, spec in custody_specs.items():
+        custody_records.append(
+            _record(
+                spec,
+                f"custody:{spec.category}/{spec.source_class}",
+                presence="shadow_only",
+                reason="M7 custody writer; production enforcement disabled per SD2",
+                details={
+                    "owner": "Custody",
+                    "m7_enforcement": "shadow_only",
+                    "production_enforcement_blocked": True,
+                },
+            )
+        )
+
+    # ── Authority-increasing writer invariant ───────────────────────────────────
+    # Verify that every authority-increasing writer is prerequisite-owned,
+    # Custody-gated, deferred shadow-only, or retired.  The invariant runs
+    # against both the audited SOURCE_REGISTRY and the new CUSTODY_SOURCE_REGISTRY.
+    invariant_contradictions = validate_authority_increasing_writers_invariant(
+        source_registry=SOURCE_REGISTRY,
+        custody_registry=CUSTODY_SOURCE_REGISTRY,
+    )
+    if invariant_contradictions:
+        # Attach invariant failures to the custody writer_map record
+        wm_key = ("custody", "writer_map")
+        for i, record in enumerate(custody_records):
+            if (record.category, record.source_class) == wm_key:
+                custody_records[i] = replace(
+                    record,
+                    presence="contradictory",
+                    reason=invariant_contradictions[0].reason,
+                    contradictions=record.contradictions + invariant_contradictions,
+                )
+                break
+
+    records = tuple(parents.values()) + tuple(children) + tuple(custody_records)
     return AuthorityInventory(records=records)
 
 
 __all__ = [
+    "CUSTODY_SOURCE_REGISTRY",
     "INVENTORY_SCHEMA_VERSION",
     "SOURCE_REGISTRY",
     "AuthorityInventory",
@@ -947,4 +1066,5 @@ __all__ = [
     "InventoryContradiction",
     "InventoryRecord",
     "collect_authority_inventory",
+    "validate_authority_increasing_writers_invariant",
 ]

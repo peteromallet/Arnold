@@ -1,0 +1,70 @@
+{
+  "schema": "m6.pc-scope-decision.v1",
+  "generated_at": "2026-07-19T22:34:46.936114+00:00",
+  "generator": "tools/generate_m6_ownership_decision.py",
+  "source_evidence": {
+    "prerequisite_verification": "/workspace/custody-control-plane-20260714/Arnold/evidence/m6-prerequisite-verification.json",
+    "migration_matrix_reconciled": "/workspace/custody-control-plane-20260714/Arnold/evidence/migration-matrix-reconciled.json"
+  },
+  "default_interpretation": "program_counter",
+  "default_rationale": "PC in checkpoint/cursor contexts defaults to native program counter. All committed source evidence (IR compiler, checkpoint module, runtime, trace) uses 'pc' as a zero-based instruction index. No repository evidence proves an alternative scope (Parity Corrective, control plane, or otherwise).",
+  "blocker_count": 1,
+  "decision_count": 1,
+  "decisions": [
+    {
+      "decision_id": "PC-SCOPE-001",
+      "surface": "Native persistence checkpoint/cursor ``pc`` field",
+      "verdict": "program_counter",
+      "rationale": "All repository evidence — the Native IR compiler, checkpoint module, runtime, and trace modules — defines ``pc`` as a zero-based program counter indexing the instruction tuple. No committed evidence supports Parity Corrective or control-plane ownership of the ``pc`` field. The migration matrix row 4 (Native persistence checkpoint/cursor) is classified as residual/legacy under Native Platform ownership with M8 handoff. Row 91 (PC adjacent work) explicitly requires human portfolio gate approval — that gate is encoded as a blocker below, not accepted scope expansion.",
+      "evidence": {
+        "source_files": [
+          {
+            "path": "arnold/pipeline/native/ir.py",
+            "line_approx": 386,
+            "quote": "Each instruction carries an explicit program counter (``pc``)",
+            "interpretation": "pc is a zero-based index into the instruction tuple"
+          },
+          {
+            "path": "arnold/pipeline/native/checkpoint.py",
+            "line_approx": 25,
+            "quote": "The ``native`` key carries the program counter and a schema version",
+            "interpretation": "cursor_pc / pc in checkpoint JSON refers to program counter"
+          },
+          {
+            "path": "arnold/pipeline/native/checkpoint.py",
+            "line_approx": 686,
+            "quote": "pc: Current zero-based program counter.",
+            "interpretation": "Docstring confirms pc = program counter"
+          }
+        ],
+        "migration_matrix_rows": [
+          {
+            "row_index": 91,
+            "consumer_surface": "PC adjacent work",
+            "current_authority": "program counter / Parity Corrective / control plane ambiguous",
+            "owner": "Portfolio gate",
+            "classification": "blocked"
+          },
+          {
+            "row_index": 4,
+            "consumer_surface": "Native persistence checkpoint/cursor",
+            "current_authority": "checkpoint JSON including native `pc`",
+            "owner": "Native Platform",
+            "classification": "residual"
+          }
+        ]
+      },
+      "blockers": [
+        {
+          "blocker_id": "PC-SCOPE-BLOCKER-001",
+          "description": "Human portfolio gate approval required for PC scope decision (migration matrix row 91, owner: Portfolio gate). Until approved, PC scope defaults to program counter only.",
+          "source": "migration matrix row 91 (PC adjacent work)",
+          "required_evidence": "PC_SCOPE_DECISION human approval record",
+          "status": "blocked"
+        }
+      ],
+      "row_hash": "48712d9558f67202e9bf3f83fb7bc8edff9fdaeb23c45cd754fc036f095f4fe5"
+    }
+  ],
+  "composite_hash": "608da7316f4ace575da39d83e42e62b8f2699e239d384d52aed8224de007f40f"
+}

@@ -145,6 +145,30 @@ to M8A: combined adopter support manifest, exact-version and post-reread traces,
 boundary/attempt/decision joins, child/root lineage and delivery proof,
 compatibility expiry map, and the residual authority-reader registry.
 
+## F01–F17 amendment contract
+
+This milestone owns universal producer/adopter wiring for F02 durable block/exit
+facts, F04 attempt/effect history, F17 provenance, and R1's active boundaries.
+It consumes rather than redefines M6A storage and M7 custody.
+
+- **Prerequisite:** accepted M6A transactional API and M7 controlled-writer,
+  action-validator, occurrence, lease/epoch, and repair-receipt contracts.
+- **First safe action:** at one attested vector, regenerate the declared/static/
+  runtime boundary inventory with promotion/effects off, then exercise the
+  lowest-risk fake adapter before touching broader cohorts.
+- **Deliverables:** `evidence/m8-f01-f17-adoption.json`, exact producer and
+  adopter traces, block/exit timestamp joins, source/install/wrapper/config/
+  process identities, bypass-negative tests, parent/root custody proof, and an
+  expiring read-only compatibility map.
+- **Acceptance evidence:** exact set equality across declarations, semantic
+  call sites, and captured traces; every dispatch has durable start and one
+  terminal/indeterminate result; every action class rejects missing/stale Run
+  Authority or Custody input; every supported F02/F04/F17 producer is traced.
+- **Component-versus-wiring safeguard:** manifests, schemas, manual emitters,
+  fixtures, and isolated adapters do not establish adoption. A row moves only
+  with implementation commit, positive/negative trace, exact runtime vector,
+  and owner acceptance.
+
 ## Profile rationale
 
 Difficulty 5/5; `partnered-5/thorough/high @codex`. Cross-runtime semantics and

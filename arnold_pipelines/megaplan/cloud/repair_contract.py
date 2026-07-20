@@ -18,6 +18,16 @@ from arnold_pipelines.megaplan.cloud.redact import redact_payload as canonical_r
 from arnold_pipelines.megaplan.observability.events import EventKind, emit
 from arnold_pipelines.megaplan.run_state.model import CanonicalRunState, CanonicalState
 
+# ── M7 custody contract imports (shadow/report-only) ────────────────────
+from arnold_pipelines.megaplan.custody.contracts import (
+    CustodyTargetKey,
+    RepairOccurrenceKey,
+    build_custody_target_key,
+    build_repair_occurrence_key,
+    occurrence_digest,
+    F01_REPAIR_OCCURRENCE_FIELDS as _F01_REPAIR_OCCURRENCE_FIELDS,
+)
+
 CURRENT_SCHEMA_VERSION = 1
 
 ADDITIVE_FIELD_DEFAULTS: dict[str, Any] = {
@@ -458,6 +468,314 @@ def blocker_fingerprint_from_acceptance(
         "predecessor_fingerprint_hash": predecessor_fingerprint_hash,
     }
     return normalize_blocker_fingerprint_v2(payload)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# M7 custody helpers — RepairOccurrenceKey construction from repair evidence
+# ═══════════════════════════════════════════════════════════════════════════
+
+#: Known T7 outbox surface identifiers (Custody-04 outbox module).
+_T7_OUTBOX_SURFACE_PREFIXES: tuple[str, ...] = (
+    "outbox:",
+    "custody-outbox:",
+    "custody-04:",
+)
+
+#: Known T12 admission surface identifiers (future Custody admission).
+_T12_ADMISSION_SURFACE_PREFIXES: tuple[str, ...] = (
+    "admission:",
+    "custody-admission:",
+    "repair-admission:",
+)
+
+
+def is_t7_outbox_reference(ref: str) -> bool:
+    """Return True if *ref* identifies a T7 outbox record.
+
+    T7 outbox references are owned by the Custody outbox module and carry
+    ``outbox:``, ``custody-outbox:``, or ``custody-04:`` prefixes.
+
+    This is a read-only classifier — it does not mutate any state.
+    """
+    if not isinstance(ref, str) or not ref.strip():
+        return False
+    cleaned = ref.strip()
+    return any(cleaned.startswith(prefix) for prefix in _T7_OUTBOX_SURFACE_PREFIXES)
+
+
+def is_t12_admission_reference(ref: str) -> bool:
+    """Return True if *ref* identifies a T12 admission surface record.
+
+    T12 admission references are owned by the repair admission surface and
+    carry ``admission:``, ``custody-admission:``, or ``repair-admission:``
+    prefixes.
+
+    This is a read-only classifier — it does not mutate any state.
+    """
+    if not isinstance(ref, str) or not ref.strip():
+        return False
+    cleaned = ref.strip()
+    return any(cleaned.startswith(prefix) for prefix in _T12_ADMISSION_SURFACE_PREFIXES)
+
+
+def validate_t7_t12_cross_binding(
+    *,
+    occurrence_key: RepairOccurrenceKey | None = None,
+    wbc_attempt_reference: str = "",
+    source_surface: str = "",
+) -> list[str]:
+    """Return a list of cross-binding violation descriptions.
+
+    Rejects any attempt to bind T7 outbox references to T12 admission
+    surface identifiers and vice versa.  Stale T7→T12 binding would allow
+    an outbox record to be mistaken for an admission decision, which
+    violates the single-owner boundary.
+
+    Returns an empty list when no violation is detected.
+    """
+    violations: list[str] = []
+    if occurrence_key is None:
+        return violations
+
+    # Classify the source surface if not explicitly provided.
+    effective_source = source_surface.strip() if source_surface else ""
+    if not effective_source:
+        if is_t7_outbox_reference(occurrence_key.wbc_attempt_reference):
+            effective_source = "outbox"
+        elif is_t12_admission_reference(occurrence_key.wbc_attempt_reference):
+            effective_source = "admission"
+
+    # Check wbc_attempt_reference for cross-binding.
+    wbc_ref = (wbc_attempt_reference or occurrence_key.wbc_attempt_reference).strip()
+    if wbc_ref:
+        if effective_source == "outbox" and is_t12_admission_reference(wbc_ref):
+            violations.append(
+                f"T7 outbox source cannot bind T12 admission reference: {wbc_ref!r}"
+            )
+        elif effective_source == "admission" and is_t7_outbox_reference(wbc_ref):
+            violations.append(
+                f"T12 admission source cannot bind T7 outbox reference: {wbc_ref!r}"
+            )
+
+    # Check the occurrence digest for cross-surface contamination.
+    digest = occurrence_key.occurrence_digest
+    if digest:
+        if effective_source == "outbox" and "admission:" in digest:
+            violations.append(
+                f"occurrence_digest carries T12 admission marker: {digest!r}"
+            )
+        elif effective_source == "admission" and "outbox:" in digest:
+            violations.append(
+                f"occurrence_digest carries T7 outbox marker: {digest!r}"
+            )
+
+    return violations
+
+
+def build_custody_target_key_from_repair_evidence(
+    *,
+    plan_state: Mapping[str, Any] | None = None,
+    current_target: Mapping[str, Any] | None = None,
+    problem_signature: Mapping[str, Any] | None = None,
+    chain_identity: str = "",
+) -> CustodyTargetKey | None:
+    """Construct a :class:`CustodyTargetKey` from legacy repair evidence artifacts.
+
+    This is a **read-only adapter** that extracts F01 fields from the same
+    plan_state, current_target, and problem_signature artifacts already used
+    by :func:`blocker_fingerprint_from_evidence`.  Legacy fingerprint
+    normalization is preserved byte-for-byte; this helper adds the M7
+    CustodyTargetKey shape alongside the existing V1/V2 fingerprint paths.
+
+    Returns ``None`` when any required F01 field cannot be resolved.
+    """
+    plan = _as_mapping(plan_state)
+    target = _as_mapping(current_target)
+    signature = _as_mapping(problem_signature)
+
+    target_plan_state = _as_mapping(target.get("plan_state"))
+    target_current_refs = _as_mapping(target.get("current_refs"))
+    chain_state = _as_mapping(target.get("chain_state"))
+    latest_failure = _as_mapping(plan.get("latest_failure"))
+    resume_cursor = _as_mapping(plan.get("resume_cursor"))
+
+    # ── F01 field resolution (mirrors blocker_fingerprint_from_evidence) ──
+    environment = _first_non_empty(
+        _as_text(target_current_refs.get("environment")),
+        _as_text(signature.get("environment")),
+    )
+    session = _first_non_empty(
+        _as_text(target_current_refs.get("session")),
+        _as_text(signature.get("session")),
+    )
+    chain = _first_non_empty(
+        _as_text(target_current_refs.get("chain")),
+        _as_text(chain_state.get("chain_name")),
+        _as_text(signature.get("chain")),
+    )
+    plan_revision = _first_non_empty(
+        _as_text(target_current_refs.get("plan_revision")),
+        _as_text(signature.get("plan_revision")),
+    )
+    phase = _first_non_empty(
+        _as_text(latest_failure.get("phase")),
+        _as_text(plan.get("phase")),
+        _as_text(signature.get("phase_or_step")),
+    )
+    task = _first_non_empty(
+        _as_text(latest_failure.get("blocked_task_id")),
+        _as_text(latest_failure.get("task_id")),
+        _as_text(signature.get("blocked_task_id")),
+    )
+    attempt = _first_non_empty(
+        _as_text(target_current_refs.get("attempt")),
+        _as_text(signature.get("attempt")),
+    )
+    normalized_failure_kind = _first_non_empty(
+        _as_text(latest_failure.get("kind")),
+        _as_text(signature.get("failure_kind")),
+    )
+    blocker_or_phase_result_hash = _first_non_empty(
+        _as_text(target_plan_state.get("fingerprint")),
+        _as_text(chain_state.get("fingerprint")),
+        _as_text(signature.get("target_fingerprint")),
+    )
+    fence = _first_non_empty(
+        _as_text(resume_cursor.get("fence")),
+        _as_text(signature.get("fence")),
+    )
+
+    return build_custody_target_key(
+        environment=environment,
+        session=session,
+        chain=chain,
+        plan_revision=plan_revision,
+        phase=phase,
+        task=task,
+        attempt=attempt,
+        normalized_failure_kind=normalized_failure_kind,
+        blocker_or_phase_result_hash=blocker_or_phase_result_hash,
+        fence=fence,
+        chain_identity=chain_identity,
+    )
+
+
+def build_repair_occurrence_key_from_repair_evidence(
+    *,
+    plan_state: Mapping[str, Any] | None = None,
+    current_target: Mapping[str, Any] | None = None,
+    problem_signature: Mapping[str, Any] | None = None,
+    chain_identity: str = "",
+    run_id: str = "",
+    run_revision: str = "",
+    coordinator_attempt_id: str = "",
+    fence_token: int = 0,
+    wbc_attempt_reference: str = "",
+    source_surface: str = "",
+) -> RepairOccurrenceKey | None:
+    """Construct a full M7 :class:`RepairOccurrenceKey` from repair evidence.
+
+    Builds a :class:`CustodyTargetKey` from the legacy repair artifacts,
+    then wraps it with the current coordinator fence token, run identity,
+    WBC attempt reference, and a deterministic occurrence digest over the
+    F01 fields + fence token + chain identity.
+
+    The returned key structurally includes the fence token and occurrence
+    digest required for M7 identity while preserving the read-only adapter
+    pattern used by existing fingerprint normalization.
+
+    Returns ``None`` when the target key cannot be constructed or when
+    T7/T12 cross-binding is detected.
+
+    Keyword Args:
+        plan_state: Plan-level state (same as blocker_fingerprint_from_evidence).
+        current_target: Current target refs and chain state.
+        problem_signature: Recurrence problem signature dict.
+        chain_identity: Optional chain identity string.
+        run_id: Run Authority run identifier.
+        run_revision: Run Authority run revision.
+        coordinator_attempt_id: Coordinator attempt identifier.
+        fence_token: Current coordinator fence token (non-negative int).
+        wbc_attempt_reference: WBC attempt reference string.
+        source_surface: ``'outbox'`` for T7, ``'admission'`` for T12, or ``''``.
+    """
+    target = build_custody_target_key_from_repair_evidence(
+        plan_state=plan_state,
+        current_target=current_target,
+        problem_signature=problem_signature,
+        chain_identity=chain_identity,
+    )
+    if target is None:
+        return None
+
+    # Resolve run identity from context when not explicitly provided.
+    plan = _as_mapping(plan_state)
+    target_map = _as_mapping(current_target)
+    target_current_refs = _as_mapping(target_map.get("current_refs"))
+    chain_state = _as_mapping(target_map.get("chain_state"))
+    signature = _as_mapping(problem_signature)
+
+    resolved_run_id = _first_non_empty(
+        run_id,
+        _as_text(target_current_refs.get("run_id")),
+        _as_text(chain_state.get("run_id")),
+    )
+    resolved_run_revision = _first_non_empty(
+        run_revision,
+        _as_text(target_current_refs.get("run_revision")),
+        _as_text(chain_state.get("run_revision")),
+        _as_text(signature.get("run_revision")),
+    )
+    resolved_attempt = _first_non_empty(
+        coordinator_attempt_id,
+        _as_text(target_current_refs.get("coordinator_attempt_id")),
+        _as_text(chain_state.get("coordinator_attempt_id")),
+    )
+    def _to_int(value: Any) -> int | None:
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            try:
+                return int(value.strip())
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    resolved_fence_token = (
+        fence_token
+        if fence_token > 0
+        else _to_int(target_current_refs.get("fence_token"))
+        or _to_int(chain_state.get("fence_token"))
+        or 0
+    )
+    resolved_wbc_ref = _first_non_empty(
+        wbc_attempt_reference,
+        _as_text(target_current_refs.get("wbc_attempt_reference")),
+        _as_text(chain_state.get("wbc_attempt_reference")),
+        _as_text(signature.get("wbc_attempt_reference")),
+    )
+
+    occurrence_key = build_repair_occurrence_key(
+        target=target,
+        run_id=resolved_run_id,
+        run_revision=resolved_run_revision,
+        coordinator_attempt_id=resolved_attempt,
+        fence_token=resolved_fence_token,
+        wbc_attempt_reference=resolved_wbc_ref,
+    )
+    if occurrence_key is None:
+        return None
+
+    # T7/T12 cross-binding rejection.
+    violations = validate_t7_t12_cross_binding(
+        occurrence_key=occurrence_key,
+        wbc_attempt_reference=resolved_wbc_ref,
+        source_surface=source_surface,
+    )
+    if violations:
+        return None
+
+    return occurrence_key
 
 
 class RepairRequestDecisionRecord(TypedDict):
@@ -5232,4 +5550,10 @@ __all__ = [
     # ── S4: semantic-health projection for repair initial facts ──────
     "build_repair_semantic_context",
     "has_repairable_semantic_finding",
+    # ── M7 custody helpers ────────────────────────────────────────────
+    "build_custody_target_key_from_repair_evidence",
+    "build_repair_occurrence_key_from_repair_evidence",
+    "is_t7_outbox_reference",
+    "is_t12_admission_reference",
+    "validate_t7_t12_cross_binding",
 ]
