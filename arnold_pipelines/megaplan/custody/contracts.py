@@ -401,9 +401,7 @@ class RepairOccurrenceKey(Contract):
         _required_str(self.run_revision, "run_revision")
         _required_str(self.coordinator_attempt_id, "coordinator_attempt_id")
         _required_nonneg_int(self.fence_token, "fence_token")
-        # wbc_attempt_reference is optional but must be a string
-        if not isinstance(self.wbc_attempt_reference, str):
-            raise ContractError("wbc_attempt_reference must be a string")
+        _required_str(self.wbc_attempt_reference, "wbc_attempt_reference")
         # Compute deterministic occurrence digest over F01 fields only
         f01_plain: dict[str, str] = {}
         for name in F01_REPAIR_OCCURRENCE_FIELDS:
@@ -531,8 +529,7 @@ class CustodyLease(Contract):
             raise ContractError("owner_boot_id must be a string")
         _required_str(self.run_authority_grant_id, "run_authority_grant_id")
         _required_nonneg_int(self.coordinator_fence_token, "coordinator_fence_token")
-        if not isinstance(self.wbc_attempt_reference, str):
-            raise ContractError("wbc_attempt_reference must be a string")
+        _required_str(self.wbc_attempt_reference, "wbc_attempt_reference")
         _required_pos_int(self.custody_epoch, "custody_epoch")
         _required_str(self.acquired_at, "acquired_at")
         _required_str(self.expires_at, "expires_at")
@@ -679,8 +676,7 @@ class CustodyLeaseEvent(Contract):
             raise ContractError("owner_boot_id must be a string")
         _required_str(self.run_authority_grant_id, "run_authority_grant_id")
         _required_nonneg_int(self.coordinator_fence_token, "coordinator_fence_token")
-        if not isinstance(self.wbc_attempt_reference, str):
-            raise ContractError("wbc_attempt_reference must be a string")
+        _required_str(self.wbc_attempt_reference, "wbc_attempt_reference")
         _required_str(self.occurrence_digest, "occurrence_digest")
         _required_str(self.idempotency_key, "idempotency_key")
         if not isinstance(self.causal_predecessor, str):

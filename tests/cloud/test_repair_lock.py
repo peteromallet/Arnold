@@ -71,7 +71,7 @@ def _make_test_custody_lease(
         run_revision="rev-1",
         coordinator_attempt_id="ca-1",
         fence_token=0,
-        wbc_attempt_reference="",
+        wbc_attempt_reference="wbc-test-001",
     )
     assert occurrence_key is not None
 
@@ -83,7 +83,7 @@ def _make_test_custody_lease(
         owner_boot_id=owner_boot_id,
         run_authority_grant_id="grant-1",
         coordinator_fence_token=0,
-        wbc_attempt_reference="",
+        wbc_attempt_reference="wbc-test-001",
         custody_epoch=custody_epoch,
         acquired_at=acquired_at,
         expires_at=expires_at,

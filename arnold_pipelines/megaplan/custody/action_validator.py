@@ -217,6 +217,8 @@ class ActionBoundaryContext:
     owner_host: str = ""
     owner_pid: str = ""
     owner_boot_id: str = ""
+    expected_custody_epoch: int = 0
+    expected_lease_id: str = ""
 
     def __post_init__(self) -> None:
         if self.action_type not in ACTION_BOUNDARY_TYPES:
@@ -235,6 +237,10 @@ class ActionBoundaryContext:
             raise ValueError("owner_pid must be a string")
         if not isinstance(self.owner_boot_id, str):
             raise ValueError("owner_boot_id must be a string")
+        if not isinstance(self.expected_custody_epoch, int) or isinstance(self.expected_custody_epoch, bool):
+            raise ValueError("expected_custody_epoch must be an integer")
+        if not isinstance(self.expected_lease_id, str):
+            raise ValueError("expected_lease_id must be a string")
 
 
 # ── Validation result ──────────────────────────────────────────────────────
@@ -404,11 +410,17 @@ def _reread_custody_lease(
     owner_host: str,
     owner_pid: str,
     owner_boot_id: str,
+    expected_custody_epoch: int = 0,
+    expected_lease_id: str = "",
 ) -> SourceCheck:
     """Reread the current Custody lease for the target.
 
     Returns a SourceCheck with outcome SATISFIED, MISSING, EXPIRED,
     STALE, NOT_OWNER, or ERROR.
+
+    When *expected_custody_epoch* is provided and > 0, the reread lease's
+    epoch is compared to it; a mismatch yields STALE so callers can detect
+    epoch drift between observation and action-boundary validation.
     """
     if lease_store is None:
         return SourceCheck(
@@ -418,8 +430,11 @@ def _reread_custody_lease(
         )
 
     try:
-        # The lease_id is derived from the target digest for lookups.
-        lease_id = f"custody-lease-{target_digest[:16]}"
+        # Use expected_lease_id if provided, otherwise derive from target digest.
+        if expected_lease_id.strip():
+            lease_id = expected_lease_id.strip()
+        else:
+            lease_id = f"custody-lease-{target_digest[:16]}"
 
         current = lease_store.current_lease(lease_id)
         if current is None:
@@ -441,6 +456,19 @@ def _reread_custody_lease(
                     "custody_epoch": current.custody_epoch,
                     "acquired_at": current.acquired_at,
                     "expires_at": current.expires_at,
+                },
+            )
+
+        # Check stale epoch: compare caller-observed epoch to reread epoch
+        if expected_custody_epoch > 0 and current.custody_epoch != expected_custody_epoch:
+            return SourceCheck(
+                source="custody_lease",
+                outcome=ValidationOutcome.STALE,
+                detail=f"stale custody epoch: caller observed {expected_custody_epoch}, lease store has {current.custody_epoch}",
+                observed_value={
+                    "lease_id": current.lease_id,
+                    "custody_epoch": current.custody_epoch,
+                    "expected_custody_epoch": expected_custody_epoch,
                 },
             )
 
@@ -745,6 +773,8 @@ def validate_action_boundary(
         context.owner_host,
         context.owner_pid,
         context.owner_boot_id,
+        expected_custody_epoch=context.expected_custody_epoch,
+        expected_lease_id=context.expected_lease_id,
     )
     checks.append(lease_check)
 

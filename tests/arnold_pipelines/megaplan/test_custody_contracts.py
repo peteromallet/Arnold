@@ -382,10 +382,9 @@ class TestRepairOccurrenceKeyRoundTrip:
         }
         assert required_keys <= set(d)
 
-    def test_wbc_attempt_reference_can_be_empty(self) -> None:
-        ok = _make_occurrence_key(wbc_attempt_reference="")
-        assert ok.wbc_attempt_reference == ""
-        assert ok.to_dict()["wbc_attempt_reference"] == ""
+    def test_wbc_attempt_reference_empty_rejected(self) -> None:
+        with pytest.raises(ContractError, match="wbc_attempt_reference"):
+            _make_occurrence_key(wbc_attempt_reference="")
 
     def test_deep_immutability(self) -> None:
         ok = _make_occurrence_key()
@@ -544,9 +543,9 @@ class TestCustodyLeaseRoundTrip:
         lease = _make_lease(causal_predecessor="")
         assert lease.causal_predecessor == ""
 
-    def test_wbc_attempt_reference_can_be_empty(self) -> None:
-        lease = _make_lease(wbc_attempt_reference="")
-        assert lease.wbc_attempt_reference == ""
+    def test_wbc_attempt_reference_empty_rejected(self) -> None:
+        with pytest.raises(ContractError, match="wbc_attempt_reference"):
+            _make_lease(wbc_attempt_reference="")
 
     def test_owner_boot_id_can_be_empty(self) -> None:
         lease = _make_lease(owner_boot_id="")
@@ -826,7 +825,7 @@ class TestCustodyLeaseEventRoundTrip:
             "owner_boot_id": "b1",
             "run_authority_grant_id": "g1",
             "coordinator_fence_token": 0,
-            "wbc_attempt_reference": "",
+            "wbc_attempt_reference": "wbc-1",
             "occurrence_digest": "sha256:abcd",
             "idempotency_key": "ik1",
             "causal_predecessor": "",
@@ -900,6 +899,10 @@ class TestCustodyLeaseEventMalformed:
     def test_non_string_wbc_attempt_reference_rejected(self) -> None:
         with pytest.raises(ContractError, match="wbc_attempt_reference"):
             _make_event(wbc_attempt_reference=99)  # type: ignore[arg-type]
+
+    def test_empty_wbc_attempt_reference_rejected(self) -> None:
+        with pytest.raises(ContractError, match="wbc_attempt_reference"):
+            _make_event(wbc_attempt_reference="")
 
     def test_missing_occurrence_digest_rejected(self) -> None:
         with pytest.raises(ContractError, match="occurrence_digest"):
