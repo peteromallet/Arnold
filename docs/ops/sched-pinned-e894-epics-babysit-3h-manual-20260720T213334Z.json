@@ -1,0 +1,275 @@
+{
+  "schema_version": "arnold-resident-schedule-manual-occurrence-result-v1",
+  "schedule": {
+    "schedule_id": "sched_pinned_e894_epics_babysit_3h",
+    "revision": 10,
+    "prompt_digest": "sha256:cf7a72e83741dbc634ac43172ffbd3f96fcc5b219381c5bbec6dfa4a07145882",
+    "state_observed": "active",
+    "operator_triggered": true,
+    "recurring_schedule_mutated": false
+  },
+  "occurrence": {
+    "resident_run_id": "subagent-20260720-213334-cd20ad73",
+    "started_at_utc": "2026-07-20T21:33:34Z",
+    "assessment_completed_at_utc": "2026-07-20T21:49:23Z",
+    "one_at_a_time_policy": "serial_interventions_all_targets",
+    "intervention_count": 1,
+    "intervention_order": ["superpom-reflections-20260719"],
+    "all_targets_iterated": true
+  },
+  "concurrent_scheduled_occurrence": {
+    "run_id": "subagent-20260720-212700-10bf6430",
+    "manifest": "/workspace/arnold/.megaplan/plans/resident-subagents/subagent-20260720-212700-10bf6430/manifest.json",
+    "manifest_sha256": "c50da898b8196e320eda66a754666dfa3806d73b7ba96a00757a669eb26fbd17",
+    "status": "running",
+    "assessment": "observing_all_three_targets_under_revision_9",
+    "demonstrable_target_ownership": [],
+    "decision": "no_duplicate_custody_repair; continue_serially_with_unowned_superpom",
+    "basis": "Its durable command and message artifacts contain observation and explicit Custody deferral, but no target mutation, repair receipt, or declared target-specific recovery ownership for Withings or Superpom."
+  },
+  "assessments": [
+    {
+      "session": "custody-control-plane-20260714",
+      "workspace": "/workspace/custody-control-plane-20260714/Arnold",
+      "spec": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/chain.yaml",
+      "marker": "/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.json",
+      "milestone": "m8-runtime-and-boundary-adoption",
+      "plan": "m8-universal-wbc-producer-and-20260720-0646",
+      "health": "progressing_deferred_to_verified_owner",
+      "semantic_checkpoint": {
+        "plan_state": "finalized",
+        "phase": "execute",
+        "attempt": 4,
+        "phase_started_at_utc": "2026-07-20T21:34:33Z",
+        "active_worker_pid": 121675,
+        "active_worker_model": "gpt-5.4",
+        "event_cursor": 840,
+        "last_state_write_at_utc": "2026-07-20T21:48:35.939311Z",
+        "t27_status": "pending",
+        "t27_output_is_meaningful": false,
+        "target_chain_recovered_claimed": false,
+        "profile": "partnered-5"
+      },
+      "current_blocker_objective": "Preserve the dirty M8 checkout and recover T27 through a no-reset, no-push resume without repeating the destructive marker relaunch.",
+      "agent_assessment": {
+        "assessment_at_utc": "2026-07-20T21:49:23Z",
+        "candidates": [
+          {
+            "run_id": "subagent-20260720-212230-092134bf",
+            "manifest": "/workspace/arnold/.megaplan/plans/resident-subagents/subagent-20260720-212230-092134bf/manifest.json",
+            "manifest_sha256": "322e9d2857ae4c53d265230f36a16ffda014fb6b119ca6902aab4c0c8527603e",
+            "declared_description": "Preserve Custody T27 work and recover the chain past T27.",
+            "match": {
+              "session": "explicit_exact",
+              "workspace": "explicit_exact_in_prompt",
+              "blocker_objective": "exact_preservation_safe_t27_recovery"
+            },
+            "lifecycle_status": "running",
+            "substantive_evidence": {
+              "kind": "preservation_snapshot_tested_source_commit_and_supported_no_push_resume",
+              "paths": [
+                "/workspace/.megaplan/custody-recovery-preservation/20260720T213200Z/manifest.json",
+                "/workspace/arnold-custody-no-reset-runtime-f7f0967"
+              ],
+              "commit": "be0fea686ca544dd487ceb75cbeca09f43e735ee",
+              "commit_timestamp_utc": "2026-07-20T21:33:33Z",
+              "latest_semantic_artifact_timestamp_utc": "2026-07-20T21:43:46.592107Z",
+              "evidence_age_seconds": 336
+            }
+          },
+          {
+            "run_id": "subagent-20260720-193054-5b0373d2",
+            "manifest": "/workspace/arnold-engine-running-e894/.megaplan/plans/resident-subagents/subagent-20260720-193054-5b0373d2/manifest.json",
+            "manifest_sha256": "095dfc0e573272c646efdc18fb422f660dd68e5b0f3f2b70342498750d9240e7",
+            "declared_description": "Fix provider fallback and safely recover the stopped Custody chain.",
+            "match": {"session": "explicit_linked", "workspace": "linked", "blocker_objective": "provider_fallback"},
+            "lifecycle_status": "completed",
+            "continuing_owner": false,
+            "substantive_evidence": {
+              "kind": "verified_source_commit_and_tests",
+              "path": "/workspace/arnold-engine-running-e894/.megaplan/plans/resident-subagents/subagent-20260720-193054-5b0373d2/result.md",
+              "sha256": "5addf6e3f43cdc9c1f38d6c008e15982dff2577be7cee1dae3459cba659c2702",
+              "timestamp_utc": "2026-07-20T19:51:37.390328Z"
+            }
+          }
+        ],
+        "classification": "defer_to_agent",
+        "decision": "do_not_duplicate_or_take_over_custody",
+        "rationale": "The newer exact owner has fresh preservation, tested source, a supported no-push resume receipt, and a live target phase. T27 output remains pending, so only owner progress and target liveness are claimed.",
+        "uncertainty": "T27 has not yet produced meaningful task output.",
+        "occupies_target_repair_slot": true
+      },
+      "non_regression": {
+        "chain_spec_sha256": "63f15c2df351c9629fe04bb66e11ea8d0a09689b2dc260c83600998b4bd70b2d",
+        "execution_bundle_sha256": "699c10f2677eab2dda3a602bba03c7e27072130339f5c25ac18e18103f6be989",
+        "northstar_sha256": "315ed6ba4db2323958448db2ec7aa81fa5ddbc140bc05823ec0de322e78c5f45",
+        "m5_sha256": "2e8f3f96fd360d6d5cab2a5c2ba5f8dde728d0ff576572f7296f6436cd2491b1",
+        "m5a_sha256": "9a337ca44fd83e0e43bbb371232bcab5d414f20706cf676f15c63256b7f82ae6",
+        "m6_sha256": "3fea24d7120fb6dd97a0a876caff200bd9d2847d6fcae37dcb69a63b1b8ec66e",
+        "status": "passed"
+      }
+    },
+    {
+      "session": "withings-health-sync-20260719",
+      "workspace": "/workspace/withings-health-sync-20260719/Pumpernickel",
+      "spec": "/workspace/withings-health-sync-20260719/Pumpernickel/.megaplan/initiatives/withings-health-integration/chain.yaml",
+      "marker": "/workspace/.megaplan/cloud-sessions/withings-health-sync-20260719.json",
+      "milestone": "m1",
+      "plan": "secure-provider-foundation-20260719-2014",
+      "health": "progressing",
+      "semantic_checkpoint": {
+        "plan_state": "finalized",
+        "phase": "execute",
+        "attempt": 7,
+        "phase_started_at_utc": "2026-07-20T21:42:11Z",
+        "active_worker_pid": 11289,
+        "active_worker_model": "gpt-5.4",
+        "phase_result": "review_success",
+        "phase_result_sha256": "4ef7106e88cf759bae202340e10f2c69a236a31fb2ba5843361435af67d244dd",
+        "substantive_progress_kind": "review_to_execute_phase_transition",
+        "phase_end_cursor": 3215,
+        "phase_transition_cursor": 3216,
+        "execute_start_cursor": 3217,
+        "execute_start_at_utc": "2026-07-20T21:42:06.130754Z",
+        "last_process_event_at_utc": "2026-07-20T21:48:45.389276Z",
+        "profile": "withings-deepseek-recovery"
+      },
+      "runtime_attestation": {
+        "expected_revision": "97df7a05240f36c7a85a2048de412ba9bf6a2ede",
+        "verified_import": "/workspace/arnold-engine-running-97df7a0/arnold_pipelines/megaplan/__init__.py",
+        "trusted_container": true,
+        "status": "passed"
+      },
+      "agent_assessment": {
+        "assessment_at_utc": "2026-07-20T21:49:23Z",
+        "candidates": [
+          {
+            "run_id": "subagent-20260720-202511-9492d3cc",
+            "manifest": "/workspace/withings-health-sync-20260719/Pumpernickel/.megaplan/plans/resident-subagents/subagent-20260720-202511-9492d3cc/manifest.json",
+            "manifest_sha256": "0d76145e093c1da4d959131430a7bbba2a5e9547be249ce5fc6ff51cb27069d0",
+            "declared_description": "Follow up on Repair the failed Withings recovery path and prove the session advances.",
+            "match": {"session": "explicit", "workspace": "exact", "blocker_objective": "prior_failed_recovery"},
+            "lifecycle_status": "cancelled",
+            "continuing_owner": false,
+            "evidence_timestamp_utc": "2026-07-20T21:01:38.454012Z"
+          }
+        ],
+        "classification": "repair_without_candidate",
+        "decision": "leave_healthy_chain_untouched",
+        "rationale": "No live target-specific repair owner exists; the exact 97df7a0 chain has fresh review-to-execute semantic progress and a live worker.",
+        "uncertainty": "none",
+        "occupies_target_repair_slot": false
+      }
+    },
+    {
+      "session": "superpom-reflections-20260719",
+      "workspace": "/workspace/superpom-reflections-20260719/Pumpernickel",
+      "spec": "/workspace/superpom-reflections-20260719/Pumpernickel/.megaplan/initiatives/superpom-reflections/chain.yaml",
+      "marker": "/workspace/.megaplan/cloud-sessions/superpom-reflections-20260719.json",
+      "milestone": "m4-hardening-ship",
+      "plan": "m4-product-hardening-and-ship-20260720-0926",
+      "health": "externally_blocked_after_root_fix",
+      "semantic_checkpoint_before": {
+        "plan_state": "blocked",
+        "phase": "execute",
+        "blocked_task": "T24",
+        "failure_kind": "execution_blocked",
+        "phase_result": "blocked_by_prereq",
+        "phase_result_sha256": "b5abddeae59daaa1911f46d999aaeaf453eb14890c113534a9c8e917ba987726",
+        "head": "dd0254b2e663fdc09ca1fd6f24dbe7548009091a",
+        "worktree_dirty": true,
+        "profile": "partnered-5"
+      },
+      "current_blocker_objective": "Fix append-only corrected-entry current semantics so exact search returns the corrected leaf and the embedding worker can resolve that leaf through v_searchable_content.",
+      "agent_assessment": {
+        "assessment_at_utc": "2026-07-20T21:49:23Z",
+        "candidates": [
+          {
+            "run_id": "managed-automatic-repair-87faa7cfc28fa0d5622c",
+            "manifest": "/workspace/superpom-reflections-20260719/Pumpernickel/.megaplan/plans/resident-subagents/managed-automatic-repair-87faa7cfc28fa0d5622c/manifest.json",
+            "manifest_sha256": "a7b220d4b2e2e282f7bba50507adf4cc4d0587ddd6d65d7a8b92c755d887a1aa",
+            "declared_description": "Canonical automatic repair loop for superpom-reflections-20260719.",
+            "match": {"session": "exact", "workspace": "exact", "blocker_objective": "execution_blocker"},
+            "lifecycle_status": "failed",
+            "continuing_owner": false,
+            "evidence_timestamp_utc": "2026-07-20T21:24:49.185804Z"
+          },
+          {
+            "run_id": "managed-automatic-repair-retry-24ad6d64a9785d8a5d48",
+            "manifest": "/workspace/superpom-reflections-20260719/Pumpernickel/.megaplan/plans/resident-subagents/managed-automatic-repair-retry-24ad6d64a9785d8a5d48/manifest.json",
+            "manifest_sha256": "943650021c157e5942bba559ae0eefd08bbaf0c653a72883d0f1b2720af6d843",
+            "declared_description": "Mutating fixer for the Superpom M4 blocker.",
+            "match": {"session": "exact", "workspace": "exact", "blocker_objective": "execution_blocker"},
+            "lifecycle_status": "completed_without_chain_recovery",
+            "continuing_owner": false,
+            "evidence_timestamp_utc": "2026-07-20T21:24:40.624942Z"
+          }
+        ],
+        "classification": "repair_without_candidate",
+        "decision": "perform_preservation_safe_root_repair",
+        "rationale": "All matching automatic repair runs are terminal and the concurrent scheduled occurrence has no target-specific mutation or ownership receipt.",
+        "uncertainty": "none_about_owner",
+        "occupies_target_repair_slot": true
+      },
+      "preservation": {
+        "manifest": "/workspace/.megaplan/superpom-recovery-preservation/20260720T213549Z/manifest.json",
+        "manifest_sha256": "d8fe90bcb0020c101256f9d24d1eeceb27e84628bfffe5aabe228816a1079ab5",
+        "base_revision": "dd0254b2e663fdc09ca1fd6f24dbe7548009091a",
+        "tracked_diff_hash": "7d54cb75d58929ff7b463c758f45ec0a03b26b55",
+        "status_hash": "069497c4498fbc399eb40c54d9bd30c800144ca4",
+        "untracked_index_hash": "08efbca5f6e75b32d1d72e61fb7ed66816a546d6",
+        "status": "passed"
+      },
+      "intervention": {
+        "kind": "isolated_source_and_migration_root_fix",
+        "worktree": "/workspace/superpom-current-reflection-recovery-20260720",
+        "branch": "refs/heads/fix/superpom-current-reflection-20260720",
+        "commit": "ae2209948f9b6591501e785fd949b5b1a0e887df",
+        "root_cause": "The new correction points to the old entry, but current queries tested whether the new entry's own supersedes pointer was null. That selected the original revision and made the corrected revision absent from the searchable-content source used by exact search and embedding jobs.",
+        "changes": [
+          "Select current revisions as append-only leaves with no successor.",
+          "Apply leaf semantics to store reads, embedding enqueue, admin counts, finalization recovery, and hot context.",
+          "Add reversible migration 0065 to replace only the reflection arm of v_searchable_content.",
+          "Mirror the verified changes into the preserved target checkout and attach a durable plan note."
+        ],
+        "deployment_performed": false,
+        "live_database_mutation_performed": false,
+        "chain_relaunch_performed": false
+      },
+      "verification": {
+        "commands": [
+          {"command": "python -m py_compile app/services/reflections.py app/services/reflections_finalization_worker.py app/services/reflections_normalization_bridge.py app/services/hot_context_solo.py scripts/validate_reflections_m4_migrations.py", "status": "passed"},
+          {"command": "python scripts/validate_reflections_m4_migrations.py --static-only", "status": "passed", "result": "36 passed, 18 skipped"},
+          {"command": "python -m pytest -q tests/test_reflection_tools.py tests/test_migration_0065_reflection_revision_leaf.py tests/test_validate_reflections_m4_migrations.py tests/test_reflections_normalization_bridge.py tests/test_reflections_finalization_worker.py tests/test_hot_context_reflections.py", "status": "passed", "result": "123 passed"},
+          {"command": "focused current/correction/finalization/hot-context suite", "status": "passed", "result": "89 passed, 5 skipped"},
+          {"command": "git diff --check", "status": "passed"}
+        ]
+      },
+      "post_action_proof": {
+        "plan_state": "blocked",
+        "durable_note_event_cursor": 7465,
+        "durable_note_timestamp_utc": "2026-07-20T21:43:26.856929Z",
+        "source_fix_material_progress": true,
+        "target_chain_recovered": false,
+        "exact_external_blocker": "Applying migration 0065 and replaying corrected-entry exact-search and embedding evidence on staging require a deployment/live staging mutation. This occurrence explicitly has no deployment authority, and no safe scratch Postgres DSN was available for live migration validation.",
+        "safe_reversible_routes_exhausted": true
+      }
+    }
+  ],
+  "constraints": {
+    "remote_push": false,
+    "pr_merge": false,
+    "deployment": false,
+    "resident_restart": false,
+    "force_operation": false,
+    "destructive_cleanup": false,
+    "profile_mutation": false,
+    "schedule_mutation": false
+  },
+  "result": {
+    "custody": "deferred_to_verified_relevant_owner; live execute resumed; T27 outcome still pending",
+    "withings": "genuinely_progressing after fresh review-to-execute transition",
+    "superpom": "root source defect fixed and verified; exact staging acceptance blocked by no-deploy boundary",
+    "recurring_schedule": "remains active at revision 10"
+  }
+}
