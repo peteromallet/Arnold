@@ -8,6 +8,10 @@ request shape used by terminal lifecycle handling, and asks
 
 It never edits plan or chain state, and a deterministic receipt prevents the
 same evidence cursor from being manually dispatched twice.
+
+M7 shadow validation is wired into ``trigger_once`` before the subprocess
+dispatch so that stale-authority paths are diagnosed before the trigger binary
+is invoked.  Production enforcement is always disabled.
 """
 
 from __future__ import annotations
@@ -25,6 +29,15 @@ from typing import Any
 
 from arnold_pipelines.megaplan.cloud import feature_flags, repair_requests
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+
+# ── M7 shadow validator import (enforcement always disabled) ────────────────
+try:
+    from arnold_pipelines.megaplan.custody.action_validator import (
+        validate_action_boundary_simple,
+    )
+    _M7_VALIDATOR_AVAILABLE = True
+except ImportError:
+    _M7_VALIDATOR_AVAILABLE = False
 
 
 RECEIPT_SCHEMA = "arnold-manual-repair-trigger-v1"
@@ -138,6 +151,102 @@ def _dispatch_event(stdout: str, request_id: str) -> dict[str, Any] | None:
         ):
             return payload
     return None
+
+
+# ── M7 shadow validator helper (T15) ────────────────────────────────────────
+
+
+def _shadow_validate_manual_trigger_boundary(
+    *,
+    session: str,
+    plan: str,
+    expected_history_index: int,
+    expected_artifact_hash: str,
+    request_id: str,
+) -> dict[str, Any]:
+    """Run the M7 shadow validator before manual repair trigger dispatch (non-blocking).
+
+    Builds a best-effort ``CustodyTargetKey`` from the manual trigger context,
+    calls ``validate_action_boundary_simple`` with ``action_type=\"repair\"``,
+    and returns typed conflict/fence/reconcile diagnostics.  Never raises —
+    all errors are captured as diagnostic metadata.
+
+    Production enforcement is always disabled; this is a shadow-only call.
+    """
+    if not _M7_VALIDATOR_AVAILABLE:
+        return {
+            "m7_validator_available": False,
+            "reason": "action_validator module not importable",
+        }
+
+    import hashlib as _hashlib
+
+    try:
+        target_dict = {
+            "environment": "manual-trigger",
+            "session": session or "unknown",
+            "chain": plan or "unknown",
+            "plan_revision": plan or "unknown",
+            "phase": "manual_trigger",
+            "task": request_id or "unknown",
+            "attempt": str(expected_history_index),
+            "normalized_failure_kind": "manual_trigger",
+            "blocker_or_phase_result_hash": _hashlib.sha256(
+                f"{session}:{plan}:{expected_artifact_hash}".encode("utf-8")
+            ).hexdigest()[:16],
+            "fence": str(expected_history_index),
+        }
+
+        result = validate_action_boundary_simple(
+            action_type="repair",
+            target=target_dict,
+            run_authority_grant_id="manual-trigger-grant",
+            coordinator_fence_token=expected_history_index,
+            wbc_attempt_reference=request_id,
+        )
+
+        typed_events: list[dict[str, Any]] = []
+        for check in result.checks:
+            outcome = check.outcome.value
+            if outcome == "conflict":
+                typed_events.append({
+                    "event_type": "conflict",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+            elif outcome == "fenced":
+                typed_events.append({
+                    "event_type": "fence",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+            elif outcome in ("stale", "expired"):
+                typed_events.append({
+                    "event_type": "reconcile",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+
+        return {
+            "m7_validator_available": True,
+            "gate_result": result.gate_result.value,
+            "enforcement_enabled": result.enforcement_enabled,
+            "shadow_mode": result.is_shadow,
+            "typed_events": typed_events,
+            "checks_summary": {
+                c.source: c.outcome.value for c in result.checks
+            },
+            "validated_at": result.validated_at,
+        }
+    except Exception as exc:
+        return {
+            "m7_validator_available": True,
+            "error": f"{type(exc).__name__}: {exc}",
+            "typed_events": [],
+        }
 
 
 def trigger_once(
@@ -279,6 +388,16 @@ def trigger_once(
             raise ManualRepairTriggerError("canonical queue returned a different request identity")
         if queued.get("status") not in {"queued", "coalesced"}:
             raise ManualRepairTriggerError(f"repair request was not accepted: {queued.get('status')}")
+
+        # ── M7 shadow validation before subprocess dispatch (T15) ──────────
+        m7_shadow = _shadow_validate_manual_trigger_boundary(
+            session=session,
+            plan=plan,
+            expected_history_index=expected_history_index,
+            expected_artifact_hash=artifact_hash,
+            request_id=request_id,
+        )
+        receipt["m7_shadow_validation"] = m7_shadow
 
         command = [
             str(trigger_bin),

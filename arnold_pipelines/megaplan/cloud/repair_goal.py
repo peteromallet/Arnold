@@ -20,6 +20,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+# ── M7 shadow validator import (enforcement always disabled) ────────────────
+try:
+    from arnold_pipelines.megaplan.custody.action_validator import (
+        validate_action_boundary_simple,
+    )
+    _M7_VALIDATOR_AVAILABLE = True
+except ImportError:
+    _M7_VALIDATOR_AVAILABLE = False
+
 
 REPAIR_GOAL_SCHEMA = "arnold-repair-goal-v1"
 GOAL_ACTIVE = "active"
@@ -1177,6 +1186,118 @@ def reconcile_l2_replan(
         }
 
 
+def _shadow_validate_repair_boundary(
+    *,
+    target: Mapping[str, Any],
+    frozen: Mapping[str, Any],
+    observation: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Run the M7 shadow validator before repair dispatch (non-blocking).
+
+    Builds a best-effort ``CustodyTargetKey`` from the repair goal context,
+    calls ``validate_action_boundary_simple`` with ``action_type="repair"``,
+    and returns typed conflict/fence/reconcile diagnostics.  Never raises —
+    all errors are captured as diagnostic metadata.
+
+    Production enforcement is always disabled; this is a shadow-only call.
+    """
+    if not _M7_VALIDATOR_AVAILABLE:
+        return {
+            "m7_validator_available": False,
+            "reason": "action_validator module not importable",
+        }
+
+    try:
+        # Build a best-effort CustodyTargetKey from the repair goal context.
+        # Missing F01 fields use placeholder values — the validator runs in
+        # shadow mode and will report MISSING rather than blocking.
+        workspace_str = str(target.get("workspace") or "")
+        session_str = str(target.get("session") or "")
+        plan_name_str = str(target.get("plan_name") or frozen.get("plan_name") or "")
+        remote_spec_str = str(target.get("remote_spec") or "")
+        blocker_id_str = str(target.get("blocker_id") or "")
+
+        worker = (
+            observation.get("active_worker")
+            if isinstance(observation.get("active_worker"), Mapping)
+            else {}
+        )
+        latest_failure = (
+            observation.get("latest_failure")
+            if isinstance(observation.get("latest_failure"), Mapping)
+            else {}
+        )
+
+        target_dict = {
+            "environment": workspace_str or "cloud",
+            "session": session_str or "unknown",
+            "chain": remote_spec_str or plan_name_str or "unknown",
+            "plan_revision": plan_name_str or "unknown",
+            "phase": str(frozen.get("target_stage") or observation.get("target_stage") or ""),
+            "task": blocker_id_str or "unknown",
+            "attempt": str(observation.get("plan_iteration") or "1"),
+            "normalized_failure_kind": str(
+                latest_failure.get("failure_kind") or "unknown"
+            ),
+            "blocker_or_phase_result_hash": hashlib.sha256(
+                blocker_id_str.encode("utf-8")
+            ).hexdigest()[:16],
+            "fence": str(observation.get("chain_last_state") or "0"),
+        }
+
+        result = validate_action_boundary_simple(
+            action_type="repair",
+            target=target_dict,
+            run_authority_grant_id=f"repair-goal:{session_str}",
+            coordinator_fence_token=0,
+            wbc_attempt_reference=blocker_id_str,
+        )
+
+        # Emit typed events based on the validation result
+        typed_events: list[dict[str, Any]] = []
+        for check in result.checks:
+            outcome = check.outcome.value
+            if outcome == "conflict":
+                typed_events.append({
+                    "event_type": "conflict",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+            elif outcome == "fenced":
+                typed_events.append({
+                    "event_type": "fence",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+            elif outcome in ("stale", "expired"):
+                typed_events.append({
+                    "event_type": "reconcile",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+
+        return {
+            "m7_validator_available": True,
+            "gate_result": result.gate_result.value,
+            "enforcement_enabled": result.enforcement_enabled,
+            "shadow_mode": result.is_shadow,
+            "typed_events": typed_events,
+            "checks_summary": {
+                c.source: c.outcome.value for c in result.checks
+            },
+            "validated_at": result.validated_at,
+        }
+    except Exception as exc:
+        return {
+            "m7_validator_available": True,
+            "error": f"{type(exc).__name__}: {exc}",
+            "typed_events": [],
+        }
+
+
 def evaluate_repair_goal(
     goal_path: str | Path,
     *,
@@ -1235,6 +1356,15 @@ def evaluate_repair_goal(
         effective_frozen["target_stage_rank"] = int(
             -1 if contract_rank is None else contract_rank
         )
+        # ── M7 shadow validation before repair dispatch ──────────────────
+        m7_shadow = _shadow_validate_repair_boundary(
+            target=target,
+            frozen=frozen,
+            observation=observation,
+        )
+        payload["m7_shadow_validation"] = m7_shadow
+        # ─────────────────────────────────────────────────────────────────
+
         evaluation = evaluate_checkpoint(effective_frozen, observation)
         active_replan_epoch = int(payload.get("active_replan_epoch") or 0)
         terminal_failure = (
@@ -1516,6 +1646,7 @@ def evaluate_repair_goal(
             "recovery_gate_failures": deepcopy(
                 (payload.get("recovery_gate_failures") or [])[-5:]
             ),
+            "m7_shadow_validation": m7_shadow,
         }
 
 
@@ -1670,6 +1801,7 @@ __all__ = [
     "GOAL_APPROVAL_REQUIRED",
     "GOAL_PROGRESSED",
     "REPAIR_GOAL_SCHEMA",
+    "_shadow_validate_repair_boundary",
     "capture_checkpoint",
     "attach_repair_goal_owner",
     "reconcile_l2_replan",
