@@ -1275,28 +1275,15 @@ class ResidentDiscordService:
         # private, including the fallback rendered after collection errors.
         await interaction.response.defer(thinking=True, ephemeral=True)
         try:
-            refresh_snapshot = getattr(
-                getattr(self.runtime, "profile", None),
-                "refresh_cloud_status_snapshot",
-                None,
-            )
-            if refresh_snapshot is not None:
-                try:
-                    # This is an awaited per-command rebuild, not the ordinary
-                    # throttled background refresh.  Keeping it off the event
-                    # loop lets Discord heartbeats continue while the status
-                    # projection walks marker and repair evidence.
-                    await asyncio.to_thread(refresh_snapshot)
-                except Exception:
-                    # The typed read below still has the last durable snapshot,
-                    # so a failed rebuild degrades to cached status rather than
-                    # replacing the whole response with an availability error.
-                    LOGGER.warning(
-                        "Resident whats-cooking snapshot refresh failed; using cached status",
-                        exc_info=True,
-                    )
+            timezone_name = TimezoneService(
+                getattr(self.runtime, "store", None),
+                getattr(self.runtime, "config", None),
+            ).resolve(user_id=user_id, guild_id=guild_id).name
             report = await collect_currently_running(self.runtime)
-            rendered = render_currently_running(report)
+            rendered = render_currently_running(
+                report,
+                timezone_name=timezone_name,
+            )
         except Exception:
             LOGGER.exception("Resident whats-cooking command failed")
             rendered = (

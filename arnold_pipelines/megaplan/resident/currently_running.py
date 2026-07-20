@@ -15,7 +15,6 @@ from typing import Any
 
 from agentbox.redaction import redact_text
 
-from .status_tree import MAX_NODE_LIMIT
 from .subagent import list_managed_resident_agents
 from .timezone import format_timestamp
 
@@ -57,34 +56,27 @@ class CurrentlyRunningReport:
 
 
 async def collect_currently_running(runtime: Any) -> CurrentlyRunningReport:
-    """Read only the bounded status root and the managed-agent inventory.
+    """Collect a fresh bounded status root and the managed-agent inventory.
 
-    The status read deliberately goes through the resident's typed
-    ``read_cloud_status_node`` registration.  Discord must not know the path or
-    schema of the complete watchdog JSON.
+    The profile collector rebuilds authoritative status at invocation time and
+    returns only the compact root.  This command deliberately does not read the
+    persisted cloud-status JSON or reuse hot context.
     """
 
     async def read_status_node() -> tuple[Mapping[str, Any] | None, str | None]:
         try:
-            registration = runtime.profile.tools().get("read_cloud_status_node")
-            payload = registration.input_model(
-                node_id="root", cursor=0, limit=MAX_NODE_LIMIT
-            )
-            if inspect.iscoroutinefunction(registration.handler):
-                result = await registration.handler(payload)
+            collector = runtime.profile.collect_fresh_cloud_status_root
+            if inspect.iscoroutinefunction(collector):
+                node = await collector()
             else:
-                result = await asyncio.to_thread(registration.handler, payload)
-            if inspect.isawaitable(result):
-                result = await result
-            if not getattr(result, "ok", False):
-                return None, "canonical status node is unavailable"
-            data = getattr(result, "data", None)
-            node = data.get("node") if isinstance(data, Mapping) else None
+                node = await asyncio.to_thread(collector)
+            if inspect.isawaitable(node):
+                node = await node
             if not isinstance(node, Mapping):
-                return None, "canonical status node returned no bounded root"
+                return None, "fresh canonical status collection returned no bounded root"
             return node, None
         except Exception as exc:  # command must degrade independently by source
-            return None, f"canonical status node read failed ({exc.__class__.__name__})"
+            return None, f"fresh canonical status collection failed ({exc.__class__.__name__})"
 
     async def read_managed_agents() -> tuple[Mapping[str, Any] | None, str | None]:
         project_root = Path(getattr(runtime, "project_root", Path.cwd()))
@@ -189,7 +181,10 @@ def discover_recently_completed_managed_agents(
 
 
 def render_currently_running(
-    report: CurrentlyRunningReport, *, now: datetime | None = None
+    report: CurrentlyRunningReport,
+    *,
+    now: datetime | None = None,
+    timezone_name: str = "UTC",
 ) -> str:
     """Render a compact, truthful status card using Discord markdown."""
 
@@ -204,7 +199,7 @@ def render_currently_running(
         # This canonical banner is intentionally verbatim and must be first.
         lines = [stale_banner, "", *lines]
     if isinstance(status_node, Mapping):
-        snapshot = _snapshot_label(status_node)
+        snapshot = _snapshot_label(status_node, timezone_name=timezone_name)
         if snapshot:
             lines.extend((snapshot, ""))
 
@@ -566,8 +561,10 @@ def _source_record_label(record: Mapping[str, Any]) -> str | None:
     return content
 
 
-def _snapshot_label(status_node: Mapping[str, Any]) -> str | None:
-    """Return an honest UTC-formatted freshness line when the root supplies it."""
+def _snapshot_label(
+    status_node: Mapping[str, Any], *, timezone_name: str
+) -> str | None:
+    """Return an honestly localized freshness line when the root supplies it."""
 
     generated_at = status_node.get("generated_at") or status_node.get(
         "watchdog_generated_at"
@@ -575,7 +572,7 @@ def _snapshot_label(status_node: Mapping[str, Any]) -> str | None:
     if not generated_at:
         return None
     try:
-        rendered = format_timestamp(generated_at, "UTC")
+        rendered = format_timestamp(generated_at, timezone_name)
     except (TypeError, ValueError):
         return "_Snapshot time unavailable._"
     return f"_Snapshot generated {rendered}_"

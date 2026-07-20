@@ -488,28 +488,22 @@ def test_degraded_status_is_labeled_without_hiding_available_canonical_items() -
     assert "`degraded-epic`\n  `planned` · 12% overall" in rendered
 
 
-def test_collection_uses_typed_bounded_status_tool_and_managed_agent_inventory(
+def test_collection_uses_fresh_bounded_profile_root_and_managed_agent_inventory(
     monkeypatch, tmp_path
 ) -> None:
-    calls: list[object] = []
+    calls: list[str] = []
 
-    class InputModel:
-        def __init__(self, **values):
-            self.__dict__.update(values)
+    def collect_fresh_root():
+        calls.append("fresh")
+        return {"node_id": "root", "sessions": []}
 
-    def status_handler(payload):
-        calls.append(payload)
-        return SimpleNamespace(
-            ok=True,
-            data={"node": {"node_id": "root", "sessions": []}},
-        )
-
-    registration = SimpleNamespace(input_model=InputModel, handler=status_handler)
-    registry = SimpleNamespace(
-        get=lambda name: registration if name == "read_cloud_status_node" else None
-    )
     runtime = SimpleNamespace(
-        profile=SimpleNamespace(tools=lambda: registry),
+        profile=SimpleNamespace(
+            collect_fresh_cloud_status_root=collect_fresh_root,
+            tools=lambda: (_ for _ in ()).throw(
+                AssertionError("persisted status tool must not be used")
+            ),
+        ),
         project_root=tmp_path,
     )
     monkeypatch.setattr(
@@ -525,9 +519,7 @@ def test_collection_uses_typed_bounded_status_tool_and_managed_agent_inventory(
 
     assert report.status_node == {"node_id": "root", "sessions": []}
     assert report.managed_agents["project_root_seen"] == str(tmp_path)
-    assert len(calls) == 1
-    assert calls[0].node_id == "root"
-    assert calls[0].limit == 25
+    assert calls == ["fresh"]
 
 
 def test_collection_replaces_opaque_agent_label_from_exact_inbound_source(
@@ -555,18 +547,13 @@ def test_collection_replaces_opaque_agent_label_from_exact_inbound_source(
     )
     monkeypatch.setenv("MEGAPLAN_RESIDENT_STORE_ROOT", str(store_root))
 
-    class InputModel:
-        def __init__(self, **values):
-            self.__dict__.update(values)
-
-    registration = SimpleNamespace(
-        input_model=InputModel,
-        handler=lambda _payload: SimpleNamespace(
-            ok=True, data={"node": {"node_id": "root", "sessions": []}}
-        ),
-    )
     runtime = SimpleNamespace(
-        profile=SimpleNamespace(tools=lambda: SimpleNamespace(get=lambda _name: registration)),
+        profile=SimpleNamespace(
+            collect_fresh_cloud_status_root=lambda: {
+                "node_id": "root",
+                "sessions": [],
+            }
+        ),
         project_root=tmp_path,
     )
     monkeypatch.setattr(
@@ -694,16 +681,11 @@ def test_real_discord_command_callback_authorizes_collects_and_replies(
     assert interaction.followup.messages[0][1] == {"ephemeral": True}
 
 
-def test_currently_running_refreshes_before_collecting_and_renders_fresh_status(
+def test_distinct_command_invocations_collect_and_render_distinct_fresh_status(
     monkeypatch,
 ) -> None:
-    events: list[str] = []
-    status = {
-        "node": {
-            "generated_at": "2026-07-19T19:32:59Z",
-            "sessions": [],
-        }
-    }
+    collections: list[str] = []
+    generated = iter(("2026-07-19T20:16:00Z", "2026-07-19T20:17:00Z"))
 
     class Authorizer:
         def authorize_inbound(self, _subject):
@@ -720,52 +702,72 @@ def test_currently_running_refreshes_before_collecting_and_renders_fresh_status(
         async def send(self, content, **kwargs):
             self.messages.append((content, kwargs))
 
-    def refresh_snapshot():
-        events.append("refresh")
-        status["node"] = {
-            "generated_at": "2026-07-19T20:16:00Z",
+    def collect_fresh_root():
+        generated_at = next(generated)
+        collections.append(generated_at)
+        return {
+            "generated_at": generated_at,
             "sessions": [],
         }
 
-    async def fake_collect(_runtime):
-        events.append("collect")
-        return CurrentlyRunningReport(
-            status_node=status["node"], managed_agents={"running": []}
-        )
+    class Store:
+        def load_resident_user_preference(self, **_kwargs):
+            return SimpleNamespace(timezone_name="Europe/Berlin")
 
-    monkeypatch.setattr(discord_module, "collect_currently_running", fake_collect)
+    monkeypatch.setattr(
+        module,
+        "list_managed_resident_agents",
+        lambda **_kwargs: {"running": []},
+    )
     service = object.__new__(ResidentDiscordService)
     service.runtime = SimpleNamespace(
         authorizer=Authorizer(),
-        profile=SimpleNamespace(refresh_cloud_status_snapshot=refresh_snapshot),
+        profile=SimpleNamespace(
+            collect_fresh_cloud_status_root=collect_fresh_root,
+            tools=lambda: (_ for _ in ()).throw(
+                AssertionError("persisted status tool must not be used")
+            ),
+        ),
+        store=Store(),
+        config=SimpleNamespace(
+            default_timezone="UTC",
+            guild_timezone_defaults={},
+        ),
     )
-    interaction = SimpleNamespace(
-        user=SimpleNamespace(id=42),
-        guild_id=None,
-        channel=None,
-        channel_id=99,
-        response=Response(),
-        followup=Followup(),
-    )
 
-    asyncio.run(service.handle_currently_running_interaction(interaction))
+    interactions = [
+        SimpleNamespace(
+            user=SimpleNamespace(id=42),
+            guild_id=None,
+            channel=None,
+            channel_id=99,
+            response=Response(),
+            followup=Followup(),
+        )
+        for _ in range(2)
+    ]
 
-    assert events == ["refresh", "collect"]
-    content, kwargs = interaction.followup.messages[0]
-    assert "Snapshot generated 2026-07-19 20:16:00 UTC" in content
-    assert "19:32:59" not in content
-    assert kwargs == {"ephemeral": True}
+    for interaction in interactions:
+        asyncio.run(service.handle_currently_running_interaction(interaction))
+
+    assert collections == ["2026-07-19T20:16:00Z", "2026-07-19T20:17:00Z"]
+    first = interactions[0].followup.messages[0]
+    second = interactions[1].followup.messages[0]
+    assert "Snapshot generated 2026-07-19 22:16:00 CEST (UTC+02:00)" in first[0]
+    assert "Snapshot generated 2026-07-19 22:17:00 CEST (UTC+02:00)" in second[0]
+    assert "22:16:00" not in second[0]
+    assert first[1] == second[1] == {"ephemeral": True}
 
 
-def test_foreground_snapshot_refresh_rebuilds_on_every_call(monkeypatch, tmp_path) -> None:
+def test_fresh_root_rebuilds_without_loading_or_writing_persisted_status(
+    monkeypatch,
+) -> None:
     import threading
 
     from arnold_pipelines.megaplan.cloud import status_snapshot
     from arnold_pipelines.megaplan.resident.profile import MegaplanResidentProfile
 
     builds: list[int] = []
-    writes: list[tuple[dict, object]] = []
-
     def build_snapshot():
         builds.append(len(builds) + 1)
         return {"generated_at": f"fresh-{builds[-1]}", "sessions": []}
@@ -774,29 +776,33 @@ def test_foreground_snapshot_refresh_rebuilds_on_every_call(monkeypatch, tmp_pat
     monkeypatch.setattr(status_snapshot, "build_cloud_status_snapshot", build_snapshot)
     monkeypatch.setattr(
         status_snapshot,
+        "load_cloud_status_snapshot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("persisted snapshot must not be loaded")
+        ),
+    )
+    monkeypatch.setattr(
+        status_snapshot,
         "write_cloud_status_snapshot",
-        lambda snapshot, *, path: writes.append((snapshot, path)),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("command collection must not persist a full snapshot")
+        ),
     )
     profile = object.__new__(MegaplanResidentProfile)
-    profile.config = SimpleNamespace(status_snapshot_path=tmp_path / "cloud-status.json")
     profile._snapshot_refresh_lock = threading.Lock()
-    # A foreground command does not consult the background scheduler's recent
-    # start time; each explicit invocation must produce a new projection.
-    profile._snapshot_refresh_started_at = float("inf")
 
-    assert profile.refresh_cloud_status_snapshot() is True
-    assert profile.refresh_cloud_status_snapshot() is True
+    first = profile.collect_fresh_cloud_status_root()
+    second = profile.collect_fresh_cloud_status_root()
 
     assert builds == [1, 2]
-    assert [snapshot["generated_at"] for snapshot, _path in writes] == [
-        "fresh-1",
-        "fresh-2",
-    ]
-    assert all(path == tmp_path / "cloud-status.json" for _snapshot, path in writes)
+    assert first["generated_at"] == "fresh-1"
+    assert second["generated_at"] == "fresh-2"
 
 
-def test_currently_running_uses_cached_status_when_refresh_fails(monkeypatch) -> None:
-    events: list[str] = []
+def test_currently_running_labels_fresh_collection_failure_without_cached_status(
+    monkeypatch,
+) -> None:
+    collections: list[str] = []
 
     class Authorizer:
         def authorize_inbound(self, _subject):
@@ -813,25 +819,24 @@ def test_currently_running_uses_cached_status_when_refresh_fails(monkeypatch) ->
         async def send(self, content, **kwargs):
             self.messages.append((content, kwargs))
 
-    def failed_refresh():
-        events.append("refresh")
+    def failed_collection():
+        collections.append("fresh")
         raise RuntimeError("projection rebuild failed")
 
-    async def collect_cached(_runtime):
-        events.append("collect_cached")
-        return CurrentlyRunningReport(
-            status_node={
-                "generated_at": "2026-07-19T19:32:59Z",
-                "sessions": [],
-            },
-            managed_agents={"running": []},
-        )
-
-    monkeypatch.setattr(discord_module, "collect_currently_running", collect_cached)
+    monkeypatch.setattr(
+        module,
+        "list_managed_resident_agents",
+        lambda **_kwargs: {"running": []},
+    )
     service = object.__new__(ResidentDiscordService)
     service.runtime = SimpleNamespace(
         authorizer=Authorizer(),
-        profile=SimpleNamespace(refresh_cloud_status_snapshot=failed_refresh),
+        profile=SimpleNamespace(
+            collect_fresh_cloud_status_root=failed_collection,
+            tools=lambda: (_ for _ in ()).throw(
+                AssertionError("cached status must not be read")
+            ),
+        ),
     )
     interaction = SimpleNamespace(
         user=SimpleNamespace(id=42),
@@ -844,10 +849,11 @@ def test_currently_running_uses_cached_status_when_refresh_fails(monkeypatch) ->
 
     asyncio.run(service.handle_currently_running_interaction(interaction))
 
-    assert events == ["refresh", "collect_cached"]
+    assert collections == ["fresh"]
     content, kwargs = interaction.followup.messages[0]
-    assert "Snapshot generated 2026-07-19 19:32:59 UTC" in content
-    assert "temporarily unavailable" not in content
+    assert "fresh canonical status collection failed (RuntimeError)" in content
+    assert "Snapshot generated" not in content
+    assert "stale" not in content.casefold()
     assert kwargs == {"ephemeral": True}
 
 
@@ -953,15 +959,24 @@ def test_long_lists_include_every_live_agent_and_chunk_safely() -> None:
     assert all(0 < len(chunk) <= DISCORD_MESSAGE_LIMIT for chunk in chunks)
 
 
-def test_snapshot_time_is_displayed_in_utc_with_date_time_and_offset() -> None:
-    rendered = render_currently_running(
+def test_snapshot_utc_input_is_displayed_in_berlin_with_dst_specific_offset() -> None:
+    summer = render_currently_running(
         CurrentlyRunningReport(
             status_node={"generated_at": "2026-07-14T16:30:45Z", "sessions": []},
             managed_agents={"running": []},
-        )
+        ),
+        timezone_name="Europe/Berlin",
+    )
+    winter = render_currently_running(
+        CurrentlyRunningReport(
+            status_node={"generated_at": "2026-01-14T16:30:45Z", "sessions": []},
+            managed_agents={"running": []},
+        ),
+        timezone_name="Europe/Berlin",
     )
 
-    assert "Snapshot generated 2026-07-14 16:30:45 UTC (UTC+00:00)" in rendered
+    assert "Snapshot generated 2026-07-14 18:30:45 CEST (UTC+02:00)" in summer
+    assert "Snapshot generated 2026-01-14 17:30:45 CET (UTC+01:00)" in winter
 
 
 def test_repairing_chain_remains_distinct_from_its_progress_display_state() -> None:

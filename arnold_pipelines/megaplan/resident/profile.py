@@ -1491,6 +1491,24 @@ class MegaplanResidentProfile:
             )
         return True
 
+    def collect_fresh_cloud_status_root(self) -> dict[str, Any]:
+        """Build and compact authoritative status without reading its cache.
+
+        Discord's ``/whats-cooking`` command uses this foreground path so each
+        invocation observes current marker, watchdog, repair, and liveness
+        evidence.  The complete build remains local to this method; only the
+        bounded status-tree root crosses into command collection and rendering.
+        """
+
+        if not status_snapshot.has_local_markers():
+            raise RuntimeError("local cloud status markers are unavailable")
+        with self._snapshot_refresh_lock:
+            snapshot = status_snapshot.build_cloud_status_snapshot()
+        root = compact_cloud_status_snapshot(snapshot)
+        if root is None:  # pragma: no cover - build contract is a mapping
+            raise RuntimeError("cloud status build returned no bounded root")
+        return root
+
     def _schedule_cloud_status_snapshot_refresh(self) -> None:
         if not status_snapshot.has_local_markers():
             return
