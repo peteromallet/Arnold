@@ -28,6 +28,7 @@ from arnold_pipelines.megaplan.planning.control_binding import (
     planning_run_state_view,
 )
 from arnold_pipelines.megaplan.planning.validation import preflight_or_raise, profile_validate_operation
+from arnold_pipelines.megaplan.runtime.process import megaplan_engine_env
 from arnold_pipelines.megaplan.types import CliError
 
 SUPPORTED_OPERATIONS = frozenset(
@@ -168,9 +169,9 @@ def _phase_subprocess_command(argv: list[Any]) -> list[str]:
     if not args:
         return []
     if args[0] == "megaplan":
-        return [sys.executable, "-m", "arnold_pipelines.megaplan", *args[1:]]
+        return [sys.executable, "-P", "-m", "arnold_pipelines.megaplan", *args[1:]]
     if args[0] in _MEGAPLAN_MODULE_COMMANDS:
-        return [sys.executable, "-m", "arnold_pipelines.megaplan", *args]
+        return [sys.executable, "-P", "-m", "arnold_pipelines.megaplan", *args]
     return args
 
 
@@ -187,7 +188,8 @@ def _run_phase_subprocess(
     if not argv:
         return 1, "", "missing command"
 
-    env = os.environ.copy()
+    env = megaplan_engine_env(dict(os.environ))
+    env["PYTHONSAFEPATH"] = "1"
     if progress_env:
         env.update({str(key): str(value) for key, value in progress_env.items()})
     proc = subprocess.run(

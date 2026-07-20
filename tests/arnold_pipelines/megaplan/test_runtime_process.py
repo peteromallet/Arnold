@@ -12,6 +12,7 @@ from arnold_pipelines.megaplan.runtime.process import (
     megaplan_engine_root,
 )
 from arnold_pipelines.megaplan.control import _resume_runner
+from arnold_pipelines.megaplan.planning.operations import _run_phase_subprocess
 
 
 def test_engine_root_is_anchored_to_megaplan_not_target_arnold(
@@ -62,6 +63,45 @@ def test_resume_child_keeps_parent_megaplan_ahead_of_target_checkout(
     ]
     child_env = captured["env"]
     assert isinstance(child_env, dict)
+    assert child_env["PYTHONPATH"].split(os.pathsep)[0] == str(
+        Path(__file__).resolve().parents[3]
+    )
+
+
+def test_native_resume_dispatch_keeps_pinned_engine_ahead_of_target_checkout(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    target_root = tmp_path / "target-checkout"
+    target_package = target_root / "arnold"
+    target_package.mkdir(parents=True)
+    monkeypatch.setattr(arnold, "__file__", str(target_package / "__init__.py"))
+
+    captured: dict[str, object] = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = list(argv)
+        captured["env"] = dict(kwargs["env"])
+        return subprocess.CompletedProcess(argv, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = _run_phase_subprocess(
+        "execute",
+        plan="demo",
+        cwd=target_root,
+        argv=["execute", "--plan", "demo"],
+    )
+
+    assert result == (0, "ok", "")
+    assert captured["argv"][:4] == [
+        sys.executable,
+        "-P",
+        "-m",
+        "arnold_pipelines.megaplan",
+    ]
+    child_env = captured["env"]
+    assert isinstance(child_env, dict)
+    assert child_env["PYTHONSAFEPATH"] == "1"
     assert child_env["PYTHONPATH"].split(os.pathsep)[0] == str(
         Path(__file__).resolve().parents[3]
     )
