@@ -660,6 +660,22 @@ def test_mutation_shaped_execution_cannot_opt_out_of_git_custody() -> None:
         )
 
 
+def test_autonomous_execution_requires_explicit_receipt_capable_claim() -> None:
+    with pytest.raises(ValueError, match="one receipt-capable target"):
+        subagent_module.resolve_delegated_mutation_claim(
+            task_kind="autonomous", work_intent="execution", mutation_claim="auto"
+        )
+
+    assert (
+        subagent_module.resolve_delegated_mutation_claim(
+            task_kind="autonomous",
+            work_intent="execution",
+            mutation_claim="git_backed",
+        )
+        == "git_backed"
+    )
+
+
 def test_completion_verifier_receives_non_mutating_contract_classification(
     tmp_path: Path,
 ) -> None:

@@ -321,6 +321,12 @@ def resolve_delegated_mutation_claim(
                 "review/speculative work cannot claim an integrated git-backed mutation"
             )
         return "none"
+    if task_kind == "autonomous" and mutation_claim == "auto":
+        raise ValueError(
+            "autonomous execution requires an explicit mutation_claim='git_backed' "
+            "and one receipt-capable target; operational or multi-workspace tasks must "
+            "be split or rejected before launch"
+        )
     if task_kind not in _BOUNDED_TASK_KINDS:
         if mutation_claim == "none":
             raise ValueError(
