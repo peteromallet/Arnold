@@ -3,6 +3,11 @@
 Also provides acceptance-aware revalidation so that after a repair result the
 prior acceptance candidate is invalidated and the acceptance boundary is forced
 to use the full suite (not a focused/scoped selector).
+
+M7 shadow validation is wired into ``revalidate_repair_target`` so that
+stale-authority paths are diagnosed before a revalidation verdict is returned.
+Production enforcement is always disabled — the validator runs in shadow mode
+and does not block callers.
 """
 
 from __future__ import annotations
@@ -10,6 +15,15 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
+
+# ── M7 shadow validator import (enforcement always disabled) ────────────────
+try:
+    from arnold_pipelines.megaplan.custody.action_validator import (
+        validate_action_boundary_simple,
+    )
+    _M7_VALIDATOR_AVAILABLE = True
+except ImportError:
+    _M7_VALIDATOR_AVAILABLE = False
 
 
 _AUTHORITY_FIELDS = (
@@ -50,10 +64,124 @@ class TargetRevalidation:
     acceptance_candidates_invalidated: int = 0
     acceptance_invalidation_reason: str = ""
 
+    # ── M7 shadow validation fields (T15) ─────────────────────────────
+    m7_shadow_validation: dict[str, Any] | None = None
+
     def as_json(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["changed_fields"] = list(self.changed_fields)
         return payload
+
+
+# ── M7 shadow validator helper (T15) ────────────────────────────────────────
+
+
+def _shadow_validate_revalidation_boundary(
+    *,
+    before: Mapping[str, Any] | None,
+    after: Mapping[str, Any] | None,
+    session_health: str,
+) -> dict[str, Any]:
+    """Run the M7 shadow validator during repair target revalidation (non-blocking).
+
+    Builds a best-effort ``CustodyTargetKey`` from the before/after target
+    snapshots, calls ``validate_action_boundary_simple`` with
+    ``action_type=\"repair\"``, and returns typed conflict/fence/reconcile
+    diagnostics.  Never raises — all errors are captured as diagnostic metadata.
+
+    Production enforcement is always disabled; this is a shadow-only call.
+    """
+    if not _M7_VALIDATOR_AVAILABLE:
+        return {
+            "m7_validator_available": False,
+            "reason": "action_validator module not importable",
+        }
+
+    import hashlib as _hashlib
+
+    try:
+        after_map = after if isinstance(after, Mapping) else {}
+        before_map = before if isinstance(before, Mapping) else {}
+
+        target_id = str(after_map.get("target_id") or before_map.get("target_id") or "")
+        plan_state = (
+            after_map.get("plan_state")
+            if isinstance(after_map.get("plan_state"), Mapping)
+            else before_map.get("plan_state")
+            if isinstance(before_map.get("plan_state"), Mapping)
+            else {}
+        )
+        heartbeat = (
+            after_map.get("active_step_heartbeat")
+            if isinstance(after_map.get("active_step_heartbeat"), Mapping)
+            else {}
+        )
+
+        target_dict = {
+            "environment": "revalidation",
+            "session": target_id.split(":")[0] if ":" in target_id else target_id or "unknown",
+            "chain": target_id or "unknown",
+            "plan_revision": str(plan_state.get("current_state") or ""),
+            "phase": str(heartbeat.get("phase") or ""),
+            "task": str(heartbeat.get("worker_pid") or "unknown"),
+            "attempt": str(heartbeat.get("attempt") or "1"),
+            "normalized_failure_kind": "revalidation",
+            "blocker_or_phase_result_hash": _hashlib.sha256(
+                target_id.encode("utf-8")
+            ).hexdigest()[:16],
+            "fence": str(plan_state.get("fingerprint") or "0"),
+        }
+
+        result = validate_action_boundary_simple(
+            action_type="repair",
+            target=target_dict,
+            run_authority_grant_id="revalidation-grant",
+            coordinator_fence_token=0,
+            wbc_attempt_reference=target_id,
+        )
+
+        typed_events: list[dict[str, Any]] = []
+        for check in result.checks:
+            outcome = check.outcome.value
+            if outcome == "conflict":
+                typed_events.append({
+                    "event_type": "conflict",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+            elif outcome == "fenced":
+                typed_events.append({
+                    "event_type": "fence",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+            elif outcome in ("stale", "expired"):
+                typed_events.append({
+                    "event_type": "reconcile",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+
+        return {
+            "m7_validator_available": True,
+            "gate_result": result.gate_result.value,
+            "enforcement_enabled": result.enforcement_enabled,
+            "shadow_mode": result.is_shadow,
+            "typed_events": typed_events,
+            "checks_summary": {
+                c.source: c.outcome.value for c in result.checks
+            },
+            "validated_at": result.validated_at,
+        }
+    except Exception as exc:
+        return {
+            "m7_validator_available": True,
+            "error": f"{type(exc).__name__}: {exc}",
+            "typed_events": [],
+        }
 
 
 def revalidate_repair_target(
@@ -109,6 +237,13 @@ def revalidate_repair_target(
         reason = "runner exists but active worker is dead or unverifiable"
     else:
         reason = "runner exists without fresh target progress"
+    # ── M7 shadow validation before revalidation verdict (T15) ────────────
+    m7_shadow = _shadow_validate_revalidation_boundary(
+        before=before,
+        after=after,
+        session_health=session_health,
+    )
+
     return TargetRevalidation(
         changed_fields=changed,
         superseded=superseded,
@@ -117,6 +252,7 @@ def revalidate_repair_target(
         progress_observed=progress_observed,
         recovery_verified=verified,
         reason=reason,
+        m7_shadow_validation=m7_shadow,
     )
 
 
