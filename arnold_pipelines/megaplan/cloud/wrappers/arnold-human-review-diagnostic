@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-exec python3 -P -m arnold_pipelines.megaplan.cloud.human_review_diagnostic "$@"

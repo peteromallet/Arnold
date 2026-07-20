@@ -190,9 +190,6 @@ def test_hot_context_prompt_output_and_delegation_share_resolved_timezone(tmp_pa
         await runtime.coalescer.flush_all()
 
         assert runner.request.hot_context["user_timezone"]["timezone_name"] == "America/New_York"
-        assert "summary_line" not in runner.request.hot_context["current_request"]
-        assert "sole current request" in runner.request.system_prompt
-        assert '"content": "status?"' in runner.request.system_prompt
         assert "render every absolute user-visible time in America/New_York" in runner.request.system_prompt
         assert runner.request.launch_origin["timezone_name"] == "America/New_York"
         assert outbound.sent[-1].content == "Snapshot: 2026-07-13 08:00:00 EDT (UTC-04:00)"

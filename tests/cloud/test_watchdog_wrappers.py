@@ -1640,9 +1640,6 @@ def test_repair_data_init_preserves_legacy_top_level_shape_via_contract(tmp_path
             "watchdog_log_tail": "watchdog-log",
             "tmux_pane_tail": "tmux-pane",
             "chain_state_files": "/tmp/workspace/.megaplan/plans/.chains/chain-demo.json",
-            "semantic_health": {},
-            "semantic_context": {},
-            "custody_projection": {},
         },
         "attempts": [{"attempt_id": 7, "legacy": True}],
         "current_attempt_id": None,
@@ -3233,7 +3230,7 @@ def test_watchdog_kimi_repair_is_backgrounded_so_it_cannot_block_the_tick() -> N
     # repair on one session cannot block the tick from scanning/reporting the
     # other sessions.
     assert "dispatch_kimi_repair()" in text
-    assert "python3 -P -m arnold_pipelines.megaplan.managed_agent run" in text
+    assert "python3 -m arnold_pipelines.megaplan.managed_agent run" in text
     assert "--run-kind automatic_repair" in text
     assert 'setsid "${managed_cmd[@]}"' in text
     assert 'PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-$PRIMARY_REPAIR_SOURCE_BIN}"' in text
@@ -3258,101 +3255,6 @@ def test_watchdog_kimi_repair_is_backgrounded_so_it_cannot_block_the_tick() -> N
                 "setsid", "dispatch_kimi_repair", "kimi_operator_running",
                 "kimi_dispatch", "log ",
             )), f"bare synchronous Kimi invocation remains: {ln!r}"
-
-
-def test_watchdog_managed_repair_dispatches_pin_the_selected_runtime() -> None:
-    text = _wrapper("arnold-watchdog")
-
-    assert text.count("python3 -P -m arnold_pipelines.megaplan.managed_agent run") == 2
-    assert text.count("PYTHONSAFEPATH=1 \\") >= 4
-    assert "route_l1_launch_failure_to_meta_repair" in text
-    assert text.count(
-        'route_l1_launch_failure_to_meta_repair "$session" "$workspace" "$remote_spec" "$report_items"'
-    ) == 2
-    assert text.index("route_l1_launch_failure_to_meta_repair()") < text.index(
-        'log "session requires human review session=$session'
-    )
-
-
-def test_watchdog_failed_launch_releases_only_exact_unbound_claim(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
-    marker_dir.mkdir()
-    queue_dir = repair_requests.repair_queue_dir(marker_dir)
-    owner_pid = os.getpid()
-    released_blocker = "blocker:v1:release"
-    retained_blocker = "blocker:v1:retained"
-    repair_requests.claim_active_repair_request(
-        queue_dir,
-        blocker_id=released_blocker,
-        request_id="req-release",
-        actor="arnold-watchdog",
-        session="demo-session",
-        pid=owner_pid,
-    )
-    repair_requests.claim_active_repair_request(
-        queue_dir,
-        blocker_id=retained_blocker,
-        request_id="req-retained",
-        actor="arnold-watchdog",
-        session="demo-session",
-        pid=owner_pid,
-        extra={
-            "managed_agent_run_id": "managed-run-live",
-            "managed_manifest_path": "/tmp/managed-run-live/manifest.json",
-        },
-    )
-
-    script = "\n\n".join(
-        [
-            _extract_wrapper_function("release_failed_repair_launch_claim"),
-            f"MARKER_DIR={str(marker_dir)!r}",
-            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
-            f"SRC_DIR={str(REPO_ROOT)!r}",
-            (
-                "release_failed_repair_launch_claim demo-session req-release "
-                f"{released_blocker!r} 99999999 {owner_pid}; echo released:$?"
-            ),
-            (
-                "release_failed_repair_launch_claim demo-session req-retained "
-                f"{retained_blocker!r} 99999999 {owner_pid}; echo retained:$?"
-            ),
-        ]
-    )
-    result = _run_watchdog_shell(script)
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip().splitlines() == ["released:0", "retained:1"]
-    assert not repair_requests.active_repair_claim_lock_dir(queue_dir, released_blocker).exists()
-    assert repair_requests.active_repair_claim_lock_dir(queue_dir, retained_blocker).exists()
-
-
-def test_watchdog_routes_confirmed_l1_launch_failure_to_l2() -> None:
-    script = "\n\n".join(
-        [
-            _extract_wrapper_function("route_l1_launch_failure_to_meta_repair"),
-            """
-REPAIR_DISPATCH_RESULT=launch_failed
-dispatch_meta_repair() {
-  echo "META:$5" >&2
-  REPAIR_DISPATCH_RESULT=dispatched
-  return 0
-}
-log() { echo "LOG:$*" >&2; }
-report_item() { echo "REPORT:$3:$4:$5"; }
-route_l1_launch_failure_to_meta_repair demo-session /tmp/ws /tmp/spec /tmp/report
-echo "status:$REPAIR_DISPATCH_RESULT"
-""".strip(),
-        ]
-    )
-    result = _run_watchdog_shell(script)
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip().splitlines() == [
-        "REPORT:meta_repair:dispatched:L2 took custody after confirmed L1 launch failure",
-        "status:dispatched",
-    ]
-    assert "META:l1_launch_failed" in result.stderr
-    assert "L2 now has custody" in result.stderr
 
 
 def test_watchdog_repair_dispatch_is_scoped_per_session() -> None:
@@ -3649,15 +3551,15 @@ echo "status:${REPAIR_DISPATCH_RESULT:-unset}"
 
 
 def test_watchdog_dispatch_reclaims_stale_request_claim_and_launches(tmp_path: Path) -> None:
-    marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
-    marker_dir.mkdir(parents=True)
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
     log_path = tmp_path / "watchdog.log"
     launch_log = tmp_path / "repair-launches.log"
     repair_bin = tmp_path / "fake-repair-loop"
     repair_bin.write_text(
         "#!/usr/bin/env bash\n"
         f"printf '%s\\n' \"$1\" >> {str(launch_log)!r}\n"
-        "sleep 5\n",
+        "sleep 0.1\n",
         encoding="utf-8",
     )
     repair_bin.chmod(repair_bin.stat().st_mode | stat.S_IXUSR)
@@ -3700,10 +3602,6 @@ def test_watchdog_dispatch_reclaims_stale_request_claim_and_launches(tmp_path: P
 log() { printf '%s\n' "$*" >> "$LOG"; }
 dispatch_kimi_repair demo-a __WORKSPACE__ /tmp/spec
 echo "status:${REPAIR_DISPATCH_RESULT:-unset}"
-demo_pgid="$(cat "$(kimi_pgid_path demo-a)" 2>/dev/null || true)"
-if [[ "$demo_pgid" =~ ^[0-9]+$ ]]; then
-  kill -- "-$demo_pgid" 2>/dev/null || kill "$demo_pgid" 2>/dev/null || true
-fi
 """.replace("__WORKSPACE__", shlex.quote(str(workspace))).strip(),
         ]
     )
@@ -4612,46 +4510,6 @@ def test_watchdog_auto_merge_policy_attempts_pr_merge_before_waiting(
     gh_calls = gh_log.read_text(encoding="utf-8").splitlines()
     assert "pr ready 42" in gh_calls
     assert "pr merge 42 --auto --squash --delete-branch" in gh_calls
-
-
-def test_watchdog_finalized_plan_never_authorizes_pr_merge(tmp_path: Path) -> None:
-    workspace = tmp_path / "ws"
-    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
-    chain_dir.mkdir(parents=True)
-    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
-    spec_path.parent.mkdir(parents=True)
-    spec_path.write_text("merge_policy: auto\n", encoding="utf-8")
-    (chain_dir / "demo-chain.json").write_text(
-        json.dumps(
-            {
-                "last_state": "finalized",
-                "current_plan_name": "demo-plan",
-                "pr_number": 42,
-            }
-        ),
-        encoding="utf-8",
-    )
-    gh_log = tmp_path / "gh.log"
-    gh_path = tmp_path / "gh"
-    gh_path.write_text(
-        "#!/usr/bin/env bash\n"
-        f"printf '%s\\n' \"$*\" >> {str(gh_log)!r}\n"
-        "exit 1\n",
-        encoding="utf-8",
-    )
-    gh_path.chmod(gh_path.stat().st_mode | stat.S_IXUSR)
-
-    script = "\n\n".join(
-        [
-            _extract_wrapper_function("chain_wait_status"),
-            f"chain_wait_status {str(workspace)!r} {str(spec_path)!r}",
-        ]
-    )
-    result = _run_watchdog_shell(script, path_prefix=tmp_path)
-
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "none"
-    assert not gh_log.exists()
 
 
 def test_watchdog_auto_policy_merged_pr_fetches_origin_before_relaunch(
@@ -7890,7 +7748,7 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     assert "run_kimi_launch_turn()" in text
     assert 'timeout "$dev_timeout"' in text
     assert '--stdin-file "$prompt_path"' in text
-    assert 'PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold.agent.run_agent' in text
+    assert 'timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent' in text
     assert '--query_file="$prompt_path"' in text
     assert '--query="$(cat "$prompt_path")"' not in text
     assert "prepare_repair_agent_exec_env()" in text
@@ -7898,7 +7756,7 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     assert "export -n failure_summary chain_health_block recurrence_block mode_tasks relaunch_command" in text
     assert text.index("prepare_repair_agent_exec_env") < text.index('timeout "$dev_timeout"')
     assert text.index("prepare_repair_agent_exec_env", text.index("run_kimi_launch_turn()")) < text.index(
-        'PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold.agent.run_agent'
+        'timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent'
     )
     assert 'tmux new-session -d -s "$session"' in text
     assert r'rm -f -- "\${BASH_SOURCE[0]}"' in text
@@ -9141,141 +8999,6 @@ def test_compute_meta_repair_trigger_skips_stale_launch_failure_after_success(
     assert result.stdout.strip() == "NO_TRIGGER"
 
 
-def test_compute_meta_repair_trigger_detects_semantic_fingerprint_recurrence(
-    tmp_path: Path,
-) -> None:
-    """3 unchanged semantic fingerprints should trigger persistent_recurring_retry."""
-    marker_dir = tmp_path / "markers"
-    repair_data_dir = marker_dir / "repair-data"
-    repair_data_dir.mkdir(parents=True)
-    unchanged_fp = "abc123def456"  # stable fingerprint across attempts
-    (repair_data_dir / "fp-session.repair-data.json").write_text(
-        json.dumps(
-            {
-                "session": "fp-session",
-                "outcome": "repairing",
-                "initial_facts": {
-                    "semantic_health": {"fingerprint": unchanged_fp}
-                },
-                "attempts": [
-                    {
-                        "attempt_id": 1,
-                        "failure_classification": "semantic_boundary_violation",
-                        "failure_context": {
-                            "semantic_health": {"fingerprint": unchanged_fp}
-                        },
-                    },
-                    {
-                        "attempt_id": 2,
-                        "failure_classification": "semantic_boundary_violation",
-                        "failure_context": {
-                            "semantic_health": {"fingerprint": unchanged_fp}
-                        },
-                    },
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    observation = json.dumps(
-        {
-            "authoritative_source": "chain_state",
-            "current_refs": {
-                "current_plan_name": "fp-plan",
-                "chain_current_plan_name": "fp-plan",
-                "plan_current_state": "initialized",
-                "chain_last_state": "initialized",
-            },
-            "plan_state": {"present": True},
-            "chain_state": {"present": True},
-            "active_step_heartbeat": {"active": False},
-        }
-    )
-    script = "\n\n".join(
-        [
-            _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
-            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
-            f"MARKER_DIR={str(marker_dir)!r}",
-            f"SRC_DIR={str(REPO_ROOT)!r}",
-            (
-                f"compute_meta_repair_trigger fp-session "
-                f"{shlex.quote(observation)} stopped"
-            ),
-        ]
-    )
-    result = _run_watchdog_shell(script)
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "TRIGGER:persistent_recurring_retry"
-
-
-def test_compute_meta_repair_trigger_skips_when_semantic_fingerprint_changes(
-    tmp_path: Path,
-) -> None:
-    """Changed semantic fingerprints should NOT trigger persistent_recurring_retry on fingerprint recurrence alone."""
-    marker_dir = tmp_path / "markers"
-    repair_data_dir = marker_dir / "repair-data"
-    repair_data_dir.mkdir(parents=True)
-    (repair_data_dir / "fp-chg-session.repair-data.json").write_text(
-        json.dumps(
-            {
-                "session": "fp-chg-session",
-                "outcome": "repairing",
-                "initial_facts": {
-                    "semantic_health": {"fingerprint": "fp_v3_different"}
-                },
-                "attempts": [
-                    {
-                        "attempt_id": 1,
-                        "failure_classification": "semantic_boundary_violation",
-                        "failure_context": {
-                            "semantic_health": {"fingerprint": "fp_v1_old"}
-                        },
-                    },
-                    {
-                        "attempt_id": 2,
-                        "failure_classification": "semantic_boundary_violation",
-                        "failure_context": {
-                            "semantic_health": {"fingerprint": "fp_v2_changed"}
-                        },
-                    },
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    observation = json.dumps(
-        {
-            "authoritative_source": "chain_state",
-            "current_refs": {
-                "current_plan_name": "fp-chg-plan",
-                "chain_current_plan_name": "fp-chg-plan",
-                "plan_current_state": "initialized",
-                "chain_last_state": "initialized",
-            },
-            "plan_state": {"present": True},
-            "chain_state": {"present": True},
-            "active_step_heartbeat": {"active": False},
-        }
-    )
-    script = "\n\n".join(
-        [
-            _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
-            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
-            f"MARKER_DIR={str(marker_dir)!r}",
-            f"SRC_DIR={str(REPO_ROOT)!r}",
-            (
-                f"compute_meta_repair_trigger fp-chg-session "
-                f"{shlex.quote(observation)} stopped"
-            ),
-        ]
-    )
-    result = _run_watchdog_shell(script)
-    assert result.returncode == 0, result.stderr
-    # Changed fingerprints: no fingerprint recurrence; failure_kinds only has
-    # 2 entries (< 3 threshold) so overall trigger should be NO_TRIGGER.
-    assert result.stdout.strip() == "NO_TRIGGER"
-
-
 def test_launch_chain_tick_dispatches_meta_repair_on_partial_liveness_trigger(tmp_path: Path) -> None:
     paths = _prepare_meta_repair_launch_chain_tick_fixture(
         tmp_path,
@@ -10022,11 +9745,7 @@ def test_repair_trigger_path_unit_fires_immediate_error_queue_scan() -> None:
     assert "DirectoryNotEmpty=/workspace/.megaplan/repair-queue/requests" in path_unit
     assert "PathModified=/workspace/.megaplan/repair-queue/requests" in path_unit
     assert "Unit=megaplan-repair-trigger.service" in path_unit
-    assert (
-        "ExecStart=/workspace/.megaplan/supervisor-python/current/bin/python3 "
-        "/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger"
-    ) in service_unit
-    assert "MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED=1" in service_unit
+    assert "ExecStart=/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger" in service_unit
     assert "ARNOLD_REPAIR_TRIGGER_ENABLED" in service_unit
 
 
@@ -10103,14 +9822,10 @@ SYNC_BRANCH=editible-install
     result = _run_watchdog_shell(script)
     assert result.returncode == 1, result.stderr
     lines = order_path.read_text(encoding="utf-8").splitlines()
+    assert "report:observation_runtime_invalid" in lines
     assert "report:observation_blind" in lines
-    assert "sync" not in lines
     error_payload = json.loads((status_dir / "cloud-status.write-error.json").read_text(encoding="utf-8"))
     assert "observation bootstrap failed" in error_payload["error"]
-    atomic_payload = json.loads(
-        (status_dir / "watchdog-observation-failure.json").read_text(encoding="utf-8")
-    )
-    assert atomic_payload["status"] == "failed"
 
 
 def test_watchdog_session_health_status_treats_live_worker_process_as_alive_without_tmux(tmp_path: Path) -> None:
@@ -13406,9 +13121,9 @@ def _build_meta_dispatch_script(
 
     lines += [
         f"MARKER_DIR={str(marker_dir)!r}",
-        f"SRC_DIR={str(marker_dir.parent)!r}",
+        """SRC_DIR=/workspace/arnold""",
         f"""LOG={str(log_path) if log_path else '/dev/null'}""",
-        f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+        "WRAPPER_REPO_ROOT=/workspace/arnold",
         f"META_REPAIR_BIN={meta_repair_bin!r}",
         f"META_REPAIR_ENABLED_FLAG={meta_repair_enabled}",
         f"REPAIR_DATA_DIR={str(marker_dir)!r}/repair-data",

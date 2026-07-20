@@ -6,11 +6,7 @@ import os
 from pathlib import Path
 from typing import Any, Callable
 
-from arnold_pipelines.megaplan.schema_projection import (
-    project_schema_owned_fields,
-    require_schema_fields,
-)
-from arnold_pipelines.megaplan.schemas import SCHEMAS, GateArtifact, GatePayload
+from arnold_pipelines.megaplan.schemas import GateArtifact, GatePayload
 from arnold_pipelines.megaplan.types import GateCheckResult, PlanState
 from arnold_pipelines.megaplan._core import latest_plan_meta_path, load_flag_registry, read_json, unresolved_significant_flags
 
@@ -116,27 +112,12 @@ def build_gate_artifact(
 ) -> GateArtifact:
     from arnold_pipelines.megaplan.north_star_actions import normalize_north_star_actions
 
-    require_schema_fields(
-        gate_payload,
-        SCHEMAS["gate.json"],
-        contract="gate artifact persistence",
-    )
     preflight = signals["preflight_results"]
     recommendation = gate_payload["recommendation"]
     warnings = list(signals.get("warnings", [])) + list(gate_payload.get("warnings", []))
-    raw_north_star = gate_payload["north_star_actions"]
-    if not isinstance(raw_north_star, list):
-        raise RuntimeError(
-            "gate artifact persistence: north_star_actions must be a list; "
-            "refusing to default an invalid required field"
-        )
+    raw_north_star = gate_payload.get("north_star_actions")
     north_star_actions = normalize_north_star_actions(raw_north_star)
-    artifact: GateArtifact = {
-        **project_schema_owned_fields(
-            gate_payload,
-            SCHEMAS["gate.json"],
-            contract="gate artifact persistence",
-        ),
+    return {
         "passed": recommendation == "PROCEED" and all(preflight.values()),
         "criteria_check": signals["criteria_check"],
         "preflight_results": preflight,
@@ -156,7 +137,6 @@ def build_gate_artifact(
         "resolution_summary": gate_payload.get("resolution_summary", ""),
         "north_star_actions": north_star_actions,
     }
-    return artifact
 
 
 def build_orchestrator_guidance(

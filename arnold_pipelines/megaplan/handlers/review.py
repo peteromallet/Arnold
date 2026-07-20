@@ -52,8 +52,6 @@ from arnold_pipelines.megaplan.planning.state import (
 from arnold.pipeline.step_io_contract import StepIOOperation
 from arnold_pipelines.megaplan.runtime.schema_registry_adapter import create_step_io_contract_context
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
-from arnold_pipelines.megaplan.schema_projection import schema_property_names
-from arnold_pipelines.megaplan.schemas import SCHEMAS
 from arnold_pipelines.megaplan.workflows import REVIEW_POLICY
 from arnold_pipelines.megaplan.workers import (
     WorkerResult,
@@ -112,18 +110,22 @@ judges the *work product*.  Do not rename or conflate them.
 
 log = logging.getLogger(__name__)
 
-_REVIEW_SCRATCH_EXTENSION_FIELDS: frozenset[str] = frozenset(
-    {"review_completion_status"}
+# ── T11: Review-scoped scratch promotion known keys ───────────────────────
+# The model produces only these keys in the scratch template; unknown
+# top-level keys injected by the model are stripped before promotion.
+_REVIEW_SCRATCH_KNOWN_KEYS: frozenset[str] = frozenset(
+    {
+        "review_verdict",
+        "review_completion_status",
+        "criteria",
+        "issues",
+        "rework_items",
+        "summary",
+        "task_verdicts",
+        "sense_check_verdicts",
+    }
 )
-
-
-def _review_scratch_known_keys() -> frozenset[str]:
-    """Project every review-schema field plus one handler control field."""
-
-    return schema_property_names(
-        SCHEMAS["review.json"],
-        contract="review scratch promotion",
-    ) | _REVIEW_SCRATCH_EXTENSION_FIELDS
+# ────────────────────────────────────────────────────────────────────────────
 
 
 def _build_review_blocked_message(
@@ -657,7 +659,7 @@ def _promote_authoritative_review_output(
     if raw.get("review_verdict") not in {"approved", "needs_rework"}:
         return False
 
-    promoted = {key: raw[key] for key in _review_scratch_known_keys() if key in raw}
+    promoted = {key: raw[key] for key in _REVIEW_SCRATCH_KNOWN_KEYS if key in raw}
     payload.clear()
     payload.update(promoted)
     payload["raw_review_output_promoted"] = True
@@ -2108,7 +2110,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
             _, _promoted = promote_scratch(
                 plan_dir,
                 _scratch_filename,
-                _review_scratch_known_keys(),
+                _REVIEW_SCRATCH_KNOWN_KEYS,
                 worker,
                 seed_json=_seed_json,
                 file_fill_instructed=_file_fill_instructed,
@@ -2167,7 +2169,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 _, _promoted = promote_scratch(
                     plan_dir,
                     _scratch_filename,
-                    _review_scratch_known_keys(),
+                    _REVIEW_SCRATCH_KNOWN_KEYS,
                     worker,
                     seed_json=_seed_json,
                     file_fill_instructed=_file_fill_instructed,

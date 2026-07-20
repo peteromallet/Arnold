@@ -87,14 +87,10 @@ def test_builds_argv_and_reads_stdout(tmp_path, monkeypatch) -> None:
     captured: dict = {}
 
     def fake_run(argv, **kwargs):
-        # Cloud-status collection can issue an unrelated ``ps`` while this
-        # process-wide subprocess monkeypatch is active. Capture only the
-        # Hermes launcher invocation owned by this test.
-        if "--query-file" in argv:
-            captured["argv"] = list(argv)
-            captured["kwargs"] = kwargs
-            qf = argv[argv.index("--query-file") + 1]
-            captured["query"] = Path(qf).read_text()
+        captured["argv"] = list(argv)
+        captured["kwargs"] = kwargs
+        qf = argv[argv.index("--query-file") + 1]
+        captured["query"] = Path(qf).read_text()
         return _Completed(stdout="FINAL ANSWER\n", stderr="diag", returncode=0)
 
     monkeypatch.setattr(subagent_module.subprocess, "run", fake_run)
@@ -124,9 +120,7 @@ def test_builds_argv_and_reads_stdout(tmp_path, monkeypatch) -> None:
     assert "--max-tokens" in argv and "12345" in argv
     assert "--project-dir" in argv and str(tmp_path) in argv
     assert "--query-file" in argv
-    assert captured["query"].startswith(
-        "hello\nworld\n\n[Completion delivery contract]"
-    )
+    assert captured["query"].startswith("hello\nworld\n\n[Completion delivery contract]")
     assert FINAL_SUMMARY_INSTRUCTION in captured["query"]
     # query file cleaned up after the run
     qf = argv[argv.index("--query-file") + 1]
@@ -251,9 +245,7 @@ def test_codex_background_launch_writes_durable_manifest(tmp_path, monkeypatch) 
     assert manifest["full_log_path"] == result.log_path
     assert Path(manifest["result_path"]).is_file()
     prompt = Path(manifest["prompt_path"]).read_text()
-    assert prompt.startswith(
-        "do the work\n\n[Completion delivery contract]"
-    )
+    assert prompt.startswith("do the work\n\n[Completion delivery contract]")
     assert "[Delegated context directory]" in prompt
     assert "full resident/cloud/conversation state is deliberately not embedded" in prompt
     assert "resident context --node root" in prompt
@@ -470,7 +462,6 @@ def test_managed_agent_hot_context_separates_running_and_recent(tmp_path, monkey
         "status": "running",
         "pid": 123,
         "created_at": "2026-07-10T02:00:00Z",
-        "usage": {"total_tokens": 12_345},
         "log_path": "/logs/running.log",
     }))
     (completed / "manifest.json").write_text(json.dumps({
@@ -498,7 +489,6 @@ def test_managed_agent_hot_context_separates_running_and_recent(tmp_path, monkey
 
     assert status["running_count"] == 1
     assert status["running"][0]["run_id"] == "running"
-    assert status["running"][0]["usage"] == {"total_tokens": 12_345}
     assert status["running"][0]["full_log_path"] == "/logs/running.log"
     assert status["recent"][0]["run_id"] == "completed"
     assert status["recent"][0]["completion_delivery"]["status"] == "delivered"
@@ -593,10 +583,7 @@ def test_discord_origin_flows_from_inbound_turn_into_managed_launch(tmp_path, mo
         profile=profile,
         runner=FakeAgentRunner(
             [
-                    FakeAgentStep.call(
-                        "launch_subagent",
-                        {"task": "do it", "description": "Do the requested work"},
-                    ),
+                FakeAgentStep.call("launch_subagent", {"task": "do it"}),
                 FakeAgentStep.final("Started it."),
             ]
         ),
@@ -799,10 +786,10 @@ def test_completion_sweep_replies_once_and_persists_evidence(tmp_path) -> None:
 @pytest.mark.parametrize(
     ("delegated_status", "summary", "expected_outcome"),
     [
-        ("completed", "Work and tests match the claim. The verification outcome is success.", "success"),
-        ("completed", "Core work exists, but one check is missing. The verification outcome is partial.", "partial"),
-        ("failed", "The delegated run failed before completion. The verification outcome is failed.", "failed"),
-        ("completed", "Available evidence is inconclusive. The verification outcome is unknown.", "unknown"),
+        ("completed", "Verification outcome: success. Work and tests match the claim.", "success"),
+        ("completed", "Verification outcome: partial. Core work exists; one check is missing.", "partial"),
+        ("failed", "Verification outcome: failed. The delegated run failed before completion.", "failed"),
+        ("completed", "Verification outcome: unknown. Available evidence is inconclusive.", "unknown"),
     ],
 )
 def test_terminal_run_triggers_verified_resident_turn_and_exact_reply(
@@ -820,11 +807,6 @@ def test_terminal_run_triggers_verified_resident_turn_and_exact_reply(
         async def run(self, request, _tools):
             self.requests.append(request)
             assert "never proof" in request.system_prompt
-            assert "must begin with exactly" not in request.system_prompt
-            assert "begin with what happened" in request.system_prompt
-            assert "sole current request" in request.system_prompt
-            assert "must not be copied to run provenance" in request.system_prompt
-            assert "summary_line" not in request.hot_context["current_request"]
             assert str(manifest_path.resolve()) in request.messages[-1]["content"]
             return AgentResponse(final_text=summary)
 
@@ -860,7 +842,6 @@ def test_terminal_run_triggers_verified_resident_turn_and_exact_reply(
     assert result.delivered == 1
     assert len(runner.requests) == 1
     assert outbound.sent[0].content == summary
-    assert not outbound.sent[0].content.lower().startswith("verification outcome:")
     assert outbound.sent[0].metadata["discord_reply_to_message_id"] == "1001"
     assert persisted["launch_provenance"] == original["launch_provenance"]
     assert persisted["resident_completion_turn"]["verification_outcome"] == expected_outcome
@@ -888,7 +869,7 @@ def test_terminal_verifier_excludes_newer_conversation_commands(tmp_path) -> Non
             rendered = "\n".join(str(item.get("content") or "") for item in request.messages)
             assert "Restart the resident service now" not in rendered
             assert str(manifest_path.resolve()) in rendered
-            return AgentResponse(final_text="Exact incident verified. The verification outcome is success.")
+            return AgentResponse(final_text="Verification outcome: success. Exact incident verified.")
 
     class _Outbound:
         def __init__(self) -> None:
@@ -932,7 +913,7 @@ def test_resident_completion_turn_and_delivery_are_idempotent_across_retries(tmp
         async def run(self, _request, _tools):
             self.calls += 1
             return AgentResponse(
-                final_text="Repository evidence supports completion. The verification outcome is success."
+                final_text="Verification outcome: success. Repository evidence supports completion."
             )
 
     class _Outbound:
@@ -1000,7 +981,7 @@ def test_restart_reclaims_stale_completion_turn_claim_without_duplicate_delivery
     async def handler(path, claimed):
         handler_calls.append((path, claimed["resident_completion_turn"]["attempt_count"]))
         return ManagedCompletionTurnResult(
-            final_text="Restart recovery verified the evidence. The verification outcome is success.",
+            final_text="Verification outcome: success. Restart recovery verified the evidence.",
             verification_outcome="success",
             turn_id="turn-existing",
             outbound_message_id="msg-existing",
@@ -1067,8 +1048,7 @@ def test_failed_resident_verifier_delivers_truthful_unknown_summary(tmp_path) ->
 
     persisted = json.loads(manifest_path.read_text())
     assert result.delivered == 1
-    assert not outbound.sent[0].content.lower().startswith("verification outcome:")
-    assert "verification outcome is unknown" in outbound.sent[0].content.lower()
+    assert outbound.sent[0].content.startswith("Verification outcome: unknown.")
     assert "not being reported as proof" in outbound.sent[0].content
     assert persisted["resident_completion_turn"]["verification_outcome"] == "unknown"
 
@@ -1371,9 +1351,7 @@ def test_newer_run_supersedes_duplicate_completion_for_same_original_request(tmp
     older = json.loads(older_path.read_text())["completion_delivery"]
     newer = json.loads(newer_path.read_text())["completion_delivery"]
     assert result.delivered == 1
-    assert [message.content for message in outbound.sent] == [
-        "current completion"
-    ]
+    assert [message.content for message in outbound.sent] == ["current completion"]
     assert outbound.sent[0].metadata["discord_reply_to_message_id"] == original_discord_id
     assert older["status"] == "superseded"
     assert older["superseded_by_run_id"] == "subagent-newer"

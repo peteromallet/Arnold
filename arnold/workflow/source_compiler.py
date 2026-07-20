@@ -685,7 +685,7 @@ def check_workflow_source(
     boundary_contract_records = tuple(boundary_contracts)
     boundary_evidence_records = tuple(boundary_evidence)
     row_evidence_diagnostics = (
-        _row_evidence_diagnostics(parsed_source, evidence_records, boundary_contract_records)
+        _row_evidence_diagnostics(parsed_source, evidence_records)
         if evidence is not None
         else ()
     )
@@ -722,9 +722,8 @@ def check_workflow_source(
 def _row_evidence_diagnostics(
     parsed_source: ParsedWorkflowSource,
     evidence: Sequence[SemanticEvidence],
-    boundary_contracts: Sequence[BoundaryContract] = (),
 ) -> tuple[AuthoringDiagnostic, ...]:
-    implemented_rows = _implemented_front_half_rows(parsed_source.workflow, boundary_contracts)
+    implemented_rows = _implemented_front_half_rows(parsed_source.workflow)
     if not implemented_rows:
         return ()
     evidenced_row_ids = {record.row_id for record in evidence if record.row_id}
@@ -1252,7 +1251,7 @@ def _boundary_evidence_diagnostics(
     if not boundary_contracts and not boundary_evidence:
         return ()
 
-    implemented_rows = _implemented_boundary_rows(parsed_source.workflow, boundary_contracts)
+    implemented_rows = _implemented_boundary_rows(parsed_source.workflow)
     implemented_by_row_id = {row.row_id: row for row in implemented_rows}
     contracts_by_row_id = {
         contract.row_id: contract
@@ -1682,11 +1681,10 @@ def _boundary_orphan_details(
 
 def _implemented_front_half_rows(
     workflow: WorkflowDeclaration | None,
-    boundary_contracts: Sequence[BoundaryContract] = (),
 ) -> tuple[_ImplementedFrontHalfRow, ...]:
     if workflow is None:
         return ()
-    row_specs = _front_half_row_specs(boundary_contracts)
+    row_specs = _front_half_row_specs()
     if not row_specs:
         return ()
     implemented_by_row_id: dict[str, _ImplementedFrontHalfRow] = {}
@@ -1733,17 +1731,12 @@ def _collect_front_half_rows(
             _collect_front_half_rows(statement.body, row_specs, implemented_by_row_id)
 
 
-def _front_half_row_specs(
-    boundary_contracts: Sequence[BoundaryContract] = (),
-) -> Mapping[str, tuple[str, str]]:
-    """Build row_specs mapping component_ref → (row_id, phase) from boundary contracts.
-
-    This is a neutral interface: callers inject their own BoundaryContract
-    sequences.  The generic source compiler does not import
-    ``arnold_pipelines.megaplan``.
-    """
-    if not boundary_contracts:
+def _front_half_row_specs() -> Mapping[str, tuple[str, str]]:
+    try:
+        from arnold_pipelines.megaplan.workflows.boundary_contracts import BOUNDARY_CONTRACTS
+    except ImportError:
         return MappingProxyType({})
+
     front_half_phases = frozenset(
         {
             "prep",
@@ -1758,7 +1751,7 @@ def _front_half_row_specs(
         }
     )
     row_specs: dict[str, tuple[str, str]] = {}
-    for contract in boundary_contracts:
+    for contract in BOUNDARY_CONTRACTS:
         if contract.phase is None or contract.row_id is None:
             continue
         if contract.phase.value not in front_half_phases:
@@ -1776,12 +1769,11 @@ def _front_half_row_specs(
 
 def _implemented_boundary_rows(
     workflow: WorkflowDeclaration | None,
-    boundary_contracts: Sequence[BoundaryContract] = (),
 ) -> tuple[_ImplementedFrontHalfRow, ...]:
     if workflow is None:
         return ()
     implemented_by_row_id = {
-        row.row_id: row for row in _implemented_front_half_rows(workflow, boundary_contracts)
+        row.row_id: row for row in _implemented_front_half_rows(workflow)
     }
     for row in _implemented_s5_boundary_rows(workflow):
         implemented_by_row_id.setdefault(row.row_id, row)

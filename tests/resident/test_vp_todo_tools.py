@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 
 import pytest
 
 from arnold_pipelines.megaplan.resident import profile as profile_module
 from arnold_pipelines.megaplan.resident import vp_todo
-from arnold_pipelines.megaplan.resident import agent_loop as agent_loop_module
-from arnold_pipelines.megaplan.resident.agent_loop import ToolRuntimeContext
 from arnold_pipelines.megaplan.resident.auth import ResidentAuthorizer
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
 from arnold_pipelines.megaplan.resident.profile import (
@@ -18,7 +15,6 @@ from arnold_pipelines.megaplan.resident.profile import (
     LaunchSubagentInput,
     MegaplanResidentProfile,
     ReadTodoListInput,
-    ReconcileTodoItemInput,
 )
 from arnold_pipelines.megaplan.resident.subagent import SubagentResult
 from arnold_pipelines.megaplan.store import FileStore
@@ -71,57 +67,6 @@ def test_fail_retained_via_tool(tmp_path) -> None:
     assert items[0]["status"] == "failed"
 
 
-def test_reconcile_existing_canonical_run_is_terminal_and_idempotent(tmp_path) -> None:
-    profile = _profile(tmp_path)
-    added = profile._add_todo_item(AddTodoItemInput(task="launch chain")).data["item"]
-    payload = ReconcileTodoItemInput(
-        id=added["id"],
-        canonical_run_id="canonical-chain-7",
-        evidence="/evidence/canonical-chain-7.json",
-        resolution="the exact requested chain is already canonical and running",
-    )
-
-    first = profile._reconcile_todo_item(payload)
-    second = profile._reconcile_todo_item(payload)
-
-    assert first.ok is True and second.ok is True
-    item = profile._read_todo_list(ReadTodoListInput()).data["items"][0]
-    assert item["status"] == vp_todo.SUPERSEDED
-    assert item["canonical_run_id"] == "canonical-chain-7"
-    assert item["canonical_run_evidence"] == "/evidence/canonical-chain-7.json"
-    assert profile._read_todo_list(ReadTodoListInput()).data["pending"] == 0
-
-
-def test_reconcile_rejects_missing_evidence_and_conflicting_run(tmp_path) -> None:
-    profile = _profile(tmp_path)
-    added = profile._add_todo_item(AddTodoItemInput(task="launch chain")).data["item"]
-    missing = profile._reconcile_todo_item(
-        ReconcileTodoItemInput(
-            id=added["id"], canonical_run_id="run-1", evidence="", resolution="overlap"
-        )
-    )
-    assert missing.ok is False
-    assert profile._read_todo_list(ReadTodoListInput()).data["pending"] == 1
-
-    assert profile._reconcile_todo_item(
-        ReconcileTodoItemInput(
-            id=added["id"],
-            canonical_run_id="run-1",
-            evidence="/evidence/run-1.json",
-            resolution="exact canonical identity",
-        )
-    ).ok
-    conflict = profile._reconcile_todo_item(
-        ReconcileTodoItemInput(
-            id=added["id"],
-            canonical_run_id="run-2",
-            evidence="/evidence/run-2.json",
-            resolution="different run",
-        )
-    )
-    assert conflict.ok is False
-
-
 def test_add_rejects_empty_task(tmp_path) -> None:
     profile = _profile(tmp_path)
     result = profile._add_todo_item(AddTodoItemInput(task="   "))
@@ -153,12 +98,7 @@ def test_launch_subagent_tool_wraps_dispatcher(tmp_path, monkeypatch) -> None:
 
     result = asyncio.run(
         profile._launch_subagent(
-            LaunchSubagentInput(
-                task="summarize readme",
-                description="Summarize the repository README",
-                toolsets="file,web",
-                project_dir="/repo",
-            )
+            LaunchSubagentInput(task="summarize readme", toolsets="file,web", project_dir="/repo")
         )
     )
     assert result.ok is True
@@ -178,89 +118,9 @@ def test_launch_subagent_tool_propagates_failure(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(profile_module, "launch_subagent_task", fake_launch)
 
-    result = asyncio.run(
-        profile._launch_subagent(
-            LaunchSubagentInput(task="x", description="Run the delegated task")
-        )
-    )
+    result = asyncio.run(profile._launch_subagent(LaunchSubagentInput(task="x")))
     assert result.ok is False
     assert result.data["returncode"] == 6
-
-
-def test_scheduled_todo_launch_without_authoritative_inbound_fails_with_diagnostic(
-    tmp_path, monkeypatch
-) -> None:
-    profile = _profile(tmp_path)
-    item = vp_todo.add_item(
-        profile.config.special_requests_todo_path,
-        "launch legacy scheduled work",
-    )
-
-    async def must_not_launch(*args, **kwargs):
-        raise AssertionError("missing inbound custody must block process launch")
-
-    monkeypatch.setattr(profile_module, "launch_subagent_task", must_not_launch)
-
-    result = asyncio.run(
-        profile._launch_subagent(
-            LaunchSubagentInput(
-                task=item["task"],
-                description="Launch the scheduled work",
-                request_id=item["id"],
-            )
-        )
-    )
-
-    assert result.ok is False
-    assert result.data["diagnostic_code"] == "missing_launch_provenance"
-    assert result.data["escalation_required"] is True
-    logs = [
-        json.loads(path.read_text(encoding="utf-8"))
-        for path in (tmp_path / "store" / "system_logs").glob("*.json")
-    ]
-    diagnostic = next(
-        row
-        for row in logs
-        if row["event_type"] == "resident_vp_todo_launch_custody_failure"
-    )
-    assert diagnostic["details"]["todo_item_id"] == item["id"]
-    assert diagnostic["details"]["delegation_allowed"] is False
-
-
-def test_scheduled_turn_cannot_launch_outside_retained_todo(tmp_path, monkeypatch) -> None:
-    profile = _profile(tmp_path)
-
-    async def must_not_launch(*args, **kwargs):
-        raise AssertionError("scheduled authority must remain bounded to a retained todo")
-
-    monkeypatch.setattr(profile_module, "launch_subagent_task", must_not_launch)
-    token = agent_loop_module._TOOL_RUNTIME_CONTEXT.set(
-        ToolRuntimeContext(
-            conversation_id="scheduled-audit",
-            launch_origin={
-                "transport": "non_discord",
-                "applicability": "not_applicable",
-                "source_kind": "scheduled_turn",
-            },
-        )
-    )
-    try:
-        result = asyncio.run(
-            profile._launch_subagent(
-                LaunchSubagentInput(
-                    task="unretained work",
-                    description="Attempt work outside the retained todo",
-                    request_id="unknown-todo",
-                )
-            )
-        )
-    finally:
-        agent_loop_module._TOOL_RUNTIME_CONTEXT.reset(token)
-
-    assert result.ok is False
-    assert result.data["delegation_allowed"] is False
-    assert result.data["escalation_required"] is True
-    assert "exact retained todo" in result.message
 
 
 def test_hot_context_exposes_managed_resident_agents(tmp_path, monkeypatch) -> None:
@@ -285,16 +145,6 @@ def test_hot_context_exposes_managed_resident_agents(tmp_path, monkeypatch) -> N
     assert context["resident_runtime"]["subagent_launch"]["standard"] == (
         "arnold-managed-agent-run-v2"
     )
-    policy = context["resident_runtime"]["subagent_launch"]["delegation_policy"]
-    assert "independent actionable sub-problems" in policy["preference"]
-    assert "one clear owner per sub-problem" in policy["ownership"]
-    assert "action-oriented task prompt" in policy["task_prompt_contract"]
-    assert "explanation, review, status" in policy["exceptions"]["non_execution"]
-    assert "trivial or non-independent fragments" in policy["exceptions"][
-        "trivial_or_non_independent"
-    ]
-    assert "never expands" in policy["exceptions"]["authorization"]
-    assert "returned durable run ID" in policy["launch_evidence"]
 
 
 def test_hot_context_vp_todos_is_empty_when_no_pending_items(tmp_path) -> None:
@@ -408,9 +258,5 @@ def test_hot_context_vp_todos_labels_conditional_work_and_full_list_retrieval(tm
 
 def test_launch_subagent_tool_rejects_empty_task(tmp_path) -> None:
     profile = _profile(tmp_path)
-    result = asyncio.run(
-        profile._launch_subagent(
-            LaunchSubagentInput(task="", description="Reject the empty task")
-        )
-    )
+    result = asyncio.run(profile._launch_subagent(LaunchSubagentInput(task="")))
     assert result.ok is False

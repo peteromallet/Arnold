@@ -446,31 +446,6 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
     )
     resume_chain_parser.add_argument("--actor", default="operator")
 
-    retire_chain_parser = cloud_sub.add_parser(
-        "retire-chain",
-        parents=[shared],
-        help="Archive and tombstone one exact zero-progress paused chain superseded by a completed chain",
-    )
-    retire_chain_parser.add_argument("--session", required=True)
-    retire_chain_parser.add_argument("--expect-marker-sha256", required=True)
-    retire_chain_parser.add_argument("--superseded-by", required=True)
-    retire_chain_parser.add_argument("--expect-superseding-marker-sha256", required=True)
-    retire_chain_parser.add_argument("--completion-manifest", required=True)
-    retire_chain_parser.add_argument("--completion-manifest-sha256", required=True)
-    retire_chain_parser.add_argument("--git-repo", required=True)
-    retire_chain_parser.add_argument("--base-ref", default="origin/main")
-    retire_chain_parser.add_argument("--landed-commit", action="append", required=True)
-    retire_chain_parser.add_argument("--reason", required=True)
-    retire_chain_parser.add_argument("--actor", default="operator")
-    retire_chain_parser.add_argument(
-        "--marker-dir", default="/workspace/.megaplan/cloud-sessions"
-    )
-    retire_chain_parser.add_argument(
-        "--on-box",
-        action="store_true",
-        help="Run against the local agentbox control plane instead of using SSH transport",
-    )
-
     cloud_sub.add_parser("down", parents=[shared], help="Pause the deployment without deleting volume")
 
     supervise_parser = cloud_sub.add_parser(
@@ -522,9 +497,6 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             return _run_init(root, args)
         if action == "quickstart":
             return _run_quickstart(root, args)
-
-        if action == "retire-chain" and bool(getattr(args, "on_box", False)):
-            return _run_session_retirement(args)
 
         spec = _load_cloud_spec(root, args)
         provider = _provider_for_action(spec, args)
@@ -650,20 +622,6 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             _relay_output(result, secret_names=spec.secrets, env=os.environ)
             return result.returncode
 
-        if action == "retire-chain":
-            command = shlex.join(
-                [
-                    "python3",
-                    "-P",
-                    "-m",
-                    "arnold_pipelines.megaplan.cloud.session_retirement",
-                    *_session_retirement_argv(args),
-                ]
-            )
-            result = provider.ssh_exec(command)
-            _relay_output(result, secret_names=spec.secrets, env=os.environ)
-            return result.returncode
-
         if action == "down":
             return provider.down()
 
@@ -685,42 +643,6 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
         raise CliError("invalid_args", f"Unknown cloud action: {action}")
     except CliError as exc:
         return _emit_error(exc)
-
-
-def _session_retirement_argv(args: argparse.Namespace) -> list[str]:
-    argv = [
-        "--marker-dir",
-        str(args.marker_dir),
-        "--session",
-        str(args.session),
-        "--expect-marker-sha256",
-        str(args.expect_marker_sha256),
-        "--superseded-by",
-        str(args.superseded_by),
-        "--expect-superseding-marker-sha256",
-        str(args.expect_superseding_marker_sha256),
-        "--completion-manifest",
-        str(args.completion_manifest),
-        "--completion-manifest-sha256",
-        str(args.completion_manifest_sha256),
-        "--git-repo",
-        str(args.git_repo),
-        "--base-ref",
-        str(args.base_ref),
-        "--reason",
-        str(args.reason),
-        "--actor",
-        str(args.actor),
-    ]
-    for commit in args.landed_commit:
-        argv.extend(["--landed-commit", str(commit)])
-    return argv
-
-
-def _run_session_retirement(args: argparse.Namespace) -> int:
-    from arnold_pipelines.megaplan.cloud.session_retirement import main
-
-    return main(_session_retirement_argv(args))
 
 
 def _cloud_yaml_path(root: Path, args: argparse.Namespace) -> Path:
@@ -2657,16 +2579,7 @@ with os.fdopen(fd, "w", encoding="utf-8") as handle:
     handle.write(json.dumps(current, indent=2, sort_keys=True) + "\\n")
 os.replace(tmp_name, path)
 """
-    # The marker writer is embedded before ``;`` or ``&&`` in several larger
-    # shell commands. Group it so the heredoc terminator remains on a line by
-    # itself while the caller can safely append an operator to the closing
-    # brace. The group preserves the Python process exit status.
-    return (
-        "{\n"
-        f"python3 - <<'MEGAPLAN_MARKER_WRITE'\n{script.strip()}\n"
-        "MEGAPLAN_MARKER_WRITE\n"
-        "}"
-    )
+    return f"python3 - <<'MEGAPLAN_MARKER_WRITE'\n{script.strip()}\nMEGAPLAN_MARKER_WRITE"
 
 
 def _prelaunch_marker_guard_command(ctx: "ChainLaunchContext") -> str:
@@ -2873,7 +2786,7 @@ def _chain_start_command(
         cwd = shlex.quote(project_dir or engine_dir)
         engine_path = shlex.quote(engine_dir)
         prefix += (
-            'ENGINE_DIR="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"; '
+            'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"; '
             f'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR={engine_path}; fi; '
             f'cd {cwd} && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${{PYTHONPATH:-}}" '
         )
@@ -2936,13 +2849,11 @@ def _megaplan_refresh_command(
         '    https://github.com/*) UPSTREAM_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${UPSTREAM_URL#https://github.com/}" ;;',
         "  esac",
         "fi",
-        # Linked Git worktrees expose ``.git`` as a file. Treat both a normal
-        # checkout directory and a worktree gitfile as an existing source.
-        'if [ -n "$REPO" ] && [ ! -e "$SRC/.git" ]; then',
+        'if [ -n "$REPO" ] && [ ! -d "$SRC/.git" ]; then',
         '  mkdir -p "$(dirname "$SRC")"',
         '  git clone --branch "$REF" "$UPSTREAM_URL" "$SRC"',
         "fi",
-        'if [ -e "$SRC/.git" ]; then',
+        'if [ -d "$SRC/.git" ]; then',
         '  git -C "$SRC" fetch origin "$REF"',
         '  BRANCH="$(git -C "$SRC" branch --show-current)"',
         '  if [ "$BRANCH" != "$REF" ]; then git -C "$SRC" checkout "$REF"; fi',
@@ -2996,9 +2907,6 @@ def _megaplan_refresh_command(
         "else",
         '  echo "[megaplan-refresh] source clone missing at $SRC; skipping editable install"',
         "fi",
-        # Preserve the refresh-verified source across the later cloud hot-env
-        # load, which may still advertise an older resident runtime.
-        'export MEGAPLAN_LAUNCH_RUNTIME_SRC="${MEGAPLAN_RUNTIME_SRC:-}"',
         'echo "[megaplan-refresh] done"',
         "true",
     ]
@@ -3191,7 +3099,7 @@ def _epic_chain_start_command(
     if engine_dir:
         engine_path = shlex.quote(engine_dir)
         prefix += (
-            'ENGINE_DIR="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"; '
+            'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"; '
             f'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR={engine_path}; fi; '
             f'cd {shlex.quote(workspace)} && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${{PYTHONPATH:-}}" '
         )
@@ -4196,12 +4104,6 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             detail="cloud chain launch is preparing the remote session",
         ),
     }
-    if bool(getattr(args, "fresh", False)):
-        # A fresh launch explicitly supersedes any prior pause for this exact
-        # identity. Atomic marker writes merge existing fields, so overwrite
-        # both controls instead of leaving a stale should_run=false marker.
-        marker_payload["should_run"] = True
-        marker_payload["operator_pause"] = None
     try:
         engine_ref_check = _verify_configured_megaplan_ref_advertised(launch_spec)
     except CliError as exc:
@@ -4685,9 +4587,6 @@ def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpe
             detail="cloud epic-chain launch is preparing the remote session",
         ),
     }
-    if bool(getattr(args, "fresh", False)):
-        marker_payload["should_run"] = True
-        marker_payload["operator_pause"] = None
     try:
         engine_ref_check = _verify_configured_megaplan_ref_advertised(launch_spec)
     except CliError as exc:

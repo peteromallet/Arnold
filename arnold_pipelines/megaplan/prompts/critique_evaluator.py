@@ -23,8 +23,6 @@ from arnold_pipelines.megaplan._core import (
 )
 from arnold_pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
 from arnold_pipelines.megaplan.audits.critique_evaluator import MAX_OTHER_AREAS
-from arnold_pipelines.megaplan.schema_projection import schema_template_payload
-from arnold_pipelines.megaplan.schemas import SCHEMAS
 from arnold_pipelines.megaplan.types import PlanState
 
 
@@ -484,11 +482,12 @@ def _write_critique_evaluator_template(
         {"check_id": cid, "why": ""} for cid in all_check_ids
     ]
 
-    template = schema_template_payload(
-        SCHEMAS["critique_evaluator.json"],
-        contract="critique evaluator scratch template",
-    )
-    template["skipped"] = skipped
+    template: dict[str, object] = {
+        "selections": [],
+        "skipped": skipped,
+        "evaluator_model": "",
+        "flag_verifications": [],
+    }
 
     output_path = plan_dir / "critique_evaluator_output.json"
     output_path.write_text(json.dumps(template, indent=2), encoding="utf-8")

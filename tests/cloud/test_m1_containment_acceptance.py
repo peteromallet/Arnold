@@ -79,8 +79,7 @@ def _extract_report_assembler() -> str:
     marker = (
         'python3 - "$GATHER_DIR/findings.json" "$JSON_OUT" "$MD_OUT" '
         '"$REPORT_LOG" "$TS" "$AUDIT_MUTATION_AUTHORIZED_FLAG" '
-        '"$AUDIT_LAUNCH_ATTEMPTED" "$RECOVERY_EVIDENCE" '
-        '"$AUDIT_CODEX_MODEL" <<\'PY\''
+        '"$AUDIT_LAUNCH_ATTEMPTED" <<\'PY\''
     )
     start = text.index("\n", text.index(marker)) + 1
     return text[start : text.index("\nPY\n", start)]
@@ -133,7 +132,6 @@ def _run_auditor_dispatch(tmp_path: Path) -> dict[str, object]:
          f"ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
          f"GATHER_DIR={shlex.quote(str(gather_dir))}",
          f"REPORT_DIR={shlex.quote(str(tmp_path / 'reports'))}",
-         "TS=20260713T210000Z",
          "DEEPSEEK_MODEL=deepseek:deepseek-v4-pro",
          "AUDIT_CODEX_MODEL=gpt-5.6-sol",
          "SUBAGENT_PROFILE=partnered-5",
@@ -166,20 +164,7 @@ def _run_report_assembler(tmp_path: Path, findings: dict[str, object]) -> dict[s
     program.write_text(_extract_report_assembler(), encoding="utf-8")
     findings_path = tmp_path / "findings.json"
     json_out = tmp_path / "audit.json"
-    recovery_path = tmp_path / "recovery.json"
     findings_path.write_text(json.dumps(findings), encoding="utf-8")
-    recovery_path.write_text(
-        json.dumps(
-            {
-                "enabled": False,
-                "watchdog_exit_code": None,
-                "sessions_discovered": 0,
-                "should_run_count": 0,
-                "decisions": [],
-            }
-        ),
-        encoding="utf-8",
-    )
     result = subprocess.run(
         [
             sys.executable,
@@ -191,8 +176,6 @@ def _run_report_assembler(tmp_path: Path, findings: dict[str, object]) -> dict[s
             "20260710T200000Z",
             "1",
             "1",
-            str(recovery_path),
-            "gpt-5.6-sol",
         ],
         capture_output=True,
         text=True,
@@ -417,8 +400,6 @@ def test_real_auditor_dispatch_proves_exact_model_and_read_only_receipt(tmp_path
         "read-only",
         "-c",
         "model=gpt-5.6-sol",
-        "-c",
-        "model_reasoning_effort=high",
         "-",
     ]
     receipt_path = (
@@ -437,7 +418,7 @@ def test_real_auditor_dispatch_proves_exact_model_and_read_only_receipt(tmp_path
     }
 
 
-def test_auditor_ordinary_finding_stays_report_only_without_true_stall_gate(
+def test_auditor_routes_findings_only_to_queue_and_attempt_is_not_report_only(
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -465,7 +446,7 @@ def test_auditor_ordinary_finding_stays_report_only_without_true_stall_gate(
         },
         queue_root=queue_root,
     )
-    assert routed is None
+    assert routed is not None and routed["request"]["queue_dir"] == str(queue_root)
     assert not (workspace / ".git").exists()
     assert not (workspace / ".megaplan" / "plans").exists()
 
@@ -479,6 +460,6 @@ def test_auditor_ordinary_finding_stays_report_only_without_true_stall_gate(
         },
     )
     summary = report["dispatch_summary"]
-    assert summary["mode"] == "report_only"
-    assert summary["model_dispatched"] is False
-    assert report["data_quality"]["canonical_launch_disagreements"]
+    assert summary["mode"] == "autofix_attempted"
+    assert summary["model_dispatched"] is True
+    assert "regardless of launch outcome" in summary["rationale"]

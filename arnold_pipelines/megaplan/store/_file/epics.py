@@ -25,20 +25,8 @@ class FileEpicMixin:
         state: str = "shaping",
         home_backend: str = "file",
         idempotency_key: str | None = None,
-        epic_id: str | None = None,
     ) -> Epic:
-        request_hash = None
-        if idempotency_key is not None:
-            request_hash = self._request_hash(
-                "create_epic",
-                (),
-                {"title": title, "goal": goal, "body": body, "state": state, "home_backend": home_backend, "epic_id": epic_id},
-            )
-            replayed = self._load_epic_idempotency("create_epic", idempotency_key, request_hash)
-            if replayed is not None:
-                return replayed
-        if epic_id is None:
-            epic_id = _new_id("epic")
+        epic_id = _new_id("epic")
         epic = Epic(
             id=epic_id,
             title=title,
@@ -54,14 +42,6 @@ class FileEpicMixin:
         with self.transaction(epic_id):
             self._save_model(self._epic_path(epic_id), epic, journal_root=journal_root)
             self._commit_write(self._body_path(epic_id), body.encode("utf-8"), journal_root=journal_root)
-            if idempotency_key is not None and request_hash is not None:
-                self._save_epic_idempotency(
-                    operation="create_epic",
-                    idempotency_key=idempotency_key,
-                    request_hash=request_hash,
-                    response=epic,
-                    journal_root=journal_root,
-                )
         return epic
 
     def load_epic(self, epic_id: str) -> Epic | None:
@@ -76,7 +56,7 @@ class FileEpicMixin:
                 (epic_id,),
                 {"expected_revision": expected_revision, **changes},
             )
-            replayed = self._load_epic_idempotency("update_epic", idempotency_key, request_hash)
+            replayed = self._load_epic_idempotency(idempotency_key, request_hash)
             if replayed is not None:
                 return replayed
         current = self.load_epic(epic_id)
@@ -95,7 +75,6 @@ class FileEpicMixin:
                 self._commit_write(self._body_path(epic_id), updated.body.encode("utf-8"), journal_root=journal_root)
             if idempotency_key is not None and request_hash is not None:
                 self._save_epic_idempotency(
-                    operation="update_epic",
                     idempotency_key=idempotency_key,
                     request_hash=request_hash,
                     response=updated,

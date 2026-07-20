@@ -15,7 +15,6 @@ import yaml
 
 from arnold_pipelines.megaplan import chain as chain_module
 from arnold_pipelines.megaplan.cloud.cli import (
-    _atomic_marker_write_command,
     _bootstrap_launch_command,
     _chain_anchor_uploads,
     _chain_launch_verification_command,
@@ -28,7 +27,6 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _derive_bootstrap_session_name,
     _latest_failure_from_plan_status,
     _materialize_canonical_epic_input,
-    _megaplan_refresh_command,
     _normalized_chain_upload_spec,
     _phase_model_by_label_from_preflight,
     _filter_cloud_sessions_since,
@@ -134,7 +132,7 @@ def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     )
 
     assert "if [ -f /workspace/.cloud-hot-env ]; then set -a; . /workspace/.cloud-hot-env; set +a; fi;" in command
-    assert 'ENGINE_DIR="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"' in command
+    assert 'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"' in command
     assert 'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR=/workspace/arnold; fi;' in command
     assert 'cd /workspace/project && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}"' in command
     assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start" in command
@@ -155,36 +153,6 @@ def test_tmux_chain_launch_default_marker_records_run_kind() -> None:
     assert marker["run_kind"] == "chain"
     assert marker["notification_context"]["audience"] == "test_only"
     assert marker["notification_context"]["reason"] == "pytest_environment"
-
-
-def test_atomic_marker_writer_can_be_followed_by_shell_operator(tmp_path: Path) -> None:
-    marker = tmp_path / "markers" / "demo.json"
-    command = _atomic_marker_write_command(
-        str(marker),
-        {"session": "demo", "run_kind": "chain"},
-    )
-
-    result = subprocess.run(
-        ["bash", "-lc", f"{command}; test -s {marker}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert json.loads(marker.read_text()) == {
-        "run_kind": "chain",
-        "session": "demo",
-    }
-
-
-def test_megaplan_refresh_recognizes_linked_worktree_gitfile() -> None:
-    command = _megaplan_refresh_command(_cloud_spec())
-
-    assert '[ ! -e "$SRC/.git" ]' in command
-    assert '[ -e "$SRC/.git" ]' in command
-    assert '[ -d "$SRC/.git" ]' not in command
-    assert 'export MEGAPLAN_LAUNCH_RUNTIME_SRC="${MEGAPLAN_RUNTIME_SRC:-}"' in command
 
 
 def test_preflight_phase_model_materialization_preserves_profile_tier_routing() -> None:
@@ -431,8 +399,6 @@ def test_launch_epic_end_to_end_uploads_canonical_spec_and_tracks_watchdog(
     marker = next(marker for marker in provider.markers.values() if marker["remote_spec"] == remote_spec)
     assert marker["run_kind"] == "chain"
     assert marker["allow_human_gates"] is False
-    assert marker["should_run"] is True
-    assert marker["operator_pause"] is None
     assert "python -P -m arnold_pipelines.megaplan chain start" in marker["relaunch_command"]
     assert f"--spec {remote_spec}" in marker["relaunch_command"]
     assert remote_spec in provider.remote_files

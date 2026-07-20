@@ -49,28 +49,6 @@ if [[ ! -f "$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-m
   && [[ -f "$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop" ]]; then
   WRAPPER_REPO_ROOT="$ARNOLD_SRC"
 fi
-SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
-if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
-  SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
-fi
-if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
-  SUPERVISOR_RUNTIME_LIB="/usr/local/bin/arnold-supervisor-runtime-lib"
-fi
-# shellcheck disable=SC1090
-. "$SUPERVISOR_RUNTIME_LIB"
-arnold_supervisor_stdlib_init meta-repair-loop || exit $?
-SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
-SUPERVISOR_GAP_SCAN="${MEGAPLAN_SUPERVISOR_GAP_SCAN:-$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-gap-scan}"
-if [[ ! -x "$SUPERVISOR_GAP_SCAN" ]]; then
-  SUPERVISOR_GAP_SCAN="/usr/local/bin/arnold-supervisor-gap-scan"
-fi
-SUPERVISOR_GAP_EVIDENCE="$REPAIR_DATA_DIR/${SAFE_SESSION}.supervisor-gap.json"
-if [[ -x "$SUPERVISOR_GAP_SCAN" ]]; then
-  "$MEGAPLAN_SUPERVISOR_STDLIB_PYTHON" -P "$SUPERVISOR_GAP_SCAN" \
-    --marker-dir "$MARKER_DIR" --session "$SESSION" \
-    --output "$SUPERVISOR_GAP_EVIDENCE" >/dev/null 2>&1 || true
-fi
-arnold_supervisor_runtime_init meta-repair-loop "$ARNOLD_SRC" || exit $?
 LAUNCHER="${MEGAPLAN_META_LAUNCHER:-/root/.claude/skills/subagent-launcher/launch_hermes_agent.py}"
 SUBAGENT_SKILL="${MEGAPLAN_META_SUBAGENT_SKILL:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md}"
 DEEPSEEK_MODEL="${MEGAPLAN_META_MODEL:-deepseek:deepseek-v4-pro}"
@@ -90,6 +68,7 @@ REPAIR_DATA_PATH="$REPAIR_DATA_DIR/${SESSION}.repair-data.json"
 RUN_DIR="${MEGAPLAN_META_RUN_DIR:-/workspace/.megaplan/meta-runs}"
 BRIEF_PREFLIGHT_MAX_CHARS="${MEGAPLAN_META_BRIEF_PREFLIGHT_MAX_CHARS:-900000}"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
+SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
 RUN_LOG="$RUN_DIR/${TS}-${SAFE_SESSION}.log"
 
 load_resident_delegation_context() {
@@ -357,9 +336,6 @@ BRIEF_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-brief.md"
   echo "**Trigger:** \`$TRIGGER_TYPE\`"
   echo "**Session:** \`$SESSION\`"
   echo "**Repair Data Directory:** \`$REPAIR_DATA_DIR\`"
-  if [[ -s "$SUPERVISOR_GAP_EVIDENCE" ]]; then
-    echo "**Dependency-independent launch-gap evidence:** \`$SUPERVISOR_GAP_EVIDENCE\`"
-  fi
   echo
   echo "$PROMPT"
   echo
@@ -436,9 +412,6 @@ if [[ "$BRIEF_SIZE" =~ ^[0-9]+$ ]] && (( BRIEF_SIZE > BRIEF_PREFLIGHT_MAX_CHARS 
     echo "**Trigger:** \`$TRIGGER_TYPE\`"
     echo "**Session:** \`$SESSION\`"
     echo "**Repair Data Directory:** \`$REPAIR_DATA_DIR\`"
-    if [[ -s "$SUPERVISOR_GAP_EVIDENCE" ]]; then
-      echo "**Dependency-independent launch-gap evidence:** \`$SUPERVISOR_GAP_EVIDENCE\`"
-    fi
     echo
     echo "$PROMPT"
     echo
@@ -575,7 +548,7 @@ EOF
     # contain a product-local `megaplan` package that shadows Hermes runtime
     # discovery before the agent starts.
     cd /workspace || exit 1
-    PYTHONSAFEPATH=1 timeout "$SUBAGENT_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -c '
+    timeout "$SUBAGENT_TIMEOUT" python3 -c '
 import runpy
 import sys
 import types
@@ -859,7 +832,6 @@ import json, os, sys, uuid
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.meta_repair import (
-    build_meta_repair_verdict,
     derive_meta_repair_effective_outcome,
     MetaRepairRecord,
     MetaRepairTrigger,
@@ -943,28 +915,9 @@ record = MetaRepairRecord(
     post_retrigger_verification=post_retrigger_verification,
     outcome=effective_outcome,
 )
-
-# Build the meta-repair verdict following the same discipline as ordinary repair
-meta_verdict = build_meta_repair_verdict(
-    record=record,
-    verdict=verdict,
-    session=session,
-    failure_reasons=(
-        f"trigger={trigger_raw}" if trigger_raw else "no_trigger",
-    ),
-    retrigger_command_evidence=(
-        os.environ.get("META_REPAIR_VERIFICATION_JSON", "{}")
-    ),
-)
-
-record_path = persist_meta_repair_record(
-    record,
-    repair_data_dir=repair_data_dir,
-    verdict=meta_verdict,
-)
+record_path = persist_meta_repair_record(record, repair_data_dir=repair_data_dir)
 print(f"RECORD_PATH={record_path}")
 print(f"META_REPAIR_ID={meta_repair_id}")
-print(f"VERDICT_KIND={meta_verdict.verdict_kind}")
 PY
 }
 export META_REPAIR_VERIFICATION_JSON='{}'

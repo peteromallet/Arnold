@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-import json
 from pathlib import Path
-import re
 from typing import Any, Protocol
 
 from arnold_pipelines.megaplan.schemas import Message, ProgressEvent, ResidentConversation, SystemLog
@@ -26,13 +24,8 @@ from .config import ResidentConfig
 from .context_tree import classify_intent_packs
 from .escalations import EscalationAnswerDecision, authorize_escalation_answer, confirm_escalation_resolution
 from .profile import MegaplanResidentProfile
-from .query_relationship import (
-    classify_query_relationship,
-    load_query_relationship,
-    relationship_store_root,
-)
 from .reply_chain import build_reply_provenance, render_reply_context
-from .timezone import TimezoneService, localize_text_timestamps, timezone_prompt_instruction
+from .timezone import localize_text_timestamps, timezone_prompt_instruction
 
 
 @dataclass(frozen=True)
@@ -105,7 +98,6 @@ class ResidentRuntime:
         profile: MegaplanResidentProfile,
         runner: AgentRunner,
         outbound: OutboundSink,
-        project_root: str | Path | None = None,
     ) -> None:
         self.config = config
         self.authorizer = authorizer
@@ -114,9 +106,6 @@ class ResidentRuntime:
         self.profile = profile
         self.runner = runner
         self.outbound = outbound
-        self.project_root = Path(
-            project_root or getattr(runner, "cwd", None) or Path.cwd()
-        ).resolve()
         self.coalescer: AsyncBurstCoalescer[str, PersistedInboundEvent] = AsyncBurstCoalescer(
             self._handle_batch,
             idle_delay_s=config.burst_idle_delay_s,
@@ -180,159 +169,7 @@ class ResidentRuntime:
         persisted = self._persist_inbound_event(event)
         if persisted.message.bot_turn_id is not None:
             return
-        classify_query_relationship(
-            store=self.store,
-            conversation=persisted.conversation,
-            current=persisted.message,
-            project_root=self.project_root,
-        )
-        if await self._route_discord_managed_followup(persisted):
-            return
         await self.coalescer.submit(persisted.conversation.id, persisted)
-
-    async def _route_discord_managed_followup(
-        self, persisted: PersistedInboundEvent
-    ) -> bool:
-        """Continue an exact recent managed session or leave normal routing intact."""
-
-        provenance = persisted.message.discord_reply_provenance
-        if not isinstance(provenance, Mapping):
-            return False
-        source_author_id = _optional_string(provenance.get("source_author_id"))
-        if source_author_id != persisted.event.subject.user_id:
-            return False
-        ancestors = provenance.get("ancestors")
-        if not isinstance(ancestors, list) or not ancestors:
-            return False
-        immediate = ancestors[0]
-        if not isinstance(immediate, Mapping) or immediate.get("status") != "available":
-            return False
-        parent_discord_id = _optional_string(immediate.get("message_id"))
-        reference_discord_id = _optional_string(
-            persisted.event.raw.get("discord_reference_message_id")
-        )
-        if not parent_discord_id or parent_discord_id != reference_discord_id:
-            return False
-        # "Reply to their own message" is proven twice: from the immutable
-        # adapter-captured ancestor and from the exact stored parent source.
-        if _optional_string(immediate.get("author_id")) != source_author_id:
-            return False
-        parent = self.store.find_conversation_message_by_discord_id(
-            persisted.conversation.id, parent_discord_id
-        )
-        parent_provenance = getattr(parent, "discord_reply_provenance", None)
-        if (
-            parent is None
-            or parent.direction != "inbound"
-            or parent.conversation_id != persisted.conversation.id
-            or not isinstance(parent_provenance, Mapping)
-            or _optional_string(parent_provenance.get("source_author_id"))
-            != source_author_id
-        ):
-            return False
-
-        from .provenance import normalize_delegation_provenance
-        from .subagent import (
-            SubagentFollowupError,
-            find_discord_followup_target,
-            follow_up_managed_subagent,
-        )
-
-        target = find_discord_followup_target(
-            source_record_id=parent.id,
-            discord_message_id=parent_discord_id,
-            resident_conversation_id=persisted.conversation.id,
-            conversation_key=persisted.conversation.conversation_key,
-            reply_received_at=persisted.message.sent_at,
-            project_root=self.project_root,
-        )
-        if target is None:
-            return False
-        timezone_name = TimezoneService(self.store, self.config).resolve(
-            user_id=source_author_id,
-            conversation=persisted.conversation,
-            guild_id=persisted.event.subject.guild_id,
-        ).name
-        caller_provenance = normalize_delegation_provenance(
-            {
-                "transport": "discord",
-                "applicability": "applicable",
-                "resident_conversation_id": persisted.conversation.id,
-                "source_record_id": persisted.message.id,
-                "conversation_key": persisted.conversation.conversation_key,
-                "discord_message_id": persisted.message.discord_message_id,
-                "reply_to_message_id": persisted.message.discord_message_id,
-                "guild_id": persisted.event.subject.guild_id,
-                "channel_id": persisted.event.subject.channel_id,
-                "thread_id": _optional_string(
-                    persisted.event.raw.get("thread_id")
-                ),
-                "dm_user_id": _optional_string(
-                    persisted.event.raw.get("dm_user_id")
-                ),
-                "source_kind": "discord_inbound_message",
-                "timezone_name": timezone_name,
-            }
-        )
-        try:
-            query_relationship = load_query_relationship(
-                persisted.message.id,
-                store_root=relationship_store_root(self.store, self.project_root),
-            )
-            result = follow_up_managed_subagent(
-                run_id=target.run_id,
-                message=persisted.message.content,
-                project_dir=self.project_root,
-                idempotency_key=persisted.event.idempotency_key,
-                caller_provenance=caller_provenance,
-                expected_target_source_record_id=parent.id,
-                expected_target_discord_message_id=parent_discord_id,
-                query_relationship=query_relationship,
-            )
-        except (SubagentFollowupError, ValueError, OSError) as exc:
-            self.emitter.log_system_event(
-                level="warn",
-                category="system",
-                event_type="resident_subagent_followup_fallback",
-                message="Managed-session continuation was unsafe; normal resident routing retained",
-                details={
-                    "source_record_id": persisted.message.id,
-                    "parent_source_record_id": parent.id,
-                    "target_run_id": target.run_id,
-                    "error_class": exc.__class__.__name__,
-                },
-                idempotency_key=deterministic_idempotency_key(
-                    "resident-subagent-followup-fallback", persisted.message.id
-                ),
-            )
-            return False
-        await self._invoke_transport_lifecycle(
-            "mark_processing",
-            conversation_key=persisted.conversation.conversation_key,
-            message_ids=[str(persisted.message.discord_message_id)],
-            turn_id=f"followup:{result.followup_id}",
-        )
-        self.emitter.log_system_event(
-            level="info",
-            category="system",
-            event_type="resident_subagent_followup_routed",
-            message="Discord reply queued into its exact resident-managed model session",
-            details={
-                "source_record_id": persisted.message.id,
-                "parent_source_record_id": parent.id,
-                "target_run_id": target.run_id,
-                "lineage_root_run_id": target.lineage_root_run_id,
-                "continuation_run_id": result.continuation_run_id,
-                "launch_anchor": target.launch_anchor,
-                "launch_anchor_field": target.launch_anchor_field,
-                "window_seconds": 900,
-                "idempotent_replay": result.idempotent_replay,
-            },
-            idempotency_key=deterministic_idempotency_key(
-                "resident-subagent-followup-routed", persisted.message.id
-            ),
-        )
-        return True
 
     async def recover_abandoned_turns(self) -> int:
         recovered = 0
@@ -551,33 +388,14 @@ class ResidentRuntime:
             raise RuntimeError("managed completion provenance does not match the inbound reply target")
 
         hot_context = await self.profile.load_hot_context(conversation.id)
-        hot_context["current_request"] = {
-            "authority": "persisted inbound record triggering the delegated run",
-            "source_record_ids": [source_message.id],
-            "query_relationship": (
-                dict(manifest["query_relationship"])
-                if isinstance(manifest.get("query_relationship"), Mapping)
-                else None
-            ),
-        }
         if isinstance(hot_context.get("context_root"), dict):
             hot_context["context_root"]["intent_packs"] = ["delegation", "conversation"]
         prompt_for = getattr(self.profile, "system_prompt_for", None)
-        profile_prompt = (
-            prompt_for(source_message.content)
-            if callable(prompt_for)
-            else self.profile.system_prompt()
-        )
         system_prompt = (
-            profile_prompt
-            + "\n\n"
-            + _authoritative_current_request_records_prompt(
-                [
-                    {
-                        "source_record_id": source_message.id,
-                        "content": source_message.content,
-                    }
-                ]
+            (
+                prompt_for("delegated terminal result verification")
+                if callable(prompt_for)
+                else self.profile.system_prompt()
             )
             + "\n\n"
             + _timezone_instruction_from_hot_context(hot_context)
@@ -652,29 +470,27 @@ class ResidentRuntime:
             safe_text = _localize_user_text(
                 redact_text(response.final_text).strip(), hot_context
             )
-            classified_outcome = _classified_verification_outcome(safe_text)
-            outcome = classified_outcome or "unknown"
+            outcome = _verification_outcome(safe_text)
             if not safe_text:
                 safe_text = (
-                    "The verification outcome is unknown because the resident verification turn "
-                    "returned no summary; the delegated result is not being treated as proof."
+                    "Verification outcome: unknown. The resident verification turn returned no "
+                    "summary, so the delegated result is not being treated as proof."
                 )
                 outcome = "unknown"
-            elif classified_outcome is None:
+            elif outcome == "unknown" and "verification outcome:" not in safe_text.lower():
                 safe_text = (
-                    safe_text
-                    + "\n\nThe verification outcome is unknown because the resident did not "
-                    "provide a clear evidence classification."
+                    "Verification outcome: unknown. The resident did not provide the required "
+                    "evidence classification.\n\n" + safe_text
                 )
             turn_status = "completed"
             warnings = None
         except Exception as exc:
             outcome = "unknown"
             safe_text = (
-                f"The delegated run reached terminal status {str(manifest.get('status') or 'unknown')!r}, "
-                "but the resident verification turn failed before it could independently validate the "
-                "claimed work. The verification outcome is unknown, so the delegated final result is not "
-                "being reported as proof; operator inspection is still required."
+                f"Verification outcome: unknown. The delegated run reached terminal status "
+                f"{str(manifest.get('status') or 'unknown')!r}, but the resident verification turn "
+                "failed before it could independently validate the claimed work. The delegated final "
+                "result is therefore not being reported as proof; operator inspection is still required."
             )
             turn_status = "failed"
             warnings = [f"completion verifier {exc.__class__.__name__}"]
@@ -783,36 +599,13 @@ class ResidentRuntime:
         active_epic_id = conversation.active_epic_id
         request_text = "\n".join(item.message.content for item in items if item.message.content)
         hot_context = await self.profile.load_hot_context(conversation.id)
-        relationship_root = relationship_store_root(self.store, self.project_root)
-        query_relationships = [
-            relationship
-            for item in items
-            if (
-                relationship := load_query_relationship(
-                    item.message.id, store_root=relationship_root
-                )
-            )
-            is not None
-        ]
-        hot_context["current_request"] = {
-            "authority": "persisted inbound records triggering this turn",
-            "source_record_ids": [item.message.id for item in items],
-            "query_relationships": query_relationships,
-        }
-        if query_relationships:
-            hot_context["current_query_relationships"] = query_relationships
         if isinstance(hot_context.get("context_root"), dict):
             hot_context["context_root"]["intent_packs"] = list(
                 classify_intent_packs(request_text)
             )
         prompt_for = getattr(self.profile, "system_prompt_for", None)
-        profile_prompt = (
-            prompt_for(request_text) if callable(prompt_for) else self.profile.system_prompt()
-        )
         system_prompt = (
-            profile_prompt
-            + "\n\n"
-            + _authoritative_current_request_prompt(items)
+            (prompt_for(request_text) if callable(prompt_for) else self.profile.system_prompt())
             + "\n\n"
             + _timezone_instruction_from_hot_context(hot_context)
         )
@@ -1092,15 +885,6 @@ class ResidentRuntime:
             if _optional_string(item.event.raw.get("discord_message_id"))
             and item.conversation.conversation_key.startswith("discord:")
         ]
-        if discord_items and len(discord_items) != len(items):
-            # A scheduler event coalesced with a Discord inbound must never
-            # borrow the coincident user's immutable reply envelope.
-            return {
-                "transport": "discord",
-                "applicability": "ambiguous",
-                "source_kind": "mixed_scheduler_discord_burst",
-                "resident_turn_id": turn_id,
-            }
         if len(discord_items) > 1:
             # A burst can contain independent user requests.  The resident may
             # answer the burst conversationally, but delegated side effects
@@ -1112,16 +896,10 @@ class ResidentRuntime:
                 "resident_turn_id": turn_id,
             }
         if not discord_items:
-            scheduled_turn = any(
-                item.event.raw.get("source_kind") == "scheduled_turn"
-                for item in items
-            )
             return {
                 "transport": "non_discord",
                 "applicability": "not_applicable",
-                "source_kind": (
-                    "scheduled_turn" if scheduled_turn else "scheduler_or_internal_turn"
-                ),
+                "source_kind": "scheduler_or_internal_turn",
             }
         item = discord_items[0]
         message_id = _optional_string(item.event.raw.get("discord_message_id"))
@@ -1416,46 +1194,6 @@ def _localize_user_text(text: str, hot_context: Mapping[str, Any]) -> str:
     )
 
 
-def _authoritative_current_request_prompt(
-    items: Sequence[PersistedInboundEvent],
-) -> str:
-    """Render the exact turn-triggering records as prompt authority, without summarizing."""
-
-    return _authoritative_current_request_records_prompt(
-        [
-            {
-                "source_record_id": item.message.id,
-                "content": item.message.content,
-            }
-            for item in items
-        ]
-    )
-
-
-def _authoritative_current_request_records_prompt(
-    records: Sequence[Mapping[str, str]],
-) -> str:
-    """Render exact persisted inbound records as the system-prompt request authority."""
-
-    has_content = any(record.get("content") for record in records)
-    absence = (
-        "Every authoritative content value is empty. There is no substantive current request "
-        "to infer; represent that absence honestly and do not fabricate one."
-        if not has_content
-        else "Answer the authoritative message or messages below as the current request."
-    )
-    return (
-        "Authoritative current inbound request for this turn:\n"
-        "The persisted inbound record(s) in the JSON block below are the sole current request. "
-        "Bounded conversation history, reply ancestry, hot context, and retrieved context are "
-        "context only: do not infer or substitute a different current request from them. "
-        f"{absence} Respond naturally without adding a synthetic request header.\n"
-        "<authoritative_current_request_json>\n"
-        + json.dumps(records, ensure_ascii=False, sort_keys=True)
-        + "\n</authoritative_current_request_json>"
-    )
-
-
 _COMPLETION_VERIFIER_SYSTEM_PROMPT = """
 You are handling a resident-managed delegated-run completion as a fresh normal
 resident turn. Independently verify the original task and the delegated run's
@@ -1463,12 +1201,11 @@ claims. A terminal manifest, exit code zero, result.md, or delegated final prose
 is evidence to inspect, never proof of completion. Inspect the actual project
 state and run log; run proportionate read-only or test verification when safe.
 Classify truthfully as success, partial, failed, unknown, or blocked. Do not
-repair or continue the delegated task in this turn. Write a concise,
-user-facing response in natural prose: begin with what happened rather than a
-template label, and state the classification clearly in prose (for example,
-"The verification outcome is partial."). Explain what is actually complete,
-concrete verification evidence, and remaining caveats/actions. Never expose
-secrets or internal handoff notes.
+repair or continue the delegated task in this turn. Your concise user-facing
+response must begin with exactly `Verification outcome: <classification>.` and
+explain what happened, what is actually complete, concrete verification
+evidence, and remaining caveats/actions. Never expose secrets or internal
+handoff notes.
 """.strip()
 
 
@@ -1484,14 +1221,6 @@ def _managed_completion_verification_prompt(
             path = manifest_path.parent / path
         return str(path.resolve())
 
-    relationship = manifest.get("query_relationship")
-    relationship_context = (
-        "Query relationship and aggregation ownership:\n"
-        + json.dumps(relationship, sort_keys=True, default=str)
-        + "\n\n"
-        if isinstance(relationship, Mapping)
-        else ""
-    )
     return (
         "A resident-managed delegated execution has reached a terminal state and now requires "
         "independent completion verification. Do not accept its final response as proof.\n\n"
@@ -1503,27 +1232,17 @@ def _managed_completion_verification_prompt(
         f"Original delegated prompt: {resolved_path('prompt_path', 'prompt.md')}\n"
         f"Delegated final claim: {resolved_path('result_path', 'result.md')}\n"
         f"Full delegated log: {resolved_path('full_log_path', str(manifest.get('log_path') or 'run.log'))}\n\n"
-        f"{relationship_context}"
-        "Authoritative original user request (preserve its requirements):\n"
+        "Original user request (context only; preserve its requirements):\n"
         f"{source_message[:12000]}"
     )
 
 
-def _classified_verification_outcome(text: str) -> str | None:
-    """Return an explicit verifier classification, distinct from no classification."""
-
-    normalized = text.lower()
-    for outcome in ("success", "partial", "failed", "unknown", "blocked"):
-        if re.search(
-            rf"\b(?:the )?verification outcome\s*(?::|is|was|as)\s*{outcome}\b",
-            normalized,
-        ):
-            return outcome
-    return None
-
-
 def _verification_outcome(text: str) -> str:
-    return _classified_verification_outcome(text) or "unknown"
+    prefix = text.lstrip().lower()[:120]
+    for outcome in ("success", "partial", "failed", "unknown", "blocked"):
+        if prefix.startswith(f"verification outcome: {outcome}"):
+            return outcome
+    return "unknown"
 
 
 def _repair_data_dir_from_config(config: ResidentConfig) -> str | None:

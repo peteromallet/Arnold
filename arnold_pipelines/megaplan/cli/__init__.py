@@ -80,7 +80,6 @@ from arnold_pipelines.megaplan.handlers import (
     handle_tiebreaker_run,
     handle_verify_human,
 )
-from arnold_pipelines.megaplan.handlers.strategy import handle_strategy
 from arnold_pipelines.megaplan.loop.handlers import (
     handle_loop_init,
     handle_loop_pause,
@@ -374,105 +373,6 @@ def build_parser() -> argparse.ArgumentParser:
     initiative_search.add_argument("keywords", nargs="*")
     initiative_search.add_argument("--keywords-all", action="store_true")
     initiative_search.add_argument("--limit", type=int)
-
-    ticket_parser = subparsers.add_parser("ticket")
-    ticket_sub = ticket_parser.add_subparsers(dest="ticket_action", required=True)
-    ticket_new = ticket_sub.add_parser("new")
-    ticket_new.add_argument("title")
-    ticket_new.add_argument("-b", "--body")
-    ticket_new.add_argument("--stdin-body", action="store_true")
-    ticket_new.add_argument("--edit", action="store_true")
-    ticket_new.add_argument("--tags")
-    ticket_new.add_argument("--project")
-    ticket_new.add_argument("--roadmap-horizon", choices=["Now", "Next", "Later"], default=None)
-    ticket_new.add_argument("--roadmap-title", default=None)
-    ticket_list = ticket_sub.add_parser("list")
-    ticket_list.add_argument("--status")
-    ticket_list.add_argument("--tags")
-    ticket_list.add_argument("--json", action="store_true")
-    ticket_show = ticket_sub.add_parser("show")
-    ticket_show.add_argument("ticket_id")
-    ticket_show.add_argument("--json", action="store_true")
-    ticket_edit = ticket_sub.add_parser("edit")
-    ticket_edit.add_argument("ticket_id")
-    ticket_edit.add_argument("--title")
-    ticket_edit.add_argument("--body")
-    ticket_edit.add_argument("--status")
-    ticket_edit.add_argument("--add-tag")
-    ticket_edit.add_argument("--remove-tag")
-    ticket_link = ticket_sub.add_parser("link")
-    ticket_link.add_argument("ticket_id")
-    ticket_link.add_argument("epic_id")
-    ticket_link.add_argument("--resolves", action="store_true")
-    ticket_unlink = ticket_sub.add_parser("unlink")
-    ticket_unlink.add_argument("ticket_id")
-    ticket_unlink.add_argument("epic_id")
-    ticket_addressed = ticket_sub.add_parser("addressed")
-    ticket_addressed.add_argument("ticket_id")
-    ticket_addressed.add_argument("--note")
-    ticket_dismiss = ticket_sub.add_parser("dismiss")
-    ticket_dismiss.add_argument("ticket_id")
-    ticket_dismiss.add_argument("--reason")
-    ticket_reopen = ticket_sub.add_parser("reopen")
-    ticket_reopen.add_argument("ticket_id")
-    ticket_search = ticket_sub.add_parser("search")
-    ticket_search.add_argument("keywords", nargs="*")
-    ticket_search.add_argument("--keywords-all", action="store_true")
-    ticket_search.add_argument("--status")
-    ticket_search.add_argument("--tags")
-    ticket_search.add_argument("--projects", nargs="*")
-    ticket_search.add_argument("--all-projects", action="store_true")
-    ticket_search.add_argument("--sort", default="created")
-    ticket_search.add_argument("--asc", action="store_true")
-    ticket_search.add_argument("--limit", type=int)
-    ticket_search.add_argument("--snippet", action="store_true", default=True)
-    ticket_search.add_argument("--json", action="store_true")
-    ticket_promote = ticket_sub.add_parser("promote")
-    ticket_promote.add_argument("ticket_id")
-    ticket_promote.add_argument("--initiative-slug")
-    ticket_promote.add_argument("--title")
-    ticket_promote.add_argument("--goal")
-    ticket_promote.add_argument("--body")
-    ticket_promote.add_argument("--no-resolve", action="store_true")
-    ticket_promote.add_argument("--skip-strategy", action="store_true")
-    ticket_promote.add_argument("--json", action="store_true")
-
-    strategy_parser = subparsers.add_parser("strategy")
-    strategy_sub = strategy_parser.add_subparsers(dest="strategy_action", required=True)
-    strategy_init = strategy_sub.add_parser("init")
-    strategy_init.add_argument("--force", action="store_true")
-    strategy_validate = strategy_sub.add_parser("validate")
-    strategy_validate.add_argument("--json", action="store_true")
-    strategy_show = strategy_sub.add_parser("show")
-    strategy_show.add_argument("--json", action="store_true")
-    strategy_list = strategy_sub.add_parser("list")
-    strategy_list.add_argument("--horizon", choices=["Now", "Next", "Later"])
-    strategy_list.add_argument("--type", choices=["ticket", "epic"], dest="entry_type")
-    strategy_list.add_argument("--json", action="store_true")
-    strategy_project = strategy_sub.add_parser("project")
-    strategy_project.add_argument("--write", action="store_true")
-    strategy_project.add_argument("--output")
-    strategy_project.add_argument("--json", action="store_true")
-    strategy_add = strategy_sub.add_parser("add")
-    strategy_add.add_argument("type", choices=["ticket", "epic"])
-    strategy_add.add_argument("ref")
-    strategy_add.add_argument("--title", required=True)
-    strategy_add.add_argument("--horizon", required=True, choices=["Now", "Next", "Later"])
-    strategy_remove = strategy_sub.add_parser("remove")
-    strategy_remove.add_argument("type", choices=["ticket", "epic"])
-    strategy_remove.add_argument("ref")
-    strategy_move = strategy_sub.add_parser("move")
-    strategy_move.add_argument("type", choices=["ticket", "epic"])
-    strategy_move.add_argument("ref")
-    strategy_move.add_argument("--to", required=True, choices=["Now", "Next", "Later"], dest="horizon")
-    strategy_doctor = strategy_sub.add_parser("doctor")
-    strategy_doctor.add_argument("--json", action="store_true")
-    strategy_migrate = strategy_sub.add_parser("migrate")
-    strategy_migrate.add_argument(
-        "--apply",
-        action="store_true",
-        help="Perform supported reversible rewrites (default: dry-run).",
-    )
 
     # `status` is defined above with its dedicated flags; only add the
     # lightweight observability siblings here.
@@ -2637,7 +2537,6 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "brief": handle_brief,
     "initiative": handle_initiative,
     "contract": handle_contract,
-    "strategy": handle_strategy,
     "ticket": handle_ticket,
     "epic": handle_epic,
     "migrate-local-plans": handle_migrate_local_plans,
