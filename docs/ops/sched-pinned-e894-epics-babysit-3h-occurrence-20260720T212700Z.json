@@ -12,7 +12,7 @@
   },
   "occurrence": {
     "started_at_utc": "2026-07-20T21:27:00.551208Z",
-    "assessment_completed_at_utc": "2026-07-20T21:51:42Z",
+    "assessment_completed_at_utc": "2026-07-20T21:55:05Z",
     "previous_occurrence_result": "/workspace/arnold/docs/ops/sched-pinned-e894-epics-babysit-3h-manual-20260720T210329Z.json",
     "one_at_a_time_policy": "serial_interventions_all_targets_with_target_specific_deferral",
     "selected_repair_owners": {
@@ -46,8 +46,8 @@
         "t27_audit_artifact_timestamp_utc": "2026-07-20T21:47:21.894724Z",
         "t28_artifact": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m8-universal-wbc-producer-and-20260720-0646/execute_batch_28_output.json",
         "t28_artifact_timestamp_utc": "2026-07-20T21:47:24.320665Z",
-        "event_cursor": 840,
-        "event_timestamp_utc": "2026-07-20T21:47:24.553341Z",
+        "event_cursor": 855,
+        "event_timestamp_utc": "2026-07-20T21:54:59.687836Z",
         "runner_pid": 121675,
         "tmux_alive": true,
         "profile": "partnered-5",
@@ -72,7 +72,7 @@
         "status": "passed"
       },
       "agent_assessment": {
-        "assessment_at_utc": "2026-07-20T21:51:42Z",
+        "assessment_at_utc": "2026-07-20T21:55:05Z",
         "candidates": [
           {
             "run_id": "subagent-20260720-193054-5b0373d2",
@@ -89,7 +89,7 @@
               "path": "/workspace/arnold-engine-running-e894/.megaplan/plans/resident-subagents/subagent-20260720-193054-5b0373d2/result.md",
               "sha256": "5addf6e3f43cdc9c1f38d6c008e15982dff2577be7cee1dae3459cba659c2702",
               "timestamp_utc": "2026-07-20T19:51:37.370912Z",
-              "evidence_age_seconds": 7205
+              "evidence_age_seconds": 7410
             },
             "continuing_owner": false
           },
@@ -109,7 +109,7 @@
               "path": "/workspace/arnold-custody-no-reset-runtime-f7f0967",
               "commit": "be0fea686ca544dd487ceb75cbeca09f43e735ee",
               "timestamp_utc": "2026-07-20T21:33:33Z",
-              "evidence_age_seconds": 1089,
+              "evidence_age_seconds": 1292,
               "verification": "4 passed, 34 deselected; exact marker resume returned runner_started=true and no_push=true"
             },
             "continuing_owner": true,
@@ -162,12 +162,12 @@
       "plan": "secure-provider-foundation-20260719-2014",
       "phase": "review",
       "semantic_checkpoint": {
-        "plan_state": "finalized",
+        "plan_state": "executed",
         "latest_failure": null,
         "latest_review_result": "in_flight_after_execute_completion",
         "latest_review_timestamp_utc": "2026-07-20T21:50:24.374446Z",
-        "event_cursor": 3247,
-        "event_timestamp_utc": "2026-07-20T21:51:09.179848Z",
+        "event_cursor": 3254,
+        "event_timestamp_utc": "2026-07-20T21:54:53.262031Z",
         "runner_pid": 11289,
         "tmux_alive": true,
         "profile": "withings-deepseek-recovery",
@@ -183,7 +183,7 @@
         "status": "passed"
       },
       "agent_assessment": {
-        "assessment_at_utc": "2026-07-20T21:51:42Z",
+        "assessment_at_utc": "2026-07-20T21:55:05Z",
         "candidates": [],
         "classification": "healthy_no_repair",
         "decision": "leave_healthy_chain_untouched",
@@ -228,7 +228,7 @@
         "status": "passed_for_observation_no_relaunch"
       },
       "agent_assessment": {
-        "assessment_at_utc": "2026-07-20T21:51:42Z",
+        "assessment_at_utc": "2026-07-20T21:55:05Z",
         "candidates": [
           {
             "run_id": "subagent-20260720-213334-cd20ad73",
@@ -246,7 +246,7 @@
               "path": "/workspace/arnold/docs/ops/sched-pinned-e894-epics-babysit-3h-manual-20260720T213334Z.json",
               "commit": "ae2209948f9b6591501e785fd949b5b1a0e887df",
               "timestamp_utc": "2026-07-20T21:43:26.856929Z",
-              "evidence_age_seconds": 496,
+              "evidence_age_seconds": 698,
               "verification": "123 passed; focused 89 passed, 5 skipped; static migration validation and git diff check passed"
             },
             "continuing_owner": true,
