@@ -53,7 +53,13 @@ def pause_session(
 
 
 def resume_session(
-    *, spec: Path, workspace: Path, session: str, marker_path: Path, actor: str
+    *,
+    spec: Path,
+    workspace: Path,
+    session: str,
+    marker_path: Path,
+    actor: str,
+    no_push: bool = False,
 ) -> dict[str, Any]:
     result = resume_chain(spec, workspace, actor=actor)
     marker = _load_marker(marker_path)
@@ -72,6 +78,12 @@ def resume_session(
         "ARNOLD_REPAIR_SESSION": session,
         "ARNOLD_REPAIR_RUN_KIND": str(marker.get("run_kind") or "chain"),
     }
+    if no_push:
+        # A no-push chain resume deliberately stays on the current milestone
+        # checkout. In chain.run_chain this disables PR branch preparation,
+        # whose cleanup step otherwise resets tracked and untracked WIP before
+        # checking out the remote milestone branch.
+        managed_env["MEGAPLAN_CHAIN_NO_PUSH"] = "1"
     tmux_command = ["tmux", "new-session", "-d", "-s", session, "-c", str(workspace)]
     for key, value in managed_env.items():
         tmux_command.extend(["-e", f"{key}={value}"])
@@ -83,7 +95,12 @@ def resume_session(
     marker.pop("operator_pause", None)
     marker["should_run"] = True
     _write_marker(marker_path, marker)
-    return {**result, "session": session, "runner_started": True}
+    return {
+        **result,
+        "session": session,
+        "runner_started": True,
+        "no_push": no_push,
+    }
 
 
 def _load_marker(path: Path) -> dict[str, Any]:
@@ -110,6 +127,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--marker", required=True)
     parser.add_argument("--reason", default="operator requested pause")
     parser.add_argument("--actor", default="operator")
+    parser.add_argument(
+        "--no-push",
+        action="store_true",
+        help=(
+            "resume with MEGAPLAN_CHAIN_NO_PUSH=1 so an existing dirty "
+            "milestone checkout is not reset for PR branch preparation"
+        ),
+    )
     args = parser.parse_args(argv)
     common = {
         "spec": Path(args.spec),
@@ -121,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     payload = (
         pause_session(**common, reason=args.reason)
         if args.action == "pause"
-        else resume_session(**common)
+        else resume_session(**common, no_push=args.no_push)
     )
     print(json.dumps({"success": True, **payload}, indent=2, sort_keys=True))
     return 0
