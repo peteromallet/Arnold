@@ -1215,8 +1215,6 @@ def _control_invalid_transition_failure(
     stdout: str,
     stderr: str,
 ) -> dict[str, Any] | None:
-    if next_step in PHASE_NAMES:
-        return None
     action = _control_action_label(next_step)
     payload = _extract_cli_error_payload(stdout, stderr)
     combined = f"{stderr}\n{stdout}".strip()
@@ -3278,13 +3276,42 @@ def _project_auto_dispatch(
         )
 
     try:
-        projection = read_valid_targets(
-            state,
-            plugin_id="megaplan",
-            recovery=_projection_uses_recovery(state),
+        projection = tuple(
+            read_valid_targets(
+                state,
+                plugin_id="megaplan",
+                recovery=_projection_uses_recovery(state),
+            )
         )
     except Exception:
         projection = ()
+
+    # A resume cursor describes how to retry the state in which its failure was
+    # recorded; it is not authority to bypass a later successful transition.
+    # In particular, force-proceed can advance blocked -> gated while retaining
+    # the old execute cursor for audit.  Once the current control projection no
+    # longer offers that phase, ignore the stale cursor and dispatch the legal
+    # target (gated -> finalize) instead of retrying execute illegally.
+    projected_target_ids: set[str] = set()
+    for target in projection:
+        target_id = _normalize_auto_target_id(getattr(target, "id", None))
+        metadata = getattr(target, "metadata", {})
+        if not isinstance(metadata, Mapping):
+            metadata = {}
+        if (
+            target_id
+            and _is_auto_supported_target(target_id)
+            and metadata.get("actionable", True) is not False
+        ):
+            projected_target_ids.add(target_id)
+    if (
+        not _projection_uses_recovery(state)
+        and observed_phase_source in {"resume_cursor", "latest_failure"}
+        and cursor_dispatch_phase is not None
+        and cursor_dispatch_phase not in projected_target_ids
+    ):
+        cursor_dispatch_phase = None
+        cursor_next_dispatches = ()
 
     valid_targets: list[str] = []
     mismatches: list[str] = []
@@ -5014,6 +5041,59 @@ def drive(
                 )
         code, out, err, result = _run_phase(cmd, next_step)
         _clear_completed_phase_active_step(next_step, result)
+        invalid_phase_transition = (
+            _control_invalid_transition_failure(next_step, str(state), out, err)
+            if code != 0
+            else None
+        )
+        if invalid_phase_transition is not None and next_step in PHASE_NAMES:
+            action = str(invalid_phase_transition.get("action") or next_step)
+            message = str(
+                invalid_phase_transition.get("message")
+                or f"{action} returned invalid_transition"
+            )
+            actual_state = str(invalid_phase_transition.get("actual_state") or state)
+            reason = f"{action} invalid transition from state '{actual_state}': {message}"
+            log(
+                "phase cursor is not admissible from current state — bailing to repair",
+                action=action,
+                current_state=actual_state,
+            )
+            _record_failure(
+                plan_dir=plan_dir,
+                kind="workflow_cursor_mismatch",
+                message=reason,
+                current_state=STATE_BLOCKED,
+                phase=action,
+                resume_cursor={
+                    "phase": action,
+                    "retry_strategy": "repair_workflow_projection",
+                },
+                last_artifact=_latest_artifact_name(plan_dir),
+                suggested_action=(
+                    "Repair the workflow projection before resuming; the recorded "
+                    "phase cursor is not legal from the current plan state."
+                ),
+                metadata={
+                    "action": action,
+                    "actual_state": actual_state,
+                    "error": invalid_phase_transition.get("error"),
+                    "cli_error": invalid_phase_transition.get("cli_error"),
+                    "exit_code": code,
+                    "stderr": _filtered_failure_stderr(err),
+                    "stderr_raw": redact_security_text(err.strip())[-16_384:],
+                    "stdout": out.strip()[-400:],
+                    "iteration": iteration,
+                },
+            )
+            return _outcome(
+                "blocked",
+                final_state=STATE_BLOCKED,
+                iterations=iteration,
+                reason=reason,
+                last_phase=action,
+                blocking_reasons=["workflow_cursor_mismatch"],
+            )
         # Context-exhaustion retry loop: detect via PhaseResult.exit_kind,
         # not by string-matching captured stdout.
         #

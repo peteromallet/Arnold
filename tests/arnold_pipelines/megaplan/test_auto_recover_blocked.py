@@ -873,6 +873,151 @@ def test_drive_blocks_when_observed_cursor_disagrees_with_forward_projection(
     assert failure["metadata"]["observed_phase_source"] is None
 
 
+def test_drive_gated_state_uses_finalize_instead_of_stale_execute_cursor(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "gated",
+                "iteration": 1,
+                "config": {},
+                "resume_cursor": {
+                    "phase": "execute",
+                    "retry_strategy": "check_provider_and_retry",
+                },
+                "latest_failure": {
+                    "kind": "external_error",
+                    "phase": "execute",
+                    "message": "phase 'execute' external dependency failure: [unknown] auth",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    run_calls: list[list[str]] = []
+
+    def fake_status(plan: str, **kwargs):
+        assert plan == "demo"
+        return {
+            "state": "gated",
+            "next_step": "finalize",
+            "valid_next": ["finalize"],
+            "progress": {},
+            "workflow_cursor": {
+                "phase": "execute",
+                "dispatch_phase": "execute",
+                "next_dispatch_phases": ["review"],
+            },
+        }
+
+    def fake_run_planning_phase(args, **kwargs):
+        run_calls.append(list(args))
+        return 0, "", ""
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=1, poll_sleep=0)
+
+    assert outcome.status == "cap"
+    assert run_calls == [["finalize", "--plan", "demo"]]
+    assert not any("auth" in event.get("msg", "") for event in outcome.events)
+
+
+def test_drive_phase_invalid_transition_does_not_inherit_prior_auth_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "gated",
+                "iteration": 1,
+                "config": {},
+                "resume_cursor": {
+                    "phase": "execute",
+                    "retry_strategy": "check_provider_and_retry",
+                },
+                "latest_failure": {
+                    "kind": "external_error",
+                    "phase": "execute",
+                    "message": "phase 'execute' external dependency failure: [unknown] auth",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    run_calls = 0
+    captured_failures: list[dict[str, object]] = []
+
+    def fake_status(plan: str, **kwargs):
+        assert plan == "demo"
+        return {
+            "state": "gated",
+            "next_step": "execute",
+            "valid_next": ["execute"],
+            "progress": {},
+        }
+
+    def force_stale_projection(*args, **kwargs):
+        return auto._AutoDispatchProjection(
+            next_step="execute",
+            valid_next=("execute",),
+            observed_phase="execute",
+            observed_phase_source="resume_cursor",
+        )
+
+    def fake_run_planning_phase(args, **kwargs):
+        nonlocal run_calls
+        run_calls += 1
+        return (
+            1,
+            "",
+            json.dumps(
+                {
+                    "success": False,
+                    "error": "invalid_transition",
+                    "message": "Cannot run 'execute' while current state is 'gated'",
+                    "details": {"current_state": "gated"},
+                }
+            ),
+        )
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_project_auto_dispatch", force_stale_projection)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(
+        auto,
+        "_record_lifecycle_failure",
+        lambda **kwargs: captured_failures.append(dict(kwargs)),
+    )
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=10, poll_sleep=0)
+
+    assert outcome.status == "blocked"
+    assert outcome.blocking_reasons == ["workflow_cursor_mismatch"]
+    assert run_calls == 1
+    failure = captured_failures[-1]
+    assert failure["kind"] == "workflow_cursor_mismatch"
+    assert "Cannot run 'execute' while current state is 'gated'" in failure["message"]
+    assert "auth" not in failure["message"]
+    assert failure["metadata"]["error"] == "invalid_transition"
+
+
 def test_drive_reconciles_completed_execute_before_cursor_projection(
     monkeypatch,
     tmp_path: Path,
