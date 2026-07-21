@@ -9174,6 +9174,10 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
         'PYTHONSAFEPATH=1 timeout "$KIMI_TIMEOUT" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold.agent.run_agent'
     )
     assert 'tmux new-session -d -s "$session"' in text
+    assert 'SUPERVISE_BIN="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervise"' in text
+    assert '[[ ! -x "$SUPERVISE_BIN" ]]' in text
+    assert "$(printf '%q' \"$SUPERVISE_BIN\")" in text
+    assert "/usr/local/bin/arnold-supervise" not in text
     assert 'launch_receipt="$RUN_DIR/mechanical-launch-$iteration-receipt.json"' in text
     assert '"schema_version": "arnold-mechanical-launch-receipt-v1"' in text
     assert 'export ARNOLD_AUTONOMY=$(printf \'%q\' "${ARNOLD_AUTONOMY:-}")' in text
