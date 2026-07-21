@@ -2,7 +2,7 @@
   "schema_version": "arnold-resident-schedule-occurrence-result-v1",
   "occurrence": {
     "started_at_utc": "2026-07-21T00:57:01.448709Z",
-    "assessment_completed_at_utc": "2026-07-21T02:44:27Z",
+    "assessment_completed_at_utc": "2026-07-21T02:48:20Z",
     "previous_occurrence_result": "/workspace/arnold/docs/ops/sched-pinned-e894-epics-babysit-3h-occurrence-20260720T212700Z.json",
     "one_at_a_time_policy": "serial_interventions_all_targets_with_target_specific_deferral",
     "resident_run_id": "subagent-20260721-005701-6071f8dc",
@@ -71,7 +71,7 @@
         "target_marker": "/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.json",
         "target_workspace": "/workspace/custody-control-plane-20260714/Arnold",
         "current_blocker_or_objective": "no current blocker; continue M8A execution on the preservation-safe capsule",
-        "assessment_at_utc": "2026-07-21T02:44:27Z",
+        "assessment_at_utc": "2026-07-21T02:48:20Z",
         "candidates": [
           {
             "run_id": "subagent-20260720-193054-5b0373d2",
@@ -161,7 +161,7 @@
         "target_marker": "/workspace/.megaplan/cloud-sessions/withings-health-sync-20260719.json",
         "target_workspace": "/workspace/withings-health-sync-20260719/Pumpernickel",
         "current_blocker_or_objective": "no current blocker; M2 prep is progressing",
-        "assessment_at_utc": "2026-07-21T02:44:27Z",
+        "assessment_at_utc": "2026-07-21T02:48:20Z",
         "candidates": [
           {
             "run_id": "managed-automatic-repair-0f077a87ad2598a4c76d",
@@ -220,7 +220,7 @@
         "target_marker": "/workspace/.megaplan/cloud-sessions/superpom-reflections-20260719.json",
         "target_workspace": "/workspace/superpom-reflections-20260719/Pumpernickel",
         "current_blocker_or_objective": "blocker:v2:3888de40140e7f2fdc0324279c53ca2c0214fe76280b5c0ed4b8d374f42493c6; staging migration/application and corrected-entry replay",
-        "assessment_at_utc": "2026-07-21T02:44:27Z",
+        "assessment_at_utc": "2026-07-21T02:48:20Z",
         "candidates": [
           {
             "run_id": "managed-automatic-repair-retry-d6880f837d49c8634f62",
@@ -257,7 +257,18 @@
             "declared_description": "Codex meta-repair worker superpom-reflections-20260719",
             "explicit_match": {"session": "exact", "workspace": "exact in stdin investigation context", "chain": "parent exact", "objective": "repair deterministic L1-to-L2 source-repair handoff; does not declare authority to deploy staging"},
             "observed_lifecycle_status": "running",
-            "substantive_evidence": {"kind": "inspectable fresh repair-system diff in managed run log", "path": "/workspace/arnold-superfixer-custody-fix-20260716/.megaplan/plans/resident-subagents/managed-automatic-meta-repair-worker-624c79a6acad4499abf4/run.log", "sha256": "c81e19c7717d42a941242deb240ee2b7435006150ca6ef20e2fb35725a5ccb23", "timestamp_utc": "2026-07-21T02:43:22.450216Z", "age_seconds": 65},
+            "substantive_evidence": {"kind": "inspectable fresh repair-system diff in managed run log", "path": "/workspace/arnold-superfixer-custody-fix-20260716/.megaplan/plans/resident-subagents/managed-automatic-meta-repair-worker-624c79a6acad4499abf4/run.log", "sha256_at_recheck": "ff93e31957b3e5faaedc71eadb66f2bf317029ea1b70fc1e209c48ef8dfa9a08", "timestamp_utc": "2026-07-21T02:46:10.845643Z", "age_seconds": 121},
+            "continuing_owner": true,
+            "target_chain_recovery_proven": false
+          },
+          {
+            "run_id": "managed-automatic-research-subagent-1fa0e99f6c17d568170e",
+            "canonical_manifest": "/workspace/kimi-goal-operator/20260721T024528Z-superpom-reflections-20260719/.megaplan/plans/resident-subagents/managed-automatic-research-subagent-1fa0e99f6c17d568170e/manifest.json",
+            "manifest_sha256": "9b04494a342e5098884388c4d76d752eb502aeb33cc85bfff3b0f9e917796a48",
+            "declared_description": "Read-only investigation of blocker:v2:3888de40140e7f2fdc0324279c53ca2c0214fe76280b5c0ed4b8d374f42493c6 for superpom-reflections-20260719 at current plan; produce evidence and a mutation verdict",
+            "explicit_match": {"session": "exact", "workspace": "linked through repair request context", "chain": "linked through parent repair request", "objective": "same blocker id; read-only evidence and mutation verdict"},
+            "observed_lifecycle_status": "running",
+            "substantive_evidence": {"kind": "none yet; manifest launch only", "path": "/workspace/kimi-goal-operator/20260721T024528Z-superpom-reflections-20260719/.megaplan/plans/resident-subagents/managed-automatic-research-subagent-1fa0e99f6c17d568170e/manifest.json", "sha256": "9b04494a342e5098884388c4d76d752eb502aeb33cc85bfff3b0f9e917796a48", "timestamp_utc": "2026-07-21T02:48:14.428553Z", "age_seconds": 0},
             "continuing_owner": true,
             "target_chain_recovery_proven": false
           }
@@ -275,9 +286,9 @@
   "verification": {
     "canonical_unified_inventory": {
       "scope": "unified resident and automatic-repair managed agents",
-      "re_read_at_utc": "2026-07-21T02:44:27Z",
-      "running_count": 3,
-      "running_run_ids": ["managed-automatic-meta-repair-worker-624c79a6acad4499abf4", "managed-automatic-meta-repair-e5926dc3e2ae833ee065", "subagent-20260721-005701-6071f8dc"]
+      "re_read_at_utc": "2026-07-21T02:48:20Z",
+      "running_count": 4,
+      "running_run_ids": ["managed-automatic-research-subagent-1fa0e99f6c17d568170e", "managed-automatic-meta-repair-worker-624c79a6acad4499abf4", "managed-automatic-meta-repair-e5926dc3e2ae833ee065", "subagent-20260721-005701-6071f8dc"]
     },
     "withings_tests": [
       {"command": "reviewer exact aggregate pytest command", "result": "1982 passed, 93 skipped, 0 failed, 0 errors"},
