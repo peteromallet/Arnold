@@ -286,12 +286,12 @@ class TestOutboxAtomicity:
             outbox = SqliteLedgerOutbox(store)
             aid = _aid()
 
-            # First event at sequence 5.
-            e1 = _make_event(attempt_id=aid, sequence=5, idempotency_key="k1")
+            # Establish the contiguous stream required by the M7 gap guard.
+            e1 = _make_event(attempt_id=aid, sequence=1, idempotency_key="k1")
             store.append_event(aid, e1)
 
-            # Try to append at sequence 3 (regression).
-            e2 = _make_event(attempt_id=aid, sequence=3, idempotency_key="k2")
+            # Reuse sequence 1 with a different idempotency key (regression).
+            e2 = _make_event(attempt_id=aid, sequence=1, idempotency_key="k2")
             payloads = _make_outbox_payloads(["topic.d"])
 
             with pytest.raises(MonotonicSequenceError):
