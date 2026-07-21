@@ -1927,15 +1927,7 @@ def _deserialize_ledger_event(d: dict[str, Any]) -> LedgerEvent:
     # Payload (may be None, a dict, or a DurableRef dict)
     payload_raw = d.get("payload")
     if payload_raw is not None and isinstance(payload_raw, dict) and "store_id" in payload_raw:
-        from arnold.workflow.durable_refs import DurableRef
-        payload = DurableRef(
-            store_id=payload_raw["store_id"],
-            locator=payload_raw["locator"],
-            digest=payload_raw.get("digest", ""),
-            schema_type=payload_raw.get("schema_type", "application/json"),
-            visibility_class=payload_raw.get("visibility_class"),
-            encryption_scope=payload_raw.get("encryption_scope"),
-        )
+        payload = _deserialize_durable_ref(payload_raw)
     else:
         payload = payload_raw
 
@@ -1978,6 +1970,12 @@ def _deserialize_durable_ref(d: dict[str, Any]) -> Any:
         availability_class=d.get("availability_class", "standard"),
         tenant_id=d.get("tenant_id"),
         workflow_id=d.get("workflow_id"),
+        key_id=d.get("key_id"),
+        key_version=d.get("key_version"),
+        created_at_ns=d.get("created_at_ns"),
+        expires_at_ns=d.get("expires_at_ns"),
+        legal_hold=d.get("legal_hold", False),
+        tombstoned_at_ns=d.get("tombstoned_at_ns"),
         ref_version=d.get("ref_version", "arnold.workflow.durable_ref.v1"),
         metadata=d.get("metadata", {}),
     )

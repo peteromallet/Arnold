@@ -22,14 +22,24 @@ Design rules
   re-running the full pipeline.
 * **Core functions are side-effect free** — only the explicit
   :func:`write_strategy_projection` helper touches the filesystem.
+* **Rebuild metadata**: :func:`compute_strategy_projection_digest` and
+  :func:`capture_strategy_source_cursor` provide stable digests and source
+  cursors for rebuild parity. :func:`project_strategy_with_metadata` adds
+  freshness, lag, and cursor fields while keeping the core reducer pure.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+from arnold_pipelines.megaplan._core.io import (
+    ProjectionCursor,
+    _projection_canonical_dumps,
+    now_utc,
+)
 from arnold_pipelines.megaplan.strategy.contract import (
     SCHEMA_VERSION,
     PROJECTION_SCHEMA_VERSION,
@@ -40,6 +50,8 @@ from arnold_pipelines.megaplan.strategy.contract import (
     StrategyDocument,
     StrategySection,
 )
+
+REBUILD_METADATA_SCHEMA_VERSION = 1
 
 # ---------------------------------------------------------------------------
 # Public API - pure projection (side-effect free)
@@ -160,6 +172,150 @@ def write_strategy_projection(
     json_text = serialize_strategy_projection(document)
     output_path.write_text(json_text, encoding="utf-8")
     return output_path
+
+
+# ---------------------------------------------------------------------------
+# Rebuild metadata & digest helpers (pure, no side effects)
+# ---------------------------------------------------------------------------
+
+
+def compute_strategy_projection_digest(document: StrategyDocument) -> str:
+    """Compute a deterministic SHA-256 digest of the strategy projection.
+
+    The digest is computed over the canonical (stable, sorted-key,
+    no-whitespace) JSON representation of ``project_strategy(document)``,
+    making it byte-for-byte comparable across rebuilds.
+
+    Parameters
+    ----------
+    document:
+        A parsed, validated, and resolved :class:`StrategyDocument`.
+
+    Returns
+    -------
+    str
+        ``"sha256:<hex>"`` digest string.
+    """
+    projection = project_strategy(document)
+    canonical = _projection_canonical_dumps(projection)
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def capture_strategy_source_cursor(source_path: str | Path) -> ProjectionCursor:
+    """Capture a :class:`ProjectionCursor` for the strategy Markdown source.
+
+    This function is **read-only** — it never mutates the source file.
+
+    Parameters
+    ----------
+    source_path:
+        Path to the strategy Markdown source (e.g. ``STRATEGY.md``).
+
+    Returns
+    -------
+    ProjectionCursor
+        An immutable cursor capturing the source file state.
+    """
+    from arnold_pipelines.megaplan._core.io import _projection_cursor_from_path
+
+    return _projection_cursor_from_path(Path(source_path))
+
+
+def strategy_rebuild_metadata(
+    source_path: str | Path,
+    *,
+    projection_digest: str = "",
+    computed_at: str | None = None,
+) -> dict[str, Any]:
+    """Produce rebuild metadata for a strategy projection.
+
+    Pure function — never mutates source evidence.  The caller is
+    responsible for attaching the returned metadata to a projection view.
+
+    Parameters
+    ----------
+    source_path:
+        Path to the strategy Markdown source file.
+    projection_digest:
+        Pre-computed digest of the projection view.
+    computed_at:
+        ISO-8601 rebuild timestamp (default: ``now_utc()``).
+
+    Returns
+    -------
+    dict
+        Metadata dict with ``source_cursor``, ``rebuilt_at``,
+        ``freshness_seconds``, ``lag_seconds``, optional
+        ``projection_digest``, and ``rebuild_schema_version``.
+    """
+    from datetime import datetime
+
+    cursor = capture_strategy_source_cursor(source_path)
+    rebuilt_at = computed_at or now_utc()
+
+    freshness_seconds = 0.0
+
+    try:
+        source_path_obj = Path(source_path)
+        if source_path_obj.exists():
+            source_mtime = source_path_obj.stat().st_mtime
+            rebuild_epoch = datetime.fromisoformat(rebuilt_at).timestamp()
+            lag_seconds = max(0.0, rebuild_epoch - source_mtime)
+        else:
+            lag_seconds = 0.0
+    except (OSError, ValueError):
+        lag_seconds = 0.0
+
+    metadata: dict[str, Any] = {
+        "rebuild_schema_version": REBUILD_METADATA_SCHEMA_VERSION,
+        "source_cursor": cursor.to_dict(),
+        "rebuilt_at": rebuilt_at,
+        "freshness_seconds": freshness_seconds,
+        "lag_seconds": lag_seconds,
+    }
+    if projection_digest:
+        metadata["projection_digest"] = projection_digest
+
+    return metadata
+
+
+def project_strategy_with_metadata(
+    document: StrategyDocument,
+    *,
+    source_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Project *document* with rebuild metadata attached.
+
+    Returns the same projection as :func:`project_strategy` plus a
+    top-level ``rebuild_metadata`` block containing the source cursor,
+    freshness, lag, and rebuild digest when *source_path* is provided.
+
+    The core projection is unchanged — metadata is additive and does not
+    affect the original fields.
+
+    Parameters
+    ----------
+    document:
+        A parsed, validated, and resolved :class:`StrategyDocument`.
+    source_path:
+        Optional path to the strategy Markdown source.  When ``None``,
+        ``rebuild_metadata`` is omitted.
+
+    Returns
+    -------
+    dict
+        The projection dict with an optional ``rebuild_metadata`` key.
+    """
+    projection = project_strategy(document)
+    if source_path is not None:
+        digest = compute_strategy_projection_digest(document)
+        metadata = strategy_rebuild_metadata(
+            source_path, projection_digest=digest
+        )
+        result: dict[str, Any] = dict(projection)
+        result["rebuild_metadata"] = metadata
+        return result
+    return projection
 
 
 # ---------------------------------------------------------------------------

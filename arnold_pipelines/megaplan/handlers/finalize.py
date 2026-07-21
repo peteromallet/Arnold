@@ -2283,6 +2283,40 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
             )
         success_projection = _finalize_success_projection()
         _ensure_execution_baseline(state)
+        try:
+            from arnold_pipelines.megaplan.observability.work_ledger import (
+                WorkClass,
+                emit_transition_activity,
+                emit_worker_inference,
+            )
+
+            emit_worker_inference(
+                plan_dir,
+                phase="finalize",
+                worker=worker,
+                work_class=WorkClass.PRODUCTIVE,
+                attempt_id=state.get("meta", {}).get("current_invocation_id"),
+                agent=agent,
+                metadata={
+                    "boundary": "finalize_worker",
+                    "task_count": len(worker.payload["tasks"]),
+                    "watch_item_count": len(worker.payload["watch_items"]),
+                    "scratch_status": scratch_status,
+                },
+            )
+            emit_transition_activity(
+                plan_dir,
+                phase="finalize",
+                transition="finalize_success_projection",
+                from_state=str(state.get("current_state") or ""),
+                to_state=str(success_projection["state"]),
+                metadata={
+                    "route_signal": success_projection["route_signal"],
+                    "artifact_hash": artifact_hash,
+                },
+            )
+        except Exception:
+            LOGGER.debug("Work ledger finalize event emission skipped", exc_info=True)
         state["current_state"] = success_projection["state"]
         return _finish_step(
             plan_dir, state, args,

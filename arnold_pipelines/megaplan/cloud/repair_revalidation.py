@@ -277,3 +277,37 @@ def acceptance_revalidation_after_repair(
         acceptance_candidates_invalidated=invalidated_count,
         acceptance_invalidation_reason=invalidation_details,
     )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# T18 / Step 11 — canonical dispatch-identity revalidation.
+#
+# The five mutating repair action kinds (repair / retry / escalation /
+# cancellation / adoption) must each pass through a fresh source reread
+# before mutating control flow.  ``revalidate_dispatch_identity`` is the
+# post-reread check that quarantines the action when the live occurrence
+# tuple or fence token has drifted.  It is read-only — it never mutates
+# repair state and never grants authority beyond "the tuple is still live".
+# ──────────────────────────────────────────────────────────────────────
+
+
+def revalidate_dispatch_identity(
+    action: str,
+    *,
+    current_identity: repair_requests.RepairDispatchIdentity | None,
+    fresh_identity: repair_requests.RepairDispatchIdentity | None,
+) -> tuple[bool, str, repair_requests.SourceRereadVerdict]:
+    """Revalidate a mutating repair action against a fresh source reread.
+
+    Returns ``(permitted, reason, verdict)`` where *verdict* is the full
+    :class:`~arnold_pipelines.megaplan.cloud.repair_requests.SourceRereadVerdict`
+    and *permitted* / *reason* are convenience projections of it.  Callers
+    that record a quarantine should persist ``verdict.as_dict()``-style
+    diagnostics (never authority).
+    """
+    verdict = repair_requests.require_source_reread_for_action(
+        action,
+        current_identity=current_identity,
+        fresh_identity=fresh_identity,
+    )
+    return verdict.permitted, verdict.reason, verdict

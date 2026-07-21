@@ -8856,10 +8856,13 @@ def test_watchdog_enforces_single_instance_and_reexecs_after_hot_update() -> Non
     assert 'log "watchdog wrapper updated on disk; re-execing $reexec_reason"' in text
     assert 'exec bash "$reexec_path" "${WATCHDOG_ARGS[@]}"' in text
     assert 'log "scan start marker_dir=$MARKER_DIR"' in scan_once
-    assert 'sync_editable_source_branch "$report_items" || true' in scan_once
+    assert (
+        'sync_editable_source_branch "$report_items" || authority_gap_continue "T29-BYPASS-208"'
+        in scan_once
+    )
     assert scan_once.count("maybe_reexec_updated_watchdog") == 2
     assert scan_once.index('log "scan start marker_dir=$MARKER_DIR"') < scan_once.index("maybe_reexec_updated_watchdog")
-    assert scan_once.index('sync_editable_source_branch "$report_items" || true') < scan_once.rindex("maybe_reexec_updated_watchdog")
+    assert scan_once.index('sync_editable_source_branch "$report_items"') < scan_once.rindex("maybe_reexec_updated_watchdog")
 
 
 def test_watchdog_refresh_syncs_cloud_runtime_wrappers() -> None:

@@ -924,19 +924,24 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         _repair_start = __import__("time").monotonic()
         response = _adopt_repair_receipts(plan_dir, state, _finalize_data, response)
         _repair_elapsed_ms = int((__import__("time").monotonic() - _repair_start) * 1000)
-        # --- M9: work ledger — repair verification event ---
+        # --- M9: work ledger — repair verification tool event ---
         try:
-            from arnold_pipelines.megaplan.observability.work_ledger import emit_repair_verification
+            from arnold_pipelines.megaplan.observability.work_ledger import (
+                WorkClass,
+                emit_tool_activity,
+            )
 
             _rv_adoption = response.get("_repair_adoption", {}) if response else {}
-            emit_repair_verification(
+            emit_tool_activity(
                 plan_dir,
+                phase="execute",
+                tool_name="repair_receipt_adoption",
+                work_class=WorkClass.REPAIR_VERIFICATION,
                 task_id=None,  # plan-scoped
                 batch_id=str(getattr(args, "batch", "auto")),
                 attempt_id=state.get("meta", {}).get("current_invocation_id"),
                 elapsed_ms=_repair_elapsed_ms,
                 metadata={
-                    "phase": "execute",
                     "total_receipts": _rv_adoption.get("total_receipts", 0),
                     "adopted": _rv_adoption.get("adopted", 0),
                     "quarantined": _rv_adoption.get("quarantined", 0),

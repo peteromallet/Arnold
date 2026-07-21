@@ -225,6 +225,57 @@ log() {
   echo "[meta-repair $(date -Iseconds)] $message" | tee -a "$RUN_LOG"
 }
 
+authority_gap_record() {
+  local evidence_id="$1"
+  local disposition="$2"
+  local rc="$3"
+  local detail="${4:-authority-risk bypass converted to typed evidence gap}"
+  local gap_root="${REPAIR_DATA_DIR:-${DATA_DIR:-${MARKER_DIR:-/tmp}}}"
+  local gap_path="$gap_root/authority-gaps.jsonl"
+  local log_path="${LOG:-${RUN_LOG:-/dev/null}}"
+  mkdir -p "$gap_root" >/dev/null 2>&1 || true
+  python3 - "$gap_path" "$evidence_id" "$disposition" "$rc" "$detail" \
+    "${SESSION:-}" "${WORKSPACE:-}" "${REMOTE_SPEC:-}" <<'PY' \
+    >/dev/null 2>>"$log_path" || true
+import datetime as dt
+import json
+import pathlib
+import sys
+
+path, evidence_id, disposition, rc, detail, session, workspace, remote_spec = sys.argv[1:9]
+payload = {
+    "schema_version": "arnold.megaplan.cloud.wrapper_authority_gap.v1",
+    "evidence_id": evidence_id,
+    "disposition": disposition,
+    "exit_code": int(rc) if str(rc).isdigit() else rc,
+    "detail": detail,
+    "wrapper": "arnold-meta-repair-loop",
+    "session": session,
+    "workspace": workspace,
+    "remote_spec": remote_spec,
+    "recorded_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+}
+target = pathlib.Path(path)
+target.parent.mkdir(parents=True, exist_ok=True)
+with target.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(payload, sort_keys=True) + "\n")
+PY
+  printf '[meta-repair %s] authority gap %s disposition=%s rc=%s path=%s\n' \
+    "$(date -Iseconds)" "$evidence_id" "$disposition" "$rc" "$gap_path" >>"$log_path" 2>&1 || true
+}
+
+authority_gap_continue() {
+  local rc=$?
+  authority_gap_record "$1" "typed_evidence_gap" "$rc" "${2:-authority-risk bypass converted to typed evidence gap}"
+  return 0
+}
+
+authority_fail_closed() {
+  local rc=$?
+  authority_gap_record "$1" "fail_closed" "$rc" "${2:-authority-risk bypass failed closed}"
+  return 1
+}
+
 redact_inline_text() {
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$1" <<'PY'
 import sys
@@ -310,7 +361,11 @@ print(f"OK:{result.recommendation}")
 PY
 }
 
-RECURSION_OUTPUT="$(recursion_check 2>&1)" || true
+RECURSION_OUTPUT="$(recursion_check 2>&1)" || {
+  authority_fail_closed "T29-BYPASS-024" "meta-repair recursion guard failed"
+  log "recursion guard failed closed; refusing meta-repair dispatch"
+  exit 1
+}
 if [[ "$RECURSION_OUTPUT" == RECURSION:* ]]; then
   log "recursion guard: $RECURSION_OUTPUT"
   log "escalating to NEEDS_HUMAN instead of recursing"
@@ -489,7 +544,11 @@ print("PROMPT_END")
 PY
 }
 
-CLASSIFICATION_RESULT="$(classification_and_prompt 2>&1)" || true
+CLASSIFICATION_RESULT="$(classification_and_prompt 2>&1)" || {
+  authority_fail_closed "T29-BYPASS-025" "meta-repair trigger classification failed"
+  log "trigger classification failed closed; refusing meta-repair dispatch"
+  exit 1
+}
 if [[ "$CLASSIFICATION_RESULT" == NO_TRIGGER* ]]; then
   log "no meta-repair trigger matched; exiting"
   exit 0
@@ -1045,7 +1104,11 @@ redact_file_in_place "$BRIEF_PATH"
 BRIEF_SIZE="$(wc -c < "$BRIEF_PATH" | tr -d ' ')"
 if [[ "$BRIEF_SIZE" =~ ^[0-9]+$ ]] && (( BRIEF_SIZE > BRIEF_PREFLIGHT_MAX_CHARS )); then
   log "meta-repair brief exceeded preflight char budget; rebuilding emergency brief chars=$BRIEF_SIZE limit=$BRIEF_PREFLIGHT_MAX_CHARS"
-  CLASSIFICATION_RESULT="$(classification_and_prompt 1 2>&1)" || true
+  CLASSIFICATION_RESULT="$(classification_and_prompt 1 2>&1)" || {
+    authority_fail_closed "T29-BYPASS-030" "meta-repair emergency trigger classification failed"
+    log "emergency trigger classification failed closed; refusing meta-repair dispatch"
+    exit 1
+  }
   if [[ "$CLASSIFICATION_RESULT" == NO_TRIGGER* ]]; then
     log "emergency prompt rebuild returned no trigger; exiting"
     exit 0
@@ -1161,7 +1224,10 @@ print(f"COMMIT_REASON={commit_result.reason}")
 PY
 }
 
-COMMIT_GATE="$(commit_gate_check 2>&1)" || true
+COMMIT_GATE="$(commit_gate_check 2>&1)" || {
+  authority_gap_record "T29-BYPASS-031" "fail_closed" "$?" "meta-repair commit authority gate failed"
+  COMMIT_GATE=$'COMMIT_ALLOWED=False\nPUSH_ALLOWED=False\nCOMMIT_REASON=commit authority gate failed closed'
+}
 COMMIT_ALLOWED="$(echo "$COMMIT_GATE" | sed -n 's/^COMMIT_ALLOWED=//p')"
 PUSH_ALLOWED="$(echo "$COMMIT_GATE" | sed -n 's/^PUSH_ALLOWED=//p')"
 log "commit_allowed=$COMMIT_ALLOWED push_allowed=$PUSH_ALLOWED"
@@ -1253,7 +1319,7 @@ runpy.run_path(launcher, run_name="__main__")
       --toolsets "file,web,terminal" \
       --query-file "$FALLBACK_BRIEF_PATH" \
       --project-dir /workspace
-  ) > "$FALLBACK_RESP_PATH" 2>> "$ERR_PATH" || true
+  ) > "$FALLBACK_RESP_PATH" 2>> "$ERR_PATH" || authority_gap_continue "T29-BYPASS-033" "authority-risk bypass converted to typed evidence gap"
   redact_file_in_place "$FALLBACK_RESP_PATH"
   redact_file_in_place "$ERR_PATH"
 
@@ -1331,7 +1397,10 @@ except Exception:
 spec = payload.get('remote_spec') or payload.get('spec') or ''
 workspace = payload.get('workspace') or ''
 print(f'{spec}\t{workspace}')
-" "$marker_path" 2>/dev/null || true)"
+" "$marker_path" 2>/dev/null)" || {
+    authority_fail_closed "T29-BYPASS-034" "meta-repair acceptance gate marker read failed"
+    return 1
+  }
   if [[ -z "$remote_spec" ]]; then
     return 0
   fi
@@ -1347,24 +1416,28 @@ spec_path, workspace, caller = sys.argv[1:4]
 result = check_wrapper_acceptance_gate(spec_path, workspace=workspace, caller_kind=caller)
 print(json.dumps(result, sort_keys=True))
 PY
-)" || true
+)" || {
+    authority_fail_closed "T29-BYPASS-035" "meta-repair acceptance gate evaluation failed"
+    return 1
+  }
   if [[ -z "$gate_json" ]]; then
-    return 0
+    authority_gap_record "T29-BYPASS-035" "fail_closed" "0" "meta-repair acceptance gate produced no evidence"
+    return 1
   fi
-  gate_open="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('gate_open',True))" <<<"$gate_json" 2>/dev/null || echo True)"
+  gate_open="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('gate_open',False))" <<<"$gate_json" 2>/dev/null || echo False)"
   if [[ "$gate_open" == "True" || "$gate_open" == "true" ]]; then
     return 0
   fi
-  reason="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('reason','unknown'))" <<<"$gate_json" 2>/dev/null || echo "acceptance gate closed")"
+  reason="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('reason','unknown'))" <<<"$gate_json" 2>/dev/null || echo "acceptance gate unreadable")"
   log "[meta-repair] acceptance gate closed session=$SESSION: $reason"
-  blocker_event="$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d.get('blocker_event',{})))" <<<"$gate_json" 2>/dev/null || true)"
+  blocker_event="$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d.get('blocker_event',{})))" <<<"$gate_json" 2>/dev/null || { authority_gap_continue "T29-BYPASS-036" "meta-repair acceptance blocker event parse failed"; printf '{}'; })"
   if [[ -n "$blocker_event" && "$blocker_event" != "{}" ]]; then
     local blocker_file="$REPAIR_DATA_DIR/meta/${SESSION}.blocker-acceptance-gate.json"
     python3 -c "
 import json, pathlib, sys
 pathlib.Path(sys.argv[1]).parent.mkdir(parents=True, exist_ok=True)
 pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
-" "$blocker_file" "$blocker_event" 2>/dev/null || true
+" "$blocker_file" "$blocker_event" 2>/dev/null || authority_gap_continue "T29-BYPASS-037" "authority-risk bypass converted to typed evidence gap"
     log "[meta-repair] blocker event persisted: $blocker_file"
   fi
   printf '%s\n' "NO_FIX" "Meta-repair dispatch blocked: acceptance gate closed ($reason)" > "$RESP_PATH"
@@ -1427,7 +1500,7 @@ elif command -v codex >/dev/null 2>&1; then
     fi
     managed_cmd+=(-- timeout "$CODEX_TIMEOUT" codex exec --skip-git-repo-check --sandbox danger-full-access -c model="$META_CODEX_MODEL" -c model_reasoning_effort=high -)
     "${managed_cmd[@]}"
-  ) > "$RESP_PATH" 2>"$ERR_PATH" || true
+  ) > "$RESP_PATH" 2>"$ERR_PATH" || authority_gap_continue "T29-BYPASS-038" "authority-risk bypass converted to typed evidence gap"
   redact_file_in_place "$RESP_PATH"
   redact_file_in_place "$ERR_PATH"
   META_WORKER_RUN_ID="$(cat "$WORKER_RUN_ID_PATH" 2>/dev/null || true)"
@@ -1447,10 +1520,14 @@ else
 fi
 
 if ! has_recordable_verdict "$RESP_PATH"; then
-  run_direct_hermes_fallback || true
+  run_direct_hermes_fallback || authority_gap_continue "T29-BYPASS-040" "authority-risk bypass converted to typed evidence gap"
 fi
 if ! has_recordable_verdict "$RESP_PATH"; then
-  FAILURE_RECORD_INFO="$(persist_unrecordable_launch_failure 2>&1)" || true
+  FAILURE_RECORD_INFO="$(persist_unrecordable_launch_failure 2>&1)" || {
+    authority_fail_closed "T29-BYPASS-041" "meta-repair failed to persist unrecordable-launch evidence"
+    log "unrecordable launch failure could not be persisted; failing closed"
+    exit 1
+  }
   FAILURE_RECORD_PATH="$(echo "$FAILURE_RECORD_INFO" | sed -n 's/^RECORD_PATH=//p')"
   log "all meta-repair launch paths failed; negative evidence persisted path=$FAILURE_RECORD_PATH and recursion guard remains unpoisoned"
   exit 1
@@ -1554,7 +1631,7 @@ print("INSTALL_SYNC_JSON=" + json.dumps({
     "event_type": event.get("type", ""),
 }, default=str))
 PY
-)" || true
+)" || authority_gap_continue "T29-BYPASS-042" "authority-risk bypass converted to typed evidence gap"
 
   if [[ "$INSTALL_SYNC_RESULT" == NO_SOURCE_COMMIT* ]]; then
     log "no source commit detected; skipping install sync"
@@ -2004,7 +2081,7 @@ print("VERIFICATION_JSON=" + json.dumps(verification, sort_keys=True))
 print(f"RETRIGGER_RETURNCODE={effective_returncode}")
 print(f"RETRIGGER_RAW_RETURNCODE={retrigger_result.returncode}")
 PY
-)" || true
+)" || authority_gap_continue "T29-BYPASS-043" "authority-risk bypass converted to typed evidence gap"
 
     RETRIGGER_EVENT_ID="$(echo "$RETRIGGER_RESULT" | sed -n 's/^RETRIGGER_EVENT_ID=//p')"
     VERIFICATION_EVENT_ID="$(echo "$RETRIGGER_RESULT" | sed -n 's/^VERIFICATION_EVENT_ID=//p')"
@@ -2017,7 +2094,11 @@ PY
   fi
 fi
 
-RECORD_INFO="$(persist_record 2>&1)" || true
+RECORD_INFO="$(persist_record 2>&1)" || {
+  authority_fail_closed "T29-BYPASS-044" "meta-repair failed to persist terminal record"
+  log "meta-repair terminal record could not be persisted; failing closed"
+  exit 1
+}
 RECORD_PATH="$(echo "$RECORD_INFO" | sed -n 's/^RECORD_PATH=//p')"
 META_REPAIR_ID="$(echo "$RECORD_INFO" | sed -n 's/^META_REPAIR_ID=//p')"
 log "record persisted meta_repair_id=$META_REPAIR_ID path=$RECORD_PATH"

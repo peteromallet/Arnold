@@ -10,7 +10,7 @@
         "Canonical reads must bind to exact WBC source identity instead of implicit latest filenames."
       ],
       "expiry": {
-        "current_milestone": "M7",
+        "current_milestone": "M9",
         "milestone": "M9",
         "status": "compatible"
       },
@@ -51,7 +51,7 @@
         "Stale or missing markers must degrade to UNKNOWN rather than silently refreshing activity."
       ],
       "expiry": {
-        "current_milestone": "M7",
+        "current_milestone": "M9",
         "milestone": "M9",
         "status": "compatible"
       },
@@ -97,7 +97,7 @@
         "Canonical WBC rereads must remain the only source for authority-increasing transitions."
       ],
       "expiry": {
-        "current_milestone": "M7",
+        "current_milestone": "M9",
         "milestone": "M9",
         "status": "compatible"
       },
@@ -145,7 +145,7 @@
         "Disagreement between process facts and canonical evidence must remain drift, not auto-repair authority."
       ],
       "expiry": {
-        "current_milestone": "M7",
+        "current_milestone": "M9",
         "milestone": "M9",
         "status": "compatible"
       },
@@ -194,7 +194,7 @@
         "Missing canonical WBC evidence must remain UNKNOWN rather than inferred from prose text."
       ],
       "expiry": {
-        "current_milestone": "M7",
+        "current_milestone": "M9",
         "milestone": "M9",
         "status": "compatible"
       },
@@ -240,7 +240,7 @@
         "Any missing denominator or mismatched session usage must remain diagnostic-only."
       ],
       "expiry": {
-        "current_milestone": "M7",
+        "current_milestone": "M9",
         "milestone": "M9",
         "status": "compatible"
       },
@@ -288,13 +288,15 @@
       "approver": "operational-approval-required",
       "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
       "diagnostics": [
-        "Historical state-reader compatibility remains read-only and cannot increase authority.",
-        "Canonical WBC rereads must replace direct legacy JSON or lock-based observations before expiry."
+        "[M9 RETIRED] This adapter expired at M8 and is now non-authoritative with a zero-reader gate.",
+        "All consumer reads must use canonical WBC queries with exact source-cursor vectors.",
+        "Historical reference only; no dispatch, completion, or lifecycle authority is permitted."
       ],
       "expiry": {
-        "current_milestone": "M7",
+        "current_milestone": "M9",
         "milestone": "M8",
-        "status": "compatible"
+        "status": "expired",
+        "retired_at_milestone": "M9"
       },
       "observed_read_operations": [
         "load_bakeoff_state",
@@ -310,8 +312,7 @@
       ],
       "reader_name": "Bakeoff State Consumer",
       "supported_versions": [
-        "legacy",
-        "shadow"
+        "retired"
       ],
       "zero_authority_caller_proof": {
         "authority_increasing_write_allowed": false,
@@ -321,14 +322,16 @@
         ],
         "callsite_count": 7,
         "diagnostic_only": true,
-        "mode": "shadow",
+        "mode": "retired",
         "projection_ids": [
           "bakeoff-state-projection",
           "channel-shadow-projection"
         ],
         "read_only": true,
-        "read_only_verified": true
-      }
+        "read_only_verified": false
+      },
+      "non_authoritative": true,
+      "zero_reader_gate": "Zero-reader gate active: this adapter is non-authoritative and must not be read by any dispatch, completion, cancellation, publication, delivery, repair, or lifecycle-transition path. Any consumer still referencing this adapter must be migrated to canonical WBC queries with exact source-cursor vectors. Compatibility reads are prohibited; only evidence-extracted non-authoritative historical references remain permitted for traceability until deletion."
     },
     {
       "adapter_class": "raw_json",
@@ -336,13 +339,15 @@
       "approver": "operational-approval-required",
       "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
       "diagnostics": [
-        "Historical state-reader compatibility remains read-only and cannot increase authority.",
-        "Canonical WBC rereads must replace direct legacy JSON or lock-based observations before expiry."
+        "[M9 RETIRED] This adapter expired at M8 and is now non-authoritative with a zero-reader gate.",
+        "All consumer reads must use canonical WBC queries with exact source-cursor vectors.",
+        "Historical reference only; no dispatch, completion, or lifecycle authority is permitted."
       ],
       "expiry": {
-        "current_milestone": "M7",
+        "current_milestone": "M9",
         "milestone": "M8",
-        "status": "compatible"
+        "status": "expired",
+        "retired_at_milestone": "M9"
       },
       "observed_read_operations": [
         "_load_chain_state_file",
@@ -362,8 +367,7 @@
       ],
       "reader_name": "Chain State Consumer",
       "supported_versions": [
-        "legacy",
-        "shadow"
+        "retired"
       ],
       "zero_authority_caller_proof": {
         "authority_increasing_write_allowed": false,
@@ -373,13 +377,15 @@
         ],
         "callsite_count": 20,
         "diagnostic_only": true,
-        "mode": "shadow",
+        "mode": "retired",
         "projection_ids": [
           "chain-state-projection"
         ],
         "read_only": true,
-        "read_only_verified": true
-      }
+        "read_only_verified": false
+      },
+      "non_authoritative": true,
+      "zero_reader_gate": "Zero-reader gate active: this adapter is non-authoritative and must not be read by any dispatch, completion, cancellation, publication, delivery, repair, or lifecycle-transition path. Any consumer still referencing this adapter must be migrated to canonical WBC queries with exact source-cursor vectors. Compatibility reads are prohibited; only evidence-extracted non-authoritative historical references remain permitted for traceability until deletion."
     },
     {
       "adapter_class": "raw_json",
@@ -387,13 +393,15 @@
       "approver": "operational-approval-required",
       "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
       "diagnostics": [
-        "Historical state-reader compatibility remains read-only and cannot increase authority.",
-        "Canonical WBC rereads must replace direct legacy JSON or lock-based observations before expiry."
+        "[M9 RETIRED] This adapter expired at M8 and is now non-authoritative with a zero-reader gate.",
+        "All consumer reads must use canonical WBC queries with exact source-cursor vectors.",
+        "Historical reference only; no dispatch, completion, or lifecycle authority is permitted."
       ],
       "expiry": {
-        "current_milestone": "M7",
+        "current_milestone": "M9",
         "milestone": "M8",
-        "status": "compatible"
+        "status": "expired",
+        "retired_at_milestone": "M9"
       },
       "observed_read_operations": [
         "load_plan",
@@ -413,8 +421,7 @@
       ],
       "reader_name": "Heartbeat State Consumer",
       "supported_versions": [
-        "legacy",
-        "shadow"
+        "retired"
       ],
       "zero_authority_caller_proof": {
         "authority_increasing_write_allowed": false,
@@ -424,13 +431,15 @@
         ],
         "callsite_count": 20,
         "diagnostic_only": true,
-        "mode": "shadow",
+        "mode": "retired",
         "projection_ids": [
           "heartbeat-projection"
         ],
         "read_only": true,
-        "read_only_verified": true
-      }
+        "read_only_verified": false
+      },
+      "non_authoritative": true,
+      "zero_reader_gate": "Zero-reader gate active: this adapter is non-authoritative and must not be read by any dispatch, completion, cancellation, publication, delivery, repair, or lifecycle-transition path. Any consumer still referencing this adapter must be migrated to canonical WBC queries with exact source-cursor vectors. Compatibility reads are prohibited; only evidence-extracted non-authoritative historical references remain permitted for traceability until deletion."
     },
     {
       "adapter_class": "process",
@@ -438,13 +447,15 @@
       "approver": "operational-approval-required",
       "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
       "diagnostics": [
-        "Historical state-reader compatibility remains read-only and cannot increase authority.",
-        "Canonical WBC rereads must replace direct legacy JSON or lock-based observations before expiry."
+        "[M9 RETIRED] This adapter expired at M8 and is now non-authoritative with a zero-reader gate.",
+        "All consumer reads must use canonical WBC queries with exact source-cursor vectors.",
+        "Historical reference only; no dispatch, completion, or lifecycle authority is permitted."
       ],
       "expiry": {
-        "current_milestone": "M7",
+        "current_milestone": "M9",
         "milestone": "M8",
-        "status": "compatible"
+        "status": "expired",
+        "retired_at_milestone": "M9"
       },
       "observed_read_operations": [
         "repair_lock"
@@ -458,8 +469,7 @@
       ],
       "reader_name": "Repair Lock Consumer",
       "supported_versions": [
-        "legacy",
-        "shadow"
+        "retired"
       ],
       "zero_authority_caller_proof": {
         "authority_increasing_write_allowed": false,
@@ -469,11 +479,13 @@
         ],
         "callsite_count": 0,
         "diagnostic_only": true,
-        "mode": "shadow",
+        "mode": "retired",
         "projection_ids": [],
         "read_only": true,
-        "read_only_verified": true
-      }
+        "read_only_verified": false
+      },
+      "non_authoritative": true,
+      "zero_reader_gate": "Zero-reader gate active: this adapter is non-authoritative and must not be read by any dispatch, completion, cancellation, publication, delivery, repair, or lifecycle-transition path. Any consumer still referencing this adapter must be migrated to canonical WBC queries with exact source-cursor vectors. Compatibility reads are prohibited; only evidence-extracted non-authoritative historical references remain permitted for traceability until deletion."
     },
     {
       "adapter_class": "raw_json",
@@ -481,13 +493,15 @@
       "approver": "operational-approval-required",
       "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
       "diagnostics": [
-        "Historical state-reader compatibility remains read-only and cannot increase authority.",
-        "Canonical WBC rereads must replace direct legacy JSON or lock-based observations before expiry."
+        "[M9 RETIRED] This adapter expired at M8 and is now non-authoritative with a zero-reader gate.",
+        "All consumer reads must use canonical WBC queries with exact source-cursor vectors.",
+        "Historical reference only; no dispatch, completion, or lifecycle authority is permitted."
       ],
       "expiry": {
-        "current_milestone": "M7",
+        "current_milestone": "M9",
         "milestone": "M8",
-        "status": "compatible"
+        "status": "expired",
+        "retired_at_milestone": "M9"
       },
       "observed_read_operations": [
         "_load_current_plan_review",
@@ -515,8 +529,7 @@
       ],
       "reader_name": "Cloud Status Snapshot Consumer",
       "supported_versions": [
-        "legacy",
-        "shadow"
+        "retired"
       ],
       "zero_authority_caller_proof": {
         "authority_increasing_write_allowed": false,
@@ -526,13 +539,15 @@
         ],
         "callsite_count": 19,
         "diagnostic_only": true,
-        "mode": "shadow",
+        "mode": "retired",
         "projection_ids": [
           "status-snapshot-projection"
         ],
         "read_only": true,
-        "read_only_verified": true
-      }
+        "read_only_verified": false
+      },
+      "non_authoritative": true,
+      "zero_reader_gate": "Zero-reader gate active: this adapter is non-authoritative and must not be read by any dispatch, completion, cancellation, publication, delivery, repair, or lifecycle-transition path. Any consumer still referencing this adapter must be migrated to canonical WBC queries with exact source-cursor vectors. Compatibility reads are prohibited; only evidence-extracted non-authoritative historical references remain permitted for traceability until deletion."
     },
     {
       "adapter_class": "raw_json",
@@ -540,13 +555,15 @@
       "approver": "operational-approval-required",
       "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
       "diagnostics": [
-        "Historical state-reader compatibility remains read-only and cannot increase authority.",
-        "Canonical WBC rereads must replace direct legacy JSON or lock-based observations before expiry."
+        "[M9 RETIRED] This adapter expired at M8 and is now non-authoritative with a zero-reader gate.",
+        "All consumer reads must use canonical WBC queries with exact source-cursor vectors.",
+        "Historical reference only; no dispatch, completion, or lifecycle authority is permitted."
       ],
       "expiry": {
-        "current_milestone": "M7",
+        "current_milestone": "M9",
         "milestone": "M8",
-        "status": "compatible"
+        "status": "expired",
+        "retired_at_milestone": "M9"
       },
       "observed_read_operations": [
         "load_supervisor_state"
@@ -560,8 +577,7 @@
       ],
       "reader_name": "Supervisor State Consumer",
       "supported_versions": [
-        "legacy",
-        "shadow"
+        "retired"
       ],
       "zero_authority_caller_proof": {
         "authority_increasing_write_allowed": false,
@@ -571,13 +587,15 @@
         ],
         "callsite_count": 1,
         "diagnostic_only": true,
-        "mode": "shadow",
+        "mode": "retired",
         "projection_ids": [
           "supervisor-state-projection"
         ],
         "read_only": true,
-        "read_only_verified": true
-      }
+        "read_only_verified": false
+      },
+      "non_authoritative": true,
+      "zero_reader_gate": "Zero-reader gate active: this adapter is non-authoritative and must not be read by any dispatch, completion, cancellation, publication, delivery, repair, or lifecycle-transition path. Any consumer still referencing this adapter must be migrated to canonical WBC queries with exact source-cursor vectors. Compatibility reads are prohibited; only evidence-extracted non-authoritative historical references remain permitted for traceability until deletion."
     }
   ],
   "meta": {
@@ -591,10 +609,10 @@
       "token"
     ],
     "adapter_count": 12,
-    "expired_adapter_count": 0,
-    "generated_at": "2026-07-21T00:01:43.840454+00:00",
-    "generated_by": "M8 Step 8 (T8) \u2014 generate_wbc_boundary_inventory.py",
+    "expired_adapter_count": 6,
+    "generated_at": "2026-07-21T13:01:03.366720+00:00",
+    "generated_by": "M9 Step 14 (T23) \u2014 retire M8-expiry historical adapters",
     "read_only_verified_count": 12,
-    "schema": "m8.wbc-historical-adapters.v1"
+    "schema": "m9.wbc-historical-adapters.v1"
   }
 }

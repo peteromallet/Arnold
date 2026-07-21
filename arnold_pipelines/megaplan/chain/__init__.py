@@ -6296,6 +6296,82 @@ def run_chain(
         events.append({"msg": msg, **fields})
         writer(f"[chain] {msg}\n")
 
+    def _emit_chain_work_boundary(
+        kind: str,
+        *,
+        plan_name: str | None = None,
+        phase: str | None = "chain",
+        elapsed_ms: int | None = None,
+        operation: str | None = None,
+        from_state: str | None = None,
+        to_state: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        target_plan = plan_name or state.current_plan_name
+        if not target_plan:
+            return
+        try:
+            plan_dir = resolve_plan_dir(root, target_plan)
+        except CliError:
+            return
+        payload = {
+            "boundary": kind,
+            "chain_spec": str(spec_path),
+            "current_plan_name": target_plan,
+            **dict(metadata or {}),
+        }
+        try:
+            from arnold_pipelines.megaplan.observability.work_ledger import (
+                emit_git_activity,
+                emit_replay,
+                emit_retry_wait,
+                emit_session_start,
+                emit_transition_activity,
+            )
+
+            if kind == "chain_session_start":
+                emit_session_start(
+                    plan_dir,
+                    phase=phase,
+                    session_id=f"chain:{os.getpid()}:{spec_path.name}",
+                    agent="chain",
+                    metadata=payload,
+                )
+            elif kind == "git":
+                emit_git_activity(
+                    plan_dir,
+                    phase=phase or "chain",
+                    operation=operation or "chain_git_boundary",
+                    elapsed_ms=elapsed_ms,
+                    metadata=payload,
+                )
+            elif kind == "retry_wait":
+                emit_retry_wait(
+                    plan_dir,
+                    elapsed_ms=elapsed_ms,
+                    unavailable_reason="chain_retry_boundary_no_model",
+                    metadata=payload,
+                )
+            elif kind == "replay":
+                emit_replay(
+                    plan_dir,
+                    elapsed_ms=elapsed_ms,
+                    unavailable_reason="chain_replay_boundary_usage_unavailable",
+                    metadata=payload,
+                )
+            elif kind == "transition":
+                emit_transition_activity(
+                    plan_dir,
+                    phase=phase,
+                    transition=str(payload.get("transition") or "chain_transition"),
+                    from_state=from_state,
+                    to_state=to_state,
+                    elapsed_ms=elapsed_ms,
+                    metadata=payload,
+                )
+        except Exception:
+            log.debug("Work ledger chain event emission skipped", exc_info=True)
+
     # ---- Seed phase ----
     if spec.seed_plan and state.current_milestone_index < 0:
         seed_state = _plan_state(root, spec.seed_plan, timeout=spec.status_timeout)
@@ -6303,6 +6379,18 @@ def run_chain(
         if seed_state not in TERMINAL_SKIP_STATES:
             state.current_plan_name = spec.seed_plan
             chain_spec.save_chain_state(spec_path, state)
+            _emit_chain_work_boundary(
+                "chain_session_start",
+                plan_name=spec.seed_plan,
+                metadata={"boundary": "seed_plan_start", "seed_state": seed_state},
+            )
+            _emit_chain_work_boundary(
+                "transition",
+                plan_name=spec.seed_plan,
+                from_state=seed_state,
+                to_state="chain_driving_seed",
+                metadata={"transition": "chain_seed_start"},
+            )
             outcome = _drive_plan_with_blocked_execute_recovery(
                 root,
                 spec_path,
@@ -6338,6 +6426,15 @@ def run_chain(
                 )
             if decision == "retry":
                 # Recursive retry kept simple: re-drive seed once.
+                _emit_chain_work_boundary(
+                    "retry_wait",
+                    plan_name=spec.seed_plan,
+                    elapsed_ms=0,
+                    metadata={
+                        "milestone_label": "seed",
+                        "retry_strategy": "seed_recursive_retry",
+                    },
+                )
                 outcome = _drive_plan_with_blocked_execute_recovery(
                     root,
                     spec_path,
@@ -6950,6 +7047,16 @@ def run_chain(
                     _rearm_fresh_session_execute_block(plan_dir, writer=writer)
                 plan_state = _plan_state_payload_from_name(root, plan_name)
                 if _blocked_plan_replay_would_be_redundant(state, plan_state=plan_state):
+                    _emit_chain_work_boundary(
+                        "replay",
+                        plan_name=plan_name,
+                        elapsed_ms=0,
+                        metadata={
+                            "milestone_label": milestone.label,
+                            "replay_boundary": "blocked_plan_replay_suppressed",
+                            "plan_state": plan_state.get("current_state"),
+                        },
+                    )
                     _append_reconciliation_audit(
                         state,
                         plan_name=plan_name,
@@ -6976,6 +7083,26 @@ def run_chain(
                     writer=writer,
                 )
                 log(f"resuming existing plan {plan_name} for {milestone.label}")
+                _emit_chain_work_boundary(
+                    "chain_session_start",
+                    plan_name=plan_name,
+                    metadata={
+                        "boundary": "milestone_resume",
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                    },
+                )
+                _emit_chain_work_boundary(
+                    "transition",
+                    plan_name=plan_name,
+                    from_state=str(plan_state.get("current_state") or ""),
+                    to_state="chain_resuming_milestone",
+                    metadata={
+                        "transition": "chain_milestone_resume",
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                    },
+                )
                 _emit_milestone_start_evidence(
                     state,
                     milestone_label=milestone.label,
@@ -7101,7 +7228,28 @@ def run_chain(
                     plan_name=plan_name,
                 )
                 chain_spec.save_chain_state(spec_path, state)
+                _emit_chain_work_boundary(
+                    "chain_session_start",
+                    plan_name=plan_name,
+                    metadata={
+                        "boundary": "milestone_init",
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                    },
+                )
+                _emit_chain_work_boundary(
+                    "transition",
+                    plan_name=plan_name,
+                    from_state=None,
+                    to_state=STATE_PREPPED,
+                    metadata={
+                        "transition": "chain_milestone_init",
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                    },
+                )
                 if use_pr:
+                    _git_start = time.monotonic()
                     _commit_and_push_phase(
                         root,
                         milestone.branch or "",
@@ -7109,6 +7257,17 @@ def run_chain(
                         "init",
                         writer=writer,
                         preexisting_dirty_paths=preexisting_dirty_paths,
+                    )
+                    _emit_chain_work_boundary(
+                        "git",
+                        plan_name=plan_name,
+                        operation="chain_commit_and_push_init",
+                        elapsed_ms=max(0, int((time.monotonic() - _git_start) * 1000)),
+                        metadata={
+                            "milestone_label": milestone.label,
+                            "milestone_index": idx,
+                            "branch": milestone.branch,
+                        },
                     )
                     _capture_sync_state(
                         root, spec_path, branch=milestone.branch, pr_number=state.pr_number
@@ -7137,6 +7296,7 @@ def run_chain(
 
         def phase_callback(phase: str, _code: int, _out: str, _err: str) -> None:
             if use_pr and milestone.branch:
+                _git_start = time.monotonic()
                 _commit_and_push_phase(
                     root,
                     milestone.branch,
@@ -7144,6 +7304,19 @@ def run_chain(
                     phase,
                     writer=writer,
                     preexisting_dirty_paths=preexisting_dirty_paths,
+                )
+                _emit_chain_work_boundary(
+                    "git",
+                    plan_name=plan_name,
+                    operation=f"chain_commit_and_push_{phase}",
+                    phase=phase,
+                    elapsed_ms=max(0, int((time.monotonic() - _git_start) * 1000)),
+                    metadata={
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                        "branch": milestone.branch,
+                        "phase_returncode": _code,
+                    },
                 )
                 _capture_sync_state(
                     root, spec_path, branch=milestone.branch, pr_number=state.pr_number
@@ -7237,8 +7410,27 @@ def run_chain(
                     f"retrying milestone {milestone.label} by resuming plan "
                     f"{state.current_plan_name} from {resumable_state}"
                 )
+                _emit_chain_work_boundary(
+                    "retry_wait",
+                    plan_name=state.current_plan_name,
+                    elapsed_ms=0,
+                    metadata={
+                        "milestone_label": milestone.label,
+                        "retry_strategy": "resume_milestone",
+                        "resumable_state": resumable_state,
+                    },
+                )
             else:
                 log(f"retrying milestone {milestone.label}")
+                _emit_chain_work_boundary(
+                    "retry_wait",
+                    plan_name=state.current_plan_name,
+                    elapsed_ms=0,
+                    metadata={
+                        "milestone_label": milestone.label,
+                        "retry_strategy": "reinit_milestone",
+                    },
+                )
                 _preserve_carried_wip_before_retry(
                     root,
                     spec_path,
@@ -7299,6 +7491,7 @@ def run_chain(
             and not use_pr
             and mode != "plan"
         ):
+            _git_start = time.monotonic()
             local_commit_sha = _commit_phase(
                 root,
                 plan_name,
@@ -7306,7 +7499,19 @@ def run_chain(
                 writer=writer,
                 preexisting_dirty_paths=preexisting_dirty_paths,
             )
+            _emit_chain_work_boundary(
+                "git",
+                plan_name=plan_name,
+                operation="chain_commit_done",
+                elapsed_ms=max(0, int((time.monotonic() - _git_start) * 1000)),
+                metadata={
+                    "milestone_label": milestone.label,
+                    "milestone_index": idx,
+                    "commit_sha": local_commit_sha,
+                },
+            )
         if decision == "advance" and use_pr and state.pr_number is not None:
+            _git_start = time.monotonic()
             _commit_and_push_phase(
                 root,
                 milestone.branch or "",
@@ -7314,6 +7519,18 @@ def run_chain(
                 "done",
                 writer=writer,
                 preexisting_dirty_paths=preexisting_dirty_paths,
+            )
+            _emit_chain_work_boundary(
+                "git",
+                plan_name=plan_name,
+                operation="chain_commit_and_push_done",
+                elapsed_ms=max(0, int((time.monotonic() - _git_start) * 1000)),
+                metadata={
+                    "milestone_label": milestone.label,
+                    "milestone_index": idx,
+                    "branch": milestone.branch,
+                    "pr_number": state.pr_number,
+                },
             )
             _capture_sync_state(
                 root, spec_path, branch=milestone.branch, pr_number=state.pr_number
