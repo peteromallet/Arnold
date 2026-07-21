@@ -4,7 +4,7 @@
     "resident_run_id": "subagent-20260721-193143-8e6217bb",
     "trigger_kind": "fixed_delay_schedule_occurrence",
     "started_at_utc": "2026-07-21T19:31:43.876919Z",
-    "assessment_completed_at_utc": "2026-07-21T20:10:43.221421Z",
+    "assessment_completed_at_utc": "2026-07-21T20:14:17.699390Z",
     "previous_occurrence_run_id": "subagent-20260721-192055-7e046611",
     "one_at_a_time_policy": "serial_interventions_all_targets_with_target_specific_ownership",
     "final_classification": "partial",
@@ -303,7 +303,7 @@
   "verification": {
     "targets_assessed_serially": true,
     "targets_reassessed_immediately_before_write": true,
-    "final_three_target_recheck_at_utc": "2026-07-21T20:10:43.221421Z",
+    "final_three_target_recheck_at_utc": "2026-07-21T20:14:17.699390Z",
     "candidate_manifests_and_cited_artifacts_reread": true,
     "canonical_active_inventory": {
       "observed_at_utc": "2026-07-21T20:08:15.752780Z",
