@@ -390,6 +390,58 @@ def test_resolve_current_target_prefers_terminal_plan_over_stale_chain_state(tmp
     assert "terminal plan state supersedes stale chain state" in record["rationale"]
 
 
+def test_resolve_current_target_preserves_awaiting_pr_merge_custody(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones:\n  - label: m1\n  - label: m2\n", encoding="utf-8")
+    plan_name = "m1-current-plan"
+    _write_marker(
+        marker_dir / "demo-session.json",
+        {
+            "session": "demo-session",
+            "workspace": str(workspace),
+            "remote_spec": str(spec_path),
+            "run_kind": "chain",
+        },
+    )
+    _write_chain_state(
+        _chain_state_path(workspace, spec_path),
+        {
+            "current_plan_name": plan_name,
+            "current_milestone_index": 0,
+            "completed": [],
+            "last_state": "awaiting_pr_merge",
+            "pr_number": 290,
+            "pr_state": "open",
+        },
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {"name": plan_name, "current_state": "done"},
+    )
+
+    record = resolve_current_target(
+        "demo-session",
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+
+    assert record["authoritative_source"] == "chain_state"
+    assert record["current_refs"]["chain_last_state"] == "awaiting_pr_merge"
+    assert record["current_refs"]["plan_current_state"] == "done"
+    assert record["chain_state"]["pr_number"] == 290
+    assert record["chain_state"]["pr_state"] == "open"
+    assert record["stale_evidence"] == []
+    assert record["evidence_state"]["status"] == "resolved"
+    assert "chain acceptance wait remains authoritative after terminal plan" in record["rationale"]
+
+
 def test_resolve_current_target_tolerates_partial_evidence_fixture(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     repair_data_dir = marker_dir / "repair-data"

@@ -18,6 +18,7 @@ from arnold_pipelines.megaplan.cloud.session_markers import (
 
 _FINGERPRINT_ALGORITHM = "sha256"
 _TERMINAL_PLAN_STATES = {"done", "aborted", "cancelled"}
+_CHAIN_ACCEPTANCE_WAIT_STATES = {"awaiting_pr_merge"}
 
 _PARTIAL_EVIDENCE_KINDS = {
     "invalid_marker_json",
@@ -241,6 +242,7 @@ def resolve_current_target(
         and chain_state_path is not None
         and chain_state_path.exists()
         and chain_last_state.lower() not in _TERMINAL_PLAN_STATES
+        and chain_last_state.lower() not in _CHAIN_ACCEPTANCE_WAIT_STATES
     ):
         stale_evidence.append(
             _artifact(
@@ -278,6 +280,14 @@ def resolve_current_target(
                 "path": chosen["marker_path"],
             }
         )
+    elif (
+        run_kind == "chain"
+        and chain_state_path is not None
+        and chain_state_path.exists()
+        and chain_last_state.lower() in _CHAIN_ACCEPTANCE_WAIT_STATES
+    ):
+        authoritative_source = "chain_state"
+        rationale.append("chain acceptance wait remains authoritative after terminal plan")
     elif plan_name and plan_state_path is not None and plan_state_path.exists() and _is_terminal_plan_state(plan_current_state):
         authoritative_source = "plan_state"
     elif chain_current_plan and chain_state_path is not None and chain_state_path.exists():
@@ -333,6 +343,8 @@ def resolve_current_target(
             "present": bool(chain_state_path and chain_state_path.exists()),
             "current_plan_name": chain_current_plan,
             "last_state": _safe_text(chain_state.get("last_state")),
+            "pr_number": chain_state.get("pr_number"),
+            "pr_state": _safe_text(chain_state.get("pr_state")),
             "milestone_total": len(chain_state.get("milestones")) if isinstance(chain_state.get("milestones"), list) else 0,
             "completed_count": len(chain_state.get("completed")) if isinstance(chain_state.get("completed"), list) else 0,
             "chain_complete": chain_state.get("chain_complete"),
