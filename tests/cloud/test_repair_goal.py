@@ -456,6 +456,28 @@ def test_current_epoch_investigator_replan_routes_to_l2_once(tmp_path: Path) -> 
     assert after_reconcile["evaluation"]["control_action"] != "meta_repair"
 
 
+def test_current_epoch_arnold_source_replan_routes_to_l2_once(
+    tmp_path: Path,
+) -> None:
+    path, _goal_payload = _goal(tmp_path)
+    failure = record_terminal_failure(
+        path,
+        outcome="deterministic_failure_source_fix_needed",
+        phase="investigator-replan-arnold-source",
+        reason="validated investigator replan targets Arnold repair-system source",
+        owner_run_id="repair-owner-1",
+    )
+
+    routed = evaluate_repair_goal(path, action="watchdog_authority_check")
+
+    assert failure["terminal_failure"]["replan_epoch"] == 0
+    assert routed["status"] == GOAL_ACTIVE
+    assert routed["evaluation"]["control_action"] == "meta_repair"
+    assert routed["evaluation"]["failed_fixer_evidence"]["phase"] == (
+        "investigator-replan-arnold-source"
+    )
+
+
 def test_productive_target_commit_resets_breaker_without_completing_goal(tmp_path: Path) -> None:
     path, goal = _goal(tmp_path)
     workspace = Path(goal["target"]["workspace"])

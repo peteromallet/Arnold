@@ -5153,6 +5153,7 @@ has_l1_custody_failure = bool(
         "fixer_infrastructure_failure",
         "deterministic_failure",
         "deterministic_failure_source_fix_needed",
+        "replan_required",
     }
     or investigation.get("status") in {"failed", "invalid"}
 )
@@ -5160,6 +5161,7 @@ needs_human_present = needs_human_path.exists()
 terminal_repair_failures = {
     "discord_escalated",
     "deterministic_failure_source_fix_needed",
+    "replan_required",
     "repair_timeout",
     "repair_exhausted",
 }

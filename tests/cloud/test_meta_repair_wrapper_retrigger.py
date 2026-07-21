@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shlex
@@ -63,6 +64,39 @@ def test_repair_loop_bin_falls_back_when_override_missing() -> None:
     )
 
 
+def test_repair_loop_bin_rejects_stale_installed_override(tmp_path: Path) -> None:
+    text = _meta_repair_wrapper()
+    start = text.index('MARKER_DIR="${MEGAPLAN_META_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"')
+    end = text.index('REPAIR_DATA_PATH="$REPAIR_DATA_DIR/${SESSION}.repair-data.json"')
+    prolog = text[start:end]
+    stale = tmp_path / "arnold-repair-loop"
+    stale.write_text("#!/usr/bin/env bash\nexit 99\n", encoding="utf-8")
+    stale.chmod(0o755)
+    script = "\n".join(
+        [
+            "set -eu",
+            "SESSION=demo-session",
+            f"MEGAPLAN_META_ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
+            "MEGAPLAN_META_SELF_PATH=/usr/local/bin/arnold-meta-repair-loop",
+            f"ARNOLD_META_REPAIR_LOOP_ORIGIN={shlex.quote(str(WRAPPER_PATH))}",
+            f"MEGAPLAN_META_REPAIR_LOOP_BIN={shlex.quote(str(stale))}",
+            prolog,
+            'printf "REPAIR_LOOP_BIN=%s\\n" "$REPAIR_LOOP_BIN"',
+        ]
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        f"REPAIR_LOOP_BIN={REPO_ROOT}/arnold_pipelines/megaplan/cloud/wrappers/"
+        "arnold-repair-loop"
+    ) in result.stdout
+    assert "ignoring repair-loop override that differs from repaired source" in result.stderr
+
+
 def test_unrecordable_codex_response_dispatches_direct_hermes() -> None:
     text = _meta_repair_wrapper()
 
@@ -104,10 +138,80 @@ def test_l3_trigger_requires_typed_request_and_uses_pointer_prompt() -> None:
 
 def test_meta_repair_provenance_bootstrap_uses_safe_python_path() -> None:
     text = _meta_repair_wrapper()
-    assert 'PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$marker_path"' in text
+    assert 'PYTHONSAFEPATH=1 PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 -P - \\' in text
     assert 'INSTALL_SYNC_STATUS="commit_custody_failed"' in text
     assert "will NOT install sync or retrigger ordinary repair" in text
     assert 'post_retrigger_verification["commit_custody"]' in text
+
+
+def test_l2_observation_contract_attestation_rejects_stale_source_scope(
+    tmp_path: Path,
+) -> None:
+    text = _meta_repair_wrapper()
+    start = text.index("attest_meta_investigation_contract_artifact() {")
+    end = text.index("\n}\n", start) + 3
+    function = text[start:end]
+    contract = REPO_ROOT / "arnold_pipelines/megaplan/cloud/repair_investigation.py"
+    source_observation = {
+        "kind": "source_contract",
+        "path": str(contract),
+        "sha256": hashlib.sha256(contract.read_bytes()).hexdigest(),
+    }
+    observation_path = tmp_path / "observation.json"
+    required = {
+        "safe_repair_target_by_action": {"repair_source": ["arnold_source"]},
+        "handoff_allowed_mutations_by_action": {
+            "repair_source": [
+                "arnold_source:arnold_pipelines/megaplan/cloud/<bounded component>",
+                "arnold_source:tests/cloud/<bounded component>",
+            ]
+        },
+        "l2_source_boundary": (
+            "Target application files remain target_workspace work owned by L1."
+        ),
+    }
+    observation_path.write_text(
+        json.dumps(
+            {
+                "required_receipt_shape": required,
+                "observations": [source_observation],
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n".join(
+        [
+            function,
+            f"MEGAPLAN_SUPERVISOR_STDLIB_PYTHON={shlex.quote(sys.executable)}",
+            f"META_INVESTIGATION_OBSERVATION_PATH={shlex.quote(str(observation_path))}",
+            f"ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
+            "attest_meta_investigation_contract_artifact",
+        ]
+    )
+
+    accepted = subprocess.run(
+        ["bash", "-lc", script], capture_output=True, text=True, check=False
+    )
+    assert accepted.returncode == 0, accepted.stderr
+
+    required["safe_repair_target_by_action"]["repair_source"] = [
+        "arnold_source",
+        "target_workspace",
+    ]
+    observation_path.write_text(
+        json.dumps(
+            {
+                "required_receipt_shape": required,
+                "observations": [source_observation],
+            }
+        ),
+        encoding="utf-8",
+    )
+    rejected = subprocess.run(
+        ["bash", "-lc", script], capture_output=True, text=True, check=False
+    )
+    assert rejected.returncode != 0
+    assert "permits repair_source outside Arnold source" in rejected.stderr
 
 
 def test_recordable_verdict_check_rejects_arbitrary_output(tmp_path: Path) -> None:
@@ -272,7 +376,9 @@ def test_persist_record_marks_retrigger_verification_failure(tmp_path: Path) -> 
 def test_retrigger_helper_passes_workspace_and_remote_spec(tmp_path: Path) -> None:
     marker = (
         'python3 - "$SESSION" "$REPAIR_LOOP_BIN" "$WRAPPER_REPO_ROOT" '
-        '"$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_PATH" "$MARKER_DIR" <<'
+        '"$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_PATH" "$MARKER_DIR" '
+        '"$META_INVESTIGATION_OBSERVATION_PATH" "$META_INVESTIGATION_CONTEXT_DIGEST" '
+        '"$META_INVESTIGATION_RECEIPT_PATH" <<'
     )
     program = _extract_meta_repair_embedded_python(marker)
     prog_path = tmp_path / "_retrigger.py"
@@ -304,6 +410,32 @@ def test_retrigger_helper_passes_workspace_and_remote_spec(tmp_path: Path) -> No
     plan_path.parent.mkdir(parents=True, exist_ok=True)
     plan_path.write_text(json.dumps({"current_state": "done"}), encoding="utf-8")
 
+    goal_path = tmp_path / "repair-goal.json"
+    goal_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "arnold-repair-goal-v1",
+                "goal_id": "repair-goal-demo",
+                "status": "active",
+                "terminal": False,
+                "checkpoint_digest": "checkpoint-demo",
+                "target": {
+                    "session": "demo-session",
+                    "workspace": str(workspace),
+                    "remote_spec": str(spec_path),
+                    "blocker_id": "blocker:demo",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    handoff_path = tmp_path / "l2-handoff.json"
+    handoff_path.write_text("{}\n", encoding="utf-8")
+    receipt_path = tmp_path / "l2-receipt.json"
+    receipt_path.write_text(
+        json.dumps({"receipt_digest": "receipt-demo"}), encoding="utf-8"
+    )
+
     (marker_dir / "demo-session.json").write_text(
         json.dumps(
             {
@@ -319,6 +451,12 @@ def test_retrigger_helper_passes_workspace_and_remote_spec(tmp_path: Path) -> No
         json.dumps(
                 {
                     "session": "demo-session",
+                    "blocker_id": "blocker:demo",
+                    "repair_goal": {
+                        "goal_id": "repair-goal-demo",
+                        "goal_path": str(goal_path),
+                        "checkpoint_digest": "checkpoint-demo",
+                    },
                     "outcome": "complete",
                     "verification": {
                         "outcome": "complete",
@@ -353,16 +491,21 @@ def test_retrigger_helper_passes_workspace_and_remote_spec(tmp_path: Path) -> No
 
     env = dict(os.environ)
     env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+    env["CLOUD_WATCHDOG_REPAIR_BLOCKER_ID"] = ""
+    env["CLOUD_WATCHDOG_REPAIR_REQUEST_ID"] = "request:demo"
     result = subprocess.run(
         [
             sys.executable,
             str(prog_path),
             "demo-session",
-                str(repair_loop_bin),
-                str(tmp_path),
-                "",
-                str(repair_data_dir / "demo-session.repair-data.json"),
-                str(marker_dir),
+            str(repair_loop_bin),
+            str(tmp_path),
+            "",
+            str(repair_data_dir / "demo-session.repair-data.json"),
+            str(marker_dir),
+            str(handoff_path),
+            "context-demo",
+            str(receipt_path),
         ],
         capture_output=True,
         text=True,

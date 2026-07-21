@@ -10618,6 +10618,61 @@ def test_compute_meta_repair_trigger_routes_source_fix_breaker_to_l2(
     assert result.stdout.strip() == "TRIGGER:repair_goal_circuit_breaker"
 
 
+def test_compute_meta_repair_trigger_does_not_hide_replan_behind_live_worker(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "outcome": "replan_required",
+                "investigation": {
+                    "status": "accepted",
+                    "recommended_action": "replan",
+                },
+                "attempts": [{"attempt_id": 1, "outcome": "replan_required"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    observation = json.dumps(
+        {
+            "authoritative_source": "chain_state",
+            "current_refs": {
+                "current_plan_name": "demo-plan",
+                "chain_current_plan_name": "demo-plan",
+                "plan_current_state": "blocked",
+                "chain_last_state": "blocked",
+            },
+            "plan_state": {"present": True},
+            "chain_state": {"present": True},
+            "active_step_heartbeat": {"active": True, "pid_live": True},
+        }
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until(
+                "compute_meta_repair_trigger", "dispatch_meta_repair"
+            ),
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                "compute_meta_repair_trigger demo-session "
+                f"{shlex.quote(observation)} alive"
+            ),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "TRIGGER:l1_custody_failure"
+
+
 def test_compute_meta_repair_trigger_detects_semantic_fingerprint_recurrence(
     tmp_path: Path,
 ) -> None:
@@ -15142,6 +15197,7 @@ def test_l2_pathological_evidence_builds_minimal_envelope_and_launches_investiga
             "ARNOLD_MANAGED_AGENT_RUN_ID=parent-1",
             "redact_file_in_place() { :; }",
             "log() { :; }",
+            "attest_meta_investigation_contract_artifact() { :; }",
             r'''python3() {
   if [[ "$1" == "-m" && "$2" == "arnold_pipelines.megaplan.managed_agent" ]]; then
     printf '%s\n' 'managed-investigator-pathological' > "$META_INVESTIGATION_RUN_ID_PATH"
@@ -15282,6 +15338,24 @@ def test_meta_repair_wrapper_pins_investigation_contract_import_to_source() -> N
     assert text.index('if ! attest_meta_repair_python_source; then') < text.index(
         'load_resident_delegation_context() {'
     )
+    assert 'attest_meta_investigation_contract_artifact() {' in text
+    assert 'L2 observation permits repair_source outside Arnold source' in text
+    assert 'L2 observation source contract digest disagrees with source custody' in text
+    assert text.index(
+        'attest_meta_investigation_contract_artifact 2>>"$RUN_LOG"'
+    ) < text.index('META_INVESTIGATION_CONTEXT_DIGEST="$(python3 -c')
+
+
+def test_meta_repair_retrigger_uses_only_custody_bound_repair_loop() -> None:
+    text = _meta_repair_wrapper()
+
+    assert (
+        'REPAIR_LOOP_SOURCE="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/'
+        'arnold-repair-loop"'
+    ) in text
+    assert 'cmp -s -- "$REPAIR_LOOP_OVERRIDE" "$REPAIR_LOOP_SOURCE"' in text
+    assert 'REPAIR_LOOP_BIN="$REPAIR_LOOP_SOURCE"' in text
+    assert "ignoring repair-loop override that differs from repaired source" in text
 
 
 def test_meta_repair_snapshot_ignores_inherited_foreign_snapshot_custody() -> None:

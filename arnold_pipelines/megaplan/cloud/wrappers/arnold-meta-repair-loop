@@ -120,10 +120,22 @@ META_REPAIR_BUDGET="${MEGAPLAN_META_BUDGET_SECS:-7200}"
 META_REPAIR_ENABLED_VAR="${ARNOLD_META_REPAIR_ENABLED:-1}"
 META_REPAIR_COMMIT_ENABLED_VAR="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-1}"
 SYNC_BRANCH="${MEGAPLAN_META_SYNC_BRANCH:-editible-install}"
-REPAIR_LOOP_BIN="${MEGAPLAN_META_REPAIR_LOOP_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop}"
-REPAIR_LOOP_FALLBACK="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
-if [[ ! -f "$REPAIR_LOOP_BIN" && -f "$REPAIR_LOOP_FALLBACK" ]]; then
-  REPAIR_LOOP_BIN="$REPAIR_LOOP_FALLBACK"
+REPAIR_LOOP_SOURCE="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+REPAIR_LOOP_OVERRIDE="${MEGAPLAN_META_REPAIR_LOOP_BIN:-}"
+if [[ ! -x "$REPAIR_LOOP_SOURCE" ]]; then
+  echo "arnold-meta-repair-loop: repaired source repair-loop is unavailable: $REPAIR_LOOP_SOURCE" >&2
+  exit 78
+fi
+# The installed wrapper can lag the source commit that L2 just repaired.  An
+# override is therefore discovery only: use it when it is byte-identical to
+# the custody-bound source, otherwise retrigger through the source wrapper.
+REPAIR_LOOP_BIN="$REPAIR_LOOP_SOURCE"
+if [[ -n "$REPAIR_LOOP_OVERRIDE" ]]; then
+  if [[ -f "$REPAIR_LOOP_OVERRIDE" ]] && cmp -s -- "$REPAIR_LOOP_OVERRIDE" "$REPAIR_LOOP_SOURCE"; then
+    REPAIR_LOOP_BIN="$REPAIR_LOOP_OVERRIDE"
+  else
+    echo "arnold-meta-repair-loop: ignoring repair-loop override that differs from repaired source" >&2
+  fi
 fi
 REPAIR_DATA_PATH="$REPAIR_DATA_DIR/${SESSION}.repair-data.json"
 RUN_DIR="${MEGAPLAN_META_RUN_DIR:-/workspace/.megaplan/meta-runs}"
@@ -156,6 +168,55 @@ if actual != expected:
         "meta-repair investigation contract import disagrees with source custody: "
         f"expected={expected} actual={actual}"
     )
+PY
+}
+
+attest_meta_investigation_contract_artifact() {
+  "$MEGAPLAN_SUPERVISOR_STDLIB_PYTHON" -P - \
+    "$META_INVESTIGATION_OBSERVATION_PATH" "$ARNOLD_SRC" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+observation_path = Path(sys.argv[1])
+source_root = Path(sys.argv[2]).resolve()
+payload = json.loads(observation_path.read_text(encoding="utf-8"))
+required = payload.get("required_receipt_shape")
+if not isinstance(required, dict):
+    raise SystemExit("L2 observation omitted required receipt shape")
+if required.get("safe_repair_target_by_action", {}).get("repair_source") != [
+    "arnold_source"
+]:
+    raise SystemExit("L2 observation permits repair_source outside Arnold source")
+allowed = required.get("handoff_allowed_mutations_by_action", {}).get(
+    "repair_source"
+)
+expected_allowed = [
+    "arnold_source:arnold_pipelines/megaplan/cloud/<bounded component>",
+    "arnold_source:tests/cloud/<bounded component>",
+]
+if allowed != expected_allowed:
+    raise SystemExit("L2 observation has stale or unbounded source mutation examples")
+boundary = str(required.get("l2_source_boundary") or "")
+if "Target application files remain target_workspace" not in boundary:
+    raise SystemExit("L2 observation omitted target/source ownership boundary")
+contracts = [
+    item
+    for item in payload.get("observations") or []
+    if isinstance(item, dict) and item.get("kind") == "source_contract"
+]
+if len(contracts) != 1:
+    raise SystemExit("L2 observation must bind exactly one source contract")
+expected_path = (
+    source_root / "arnold_pipelines/megaplan/cloud/repair_investigation.py"
+).resolve()
+actual_path = Path(str(contracts[0].get("path") or "")).resolve()
+if actual_path != expected_path:
+    raise SystemExit("L2 observation source contract path disagrees with source custody")
+actual_digest = hashlib.sha256(expected_path.read_bytes()).hexdigest()
+if str(contracts[0].get("sha256") or "") != actual_digest:
+    raise SystemExit("L2 observation source contract digest disagrees with source custody")
 PY
 }
 
@@ -543,6 +604,7 @@ run_meta_repair_investigation() {
     arnold_pipelines.megaplan.cloud.repair_investigation observe-meta \
     --context "$META_INVESTIGATION_CONTEXT_PATH" \
     --output "$META_INVESTIGATION_OBSERVATION_PATH" >/dev/null 2>>"$RUN_LOG" || return 1
+  attest_meta_investigation_contract_artifact 2>>"$RUN_LOG" || return 1
   META_INVESTIGATION_CONTEXT_DIGEST="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["context_digest"])' "$META_INVESTIGATION_CONTEXT_PATH")"
   {
     cat <<EOF

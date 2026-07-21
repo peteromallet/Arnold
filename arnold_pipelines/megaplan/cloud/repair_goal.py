@@ -1263,7 +1263,10 @@ def evaluate_repair_goal(
         terminal_failure_epoch = int(terminal_failure.get("replan_epoch") or 0)
         if (
             evaluation["status"] == GOAL_ACTIVE
-            and terminal_failure.get("phase") == "investigator-replan-required"
+            and terminal_failure.get("phase") in {
+                "investigator-replan-required",
+                "investigator-replan-arnold-source",
+            }
             and terminal_failure.get("escalation_required") is True
             and terminal_failure_epoch == active_replan_epoch
         ):
