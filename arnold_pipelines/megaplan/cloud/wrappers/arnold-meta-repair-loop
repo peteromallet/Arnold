@@ -1931,6 +1931,7 @@ if replan_epoch <= 0:
 os.environ["ARNOLD_REPAIR_L2_HANDOFF_PATH"] = str(l2_handoff_path)
 os.environ["ARNOLD_REPAIR_L2_CONTEXT_DIGEST"] = l2_context_digest
 os.environ["ARNOLD_REPAIR_L2_REPLAN_EPOCH"] = str(replan_epoch)
+os.environ["MEGAPLAN_REPAIR_CONTROL_SRC"] = str(workspace_root.resolve())
 identity_key = f"meta-retrigger:{session}:{l2_context_digest}:epoch:{replan_epoch}"
 managed_project = Path(workspace).resolve() if workspace else workspace_root.resolve()
 spec = ManagedCommandSpec(
