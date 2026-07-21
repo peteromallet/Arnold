@@ -14,7 +14,7 @@
   "occurrence": {
     "resident_run_id": "subagent-20260721-092219-b39252d2",
     "started_at_utc": "2026-07-21T09:22:19.685995Z",
-    "assessment_completed_at_utc": "2026-07-21T09:32:42Z",
+    "assessment_completed_at_utc": "2026-07-21T09:36:56Z",
     "previous_occurrence_run_id": "subagent-20260721-055308-b8ffafa7",
     "previous_occurrence_result": "/workspace/arnold/.megaplan/plans/resident-subagents/subagent-20260721-055308-b8ffafa7/result.md",
     "one_at_a_time_policy": "serial_interventions_all_targets_with_target_specific_deferral",
@@ -45,7 +45,7 @@
         "active_phase": "execute",
         "liveness": "progressing",
         "liveness_reason": "last event 2s ago",
-        "latest_event_at_utc": "2026-07-21T09:32:35.001476Z",
+        "latest_event_at_utc": "2026-07-21T09:36:50.000622Z",
         "latest_failure": null,
         "profile_observed": "partnered-5"
       },
@@ -155,7 +155,7 @@
         "active_phase": "execute",
         "liveness": "progressing",
         "liveness_reason": "last event 1s ago",
-        "latest_event_at_utc": "2026-07-21T09:32:38.721278Z",
+        "latest_event_at_utc": "2026-07-21T09:36:54.255608Z",
         "latest_failure": null,
         "profile_observed": "partnered-5"
       },
@@ -226,7 +226,7 @@
         "display_state": "blocked",
         "active_phase": null,
         "liveness": "stalled",
-        "liveness_reason": "last event 42555s ago and no in-flight LLM",
+        "liveness_reason": "last event 42810s ago and no in-flight LLM",
         "latest_event_at_utc": "2026-07-20T21:43:26.856929Z",
         "recoverable_via": [
           "recover-blocked"
@@ -365,7 +365,7 @@
   "verification": {
     "canonical_unified_inventory": {
       "scope": "unified resident and automatic-repair managed agents",
-      "re_read_at_utc": "2026-07-21T09:32:14Z",
+      "re_read_at_utc": "2026-07-21T09:36:49Z",
       "running_count": 1,
       "running_run_ids": [
         "subagent-20260721-092219-b39252d2"
@@ -374,7 +374,7 @@
     "runtime_heads_and_imports_attested": true,
     "custody_protected_hashes_attested": true,
     "candidate_manifests_and_cited_artifacts_re_read": true,
-    "terminal_artifacts_rechecked_at_utc": "2026-07-21T09:32:42Z",
+    "terminal_artifacts_rechecked_at_utc": "2026-07-21T09:36:56Z",
     "profiles_mutated_by_occurrence": false,
     "resident_restarted_or_repointed": false,
     "deployment_performed": false,
