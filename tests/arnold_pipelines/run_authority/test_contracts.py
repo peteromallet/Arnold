@@ -25,6 +25,7 @@ from arnold_pipelines.run_authority import (
     SubjectAttempt,
     assert_idempotent,
     contract_from_dict,
+    validate_scope_binding,
     validate_relationships,
 )
 
@@ -164,6 +165,47 @@ def test_complete_relationship_chain_accepts_and_all_identity_links_reject_confl
             values[target] = replacement
         with pytest.raises(error):
             validate_relationships(**values, evidence=evidence_items)
+
+
+def test_validate_scope_binding_requires_current_grant_subject_and_capability() -> None:
+    _, _, fence, grant, *_ = _records()
+
+    validate_scope_binding(
+        grant=grant,
+        fence=fence,
+        expected_grant_id=grant.grant_id,
+        subject_id="subject-a",
+        fence_token=fence.token,
+        required_capability="read",
+    )
+
+    with pytest.raises(RevisionConflict):
+        validate_scope_binding(
+            grant=grant,
+            fence=fence,
+            expected_grant_id="stale-grant",
+            subject_id="subject-a",
+            fence_token=fence.token,
+            required_capability="read",
+        )
+    with pytest.raises(IdentityConflict):
+        validate_scope_binding(
+            grant=grant,
+            fence=fence,
+            expected_grant_id=grant.grant_id,
+            subject_id="subject-z",
+            fence_token=fence.token,
+            required_capability="read",
+        )
+    with pytest.raises(IdentityConflict):
+        validate_scope_binding(
+            grant=grant,
+            fence=fence,
+            expected_grant_id=grant.grant_id,
+            subject_id="subject-a",
+            fence_token=fence.token,
+            required_capability="publish",
+        )
 
 
 def test_cas_idempotency_and_payload_conflict_semantics_are_explicit() -> None:

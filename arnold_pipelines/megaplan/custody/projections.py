@@ -57,11 +57,9 @@ from arnold_pipelines.megaplan._core.io import (
     latest_projection_cursor,
     load_projection_history,
     now_utc,
-    projection_history_path,
     projection_snapshot_path,
     rebuild_projection_atomically,
     recover_projection_from_cursor_mismatch,
-    sha256_file,
 )
 
 
@@ -112,14 +110,6 @@ class ProjectionNotFoundError(ProjectionStoreError):
 def _default_base_dir() -> Path:
     return Path(os.path.expanduser("~/.megaplan/custody/projections"))
 
-
-def _atomic_write(path: Path, content: str) -> None:
-    """Write *content* to *path* atomically via temp-file + rename."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        fh.write(content)
-    os.replace(tmp, path)
 
 
 @dataclass
@@ -456,8 +446,8 @@ class CustodyProjectionStore:
 
 
 def _generate_event_id(projection_id: str, event_type: str) -> str:
-    """Generate a deterministic event ID from projection_id + event_type + timestamp."""
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    """Generate a unique event ID from projection_id + event_type + high-precision timestamp."""
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%f")
     seed = f"{projection_id}:{event_type}:{ts}"
     digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
     return f"proj-{digest}"

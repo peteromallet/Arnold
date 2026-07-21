@@ -22,6 +22,50 @@ quota_count=0; other_count=0
 last_err=""; streak=0
 log() { echo "[supervise $(date -Iseconds)] $*" | tee -a "$LOG"; }
 
+authority_gap_record() {
+  local evidence_id="$1"
+  local disposition="$2"
+  local rc="$3"
+  local detail="${4:-authority-risk bypass converted to typed evidence gap}"
+  local gap_root="${REPAIR_DATA_DIR:-${DATA_DIR:-${MARKER_DIR:-/tmp}}}"
+  local gap_path="$gap_root/authority-gaps.jsonl"
+  mkdir -p "$gap_root" >/dev/null 2>&1 || true
+  python3 - "$gap_path" "$evidence_id" "$disposition" "$rc" "$detail" \
+    "${SUPERVISE_SESSION:-}" "${SUPERVISE_WORKSPACE:-}" "${SUPERVISE_REMOTE_SPEC:-}" <<'PY' \
+    >/dev/null 2>>"${LOG:-/dev/null}" || true
+import datetime as dt
+import json
+import pathlib
+import sys
+
+path, evidence_id, disposition, rc, detail, session, workspace, remote_spec = sys.argv[1:9]
+payload = {
+    "schema_version": "arnold.megaplan.cloud.wrapper_authority_gap.v1",
+    "evidence_id": evidence_id,
+    "disposition": disposition,
+    "exit_code": int(rc) if str(rc).isdigit() else rc,
+    "detail": detail,
+    "wrapper": "arnold-supervise",
+    "session": session,
+    "workspace": workspace,
+    "remote_spec": remote_spec,
+    "recorded_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+}
+target = pathlib.Path(path)
+target.parent.mkdir(parents=True, exist_ok=True)
+with target.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(payload, sort_keys=True) + "\n")
+PY
+  printf '[supervise %s] authority gap %s disposition=%s rc=%s path=%s\n' \
+    "$(date -Iseconds)" "$evidence_id" "$disposition" "$rc" "$gap_path" >>"${LOG:-/dev/null}" 2>&1 || true
+}
+
+authority_gap_continue() {
+  local rc=$?
+  authority_gap_record "$1" "typed_evidence_gap" "$rc" "${2:-authority-risk bypass converted to typed evidence gap}"
+  return 0
+}
+
 deterministic_failure_reason() {
   local run_log="$1"
   if grep -q '"error"[[:space:]]*:[[:space:]]*"chain_execution_binding_drift"' "$run_log"; then
@@ -127,7 +171,7 @@ PY
 
 exit_with_repair_request() {
   local reason="$1"
-  queue_result="$(queue_repair_request "$reason" 2>&1 || true)"
+  queue_result="$(queue_repair_request "$reason" 2>&1 || authority_gap_continue "T29-BYPASS-115" "authority-risk bypass converted to typed evidence gap")"
   log "repair queue result: $queue_result"
   exit 1
 }
@@ -153,7 +197,7 @@ while true; do
     log "cmd exited clean (rc=0) — supervisor exiting; inner driver owns plan state"
     rm -f "$RUN_LOG"; exit 0
   fi
-  deterministic_reason="$(deterministic_failure_reason "$RUN_LOG" || true)"
+  deterministic_reason="$(deterministic_failure_reason "$RUN_LOG" || authority_gap_continue "T29-BYPASS-116" "authority-risk bypass converted to typed evidence gap")"
   if [[ -n "$deterministic_reason" ]]; then
     log "deterministic failure ($deterministic_reason) — refusing retry spin"
     rm -f "$RUN_LOG"

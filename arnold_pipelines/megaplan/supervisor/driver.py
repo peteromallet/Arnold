@@ -24,6 +24,14 @@ from arnold_pipelines.megaplan.auto import (
     DriverOutcome,
     drive as auto_drive,
 )
+from arnold_pipelines.megaplan.custody.admission_control import (
+    AdmissionFence,
+    SUPERVISOR_ADMISSION_SURFACE,
+    SUPERVISOR_ADMISSION_WRITER_ID,
+    register_admission_writers,
+    synthetic_text_source_record,
+    validate_admission_mutation,
+)
 from arnold_pipelines.megaplan.supervisor.model import RunNode
 
 RunWriter = Callable[[str], object]
@@ -60,6 +68,27 @@ class DefaultRunDriver:
     """Adapter that preserves the existing subprocess-loop auto-driver path."""
 
     def drive(self, request: RunRequest) -> DriverOutcome:
+        register_admission_writers()
+        validate_admission_mutation(
+            writer_id=SUPERVISOR_ADMISSION_WRITER_ID,
+            surface_name=SUPERVISOR_ADMISSION_SURFACE,
+            selector=request.plan,
+            source_record=synthetic_text_source_record(
+                selector=request.plan,
+                label="supervisor-run-request",
+                text="\n".join((str(request.root), request.plan)),
+            ),
+            fences=(
+                AdmissionFence(
+                    identity="request_root_exists",
+                    expected=True,
+                    observed=request.root.exists(),
+                    satisfied=request.root.exists(),
+                    detail="supervisor dispatch requires an existing project root",
+                ),
+            ),
+            extra={"root": str(request.root)},
+        )
         return auto_drive(
             request.plan,
             cwd=request.root,

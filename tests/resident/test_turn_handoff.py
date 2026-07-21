@@ -45,7 +45,9 @@ def _discord_request() -> AgentRequest:
     )
 
 
-def _tools(*, launch_ok: bool = True) -> tuple[ToolRegistry, list[str]]:
+def _tools(
+    *, launch_ok: bool = True, launch_status: str = "running"
+) -> tuple[ToolRegistry, list[str]]:
     registry = ToolRegistry()
     polled: list[str] = []
 
@@ -57,8 +59,10 @@ def _tools(*, launch_ok: bool = True) -> tuple[ToolRegistry, list[str]]:
             message="subagent launched",
             data={
                 "run_id": f"subagent-{payload.task}",
-                "status": "running",
+                "status": launch_status,
                 "manifest_path": f"/runs/subagent-{payload.task}/manifest.json",
+                "custody_evidence_path": f"/runs/subagent-{payload.task}/managed-child-custody.jsonl",
+                "delivery_owner_run_id": f"subagent-{payload.task}",
             },
         )
 
@@ -100,6 +104,9 @@ def test_successful_durable_launch_finishes_before_poll_or_duplicate_result() ->
     )
     assert response.metadata["turn_handoff"] == "durable_subagents"
     assert response.metadata["launched_run_ids"] == ["subagent-alpha"]
+    assert response.metadata["managed_child_custody_evidence_paths"] == [
+        "/runs/subagent-alpha/managed-child-custody.jsonl"
+    ]
     assert [call.tool_name for call in response.tool_calls] == ["launch_subagent"]
     assert polled == []
 
@@ -152,6 +159,20 @@ def test_sequential_launches_acknowledge_all_runs_after_explicit_final_handoff()
         "will reply automatically to this message."
     )
     assert response.metadata["launched_run_ids"] == ["subagent-alpha", "subagent-beta"]
+    assert polled == []
+
+
+def test_queued_launch_is_already_durable_handoff_evidence() -> None:
+    tools, polled = _tools(launch_status="queued")
+    runner = FakeAgentRunner(
+        [FakeAgentStep.call("launch_subagent", {"task": "alpha"}), FakeAgentStep.call("poll")]
+    )
+
+    response = asyncio.run(runner.run(_discord_request(), tools))
+
+    assert response.metadata["turn_handoff"] == "durable_subagents"
+    assert response.metadata["launched_run_ids"] == ["subagent-alpha"]
+    assert response.metadata["managed_child_delivery_owner_run_ids"] == ["subagent-alpha"]
     assert polled == []
 
 

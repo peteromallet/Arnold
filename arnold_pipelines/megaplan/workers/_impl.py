@@ -19,7 +19,7 @@ import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from arnold_pipelines.megaplan.audits.robustness import build_empty_template
 from arnold_pipelines.megaplan.forms.provocations import select_active_checks
@@ -91,6 +91,8 @@ from arnold_pipelines.megaplan.runtime.execution_environment import (
     isolation_cli_error,
 )
 
+if TYPE_CHECKING:
+    from arnold_pipelines.megaplan.custody.common_worker_dispatch import CommonWorkerDispatchSpec
 
 from arnold_pipelines.megaplan.workers._mock_payloads import _EXECUTE_STEPS, _build_mock_payload
 
@@ -4655,6 +4657,149 @@ def _patch_active_step_fallback_metadata(
 
 
 def run_step_with_worker(
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    args: argparse.Namespace,
+    *,
+    root: Path,
+    resolved: tuple[str, str, bool, str | None] | AgentMode | None = None,
+    prompt_override: str | None = None,
+    prompt_kwargs: dict[str, Any] | None = None,
+    read_only: bool = False,
+    output_path: Path | None = None,
+    worker_options: dict[str, Any] | None = None,
+    record_routing: bool = True,
+    ledger_phase: str | None = None,
+    ledger_step_label: str | None = None,
+    ledger_selected_spec: str | None = None,
+    ledger_tier: int | None = None,
+    ledger_complexity: int | None = None,
+    ledger_tier_routing_active: bool = False,
+    ledger_configured_specs: tuple[str, ...] | list[str] | str | None = None,
+    ledger_attempt_index: int | None = None,
+    ledger_attempted_specs: tuple[str, ...] | list[str] | str | None = None,
+    ledger_failed_attempt_reasons: tuple[str, ...] | list[str] | None = None,
+    ledger_fallback_trigger: str | None = None,
+    wbc_dispatch: CommonWorkerDispatchSpec | None = None,
+) -> tuple[WorkerResult, str, str, bool]:
+    if wbc_dispatch is None:
+        return _run_step_with_worker_legacy(
+            step,
+            state,
+            plan_dir,
+            args,
+            root=root,
+            resolved=resolved,
+            prompt_override=prompt_override,
+            prompt_kwargs=prompt_kwargs,
+            read_only=read_only,
+            output_path=output_path,
+            worker_options=worker_options,
+            record_routing=record_routing,
+            ledger_phase=ledger_phase,
+            ledger_step_label=ledger_step_label,
+            ledger_selected_spec=ledger_selected_spec,
+            ledger_tier=ledger_tier,
+            ledger_complexity=ledger_complexity,
+            ledger_tier_routing_active=ledger_tier_routing_active,
+            ledger_configured_specs=ledger_configured_specs,
+            ledger_attempt_index=ledger_attempt_index,
+            ledger_attempted_specs=ledger_attempted_specs,
+            ledger_failed_attempt_reasons=ledger_failed_attempt_reasons,
+            ledger_fallback_trigger=ledger_fallback_trigger,
+        )
+
+    dispatch_result = wbc_dispatch.run(
+        lambda _start: _run_step_with_worker_legacy(
+            step,
+            state,
+            plan_dir,
+            args,
+            root=root,
+            resolved=resolved,
+            prompt_override=prompt_override,
+            prompt_kwargs=prompt_kwargs,
+            read_only=read_only,
+            output_path=output_path,
+            worker_options=worker_options,
+            record_routing=record_routing,
+            ledger_phase=ledger_phase,
+            ledger_step_label=ledger_step_label,
+            ledger_selected_spec=ledger_selected_spec,
+            ledger_tier=ledger_tier,
+            ledger_complexity=ledger_complexity,
+            ledger_tier_routing_active=ledger_tier_routing_active,
+            ledger_configured_specs=ledger_configured_specs,
+            ledger_attempt_index=ledger_attempt_index,
+            ledger_attempted_specs=ledger_attempted_specs,
+            ledger_failed_attempt_reasons=ledger_failed_attempt_reasons,
+            ledger_fallback_trigger=ledger_fallback_trigger,
+        )
+    )
+    worker, agent, mode, refreshed = dispatch_result.worker_result
+    metadata = dict(worker.auth_metadata) if isinstance(worker.auth_metadata, dict) else {}
+    metadata["wbc_dispatch"] = {
+        "attempt_id": dispatch_result.start.attempt_id,
+        "writer_id": dispatch_result.diagnostics["writer_id"],
+        "surface_name": dispatch_result.diagnostics["surface_name"],
+        "expected_source_version": wbc_dispatch.expected_source_version,
+        "start_source_lookup_key": wbc_dispatch.start_source_lookup_key,
+        "terminal_source_lookup_key": wbc_dispatch.success_source_lookup_key,
+        "start_event_sequence": (
+            dispatch_result.start.append_result.event.sequence
+            if dispatch_result.start.append_result is not None
+            else None
+        ),
+        "terminal_event_sequence": (
+            dispatch_result.terminal.append_result.event.sequence
+            if dispatch_result.terminal.append_result is not None
+            else None
+        ),
+        "promotion_mode": dispatch_result.terminal.promotion_mode.value,
+        "route_kind": (
+            dispatch_result.terminal.artifacts.metadata.get("route_kind")
+            if dispatch_result.terminal.artifacts is not None
+            else None
+        ),
+        "selected_spec": (
+            dispatch_result.terminal.artifacts.metadata.get("selected_spec")
+            if dispatch_result.terminal.artifacts is not None
+            else None
+        ),
+        "attempt_index": (
+            dispatch_result.terminal.artifacts.metadata.get("attempt_index")
+            if dispatch_result.terminal.artifacts is not None
+            else None
+        ),
+        "configured_specs": (
+            list(dispatch_result.terminal.artifacts.metadata.get("configured_specs", ()))
+            if dispatch_result.terminal.artifacts is not None
+            else None
+        ),
+        "attempted_specs": (
+            list(dispatch_result.terminal.artifacts.metadata.get("attempted_specs", ()))
+            if dispatch_result.terminal.artifacts is not None
+            else None
+        ),
+        "failed_attempt_reasons": (
+            list(dispatch_result.terminal.artifacts.metadata.get("failed_attempt_reasons", ()))
+            if dispatch_result.terminal.artifacts is not None
+            else None
+        ),
+        "fallback_trigger": (
+            dispatch_result.terminal.artifacts.metadata.get("fallback_trigger")
+            if dispatch_result.terminal.artifacts is not None
+            else None
+        ),
+        "worker_channel": worker.worker_channel,
+        "auth_channel": worker.auth_channel,
+    }
+    worker.auth_metadata = metadata
+    return worker, agent, mode, refreshed
+
+
+def _run_step_with_worker_legacy(
     step: str,
     state: PlanState,
     plan_dir: Path,

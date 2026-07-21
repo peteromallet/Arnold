@@ -17,6 +17,10 @@ from arnold_pipelines.megaplan.execute.batch import (
     handle_execute_one_batch,
 )
 from arnold_pipelines.megaplan.execute.merge import _merge_batch_results
+from arnold_pipelines.megaplan.execute.wbc import (
+    EXECUTE_DISPATCH_WBC_KEY,
+    EXECUTE_TRANSITION_WBC_KEY,
+)
 from arnold_pipelines.megaplan.execute.quality import (
     _capture_git_status_snapshot,
     _capture_git_status_snapshot_recursive,
@@ -34,6 +38,8 @@ __all__ = [
     "_compute_execute_scope_drift",
     "_resolve_tier_spec",
     "_run_and_merge_batch",
+    "EXECUTE_DISPATCH_WBC_KEY",
+    "EXECUTE_TRANSITION_WBC_KEY",
     "load_config",
     "build_monitor_hint",
 ]

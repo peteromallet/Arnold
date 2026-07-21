@@ -1,0 +1,152 @@
+{
+  "fixture_source": "handoff-metrics",
+  "description": "M8A existing-plan manifest replay fixture — 8-task representative plan with mixed dependency structure representing a previously finalized plan. Replay must be byte-stable: compile twice and assert identical task_contract_hash, seriality, critical_path, max_width, and unchanged fixture bytes.",
+  "task_contract_version": 2,
+  "validation_jobs": [
+    {
+      "id": "VJ1",
+      "command": ["pytest", "tests/test_existing_plan.py", "-q", "--tb=short"],
+      "environment": {},
+      "cwd": "${project_dir}",
+      "timeout_seconds": 120,
+      "expected_output_paths": [],
+      "content_addressed_evidence": true
+    }
+  ],
+  "tasks": [
+    {
+      "id": "E1",
+      "objective": "Audit existing finalized plan artifacts for immutability.",
+      "description": "Verify that all finalized plan artifacts under .megaplan/plans/ have not been modified since finalization.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 3,
+      "complexity_justification": "Read-only audit of existing files with hash comparison.",
+      "estimated_minutes": 4,
+      "depends_on": [],
+      "dependency_reasons": {},
+      "routing_group": "",
+      "write_set": {"paths": ["evidence/existing-plan-audit.json"], "complete": true},
+      "narrow_tests": {"selectors": ["tests/test_existing_plan_audit.py"], "max_seconds": 60, "max_runs": 2},
+      "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
+    },
+    {
+      "id": "E2",
+      "objective": "Compile report-only feasibility diagnostics for existing plans.",
+      "description": "Run the feasibility compiler in report-only mode against existing finalized plans and record diagnostics without mutating artifacts.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "Report-only compilation requires careful handling to avoid writes to historical plan directories.",
+      "estimated_minutes": 6,
+      "depends_on": ["E1"],
+      "dependency_reasons": {"E1": {"kind": "consumes_output", "reason": "E2 requires the audit results to identify which plans need feasibility diagnostics.", "required_output": "evidence/existing-plan-audit.json"}},
+      "routing_group": "",
+      "write_set": {"paths": ["evidence/feasibility-diagnostics.json"], "complete": true},
+      "narrow_tests": {"selectors": ["tests/test_feasibility_diagnostics.py"], "max_seconds": 120, "max_runs": 2},
+      "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
+    },
+    {
+      "id": "E3",
+      "objective": "Validate task contract hashes for existing plans.",
+      "description": "Recompute task contract hashes for all existing finalized plans and verify they match the stored hashes.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 3,
+      "complexity_justification": "Hash recomputation and comparison against stored values.",
+      "estimated_minutes": 4,
+      "depends_on": ["E2"],
+      "dependency_reasons": {"E2": {"kind": "consumes_output", "reason": "E3 uses the feasibility diagnostics to identify which plans need hash validation.", "required_output": "evidence/feasibility-diagnostics.json"}},
+      "routing_group": "",
+      "write_set": {"paths": ["evidence/contract-hash-validation.json"], "complete": true},
+      "narrow_tests": {"selectors": ["tests/test_contract_hash.py"], "max_seconds": 60, "max_runs": 2},
+      "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
+    },
+    {
+      "id": "E4",
+      "objective": "Extract seriality and critical path metrics for existing plans.",
+      "description": "Compute seriality ratios, critical path lengths, and max widths for all existing plans without modifying them.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 3,
+      "complexity_justification": "Metric computation from existing plan data with no mutation.",
+      "estimated_minutes": 3,
+      "depends_on": [],
+      "dependency_reasons": {},
+      "routing_group": "metrics-computation",
+      "write_set": {"paths": ["evidence/seriality-metrics.json"], "complete": true},
+      "narrow_tests": {"selectors": ["tests/test_seriality_metrics.py"], "max_seconds": 60, "max_runs": 2},
+      "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
+    },
+    {
+      "id": "E5",
+      "objective": "Compute batch width and dispatch estimates for existing plans.",
+      "description": "Calculate maximum batch width and estimated dispatch minutes for all existing plans from their task graphs.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 3,
+      "complexity_justification": "Batch topology computation from existing task graphs.",
+      "estimated_minutes": 3,
+      "depends_on": [],
+      "dependency_reasons": {},
+      "routing_group": "metrics-computation",
+      "write_set": {"paths": ["evidence/batch-metrics.json"], "complete": true},
+      "narrow_tests": {"selectors": ["tests/test_batch_metrics.py"], "max_seconds": 60, "max_runs": 2},
+      "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
+    },
+    {
+      "id": "E6",
+      "objective": "Merge metrics into unified existing-plan report.",
+      "description": "Combine seriality, batch, and feasibility metrics into a single report for each existing plan.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 3,
+      "complexity_justification": "Metric aggregation from two independent computation results.",
+      "estimated_minutes": 3,
+      "depends_on": ["E4", "E5"],
+      "dependency_reasons": {
+        "E4": {"kind": "consumes_output", "reason": "E6 requires seriality metrics to include in the unified report.", "required_output": "evidence/seriality-metrics.json"},
+        "E5": {"kind": "consumes_output", "reason": "E6 requires batch metrics to include in the unified report.", "required_output": "evidence/batch-metrics.json"}
+      },
+      "routing_group": "",
+      "write_set": {"paths": ["evidence/unified-metrics-report.json"], "complete": true},
+      "narrow_tests": {"selectors": ["tests/test_unified_metrics.py"], "max_seconds": 60, "max_runs": 2},
+      "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
+    },
+    {
+      "id": "E7",
+      "objective": "Generate existing-plan replay baseline manifest.",
+      "description": "Produce a baseline manifest recording all existing plan hashes, metrics, and diagnostics for future replay comparison.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 3,
+      "complexity_justification": "Manifest generation from aggregated metrics with content addressing.",
+      "estimated_minutes": 4,
+      "depends_on": ["E3", "E6"],
+      "dependency_reasons": {
+        "E3": {"kind": "consumes_output", "reason": "E7 requires contract hash validation results for the baseline manifest.", "required_output": "evidence/contract-hash-validation.json"},
+        "E6": {"kind": "consumes_output", "reason": "E7 requires unified metrics for the baseline manifest.", "required_output": "evidence/unified-metrics-report.json"}
+      },
+      "routing_group": "",
+      "write_set": {"paths": ["evidence/existing-plan-baseline.json"], "complete": true},
+      "narrow_tests": {"selectors": ["tests/test_baseline_manifest.py"], "max_seconds": 60, "max_runs": 2},
+      "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
+    },
+    {
+      "id": "E8",
+      "objective": "Verify report-only outputs never wrote to historical plan directories.",
+      "description": "Run a final audit confirming that all report-only replay outputs went to temp or evidence directories, never to .megaplan/plans/.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "Requires filesystem traversal and verification that no historical plan artifacts were touched.",
+      "estimated_minutes": 5,
+      "depends_on": ["E7"],
+      "dependency_reasons": {"E7": {"kind": "consumes_output", "reason": "E8 uses the baseline manifest to verify all outputs are accounted for in non-historical directories.", "required_output": "evidence/existing-plan-baseline.json"}},
+      "routing_group": "",
+      "write_set": {"paths": ["evidence/output-directory-audit.json"], "complete": true},
+      "narrow_tests": {"selectors": ["tests/test_output_audit.py"], "max_seconds": 60, "max_runs": 2},
+      "checkpoint": {"required": false, "max_interval_seconds": 300, "records": []}
+    }
+  ]
+}

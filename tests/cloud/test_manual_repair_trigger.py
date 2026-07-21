@@ -180,3 +180,81 @@ def test_manual_trigger_requires_invocation_scoped_l1_authority(
             trigger_bin=trigger_bin,
             target_resolver=lambda *_args, **_kwargs: target,
         )
+
+
+def test_manual_trigger_quarantines_receipt_when_queue_identity_differs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker_dir, queue_root, trigger_bin, target = _fixture(tmp_path)
+    _authorized(monkeypatch)
+
+    original_enqueue = repair_requests.enqueue_repair_request
+
+    def mismatched_enqueue(**kwargs):
+        result = original_enqueue(**kwargs)
+        request = dict(result["request"])
+        request["repair_identity"] = {
+            **request["repair_identity"],
+            "attempt_number": 99,
+        }
+        request["repair_identity_key"] = repair_requests.repair_identity_key(
+            request["repair_identity"]
+        )
+        result["request"] = request
+        return result
+
+    with pytest.raises(manual_repair_trigger.ManualRepairTriggerError, match="quarantined"):
+        manual_repair_trigger.trigger_once(
+            session=SESSION,
+            plan=PLAN,
+            expected_history_index=15,
+            expected_artifact_hash=ARTIFACT_HASH,
+            marker_dir=marker_dir,
+            queue_root=queue_root,
+            trigger_bin=trigger_bin,
+            target_resolver=lambda *_args, **_kwargs: target,
+            command_runner=lambda *_args, **_kwargs: pytest.fail("must not dispatch"),
+            repair_requests_enqueue=mismatched_enqueue,  # type: ignore[call-arg]
+        )
+
+    quarantined = list((queue_root / manual_repair_trigger.RECEIPT_DIR_NAME / "quarantine").glob("*.json"))
+    assert len(quarantined) == 1
+    payload = json.loads(quarantined[0].read_text(encoding="utf-8"))
+    assert payload["status"] == "quarantined"
+
+
+def test_manual_trigger_quarantines_receipt_when_queue_identity_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker_dir, queue_root, trigger_bin, target = _fixture(tmp_path)
+    _authorized(monkeypatch)
+
+    original_enqueue = repair_requests.enqueue_repair_request
+
+    def identity_free_enqueue(**kwargs):
+        result = original_enqueue(**kwargs)
+        request = dict(result["request"])
+        request["repair_identity"] = {}
+        request["repair_identity_key"] = ""
+        result["request"] = request
+        return result
+
+    with pytest.raises(manual_repair_trigger.ManualRepairTriggerError, match="quarantined"):
+        manual_repair_trigger.trigger_once(
+            session=SESSION,
+            plan=PLAN,
+            expected_history_index=15,
+            expected_artifact_hash=ARTIFACT_HASH,
+            marker_dir=marker_dir,
+            queue_root=queue_root,
+            trigger_bin=trigger_bin,
+            target_resolver=lambda *_args, **_kwargs: target,
+            command_runner=lambda *_args, **_kwargs: pytest.fail("must not dispatch"),
+            repair_requests_enqueue=identity_free_enqueue,  # type: ignore[call-arg]
+        )
+
+    quarantined = list((queue_root / manual_repair_trigger.RECEIPT_DIR_NAME / "quarantine").glob("*.json"))
+    assert len(quarantined) == 1
+    payload = json.loads(quarantined[0].read_text(encoding="utf-8"))
+    assert payload["status"] == "quarantined"
+    assert payload["observed_repair_identity"] == {}

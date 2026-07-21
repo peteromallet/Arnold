@@ -13,6 +13,7 @@ from arnold.pipeline.native.reconcile import (
     reconcile_git_worktree,
 )
 from arnold.runtime.resume import TrustTransition, resume_trust_allows_takeover
+from arnold.workflow.native_wbc import begin_native_wbc_attempt
 
 from .leases import ProjectLease
 from .store import ProjectLeaseStore
@@ -53,12 +54,45 @@ def reconcile_worktree_for_takeover(
     status_path: Path | str | None = None,
 ) -> ReconcileDecision:
     """Run the native worktree reconcile gate used before takeover."""
-
-    return reconcile_git_worktree(
-        repo_path,
-        metadata or ReconcileMetadata(operation="expired_lease_takeover"),
-        status_path=status_path,
+    repo_root = Path(repo_path)
+    evidence_root = (
+        repo_root / ".git"
+        if (repo_root / ".git").exists()
+        else Path(status_path)
+        if status_path is not None
+        else repo_root
     )
+    effective_metadata = metadata or ReconcileMetadata(operation="expired_lease_takeover")
+    attempt = begin_native_wbc_attempt(
+        evidence_root,
+        producer_family="arnold_supervisor",
+        surface="reconcile_takeover",
+        subject={"repo_path": str(repo_path), "operation": effective_metadata.operation},
+        metadata={"status_path": str(status_path) if status_path is not None else ""},
+    )
+    try:
+        decision = reconcile_git_worktree(
+            repo_path,
+            effective_metadata,
+            status_path=status_path,
+        )
+    except BaseException as exc:
+        attempt.terminal(
+            status="failed",
+            outcome="error",
+            payload={"error_type": exc.__class__.__name__, "error": str(exc)},
+        )
+        raise
+    attempt.effect(
+        "reconcile_decision",
+        {"state": decision.state, "blocked": decision.blocked},
+    )
+    attempt.terminal(
+        status="completed",
+        outcome=decision.state,
+        payload={"detail": decision.detail},
+    )
+    return decision
 
 
 def evaluate_expired_takeover(

@@ -37,7 +37,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, FrozenSet, Iterable, Mapping, Optional
+from typing import Any, FrozenSet, Iterable, Mapping, MutableMapping, Optional
 
 # ── Enablement cohort ──────────────────────────────────────────────────────────
 
@@ -83,6 +83,13 @@ class WriteGuardDecision(StrEnum):
     Treated as denied with an audit record."""
 
 
+WRITER_REGISTRY_SCHEMA_VERSION = "1"
+COHORTS: tuple[str, ...] = tuple(member.value for member in Cohort)
+WRITE_GUARD_DECISIONS: tuple[str, ...] = tuple(
+    member.value for member in WriteGuardDecision
+)
+
+
 # ── Controlled writer boundary ─────────────────────────────────────────────────
 
 
@@ -101,16 +108,16 @@ class ControlledWriter:
     surface_name: str
     """Human-readable surface name, e.g. ``"lease_store"``."""
 
-    cohort: Cohort
+    cohort: Cohort = Cohort.SHADOW
     """Current enablement cohort."""
 
-    owner: str
+    owner: str = "Custody"
     """Owning component (always ``"Custody"`` for M7 entries)."""
 
-    authority_increasing: bool
+    authority_increasing: bool = False
     """Does this writer gate an authority-increasing operation?"""
 
-    module_path: str
+    module_path: str = ""
     """Dotted Python path to the writer module, e.g.
     ``"arnold_pipelines.megaplan.custody.lease_store"``."""
 
@@ -124,6 +131,50 @@ class ControlledWriter:
     """Milestones that must be machine-verifiably accepted before this writer
     can be promoted to ``active``."""
 
+    contract_ids: tuple[str, ...] = ()
+    source_file: str = ""
+    function_name: str = ""
+    required_wbc_phases: tuple[str, ...] = ()
+    action_kind: str = ""
+
+    def __post_init__(self) -> None:
+        writer_id = str(self.writer_id).strip()
+        surface_name = str(self.surface_name).strip()
+        if not writer_id:
+            raise ValueError("writer_id must be a non-empty string")
+        if not surface_name:
+            raise ValueError("surface_name must be a non-empty string")
+        object.__setattr__(self, "writer_id", writer_id)
+        object.__setattr__(self, "surface_name", surface_name)
+        object.__setattr__(self, "cohort", Cohort(self.cohort))
+        if not self.module_path and self.source_file:
+            object.__setattr__(
+                self,
+                "module_path",
+                self.source_file.removesuffix(".py").replace("/", "."),
+            )
+        if self.action_kind and not self.authority_increasing:
+            object.__setattr__(self, "authority_increasing", True)
+        object.__setattr__(
+            self,
+            "contract_ids",
+            tuple(str(value) for value in self.contract_ids if str(value).strip()),
+        )
+        object.__setattr__(
+            self,
+            "required_wbc_phases",
+            tuple(
+                str(value) for value in self.required_wbc_phases if str(value).strip()
+            ),
+        )
+        object.__setattr__(
+            self,
+            "prerequisite_milestones",
+            frozenset(
+                str(value) for value in self.prerequisite_milestones if str(value).strip()
+            ),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "writer_id": self.writer_id,
@@ -135,6 +186,11 @@ class ControlledWriter:
             "description": self.description,
             "milestone": self.milestone,
             "prerequisite_milestones": sorted(self.prerequisite_milestones),
+            "contract_ids": list(self.contract_ids),
+            "source_file": self.source_file,
+            "function_name": self.function_name,
+            "required_wbc_phases": list(self.required_wbc_phases),
+            "action_kind": self.action_kind,
         }
 
 
@@ -325,30 +381,49 @@ CONTROLLED_WRITERS: tuple[ControlledWriter, ...] = (
 
 # ── Index helpers ──────────────────────────────────────────────────────────────
 
-_CONTROLLED_BY_ID: Mapping[str, ControlledWriter] = {
-    w.writer_id: w for w in CONTROLLED_WRITERS
-}
+_REGISTERED_BY_ID: MutableMapping[str, ControlledWriter] = {}
 
-_CONTROLLED_BY_SURFACE: Mapping[str, ControlledWriter] = {
-    w.surface_name: w for w in CONTROLLED_WRITERS
-}
+
+def _registered_writers() -> tuple[ControlledWriter, ...]:
+    """Return only explicitly adopted runtime writers.
+
+    ``CONTROLLED_WRITERS`` is a report-only inventory.  Treating that static
+    inventory as live registration would let a support manifest silently
+    authorize writers and would make an empty registry impossible.
+    """
+    return tuple(_REGISTERED_BY_ID.values())
+
+
+def _writers_for_surface(surface_name: str) -> tuple[ControlledWriter, ...]:
+    label = str(surface_name).strip()
+    if not label:
+        return ()
+    return tuple(writer for writer in _registered_writers() if writer.surface_name == label)
 
 
 def get_writer(writer_id: str) -> Optional[ControlledWriter]:
     """Look up a controlled writer by its stable id."""
-    return _CONTROLLED_BY_ID.get(writer_id)
+    label = str(writer_id).strip()
+    if not label:
+        return None
+    return _REGISTERED_BY_ID.get(label)
 
 
 def get_writer_by_surface(surface_name: str) -> Optional[ControlledWriter]:
     """Look up a controlled writer by its surface name."""
-    return _CONTROLLED_BY_SURFACE.get(surface_name)
+    matches = _writers_for_surface(surface_name)
+    if len(matches) != 1:
+        return None
+    return matches[0]
 
 
-def list_writers(cohort: Optional[Cohort] = None) -> tuple[ControlledWriter, ...]:
+def list_writers(cohort: Optional[Cohort] = None) -> list[ControlledWriter]:
     """Return all registered controlled writers, optionally filtered by cohort."""
+    writers = _registered_writers()
     if cohort is None:
-        return CONTROLLED_WRITERS
-    return tuple(w for w in CONTROLLED_WRITERS if w.cohort == cohort)
+        return list(writers)
+    selected = Cohort(cohort)
+    return [w for w in writers if w.cohort == selected]
 
 
 def list_active_writers() -> tuple[ControlledWriter, ...]:
@@ -368,7 +443,11 @@ def list_report_only_writers() -> tuple[ControlledWriter, ...]:
 
 def list_authority_increasing_writers() -> tuple[ControlledWriter, ...]:
     """Return all registered writers that gate authority-increasing operations."""
-    return tuple(w for w in CONTROLLED_WRITERS if w.authority_increasing)
+    return tuple(
+        w
+        for w in _registered_writers()
+        if w.cohort != Cohort.REPORT_ONLY and bool(w.action_kind)
+    )
 
 
 # ── Environment-flag enforcement ────────────────────────────────────────────────
@@ -405,7 +484,7 @@ class WriteGuardResult:
     diagnostics or abort the write.
     """
 
-    decision: WriteGuardDecision
+    decision: WriteGuardDecision = WriteGuardDecision.UNREGISTERED
     """Whether the write is allowed, shadow-pass, denied, or unregistered."""
 
     writer: Optional[ControlledWriter] = None
@@ -420,13 +499,29 @@ class WriteGuardResult:
     fail_closed: bool = True
     """Was the guard in fail-closed mode?"""
 
-    def allowed(self) -> bool:
-        """Return ``True`` if the write should proceed (``ALLOWED``)."""
-        return self.decision == WriteGuardDecision.ALLOWED
+    diagnostics: tuple[str, ...] = ()
+    """Structured diagnostic breadcrumbs for fail-closed callers."""
 
+    @property
+    def allowed(self) -> bool:
+        """Return ``True`` when the guard admits or shadows the write path."""
+        return self.decision in {
+            WriteGuardDecision.ALLOWED,
+            WriteGuardDecision.SHADOW_PASS,
+            WriteGuardDecision.REPORT_ONLY,
+        }
+
+    @property
+    def writer_id(self) -> str | None:
+        return self.writer.writer_id if self.writer else None
+
+    @property
     def denied(self) -> bool:
         """Return ``True`` if the write was denied (``DENIED`` or ``UNREGISTERED``)."""
-        return self.decision in (WriteGuardDecision.DENIED, WriteGuardDecision.UNREGISTERED)
+        return self.decision in {
+            WriteGuardDecision.DENIED,
+            WriteGuardDecision.UNREGISTERED,
+        }
 
     def should_write(self) -> bool:
         """Return ``True`` if the caller should issue the production write.
@@ -444,6 +539,7 @@ class WriteGuardResult:
             "reason": self.reason,
             "enforcement_enabled": self.enforcement_enabled,
             "fail_closed": self.fail_closed,
+            "diagnostics": list(self.diagnostics),
         }
 
 
@@ -505,32 +601,42 @@ def writer_guard(
 
     # Resolve writer
     writer: Optional[ControlledWriter] = None
+    lookup = writer_id or surface_name
     if writer_id:
-        writer = _CONTROLLED_BY_ID.get(writer_id)
+        writer = get_writer(writer_id)
     elif surface_name:
-        writer = _CONTROLLED_BY_SURFACE.get(surface_name)
+        writer = get_writer_by_surface(surface_name)
 
     if writer is None:
+        diagnostics = ()
+        if surface_name and len(_writers_for_surface(surface_name)) > 1:
+            diagnostics = (f"Ambiguous surface:{surface_name}",)
+        elif lookup:
+            diagnostics = (f"unknown writer:{lookup}",)
         return WriteGuardResult(
             decision=WriteGuardDecision.UNREGISTERED,
             writer=None,
             reason=(
-                f"Writer boundary {writer_id or surface_name!r} is not in "
+                f"Writer boundary {lookup!r} is not in "
                 f"the M7 controlled-writer registry.  All Custody-gated "
                 f"writes must originate from a registered boundary."
             ),
             enforcement_enabled=enforcement,
             fail_closed=fail_closed,
+            diagnostics=diagnostics,
         )
 
     # ── Cohort-based decision ───────────────────────────────────────────
-    if writer.cohort == Cohort.ACTIVE:
+    if writer.cohort == Cohort.ACTIVE and (
+        enforcement or override_fail_closed is False
+    ):
         return WriteGuardResult(
             decision=WriteGuardDecision.ALLOWED,
             writer=writer,
             reason=f"Writer {writer.writer_id!r} is in active cohort — write allowed.",
             enforcement_enabled=enforcement,
             fail_closed=fail_closed,
+            diagnostics=(f"cohort:{writer.cohort.value}",),
         )
 
     if writer.cohort == Cohort.REPORT_ONLY:
@@ -543,6 +649,7 @@ def writer_guard(
             ),
             enforcement_enabled=enforcement,
             fail_closed=fail_closed,
+            diagnostics=(f"cohort:{writer.cohort.value}",),
         )
 
     # Cohor*** is SHADOW
@@ -557,6 +664,7 @@ def writer_guard(
             ),
             enforcement_enabled=False,
             fail_closed=fail_closed,
+            diagnostics=(f"cohort:{writer.cohort.value}",),
         )
 
     # Enforcement is ON and cohort is SHADOW
@@ -573,6 +681,7 @@ def writer_guard(
             ),
             enforcement_enabled=True,
             fail_closed=True,
+            diagnostics=(f"cohort:{writer.cohort.value}",),
         )
 
     # Enforcement ON, fail-closed OFF — still shadow pass (deferred)
@@ -586,6 +695,7 @@ def writer_guard(
         ),
         enforcement_enabled=True,
         fail_closed=False,
+        diagnostics=(f"cohort:{writer.cohort.value}",),
     )
 
 
@@ -597,30 +707,68 @@ def guard_all(
     *,
     override_enforcement: Optional[bool] = None,
     override_fail_closed: Optional[bool] = None,
-) -> tuple[WriteGuardResult, ...]:
+) -> list[WriteGuardResult]:
     """Run :func:`writer_guard` against every writer in *writer_ids*.
 
     If *writer_ids* is empty, guard every registered writer.
     """
-    ids = tuple(writer_ids) if writer_ids else tuple(w.writer_id for w in CONTROLLED_WRITERS)
-    return tuple(
+    ids = tuple(writer_ids) if writer_ids else tuple(
+        w.writer_id for w in _registered_writers()
+    )
+    return [
         writer_guard(
             wid,
             override_enforcement=override_enforcement,
             override_fail_closed=override_fail_closed,
         )
         for wid in ids
-    )
+    ]
+
+
+def register_writer(writer: ControlledWriter) -> ControlledWriter:
+    """Register an in-memory controlled writer for runtime/test adoption."""
+    if not isinstance(writer, ControlledWriter):
+        raise TypeError("Expected ControlledWriter")
+    if writer.writer_id in _REGISTERED_BY_ID:
+        raise ValueError(f"Duplicate writer_id: {writer.writer_id}")
+    for existing in _registered_writers():
+        if (
+            existing.surface_name == writer.surface_name
+            and existing.cohort == writer.cohort
+        ):
+            raise ValueError(
+                f"Duplicate surface+cohort: {writer.surface_name} / {writer.cohort.value}"
+            )
+    _REGISTERED_BY_ID[writer.writer_id] = writer
+    return writer
+
+
+def deregister_writer(writer_id: str) -> bool:
+    """Remove a runtime/test writer registration."""
+    label = str(writer_id).strip()
+    if not label:
+        return False
+    return _REGISTERED_BY_ID.pop(label, None) is not None
+
+
+def _clear_registry() -> None:
+    """Clear runtime/test registrations without touching built-in defaults."""
+    _REGISTERED_BY_ID.clear()
 
 
 # ── Public surface ─────────────────────────────────────────────────────────────
 
 __all__ = [
+    "COHORTS",
     "Cohort",
     "ControlledWriter",
     "CONTROLLED_WRITERS",
+    "WRITER_REGISTRY_SCHEMA_VERSION",
+    "WRITE_GUARD_DECISIONS",
     "WriteGuardDecision",
     "WriteGuardResult",
+    "_clear_registry",
+    "deregister_writer",
     "get_writer",
     "get_writer_by_surface",
     "guard_all",
@@ -629,5 +777,6 @@ __all__ = [
     "list_report_only_writers",
     "list_shadow_writers",
     "list_writers",
+    "register_writer",
     "writer_guard",
 ]

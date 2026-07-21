@@ -16,6 +16,7 @@ from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
     validate_audit_model_inputs,
 )
 from arnold_pipelines.megaplan.cloud.incident_bridge import IncidentStoreWriter
+from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records
 
 
 def _event(**overrides: object) -> dict[str, object]:
@@ -1268,6 +1269,7 @@ class TestSixHourAuditorCompletionEvidenceConstruction:
         assert evidence.repair_dispatch_refs == ("req-1", "req-2", "req-3")
         assert evidence.escalation_verdict_count == 2
         assert evidence.escalation_verdict_refs == ("reconciler:DRIFT_DETECTED", "watchdog:watchdog_report_stale")
+        assert evidence.drift_findings == ()
         assert len(evidence.missing_repair_verdict_findings) == 1
         assert len(evidence.stale_repair_data_findings) == 1
 
@@ -1312,6 +1314,9 @@ class TestSixHourAuditorCompletionEvidenceRoundTrip:
             repair_dispatch_refs=("dispatch/req-a.json",),
             escalation_verdict_count=1,
             escalation_verdict_refs=("reconciler:DRIFT_DETECTED",),
+            drift_findings=(
+                {"layer": "reconciler", "code": "DRIFT_DETECTED", "source_pair": "resolver_vs_ledger"},
+            ),
             missing_repair_verdict_findings=(
                 {"layer": "meta_repair", "code": "meta_repair_missing_evidence",
                  "status": "error", "severity": "error", "message": "m",
@@ -1360,6 +1365,17 @@ class TestBuildAuditorCompletionEvidence:
         assert evidence.audited_window_hours == 6.0
         assert evidence.repair_dispatch_count == 1
         assert evidence.repair_dispatch_refs == ("dispatch/req-1.json",)
+        assert evidence.drift_findings == (
+            {
+                "layer": "reconciler",
+                "code": "DRIFT_DETECTED",
+                "source_pair": "",
+                "contradiction": "",
+                "recommendation": "auditor_escalate_to_human",
+                "observed": {},
+                "expected": {},
+            },
+        )
 
     def test_build_extracts_escalation_verdicts(self) -> None:
         findings = [
@@ -1479,3 +1495,47 @@ class TestSaveAuditorCompletionEvidence:
             json.loads(dest.read_text(encoding="utf-8"))
         )
         assert reloaded == evidence
+
+    def test_save_appends_incident_sidecar_record(self, tmp_path: Path) -> None:
+        evidence = SixHourAuditorCompletionEvidence(
+            outcome="auditor_human_escalation",
+            next_expected_event="human_approval.pr_merge",
+            escalation_verdict_refs=("reconciler:DRIFT_DETECTED",),
+            drift_findings=(
+                {
+                    "layer": "reconciler",
+                    "code": "DRIFT_DETECTED",
+                    "source_pair": "l2_fix_vs_resolver",
+                    "contradiction": "false_fixed_l2_result",
+                    "recommendation": "immediate_repair.repair_attempt",
+                    "observed": {"resolver_canonical_state": "RUNNING"},
+                    "expected": {"brief_outcome": "started"},
+                },
+            ),
+            evidence_timestamp="2026-07-13T16:30:00Z",
+        )
+        dest = tmp_path / "auditor-evidence.json"
+        sidecar_dir = tmp_path / "repair-data.d"
+
+        save_auditor_completion_evidence(
+            dest,
+            evidence,
+            sidecar_dir=sidecar_dir,
+            session="progress_auditor",
+        )
+
+        records = read_jsonl_records(sidecar_dir / "incidents" / "incidents.jsonl")
+        assert records[-1]["session"] == "progress_auditor"
+        assert records[-1]["kind"] == "auditor_6h_completion"
+        assert records[-1]["summary"] == "auditor_human_escalation"
+        assert records[-1]["drift_findings"] == [
+            {
+                "layer": "reconciler",
+                "code": "DRIFT_DETECTED",
+                "source_pair": "l2_fix_vs_resolver",
+                "contradiction": "false_fixed_l2_result",
+                "recommendation": "immediate_repair.repair_attempt",
+                "observed": {"resolver_canonical_state": "RUNNING"},
+                "expected": {"brief_outcome": "started"},
+            }
+        ]

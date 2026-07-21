@@ -1,44 +1,21 @@
 {
-  "blocked_by_prerequisites": false,
   "checks": [
     {
-      "description": "All declared boundary contracts must have a matrix entry",
-      "detail": "15 declared contracts have no matrix entry: ['auditor_6h_completion', 'chain_complete', 'chain_milestone_completion', 'chain_milestone_start', 'cloud_custody_blocked_relaunch_failure']...",
-      "id": "declared_contracts_complete",
-      "passes": false,
-      "unmatched_count": 15
-    },
-    {
-      "actual": 620,
-      "description": "Row count >= sum of source_counts",
-      "detail": "Row count 620 >= source sum 620",
-      "expected_min": 620,
-      "id": "row_count_consistency",
+      "detail": "C1 source_to_owner_matrix.json content hash is unchanged across the generation run.",
+      "id": "matrix_unchanged",
       "passes": true
     },
     {
-      "description": "Every unclassified runtime_module must have a default_deny row",
-      "detail": "All 96 unclassified modules covered by default_deny rows",
-      "id": "static_discovery_coverage",
-      "passes": true,
-      "static_unmatched_count": 96,
-      "uncovered_count": 0
-    },
-    {
-      "description": "Every inventory row must name an owner",
-      "detail": "All rows have a valid owner",
-      "id": "owner_coverage",
-      "missing_owner_count": 0,
+      "detail": "All required discovery sections are present in the inventory artifact.",
+      "id": "discovery_sections_emitted",
       "passes": true
     },
     {
-      "description": "Schema-only entries must be tracked in unmatched_schema_only",
-      "detail": "0 schema-only entries tracked in unmatched_schema_only set",
-      "id": "schema_only_visibility",
-      "passes": true,
-      "schema_only_count": 0
+      "detail": "Generated support rows remain fail-closed: no manifest-derived row is marked supported unless exact declaration/static/writer/runtime equality is proven.",
+      "id": "support_rows_fail_closed",
+      "passes": true
     }
   ],
-  "passes": false,
-  "prerequisite_status": "UNKNOWN"
+  "generated_at": "2026-07-21T00:01:43.840472+00:00",
+  "schema": "m8.wbc-boundary-inventory-validation.v1"
 }

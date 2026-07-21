@@ -59,6 +59,8 @@ class HumanBlockerClassification:
     resolver_record: dict[str, Any] | None = None
     needs_human_payload: dict[str, Any] | None = None
     human_gate_view: dict[str, Any] | None = None
+    source_cursor_vector: dict[str, Any] | None = None
+    evidence_gaps: dict[str, Any] | None = None
 
     @property
     def is_true_blocker(self) -> bool:
@@ -171,6 +173,7 @@ def classify_needs_human_blocker(
     resolver_record: Mapping[str, Any] | None = None,
     session_is_live: Any = None,
     pid_is_live: Any = None,
+    source_cursor_vector: Mapping[str, Any] | None = None,
 ) -> HumanBlockerClassification:
     """Conservatively classify a needs-human sidecar as a true blocker or a stale mismatch.
 
@@ -220,6 +223,10 @@ def classify_needs_human_blocker(
             rationale=("needs-human sidecar missing or unreadable — conservatively treating as blocker",),
             needs_human_payload=None,
             human_gate_view=None,
+            source_cursor_vector=_format_source_cursor(source_cursor_vector),
+            evidence_gaps=_collect_human_blocker_evidence_gaps(
+                has_payload=False, has_resolver=False,
+            ),
         )
 
     # --- resolve the evidence record -----------------------------------------------
@@ -271,6 +278,12 @@ def classify_needs_human_blocker(
             resolver_record=record,
             needs_human_payload=payload,
             human_gate_view=human_gate_view,
+            source_cursor_vector=_format_source_cursor(source_cursor_vector),
+            evidence_gaps=_collect_human_blocker_evidence_gaps(
+                has_payload=True, has_resolver=True, stale_kinds=stale_kinds,
+                resolver_plan_refs=resolver_plan_refs,
+                current_plan=current_plan, has_current_target_proof=True,
+            ),
         )
 
     # Check if the current plan appears in the needs-human plan refs
@@ -290,6 +303,12 @@ def classify_needs_human_blocker(
             resolver_record=record,
             needs_human_payload=payload,
             human_gate_view=human_gate_view,
+            source_cursor_vector=_format_source_cursor(source_cursor_vector),
+            evidence_gaps=_collect_human_blocker_evidence_gaps(
+                has_payload=True, has_resolver=True, stale_kinds=stale_kinds,
+                resolver_plan_refs=resolver_plan_refs,
+                current_plan=current_plan, has_current_target_proof=True,
+            ),
         )
 
     if not resolver_plan_refs:
@@ -307,6 +326,12 @@ def classify_needs_human_blocker(
             resolver_record=record,
             needs_human_payload=payload,
             human_gate_view=human_gate_view,
+            source_cursor_vector=_format_source_cursor(source_cursor_vector),
+            evidence_gaps=_collect_human_blocker_evidence_gaps(
+                has_payload=True, has_resolver=True, stale_kinds=stale_kinds,
+                resolver_plan_refs=[], current_plan=current_plan,
+                has_current_target_proof=False,
+            ),
         )
 
     # --- current plan IS in refs → verify with current-target proof ----------------
@@ -343,6 +368,12 @@ def classify_needs_human_blocker(
             resolver_record=record,
             needs_human_payload=payload,
             human_gate_view=human_gate_view,
+            source_cursor_vector=_format_source_cursor(source_cursor_vector),
+            evidence_gaps=_collect_human_blocker_evidence_gaps(
+                has_payload=True, has_resolver=True, stale_kinds=stale_kinds,
+                resolver_plan_refs=resolver_plan_refs,
+                current_plan=current_plan, has_current_target_proof=False,
+            ),
         )
 
     # --- current-target proof established → check for mechanical/liveness gate ------
@@ -360,6 +391,12 @@ def classify_needs_human_blocker(
             resolver_record=record,
             needs_human_payload=payload,
             human_gate_view=human_gate_view,
+            source_cursor_vector=_format_source_cursor(source_cursor_vector),
+            evidence_gaps=_collect_human_blocker_evidence_gaps(
+                has_payload=True, has_resolver=True, stale_kinds=stale_kinds,
+                resolver_plan_refs=resolver_plan_refs,
+                current_plan=current_plan, has_current_target_proof=True,
+            ),
         )
 
     # --- human-required is an allowlist, never an ambiguity fallback ----------------
@@ -378,6 +415,12 @@ def classify_needs_human_blocker(
             resolver_record=record,
             needs_human_payload=payload,
             human_gate_view=human_gate_view,
+            source_cursor_vector=_format_source_cursor(source_cursor_vector),
+            evidence_gaps=_collect_human_blocker_evidence_gaps(
+                has_payload=True, has_resolver=True, stale_kinds=stale_kinds,
+                resolver_plan_refs=resolver_plan_refs,
+                current_plan=current_plan, has_current_target_proof=True,
+            ),
         )
 
     # --- genuine TRUE_BLOCKER: typed gate + current-target proof + plan match --------
@@ -394,6 +437,12 @@ def classify_needs_human_blocker(
         resolver_record=record,
         needs_human_payload=payload,
         human_gate_view=human_gate_view,
+        source_cursor_vector=_format_source_cursor(source_cursor_vector),
+        evidence_gaps=_collect_human_blocker_evidence_gaps(
+            has_payload=True, has_resolver=True, stale_kinds=stale_kinds,
+            resolver_plan_refs=resolver_plan_refs,
+            current_plan=current_plan, has_current_target_proof=True,
+        ),
     )
 
 
@@ -1059,6 +1108,103 @@ def _build_current_pointer(
         "plan_name": plan_name,
         "run_kind": repair_payload.get("run_kind"),
     }
+
+
+# ── M9: canonical projection helpers ────────────────────────────────────────
+
+
+def _format_source_cursor(
+    cursor_vector: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Format a source cursor vector as a display-only annotation.
+
+    Returns None when no cursor is supplied (so the dataclass default
+    remains None), or a dict with an explicit absent sentinel.  The
+    result never grants dispatch, completion, cancellation, publication,
+    or delivery authority.
+    """
+    if isinstance(cursor_vector, Mapping) and cursor_vector:
+        return {
+            "authority": "evidence_extracted_display_only",
+            "value": dict(cursor_vector),
+        }
+    if cursor_vector is not None:
+        return {
+            "authority": "absent",
+            "reason": "no_source_cursor_vector_provided",
+        }
+    return None
+
+
+def _collect_human_blocker_evidence_gaps(
+    *,
+    has_payload: bool,
+    has_resolver: bool,
+    stale_kinds: set[str] | None = None,
+    resolver_plan_refs: list[str] | None = None,
+    current_plan: str = "",
+    has_current_target_proof: bool = False,
+) -> dict[str, Any]:
+    """Collect structured evidence gaps for a blocker classification.
+
+    Returns a dict whose keys name degraded dimensions and whose values are
+    ``{gap, reason, evidence_status}`` triples.  Gaps are pure display
+    annotations — they never feed dispatch, completion, cancellation,
+    publication, or delivery.
+    """
+    gaps: dict[str, Any] = {}
+    kinds = stale_kinds or set()
+    refs = resolver_plan_refs or []
+
+    if not has_payload:
+        gaps["needs_human_payload"] = {
+            "gap": "needs_human_payload_missing",
+            "reason": "needs-human sidecar missing or unreadable",
+            "evidence_status": "missing",
+        }
+
+    if not has_resolver:
+        gaps["resolver_record"] = {
+            "gap": "resolver_record_missing",
+            "reason": "no resolver evidence record available for current-target proof",
+            "evidence_status": "missing",
+        }
+
+    if "stale_needs_human_plan_ref" in kinds:
+        gaps["needs_human_plan_ref"] = {
+            "gap": "stale_needs_human_plan_ref",
+            "reason": "needs-human sidecar references an older plan",
+            "evidence_status": "stale",
+        }
+
+    if has_payload and has_resolver and not refs:
+        gaps["plan_refs"] = {
+            "gap": "plan_refs_empty",
+            "reason": "resolver did not produce plan_refs from needs-human sidecar",
+            "evidence_status": "degraded",
+        }
+
+    if has_payload and has_resolver and refs and current_plan and current_plan not in refs:
+        gaps["plan_mismatch"] = {
+            "gap": "current_plan_not_in_needs_human_refs",
+            "reason": (
+                f"needs-human sidecar references plans {refs} "
+                f"but current plan is {current_plan!r}"
+            ),
+            "evidence_status": "stale",
+        }
+
+    if has_payload and has_resolver and refs and not has_current_target_proof:
+        gaps["current_target_proof"] = {
+            "gap": "current_target_proof_missing",
+            "reason": (
+                "needs-human references current plan but resolver lacks "
+                "current-target proof (no plan/chain state or live evidence)"
+            ),
+            "evidence_status": "degraded",
+        }
+
+    return gaps
 
 
 def _safe_marker_text(value: object) -> str:

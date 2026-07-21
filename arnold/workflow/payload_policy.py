@@ -463,6 +463,29 @@ def validate_retention_payload_policy(
     return issues
 
 
+def validate_stored_byte_policy_schema(
+    policy: RetentionPayloadPolicy,
+) -> list[str]:
+    """Validate stored-byte policy metadata shape only.
+
+    This function intentionally does not prove that bytes exist, are
+    encrypted, are held, or are deleted. Runtime enforcement belongs to
+    ``ledger_payload_store`` because retention/privacy guarantees are about
+    stored bytes, not metadata declarations.
+    """
+    issues: list[str] = []
+    issues.extend(validate_retention_payload_policy(policy))
+    if policy.retention_mode != RetentionMode.EPHEMERAL and not policy.encryption_required:
+        issues.append(
+            "Stored non-ephemeral payload policy must require encryption"
+        )
+    if policy.legal_hold and policy.effective_retention_seconds != -1:
+        issues.append(
+            "Legal-hold stored-byte policy must retain bytes indefinitely"
+        )
+    return issues
+
+
 def validate_payload_preservation(
     *,
     inline_policy: InlinePayloadPolicy | None = None,
@@ -511,4 +534,5 @@ __all__ = [
     "validate_inline_payload_policy",
     "validate_payload_preservation",
     "validate_retention_payload_policy",
+    "validate_stored_byte_policy_schema",
 ]

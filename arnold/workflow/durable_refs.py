@@ -158,6 +158,12 @@ class DurableRef:
     availability_class: AvailabilityClass = AvailabilityClass.STANDARD
     tenant_id: str | None = None
     workflow_id: str | None = None
+    key_id: str | None = None
+    key_version: int | None = None
+    created_at_ns: int | None = None
+    expires_at_ns: int | None = None
+    legal_hold: bool = False
+    tombstoned_at_ns: int | None = None
     ref_version: str = "arnold.workflow.durable_ref.v1"
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
@@ -201,6 +207,20 @@ class DurableRef:
         # Size must be non-negative if provided.
         if self.size_bytes is not None and self.size_bytes < 0:
             raise ValueError("DurableRef.size_bytes must be non-negative")
+        if self.key_id is not None and not self.key_id.strip():
+            raise ValueError("DurableRef.key_id must be non-empty when set")
+        if self.key_version is not None and self.key_version < 1:
+            raise ValueError("DurableRef.key_version must be >= 1 when set")
+        if self.key_id is not None and self.key_version is None:
+            raise ValueError("DurableRef.key_version is required when key_id is set")
+        if self.key_version is not None and self.key_id is None:
+            raise ValueError("DurableRef.key_id is required when key_version is set")
+        if self.created_at_ns is not None and self.created_at_ns < 0:
+            raise ValueError("DurableRef.created_at_ns must be non-negative")
+        if self.expires_at_ns is not None and self.expires_at_ns < 0:
+            raise ValueError("DurableRef.expires_at_ns must be non-negative")
+        if self.tombstoned_at_ns is not None and self.tombstoned_at_ns < 0:
+            raise ValueError("DurableRef.tombstoned_at_ns must be non-negative")
 
     @property
     def is_retrievable(self) -> bool:
@@ -219,7 +239,12 @@ class DurableRef:
     @property
     def is_legal_hold(self) -> bool:
         """Return True when the ref is under legal hold retention."""
-        return self.retention_class == RetentionClass.LEGAL_HOLD
+        return self.legal_hold or self.retention_class == RetentionClass.LEGAL_HOLD
+
+    @property
+    def is_tombstoned(self) -> bool:
+        """Return True when the stored bytes have been tombstoned."""
+        return self.tombstoned_at_ns is not None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a sidecar-safe payload with primitive values."""
@@ -242,6 +267,18 @@ class DurableRef:
             payload["tenant_id"] = self.tenant_id
         if self.workflow_id is not None:
             payload["workflow_id"] = self.workflow_id
+        if self.key_id is not None:
+            payload["key_id"] = self.key_id
+        if self.key_version is not None:
+            payload["key_version"] = self.key_version
+        if self.created_at_ns is not None:
+            payload["created_at_ns"] = self.created_at_ns
+        if self.expires_at_ns is not None:
+            payload["expires_at_ns"] = self.expires_at_ns
+        if self.legal_hold:
+            payload["legal_hold"] = self.legal_hold
+        if self.tombstoned_at_ns is not None:
+            payload["tombstoned_at_ns"] = self.tombstoned_at_ns
         if self.metadata:
             payload["metadata"] = _thaw_value(self.metadata)
         return payload
@@ -341,6 +378,31 @@ def validate_durable_ref_secret_exclusion(ref: DurableRef) -> list[str]:
     return issues
 
 
+def validate_durable_ref_byte_access_schema(ref: DurableRef) -> list[str]:
+    """Validate byte-access schema fields without reading stored bytes.
+
+    Stored-byte policy enforcement happens in ``ledger_payload_store`` when
+    encrypted bytes are read, expired, tombstoned, or deleted. This validator
+    deliberately checks only reference metadata shape.
+    """
+    issues: list[str] = []
+
+    if ref.is_encrypted and (ref.key_id is None or ref.key_version is None):
+        issues.append(
+            "Encrypted DurableRef requires key_id and key_version metadata"
+        )
+    if ref.expires_at_ns is not None and ref.created_at_ns is not None:
+        if ref.expires_at_ns < ref.created_at_ns:
+            issues.append(
+                "DurableRef.expires_at_ns is earlier than created_at_ns"
+            )
+    if ref.is_legal_hold and ref.expires_at_ns is not None:
+        issues.append(
+            "Legal-hold DurableRef must not carry expires_at_ns"
+        )
+    return issues
+
+
 def validate_durable_ref(
     ref: DurableRef,
     *,
@@ -362,6 +424,7 @@ def validate_durable_ref(
         )
     )
     issues.extend(validate_durable_ref_secret_exclusion(ref))
+    issues.extend(validate_durable_ref_byte_access_schema(ref))
     return issues
 
 
@@ -373,6 +436,7 @@ __all__ = [
     "PrivacyClass",
     "RetentionClass",
     "validate_durable_ref",
+    "validate_durable_ref_byte_access_schema",
     "validate_durable_ref_retrievability",
     "validate_durable_ref_secret_exclusion",
     "validate_durable_ref_tenant_scope",

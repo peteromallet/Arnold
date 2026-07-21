@@ -791,7 +791,6 @@ class SqliteLedgerMigrator(LedgerMigrator):
             )
             for r in rows
         )
-
     def _compute_mismatches(
         self, applied: Sequence[MigrationRecord]
     ) -> tuple[ChecksumMismatch, ...]:
@@ -1191,6 +1190,20 @@ class SqliteLedgerMigrator(LedgerMigrator):
         )
 
 
+# M9 payload-byte migration checkpoints are additive to the M6 schema
+# migrator and retain the latter's forward-fix/checksum guarantees.
+from arnold.workflow._ledger_migrations_m9 import (  # noqa: E402
+    FileBackedPayloadMigrationLog,
+    LedgerPayloadMigration,
+    MIGRATION_SCHEMA_VERSION,
+    MigrationStatus,
+    PayloadMigrationCheckpoint,
+    assert_legacy_ref_readable,
+    durable_ref_from_dict,
+    unbackfillable_legacy_ref,
+)
+
+
 __all__ = [
     "ClassificationEvidence",
     "ClassificationSafetyError",
@@ -1206,7 +1219,15 @@ __all__ = [
     "MigrationRegistryError",
     "MigrationOrderError",
     "LedgerMigrator",
+    "FileBackedPayloadMigrationLog",
+    "LedgerPayloadMigration",
+    "MIGRATION_SCHEMA_VERSION",
+    "MigrationStatus",
+    "PayloadMigrationCheckpoint",
     "SqliteLedgerMigrator",
     "compute_migration_checksum",
     "default_m6a_migrations",
+    "assert_legacy_ref_readable",
+    "durable_ref_from_dict",
+    "unbackfillable_legacy_ref",
 ]

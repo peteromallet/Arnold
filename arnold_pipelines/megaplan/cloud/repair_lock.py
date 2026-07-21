@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Literal, Mapping
 
 from arnold_pipelines.megaplan.cloud.repair_contract import atomic_write_json, load_json
+from arnold_pipelines.megaplan.custody.contracts import normalize_repair_occurrence_key
 
 RepairLockStatus = Literal["missing", "acquired", "busy", "stale", "unauthorized"]
 PidLivenessProbe = Callable[[int], bool]
@@ -72,6 +73,7 @@ def build_owner_metadata(
     *,
     session: str,
     target_id: str = "",
+    repair_identity: Mapping[str, Any] | None = None,
     pid: int | None = None,
     command: str | None = None,
     started_at: str | None = None,
@@ -92,6 +94,10 @@ def build_owner_metadata(
         "timeout_seconds": timeout_seconds,
         "hostname": _default_hostname() if hostname is None else hostname,
     }
+    normalized_repair_identity = normalize_repair_occurrence_key(repair_identity)
+    if normalized_repair_identity is not None:
+        metadata["repair_identity"] = normalized_repair_identity.to_dict()
+        metadata["repair_identity_key"] = normalized_repair_identity.key
     if extra:
         metadata.update(dict(extra))
     return metadata
@@ -102,6 +108,7 @@ def inspect_repair_lock(
     *,
     now: datetime | None = None,
     is_pid_live: PidLivenessProbe | None = None,
+    expected_repair_identity: Mapping[str, Any] | None = None,
 ) -> RepairLockResult:
     """Inspect an existing repair lock without mutating it.
 
@@ -129,6 +136,7 @@ def inspect_repair_lock(
 
     owner: dict[str, Any] | None = owner_payload if isinstance(owner_payload, dict) else None
     pid_probe = is_pid_live or _default_is_pid_live
+    normalized_expected_identity = normalize_repair_occurrence_key(expected_repair_identity)
     if owner is None:
         if owner_path.exists():
             evidence["reasons"].append("owner_metadata_invalid")
@@ -161,6 +169,17 @@ def inspect_repair_lock(
                 evidence["age_seconds"] = age_seconds
                 if age_seconds > float(timeout_seconds):
                     evidence["reasons"].append("timeout_expired")
+        if normalized_expected_identity is not None:
+            owner_identity = normalize_repair_occurrence_key(owner.get("repair_identity"))
+            owner_identity_key = (
+                owner_identity.key
+                if owner_identity is not None
+                else str(owner.get("repair_identity_key") or "")
+            )
+            if owner_identity_key != normalized_expected_identity.key:
+                evidence["reasons"].append("repair_identity_mismatch")
+                evidence["expected_repair_identity_key"] = normalized_expected_identity.key
+                evidence["observed_repair_identity_key"] = owner_identity_key
 
     if evidence["reasons"]:
         return RepairLockResult(
@@ -178,6 +197,7 @@ def acquire_repair_lock(
     *,
     session: str,
     target_id: str = "",
+    repair_identity: Mapping[str, Any] | None = None,
     pid: int | None = None,
     command: str | None = None,
     started_at: str | None = None,
@@ -194,6 +214,7 @@ def acquire_repair_lock(
     owner = build_owner_metadata(
         session=session,
         target_id=target_id,
+        repair_identity=repair_identity,
         pid=pid,
         command=command,
         started_at=started_at,
@@ -206,7 +227,12 @@ def acquire_repair_lock(
     try:
         lock_path.mkdir(parents=False)
     except FileExistsError:
-        return inspect_repair_lock(lock_path, now=now, is_pid_live=is_pid_live)
+        return inspect_repair_lock(
+            lock_path,
+            now=now,
+            is_pid_live=is_pid_live,
+            expected_repair_identity=repair_identity,
+        )
 
     try:
         # Owner equality is the release fence.  Additive provenance belongs on
@@ -439,6 +465,7 @@ def repair_lock(
     *,
     session: str,
     target_id: str = "",
+    repair_identity: Mapping[str, Any] | None = None,
     pid: int | None = None,
     command: str | None = None,
     started_at: str | None = None,
@@ -455,6 +482,7 @@ def repair_lock(
         lock_dir,
         session=session,
         target_id=target_id,
+        repair_identity=repair_identity,
         pid=pid,
         command=command,
         started_at=started_at,

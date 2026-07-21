@@ -175,6 +175,22 @@ class EventKind:
     # object.  Always governs_live_policy=False, write-only.
     CALIBRATION_EXPERIMENT: str = "calibration_experiment"
 
+    # ── M9 Work-ledger event types (5) ─────────────────────────────────
+    SESSION_START: str = "session_start"
+    """Session started (worker / agent session)."""
+
+    INFERENCE: str = "inference"
+    """Model inference call (generalization of LLM_CALL_START/END)."""
+
+    TOOL: str = "tool"
+    """Tool invocation (non-model side-effect call)."""
+
+    GIT: str = "git"
+    """Git operation (commit, branch, status)."""
+
+    TRANSITION: str = "transition"
+    """Workflow / state-machine transition event."""
+
 
 # Convenience set for fast membership checks.
 _ALL_EVENT_KINDS: Set[str] = frozenset(
@@ -214,6 +230,11 @@ _ALL_EVENT_KINDS: Set[str] = frozenset(
         EventKind.STATE_CACHE_DRIFT,
         EventKind.CAPABILITY_CLAIM,
         EventKind.CALIBRATION_EXPERIMENT,
+        EventKind.SESSION_START,
+        EventKind.INFERENCE,
+        EventKind.TOOL,
+        EventKind.GIT,
+        EventKind.TRANSITION,
     }
 )
 
@@ -237,6 +258,9 @@ _TELEMETRY_EVENT_KINDS: Set[str] = frozenset(
         EventKind.LLM_CALL_END,
         EventKind.LLM_CALL_ERROR,
         EventKind.COST_RECORDED,
+        EventKind.INFERENCE,
+        EventKind.TOOL,
+        EventKind.GIT,
     }
 )
 

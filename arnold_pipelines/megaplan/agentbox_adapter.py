@@ -17,6 +17,7 @@ from arnold.runtime.durable_ops import (
 )
 from arnold_pipelines.megaplan.chain.spec import load_spec, validate_paths
 from arnold_pipelines.megaplan.chain.status import ChainStatusSnapshot, build_chain_status_snapshot
+from arnold_pipelines.megaplan.custody.process_adapter_wbc import begin_process_adapter_attempt
 from arnold_pipelines.megaplan.discord_dm import send_discord_dm
 from arnold_pipelines.megaplan.types import CliError
 
@@ -152,6 +153,16 @@ class MegaplanChainHandler:
         )
         project_root = _primary_worktree(prepared)
         resolved_spec_path = _resolve_spec_path(spec_path, project_root)
+        wbc_attempt = _begin_agentbox_process_attempt(
+            prepared.run_paths,
+            surface="launch",
+            details={
+                "operation_id": operation_id,
+                "repo_name": repo_name,
+                "spec_path": str(resolved_spec_path),
+                "project_root": str(project_root),
+            },
+        )
 
         manifest = _load_credential_manifest(resolved_spec_path)
         if manifest is not None:
@@ -166,6 +177,11 @@ class MegaplanChainHandler:
                 )
                 _record_credential_failure(
                     config, operation_id, prepared.run_paths, diagnostics
+                )
+                wbc_attempt.terminal(
+                    status="failed_before_dispatch",
+                    outcome="blocked",
+                    details={"phase": "credential_preflight", "diagnostics": dict(diagnostics)},
                 )
                 raise MegaplanChainLaunchError(
                     "credential_preflight_failed",
@@ -185,6 +201,11 @@ class MegaplanChainHandler:
                 extra=exc.extra,
             )
             _record_validation_failure(config, operation_id, prepared.run_paths, diagnostics)
+            wbc_attempt.terminal(
+                status="failed_before_dispatch",
+                outcome="blocked",
+                details={"phase": "validation", "diagnostics": dict(diagnostics)},
+            )
             raise MegaplanChainLaunchError(exc.code, exc.message, diagnostics=diagnostics) from exc
         except Exception as exc:
             diagnostics = _validation_diagnostics(
@@ -194,6 +215,11 @@ class MegaplanChainHandler:
                 project_root=project_root,
             )
             _record_validation_failure(config, operation_id, prepared.run_paths, diagnostics)
+            wbc_attempt.terminal(
+                status="failed_before_dispatch",
+                outcome="blocked",
+                details={"phase": "validation", "diagnostics": dict(diagnostics)},
+            )
             raise MegaplanChainLaunchError("validation_failed", str(exc), diagnostics=diagnostics) from exc
 
         command = _chain_start_command(resolved_spec_path, project_root)
@@ -227,6 +253,14 @@ class MegaplanChainHandler:
             "megaplan_chain.validation_passed",
             payload={"spec_path": str(resolved_spec_path), "project_root": str(project_root)},
         )
+        wbc_attempt.effect(
+            "validation_passed",
+            details={
+                "command": list(command),
+                "resolved_spec_path": str(resolved_spec_path),
+                "project_root": str(project_root),
+            },
+        )
         try:
             host_result = start_host_session(
                 config,
@@ -235,11 +269,31 @@ class MegaplanChainHandler:
                 cwd=project_root,
             )
         except HostLaunchError as exc:
+            wbc_attempt.terminal(
+                status="failed",
+                outcome="indeterminate",
+                details={"phase": "host_launch", "kind": exc.kind, "diagnostics": dict(exc.diagnostics)},
+            )
             raise MegaplanChainLaunchError(
                 exc.kind,
                 str(exc),
                 diagnostics=exc.diagnostics,
             ) from exc
+        wbc_attempt.effect(
+            "session_started",
+            details={
+                "session_name": host_result.session_name,
+                "launch_state": host_result.launch_state,
+            },
+        )
+        wbc_attempt.terminal(
+            status="running",
+            outcome="started",
+            details={
+                "session_name": host_result.session_name,
+                "launch_state": host_result.launch_state,
+            },
+        )
         return MegaplanChainLaunchResult(
             host_result=host_result,
             resolved_spec_path=resolved_spec_path,
@@ -265,6 +319,11 @@ class MegaplanChainHandler:
         """Refresh persisted operation state from the chain classifier."""
 
         snapshot = self.status(config, operation_id)
+        wbc_attempt = _begin_agentbox_process_attempt(
+            run_dir_paths(config, operation_id),
+            surface="tick",
+            details={"operation_id": operation_id},
+        )
         classification = snapshot.classification
         current = load_agentbox_operation(
             config,
@@ -311,6 +370,14 @@ class MegaplanChainHandler:
                 operation_types=(MEGAPLAN_CHAIN_OPERATION_TYPE,),
             )
             _record_completion_dm(config, operation_id, refreshed)
+        wbc_attempt.terminal(
+            status=updated.state.value,
+            outcome="succeeded",
+            details={
+                "effective_status": classification.effective_status,
+                "reason": classification.reason,
+            },
+        )
         return updated
 
     def resume(self, config: AgentBoxConfig, operation_id: str) -> Any:
@@ -370,6 +437,15 @@ class MegaplanChainHandler:
                 resource for resource in resources if resource.resource_type is ResourceType.LOG
             ),
         )
+        wbc_attempt = _begin_agentbox_process_attempt(
+            prepared.run_paths,
+            surface="resume",
+            details={
+                "operation_id": operation_id,
+                "project_root": str(snapshot.project_root),
+                "reason": classification.reason,
+            },
+        )
         try:
             result = start_host_session(
                 config,
@@ -378,6 +454,11 @@ class MegaplanChainHandler:
                 cwd=snapshot.project_root,
             )
         except HostLaunchError as exc:
+            wbc_attempt.terminal(
+                status="failed",
+                outcome="indeterminate",
+                details={"phase": "host_launch", "kind": exc.kind, "diagnostics": dict(exc.diagnostics)},
+            )
             raise MegaplanChainLaunchError(
                 exc.kind,
                 str(exc),
@@ -391,6 +472,15 @@ class MegaplanChainHandler:
                 "runner": snapshot.runner,
                 "session_name": result.session_name,
             },
+        )
+        wbc_attempt.effect(
+            "session_started",
+            details={"session_name": result.session_name},
+        )
+        wbc_attempt.terminal(
+            status="running",
+            outcome="started",
+            details={"session_name": result.session_name},
         )
         return load_agentbox_operation(
             config,
@@ -713,11 +803,27 @@ def _stored_chain_command(metadata: Mapping[str, Any]) -> tuple[str, ...]:
     if isinstance(command, list) and all(isinstance(part, str) for part in command):
         if tuple(command[:4]) == ("python", "-m", "arnold_pipelines.megaplan", "chain"):
             return tuple(command)
+
     message = "megaplan_chain operation is missing a stored chain command"
     raise MegaplanChainLaunchError(
         "missing_stored_chain_command",
         message,
         diagnostics={"phase": "resume", "kind": "missing_stored_chain_command"},
+    )
+
+
+def _begin_agentbox_process_attempt(
+    run_paths: RunDirPaths,
+    *,
+    surface: str,
+    details: Mapping[str, Any] | None = None,
+):
+    return begin_process_adapter_attempt(
+        run_paths.root,
+        producer_family="agentbox_adapter",
+        adapter_name="megaplan_chain",
+        surface=surface,
+        start_details=details,
     )
 
 

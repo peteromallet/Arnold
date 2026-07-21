@@ -92,12 +92,12 @@ def _make_event(
     sequence: int = 1,
     event_type: AttemptEventType = AttemptEventType.STARTED,
     idempotency_key: str = "idem-1",
-    causal_predecessor_sequence: int = 0,
+    causal_predecessor_sequence: int | None = None,
     append_position: int = 0,
     outcome: AttemptOutcome | None = None,
 ) -> LedgerEvent:
     aid = attempt_id if attempt_id is not None else _aid()
-    cps = causal_predecessor_sequence
+    cps = sequence - 1 if causal_predecessor_sequence is None else causal_predecessor_sequence
     return LedgerEvent(
         idempotency_key=idempotency_key,
         event_type=event_type,
@@ -488,9 +488,18 @@ class TestRequiredWriteFailuresNotSuppressed:
             aid = _aid()
             adapter.reserve_attempt(aid)
 
+            adapter.append_started(
+                aid,
+                _make_event(
+                    attempt_id=aid,
+                    sequence=1,
+                    event_type=AttemptEventType.STARTED,
+                    idempotency_key="started-1",
+                ),
+            )
             # Append a terminal event.
             term_event = _make_event(
-                attempt_id=aid, sequence=1,
+                attempt_id=aid, sequence=2,
                 event_type=AttemptEventType.COMPLETED,
                 idempotency_key="terminal-1",
                 outcome=AttemptOutcome.SUCCEEDED,
@@ -499,7 +508,7 @@ class TestRequiredWriteFailuresNotSuppressed:
 
             # Now try to append a non-terminal event after terminal.
             post_event = _make_event(
-                attempt_id=aid, sequence=2,
+                attempt_id=aid, sequence=3,
                 event_type=AttemptEventType.STARTED,
                 idempotency_key="post-terminal-1",
             )
@@ -697,8 +706,16 @@ class TestDelegationCorrectness:
             adapter.reserve_attempt(aid)
             assert adapter.has_terminal_event(aid) is False
 
+            adapter.append_started(
+                aid,
+                _make_event(
+                    attempt_id=aid, sequence=1,
+                    event_type=AttemptEventType.STARTED,
+                    idempotency_key="started-1",
+                ),
+            )
             ev = _make_event(
-                attempt_id=aid, sequence=1,
+                attempt_id=aid, sequence=2,
                 event_type=AttemptEventType.COMPLETED,
                 idempotency_key="ev-1",
                 outcome=AttemptOutcome.SUCCEEDED,
@@ -715,12 +732,12 @@ class TestDelegationCorrectness:
             assert adapter.last_sequence(aid) == 0
 
             ev = _make_event(
-                attempt_id=aid, sequence=3,
+                attempt_id=aid, sequence=1,
                 event_type=AttemptEventType.STARTED,
                 idempotency_key="ev-1",
             )
             adapter.append_started(aid, ev)
-            assert adapter.last_sequence(aid) == 3
+            assert adapter.last_sequence(aid) == 1
 
     def test_gates_delegate(self):
         """start_verified and terminal_or_indeterminate_verified work."""
@@ -735,13 +752,14 @@ class TestDelegationCorrectness:
             assert sg.status == GateStatus.INCOMPLETE
 
             # Append STARTED.
-            ev = _make_event(
-                attempt_id=aid, sequence=1,
-                event_type=AttemptEventType.STARTED,
-                idempotency_key="ev-1",
+            adapter.append_started(
+                aid,
+                _make_event(
+                    attempt_id=aid, sequence=1,
+                    event_type=AttemptEventType.STARTED,
+                    idempotency_key="started-1",
+                ),
             )
-            adapter.append_started(aid, ev)
-
             # Now VERIFIED.
             sg = adapter.start_verified(aid)
             assert sg.status == GateStatus.VERIFIED
@@ -775,8 +793,16 @@ class TestDelegationCorrectness:
             # No terminal yet.
             assert adapter.get_terminal_event(aid) is None
 
+            adapter.append_started(
+                aid,
+                _make_event(
+                    attempt_id=aid, sequence=1,
+                    event_type=AttemptEventType.STARTED,
+                    idempotency_key="started-1",
+                ),
+            )
             ev = _make_event(
-                attempt_id=aid, sequence=1,
+                attempt_id=aid, sequence=2,
                 event_type=AttemptEventType.FAILED,
                 idempotency_key="ev-1",
                 outcome=AttemptOutcome.FAILED,

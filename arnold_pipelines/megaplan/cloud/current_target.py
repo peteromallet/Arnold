@@ -77,6 +77,7 @@ def resolve_current_target(
     workspace_hint: str | Path | None = None,
     session_is_live: SessionLiveProbe | None = None,
     pid_is_live: PidLiveProbe | None = None,
+    source_cursor_vector: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a stable evidence record for the current repair target.
 
@@ -84,6 +85,11 @@ def resolve_current_target(
     etc.) this function returns a minimal stub record without inspecting any
     filesystem artifacts.  The stub is safe to persist and consumers already
     handle missing evidence gracefully.
+
+    *source_cursor_vector* is an optional M9 canonical projection cursor
+    recording which source files were read.  When supplied it is attached as
+    ``source_cursor_vector`` in the returned record — display-only, never
+    authority.
     """
 
     if not resolver_observe_enabled():
@@ -109,6 +115,8 @@ def resolve_current_target(
             "stale_evidence": [],
             "evidence_state": _evidence_state("missing", ["resolver_observe_disabled"]),
             "rationale": ["resolver observe disabled via ARNOLD_RESOLVER_OBSERVE"],
+            "source_cursor_vector": _format_source_cursor(source_cursor_vector),
+            "evidence_gaps": _collect_target_evidence_gaps({}, stale_evidence=[], marker_present=False),
         }
 
     markers_root = Path(marker_dir)
@@ -294,6 +302,14 @@ def resolve_current_target(
         rationale.append("marker is the only available evidence")
 
     sorted_evidence = sorted(stale_evidence, key=_artifact_sort_key)
+    evidence_gaps = _collect_target_evidence_gaps(
+        marker,
+        stale_evidence=sorted_evidence,
+        marker_present=marker_path.exists(),
+        plan_state_present=bool(plan_state_path and plan_state_path.exists()),
+        chain_state_present=bool(chain_state_path and chain_state_path.exists()),
+        tmux_live=tmux_process.get("live_status"),
+    )
     return {
         "schema_version": 1,
         "session": session,
@@ -357,6 +373,8 @@ def resolve_current_target(
         "stale_evidence": sorted_evidence,
         "evidence_state": _classify_evidence_state(sorted_evidence),
         "rationale": sorted(set(rationale)),
+        "source_cursor_vector": _format_source_cursor(source_cursor_vector),
+        "evidence_gaps": evidence_gaps,
     }
 
 
@@ -799,6 +817,158 @@ def _collect_active_step_heartbeat(
         "started_at": _safe_text(active_step.get("started_at")),
         "pid_live": pid_live,
     }
+
+# ── M9: canonical projection helpers ────────────────────────────────────────
+
+
+def _format_source_cursor(
+    cursor_vector: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Format a source cursor vector for the target record, never granting authority.
+
+    When no cursor vector is supplied the field is an explicit ``absent``
+    sentinel so consumers never mistake a missing cursor for a verified read.
+    """
+    if isinstance(cursor_vector, Mapping) and cursor_vector:
+        return {
+            "authority": "evidence_extracted_display_only",
+            "value": dict(cursor_vector),
+        }
+    return {
+        "authority": "absent",
+        "reason": "no_source_cursor_vector_provided",
+    }
+
+
+def _collect_target_evidence_gaps(
+    marker: Mapping[str, Any],
+    *,
+    stale_evidence: list[dict[str, Any]] | None = None,
+    marker_present: bool = False,
+    plan_state_present: bool = False,
+    chain_state_present: bool = False,
+    tmux_live: str = "",
+) -> dict[str, Any]:
+    """Collect structured evidence gaps for the current-target record.
+
+    Returns a dict whose keys name degraded dimensions and whose values are
+    ``{gap, reason, evidence_status}`` triples.  Gaps are pure display
+    annotations — they never feed dispatch, completion, cancellation,
+    publication, or delivery.
+    """
+    gaps: dict[str, Any] = {}
+    stale_kinds = {e.get("kind") for e in (stale_evidence or []) if isinstance(e, dict)}
+
+    # --- marker gap ---
+    if not marker_present:
+        gaps["marker"] = {
+            "gap": "marker_unavailable",
+            "reason": "session marker file missing or unreadable",
+            "evidence_status": "missing",
+        }
+    elif "invalid_marker_json" in stale_kinds:
+        gaps["marker"] = {
+            "gap": "marker_invalid",
+            "reason": "session marker JSON is unreadable; continuing with partial evidence",
+            "evidence_status": "degraded",
+        }
+
+    # --- workspace gap ---
+    workspace = _safe_text(marker.get("workspace"))
+    if not workspace:
+        gaps["workspace"] = {
+            "gap": "workspace_unknown",
+            "reason": "marker did not provide a usable workspace",
+            "evidence_status": "missing",
+        }
+
+    # --- plan state gap ---
+    if "missing_plan_state" in stale_kinds:
+        gaps["plan_state"] = {
+            "gap": "plan_state_unavailable",
+            "reason": "plan state file missing or unreadable",
+            "evidence_status": "missing",
+        }
+    elif not plan_state_present:
+        gaps["plan_state"] = {
+            "gap": "plan_state_unavailable",
+            "reason": "no plan state file found for resolved plan name",
+            "evidence_status": "missing",
+        }
+
+    # --- chain state gap ---
+    if "missing_chain_state" in stale_kinds:
+        gaps["chain_state"] = {
+            "gap": "chain_state_unavailable",
+            "reason": "chain state file missing or unreadable",
+            "evidence_status": "missing",
+        }
+    elif not chain_state_present:
+        if any(k in stale_kinds for k in ("missing_chain_state",)):
+            gaps["chain_state"] = {
+                "gap": "chain_state_unavailable",
+                "reason": "no chain state file found",
+                "evidence_status": "missing",
+            }
+
+    # --- contradictory identity ---
+    if "contradictory_plan_identity" in stale_kinds:
+        gaps["plan_identity"] = {
+            "gap": "contradictory_plan_identity",
+            "reason": "chain and plan state identify different current plans",
+            "evidence_status": "degraded",
+        }
+
+    # --- stale marker plan ref ---
+    if "stale_marker_plan_ref" in stale_kinds:
+        gaps["marker_plan_ref"] = {
+            "gap": "stale_marker_plan_ref",
+            "reason": "marker plan reference is older than chain state",
+            "evidence_status": "stale",
+        }
+
+    # --- stale needs human plan ref ---
+    if "stale_needs_human_plan_ref" in stale_kinds:
+        gaps["needs_human_plan_ref"] = {
+            "gap": "stale_needs_human_plan_ref",
+            "reason": "needs-human sidecar references an older plan",
+            "evidence_status": "stale",
+        }
+
+    # --- stale chain state after terminal plan ---
+    if "stale_chain_state_after_terminal_plan" in stale_kinds:
+        gaps["chain_state_terminal"] = {
+            "gap": "stale_chain_state_after_terminal_plan",
+            "reason": "terminal plan state supersedes stale chain state",
+            "evidence_status": "stale",
+        }
+
+    # --- superseded by live sibling ---
+    if "superseded_by_live_sibling" in stale_kinds:
+        gaps["superseded_by_sibling"] = {
+            "gap": "session_superseded_by_live_sibling",
+            "reason": "live sibling session supersedes current marker",
+            "evidence_status": "superseded",
+        }
+
+    # --- tmux liveness gap ---
+    if not tmux_live:
+        gaps["tmux_liveness"] = {
+            "gap": "tmux_liveness_unknown",
+            "reason": "no tmux/process liveness probe result",
+            "evidence_status": "missing",
+        }
+
+    # --- stale active step dead pid ---
+    if "stale_active_step_dead_pid" in stale_kinds:
+        gaps["active_step"] = {
+            "gap": "stale_active_step_dead_pid",
+            "reason": "active_step worker PID is not live",
+            "evidence_status": "stale",
+        }
+
+    return gaps
+
 
 def _artifact_sort_key(item: Mapping[str, Any]) -> tuple[str, str, str]:
     return (

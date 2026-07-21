@@ -28,6 +28,12 @@ existing ratchet cross-references, and closure argument when applicable.
 | 8 | `arnold/pipelines/evidence_pack/steps.py:714` | `run` (EmitAttestationStep) | Attestation payload (Mapping) | Tested via `tests/arnold/pipelines/evidence_pack/test_steps.py` | Attestation schema validation | `ATTESTATION_SCHEMA` |
 | 9 | `arnold/pipeline/model_seam.py:1008` | `_audit_capture_payload` | Step payload (Mapping) | Tested via `tests/arnold/pipeline/test_steps.py` pipeline model-seam capture tests | Generalized pipeline capture audit gate | `schema` resolved from invocation metadata |
 | 10 | `arnold/pipelines/megaplan/handlers/finalize.py` | `_validate_finalize_payload` | Finalize worker payload (Mapping) | Tested via `tests/test_handlers_finalize.py` and `tests/test_calibration_routing.py` | C4 finalize input-time chokepoint binding — schema-expressible checks delegated here; residual semantic checks remain in `_finalize_semantic_postcheck` | `_FINALIZE_INPUT_SCHEMA` (module-level input-time schema subset) |
+| 11 | `arnold/pipeline/native/start_from_path.py:170` | `_validate_injected_state` | Injected native state | Native start-path validation | Native boundary gate | resolved schema |
+| 12 | `arnold/pipelines/evidence_pack/verifier.py:163` | `_validate_payload` | Legacy evidence-pack payload | Evidence-pack verifier coverage | Legacy compatibility boundary | verifier schema |
+| 13 | `arnold_pipelines/evidence_pack/verifier.py:163` | `_validate_payload` | Evidence-pack payload | Evidence-pack verifier coverage | Canonical package boundary | verifier schema |
+| 14 | `arnold_pipelines/megaplan/handlers/finalize.py:455` | `_validate_finalize_payload` | Finalize worker payload | Finalize handler tests | Canonical C4 chokepoint | `_FINALIZE_INPUT_SCHEMA` |
+| 15 | `arnold_pipelines/megaplan/model_seam.py:356` | `_audit_capture_payload` | Step payload | Model-seam structural audit tests | Canonical structural audit gate | invocation schema |
+| 16 | `arnold_pipelines/megaplan/pipeline_contracts.py:471` | `consume_payload_result` | Typed-port payload | Pipeline contract tests | Canonical typed-port consumer gate | registered schema |
 
 ### Test Call Sites
 
@@ -65,6 +71,18 @@ Delegates to `_audit_capture_payload` → `validate_payload_against_schema`.
 | 8 | `arnold/pipelines/megaplan/handlers/review.py:283` | `_audit_review_payload_or_raise` | Review payload | Tested via `tests/pipelines/megaplan/review/test_review_*.py` | Review output structural audit | `"review"`, `payload` |
 | 9 | `arnold/pipelines/megaplan/handlers/execute.py:293` | `handle_execute` | Stub review payload | Tested via execute handler tests | Execute stub-review audit | `"review"`, `stub_review` |
 | 10 | `arnold/pipelines/megaplan/workers/_impl.py:1589` | `_recover_payload_from_candidates` | Step payload | Tested via worker tests | Worker-level payload recovery audit | `step` (string), `payload` (dict) |
+| 11 | `arnold_pipelines/megaplan/bakeoff/channel_shadow.py:226` | `_payload_schema_valid` | Shadow-channel payload | Bakeoff channel tests | Shadow validation gate | step payload |
+| 12 | `arnold_pipelines/megaplan/handlers/execute.py:1100` | `handle_execute` | Stub review payload | Execute handler tests | Canonical execute audit | review payload |
+| 13 | `arnold_pipelines/megaplan/handlers/gate.py:990` | `handle_gate` | Gate payload | Gate handler tests | Canonical gate audit | gate payload |
+| 14 | `arnold_pipelines/megaplan/handlers/gate.py:1106` | `handle_gate` | Gate fallback payload | Gate fallback tests | Canonical gate fallback audit | gate payload |
+| 15 | `arnold_pipelines/megaplan/handlers/review.py:682` | `_audit_review_payload_or_raise` | Review payload | Review handler tests | Canonical review audit | review payload |
+| 16 | `arnold_pipelines/megaplan/model_seam.py:1328` | `_recover_payload_with_provenance` | Preferred recovered payload | Model-seam recovery tests | Canonical recovery audit | step payload |
+| 17 | `arnold_pipelines/megaplan/model_seam.py:1371` | `_recover_payload_with_provenance` | Candidate recovered payload | Model-seam recovery tests | Canonical recovery audit | step payload |
+| 18 | `arnold_pipelines/megaplan/orchestration/critique_runtime.py:875` | `handle_critique` | Critique payload | Critique runtime tests | Critique output audit | critique payload |
+| 19 | `arnold_pipelines/megaplan/orchestration/critique_runtime.py:1070` | `_recover_valid_critique_output` | Recovered critique payload | Critique recovery tests | Critique recovery audit | critique payload |
+| 20 | `arnold_pipelines/megaplan/orchestration/critique_runtime.py:1523` | `handle_revise` | Revise payload | Critique revise tests | Revise output audit | revise payload |
+| 21 | `arnold_pipelines/megaplan/workers/_impl.py:2624` | `_recover_payload_from_candidates` | Worker recovery payload | Worker tests | Worker recovery audit | step payload |
+| 22 | `arnold_pipelines/megaplan/workers/shannon_stream.py:1266` | `run_shannon_stream_step` | Stream worker payload | Shannon stream tests | Stream output audit | step payload |
 
 ### Test Call Sites
 
@@ -94,6 +112,17 @@ Delegates to `_audit_capture_payload` → `validate_payload_against_schema`.
 | 9 | `arnold/pipelines/megaplan/workers/_impl.py:2590` | `run_codex_prep_step` | Model output (str \| Mapping) | Same as above | Codex resume capture | `invocation`, `model_output` |
 | 10 | `arnold/pipelines/megaplan/_pipeline/steps/agent.py:112` | `run` (AgentStep) | Model output (str \| Mapping) | Tested via pipeline integration tests | Agent step capture chokepoint | `worker_invocation`, `worker_output` |
 | 11 | `arnold/pipeline/model_seam.py:929` | `capture_step_output` | Repaired output (str \| Mapping) | Self-recursion for repair retry — same path as megaplan variant | Generalized pipeline capture retry | `repaired_invocation`, `repaired_output` |
+| 12 | `arnold_pipelines/megaplan/execute/batch.py:1488` | `_capture_execute_payload` | Execute payload | Batch executor tests | Canonical batch chokepoint | invocation/output |
+| 13 | `arnold_pipelines/megaplan/execute/timeout.py:155` | `_capture_execute_checkpoint_payload` | Timeout checkpoint payload | Timeout recovery tests | Canonical timeout chokepoint | invocation/output |
+| 14 | `arnold_pipelines/megaplan/model_seam.py:260` | `capture_step_output` | Repaired output | Model-seam repair tests | Canonical recursive repair gate | repaired invocation/output |
+| 15 | `arnold_pipelines/megaplan/steps/agent.py:91` | `run` | Agent step output | Pipeline agent tests | Canonical agent chokepoint | worker invocation/output |
+| 16 | `arnold_pipelines/megaplan/workers/_impl.py:3507` | `_run_codex_step_uncapped` | Codex output | Worker integration tests | Canonical worker capture | invocation/output |
+| 17 | `arnold_pipelines/megaplan/workers/_impl.py:3703` | `_run_codex_step_uncapped` | Codex fallback output | Worker integration tests | Canonical worker fallback capture | invocation/output |
+| 18 | `arnold_pipelines/megaplan/workers/_impl.py:4005` | `run_codex_prep_step` | Codex prep output | Worker prep tests | Canonical prep capture | invocation/output |
+| 19 | `arnold_pipelines/megaplan/workers/hermes.py:2403` | `_run_attempt` | Hermes output | Hermes worker tests | Canonical Hermes capture | invocation/output |
+| 20 | `arnold_pipelines/megaplan/workers/hermes.py:2428` | `_run_attempt` | Hermes Codex-path output | Hermes worker tests | Canonical Hermes fallback capture | invocation/output |
+| 21 | `arnold_pipelines/megaplan/workers/shannon.py:2931` | `_parse_and_validate` | Shannon output | Shannon worker tests | Canonical Shannon capture | invocation/output |
+| 22 | `arnold_pipelines/megaplan/workers/shannon.py:2937` | `_parse_and_validate` | Shannon fallback output | Shannon worker tests | Canonical Shannon fallback capture | invocation/output |
 
 ### Test Call Sites
 

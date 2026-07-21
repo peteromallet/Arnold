@@ -21,6 +21,13 @@ from arnold_pipelines.megaplan.bakeoff.state import (
     load_bakeoff_state,
     save_bakeoff_state,
 )
+from arnold_pipelines.megaplan.bakeoff.wbc import (
+    BAKEOFF_MERGE_SURFACE,
+    BAKEOFF_MERGE_WRITER_ID,
+    BakeoffWbcRule,
+    record_bakeoff_wbc_evidence,
+    validate_bakeoff_transition,
+)
 from arnold_pipelines.megaplan.bakeoff.worktree import ensure_main_worktree_clean, remove_worktree
 from arnold_pipelines.megaplan.types import CliError
 
@@ -36,6 +43,30 @@ def merge_bakeoff(root: Path, exp_id: str) -> int:
     chosen = state.get("chosen_profile")
     if not chosen:
         raise CliError("bakeoff_merge_missing_choice", "No chosen profile recorded.")
+    merge_evidence = validate_bakeoff_transition(
+        writer_id=BAKEOFF_MERGE_WRITER_ID,
+        surface_name=BAKEOFF_MERGE_SURFACE,
+        transition_name="merge_bakeoff",
+        subject=exp_id,
+        source_path=Path(__file__),
+        project_dir=root,
+        destructive=True,
+        rules=(
+            BakeoffWbcRule(
+                "chosen_profile_present",
+                True,
+                chosen,
+                bool(str(chosen).strip()),
+            ),
+            BakeoffWbcRule(
+                "phase_is_picked",
+                "picked",
+                state.get("phase"),
+                state.get("phase") == "picked",
+            ),
+        ),
+        extra={"chosen_profile": chosen, "mode": state.get("mode") or "code"},
+    )
 
     profiles = list(state.get("profiles", []))
     winner = _find_profile(profiles, chosen)
@@ -62,6 +93,11 @@ def merge_bakeoff(root: Path, exp_id: str) -> int:
 
     state["phase"] = "merged"
     state["merged_at"] = now_utc()
+    record_bakeoff_wbc_evidence(
+        state,
+        entry_key=f"merge:{exp_id}",
+        evidence=merge_evidence,
+    )
     save_bakeoff_state(root, state)
     return 0
 

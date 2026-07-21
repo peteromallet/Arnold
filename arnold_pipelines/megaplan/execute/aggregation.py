@@ -20,6 +20,11 @@ from arnold_pipelines.megaplan.execute.quality import (
     expand_projected_path_list,
     project_advisory_path_sets,
 )
+from arnold_pipelines.megaplan.execute.wbc import (
+    EXECUTE_PARENT_CUSTODY_KEY,
+    summarize_execute_parent_custody,
+    summarize_execute_wbc_batch_payloads,
+)
 from arnold_pipelines.megaplan.forms.directors_notes import update_directors_notes_at_aggregate
 from arnold_pipelines.megaplan.forms.provocations import select_active_checks
 from arnold_pipelines.megaplan.receipts.drift import collect_loc_by_file, compute_scope_drift
@@ -142,13 +147,23 @@ def _build_aggregate_execution_payload(
     )
     if outputs:
         output = output + "\n" + "\n".join(outputs)
+    parent_custody = summarize_execute_parent_custody(batch_payloads)
     result: dict[str, Any] = {
         "output": output,
         "commands_run": _stable_unique_strings(commands_run),
         "deviations": deviations,
         "task_updates": task_updates,
         "sense_check_acknowledgments": sense_check_acknowledgments,
+        "execute_wbc": summarize_execute_wbc_batch_payloads(batch_payloads),
+        EXECUTE_PARENT_CUSTODY_KEY: parent_custody,
     }
+    result["deviations"].extend(
+        [
+            message
+            for message in parent_custody.get("messages", [])
+            if isinstance(message, str) and message not in result["deviations"]
+        ]
+    )
     if is_prose_mode({"config": {"mode": mode}}):
         result["sections_written"] = _stable_unique_strings(sections_written)
     else:

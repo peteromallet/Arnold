@@ -66,6 +66,14 @@ from arnold_pipelines.megaplan.types import (
     CliError,
 )
 from arnold_pipelines.megaplan.control_interface import read_valid_targets
+from arnold_pipelines.megaplan.custody.admission_control import (
+    AUTO_ADMISSION_SURFACE,
+    AUTO_ADMISSION_WRITER_ID,
+    AdmissionFence,
+    register_admission_writers,
+    synthetic_text_source_record,
+    validate_admission_mutation,
+)
 from arnold_pipelines.megaplan.workflows.events import (
     resolve_workflow_phase,
     workflow_cursor,
@@ -1548,6 +1556,60 @@ def _read_state_data(plan_dir: Path | None) -> dict[str, Any] | None:
     except (CliError, json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def _admit_auto_driver(plan_dir: Path | None, plan: str) -> dict[str, Any] | None:
+    """Fail closed before auto mutates a stale or mismatched plan."""
+
+    state_data = _read_state_data(plan_dir)
+    if plan_dir is None or state_data is None:
+        return None
+
+    register_admission_writers()
+    source_record = synthetic_text_source_record(
+        selector=plan,
+        label="auto-state",
+        text=json.dumps(state_data, sort_keys=True, separators=(",", ":")),
+    )
+    fences = [
+        AdmissionFence(
+            identity="plan_name",
+            expected=plan,
+            observed=state_data.get("name"),
+            satisfied=str(state_data.get("name") or "") == plan,
+            detail="auto must mutate the exact requested plan",
+        )
+    ]
+
+    binding = (state_data.get("meta") or {}).get("canonical_source_binding")
+    if isinstance(binding, Mapping):
+        from arnold_pipelines.megaplan.planning.source_binding import assert_canonical_source_current
+
+        report = assert_canonical_source_current(plan_dir, state_data, operation="auto")
+        current = report.get("current")
+        bound = report.get("bound")
+        if isinstance(current, Mapping):
+            source_record = dict(current)
+        elif isinstance(bound, Mapping):
+            source_record = dict(bound)
+        fences.append(
+            AdmissionFence(
+                identity="canonical_source_status",
+                expected="match",
+                observed=report.get("status"),
+                satisfied=report.get("status") == "match",
+                detail="auto requires the bound canonical source to remain current",
+            )
+        )
+
+    return validate_admission_mutation(
+        writer_id=AUTO_ADMISSION_WRITER_ID,
+        surface_name=AUTO_ADMISSION_SURFACE,
+        selector=plan,
+        source_record=source_record,
+        fences=tuple(fences),
+        extra={"plan_dir": str(plan_dir)},
+    )
 
 
 def _normalize_failure_message(value: object) -> str:
@@ -3832,6 +3894,7 @@ def drive(
     # review cycle finished since we last observed the state.
     plan_dir = _resolve_plan_dir(plan, cwd)
     if plan_dir is not None:
+        _admit_auto_driver(plan_dir, plan)
         emit_event(EventKind.INIT, plan_dir=plan_dir, payload={"plan_name": plan})
     from arnold_pipelines.megaplan.orchestration.progress import ProgressEmitter
     progress_emitter = ProgressEmitter.from_env(progress_env)
@@ -3847,6 +3910,80 @@ def drive(
     def log(msg: str, **fields: Any) -> None:
         events.append({"msg": msg, **fields})
         writer(f"[auto {plan}] {msg}\n")
+
+    iteration = 0
+
+    def _emit_work_boundary(
+        kind: str,
+        *,
+        phase: str | None = None,
+        elapsed_ms: int | None = None,
+        from_state: str | None = None,
+        to_state: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        if plan_dir is None:
+            return
+        payload = {"boundary": kind, "iteration": iteration, **dict(metadata or {})}
+        try:
+            from arnold_pipelines.megaplan.observability.work_ledger import (
+                emit_compaction,
+                emit_queue_idle,
+                emit_retry_wait,
+                emit_session_start,
+                emit_transition_activity,
+            )
+
+            if kind == "auto_session_start":
+                emit_session_start(
+                    plan_dir,
+                    phase=phase or "auto",
+                    session_id=f"auto:{os.getpid()}:{plan}",
+                    agent="auto",
+                    metadata=payload,
+                )
+            elif kind == "queue_idle":
+                emit_queue_idle(
+                    plan_dir,
+                    elapsed_ms=elapsed_ms,
+                    unavailable_reason="auto_driver_wait_no_model",
+                    metadata=payload,
+                )
+            elif kind == "retry_wait":
+                emit_retry_wait(
+                    plan_dir,
+                    elapsed_ms=elapsed_ms,
+                    unavailable_reason="auto_driver_retry_boundary_no_model",
+                    metadata=payload,
+                )
+            elif kind == "compaction":
+                emit_compaction(
+                    plan_dir,
+                    elapsed_ms=elapsed_ms,
+                    unavailable_reason="auto_context_retry_usage_unavailable",
+                    metadata=payload,
+                )
+            elif kind == "transition":
+                emit_transition_activity(
+                    plan_dir,
+                    phase=phase or "auto",
+                    transition=str(payload.get("transition") or "auto_state_transition"),
+                    from_state=from_state,
+                    to_state=to_state,
+                    elapsed_ms=elapsed_ms,
+                    metadata=payload,
+                )
+        except Exception:
+            _warn_best_effort_emit_failure(
+                "M9_WARN_EMIT_AUTO_WORK_LEDGER",
+                action="auto-work-ledger",
+                plan_dir=plan_dir,
+                phase=phase,
+                event_kind=kind,
+                context=payload,
+            )
+
+    _emit_work_boundary("auto_session_start", phase="auto")
 
     live_phase_models = [
         item for item in (phase_model or []) if isinstance(item, str) and "=" in item
@@ -4006,7 +4143,6 @@ def drive(
             publish=publish,
         )
 
-    iteration = 0
     while iteration < max_iterations:
         iteration += 1
         try:
@@ -4466,6 +4602,16 @@ def drive(
             reason = active_step.get("recommended_action_reason") or "active step is still healthy"
             log(f"active step '{active_name}' still running — waiting: {reason}")
             if poll_sleep > 0:
+                _emit_work_boundary(
+                    "queue_idle",
+                    phase=active_name,
+                    elapsed_ms=max(0, int(poll_sleep * 1000)),
+                    metadata={
+                        "active_step": active_name,
+                        "reason": reason,
+                        "recommended_action": active_step.get("recommended_action"),
+                    },
+                )
                 time.sleep(poll_sleep)
             iteration -= 1  # healthy wait — don't consume iteration budget
             continue
@@ -4775,6 +4921,13 @@ def drive(
                         plan_dir=plan_dir,
                         payload={"from": last_state, "to": state},
                     )
+                    _emit_work_boundary(
+                        "transition",
+                        phase="auto",
+                        from_state=last_state,
+                        to_state=state,
+                        metadata={"transition": "auto_state_transition"},
+                    )
                 except Exception:
                     _warn_best_effort_emit_failure(
                         "M3A_WARN_EMIT_AUTO_STATE_TRANSITION",
@@ -5005,6 +5158,17 @@ def drive(
                     max_context_retries=max_context_retries,
                     next_context_retry=context_retry_count + 1,
                 )
+                _emit_work_boundary(
+                    "compaction",
+                    phase=next_step,
+                    elapsed_ms=0,
+                    metadata={
+                        "retry": context_retry_count + 1,
+                        "max_retries": max_context_retries,
+                        "retry_strategy": "fresh_session",
+                        "exit_kind": ExitKind.context_exhausted.value,
+                    },
+                )
                 context_retry_count += _ctx_decision.budget_delta
                 if "--fresh" not in cmd:
                     cmd = [*cmd, "--fresh"]
@@ -5054,6 +5218,20 @@ def drive(
                 provider_error_code=provider_error_code,
                 external_retries_used=external_retry_count,
                 max_external_retries=max_external_retries,
+            )
+            _emit_work_boundary(
+                "retry_wait",
+                phase=next_step,
+                elapsed_ms=0,
+                metadata={
+                    "retry": phase_retry_count,
+                    "max_retries": max_external_retries,
+                    "provider": provider,
+                    "error_kind": error_kind,
+                    "error_layer": error_layer,
+                    "provider_error_code": provider_error_code,
+                    "retry_strategy": "fresh_session",
+                },
             )
             if plan_dir is not None:
                 try:
@@ -5685,6 +5863,18 @@ def drive(
                     max_blocked_retries=max_blocked_retries,
                     blocking_reasons=deviations_list,
                 )
+                _emit_work_boundary(
+                    "retry_wait",
+                    phase=next_step,
+                    elapsed_ms=0,
+                    metadata={
+                        "retry": blocked_retry_count,
+                        "max_retries": max_blocked_retries,
+                        "retry_strategy": "fresh_session",
+                        "exit_kind": ek,
+                        "blocking_reasons": deviations_list,
+                    },
+                )
             elif ek == ExitKind.blocked_by_quality.value:
                 # Quality-gate block — retry with cap, using result.deviations
                 # directly (no string prefix matching).
@@ -5738,6 +5928,18 @@ def drive(
                     blocked_retries_used=blocked_retry_count,
                     max_blocked_retries=max_blocked_retries,
                     blocking_reasons=deviations_list,
+                )
+                _emit_work_boundary(
+                    "retry_wait",
+                    phase=next_step,
+                    elapsed_ms=0,
+                    metadata={
+                        "retry": blocked_retry_count,
+                        "max_retries": max_blocked_retries,
+                        "retry_strategy": "fresh_session",
+                        "exit_kind": ek,
+                        "blocking_reasons": deviations_list,
+                    },
                 )
             # timeout, context_exhausted, internal_error already handled above.
 
