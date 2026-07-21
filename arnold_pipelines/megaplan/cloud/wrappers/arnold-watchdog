@@ -5149,12 +5149,17 @@ investigation = payload.get("investigation")
 if not isinstance(investigation, dict):
     investigation = {}
 has_l1_custody_failure = bool(
-    repair_outcome in {"fixer_infrastructure_failure", "deterministic_failure"}
+    repair_outcome in {
+        "fixer_infrastructure_failure",
+        "deterministic_failure",
+        "deterministic_failure_source_fix_needed",
+    }
     or investigation.get("status") in {"failed", "invalid"}
 )
 needs_human_present = needs_human_path.exists()
 terminal_repair_failures = {
     "discord_escalated",
+    "deterministic_failure_source_fix_needed",
     "repair_timeout",
     "repair_exhausted",
 }
@@ -5164,6 +5169,7 @@ if (
     and isinstance(active_step_heartbeat, dict)
     and bool(active_step_heartbeat.get("active"))
     and not needs_human_present
+    and repair_outcome not in terminal_repair_failures
 ):
     print("NO_TRIGGER")
     raise SystemExit(0)

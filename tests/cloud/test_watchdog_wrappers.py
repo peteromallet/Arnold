@@ -10551,7 +10551,7 @@ def test_compute_meta_repair_trigger_routes_source_fix_breaker_to_l2(
             },
             "plan_state": {"present": True},
             "chain_state": {"present": True},
-            "active_step_heartbeat": {"active": False},
+            "active_step_heartbeat": {"active": True},
         }
     )
     script = "\n\n".join(
@@ -10564,7 +10564,7 @@ def test_compute_meta_repair_trigger_routes_source_fix_breaker_to_l2(
             f"SRC_DIR={str(REPO_ROOT)!r}",
             (
                 "compute_meta_repair_trigger source-session "
-                f"{shlex.quote(observation)} stopped"
+                f"{shlex.quote(observation)} alive"
             ),
         ]
     )
@@ -14699,6 +14699,9 @@ def test_meta_repair_wrapper_has_codex_dispatch() -> None:
     assert 'cd "$ARNOLD_SRC" || exit 1' in text
     assert 'codex exec --skip-git-repo-check --sandbox danger-full-access' in text
     assert "--run-kind automatic_meta_repair_worker" in text
+    assert '--output-last-message "$RESP_PATH"' in text
+    assert ') > "$CODEX_TRANSCRIPT_PATH" 2>"$ERR_PATH" || true' in text
+    assert 'redact_file_in_place "$CODEX_TRANSCRIPT_PATH"' in text
     assert '--stdin-file "$BRIEF_PATH"' in text
     assert '$(cat "$BRIEF_PATH")' not in text
     assert 'CODEX_TIMEOUT="${MEGAPLAN_META_CODEX_TIMEOUT_SECS:-5400}"' in text

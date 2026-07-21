@@ -1185,6 +1185,7 @@ log "captured pre-dispatch source HEAD=${SOURCE_BASELINE_HEAD:-unavailable}"
 # ---- Codex dispatch ---------------------------------------------------------
 RESP_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-resp.txt"
 ERR_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-resp.err"
+CODEX_TRANSCRIPT_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-codex-transcript.txt"
 WORKER_RUN_ID_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-managed-run-id"
 META_WORKER_RUN_ID=""
 META_WORKER_MANIFEST=""
@@ -1441,17 +1442,18 @@ elif command -v codex >/dev/null 2>&1; then
     if [[ -n "${ARNOLD_MANAGED_AGENT_RUN_ID:-}" ]]; then
       managed_cmd+=(--parent-run-id "$ARNOLD_MANAGED_AGENT_RUN_ID")
     fi
-    managed_cmd+=(-- timeout "$CODEX_TIMEOUT" codex exec --skip-git-repo-check --sandbox danger-full-access -c model="$META_CODEX_MODEL" -c model_reasoning_effort=high -)
+    managed_cmd+=(-- timeout "$CODEX_TIMEOUT" codex exec --skip-git-repo-check --sandbox danger-full-access -c model="$META_CODEX_MODEL" -c model_reasoning_effort=high --output-last-message "$RESP_PATH" -)
     "${managed_cmd[@]}"
-  ) > "$RESP_PATH" 2>"$ERR_PATH" || true
+  ) > "$CODEX_TRANSCRIPT_PATH" 2>"$ERR_PATH" || true
   redact_file_in_place "$RESP_PATH"
   redact_file_in_place "$ERR_PATH"
+  redact_file_in_place "$CODEX_TRANSCRIPT_PATH"
   META_WORKER_RUN_ID="$(cat "$WORKER_RUN_ID_PATH" 2>/dev/null || true)"
   if [[ -n "$META_WORKER_RUN_ID" ]]; then
     META_WORKER_MANIFEST="$ARNOLD_SRC/.megaplan/plans/resident-subagents/$META_WORKER_RUN_ID/manifest.json"
   fi
   if [[ ! -s "$RESP_PATH" ]]; then
-    if grep -qE 'Input exceeds the maximum length|input_too_large' "$ERR_PATH" 2>/dev/null; then
+    if grep -qE 'Input exceeds the maximum length|input_too_large' "$ERR_PATH" "$CODEX_TRANSCRIPT_PATH" 2>/dev/null; then
       echo "Codex meta-repair prompt exceeded input limit; see meta-repair log." > "$RESP_PATH"
     else
       echo "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents); see meta-repair log." > "$RESP_PATH"
@@ -1478,7 +1480,7 @@ log "codex response $(wc -l <<<"$RESP_TEXT" | tr -d ' ') lines"
 # ---- parse verdict from response -------------------------------------------
 VERDICT="$(echo "$RESP_TEXT" | head -1 | tr -d '\r\n')"
 
-if [[ "$VERDICT" != FIXED* && "$VERDICT" != ESCALATE* && "$VERDICT" != NO_FIX* ]] && grep -qE 'Codex meta-repair orchestrator returned no output|Codex meta-repair prompt exceeded input limit|Not inside a trusted directory|--skip-git-repo-check was not specified|Input exceeds the maximum length|input_too_large' "$RESP_PATH" "$ERR_PATH" 2>/dev/null; then
+if [[ "$VERDICT" != FIXED* && "$VERDICT" != ESCALATE* && "$VERDICT" != NO_FIX* ]] && grep -qE 'Codex meta-repair orchestrator returned no output|Codex meta-repair prompt exceeded input limit|Not inside a trusted directory|--skip-git-repo-check was not specified|Input exceeds the maximum length|input_too_large' "$RESP_PATH" "$ERR_PATH" "$CODEX_TRANSCRIPT_PATH" 2>/dev/null; then
   log "codex launch failed before producing a recordable meta-repair response; leaving recursion guard unpoisoned"
   exit 1
 fi
