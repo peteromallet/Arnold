@@ -4,11 +4,11 @@
     "resident_run_id": "subagent-20260721-232025-7a7b9866",
     "trigger_kind": "fixed_delay_schedule_occurrence",
     "started_at_utc": "2026-07-21T23:20:25.024555Z",
-    "assessment_completed_at_utc": "2026-07-21T23:26:36.233473Z",
+    "assessment_completed_at_utc": "2026-07-21T23:31:11.275240Z",
     "previous_occurrence_run_id": "subagent-20260721-193143-8e6217bb",
     "one_at_a_time_policy": "serial_interventions_all_targets_with_target_specific_ownership",
     "final_classification": "strict_success",
-    "decision": "Custody cleared the prior M8/PR-290 custody freeze through the ordinary chain path and is executing M8A with a verified exact worker plus a newer durable source artifact and no current block. Withings and Superpom remain whole-chain complete and validated. No chain intervention was needed in this occurrence."
+    "decision": "Custody cleared the prior M8/PR-290 custody freeze through the ordinary chain path and advanced M8A through an accepted T14 result after this occurrence's checkpoint, with an exact live worker and no current block. Withings and Superpom remain whole-chain complete and validated. No chain intervention was needed in this occurrence."
   },
   "schedule": {
     "schedule_id": "sched_pinned_e894_epics_babysit_3h",
@@ -58,17 +58,18 @@
         "target_checkout_dirty": true
       },
       "postflight": {
-        "observed_at_utc": "2026-07-21T23:26:36.233473Z",
+        "observed_at_utc": "2026-07-21T23:31:11.275240Z",
         "classification": "strict_success",
         "strict_progress_predicate": {
-          "evaluation": "passed_alternative_b",
+          "evaluation": "passed_alternative_a_and_b",
+          "accepted_task_batch_phase_or_milestone_after_checkpoint": true,
           "original_m8_blocker_cleared": true,
           "chain_cursor_advanced_beyond_5": true,
           "status_projection_cleared_stale_needs_attention": true,
           "current_chain_state_blocked": false,
           "verified_live_exact_worker_identity": true,
           "newer_durable_semantic_artifact_after_checkpoint": true,
-          "reason": "The authoritative chain contains accepted M8 with merged PR 290 at cursor 6, the resident projection reports running/executing, exact PID/tmux command identity names the Custody session/spec/workspace, and execute/batch.py was durably modified at 23:26:36 UTC after the checkpoint with no current blocked/failure receipt."
+          "reason": "The authoritative chain contains accepted M8 with merged PR 290 at cursor 6. T14 then produced an authority-accepted done result at 23:30:32 UTC after this occurrence's checkpoint, the resident projection reports running/executing, and exact PID/tmux command identity names the Custody session/spec/workspace with no current blocked/failure receipt."
         },
         "chain": {
           "current_milestone": "m8a-planner-compiler-and-executor-efficiency",
@@ -80,8 +81,8 @@
           "plan_state": "finalized",
           "latest_failure": null,
           "active_phase": "execute",
-          "active_step_run_id": "9784413b-5905-4c62-8deb-e9da231a834d",
-          "active_step_session_id": "c7ddf98e-1582-41c5-8d35-673f8a1f404b",
+          "active_step_run_id": "7309125c-ac64-4485-9ab9-fc43b9051c7a",
+          "active_step_session_id": "615b918b-2499-4ce0-8755-4ad12b4d9397",
           "state_path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/.chains/chain-1e998199f544.json",
           "state_sha256": "df7e4a6d38e91c6547e8eb4c6fcbce497342965cc50a160de1e3f04bb0743ca7",
           "newest_phase_result": {
@@ -89,12 +90,21 @@
             "exit_kind": "success",
             "mtime_utc": "2026-07-21T22:07:33.281235Z"
           },
-          "newest_task_and_batch": {
+          "newest_accepted_task_and_batch": {
             "batch": 14,
             "task": "T14",
-            "result": "pending",
+            "result": "done",
+            "authority_validation": "accepted",
+            "result_envelopes": 2,
             "task_path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m8a-planner-compiler-and-20260721-2116/execute_batches/batch_14/tasks_7fe51a276aa4.json",
-            "task_mtime_utc": "2026-07-21T23:20:36.271148Z"
+            "task_mtime_utc": "2026-07-21T23:30:32.573451Z",
+            "task_sha256": "5d59fb5f63dda367de64a58bba5275de59cf1f815a5e6bb9257c6e7223f0e912"
+          },
+          "current_task_and_batch": {
+            "batch": 15,
+            "task": "T15",
+            "result": "pending",
+            "started_at_utc": "2026-07-21T23:30:32Z"
           },
           "newer_semantic_artifact": {
             "path": "/workspace/custody-control-plane-20260714/Arnold/arnold_pipelines/megaplan/execute/batch.py",
@@ -150,10 +160,10 @@
         "m6_sha256": "3fea24d7120fb6dd97a0a876caff200bd9d2847d6fcae37dcb69a63b1b8ec66e"
       },
       "agent_assessment": {
-        "assessment_utc": "2026-07-21T23:26:36.233473Z",
+        "assessment_utc": "2026-07-21T23:31:11.275240Z",
         "classification": "healthy_no_repair",
         "decision": "Leave the live Custody chain untouched; no duplicate repair owner was launched.",
-        "rationale": "The original PR/cursor blocker is cleared and the exact worker has post-checkpoint durable semantic source output with no blocked/failure receipt. Canonical inventory contains only this schedule occurrence as active; the explicitly linked historical provider-fallback candidate is terminal and has no continuing ownership.",
+        "rationale": "The original PR/cursor blocker is cleared and T14 has a post-checkpoint authority-accepted done result while the exact worker continues T15 with no blocked/failure receipt. Canonical inventory contains only this schedule occurrence as active; the explicitly linked historical provider-fallback candidate is terminal and has no continuing ownership.",
         "uncertainty": null,
         "occupies_one_at_a_time_slot_for_target": false,
         "candidates": [
@@ -164,7 +174,7 @@
             "substantive_evidence_kind": "terminal result plus verified git custody evidence",
             "substantive_evidence_path": "/workspace/arnold-engine-running-e894/.megaplan/plans/resident-subagents/subagent-20260720-193054-5b0373d2/result.md",
             "evidence_utc": "2026-07-20T19:51:37.390328Z",
-            "assessment_utc": "2026-07-21T23:26:36.233473Z",
+            "assessment_utc": "2026-07-21T23:31:11.275240Z",
             "evidence_age_seconds": 99300,
             "explicit_match_fields": {
               "session": "custody-control-plane-20260714",
@@ -186,7 +196,7 @@
       "marker": "/workspace/.megaplan/cloud-sessions/withings-health-sync-20260719.json",
       "current_blocker_or_objective": "No current blocker; preserve terminal completion.",
       "postflight": {
-        "observed_at_utc": "2026-07-21T23:26:36.233473Z",
+        "observed_at_utc": "2026-07-21T23:31:11.275240Z",
         "classification": "strict_success",
         "chain_last_state": "done",
         "milestones_completed": 4,
@@ -226,7 +236,7 @@
         "marker_relaunch_used": false
       },
       "agent_assessment": {
-        "assessment_utc": "2026-07-21T23:26:36.233473Z",
+        "assessment_utc": "2026-07-21T23:31:11.275240Z",
         "classification": "healthy_no_repair",
         "decision": "Leave terminal chain untouched.",
         "rationale": "Authoritative chain state and approved 17-of-17 review receipt prove whole-chain completion; no active matching repair candidate exists.",
@@ -243,7 +253,7 @@
       "marker": "/workspace/.megaplan/cloud-sessions/superpom-reflections-20260719.json",
       "current_blocker_or_objective": "No current blocker; preserve terminal completion and accepted exact-target T24 staging evidence.",
       "postflight": {
-        "observed_at_utc": "2026-07-21T23:26:36.233473Z",
+        "observed_at_utc": "2026-07-21T23:31:11.275240Z",
         "classification": "strict_success",
         "chain_last_state": "done",
         "milestones_completed": 4,
@@ -292,7 +302,7 @@
         "marker_relaunch_used": false
       },
       "agent_assessment": {
-        "assessment_utc": "2026-07-21T23:26:36.233473Z",
+        "assessment_utc": "2026-07-21T23:31:11.275240Z",
         "classification": "healthy_no_repair",
         "decision": "Leave terminal chain untouched and do not repeat staging mutation.",
         "rationale": "Chain state, accepted T24 authority evidence, exact-target deployment/health/live-replay evidence, and approved 26-of-26 review receipt prove completion; no active matching repair candidate exists.",
@@ -319,7 +329,7 @@
       "superpom_e894": "passed with explicit marker runtime PYTHONPATH"
     },
     "custody_original_pr_cursor_gate": "passed; PR 290 merged, M8 accepted, cursor advanced 5 to 6, status projection reports running M8A",
-    "custody_current_semantic_gate": "passed alternative B; exact live worker plus post-checkpoint durable source artifact and no block/failure",
+    "custody_current_semantic_gate": "passed alternatives A and B; post-checkpoint authority-accepted T14 result plus exact live worker and no block/failure",
     "withings_terminal_gate": "passed",
     "superpom_terminal_and_t24_gate": "passed",
     "resident_restarted_or_repointed": false,
