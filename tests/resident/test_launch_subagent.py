@@ -897,6 +897,21 @@ def test_completion_sweep_replies_once_and_persists_evidence(tmp_path) -> None:
     assert manifest["completion_delivery"]["status"] == "delivered"
     assert manifest["completion_delivery"]["discord_message_ids"] == ["reply-1"]
     assert manifest["completion_delivery"]["result_kind"] == "final_result"
+    custody_events = [
+        json.loads(line)
+        for line in Path(manifest["custody_evidence_path"]).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert any(
+        event["event_kind"] == "effect"
+        and event["evidence"] == "provider_attempt_claimed"
+        for event in custody_events
+    )
+    assert any(
+        event["event_kind"] == "delivery_custody"
+        and event["evidence"] == "provider_reply_message_ids_persisted"
+        for event in custody_events
+    )
 
 
 @pytest.mark.parametrize(

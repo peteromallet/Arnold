@@ -61,6 +61,97 @@ def test_acquire_repair_lock_claims_owner_metadata_and_reports_busy_without_muta
     assert not lock_dir.exists()
 
 
+def test_repair_lock_records_and_checks_exact_repair_identity(tmp_path: Path) -> None:
+    lock_dir = tmp_path / "demo-session.lock"
+    identity = {
+        "environment_id": "/workspace/demo",
+        "session_id": "demo-session",
+        "chain_id": "/workspace/demo/chain.yaml",
+        "plan_revision": "sha256:rev-1",
+        "phase": "review",
+        "task_id": "T24",
+        "attempt_number": 1,
+        "failure_kind": "quality_gate_blocked",
+        "blocker_digest": "blocker:v1:demo",
+        "coordinator_fence_token": "fence-1",
+    }
+
+    acquired = repair_lock.acquire_repair_lock(
+        lock_dir,
+        session="demo-session",
+        target_id="target-identity",
+        repair_identity=identity,
+        pid=111,
+        command="arnold-repair-loop --session demo-session",
+        is_pid_live=lambda pid: pid == 111,
+    )
+
+    assert acquired.acquired
+    persisted = json.loads(repair_lock.owner_metadata_path(lock_dir).read_text(encoding="utf-8"))
+    assert persisted["repair_identity"]["attempt_number"] == 1
+    assert persisted["repair_identity_key"]
+
+    mismatched = repair_lock.acquire_repair_lock(
+        lock_dir,
+        session="demo-session",
+        target_id="target-identity",
+        repair_identity={**identity, "attempt_number": 2, "coordinator_fence_token": "fence-2"},
+        pid=222,
+        command="arnold-repair-loop --session demo-session --retry",
+        is_pid_live=lambda pid: pid == 111,
+    )
+
+    assert mismatched.stale
+    assert mismatched.stale_evidence is not None
+    assert "repair_identity_mismatch" in mismatched.stale_evidence["reasons"]
+
+
+def test_repair_lock_treats_missing_owner_identity_as_stale_mismatch(tmp_path: Path) -> None:
+    lock_dir = tmp_path / "demo-session.lock"
+    lock_dir.mkdir()
+    repair_lock.owner_metadata_path(lock_dir).write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "target_id": "target-stale",
+                "pid": 333,
+                "command": "arnold-repair-loop --session demo-session",
+                "started_at": "2026-07-01T18:00:00+00:00",
+                "cwd": "/workspace/project",
+                "timeout_seconds": 300,
+                "hostname": "worker-a",
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    result = repair_lock.acquire_repair_lock(
+        lock_dir,
+        session="demo-session",
+        target_id="target-new",
+        repair_identity={
+            "environment_id": "/workspace/demo",
+            "session_id": "demo-session",
+            "chain_id": "/workspace/demo/chain.yaml",
+            "plan_revision": "sha256:rev-1",
+            "phase": "review",
+            "task_id": "T24",
+            "attempt_number": 1,
+            "failure_kind": "quality_gate_blocked",
+            "blocker_digest": "blocker:v1:demo",
+            "coordinator_fence_token": "fence-1",
+        },
+        pid=444,
+        is_pid_live=lambda pid: pid == 333,
+    )
+
+    assert result.stale
+    assert result.stale_evidence is not None
+    assert "repair_identity_mismatch" in result.stale_evidence["reasons"]
+    assert result.stale_evidence["observed_repair_identity_key"] == ""
+
+
 def test_acquire_repair_lock_reports_stale_evidence_without_deleting_lock(tmp_path: Path) -> None:
     lock_dir = tmp_path / "demo-session.lock"
     lock_dir.mkdir()

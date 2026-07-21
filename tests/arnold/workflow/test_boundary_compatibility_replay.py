@@ -33,6 +33,7 @@ FIXTURE_DIR = Path("tests/fixtures/workflow_boundary_contracts")
 CONTRACT_MATRIX = Path(
     "arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json"
 )
+INVENTORY_PATH = Path("evidence/wbc-boundary-inventory.json")
 
 
 # ── Helper ────────────────────────────────────────────────────────────────
@@ -82,14 +83,18 @@ class TestEvaluatorImportAndSetup:
             e._contract_matrix_path
             == Path("arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json")
         )
+        assert e._inventory_path == INVENTORY_PATH.resolve()
 
     def test_evaluator_custom_paths(self) -> None:
         """Custom paths are stored correctly."""
         e = CompatibilityEvaluator(
-            fixture_dir="/tmp/fixtures", contract_matrix_path="/tmp/matrix.json"
+            fixture_dir="/tmp/fixtures",
+            contract_matrix_path="/tmp/matrix.json",
+            inventory_path="/tmp/inventory.json",
         )
         assert e._fixture_dir == Path("/tmp/fixtures")
         assert e._contract_matrix_path == Path("/tmp/matrix.json")
+        assert e._inventory_path == Path("/tmp/inventory.json")
 
     def test_evaluate_all_returns_tuple(self) -> None:
         """evaluate_all() must return a tuple of CompatibilityResults."""
@@ -168,14 +173,6 @@ class TestCompatibleOutcomes:
     must evaluate as COMPATIBLE with empty diagnostics."""
 
     COMPATIBLE_FIXTURES = [
-        ("captured_bundle_004_execute_aggregate_promotion", "execute_aggregate_promotion"),
-        ("captured_bundle_005_execute_approval", "execute_approval"),
-        ("captured_bundle_006_execute_approval_denial", "execute_approval_denial"),
-        ("captured_bundle_007_execute_batch_checkpoint", "execute_batch_checkpoint"),
-        ("captured_bundle_008_execute_blocked_anchor", "execute_blocked_anchor"),
-        ("captured_bundle_009_execute_no_review_terminal", "execute_no_review_terminal"),
-        ("captured_bundle_010_execute_partial_failure", "execute_partial_failure"),
-        ("captured_bundle_011_execute_resume_anchor", "execute_resume_anchor"),
         ("captured_bundle_025_prep_to_plan", "prep_to_plan"),
         ("captured_bundle_029_revise_to_critique", "revise_to_critique"),
     ]
@@ -287,6 +284,38 @@ class TestIncompatibleOutcomes:
         issues = r.details["structural_issues"]
         assert isinstance(issues, list)
         assert CompatibilityDiagnosticCode.PHASE_RESULT_EXIT_KIND_MISSING in issues
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Incomplete adoption outcomes — manual emission
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TestManualEmissionInventoryOutcomes:
+    """Generated inventory makes manual-emission rows incomplete adoption."""
+
+    MANUAL_EMIT_FIXTURES = [
+        ("captured_bundle_004_execute_aggregate_promotion", "execute_aggregate_promotion"),
+        ("captured_bundle_005_execute_approval", "execute_approval"),
+        ("captured_bundle_006_execute_approval_denial", "execute_approval_denial"),
+        ("captured_bundle_007_execute_batch_checkpoint", "execute_batch_checkpoint"),
+        ("captured_bundle_008_execute_blocked_anchor", "execute_blocked_anchor"),
+        ("captured_bundle_009_execute_no_review_terminal", "execute_no_review_terminal"),
+        ("captured_bundle_010_execute_partial_failure", "execute_partial_failure"),
+        ("captured_bundle_011_execute_resume_anchor", "execute_resume_anchor"),
+    ]
+
+    @pytest.mark.parametrize("fixture_id,expected_boundary_id", MANUAL_EMIT_FIXTURES)
+    def test_manual_emit_rows_are_non_conformant(
+        self, fixture_id: str, expected_boundary_id: str
+    ) -> None:
+        results = _get_results()
+        r = _result_by_fixture_id(results, fixture_id)
+        assert r.boundary_id == expected_boundary_id
+        assert r.status == CompatibilityStatus.NON_CONFORMANT
+        assert CompatibilityDiagnosticCode.INCOMPLETE_INVENTORY_ROW in r.diagnostics
+        assert r.details.get("producer_category") == "manual_emit"
+        assert "manual-emission" in r.details.get("inventory_reasons", [])
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -496,7 +525,7 @@ class TestNonConformantOutcomes:
 
 
 class TestStableDiagnosticCodes:
-    """All 15 CBC diagnostic codes must resolve to correct string values
+    """All CBC diagnostic codes must resolve to correct string values
     and never change across evaluator versions."""
 
     STABLE_CODES = {
@@ -515,13 +544,20 @@ class TestStableDiagnosticCodes:
         "DECLARED_ONLY_NO_PRODUCER": "CBC013_DECLARED_ONLY_NO_PRODUCER",
         "UNKNOWN_PRODUCER_CATEGORY": "CBC014_UNKNOWN_PRODUCER_CATEGORY",
         "VISIBLE_NON_CONFORMANCE": "CBC015_VISIBLE_NON_CONFORMANCE",
+        "INCOMPLETE_INVENTORY_ROW": "CBC016_INCOMPLETE_INVENTORY_ROW",
+        "START_BEFORE_DISPATCH_UNVERIFIED": "CBC017_START_BEFORE_DISPATCH_UNVERIFIED",
+        "EXACTLY_ONE_TERMINAL_UNVERIFIED": "CBC018_EXACTLY_ONE_TERMINAL_UNVERIFIED",
+        "GRANT_LEASE_GATE_UNVERIFIED": "CBC019_GRANT_LEASE_GATE_UNVERIFIED",
+        "EXACT_VERSION_LOOKUP_UNVERIFIED": "CBC020_EXACT_VERSION_LOOKUP_UNVERIFIED",
+        "CAUSAL_EVIDENCE_UNVERIFIED": "CBC021_CAUSAL_EVIDENCE_UNVERIFIED",
+        "POST_TRANSITION_REREAD_UNVERIFIED": "CBC022_POST_TRANSITION_REREAD_UNVERIFIED",
     }
 
     def test_all_codes_exist(self) -> None:
-        """All 15 CBC diagnostic codes must be members of the enum."""
+        """All CBC diagnostic codes must be members of the enum."""
         all_members = set(CompatibilityDiagnosticCode.__members__.keys())
-        assert len(all_members) == 15, (
-            f"Expected 15 CBC codes, got {len(all_members)}: {sorted(all_members)}"
+        assert len(all_members) == 22, (
+            f"Expected 22 CBC codes, got {len(all_members)}: {sorted(all_members)}"
         )
 
     def test_each_code_stable_value(self) -> None:
@@ -581,6 +617,7 @@ class TestStableDiagnosticCodes:
             "DECLARED_ONLY_NO_PRODUCER": "CBC013_DECLARED_ONLY_NO_PRODUCER",
             "UNKNOWN_PRODUCER_CATEGORY": "CBC014_UNKNOWN_PRODUCER_CATEGORY",
             "VISIBLE_NON_CONFORMANCE": "CBC015_VISIBLE_NON_CONFORMANCE",
+            "INCOMPLETE_INVENTORY_ROW": "CBC016_INCOMPLETE_INVENTORY_ROW",
         }
         for attr_name, code_value in alignment_codes.items():
             assert code_value in all_diags, (
@@ -903,6 +940,112 @@ class TestEdgeCases:
         for r in results:
             assert r.evaluator_version == "arnold.workflow.boundary_compatibility.v1"
 
+    def test_inventory_manifest_only_row_is_incomplete(self, tmp_path: Path) -> None:
+        """Support-manifest-only rows fail closed when inventory is authoritative."""
+        fixture_dir = tmp_path / "fixtures"
+        fixture_dir.mkdir()
+        bundle = fixture_dir / "captured_bundle_999_manifest_only.json"
+        bundle.write_text(
+            json.dumps(
+                {
+                    "artifacts": {
+                        "boundary_receipts": {
+                            "r1": {
+                                "boundary_id": "manifest_only_boundary",
+                                "workflow_id": "arnold.workflow",
+                                "invocation_id": "inv-1",
+                                "outcome": "complete",
+                            }
+                        },
+                        "manifest": {"boundary_id": "manifest_only_boundary", "capability_effects": ["noop"]},
+                        "phase_result": {"exit_kind": "done"},
+                        "state": {"status": "done"},
+                        "semantic_health": {},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        inventory = tmp_path / "inventory.json"
+        inventory.write_text(
+            json.dumps(
+                {
+                    "rows": [
+                        {
+                            "row_kind": "manifest_entry",
+                            "boundary_id": "manifest_only_boundary",
+                            "support_is_non_authoritative": True,
+                            "support_status": "supported",
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        e = CompatibilityEvaluator(
+            fixture_dir=fixture_dir,
+            contract_matrix_path="/nonexistent/matrix.json",
+            inventory_path=inventory,
+        )
+        result = e.evaluate_fixture(bundle)
+        assert result.status == CompatibilityStatus.NON_CONFORMANT
+        assert CompatibilityDiagnosticCode.INCOMPLETE_INVENTORY_ROW in result.diagnostics
+
+    def test_inventory_proof_gaps_emit_runtime_diagnostics(self, tmp_path: Path) -> None:
+        """Explicit inventory proof flags produce stable runtime diagnostics."""
+        fixture_dir = tmp_path / "fixtures"
+        fixture_dir.mkdir()
+        bundle = fixture_dir / "captured_bundle_998_runtime_gap.json"
+        bundle.write_text(
+            json.dumps(
+                {
+                    "artifacts": {
+                        "boundary_receipts": {
+                            "r1": {
+                                "boundary_id": "runtime_gap_boundary",
+                                "workflow_id": "arnold.workflow",
+                                "invocation_id": "inv-1",
+                                "outcome": "complete",
+                            }
+                        },
+                        "manifest": {"boundary_id": "runtime_gap_boundary", "capability_effects": ["noop"]},
+                        "phase_result": {"exit_kind": "done"},
+                        "state": {"status": "done"},
+                        "semantic_health": {},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        inventory = tmp_path / "inventory.json"
+        inventory.write_text(
+            json.dumps(
+                {
+                    "rows": [
+                        {
+                            "row_kind": "boundary_contract",
+                            "boundary_id": "runtime_gap_boundary",
+                            "producer_category": "auto_matched",
+                            "inventory_proof": {
+                                "start_before_dispatch": False,
+                                "post_transition_reread": False,
+                            },
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        e = CompatibilityEvaluator(
+            fixture_dir=fixture_dir,
+            contract_matrix_path="/nonexistent/matrix.json",
+            inventory_path=inventory,
+        )
+        result = e.evaluate_fixture(bundle)
+        assert result.status == CompatibilityStatus.NON_CONFORMANT
+        assert CompatibilityDiagnosticCode.START_BEFORE_DISPATCH_UNVERIFIED in result.diagnostics
+        assert CompatibilityDiagnosticCode.POST_TRANSITION_REREAD_UNVERIFIED in result.diagnostics
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # Cross-status consistency
@@ -932,14 +1075,14 @@ class TestCrossStatusConsistency:
         for r in results:
             counts[r.status.value] = counts.get(r.status.value, 0) + 1
 
-        # We expect at least: 10 compatible, 1 incompatible, 13 unknown, 10 non-conformant
-        assert counts.get("compatible", 0) >= 8, (
+        # We expect at least: 2 compatible, 1 incompatible, 10 unknown, 18 non-conformant
+        assert counts.get("compatible", 0) >= 2, (
             f"Too few compatible results: {counts}"
         )
         assert counts.get("unknown", 0) >= 10, (
             f"Too few unknown results: {counts}"
         )
-        assert counts.get("non_conformant", 0) >= 8, (
+        assert counts.get("non_conformant", 0) >= 18, (
             f"Too few non_conformant results: {counts}"
         )
         assert counts.get("incompatible", 0) >= 1, (

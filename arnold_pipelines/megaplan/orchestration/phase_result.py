@@ -760,6 +760,33 @@ def phase_result_guard(plan_dir: Path):
                     )
                     validate_phase_result_current(result.to_dict())
                     atomic_write_phase_result(plan_dir, result)
+                    try:
+                        from arnold_pipelines.megaplan.custody.phase_wbc import fail_phase_wbc, phase_wbc_required
+
+                        if phase_wbc_required(phase):
+                            fail_phase_wbc(
+                                state=raw,
+                                plan_dir=plan_dir,
+                                step=phase,
+                                agent=str(
+                                    (
+                                        raw.get("active_step", {})
+                                        if isinstance(raw.get("active_step"), dict)
+                                        else {}
+                                    ).get("agent")
+                                    or "megaplan"
+                                ),
+                                payload={
+                                    "phase": phase,
+                                    "status": "failed",
+                                    "failure_stage": "phase_handler",
+                                    "error_class": type(exc).__name__,
+                                    "message": str(exc),
+                                    "phase_result_ref": PHASE_RESULT_FILENAME,
+                                },
+                            )
+                    except Exception:
+                        pass
         except Exception:
             # If we can't emit, that's fine — never swallow the original
             pass

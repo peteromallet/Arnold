@@ -22,6 +22,21 @@ def _target(*, state="critiqued", cursor=10, pid="101", pid_live=True, tmux=True
     }
 
 
+def _identity(*, attempt_number: int = 1, fence_token: str = "fence-1") -> dict[str, object]:
+    return {
+        "environment_id": "/workspace/demo",
+        "session_id": "demo",
+        "chain_id": "/workspace/demo/chain.yaml",
+        "plan_revision": "sha256:plan-rev-1",
+        "phase": "finalize",
+        "task_id": "T24",
+        "attempt_number": attempt_number,
+        "failure_kind": "quality_gate_blocked",
+        "blocker_digest": "blocker:v1:demo",
+        "coordinator_fence_token": fence_token,
+    }
+
+
 def test_stale_pre_gate_evidence_is_superseded_by_current_finalize_target() -> None:
     result = revalidate_repair_target(
         _target(state="critiqued", cursor=10, pid="100"),
@@ -51,3 +66,29 @@ def test_unrelated_process_cannot_supply_recovery_liveness() -> None:
     result = revalidate_repair_target(before, after, session_health="stopped")
     assert result.runner_live is False
     assert result.recovery_verified is False
+
+
+def test_mismatched_repair_identity_quarantines_receipt() -> None:
+    before = _target()
+    after = _target()
+    before["repair_identity"] = _identity(attempt_number=1, fence_token="fence-1")
+    after["repair_identity"] = _identity(attempt_number=2, fence_token="fence-2")
+
+    result = revalidate_repair_target(before, after, session_health="alive")
+
+    assert result.repair_receipt_quarantined is True
+    assert result.recovery_verified is False
+    assert result.superseded is True
+    assert "identity" in result.reason
+
+
+def test_missing_repair_identity_quarantines_receipt() -> None:
+    before = _target()
+    after = _target()
+    before["repair_identity"] = _identity(attempt_number=1, fence_token="fence-1")
+
+    result = revalidate_repair_target(before, after, session_health="alive")
+
+    assert result.repair_receipt_quarantined is True
+    assert result.recovery_verified is False
+    assert result.superseded is True

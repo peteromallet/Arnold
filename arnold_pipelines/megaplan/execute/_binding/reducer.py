@@ -30,7 +30,7 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping
 
 from arnold_pipelines.megaplan._core.scheduler.types import Reduce
 from arnold_pipelines.megaplan.execute import (
@@ -39,6 +39,13 @@ from arnold_pipelines.megaplan.execute import (
     build_blocking_reasons,
 )
 from arnold_pipelines.megaplan.execute.merge import _is_blocking_deviation
+from arnold_pipelines.megaplan.execute.wbc import (
+    parent_custody_conflict_messages,
+    summarize_execute_parent_custody,
+    validate_parent_custody_payload,
+    validate_dispatch_wbc_payload,
+    validate_transition_wbc_payload,
+)
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     corroborated_completed_task_ids,
 )
@@ -127,6 +134,22 @@ def _append_executor_note_inline(task: dict[str, Any], note: str) -> None:
         task["executor_notes"] = note
 
 
+def _execute_wbc_blockers(payload: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    dispatch_reason = validate_dispatch_wbc_payload(payload)
+    if dispatch_reason is not None:
+        blockers.append(f"execute dispatch WBC missing or stale: {dispatch_reason}")
+    transition_reason = validate_transition_wbc_payload(payload)
+    if transition_reason is not None:
+        blockers.append(
+            f"execute transition evidence missing or stale: {transition_reason}"
+        )
+    parent_custody_reason = validate_parent_custody_payload(payload)
+    if parent_custody_reason is not None:
+        blockers.append(parent_custody_reason)
+    return blockers
+
+
 def reduce_batch(
     batch_process_result: "BatchResult",
     *,
@@ -165,6 +188,7 @@ def reduce_batch(
         BatchReduceResult with the classified BatchOutcome.
     """
     result = batch_process_result
+    wbc_blockers = _execute_wbc_blockers(result.payload)
 
     # --- Apply SD2 deviation dict mutations (patch-corruption + downgrade) ---
     if task_deviation_dict:
@@ -196,7 +220,7 @@ def reduce_batch(
                         break
 
     # --- Timeout check (highest priority, mirrors auto-loop line 1499) ------
-    if result.payload.get("_phase_outcome") == "timeout":
+    if result.payload.get("_phase_outcome") == "timeout" and not wbc_blockers:
         return BatchReduceResult(value=BatchOutcome.TIMEOUT)
 
     # --- Build blocking reasons (mirrors batch.py:613-644) ------------------
@@ -207,6 +231,7 @@ def reduce_batch(
         total_checks=result.total_sense_check_count,
         missing_task_evidence=result.missing_task_evidence,
     )
+    blocking_reasons.extend(wbc_blockers)
 
     all_tasks: list[dict[str, Any]] = finalize_data.get("tasks", [])
     tracked_tasks = [t for t in all_tasks if isinstance(t.get("id"), str)]
@@ -364,6 +389,8 @@ def compute_reducer_evidence(
         "missing_task_evidence": list(result.missing_task_evidence),
         "execution_audit": dict(result.execution_audit) if result.execution_audit else {},
         "phase_outcome": result.payload.get("_phase_outcome"),
+        "execute_wbc_blockers": _execute_wbc_blockers(result.payload),
+        "parent_custody": summarize_execute_parent_custody((result.payload,)),
     }
 
     # ── completed / blocked / uncorroborated resolution ────────────────
@@ -401,6 +428,7 @@ def compute_reducer_evidence(
             total_checks=result.total_sense_check_count,
             missing_task_evidence=result.missing_task_evidence,
         )
+        blocking_reasons.extend(_execute_wbc_blockers(result.payload))
         btr = _blocked_task_reason(batch_blocked_ids)
         if btr:
             blocking_reasons.append(btr)
@@ -519,6 +547,10 @@ def compute_reducer_evidence(
             else "ordinary"
         ),
     }
+    parent_custody = aggregate_canonical_outputs["parent_custody"]
+    conflict_messages = parent_custody_conflict_messages(parent_custody)
+    if conflict_messages:
+        repair_domain_separation["parent_custody_conflicts"] = conflict_messages
 
     # ── resume_anchors ─────────────────────────────────────────────────
     resume_anchors: list[dict[str, Any]] = []
@@ -634,6 +666,7 @@ def reduce_batch_full(
         total_checks=result.total_sense_check_count,
         missing_task_evidence=result.missing_task_evidence,
     )
+    blocking_reasons.extend(_execute_wbc_blockers(result.payload))
     btr = _blocked_task_reason(batch_blocked_ids)
     if btr:
         blocking_reasons.append(btr)

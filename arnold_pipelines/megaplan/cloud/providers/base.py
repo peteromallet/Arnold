@@ -10,10 +10,15 @@ from __future__ import annotations
 import abc
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from arnold_pipelines.megaplan.custody.process_adapter_wbc import (
+    ProcessAdapterWbcAttempt,
+    begin_process_adapter_attempt,
+)
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec
 from arnold_pipelines.megaplan.types import CliError
 
@@ -98,6 +103,24 @@ def _write_redacted_output(
 
 class Provider(abc.ABC):
     supports_session = False
+
+    def _process_adapter_evidence_root(self) -> Path:
+        return Path(tempfile.gettempdir()) / "arnold-process-adapter-wbc"
+
+    def _begin_process_adapter_attempt(
+        self,
+        *,
+        surface: str,
+        start_details: dict[str, Any] | None = None,
+        adapter_name: str | None = None,
+    ) -> ProcessAdapterWbcAttempt:
+        return begin_process_adapter_attempt(
+            self._process_adapter_evidence_root(),
+            producer_family="cloud_provider_adapter",
+            adapter_name=adapter_name or type(self).__name__,
+            surface=surface,
+            start_details=start_details,
+        )
 
     @abc.abstractmethod
     def build(self, deploy_dir: Path) -> int:

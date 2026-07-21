@@ -11,6 +11,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from arnold_pipelines.megaplan.cloud import repair_requests
+
 
 _AUTHORITY_FIELDS = (
     "target_id",
@@ -49,6 +51,9 @@ class TargetRevalidation:
     full_boundary_required: bool = False
     acceptance_candidates_invalidated: int = 0
     acceptance_invalidation_reason: str = ""
+    expected_repair_identity_key: str = ""
+    observed_repair_identity_key: str = ""
+    repair_receipt_quarantined: bool = False
 
     def as_json(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -109,6 +114,21 @@ def revalidate_repair_target(
         reason = "runner exists but active worker is dead or unverifiable"
     else:
         reason = "runner exists without fresh target progress"
+    expected_repair_identity = repair_requests.normalize_repair_identity(
+        old.get("repair_identity") if isinstance(old.get("repair_identity"), Mapping) else None
+    )
+    observed_repair_identity = repair_requests.normalize_repair_identity(
+        new.get("repair_identity") if isinstance(new.get("repair_identity"), Mapping) else None
+    )
+    expected_repair_identity_key = repair_requests.repair_identity_key(expected_repair_identity)
+    observed_repair_identity_key = repair_requests.repair_identity_key(observed_repair_identity)
+    repair_receipt_quarantined = bool(
+        expected_repair_identity_key or observed_repair_identity_key
+    ) and expected_repair_identity_key != observed_repair_identity_key
+    if repair_receipt_quarantined:
+        verified = False
+        superseded = True
+        reason = "repair receipt identity no longer matches the current target"
     return TargetRevalidation(
         changed_fields=changed,
         superseded=superseded,
@@ -117,6 +137,9 @@ def revalidate_repair_target(
         progress_observed=progress_observed,
         recovery_verified=verified,
         reason=reason,
+        expected_repair_identity_key=expected_repair_identity_key,
+        observed_repair_identity_key=observed_repair_identity_key,
+        repair_receipt_quarantined=repair_receipt_quarantined,
     )
 
 

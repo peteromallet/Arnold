@@ -23,22 +23,64 @@ class OnBoxProvider(Provider):
     def __init__(self, spec: CloudSpec) -> None:
         self._spec = spec
 
+    def _process_adapter_evidence_root(self) -> Path:
+        return Path(self._spec.repo.workspace)
+
     def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
+        attempt = self._begin_process_adapter_attempt(
+            surface="ssh_exec",
+            start_details={"command": command},
+        )
+        result = subprocess.run(
             ["bash", "-lc", command],
             capture_output=True,
             text=True,
             check=False,
         )
+        if result.returncode != 0:
+            attempt.terminal(
+                status="failed",
+                outcome="indeterminate",
+                details={
+                    "returncode": result.returncode,
+                    "stderr": (result.stderr or "").strip(),
+                    "stdout": (result.stdout or "").strip(),
+                },
+            )
+        else:
+            attempt.terminal(
+                status="completed",
+                outcome="succeeded",
+                details={"returncode": result.returncode},
+            )
+        return result
 
     def upload_file(self, src: Path, dest: str) -> None:
+        attempt = self._begin_process_adapter_attempt(
+            surface="upload_file",
+            start_details={"src": str(src), "dest": dest},
+        )
         target = Path(dest)
         target.parent.mkdir(parents=True, exist_ok=True)
         if src.resolve() == target.resolve():
+            attempt.terminal(
+                status="completed",
+                outcome="succeeded",
+                details={"skipped": True, "reason": "source_equals_target"},
+            )
             return
         shutil.copy2(src, target)
+        attempt.terminal(
+            status="completed",
+            outcome="succeeded",
+            details={"copied_bytes": src.stat().st_size},
+        )
 
     def upload_archive(self, src: Path, dest_dir: str) -> None:
+        attempt = self._begin_process_adapter_attempt(
+            surface="upload_archive",
+            start_details={"src": str(src), "dest_dir": dest_dir},
+        )
         target = Path(dest_dir)
         target.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
@@ -48,10 +90,33 @@ class OnBoxProvider(Provider):
             check=False,
         )
         if result.returncode != 0:
+            attempt.terminal(
+                status="failed",
+                outcome="indeterminate",
+                details={
+                    "returncode": result.returncode,
+                    "stderr": (result.stderr or "").strip(),
+                },
+            )
             raise CliError("provider_failed", result.stderr.strip() or "archive extraction failed")
+        attempt.terminal(
+            status="completed",
+            outcome="succeeded",
+            details={"returncode": result.returncode},
+        )
 
     def read_remote_file(self, path: str) -> str:
-        return Path(path).read_text(encoding="utf-8")
+        attempt = self._begin_process_adapter_attempt(
+            surface="read_remote_file",
+            start_details={"path": path},
+        )
+        content = Path(path).read_text(encoding="utf-8")
+        attempt.terminal(
+            status="completed",
+            outcome="succeeded",
+            details={"size_bytes": len(content.encode("utf-8"))},
+        )
+        return content
 
     def _unsupported(self, action: str):
         raise CliError("invalid_args", f"on-box transport does not support cloud {action}")

@@ -23,6 +23,7 @@ from .shared import (
     _merge_imported_decision_criteria,
     _write_json_artifact,
     _write_plan_version,
+    activate_phase_wbc,
     phase_result_guard,
 )
 
@@ -275,8 +276,9 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
             )
 
             run_id = set_active_step(state, step="prep", agent="prep-orchestration", mode="orchestrated")
-            save_state_merge_meta(plan_dir, state)
             try:
+                activate_phase_wbc(state=state, plan_dir=plan_dir, step="prep", agent="prep-orchestration")
+                save_state_merge_meta(plan_dir, state)
                 orchestration = run_prep_orchestration(state, plan_dir, root=root)
             except Exception:
                 clear_active_step(state, run_id=run_id)

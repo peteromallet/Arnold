@@ -8,7 +8,7 @@ import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Mapping
 
 from arnold.workflow.boundary_evidence import AuthorityRecord, BoundaryOutcome, BoundaryReceipt
 import arnold_pipelines.megaplan.workers as worker_module
@@ -85,6 +85,14 @@ from arnold_pipelines.megaplan.execute.merge import (
     TERMINAL_TASK_STATUSES,
     _merge_batch_results,
     _merge_scoped_batch_artifact_through_validator,
+)
+from arnold_pipelines.megaplan.execute.wbc import (
+    EXECUTE_PARENT_CUSTODY_KEY,
+    EXECUTE_DISPATCH_WBC_KEY,
+    EXECUTE_TRANSITION_WBC_KEY,
+    build_execute_batch_dispatch_spec,
+    build_transition_wbc_summary,
+    dispatch_wbc_summary,
 )
 from arnold_pipelines.megaplan.execute.quality import (
     AttributionResult,
@@ -1104,7 +1112,8 @@ def _emit_batch_boundary_receipt(
     batch_number: int | None = None,
     batch_task_ids: list[str] | None = None,
     extra_details: dict[str, Any] | None = None,
-) -> None:
+    strict: bool = False,
+) -> dict[str, Any] | None:
     """Emit an evidence-only batch boundary receipt without raising.
 
     Receipts are strictly observational — they do not affect branch
@@ -1116,7 +1125,12 @@ def _emit_batch_boundary_receipt(
         )
         contract = BOUNDARY_CONTRACTS_BY_ID.get(boundary_id)
         if contract is None:
-            return
+            if strict:
+                raise CliError(
+                    "missing_execute_boundary_contract",
+                    f"missing execute boundary contract for {boundary_id!r}",
+                )
+            return None
 
         meta = state.get("meta") or {}
         invocation_id = meta.get("current_invocation_id")
@@ -1151,10 +1165,43 @@ def _emit_batch_boundary_receipt(
             details=details,
         )
         write_boundary_receipt(plan_dir, receipt, project_dir=project_dir)
+        if not strict:
+            return None
+        receipt_path = plan_dir / "boundary_receipts" / f"{contract.boundary_id}.json"
+        if not receipt_path.is_file():
+            raise CliError(
+                "missing_execute_boundary_receipt",
+                f"boundary receipt {contract.boundary_id!r} was not persisted",
+                extra={"boundary_id": contract.boundary_id},
+            )
+        reread = read_json(receipt_path)
+        if (
+            not isinstance(reread, dict)
+            or reread.get("boundary_id") != contract.boundary_id
+            or reread.get("row_id") != contract.row_id
+            or reread.get("history_ref") != contract.expected_history_entry
+        ):
+            raise CliError(
+                "execute_boundary_receipt_reread_mismatch",
+                f"boundary receipt reread mismatch for {contract.boundary_id!r}",
+                extra={
+                    "boundary_id": contract.boundary_id,
+                    "receipt_path": str(receipt_path),
+                },
+            )
+        return {
+            "boundary_id": contract.boundary_id,
+            "row_id": contract.row_id,
+            "history_ref": contract.expected_history_entry,
+            "receipt_path": str(receipt_path.relative_to(plan_dir)),
+        }
     except Exception:
+        if strict:
+            raise
         log.warning(
             "Batch boundary receipt emission failed for %s", boundary_id, exc_info=True
         )
+        return None
 
 
 @dataclass
@@ -1746,6 +1793,20 @@ def _run_and_merge_batch(
 ) -> BatchResult:
     project_dir = Path(state["config"]["project_dir"])
     plan_mode = state["config"].get("mode", "code")
+    batch_artifact_path = execute_batch_artifact_path(
+        plan_dir, batch_number, batch_task_ids
+    )
+    dispatch_scope = BatchScope.create(
+        batch_number=batch_number,
+        task_ids=batch_task_ids,
+        sense_check_ids=batch_sense_check_ids,
+    )
+    dispatch_identity = _build_dispatch_identity(
+        plan_dir=plan_dir,
+        state=state,
+        scope=dispatch_scope,
+        finalize_data=finalize_data,
+    )
     if is_prose_mode(state):
         before_snapshot: dict[str, str] = {}
         before_error: str | None = None
@@ -1776,6 +1837,14 @@ def _run_and_merge_batch(
         resolved_model=resolved_model,
         prompt_override=prompt_override,
     )
+    wbc_dispatch = build_execute_batch_dispatch_spec(
+        plan_dir=plan_dir,
+        state=state,
+        dispatch_identity=dispatch_identity,
+        batch_number=batch_number,
+        batch_task_ids=batch_task_ids,
+        batch_sense_check_ids=batch_sense_check_ids,
+    )
     worker, agent, mode, refreshed = worker_module.run_step_with_worker(
         "execute",
         state,
@@ -1784,6 +1853,7 @@ def _run_and_merge_batch(
         root=root,
         resolved=am_for_worker,
         prompt_override=rendered_prompt_override,
+        wbc_dispatch=wbc_dispatch,
     )
     maybe_run_channel_shadow(
         root=root,
@@ -1803,6 +1873,13 @@ def _run_and_merge_batch(
         resolved_model=resolved_model,
         payload=dict(worker.payload),
     )
+    dispatch_summary = dispatch_wbc_summary(
+        auth_metadata=worker.auth_metadata if isinstance(worker.auth_metadata, dict) else None,
+        dispatch_identity=dispatch_identity,
+        batch_number=batch_number,
+    )
+    if dispatch_summary is not None:
+        payload[EXECUTE_DISPATCH_WBC_KEY] = dispatch_summary
     routing_degradations = _finalize_routing_record(
         routing_record,
         actual_agent=agent,
@@ -1858,25 +1935,12 @@ def _run_and_merge_batch(
             )
         )
     _stamp_head_sha_on_task_records(payload, finalize_data, project_dir)
-    batch_artifact_path = execute_batch_artifact_path(
-        plan_dir, batch_number, batch_task_ids
-    )
-    scope = _stamp_batch_scope(
-        payload,
-        batch_number=batch_number,
-        task_ids=batch_task_ids,
-        sense_check_ids=batch_sense_check_ids,
-    )
-    identity = _stamp_dispatch_metadata(
-        payload,
-        plan_dir=plan_dir,
-        state=state,
-        scope=scope,
-        finalize_data=finalize_data,
-    )
+    payload[BATCH_SCOPE_KEY] = dispatch_scope.to_dict()
+    payload[DISPATCH_IDENTITY_KEY] = dispatch_identity.to_dict()
+    payload.setdefault(RESULT_ENVELOPES_KEY, [])
     _stamp_result_envelopes(
         payload,
-        identity=identity,
+        identity=dispatch_identity,
         artifact_path=batch_artifact_path,
     )
     merged_count, total_batch_tasks, acknowledged_count, total_batch_checks = (
@@ -2355,6 +2419,13 @@ def handle_execute_one_batch(
             plan_dir=plan_dir,
             state=state,
         )
+        parent_custody = aggregate_payload.get(EXECUTE_PARENT_CUSTODY_KEY)
+        if isinstance(parent_custody, Mapping):
+            blocking_reasons.extend(
+                message
+                for message in parent_custody.get("messages", [])
+                if isinstance(message, str) and message not in blocking_reasons
+            )
         if deferred_acks:
             aggregate_payload.setdefault("sense_check_acknowledgments", []).extend(
                 deferred_acks
@@ -2379,9 +2450,90 @@ def handle_execute_one_batch(
     if drift is not None:
         _append_scope_drift_blocker(blocking_reasons, state, drift)
 
-    routing_blocked = any(
-        reason in blocking_reasons for reason in result.routing_degradations
+    batch_artifact = execute_batch_artifact_path(
+        plan_dir, batch_number, batch_task_ids
     )
+    batches_remaining = batches_total - batch_number
+    provisional_blocked = bool(blocking_reasons)
+    provisional_artifacts = [
+        str(batch_artifact.relative_to(plan_dir)),
+        "execution_audit.json",
+        "finalize.json",
+        "final.md",
+    ]
+    if aggregate_payload is not None and not provisional_blocked:
+        provisional_artifacts.insert(0, "execution.json")
+    if trace_written:
+        provisional_artifacts.append("execution_trace.jsonl")
+    next_step_decision = resolve_single_batch_next_step(
+        is_final_batch=is_final_batch,
+        all_tracked=all_tracked,
+        blocked=provisional_blocked,
+    )
+    transition_receipt: dict[str, Any] | None = None
+    try:
+        if next_step_decision.transition is NextExecuteTransition.BLOCKED:
+            transition_receipt = _emit_batch_boundary_receipt(
+                boundary_id="execute_partial_failure",
+                plan_dir=plan_dir,
+                state=state,
+                outcome=BoundaryOutcome.PARTIAL,
+                artifact_refs=tuple(provisional_artifacts),
+                batch_number=batch_number,
+                batch_task_ids=list(batch_task_ids),
+                extra_details={
+                    "blocking_reasons": list(blocking_reasons),
+                    "routing_blocked": any(
+                        reason in blocking_reasons
+                        for reason in result.routing_degradations
+                    ),
+                    "batches_total": batches_total,
+                },
+                strict=True,
+            )
+        elif next_step_decision.transition is NextExecuteTransition.REVIEW:
+            child_trace_refs: dict[str, Any] = {}
+            if aggregate_payload is not None:
+                task_updates = aggregate_payload.get("task_updates", [])
+                if isinstance(task_updates, list):
+                    child_trace_refs["task_count"] = len(task_updates)
+                child_trace_refs["execution_json"] = "execution.json"
+            transition_receipt = _emit_batch_boundary_receipt(
+                boundary_id="execute_aggregate_promotion",
+                plan_dir=plan_dir,
+                state=state,
+                outcome=BoundaryOutcome.COMPLETE,
+                artifact_refs=tuple(provisional_artifacts),
+                batch_number=batch_number,
+                batch_task_ids=list(batch_task_ids),
+                extra_details={
+                    "reducer_promotion": True,
+                    "child_trace_path": "execute/aggregate",
+                    "child_trace_refs": child_trace_refs,
+                    "batches_total": batches_total,
+                },
+                strict=True,
+            )
+        else:
+            transition_receipt = _emit_batch_boundary_receipt(
+                boundary_id="execute_batch_checkpoint",
+                plan_dir=plan_dir,
+                state=state,
+                outcome=BoundaryOutcome.COMPLETE,
+                artifact_refs=tuple(provisional_artifacts),
+                batch_number=batch_number,
+                batch_task_ids=list(batch_task_ids),
+                extra_details={
+                    "batches_remaining": batches_remaining,
+                    "batches_total": batches_total,
+                },
+                strict=True,
+            )
+    except Exception as error:
+        blocking_reasons.append(
+            f"execute transition evidence failed closed: {type(error).__name__}: {error}"
+        )
+
     routing_blocked = any(
         reason in blocking_reasons for reason in result.routing_degradations
     )
@@ -2394,7 +2546,7 @@ def handle_execute_one_batch(
             "retry_strategy": "fresh_session",
             "reason": "routing_degradation",
         }
-    if is_final_batch and all_tracked and not blocked:
+    elif is_final_batch and all_tracked and not blocked:
         state["current_state"] = STATE_EXECUTED
 
     user_approved_gate = bool(state["meta"].get("user_approved_gate", False))
@@ -2407,9 +2559,33 @@ def handle_execute_one_batch(
         if blocked
         else "success" if (is_final_batch and all_tracked) else "partial"
     )
-    batch_artifact = execute_batch_artifact_path(
-        plan_dir, batch_number, batch_task_ids
+    final_transition = resolve_single_batch_next_step(
+        is_final_batch=is_final_batch,
+        all_tracked=all_tracked,
+        blocked=blocked,
     )
+    dispatch_summary = result.payload.get(EXECUTE_DISPATCH_WBC_KEY)
+    if transition_receipt is not None and isinstance(dispatch_summary, Mapping):
+        transition_summary = build_transition_wbc_summary(
+            dispatch_summary=dispatch_summary,
+            boundary_id=str(transition_receipt["boundary_id"]),
+            receipt_path=str(transition_receipt["receipt_path"]),
+            transition=final_transition.transition.value,
+            result_value=result_value,
+            batch_number=batch_number,
+            batches_total=batches_total,
+        )
+        result.payload[EXECUTE_TRANSITION_WBC_KEY] = transition_summary
+        atomic_write_json(batch_artifact, result.payload)
+        if aggregate_payload is not None:
+            aggregate_payload[EXECUTE_TRANSITION_WBC_KEY] = transition_summary
+            write_plan_artifact_json(
+                plan_dir,
+                "execution.json",
+                aggregate_payload,
+                contract_context=None,
+            )
+
     append_history(
         state,
         make_history_entry(
@@ -2474,7 +2650,6 @@ def handle_execute_one_batch(
             log.warning("Execute receipt emission failed", exc_info=True)
     save_state_merge_meta(plan_dir, state)
 
-    batches_remaining = batches_total - batch_number
     tracking_note = _format_execute_tracking_note(
         merged_count=result.merged_task_count,
         total_tasks=result.total_task_count,
@@ -2492,11 +2667,7 @@ def handle_execute_one_batch(
     if trace_written:
         artifacts.append("execution_trace.jsonl")
 
-    next_step_decision = resolve_single_batch_next_step(
-        is_final_batch=is_final_batch,
-        all_tracked=all_tracked,
-        blocked=blocked,
-    )
+    next_step_decision = final_transition
     legacy_transition_target = _legacy_next_step_for_execute_policy(
         next_step_decision
     )
@@ -2588,61 +2759,6 @@ def handle_execute_one_batch(
             tier_model=tier_resolved_model if tier_routing_active else None,
         )
     _attach_next_step_runtime(response)
-
-    # ── Evidence-only batch boundary receipts ──────────────────────────
-    if next_step_decision.transition is NextExecuteTransition.BLOCKED:
-        _emit_batch_boundary_receipt(
-            boundary_id="execute_partial_failure",
-            plan_dir=plan_dir,
-            state=state,
-            outcome=BoundaryOutcome.PARTIAL,
-            artifact_refs=tuple(a for a in artifacts if isinstance(a, str)),
-            batch_number=batch_number,
-            batch_task_ids=list(batch_task_ids),
-            extra_details={
-                "blocking_reasons": blocking_reasons,
-                "routing_blocked": routing_blocked,
-                "batches_total": batches_total,
-            },
-        )
-    elif next_step_decision.transition is NextExecuteTransition.REVIEW:
-        # Aggregate promotion receipt with child trace/reducer evidence.
-        child_trace_refs: dict[str, Any] = {}
-        if aggregate_payload is not None:
-            task_updates = aggregate_payload.get("task_updates", [])
-            if isinstance(task_updates, list):
-                child_trace_refs["task_count"] = len(task_updates)
-            child_trace_refs["execution_json"] = "execution.json"
-        _emit_batch_boundary_receipt(
-            boundary_id="execute_aggregate_promotion",
-            plan_dir=plan_dir,
-            state=state,
-            outcome=BoundaryOutcome.COMPLETE,
-            artifact_refs=tuple(a for a in artifacts if isinstance(a, str)),
-            batch_number=batch_number,
-            batch_task_ids=list(batch_task_ids),
-            extra_details={
-                "reducer_promotion": True,
-                "child_trace_path": "execute/aggregate",
-                "child_trace_refs": child_trace_refs,
-                "batches_total": batches_total,
-            },
-        )
-    else:
-        # Non-final, non-blocked batch → checkpoint receipt.
-        _emit_batch_boundary_receipt(
-            boundary_id="execute_batch_checkpoint",
-            plan_dir=plan_dir,
-            state=state,
-            outcome=BoundaryOutcome.COMPLETE,
-            artifact_refs=tuple(a for a in artifacts if isinstance(a, str)),
-            batch_number=batch_number,
-            batch_task_ids=list(batch_task_ids),
-            extra_details={
-                "batches_remaining": batches_remaining,
-                "batches_total": batches_total,
-            },
-        )
 
     return response
 
@@ -3506,6 +3622,7 @@ def handle_execute_auto_loop(
                 "debt_registry_preserved": resume_decision.debt_registry_preserved,
                 "preserved_receipt_ids": list(resume_decision.preserved_receipt_ids),
             },
+            strict=True,
         )
 
     finalize_data, resolved_prereq_reset_ids = _sync_resolved_prerequisite_blocked_tasks(

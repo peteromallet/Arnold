@@ -12,6 +12,7 @@ primitives.  No Megap plan imports allowed.
 from __future__ import annotations
 
 import ast
+import json
 from dataclasses import FrozenInstanceError
 from types import MappingProxyType
 
@@ -200,7 +201,7 @@ def test_no_megaplan_imports_in_module_source() -> None:
 def test_violation_kind_is_str_enum() -> None:
     """ConformanceViolationKind is a StrEnum with all expected members."""
     members = list(ConformanceViolationKind)
-    assert len(members) >= 14  # may grow
+    assert len(members) >= 21  # may grow
     for m in members:
         assert isinstance(m, ConformanceViolationKind)
         assert isinstance(m.value, str)
@@ -226,6 +227,13 @@ def test_violation_kind_covers_all_categories() -> None:
     # Durable effects
     assert "durable_effect_unverified" in kinds
     assert "phase_result_unverified" in kinds
+    assert "start_before_dispatch_unverified" in kinds
+    assert "exactly_one_terminal_unverified" in kinds
+    assert "grant_lease_gate_unverified" in kinds
+    assert "exact_version_lookup_unverified" in kinds
+    assert "causal_evidence_unverified" in kinds
+    assert "post_transition_reread_unverified" in kinds
+    assert "incomplete_inventory_row" in kinds
     # Graph topology
     assert "graph_dangling_dependency" in kinds
     assert "graph_dangling_fan_out" in kinds
@@ -978,6 +986,117 @@ def test_no_version_pin_no_compatibility_check() -> None:
     )
     kinds = {v.kind for v in result.violations}
     assert ConformanceViolationKind.TEMPLATE_PROFILE_MISMATCH not in kinds
+
+
+# ── verify_boundary_conformance: generated inventory source of truth ─────
+
+
+def test_incomplete_generated_inventory_row_triggers_violation(tmp_path) -> None:
+    """Manual-emission inventory rows are treated as incomplete adoption."""
+    inventory_path = tmp_path / "inventory.json"
+    inventory_path.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "row_kind": "boundary_contract",
+                        "boundary_id": "b.1",
+                        "producer_category": "manual_emit",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    spec = _make_spec("b.1", receipt=_make_receipt("b.1"))
+    result = verify_boundary_conformance(
+        "arnold.workflow",
+        {"b.1": spec},
+        inventory_path=inventory_path,
+    )
+    violations = [v for v in result.violations if v.kind == ConformanceViolationKind.INCOMPLETE_INVENTORY_ROW]
+    assert len(violations) == 1
+    assert "manual-emission" in violations[0].detail["reasons"]
+
+
+def test_missing_required_inventory_invariants_trigger_specific_violations(tmp_path) -> None:
+    """Inventory proof gaps emit invariant-specific conformance violations."""
+    inventory_path = tmp_path / "inventory.json"
+    inventory_path.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "row_kind": "boundary_contract",
+                        "boundary_id": "b.1",
+                        "producer_category": "auto_matched",
+                        "inventory_proof": {
+                            "start_before_dispatch": True,
+                            "grant_lease_gate": False,
+                            "post_transition_reread": False,
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    contract = _make_contract(
+        "b.1",
+        details={
+            "required_wbc_invariants": [
+                "start_before_dispatch",
+                "grant_lease_gate",
+                "post_transition_reread",
+            ]
+        },
+    )
+    spec = _make_spec("b.1", contract=contract, receipt=_make_receipt("b.1"))
+    result = verify_boundary_conformance(
+        "arnold.workflow",
+        {"b.1": spec},
+        inventory_path=inventory_path,
+    )
+    kinds = {v.kind for v in result.violations}
+    assert ConformanceViolationKind.GRANT_LEASE_GATE_UNVERIFIED in kinds
+    assert ConformanceViolationKind.POST_TRANSITION_REREAD_UNVERIFIED in kinds
+    assert ConformanceViolationKind.START_BEFORE_DISPATCH_UNVERIFIED not in kinds
+
+
+def test_support_manifest_only_inventory_step_is_incomplete(tmp_path) -> None:
+    """Manifest-only rows matched by step_id remain incomplete source-of-truth rows."""
+    inventory_path = tmp_path / "inventory.json"
+    inventory_path.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "row_kind": "manifest_entry",
+                        "step_id": "arnold.workflow.execution_attempt_ledger",
+                        "producer_path": "arnold/workflow/execution_attempt_ledger.py",
+                        "support_is_non_authoritative": True,
+                        "support_status": "supported",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    contract = _make_contract(
+        "b.1",
+        details={"inventory_step_id": "arnold.workflow.execution_attempt_ledger"},
+    )
+    spec = _make_spec("b.1", contract=contract, receipt=_make_receipt("b.1"))
+    result = verify_boundary_conformance(
+        "arnold.workflow",
+        {"b.1": spec},
+        inventory_path=inventory_path,
+    )
+    violation = next(
+        v for v in result.violations if v.kind == ConformanceViolationKind.INCOMPLETE_INVENTORY_ROW
+    )
+    assert "schema-only" in violation.detail["reasons"]
+    assert "support-manifest-only" in violation.detail["reasons"]
 
 
 # ── verify_boundary_conformance: graph topology ───────────────────────────

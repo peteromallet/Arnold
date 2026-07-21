@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan.chain.spec import ChainSpec, ChainState, load_chain_state, load_spec
+from arnold_pipelines.megaplan.custody.process_adapter_wbc import begin_process_adapter_attempt
 from arnold_pipelines.megaplan.orchestration.completion_contract import (
     PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
     is_fail_closed_mode,
@@ -114,27 +115,56 @@ def check_wrapper_acceptance_gate(
         when the gate is closed and the wrapper must NOT restart / relaunch.
     """
     spec = Path(spec_path)
+    ws = Path(workspace) if workspace else None
+    explicit = Path(chain_state_path) if chain_state_path else None
+    evidence_root = (ws or explicit.parent if explicit is not None else spec.parent).resolve()
+    attempt = begin_process_adapter_attempt(
+        evidence_root,
+        producer_family="cloud_wrapper_adapter",
+        adapter_name="wrapper_acceptance_gate",
+        surface=caller_kind,
+        start_details={
+            "spec_path": spec_path,
+            "workspace": workspace,
+            "chain_state_path": chain_state_path,
+            "caller_kind": caller_kind,
+        },
+    )
+
+    def _finish(
+        gate_open: bool,
+        reason: str,
+        **extra: Any,
+    ) -> dict[str, Any]:
+        attempt.terminal(
+            status="gate_open" if gate_open else "gate_closed",
+            outcome="succeeded" if gate_open else "blocked",
+            details={
+                "reason": reason,
+                "caller_kind": caller_kind,
+                **extra,
+            },
+        )
+        result: dict[str, Any] = {"gate_open": gate_open, "reason": reason}
+        result.update(extra)
+        return result
+
     if not spec.exists():
-        return {"gate_open": False, "reason": f"spec not found: {spec_path}"}
+        return _finish(False, f"spec not found: {spec_path}")
 
     spec_obj = _load_spec(spec)
     if spec_obj is None:
         # If we can't read the spec, we can't determine whether successors
         # require acceptance — err on the side of allowing the restart.
-        return {
-            "gate_open": True,
-            "reason": f"spec unreadable: {spec_path}; gate open by default",
-        }
+        return _finish(True, f"spec unreadable: {spec_path}; gate open by default")
 
     # ── resolve chain state ───────────────────────────────────────────
-    ws = Path(workspace) if workspace else None
-    explicit = Path(chain_state_path) if chain_state_path else None
     state_path = _resolve_state_path(
         spec, workspace=ws, explicit_state_path=explicit
     )
     if state_path is None:
         # No persisted state yet — chain hasn't run, gate is open.
-        return {"gate_open": True, "reason": "no chain state yet"}
+        return _finish(True, "no chain state yet")
 
     try:
         state = load_chain_state(state_path)
@@ -143,29 +173,23 @@ def check_wrapper_acceptance_gate(
         # validation rejecting completed records without acceptance
         # receipts), the Python-level gate inside run_chain will handle
         # it.  The wrapper should allow the restart.
-        return {"gate_open": True, "reason": "chain state unreadable; gate open"}
+        return _finish(True, "chain state unreadable; gate open")
 
     # ── check mode ─────────────────────────────────────────────────────
     mode = normalize_contract_mode(state.completion_contract_mode)
     if not is_fail_closed_mode(mode):
-        return {
-            "gate_open": True,
-            "reason": f"mode={mode}; gate always open in non-fail-closed mode",
-        }
+        return _finish(True, f"mode={mode}; gate always open in non-fail-closed mode")
 
     # ── check successors ───────────────────────────────────────────────
     successors = getattr(spec_obj, "successors", None) or []
     if not successors:
-        return {"gate_open": True, "reason": "no declared successors"}
+        return _finish(True, "no declared successors")
 
     any_require = any(
         getattr(s, "require_accepted_transaction", True) for s in successors
     )
     if not any_require:
-        return {
-            "gate_open": True,
-            "reason": "no successor requires acceptance",
-        }
+        return _finish(True, "no successor requires acceptance")
 
     # ── check for completion + receipt ─────────────────────────────────
     # The gate is only meaningful when the chain has actually completed at
@@ -173,7 +197,7 @@ def check_wrapper_acceptance_gate(
     # restart is fine — the Python-level gate inside run_chain will handle it.
     milestones = getattr(spec_obj, "milestones", None) or []
     if not milestones:
-        return {"gate_open": True, "reason": "no milestones declared"}
+        return _finish(True, "no milestones declared")
 
     # Only apply the gate when the chain has advanced past or to the final
     # milestone AND the final milestone's label appears in completed records.
@@ -188,23 +212,23 @@ def check_wrapper_acceptance_gate(
     # If the final milestone isn't completed yet, we aren't at the
     # successor boundary — the gate doesn't apply.
     if final_milestone.label not in completed_labels:
-        return {
-            "gate_open": True,
-            "reason": (
+        return _finish(
+            True,
+            (
                 f"final milestone {final_milestone.label!r} not yet completed; "
                 f"successor boundary not reached"
             ),
-        }
+        )
 
     has_receipt = state.has_acceptance_receipt(final_milestone.label)
     if has_receipt:
-        return {
-            "gate_open": True,
-            "reason": (
+        return _finish(
+            True,
+            (
                 f"acceptance receipt present for {final_milestone.label!r}; "
                 f"gate open"
             ),
-        }
+        )
 
     # ── Gate is closed — build typed blocker event ────────────────────
     blocker_kind = BLOCKER_KIND_BY_CALLER.get(
@@ -231,14 +255,14 @@ def check_wrapper_acceptance_gate(
         },
     }
 
-    return {
-        "gate_open": False,
-        "reason": (
+    return _finish(
+        False,
+        (
             f"acceptance gate closed for {final_milestone.label!r}: "
             f"no acceptance receipt"
         ),
-        "blocker_event": blocker_event,
-    }
+        blocker_event=blocker_event,
+    )
 
 
 # ── CLI entry point for bash wrappers ──────────────────────────────────

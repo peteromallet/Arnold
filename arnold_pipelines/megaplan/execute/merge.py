@@ -37,6 +37,10 @@ from arnold_pipelines.megaplan.execute.status_constants import (
     EXECUTE_TASK_STATUS_ALIASES,
     TERMINAL_TASK_STATUSES,
 )
+from arnold_pipelines.megaplan.execute.wbc import (
+    EXECUTE_DISPATCH_WBC_KEY,
+    validate_dispatch_wbc_payload,
+)
 from arnold_pipelines.run_authority import ContractError, IdempotencyConflict
 
 
@@ -1055,6 +1059,22 @@ def _merge_batch_results(
 ) -> tuple[int, int, int, int]:
     batch_task_id_set = set(batch_task_ids)
     batch_sense_check_id_set = set(batch_sense_check_ids)
+    should_validate_dispatch_wbc = _payload_has_authority_metadata(payload) or (
+        EXECUTE_DISPATCH_WBC_KEY in payload
+    )
+    dispatch_wbc_reason = (
+        validate_dispatch_wbc_payload(payload, state=state)
+        if should_validate_dispatch_wbc
+        else None
+    )
+    if dispatch_wbc_reason is not None:
+        issues.append(
+            "Execute dispatch WBC rejected merge: "
+            f"{dispatch_wbc_reason} (source: {source_path})."
+        )
+        payload = dict(payload)
+        payload["task_updates"] = []
+        payload["sense_check_acknowledgments"] = []
     pre_merge_statuses = _snapshot_task_statuses(
         [
             task

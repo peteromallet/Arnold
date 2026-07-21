@@ -261,6 +261,38 @@ def render_reply_context(message: Any) -> str:
     return "\n".join(lines)
 
 
+def reply_chain_projection(provenance: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Return the bounded reply-custody facts safe to copy into run evidence."""
+
+    if not isinstance(provenance, Mapping):
+        return {
+            "available": False,
+            "schema_version": None,
+            "termination_reason": "missing",
+            "chain_complete": False,
+            "captured_ancestor_count": 0,
+        }
+    return {
+        "available": True,
+        "schema_version": str(provenance.get("schema_version") or ""),
+        "transport": str(provenance.get("transport") or ""),
+        "source_message_id": str(provenance.get("source_message_id") or ""),
+        "source_author_id": str(provenance.get("source_author_id") or "") or None,
+        "conversation_key": str(provenance.get("conversation_key") or "") or None,
+        "termination_reason": str(provenance.get("termination_reason") or "unknown"),
+        "chain_complete": bool(provenance.get("chain_complete", False)),
+        "capture_truncated": bool(provenance.get("capture_truncated", False)),
+        "captured_ancestor_count": int(provenance.get("captured_ancestor_count") or 0),
+        "nearest_parent_message_id": (
+            str(provenance.get("ancestors")[0].get("message_id") or "")
+            if isinstance(provenance.get("ancestors"), list)
+            and provenance.get("ancestors")
+            and isinstance(provenance.get("ancestors")[0], Mapping)
+            else None
+        ),
+    }
+
+
 def encode_reply_cursor(source_record_id: str, offset: int) -> str:
     payload = json.dumps(
         {"source_record_id": source_record_id, "offset": offset},

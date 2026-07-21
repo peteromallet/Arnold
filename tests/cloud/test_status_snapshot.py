@@ -12,6 +12,7 @@ import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -620,6 +621,91 @@ def test_snapshot_projects_manual_review_gate_without_weakening_it(fx):
     assert entry["advancement"]["action"] == "await_human"
     assert entry["advancement"]["automatic"] is False
     assert entry["advancement"]["gate"] == "review_policy.clean_milestone_pr"
+
+
+def test_snapshot_blocks_successor_advancement_on_parent_custody_conflict(
+    fx, monkeypatch
+):
+    workspace = fx.root / "custody-conflict"
+    spec_path = workspace / ".megaplan" / "initiatives" / "policy" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(
+        "merge_policy: auto\n"
+        "review_policy:\n"
+        "  clean_milestone_pr: auto\n"
+        "milestones:\n"
+        "  - label: M5A\n"
+        "successors:\n"
+        "  - chain_spec_path: suites/m6/chain.yaml\n"
+        "    label: M6\n"
+        "    require_accepted_transaction: true\n",
+        encoding="utf-8",
+    )
+    fx.add_session(
+        "custody-conflict",
+        workspace=str(workspace),
+        remote_spec=str(spec_path),
+        plan_name="m5a-plan",
+    )
+    fx.add_chain_health(
+        "custody-conflict",
+        chain_complete=True,
+        completed_count=1,
+        milestone_count=1,
+        current_plan_name="m5a-plan",
+        last_state="done",
+    )
+    chain_health_path = fx.marker_dir / "custody-conflict.chain-health.progress.json"
+    chain_health = json.loads(chain_health_path.read_text(encoding="utf-8"))
+    chain_health["completion_contract_mode"] = "enforce"
+    chain_health_path.write_text(json.dumps(chain_health), encoding="utf-8")
+    fx.add_plan_state("custody-conflict", "m5a-plan", current_state="done")
+
+    monkeypatch.setattr(
+        ss,
+        "_load_latest_chain_state",
+        lambda _workspace: (
+            workspace / ".megaplan" / "chains" / "state.json",
+            {
+                "completed": [
+                    {
+                        "label": "M5A",
+                        "plan": "m5a-plan",
+                        "acceptance_receipt": {"transaction_id": "tx-1"},
+                    }
+                ]
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        ss,
+        "load_chain_spec",
+        lambda _path: SimpleNamespace(
+            milestones=[SimpleNamespace(label="M5A")],
+            successors=[SimpleNamespace(require_accepted_transaction=True)],
+        ),
+    )
+    monkeypatch.setattr(
+        ss,
+        "_compose_repair_decision_projection",
+        lambda **_kwargs: {
+            "repair_custody": {
+                "blocker_id": "blocker-1",
+                "active_request_ids": ["req-1"],
+                "active_claim_request_ids": ["req-1"],
+                "current_target": {
+                    "current_refs": {"current_plan_name": "m5a-plan"}
+                },
+            },
+            "repair_dispatch": None,
+            "repair_projection_degraded": None,
+        },
+    )
+
+    entry = _by_session(fx.build(), "custody-conflict")
+
+    assert entry["advancement"]["action"] == "successor_gate_closed"
+    assert entry["advancement"]["gate"] == "parent_custody"
 
 
 def test_live_process_with_failed_no_next_step_is_attention(fx):

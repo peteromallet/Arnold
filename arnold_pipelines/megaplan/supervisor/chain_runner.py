@@ -55,6 +55,14 @@ from arnold_pipelines.megaplan.supervisor.state import (
     save_supervisor_state,
     validate_supervisor_state,
 )
+from arnold_pipelines.megaplan.custody.admission_control import (
+    AdmissionFence,
+    CHAIN_RUNNER_ADMISSION_SURFACE,
+    CHAIN_RUNNER_ADMISSION_WRITER_ID,
+    register_admission_writers,
+    synthetic_text_source_record,
+    validate_admission_mutation,
+)
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     effective_execute_completed_task_ids,
 )
@@ -72,6 +80,67 @@ from arnold_pipelines.megaplan.orchestration.completion_contract import (
 )
 
 SUPERVISOR_DRIVER_ESCALATE_ACTION = "fail"
+
+
+def _admit_chain_materialization(
+    *,
+    root: Path,
+    spec_path: Path,
+    spec: Any,
+    state: Any,
+    milestone: Any,
+    milestone_index: int,
+) -> dict[str, Any]:
+    from arnold_pipelines.megaplan.chain.source_admission import admit_milestone_source
+
+    register_admission_writers()
+    admission_event = admit_milestone_source(
+        root=root,
+        spec_path=spec_path,
+        spec=spec,
+        state=state,
+        milestone=milestone,
+        milestone_index=milestone_index,
+    )
+    current_identity = admission_event.get("current_identity")
+    if isinstance(current_identity, Mapping):
+        source_record = dict(current_identity)
+    else:
+        source_record = synthetic_text_source_record(
+            selector=milestone.label,
+            label="chain-milestone",
+            text=str(milestone.idea),
+        )
+    evidence = validate_admission_mutation(
+        writer_id=CHAIN_RUNNER_ADMISSION_WRITER_ID,
+        surface_name=CHAIN_RUNNER_ADMISSION_SURFACE,
+        selector=milestone.label,
+        source_record=source_record,
+        fences=(
+            AdmissionFence(
+                identity="current_milestone_index",
+                expected=milestone_index,
+                observed=getattr(state, "current_milestone_index", None),
+                satisfied=int(getattr(state, "current_milestone_index", -1)) == milestone_index,
+                detail="chain runner must materialize the currently selected milestone",
+            ),
+            AdmissionFence(
+                identity="current_plan_name",
+                expected=None,
+                observed=getattr(state, "current_plan_name", None),
+                satisfied=getattr(state, "current_plan_name", None) is None,
+                detail="chain runner must not overwrite an already materialized plan",
+            ),
+        ),
+        extra={"milestone_index": milestone_index, "outcome": admission_event.get("outcome")},
+    )
+    metadata = dict(getattr(state, "metadata", {}) or {})
+    controls = metadata.setdefault("admission_controls", {})
+    if isinstance(controls, dict):
+        controls[f"chain_runner:{milestone.label}"] = evidence
+    state.metadata = metadata
+    chain_spec.save_chain_state(spec_path, state)
+    return evidence
 
 
 class ChainMilestonePackRunner:
@@ -268,6 +337,14 @@ def run_chain(
                 )
             plan_name = chain_state.current_plan_name
             if not plan_name:
+                _admit_chain_materialization(
+                    root=root,
+                    spec_path=spec_path,
+                    spec=spec,
+                    state=chain_state,
+                    milestone=milestone,
+                    milestone_index=index,
+                )
                 plan_name = pack_runner.prepare_plan(root=root, node=node)
                 from arnold_pipelines.megaplan.chain import _attach_chain_anchors_to_plan
 

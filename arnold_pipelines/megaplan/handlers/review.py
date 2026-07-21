@@ -88,6 +88,7 @@ from arnold_pipelines.megaplan._core import (
 from .shared import (
     _attach_next_step_runtime,
     _active_step_fallback_fields,
+    _emit_named_boundary_receipt,
     _agent_mode_parts,
     _emit_phase_notice,
     _emit_receipt,
@@ -100,6 +101,7 @@ from .shared import (
 from arnold_pipelines.megaplan.orchestration.phase_result import _emit_phase_result
 from arnold_pipelines.megaplan.orchestration.phase_result import Deviation as _PhaseDeviation
 from arnold_pipelines.megaplan.receipts.extractors import review_metrics
+from arnold_pipelines.megaplan.custody.phase_wbc import complete_phase_wbc, fail_phase_wbc, phase_wbc_state
 
 """Review handler — post-execute implementation-evidence pass.
 
@@ -1361,6 +1363,58 @@ def _format_review_success_summary(criteria: list[dict[str, Any]]) -> str:
     return f"Review complete: {passed}/{total} success criteria passed."
 
 
+def _review_boundary_ids_for_outcome(
+    *,
+    result: ReviewDecisionResult,
+    next_state: str,
+) -> tuple[str, ...]:
+    if next_state == STATE_AWAITING_HUMAN_VERIFY:
+        return ("review_human_verification",)
+    if result == ReviewDecisionResult.NEEDS_REWORK:
+        return ("review_rework_effects",)
+    if result == ReviewDecisionResult.FORCE_PROCEEDED:
+        return ("review_cap_authority",)
+    if result == ReviewDecisionResult.BLOCKED and next_state == STATE_BLOCKED:
+        return ("review_cap_authority",)
+    if result == ReviewDecisionResult.SUCCESS and next_state in {STATE_DONE, STATE_REVIEWED}:
+        return ("review_reducer_promotion",)
+    return ()
+
+
+def _emit_review_route_boundary_receipts(
+    *,
+    plan_dir: Path,
+    state: PlanState,
+    worker: WorkerResult,
+    agent: str,
+    mode: str,
+    result: ReviewDecisionResult,
+    next_state: str,
+    response: StepResponse,
+    artifact_hash: str,
+    strict: bool,
+) -> tuple[str, ...]:
+    emitted_ids: list[str] = []
+    for boundary_id in _review_boundary_ids_for_outcome(result=result, next_state=next_state):
+        receipt = _emit_named_boundary_receipt(
+            boundary_id=boundary_id,
+            plan_dir=plan_dir,
+            state=state,
+            step="review",
+            worker=worker,
+            agent=agent,
+            mode=mode,
+            artifacts=["review.json", "finalize.json", "final.md"],
+            output_file="review.json",
+            artifact_hash=artifact_hash,
+            response=response,
+            strict=strict,
+        )
+        if receipt is not None:
+            emitted_ids.append(receipt.boundary_id)
+    return tuple(emitted_ids)
+
+
 def _wrap_parallel_review_worker(
     merged_payload: dict[str, Any],
     parallel_result: WorkerResult,
@@ -1846,7 +1900,6 @@ def _finalize_review_outcome(
             ),
         )
         state["current_state"] = STATE_EXECUTED
-        clear_active_step(state)
         apply_session_update(state, "review", agent, worker.session_id, mode=mode, refreshed=refreshed)
         append_history(
             state,
@@ -1876,7 +1929,6 @@ def _finalize_review_outcome(
             artifact_hash=sha256_file(plan_dir / "review.json"),
             verdict=ReviewDecisionResult.POLICY_DENIED,
         )
-        save_state_merge_meta(plan_dir, state)
         summary = "Review-to-done transition denied by policy. Re-run review after addressing the policy evidence."
         deviations = tuple(_PhaseDeviation.from_string(reason) for reason in policy_decision.reasons)
         _emit_phase_result(
@@ -1902,6 +1954,23 @@ def _finalize_review_outcome(
             "warnings": list(policy_decision.reasons),
             "_phase_outcome": "blocked_by_quality",
         }
+        if phase_wbc_state(state, step="review") is not None:
+            fail_phase_wbc(
+                state=state,
+                plan_dir=plan_dir,
+                step="review",
+                agent=agent,
+                payload={
+                    "phase": "review",
+                    "status": "failed",
+                    "failure_stage": "transition_policy",
+                    "phase_result_ref": "phase_result.json",
+                    "error_class": "ReviewPolicyDenied",
+                    "message": summary,
+                },
+            )
+        clear_active_step(state)
+        save_state_merge_meta(plan_dir, state)
         _attach_next_step_runtime(response)
         attach_agent_fallback(response, args)
         return response
@@ -1938,7 +2007,6 @@ def _finalize_review_outcome(
         state["latest_failure"] = None
         state.pop("resume_cursor", None)
 
-    clear_active_step(state)
     apply_session_update(state, "review", agent, worker.session_id, mode=mode, refreshed=refreshed)
     append_history(
         state,
@@ -1968,8 +2036,6 @@ def _finalize_review_outcome(
         artifact_hash=sha256_file(plan_dir / "review.json"),
         verdict=result if result == ReviewDecisionResult.FORCE_PROCEEDED else review_verdict,
     )
-    save_state_merge_meta(plan_dir, state)
-
     if force_proceed_blocked:
         summary = next(
             (
@@ -2034,6 +2100,57 @@ def _finalize_review_outcome(
             plan_dir=plan_dir,
             exit_kind="success",
         )
+    review_artifact_hash = sha256_file(plan_dir / "review.json")
+    strict_review_receipts = phase_wbc_state(state, step="review") is not None
+    emitted_boundary_ids = _emit_review_route_boundary_receipts(
+        plan_dir=plan_dir,
+        state=state,
+        worker=worker,
+        agent=agent,
+        mode=mode,
+        result=result,
+        next_state=next_state,
+        response=response,
+        artifact_hash=review_artifact_hash,
+        strict=strict_review_receipts,
+    )
+    if strict_review_receipts:
+        if emitted_boundary_ids:
+            complete_phase_wbc(
+                state=state,
+                plan_dir=plan_dir,
+                step="review",
+                agent=agent,
+                payload={
+                    "phase": "review",
+                    "status": "completed",
+                    "summary": summary,
+                    "next_step": response.get("next_step"),
+                    "phase_result_ref": "phase_result.json",
+                    "boundary_receipt_id": emitted_boundary_ids[0],
+                    "boundary_receipt_ids": list(emitted_boundary_ids),
+                    "artifacts_written": ["review.json", "finalize.json", "final.md"],
+                    "output_file": "review.json",
+                    "artifact_hash": review_artifact_hash,
+                },
+            )
+        else:
+            fail_phase_wbc(
+                state=state,
+                plan_dir=plan_dir,
+                step="review",
+                agent=agent,
+                payload={
+                    "phase": "review",
+                    "status": "failed",
+                    "failure_stage": "result_evidence",
+                    "phase_result_ref": "phase_result.json",
+                    "error_class": "MissingBoundaryReceipt",
+                    "message": "review route did not produce a required durable boundary receipt",
+                },
+            )
+    clear_active_step(state)
+    save_state_merge_meta(plan_dir, state)
     _attach_next_step_runtime(response)
     attach_agent_fallback(response, args)
     return response

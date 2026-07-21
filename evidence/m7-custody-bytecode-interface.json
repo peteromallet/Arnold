@@ -1,0 +1,404 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-20T07:30:00Z",
+  "source": "M7 custody bytecode (.pyc files in arnold_pipelines/megaplan/custody/__pycache__/)",
+  "purpose": "Compatibility evidence for rebuilt M7 custody modules. Bytecode is compatibility evidence, NOT authority — North Star invariants override recovered API behavior.",
+  "modules": {
+    "contracts": {
+      "source_pyc": "arnold_pipelines/megaplan/custody/__pycache__/contracts.cpython-311.pyc",
+      "public_dataclasses": [
+        {
+          "name": "CustodyTargetKey",
+          "fields": ["subject_type", "subject_id", "action", "target_kind", "target_id", "contract_id"],
+          "description": "Immutable key identifying the exact custody target for an action."
+        },
+        {
+          "name": "RepairOccurrenceKey",
+          "fields": ["environment_id", "session_id", "chain_id", "plan_revision", "phase", "task_id", "attempt_number", "failure_kind", "blocker_digest", "coordinator_fence_token"],
+          "description": "Immutable key identifying a specific repair occurrence (F01 tuple + fence + chain identity)."
+        },
+        {
+          "name": "CustodyLease",
+          "fields": ["lease_id", "target_key", "occurrence_key", "owner", "epoch", "acquired_at", "expires_at", "fence_token", "status", "causal_predecessor"],
+          "description": "Attempt-scoped custody lease with epoch, owner, fence, expiry."
+        },
+        {
+          "name": "CustodyLeaseEvent",
+          "fields": ["lease_id", "event_type", "occurred_at", "payload", "sequence", "causal_predecessor"],
+          "description": "Append-only custody lease event for the event-sourced lease store."
+        }
+      ],
+      "public_enums": [
+        {
+          "name": "CustodyLeaseEventType",
+          "members": ["ACQUIRE", "RENEW", "TRANSFER", "RELEASE", "EXPIRE", "FENCE", "CONFLICT", "RECONCILE", "QUARANTINE"]
+        },
+        {
+          "name": "CustodyLeaseOutcome",
+          "members": ["ACQUIRED", "RENEWED", "TRANSFERRED", "RELEASED", "EXPIRED", "FENCED", "CONFLICTED", "RECONCILED", "QUARANTINED"]
+        }
+      ],
+      "public_functions": [
+        {"name": "process_birth_identity", "signature": "() -> dict[str, str]", "description": "Return current process-birth identity: hostname, pid, boot time."},
+        {"name": "target_digest", "signature": "(target: dict) -> str", "description": "SHA-256 digest over canonical target dict."},
+        {"name": "occurrence_digest", "signature": "(f01_fields: dict, fence_token: str, chain_identity: str) -> str", "description": "SHA-256 digest over F01 tuple, fence token, and chain identity."},
+        {"name": "normalize_custody_target_key", "signature": "(payload: Any) -> CustodyTargetKey | None", "description": "Return canonical CustodyTargetKey or None for invalid inputs."},
+        {"name": "build_custody_target_key", "signature": "(**kwargs) -> CustodyTargetKey | None", "description": "Build a CustodyTargetKey from kwargs; returns None if any required field is empty."},
+        {"name": "normalize_repair_occurrence_key", "signature": "(payload: Any) -> RepairOccurrenceKey | None", "description": "Return canonical RepairOccurrenceKey or None for invalid inputs."},
+        {"name": "build_repair_occurrence_key", "signature": "(**kwargs) -> RepairOccurrenceKey | None", "description": "Build a RepairOccurrenceKey; returns None if required fields are empty."},
+        {"name": "normalize_custody_lease", "signature": "(payload: Any) -> CustodyLease | None", "description": "Return canonical CustodyLease or None for invalid inputs."},
+        {"name": "normalize_custody_lease_event", "signature": "(payload: Any) -> CustodyLeaseEvent | None", "description": "Return canonical CustodyLeaseEvent or None for invalid inputs."}
+      ],
+      "public_constants": [
+        {"name": "CUSTODY_TARGET_KEY_VERSION", "value": "1"},
+        {"name": "REPAIR_OCCURRENCE_KEY_VERSION", "value": "1"},
+        {"name": "CUSTODY_LEASE_VERSION", "value": "1"},
+        {"name": "CUSTODY_LEASE_EVENT_VERSION", "value": "1"},
+        {"name": "F01_REPAIR_OCCURRENCE_FIELDS", "type": "tuple[str, ...]"}
+      ]
+    },
+    "lease_store": {
+      "source_pyc": "arnold_pipelines/megaplan/custody/__pycache__/lease_store.cpython-311.pyc",
+      "public_dataclasses": [
+        {
+          "name": "CustodyLeaseStore",
+          "fields": ["base_dir", "history_path", "state_path", "lock_path", "quarantine_path"],
+          "description": "Event-sourced custody lease store with atomic append, idempotency, and quarantine."
+        }
+      ],
+      "public_exceptions": [
+        {"name": "LeaseStoreError", "base": "RuntimeError"},
+        {"name": "StaleSequenceError", "base": "LeaseStoreError"},
+        {"name": "LeaseIdempotencyConflict", "base": "LeaseStoreError"},
+        {"name": "QuarantinedPayloadError", "base": "LeaseStoreError"},
+        {"name": "LeaseNotFoundError", "base": "LeaseStoreError"}
+      ],
+      "public_functions": [
+        {"name": "default_lease_store_dir", "signature": "() -> Path", "description": "Return default custody lease-store directory (~/.megaplan/custody/leases)."},
+        {"name": "reduce_event", "signature": "(current: CustodyLease | None, event: CustodyLeaseEvent) -> CustodyLease | None", "description": "Apply a single event to current lease state, returning new state."},
+        {"name": "replay_events", "signature": "(events: Sequence[CustodyLeaseEvent]) -> CustodyLease | None", "description": "Deterministically replay events to compute current lease."},
+        {"name": "open_lease_store", "signature": "(base_dir: Path | str | None = None) -> CustodyLeaseStore", "description": "Open a custody lease store rooted at base_dir."},
+        {"name": "record_events", "signature": "(store: CustodyLeaseStore, events: Sequence[CustodyLeaseEvent]) -> Sequence[CustodyLeaseEvent]", "description": "Record a batch of events in sequence order."}
+      ]
+    },
+    "action_validator": {
+      "source_pyc": "arnold_pipelines/megaplan/custody/__pycache__/action_validator.cpython-311.pyc",
+      "public_dataclasses": [
+        {
+          "name": "ActionBoundaryContext",
+          "fields": ["action_type", "target", "run_authority_grant_id", "coordinator_fence_token", "wbc_attempt_reference"],
+          "description": "Context for action boundary validation."
+        },
+        {
+          "name": "ActionBoundaryResult",
+          "fields": ["gate_result", "sources", "authorized", "diagnostics"],
+          "description": "Full action boundary validation result."
+        }
+      ],
+      "public_enums": [
+        {
+          "name": "ActionBoundaryType",
+          "members": ["DISPATCH", "REPAIR", "COMPLETE", "CANCEL", "PUBLISH", "DELIVER", "SUSPEND", "RESUME", "RETRY"]
+        },
+        {
+          "name": "ValidationOutcome",
+          "members": ["SATISFIED", "MISSING", "STALE", "EXPIRED", "FENCED", "CONFLICT", "NOT_OWNER", "ERROR"]
+        },
+        {
+          "name": "GateResult",
+          "members": ["ALLOWED", "DENIED", "SHADOW_PASS"]
+        },
+        {
+          "name": "SourceCheck",
+          "members": ["RUN_AUTHORITY_GRANT", "RUN_AUTHORITY_FENCE", "CUSTODY_LEASE", "CUSTODY_EPOCH", "WBC_ATTEMPT", "SOURCE_VERSION"]
+        }
+      ],
+      "public_functions": [
+        {"name": "validate_action_boundary", "signature": "(context: ActionBoundaryContext, lease_store=None, outbox=None, enforcement_enabled=None) -> ActionBoundaryResult", "description": "Validate action boundary: rereads grant/fence/lease/epoch/WBC attempt immediately. Returns ActionBoundaryResult; callers must test result.authorized."},
+        {"name": "production_enforcement_enabled", "signature": "() -> bool", "description": "Return True when ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT env var is active."},
+        {"name": "validate_action_boundary_simple", "signature": "(action_type, target, run_authority_grant_id, coordinator_fence_token, wbc_attempt_reference=None, **store_dirs) -> ActionBoundaryResult", "description": "Convenience wrapper for validate_action_boundary with default store setup."}
+      ],
+      "public_constants": [
+        {"name": "ACTION_VALIDATOR_SCHEMA_VERSION", "value": "1"}
+      ]
+    },
+    "controlled_writer_registry": {
+      "source_pyc": "arnold_pipelines/megaplan/custody/__pycache__/controlled_writer_registry.cpython-311.pyc",
+      "public_dataclasses": [
+        {
+          "name": "ControlledWriter",
+          "fields": ["writer_id", "surface_name", "cohort", "contract_ids", "source_file", "function_name", "required_wbc_phases", "action_kind"],
+          "description": "Controlled writer registration entry."
+        },
+        {
+          "name": "WriteGuardResult",
+          "fields": ["decision", "writer_id", "surface_name", "cohort", "enforcement_enabled", "fail_closed", "diagnostics"],
+          "description": "Result of writer guard check."
+        }
+      ],
+      "public_enums": [
+        {
+          "name": "Cohort",
+          "members": ["ACTIVE", "SHADOW", "REPORT_ONLY"]
+        },
+        {
+          "name": "WriteGuardDecision",
+          "members": ["ALLOWED", "DENIED", "SHADOW_PASS", "REPORT_ONLY", "UNREGISTERED"]
+        }
+      ],
+      "public_functions": [
+        {"name": "get_writer", "signature": "(writer_id: str) -> ControlledWriter | None", "description": "Look up a controlled writer by its stable id."},
+        {"name": "get_writer_by_surface", "signature": "(surface_name: str) -> ControlledWriter | None", "description": "Look up a controlled writer by its surface name."},
+        {"name": "list_writers", "signature": "(cohort: Cohort | None = None) -> list[ControlledWriter]", "description": "Return all registered controlled writers, optionally filtered by cohort."},
+        {"name": "list_active_writers", "signature": "() -> list[ControlledWriter]", "description": "Return writers in the active cohort."},
+        {"name": "list_shadow_writers", "signature": "() -> list[ControlledWriter]", "description": "Return writers in the shadow cohort."},
+        {"name": "list_report_only_writers", "signature": "() -> list[ControlledWriter]", "description": "Return writers in the report_only cohort."},
+        {"name": "list_authority_increasing_writers", "signature": "() -> list[ControlledWriter]", "description": "Return all registered writers that gate authority-increasing operations."},
+        {"name": "writer_guard", "signature": "(writer_id: str = '', surface_name: str = '', override_enforcement=None, override_fail_closed=None) -> WriteGuardResult", "description": "Single entry-point for all Custody-gated production writes. Fail-closed."},
+        {"name": "guard_all", "signature": "(writer_ids: Iterable[str] | None = None) -> list[WriteGuardResult]", "description": "Run writer_guard against every writer in writer_ids (or all registered if empty)."}
+      ]
+    },
+    "writer_map": {
+      "source_pyc": "arnold_pipelines/megaplan/custody/__pycache__/writer_map.cpython-311.pyc",
+      "public_dataclasses": [
+        {
+          "name": "OccurrenceWriterTerminalProvenanceMap",
+          "description": "Deterministic M7 provenance map joining writer surfaces to occurrence/terminal evidence."
+        }
+      ],
+      "public_enums": [
+        {
+          "name": "WriterSurface",
+          "members": ["LEASE_STORE", "OUTBOX", "ACTION_VALIDATOR", "CANARY", "COMPATIBILITY", "PROJECTION_STORE", "REPAIR_RECEIPT", "WRITER_REGISTRY", "WRITER_MAP"]
+        }
+      ],
+      "public_functions": [
+        {"name": "generate_writer_map", "signature": "(output_path: Path | None = None) -> OccurrenceWriterTerminalProvenanceMap", "description": "Generate the deterministic M7 provenance map, writing JSON atomically if output_path given."}
+      ],
+      "public_constants": [
+        {"name": "F01_REPAIR_OCCURRENCE_FIELDS", "type": "tuple"},
+        {"name": "BLOCKER_FINGERPRINT_V1_FIELDS", "type": "tuple"},
+        {"name": "BLOCKER_FINGERPRINT_V2_EXTENSION_FIELDS", "type": "tuple"},
+        {"name": "PROBLEM_SIGNATURE_FIELDS", "type": "tuple"},
+        {"name": "ACCEPTANCE_PREDICATE_SIGNATURE_FIELDS", "type": "tuple"},
+        {"name": "EXTENDED_PROBLEM_SIGNATURE_FIELDS", "type": "tuple"},
+        {"name": "M7_MISSING_FIELDS", "type": "tuple"},
+        {"name": "OWNER_RUN_AUTHORITY", "value": "run_authority"},
+        {"name": "OWNER_WBC", "value": "wbc"},
+        {"name": "OWNER_CUSTODY", "value": "custody"},
+        {"name": "OWNER_PROJECTION", "value": "projection"},
+        {"name": "OWNER_OBSERVABILITY", "value": "observability"},
+        {"name": "OWNER_DOMAIN", "value": "domain"},
+        {"name": "OWNER_MAINTENANCE", "value": "maintenance"}
+      ]
+    },
+    "canary": {
+      "source_pyc": "arnold_pipelines/megaplan/custody/__pycache__/canary.cpython-311.pyc",
+      "public_dataclasses": [
+        {
+          "name": "CanaryCheck",
+          "fields": ["check_type", "outcome", "diagnostics"],
+          "description": "A single canary check result."
+        },
+        {
+          "name": "PromotionGateContext",
+          "fields": ["projection_id", "target", "run_authority_grant_id", "coordinator_fence_token", "wbc_attempt_reference", "source_path"],
+          "description": "Context for promotion gate validation."
+        },
+        {
+          "name": "PromotionGateResult",
+          "fields": ["gate_decision", "checks", "authorized", "diagnostics"],
+          "description": "Full promotion gate validation result."
+        }
+      ],
+      "public_enums": [
+        {
+          "name": "CanaryCheckType",
+          "members": ["SOURCE_PROVENANCE", "RUN_AUTHORITY", "CUSTODY_LEASE", "WBC_ATTEMPT"]
+        },
+        {
+          "name": "CanaryOutcome",
+          "members": ["SATISFIED", "MISSING", "STALE", "EXPIRED", "FENCED", "CONFLICT", "NOT_OWNER", "PROVENANCE_UNVERIFIED", "ERROR"]
+        },
+        {
+          "name": "PromotionGateDecision",
+          "members": ["ALLOWED", "DENIED", "SHADOW_PASS"]
+        }
+      ],
+      "public_functions": [
+        {"name": "validate_promotion_gate", "signature": "(context: PromotionGateContext, lease_store=None, outbox=None, projection_store=None, provenance_source=None, expected_source_digest=None, enforcement_enabled=None) -> PromotionGateResult", "description": "Validate promotion gate: source provenance, run authority, custody lease, WBC attempt."},
+        {"name": "validate_promotion_gate_simple", "signature": "(projection_id, target, run_authority_grant_id, coordinator_fence_token, source_path=None, wbc_attempt_reference=None, **store_dirs) -> PromotionGateResult", "description": "Convenience wrapper for validate_promotion_gate."},
+        {"name": "canary_enforcement_enabled", "signature": "() -> bool", "description": "Return True when ARNOLD_M7_CANARY_ENFORCEMENT is active."}
+      ],
+      "public_constants": [
+        {"name": "CANARY_SCHEMA_VERSION", "value": "1"}
+      ]
+    },
+    "compatibility": {
+      "source_pyc": "arnold_pipelines/megaplan/custody/__pycache__/compatibility.cpython-311.pyc",
+      "public_dataclasses": [
+        {
+          "name": "ReaderCompatibility",
+          "fields": ["reader_id", "projection_ids", "mode", "deadline_milestone", "status"],
+          "description": "Registration of a historical compatibility reader."
+        },
+        {
+          "name": "CompatibilitySnapshot",
+          "fields": ["mode", "current_milestone", "readers", "rollback_safety"],
+          "description": "Point-in-time compatibility snapshot for audit and diagnostics."
+        },
+        {
+          "name": "RollbackValidation",
+          "fields": ["safe", "reasons", "disabled_writers", "preserved_quarantined"],
+          "description": "Rollback safety validation result."
+        }
+      ],
+      "public_enums": [
+        {
+          "name": "CompatibilityMode",
+          "members": ["SHADOW", "ACTIVE", "ROLLBACK"]
+        },
+        {
+          "name": "CompatibilityStatus",
+          "members": ["COMPATIBLE", "EXPIRING", "EXPIRED", "INCOMPATIBLE"]
+        },
+        {
+          "name": "DeadlineMilestone",
+          "members": ["M7", "M7A", "M8", "M9", "M10"]
+        }
+      ],
+      "public_functions": [
+        {"name": "get_reader", "signature": "(reader_id: str) -> ReaderCompatibility | None", "description": "Look up a registered reader by stable id."},
+        {"name": "list_readers", "signature": "(mode: CompatibilityMode | None = None, deadline: DeadlineMilestone | None = None) -> list[ReaderCompatibility]", "description": "List registered readers, optionally filtered."},
+        {"name": "list_expired_readers", "signature": "(current_milestone: DeadlineMilestone) -> list[ReaderCompatibility]", "description": "Return readers whose compatibility has expired."},
+        {"name": "list_expiring_readers", "signature": "(current_milestone: DeadlineMilestone) -> list[ReaderCompatibility]", "description": "Return readers approaching their compatibility deadline."},
+        {"name": "check_reader_compatibility", "signature": "(reader_id: str, current_milestone=None, mode=None) -> CompatibilityStatus", "description": "Check whether a reader is compatible under current mode."},
+        {"name": "get_mode", "signature": "() -> CompatibilityMode", "description": "Return current compatibility mode."},
+        {"name": "is_production_enforcement_enabled", "signature": "() -> bool", "description": "Return True when M7 production enforcement is enabled."},
+        {"name": "validate_rollback_safety", "signature": "(reader_ids=None, writer_ids=None, quarantined_count=None) -> RollbackValidation", "description": "Validate that a rollback is safe."},
+        {"name": "snapshot", "signature": "() -> CompatibilitySnapshot", "description": "Generate a point-in-time compatibility snapshot for audit/diagnostics."}
+      ],
+      "public_constants": [
+        {"name": "COMPATIBILITY_SCHEMA_VERSION", "value": "1"}
+      ]
+    },
+    "outbox": {
+      "source_pyc": "arnold_pipelines/megaplan/custody/__pycache__/outbox.cpython-311.pyc",
+      "public_dataclasses": [
+        {
+          "name": "OutboxRecord",
+          "fields": ["record_id", "record_type", "status", "target_key", "occurrence_key", "wbc_attempt_reference", "run_authority_grant_id", "coordinator_fence_token", "created_at", "reconciled_at", "causal_predecessor"],
+          "description": "Append-only custody outbox record."
+        },
+        {
+          "name": "DeadLetterRecord",
+          "fields": ["record_id", "original_record", "failure_reason", "dead_lettered_at"],
+          "description": "Dead-lettered outbox record after reconciliation failure."
+        },
+        {
+          "name": "ReconciliationResult",
+          "fields": ["disposition", "record_id", "diagnostics"],
+          "description": "Result of reconciling an outbox record."
+        },
+        {
+          "name": "CustodyOutbox",
+          "fields": ["base_dir", "history_path", "lock_path", "dead_letter_path"],
+          "description": "Durable custody outbox for evidence reconciliation."
+        }
+      ],
+      "public_enums": [
+        {
+          "name": "OutboxRecordStatus",
+          "members": ["PENDING", "RECONCILED", "DEAD_LETTER"]
+        },
+        {
+          "name": "OutboxRecordType",
+          "members": ["LEASE_EVENT", "WBC_ATTEMPT", "RUN_AUTHORITY_GRANT", "COORDINATOR_FENCE"]
+        },
+        {
+          "name": "ReconciliationDisposition",
+          "members": ["MATCHED", "MISMATCHED", "MISSING", "STALE", "ERROR"]
+        }
+      ],
+      "public_functions": [
+        {"name": "reconcile_outbox_record", "signature": "(outbox: CustodyOutbox, record: OutboxRecord, lease_store=None, wbc_attempt_reader=None, run_authority_reader=None) -> tuple[OutboxRecord, tuple[ReconciliationResult, ...]]", "description": "Reconcile an outbox record by rereading source records."},
+        {"name": "reconcile_all_pending", "signature": "(outbox: CustodyOutbox, **readers) -> tuple[list[OutboxRecord], list[DeadLetterRecord]]", "description": "Reconcile all pending outbox records."},
+        {"name": "open_outbox", "signature": "(base_dir: Path | str | None = None) -> CustodyOutbox", "description": "Open custody outbox store rooted at base_dir."},
+        {"name": "build_outbox_record_from_event", "signature": "(event: CustodyLeaseEvent) -> OutboxRecord", "description": "Build outbox record from custody lease event."}
+      ],
+      "public_constants": [
+        {"name": "OUTBOX_SCHEMA_VERSION", "value": "1"},
+        {"name": "DEAD_LETTER_SCHEMA_VERSION", "value": "1"}
+      ]
+    },
+    "projections": {
+      "source_pyc": "arnold_pipelines/megaplan/custody/__pycache__/projections.cpython-311.pyc",
+      "public_dataclasses": [
+        {
+          "name": "CustodyProjectionStore",
+          "fields": ["base_dir"],
+          "description": "Projection store for custody-related materialized views."
+        }
+      ],
+      "public_enums": [
+        {
+          "name": "ProjectionEventType",
+          "members": ["SNAPSHOT", "UPDATE", "DELETE", "TAG"]
+        }
+      ],
+      "public_exceptions": [
+        {"name": "ProjectionStoreError", "base": "RuntimeError"},
+        {"name": "ProjectionNotFoundError", "base": "ProjectionStoreError"}
+      ],
+      "public_functions": [
+        {"name": "open_projection_store", "signature": "(base_dir: Path | str | None = None) -> CustodyProjectionStore", "description": "Open custody projection store rooted at base_dir."},
+        {"name": "append_events", "signature": "(store: CustodyProjectionStore, projection_id: str, events: Sequence[tuple[str, dict]]) -> Sequence[dict]", "description": "Append a batch of projection events in sequence."}
+      ],
+      "public_constants": [
+        {"name": "PROJECTION_SCHEMA_VERSION", "value": "1"}
+      ]
+    },
+    "repair_receipt": {
+      "source_pyc": "arnold_pipelines/megaplan/custody/__pycache__/repair_receipt.cpython-311.pyc",
+      "public_dataclasses": [
+        {
+          "name": "RepairReceipt",
+          "fields": ["receipt_id", "status", "target_key", "occurrence_key", "lease", "attempt_evidence", "occurred_at", "causal_predecessor", "receipt_digest"],
+          "description": "Immutable repair receipt with idempotent digest."
+        }
+      ],
+      "public_enums": [
+        {
+          "name": "RepairReceiptStatus",
+          "members": ["ATTEMPT", "REVIEW", "REWORK", "ACCEPTED", "REJECTED", "SUPERSEDED"]
+        }
+      ],
+      "public_functions": [
+        {"name": "compute_receipt_digest", "signature": "(receipt: RepairReceipt) -> str", "description": "Compute deterministic SHA-256 content address of a receipt."},
+        {"name": "build_repair_receipt", "signature": "(**kwargs) -> RepairReceipt | None", "description": "Build repair receipt from kwargs; returns None if required fields missing."},
+        {"name": "normalize_repair_receipt", "signature": "(payload: Any) -> RepairReceipt | None", "description": "Return canonical RepairReceipt or None for invalid inputs."},
+        {"name": "review_receipt", "signature": "(receipt: RepairReceipt) -> RepairReceipt", "description": "Transition receipt through review without altering attempt evidence."},
+        {"name": "rework_receipt", "signature": "(receipt: RepairReceipt) -> RepairReceipt", "description": "Create rework receipt with updated evidence."},
+        {"name": "supersede_receipt", "signature": "(receipt: RepairReceipt) -> RepairReceipt", "description": "Mark receipt as superseded by a later one (terminal status)."},
+        {"name": "is_same_attempt_evidence", "signature": "(a: RepairReceipt, b: RepairReceipt) -> bool", "description": "Return True if two receipts carry byte-identical attempt evidence."}
+      ],
+      "public_constants": [
+        {"name": "REPAIR_RECEIPT_SCHEMA_VERSION", "value": "1"}
+      ]
+    }
+  },
+  "cross_module_dependencies": {
+    "contracts": ["run_authority.contracts"],
+    "lease_store": ["custody.contracts", "run_authority.contracts"],
+    "action_validator": ["custody.contracts", "custody.lease_store", "custody.outbox", "run_authority.contracts"],
+    "controlled_writer_registry": [],
+    "writer_map": [],
+    "canary": ["custody.action_validator", "custody.contracts", "custody.lease_store", "custody.outbox", "custody.projections"],
+    "compatibility": ["custody.action_validator"],
+    "outbox": ["custody.contracts", "run_authority.contracts"],
+    "projections": ["arnold_pipelines.megaplan._core.io"],
+    "repair_receipt": ["custody.contracts", "run_authority.contracts"]
+  },
+  "north_star_overrides_note": "Bytecode-derived interfaces are compatibility evidence only. North Star invariants (WBC records never grant/lease authority, Run Authority does not store custody leases, Custody does not accept receipts as grants) override any recovered behavior that would authorize from derived state or best-effort receipts."
+}
+

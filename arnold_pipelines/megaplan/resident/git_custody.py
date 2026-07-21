@@ -220,6 +220,26 @@ def render_git_custody_contract(custody: Mapping[str, Any]) -> str:
     )
 
 
+def git_custody_projection(custody: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Return the bounded custody facts copied into managed-child event trails."""
+
+    if not isinstance(custody, Mapping):
+        return {"available": False, "resolution_status": "missing"}
+    resolution = custody.get("target_resolution")
+    resolution = resolution if isinstance(resolution, Mapping) else {}
+    return {
+        "available": True,
+        "schema_version": str(custody.get("schema_version") or ""),
+        "evidence_path": str(custody.get("evidence_path") or "") or None,
+        "resolution_status": str(resolution.get("status") or "unknown"),
+        "resolution_reason": str(resolution.get("reason") or "") or None,
+        "target_ref": str(resolution.get("target_ref") or "") or None,
+        "target_path": str(resolution.get("target_path") or "") or None,
+        "base_revision": str(resolution.get("base_revision") or "") or None,
+        "gate": str(resolution.get("gate") or "") or None,
+    }
+
+
 def _mapping(value: object, field: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise GitCustodyError(f"git custody evidence missing object: {field}")

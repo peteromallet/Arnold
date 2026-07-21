@@ -55,6 +55,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Mapping
 
 from arnold.workflow.boundary_evidence import (
@@ -66,12 +67,18 @@ from arnold.workflow.boundary_evidence import (
     SemanticFinding,
 )
 from arnold.workflow.boundary_templates import (
+    DEFAULT_WBC_INVENTORY_PATH,
     BoundaryTemplateKind,
+    InventoryRowCompleteness,
     TemplateVersionPin,
+    WbcInventoryInvariant,
+    assess_inventory_rows,
     check_contract_conformance,
     check_template_upgrade,
     classify_boundary_kind,
     get_required_fields,
+    load_wbc_boundary_inventory,
+    select_inventory_rows,
 )
 from arnold.workflow.boundary_evidence import TemplateCompatibility
 
@@ -130,6 +137,27 @@ class ConformanceViolationKind(StrEnum):
 
     PHASE_RESULT_UNVERIFIED = "phase_result_unverified"
     """The contract requires a phase result (``phase_result_required=True``) but no receipt phase result ref was provided."""
+
+    START_BEFORE_DISPATCH_UNVERIFIED = "start_before_dispatch_unverified"
+    """Generated inventory does not prove a durable start exists before dispatch."""
+
+    EXACTLY_ONE_TERMINAL_UNVERIFIED = "exactly_one_terminal_unverified"
+    """Generated inventory does not prove a single terminal outcome."""
+
+    GRANT_LEASE_GATE_UNVERIFIED = "grant_lease_gate_unverified"
+    """Generated inventory does not prove the Run Authority plus Custody gate."""
+
+    EXACT_VERSION_LOOKUP_UNVERIFIED = "exact_version_lookup_unverified"
+    """Generated inventory does not prove exact-version source lookup before mutation."""
+
+    CAUSAL_EVIDENCE_UNVERIFIED = "causal_evidence_unverified"
+    """Generated inventory does not prove joined causal evidence for lifecycle events."""
+
+    POST_TRANSITION_REREAD_UNVERIFIED = "post_transition_reread_unverified"
+    """Generated inventory does not prove authoritative reread after transition."""
+
+    INCOMPLETE_INVENTORY_ROW = "incomplete_inventory_row"
+    """Generated inventory marks the boundary as incomplete adoption state."""
 
     # ── Graph-topology level ─────────────────────────────────────────────
     GRAPH_DANGLING_DEPENDENCY = "graph_dangling_dependency"
@@ -309,6 +337,7 @@ def verify_boundary_conformance(
     *,
     template_kinds: Mapping[str, BoundaryTemplateKind | str] | None = None,
     version_pins: Mapping[str, TemplateVersionPin] | None = None,
+    inventory_path: str | Path | None = DEFAULT_WBC_INVENTORY_PATH,
 ) -> ConformanceResult:
     """Verify graph-shaped workflow boundary conformance in memory.
 
@@ -331,6 +360,8 @@ def verify_boundary_conformance(
             to check for template-version compatibility.  When a pin is
             present, the verifier confirms the pinned version is compatible
             with the current template profile for that boundary's kind.
+        inventory_path: Optional generated inventory artifact used as the
+            source of truth for adoption completeness and runtime proof checks.
 
     Returns:
         A :class:`ConformanceResult` with all violations found.
@@ -345,6 +376,7 @@ def verify_boundary_conformance(
     boundary_ids = frozenset(boundaries.keys())
     receipt_count = 0
     evidence_count = 0
+    inventory = load_wbc_boundary_inventory(inventory_path)
 
     # Resolve template_kinds mapping — merge parameter with spec-level hints
     resolved_templates: dict[str, BoundaryTemplateKind] = {}
@@ -393,6 +425,12 @@ def verify_boundary_conformance(
 
         # Also check for generic contract completeness independent of template
         _check_contract_basics(contract, boundary_id, violations)
+        _check_inventory_adoption(
+            contract=contract,
+            boundary_id=boundary_id,
+            inventory=inventory,
+            violations=violations,
+        )
 
         # ── 1b. Template-version compatibility ────────────────────────────
         if version_pins and boundary_id in version_pins:
@@ -589,6 +627,91 @@ def _check_contract_basics(
                         "expected_state_delta_empty": True,
                         "receipt_required": contract.receipt_required,
                         "authority_required": contract.authority_required,
+                    },
+                )
+            )
+
+
+_VIOLATION_BY_INVARIANT: dict[WbcInventoryInvariant, ConformanceViolationKind] = {
+    WbcInventoryInvariant.START_BEFORE_DISPATCH: ConformanceViolationKind.START_BEFORE_DISPATCH_UNVERIFIED,
+    WbcInventoryInvariant.EXACTLY_ONE_TERMINAL: ConformanceViolationKind.EXACTLY_ONE_TERMINAL_UNVERIFIED,
+    WbcInventoryInvariant.GRANT_LEASE_GATE: ConformanceViolationKind.GRANT_LEASE_GATE_UNVERIFIED,
+    WbcInventoryInvariant.EXACT_VERSION_LOOKUP: ConformanceViolationKind.EXACT_VERSION_LOOKUP_UNVERIFIED,
+    WbcInventoryInvariant.CAUSAL_EVIDENCE: ConformanceViolationKind.CAUSAL_EVIDENCE_UNVERIFIED,
+    WbcInventoryInvariant.POST_TRANSITION_REREAD: ConformanceViolationKind.POST_TRANSITION_REREAD_UNVERIFIED,
+}
+
+_INVARIANT_DESCRIPTION: dict[WbcInventoryInvariant, str] = {
+    WbcInventoryInvariant.START_BEFORE_DISPATCH: "durable start-before-dispatch evidence",
+    WbcInventoryInvariant.EXACTLY_ONE_TERMINAL: "exactly-one-terminal evidence",
+    WbcInventoryInvariant.GRANT_LEASE_GATE: "Run Authority plus Custody grant/lease gate evidence",
+    WbcInventoryInvariant.EXACT_VERSION_LOOKUP: "exact-version source lookup evidence",
+    WbcInventoryInvariant.CAUSAL_EVIDENCE: "joined causal evidence",
+    WbcInventoryInvariant.POST_TRANSITION_REREAD: "post-transition authoritative reread evidence",
+}
+
+
+def _check_inventory_adoption(
+    *,
+    contract: BoundaryContract,
+    boundary_id: str,
+    inventory: Mapping[str, Any] | None,
+    violations: list[ConformanceViolation],
+) -> None:
+    """Check generated inventory adoption status for the boundary."""
+    if inventory is None:
+        return
+
+    details = dict(contract.details)
+    inventory_boundary_id = str(details.get("inventory_boundary_id") or boundary_id)
+    inventory_step_id = details.get("inventory_step_id")
+    step_id = str(inventory_step_id) if inventory_step_id else None
+    raw_required = details.get("required_wbc_invariants", ())
+    if isinstance(raw_required, (str, WbcInventoryInvariant)):
+        raw_required = (raw_required,)
+    rows = select_inventory_rows(
+        inventory,
+        boundary_id=inventory_boundary_id or None,
+        step_id=step_id,
+    )
+    if not rows:
+        return
+
+    assessment = assess_inventory_rows(rows, required_invariants=list(raw_required))
+    if assessment.completeness == InventoryRowCompleteness.INCOMPLETE:
+        if assessment.reasons:
+            violations.append(
+                ConformanceViolation(
+                    boundary_id=boundary_id,
+                    kind=ConformanceViolationKind.INCOMPLETE_INVENTORY_ROW,
+                    description=(
+                        f"Generated inventory marks boundary '{boundary_id}' as incomplete: "
+                        f"{', '.join(assessment.reasons)}."
+                    ),
+                    detail={
+                        "inventory_boundary_id": inventory_boundary_id,
+                        "inventory_step_id": step_id,
+                        "reasons": list(assessment.reasons),
+                        "row_kind": assessment.row_kind,
+                        "producer_category": assessment.producer_category,
+                        "matched_row_count": assessment.matched_row_count,
+                    },
+                )
+            )
+        for invariant in assessment.missing_invariants:
+            violations.append(
+                ConformanceViolation(
+                    boundary_id=boundary_id,
+                    kind=_VIOLATION_BY_INVARIANT[invariant],
+                    description=(
+                        f"Generated inventory for boundary '{boundary_id}' does not prove "
+                        f"{_INVARIANT_DESCRIPTION[invariant]}."
+                    ),
+                    detail={
+                        "inventory_boundary_id": inventory_boundary_id,
+                        "inventory_step_id": step_id,
+                        "invariant": invariant.value,
+                        "row_kind": assessment.row_kind,
                     },
                 )
             )
@@ -869,6 +992,7 @@ def verify_single_boundary(
     workflow_id: str = "arnold.workflow",
     template_kind: BoundaryTemplateKind | str | None = None,
     version_pin: TemplateVersionPin | None = None,
+    inventory_path: str | Path | None = DEFAULT_WBC_INVENTORY_PATH,
 ) -> ConformanceResult:
     """Verify a single boundary in isolation.
 
@@ -899,6 +1023,7 @@ def verify_single_boundary(
         boundaries={boundary.boundary_id: boundary},
         template_kinds=tk_map,
         version_pins=vp_map,
+        inventory_path=inventory_path,
     )
 
 
@@ -1065,6 +1190,7 @@ def classify_and_verify_boundaries(
     boundaries: Mapping[str, WorkflowBoundarySpec],
     *,
     version_pins: Mapping[str, TemplateVersionPin] | None = None,
+    inventory_path: str | Path | None = DEFAULT_WBC_INVENTORY_PATH,
 ) -> ConformanceResult:
     """Auto-classify each boundary's template kind and verify conformance.
 
@@ -1094,6 +1220,7 @@ def classify_and_verify_boundaries(
         boundaries=boundaries,
         template_kinds=template_kinds if template_kinds else None,
         version_pins=version_pins,
+        inventory_path=inventory_path,
     )
 
 

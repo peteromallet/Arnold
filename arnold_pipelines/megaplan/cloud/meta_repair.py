@@ -54,6 +54,7 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     REPAIRING,
     SUCCESS_OUTCOMES,
     TRUE_HUMAN_BLOCKER,
+    append_attempt_record,
     atomic_write_json,
     build_verification_record,
     classify_recovery_verification,
@@ -1797,6 +1798,23 @@ def persist_meta_repair_record(
         verdict_path = meta_dir / _META_REPAIR_COMPLETION_REQUIRED_ARTIFACT
         save_meta_repair_verdict(verdict_path, verdict, redactor=None)
 
+    sidecar_dir = repair_root.with_name(f"{repair_root.name}.d")
+    append_attempt_record(
+        sidecar_dir,
+        {
+            "session_id": record.session,
+            "attempt_id": record.meta_repair_id,
+            "actor": "meta_repair",
+            "state": _meta_repair_attempt_state(record.outcome),
+            "outcome": record.outcome,
+            "trigger": record.trigger.value if record.trigger is not None else "",
+            "blocker_id": record.blocker_id,
+            "record_path": str(file_path),
+            "verdict_kind": verdict.verdict_kind if verdict is not None else "",
+            "recorded_at": record.created_at,
+        },
+    )
+
     update_session_index(
         repair_root / "index.json",
         record.session,
@@ -1812,6 +1830,19 @@ def persist_meta_repair_record(
         },
     )
     return file_path
+
+
+def _meta_repair_attempt_state(outcome: str) -> str:
+    normalized = str(outcome or "").strip().lower()
+    if not normalized:
+        return "failed"
+    if normalized in {"repairing", "running", "pending", "in_progress"}:
+        return "running"
+    if normalized in {"fixed", "complete", "completed", "recovered"}:
+        return "succeeded"
+    if is_success_outcome(normalized):
+        return "succeeded"
+    return "failed"
 
 
 def load_meta_repair_record(

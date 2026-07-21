@@ -40,8 +40,10 @@ profile kinds.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Mapping
 
 from arnold.workflow.boundary_evidence import (
@@ -92,6 +94,37 @@ class BoundaryTemplateKind(StrEnum):
 
     EXTERNAL_WITNESS = "external_witness"
     """External witness boundary: external attestation evidence."""
+
+
+class WbcInventoryInvariant(StrEnum):
+    """Inventory-backed WBC runtime proof requirements."""
+
+    START_BEFORE_DISPATCH = "start_before_dispatch"
+    EXACTLY_ONE_TERMINAL = "exactly_one_terminal"
+    GRANT_LEASE_GATE = "grant_lease_gate"
+    EXACT_VERSION_LOOKUP = "exact_version_lookup"
+    CAUSAL_EVIDENCE = "causal_evidence"
+    POST_TRANSITION_REREAD = "post_transition_reread"
+
+
+class InventoryRowCompleteness(StrEnum):
+    """Typed completeness state for generated inventory rows."""
+
+    COMPLETE = "complete"
+    INCOMPLETE = "incomplete"
+    ABSENT = "absent"
+
+
+@dataclass(frozen=True)
+class InventoryRowAssessment:
+    """Source-of-truth assessment for one logical inventory row set."""
+
+    completeness: InventoryRowCompleteness
+    reasons: tuple[str, ...] = ()
+    missing_invariants: tuple[WbcInventoryInvariant, ...] = ()
+    producer_category: str | None = None
+    row_kind: str | None = None
+    matched_row_count: int = 0
 
 
 # ── Required-field profiles ─────────────────────────────────────────────────
@@ -237,6 +270,56 @@ REQUIRED_FIELDS_BY_KIND: dict[BoundaryTemplateKind, frozenset[str]] = {
     BoundaryTemplateKind.EXECUTION_CUSTODY: REQUIRED_FIELDS_EXECUTION_CUSTODY,
     BoundaryTemplateKind.GRAPH_JOIN_FANOUT: REQUIRED_FIELDS_GRAPH_JOIN_FANOUT,
     BoundaryTemplateKind.EXTERNAL_WITNESS: REQUIRED_FIELDS_EXTERNAL_WITNESS,
+}
+
+DEFAULT_WBC_INVENTORY_PATH = Path(__file__).resolve().parents[2] / "evidence" / "wbc-boundary-inventory.json"
+
+_INCOMPLETE_SUPPORT_REASONS: dict[str, str] = {
+    "partial": "support-manifest-only",
+    "planned": "support-manifest-only",
+    "unknown": "unknown",
+    "warn_only": "warn-only",
+    "warning_only": "warn-only",
+    "fixture_only": "fixture-only",
+    "manual": "manual",
+    "schema_only": "schema-only",
+    "support_manifest_only": "support-manifest-only",
+}
+
+_INVARIANT_FLAG_KEYS: dict[WbcInventoryInvariant, tuple[str, ...]] = {
+    WbcInventoryInvariant.START_BEFORE_DISPATCH: (
+        "start_before_dispatch",
+        "start_before_dispatch_proven",
+        "durable_start_before_dispatch",
+        "started_before_dispatch",
+    ),
+    WbcInventoryInvariant.EXACTLY_ONE_TERMINAL: (
+        "exactly_one_terminal",
+        "exactly_one_terminal_proven",
+        "single_terminal_outcome",
+    ),
+    WbcInventoryInvariant.GRANT_LEASE_GATE: (
+        "grant_lease_gate",
+        "grant_lease_gate_proven",
+        "grant_lease_validation",
+        "grant_and_lease_gate",
+    ),
+    WbcInventoryInvariant.EXACT_VERSION_LOOKUP: (
+        "exact_version_lookup",
+        "exact_version_lookup_proven",
+        "exact_source_version_lookup",
+    ),
+    WbcInventoryInvariant.CAUSAL_EVIDENCE: (
+        "causal_evidence",
+        "causal_evidence_proven",
+        "joined_causal_evidence",
+    ),
+    WbcInventoryInvariant.POST_TRANSITION_REREAD: (
+        "post_transition_reread",
+        "post_transition_reread_proven",
+        "authoritative_reread",
+        "post_write_reread",
+    ),
 }
 
 # ── Canonical template instances ────────────────────────────────────────────
@@ -880,8 +963,176 @@ def deliberate_upgrade_template(
     )
 
 
+def load_wbc_boundary_inventory(
+    inventory_path: str | Path | None = None,
+) -> dict[str, Any] | None:
+    """Load the generated WBC boundary inventory if available."""
+    path = Path(inventory_path) if inventory_path is not None else DEFAULT_WBC_INVENTORY_PATH
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+
+
+def select_inventory_rows(
+    inventory: Mapping[str, Any] | None,
+    *,
+    boundary_id: str | None = None,
+    step_id: str | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Return generated inventory rows matching *boundary_id* or *step_id*."""
+    if not inventory:
+        return ()
+    rows = inventory.get("rows", ())
+    matched: list[Mapping[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        if boundary_id and row.get("boundary_id") == boundary_id:
+            matched.append(row)
+            continue
+        if step_id and row.get("step_id") == step_id:
+            matched.append(row)
+    return tuple(matched)
+
+
+def assess_inventory_rows(
+    rows: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]],
+    *,
+    required_invariants: tuple[WbcInventoryInvariant | str, ...] | list[WbcInventoryInvariant | str] = (),
+) -> InventoryRowAssessment:
+    """Assess whether generated inventory rows prove complete WBC adoption."""
+    row_tuple = tuple(rows)
+    if not row_tuple:
+        return InventoryRowAssessment(completeness=InventoryRowCompleteness.ABSENT)
+
+    authoritative = _choose_authoritative_inventory_row(row_tuple)
+    row_kind = str(authoritative.get("row_kind", "") or "") or None
+    producer_category = _normalize_optional(authoritative.get("producer_category"))
+    support_status = _normalize_optional(authoritative.get("support_status"))
+    reasons: set[str] = set()
+
+    if row_kind == "manifest_entry" and bool(authoritative.get("support_is_non_authoritative")):
+        reasons.add("support-manifest-only")
+
+    if row_kind == "manifest_entry" and not authoritative.get("boundary_id"):
+        producer_path = str(authoritative.get("producer_path", "") or "")
+        step_name = str(authoritative.get("step_id", "") or "")
+        if producer_path.startswith("arnold/workflow/") or step_name.startswith("arnold.workflow."):
+            reasons.add("schema-only")
+        else:
+            reasons.add("support-manifest-only")
+
+    if producer_category == "manual_emit":
+        reasons.add("manual-emission")
+    elif producer_category == "declared_only":
+        reasons.add("declared-only")
+    elif producer_category == "unknown":
+        reasons.add("unknown")
+
+    if support_status is not None and row_kind != "boundary_contract":
+        mapped_reason = _INCOMPLETE_SUPPORT_REASONS.get(support_status)
+        if mapped_reason:
+            reasons.add(mapped_reason)
+
+    support_verification = authoritative.get("support_verification")
+    if isinstance(support_verification, Mapping):
+        missing = support_verification.get("missing_requirements")
+        if isinstance(missing, list) and missing:
+            reasons.add("support-manifest-only")
+
+    requested_invariants = {
+        invariant if isinstance(invariant, WbcInventoryInvariant) else WbcInventoryInvariant(str(invariant))
+        for invariant in required_invariants
+    }
+    explicit_invariants = _find_explicit_invariants(authoritative)
+    invariants_to_check = requested_invariants | explicit_invariants
+    missing_invariants = tuple(
+        sorted(
+            (
+                invariant
+                for invariant in invariants_to_check
+                if not _inventory_invariant_proven(authoritative, invariant)
+            ),
+            key=lambda item: item.value,
+        )
+    )
+
+    completeness = (
+        InventoryRowCompleteness.INCOMPLETE
+        if reasons or missing_invariants
+        else InventoryRowCompleteness.COMPLETE
+    )
+    return InventoryRowAssessment(
+        completeness=completeness,
+        reasons=tuple(sorted(reasons)),
+        missing_invariants=missing_invariants,
+        producer_category=producer_category,
+        row_kind=row_kind,
+        matched_row_count=len(row_tuple),
+    )
+
+
+def _choose_authoritative_inventory_row(
+    rows: tuple[Mapping[str, Any], ...],
+) -> Mapping[str, Any]:
+    def _rank(row: Mapping[str, Any]) -> tuple[int, str]:
+        row_kind = str(row.get("row_kind", "") or "")
+        if row_kind == "boundary_contract":
+            return (0, row_kind)
+        if row_kind == "manifest_entry":
+            return (1, row_kind)
+        return (2, row_kind)
+
+    return sorted(rows, key=_rank)[0]
+
+
+def _normalize_optional(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    return text or None
+
+
+def _find_explicit_invariants(row: Mapping[str, Any]) -> set[WbcInventoryInvariant]:
+    explicit: set[WbcInventoryInvariant] = set()
+    for invariant, keys in _INVARIANT_FLAG_KEYS.items():
+        if any(_lookup_nested_value(row, key) is not None for key in keys):
+            explicit.add(invariant)
+    return explicit
+
+
+def _inventory_invariant_proven(
+    row: Mapping[str, Any],
+    invariant: WbcInventoryInvariant,
+) -> bool:
+    for key in _INVARIANT_FLAG_KEYS[invariant]:
+        value = _lookup_nested_value(row, key)
+        if value is not None:
+            return bool(value)
+    return False
+
+
+def _lookup_nested_value(row: Mapping[str, Any], key: str) -> Any:
+    direct = row.get(key)
+    if direct is not None:
+        return direct
+    for container_key in ("inventory_proof", "support_verification", "evidence_flags"):
+        container = row.get(container_key)
+        if isinstance(container, Mapping) and key in container:
+            return container.get(key)
+        if isinstance(container, Mapping):
+            nested = container.get("evidence_flags")
+            if isinstance(nested, Mapping) and key in nested:
+                return nested.get(key)
+    return None
+
+
 __all__ = [
+    "DEFAULT_WBC_INVENTORY_PATH",
     "BoundaryTemplateKind",
+    "InventoryRowAssessment",
+    "InventoryRowCompleteness",
     "REQUIRED_FIELDS_BY_KIND",
     "REQUIRED_FIELDS_APPROVAL_BOUNDARY",
     "REQUIRED_FIELDS_ARTIFACT_HANDOFF_BOUNDARY",
@@ -896,6 +1147,8 @@ __all__ = [
     "TEMPLATES_BY_KIND",
     "TemplateSelection",
     "TemplateVersionPin",
+    "WbcInventoryInvariant",
+    "assess_inventory_rows",
     "check_contract_conformance",
     "check_template_upgrade",
     "classify_boundary_kind",
@@ -903,6 +1156,8 @@ __all__ = [
     "get_required_fields",
     "get_template",
     "list_template_kinds",
+    "load_wbc_boundary_inventory",
     "pin_template_version",
+    "select_inventory_rows",
     "select_template",
 ]
