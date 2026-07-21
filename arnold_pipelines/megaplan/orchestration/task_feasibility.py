@@ -272,11 +272,15 @@ def compile_task_feasibility(
             children[dep].add(task_id)
             evidence = reason_map.get(dep)
             if not isinstance(evidence, Mapping):
+                diagnostics.append(FeasibilityDiagnostic("routing_dependency_forbidden", "Dependency evidence must be a semantic reason object; routing preferences are not valid dependencies.", task_id, dep))
                 continue
             kind = evidence.get("kind")
             reason = evidence.get("reason")
             required_output = evidence.get("required_output")
-            if kind not in _DEPENDENCY_KINDS or not isinstance(reason, str) or not reason.strip() or not isinstance(required_output, str) or not required_output.strip():
+            if kind not in _DEPENDENCY_KINDS:
+                diagnostics.append(FeasibilityDiagnostic("routing_dependency_forbidden", f"Dependency kind '{kind!s}' is not a semantic dependency reason; only {sorted(_DEPENDENCY_KINDS)} are valid.", task_id, dep))
+                continue
+            if not isinstance(reason, str) or not reason.strip() or not isinstance(required_output, str) or not required_output.strip():
                 diagnostics.append(FeasibilityDiagnostic("dependency_reason_invalid", "Dependency evidence requires an allowed kind, concrete reason, and required_output.", task_id, dep))
                 continue
             lowered = reason.lower()

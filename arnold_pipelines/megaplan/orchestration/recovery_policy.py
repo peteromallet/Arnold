@@ -1,4 +1,4 @@
-"""RecoveryPolicy.classify — M4 T16 (Step 11a).
+"""RecoveryPolicy.classify — M4 T16 (Step 11a) + M8A T8 circuit integration.
 
 Pure classifier extracted from ``megaplan.auto`` so any orchestration
 consumer can ask "what should I do with this error?" without importing
@@ -6,11 +6,17 @@ the planning driver.
 
 Contract
 --------
-:class:`RecoveryPolicy` exposes one method,
-:meth:`RecoveryPolicy.classify(error, layer) -> RecoveryDecision`, which
-returns a target-agnostic decision plus a *budget delta* — never a state
-mutation.  The caller (``auto.py`` today) still owns counter bumps,
-event emissions, and state machine transitions.
+:class:`RecoveryPolicy` exposes two methods:
+
+* :meth:`RecoveryPolicy.classify(error, layer) -> RecoveryDecision`
+  — target-agnostic decision plus budget delta, never a state mutation.
+* :meth:`RecoveryPolicy.classify_with_circuit(error, layer, *, circuit, ...) -> RecoveryDecision`
+  — consults a :class:`~arnold_pipelines.megaplan.orchestration.plan_circuit.PlanCircuit`
+  before authorizing any retry; normalizes the failure signature and opens
+  the circuit when the threshold is reached.
+
+The caller (``auto.py`` today) still owns counter bumps, event emissions,
+and state machine transitions.
 
 Decision actions
 ~~~~~~~~~~~~~~~~
@@ -28,6 +34,7 @@ Per-class budgets
 * context-exhaustion (mirrors ``DEFAULT_MAX_CONTEXT_RETRIES``)
 * transient external (mirrors ``DEFAULT_MAX_EXTERNAL_RETRIES``)
 * blocked-task (mirrors ``DEFAULT_MAX_BLOCKED_RETRIES`` at auto.py:117)
+* circuit-open (plan-level; no budget counter — the circuit itself is the guard)
 
 The classifier returns ``budget_delta`` as the *increment* the caller
 should apply to its corresponding counter (always ``+1`` for now, or ``0``
@@ -82,6 +89,7 @@ HaltKind = Literal[
     "external_retry_exhausted",
     "blocked_retry_exhausted",
     "permanent_external",
+    "circuit_open",
     "unclassified",
 ]
 
@@ -256,6 +264,102 @@ class RecoveryPolicy:
             action="halt",
             halt_kind="unclassified",
             reason="unclassified error",
+        )
+
+    # ------------------------------------------------------------------
+    # classify_with_circuit — consults PlanCircuit before authorizing retry
+    # ------------------------------------------------------------------
+
+    def classify_with_circuit(
+        self,
+        error: Any,
+        layer: str,
+        *,
+        circuit: Any,  # PlanCircuit (lazy import)
+        context_retries_used: int = 0,
+        external_retries_used: int = 0,
+        blocked_retries_used: int = 0,
+        phase: str = "",
+        task_id: str | None = None,
+        batch_id: str | None = None,
+        attempt_id: str | None = None,
+        blocker: Any = None,
+        provider: str | None = None,
+        ref_metadata: str | None = None,
+        fence: str | None = None,
+    ) -> RecoveryDecision:
+        """Classify with circuit-breaking — normalizes failure and checks circuit.
+
+        Before returning any retry action, this method:
+
+        1. Normalizes the failure into a :class:`FailureSignature`.
+        2. Records the occurrence against *circuit*.
+        3. If the circuit opens or is already open, returns
+           ``halt(kind="circuit_open")`` immediately — no retry is authorized.
+        4. Otherwise delegates to :meth:`classify` for budget-aware
+           classification.
+
+        Parameters
+        ----------
+        error, layer, context_retries_used, external_retries_used,
+        blocked_retries_used, phase:
+            Forwarded to :meth:`classify`.
+        circuit:
+            A :class:`~arnold_pipelines.megaplan.orchestration.plan_circuit.PlanCircuit`
+            instance that tracks failure occurrences.
+        task_id / batch_id / attempt_id:
+            Scope identity for normalization.
+        blocker:
+            Blocker payload whose digest is used for normalization.
+        provider:
+            Provider identifier.
+        ref_metadata:
+            Source/install revision metadata.
+        fence:
+            Current grant/authority fence identifier.
+
+        Returns
+        -------
+        RecoveryDecision
+        """
+        from arnold_pipelines.megaplan.orchestration.plan_circuit import (
+            normalize_failure_signature,
+        )
+
+        # 1) Normalize the failure signature.
+        signature = normalize_failure_signature(
+            error,
+            task_id=task_id,
+            batch_id=batch_id,
+            attempt_id=attempt_id,
+            blocker=blocker,
+            provider=provider,
+            ref_metadata=ref_metadata,
+            fence=fence,
+        )
+
+        # 2) Record against the circuit.
+        circuit_decision = circuit.record_failure(signature)
+
+        # 3) If the circuit is open, halt immediately — no retry allowed.
+        if circuit_decision.is_open:
+            return RecoveryDecision(
+                action="halt",
+                halt_kind="circuit_open",
+                reason=(
+                    f"Circuit open for failure class '{signature.failure_class}' "
+                    f"(occurrence {circuit_decision.occurrence_count}/{circuit_decision.threshold})"
+                ),
+            )
+
+        # 4) Circuit is not open — delegate to standard classify.
+        return self.classify(
+            error,
+            layer,
+            context_retries_used=context_retries_used,
+            external_retries_used=external_retries_used,
+            blocked_retries_used=blocked_retries_used,
+            phase=phase,
         )
 
     # ------------------------------------------------------------------

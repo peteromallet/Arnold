@@ -651,3 +651,572 @@ class TestImportPurity:
                 assert "handler" not in lower, f"Handler import found: {full}"
                 assert "batch" not in lower, f"Batch import found: {full}"
                 assert "runtime" not in lower, f"Runtime import found: {full}"
+
+
+# ============================================================================
+# M8A T9 -- Circuit dispatch and failure evaluation policy tests
+# ============================================================================
+
+
+class TestCircuitDispatchOutcome:
+    """CircuitDispatchOutcome enum and CircuitDispatchDecision dataclass."""
+
+    def test_enum_values(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import CircuitDispatchOutcome
+        assert set(CircuitDispatchOutcome) == {
+            CircuitDispatchOutcome.PROCEED,
+            CircuitDispatchOutcome.CIRCUIT_OPEN,
+        }
+
+    def test_decision_proceed(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitDispatchDecision,
+            CircuitDispatchOutcome,
+        )
+        d = CircuitDispatchDecision(CircuitDispatchOutcome.PROCEED, reason="ok")
+        assert d.may_dispatch is True
+        assert d.open_signatures == ()
+        assert d.reason == "ok"
+
+    def test_decision_circuit_open(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitDispatchDecision,
+            CircuitDispatchOutcome,
+        )
+        sigs = ({"failure_class": "worker_budget_exhausted", "task_id": "T7"},)
+        d = CircuitDispatchDecision(
+            CircuitDispatchOutcome.CIRCUIT_OPEN,
+            open_signatures=sigs,
+            reason="circuit open",
+        )
+        assert d.may_dispatch is False
+        assert len(d.open_signatures) == 1
+        assert d.open_signatures[0]["task_id"] == "T7"
+
+    def test_decision_defaults(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitDispatchDecision,
+            CircuitDispatchOutcome,
+        )
+        d = CircuitDispatchDecision(CircuitDispatchOutcome.PROCEED)
+        assert d.open_signatures == ()
+        assert d.reason == ""
+
+    def test_decision_frozen(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitDispatchDecision,
+            CircuitDispatchOutcome,
+        )
+        d = CircuitDispatchDecision(CircuitDispatchOutcome.PROCEED)
+        with pytest.raises(Exception):
+            d.outcome = CircuitDispatchOutcome.CIRCUIT_OPEN  # type: ignore[misc]
+
+    def test_string_values(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import CircuitDispatchOutcome
+        assert CircuitDispatchOutcome.PROCEED.value == "proceed"
+        assert CircuitDispatchOutcome.CIRCUIT_OPEN.value == "circuit_open"
+
+
+class TestCircuitFailureOutcome:
+    """CircuitFailureOutcome enum and CircuitFailureDecision dataclass."""
+
+    def test_enum_values(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import CircuitFailureOutcome
+        assert set(CircuitFailureOutcome) == {
+            CircuitFailureOutcome.ALLOW_RETRY,
+            CircuitFailureOutcome.CIRCUIT_OPEN,
+            CircuitFailureOutcome.CIRCUIT_ALREADY_OPEN,
+        }
+
+    def test_decision_allow_retry(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitFailureDecision,
+            CircuitFailureOutcome,
+        )
+        d = CircuitFailureDecision(
+            CircuitFailureOutcome.ALLOW_RETRY,
+            signature={"failure_class": "test"},
+            occurrence_count=1,
+            reason="first occurrence",
+        )
+        assert d.may_retry is True
+        assert d.is_open is False
+        assert d.occurrence_count == 1
+
+    def test_decision_circuit_open(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitFailureDecision,
+            CircuitFailureOutcome,
+        )
+        d = CircuitFailureDecision(
+            CircuitFailureOutcome.CIRCUIT_OPEN,
+            signature={"failure_class": "test"},
+            occurrence_count=2,
+            reason="threshold reached",
+        )
+        assert d.may_retry is False
+        assert d.is_open is True
+
+    def test_decision_circuit_already_open(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitFailureDecision,
+            CircuitFailureOutcome,
+        )
+        d = CircuitFailureDecision(
+            CircuitFailureOutcome.CIRCUIT_ALREADY_OPEN,
+            signature={"failure_class": "test"},
+            occurrence_count=2,
+            reason="already open",
+        )
+        assert d.may_retry is False
+        assert d.is_open is True
+
+    def test_decision_defaults(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitFailureDecision,
+            CircuitFailureOutcome,
+        )
+        d = CircuitFailureDecision(CircuitFailureOutcome.ALLOW_RETRY, signature={})
+        assert d.occurrence_count == 0
+        assert d.threshold == 2
+        assert d.reason == ""
+
+    def test_decision_frozen(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitFailureDecision,
+            CircuitFailureOutcome,
+        )
+        d = CircuitFailureDecision(CircuitFailureOutcome.ALLOW_RETRY, signature={})
+        with pytest.raises(Exception):
+            d.outcome = CircuitFailureOutcome.CIRCUIT_OPEN  # type: ignore[misc]
+
+    def test_string_values(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import CircuitFailureOutcome
+        assert CircuitFailureOutcome.ALLOW_RETRY.value == "allow_retry"
+        assert CircuitFailureOutcome.CIRCUIT_OPEN.value == "circuit_open"
+        assert CircuitFailureOutcome.CIRCUIT_ALREADY_OPEN.value == "circuit_already_open"
+
+
+class TestEvaluateCircuitBeforeDispatch:
+    """evaluate_circuit_before_dispatch pure policy function."""
+
+    @staticmethod
+    def _circuit():
+        from arnold_pipelines.megaplan.orchestration.plan_circuit import PlanCircuit
+        return PlanCircuit()
+
+    def test_empty_circuit_allows_dispatch(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitDispatchOutcome,
+            evaluate_circuit_before_dispatch,
+        )
+        d = evaluate_circuit_before_dispatch(self._circuit(), task_ids=["T1", "T2"])
+        assert d.outcome == CircuitDispatchOutcome.PROCEED
+        assert d.may_dispatch is True
+        assert "No open circuits" in d.reason
+
+    def test_open_circuit_blocks_matching_task(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitDispatchOutcome,
+            evaluate_circuit_before_dispatch,
+        )
+        from arnold_pipelines.megaplan.orchestration.plan_circuit import FailureSignature
+
+        c = self._circuit()
+        sig = FailureSignature(failure_class="worker_budget_exhausted", task_id="T7")
+        c.record_failure(sig)
+        c.record_failure(sig)  # opens circuit
+
+        d = evaluate_circuit_before_dispatch(c, task_ids=["T7", "T8"])
+        assert d.outcome == CircuitDispatchOutcome.CIRCUIT_OPEN
+        assert d.may_dispatch is False
+        assert len(d.open_signatures) == 1
+        assert d.open_signatures[0]["task_id"] == "T7"
+        assert d.open_signatures[0]["failure_class"] == "worker_budget_exhausted"
+
+    def test_open_circuit_does_not_block_unrelated_task(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitDispatchOutcome,
+            evaluate_circuit_before_dispatch,
+        )
+        from arnold_pipelines.megaplan.orchestration.plan_circuit import FailureSignature
+
+        c = self._circuit()
+        sig = FailureSignature(failure_class="worker_budget_exhausted", task_id="T7")
+        c.record_failure(sig)
+        c.record_failure(sig)
+
+        d = evaluate_circuit_before_dispatch(c, task_ids=["T12", "T13"])
+        assert d.outcome == CircuitDispatchOutcome.PROCEED
+        assert d.may_dispatch is True
+
+    def test_multiple_open_circuits_reported(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitDispatchOutcome,
+            evaluate_circuit_before_dispatch,
+        )
+        from arnold_pipelines.megaplan.orchestration.plan_circuit import FailureSignature
+
+        c = self._circuit()
+        for tid in ("T7", "T9"):
+            sig = FailureSignature(failure_class="blocked_by_prereq", task_id=tid)
+            c.record_failure(sig)
+            c.record_failure(sig)
+
+        d = evaluate_circuit_before_dispatch(c, task_ids=["T7", "T8", "T9"])
+        assert d.outcome == CircuitDispatchOutcome.CIRCUIT_OPEN
+        assert len(d.open_signatures) == 2
+        blocked_tasks = {s["task_id"] for s in d.open_signatures}
+        assert blocked_tasks == {"T7", "T9"}
+
+    def test_none_circuit_allows_dispatch(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitDispatchOutcome,
+            evaluate_circuit_before_dispatch,
+        )
+        d = evaluate_circuit_before_dispatch(None, task_ids=["T1"])
+        assert d.outcome == CircuitDispatchOutcome.PROCEED
+
+    def test_batch_id_in_reason(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitDispatchOutcome,
+            evaluate_circuit_before_dispatch,
+        )
+        from arnold_pipelines.megaplan.orchestration.plan_circuit import FailureSignature
+
+        c = self._circuit()
+        sig = FailureSignature(failure_class="test", task_id="T5")
+        c.record_failure(sig)
+        c.record_failure(sig)
+
+        d = evaluate_circuit_before_dispatch(c, task_ids=["T5"], batch_id="B3")
+        assert d.outcome == CircuitDispatchOutcome.CIRCUIT_OPEN
+        assert "Batch B3" in d.reason
+
+    def test_empty_task_ids_with_open_circuit_blocks(self) -> None:
+        """When no specific task_ids are given, any open circuit blocks dispatch."""
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitDispatchOutcome,
+            evaluate_circuit_before_dispatch,
+        )
+        from arnold_pipelines.megaplan.orchestration.plan_circuit import FailureSignature
+
+        c = self._circuit()
+        sig = FailureSignature(failure_class="test", task_id="T1")
+        c.record_failure(sig)
+        c.record_failure(sig)
+
+        d = evaluate_circuit_before_dispatch(c)
+        assert d.outcome == CircuitDispatchOutcome.CIRCUIT_OPEN
+
+
+class TestEvaluateCircuitAfterFailure:
+    """evaluate_circuit_after_failure pure policy function."""
+
+    @staticmethod
+    def _circuit():
+        from arnold_pipelines.megaplan.orchestration.plan_circuit import PlanCircuit
+        return PlanCircuit()
+
+    @staticmethod
+    def _err(**kw):
+        from types import SimpleNamespace
+        return SimpleNamespace(**kw)
+
+    def test_first_failure_allows_retry(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitFailureOutcome,
+            evaluate_circuit_after_failure,
+        )
+        err = self._err(halt_kind="worker_budget_exhausted")
+        d = evaluate_circuit_after_failure(self._circuit(), err, task_id="T7")
+        assert d.outcome == CircuitFailureOutcome.ALLOW_RETRY
+        assert d.may_retry is True
+        assert d.is_open is False
+        assert d.occurrence_count == 1
+        assert d.signature["failure_class"] == "worker_budget_exhausted"
+        assert d.signature["task_id"] == "T7"
+
+    def test_second_failure_opens_circuit(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitFailureOutcome,
+            evaluate_circuit_after_failure,
+        )
+        c = self._circuit()
+        err = self._err(halt_kind="worker_budget_exhausted")
+        evaluate_circuit_after_failure(c, err, task_id="T7")
+        d = evaluate_circuit_after_failure(c, err, task_id="T7")
+        assert d.outcome == CircuitFailureOutcome.CIRCUIT_OPEN
+        assert d.is_open is True
+        assert d.may_retry is False
+        assert d.occurrence_count == 2
+
+    def test_third_failure_reports_circuit_already_open(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitFailureOutcome,
+            evaluate_circuit_after_failure,
+        )
+        c = self._circuit()
+        err = self._err(halt_kind="worker_budget_exhausted")
+        evaluate_circuit_after_failure(c, err, task_id="T7")
+        evaluate_circuit_after_failure(c, err, task_id="T7")
+        d = evaluate_circuit_after_failure(c, err, task_id="T7")
+        assert d.outcome == CircuitFailureOutcome.CIRCUIT_ALREADY_OPEN
+        assert d.is_open is True
+        assert d.may_retry is False
+
+    def test_different_tasks_independent(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitFailureOutcome,
+            evaluate_circuit_after_failure,
+        )
+        c = self._circuit()
+        err = self._err(halt_kind="worker_budget_exhausted")
+
+        # T7: two failures, circuit open
+        evaluate_circuit_after_failure(c, err, task_id="T7")
+        evaluate_circuit_after_failure(c, err, task_id="T7")
+
+        # T12: first failure, still allowed
+        d = evaluate_circuit_after_failure(c, err, task_id="T12")
+        assert d.outcome == CircuitFailureOutcome.ALLOW_RETRY
+        assert d.occurrence_count == 1
+
+    def test_preserves_exact_failure_identity(self) -> None:
+        """The signature dict must preserve exact failure identity fields."""
+        from arnold_pipelines.megaplan.execute.policy import evaluate_circuit_after_failure
+        import hashlib, json
+
+        c = self._circuit()
+        err = self._err(halt_kind="worker_budget_exhausted")
+        blocker = {"kind": "budget_exhausted", "reason": "test", "iterations": 90}
+        digest = hashlib.sha256(json.dumps(blocker, sort_keys=True, default=str).encode()).hexdigest()
+
+        d = evaluate_circuit_after_failure(
+            c, err,
+            task_id="T7",
+            batch_id="B3",
+            attempt_id="A2",
+            blocker=blocker,
+            provider="anthropic",
+            ref_metadata="abc123def",
+            fence="fence-v1",
+        )
+        sig = d.signature
+        assert sig["failure_class"] == "worker_budget_exhausted"
+        assert sig["task_id"] == "T7"
+        assert sig["batch_id"] == "B3"
+        assert sig["attempt_id"] == "A2"
+        assert sig["blocker_digest"] == digest
+        assert sig["provider"] == "anthropic"
+        assert sig["ref_metadata"] == "abc123def"
+        assert sig["fence"] == "fence-v1"
+
+    def test_none_circuit_allows_retry(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitFailureOutcome,
+            evaluate_circuit_after_failure,
+        )
+        err = self._err(halt_kind="worker_budget_exhausted")
+        d = evaluate_circuit_after_failure(None, err, task_id="T7")
+        assert d.outcome == CircuitFailureOutcome.ALLOW_RETRY
+
+    def test_explicit_failure_class_override(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import evaluate_circuit_after_failure
+        err = self._err()  # no known fields, would be unclassified
+        d = evaluate_circuit_after_failure(
+            self._circuit(), err, task_id="T7", failure_class="blocked_by_prereq"
+        )
+        assert d.signature["failure_class"] == "blocked_by_prereq"
+
+    def test_reason_includes_count_and_threshold(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import evaluate_circuit_after_failure
+        err = self._err(halt_kind="worker_budget_exhausted")
+        d = evaluate_circuit_after_failure(self._circuit(), err, task_id="T7")
+        assert "occurrence 1/2" in d.reason
+        assert "worker_budget_exhausted" in d.reason
+
+
+class TestBuildCircuitEvidenceProjection:
+    """build_circuit_evidence_projection pure policy function."""
+
+    @staticmethod
+    def _circuit():
+        from arnold_pipelines.megaplan.orchestration.plan_circuit import PlanCircuit
+        return PlanCircuit()
+
+    def test_empty_circuit_projection(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import build_circuit_evidence_projection
+        p = build_circuit_evidence_projection(self._circuit())
+        assert p["circuit_threshold"] == 2
+        assert p["open_signatures"] == []
+        assert p["occurrence_counts"] == {}
+        assert p["total_open_circuits"] == 0
+
+    def test_open_circuit_projection(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import build_circuit_evidence_projection
+        from arnold_pipelines.megaplan.orchestration.plan_circuit import FailureSignature
+
+        c = self._circuit()
+        sig = FailureSignature(failure_class="blocked_by_prereq", task_id="T7", batch_id="B3")
+        c.record_failure(sig)
+        c.record_failure(sig)  # opens
+
+        p = build_circuit_evidence_projection(c)
+        assert p["total_open_circuits"] == 1
+        assert len(p["open_signatures"]) == 1
+        assert p["open_signatures"][0]["failure_class"] == "blocked_by_prereq"
+        assert p["open_signatures"][0]["task_id"] == "T7"
+        assert "blocked_by_prereq" in p["occurrence_counts"]
+        assert p["occurrence_counts"]["blocked_by_prereq"]["T7"] == 2
+
+    def test_multiple_classes_projection(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import build_circuit_evidence_projection
+        from arnold_pipelines.megaplan.orchestration.plan_circuit import FailureSignature
+
+        c = self._circuit()
+        for fc, tid in (("blocked_by_prereq", "T7"), ("context_exhausted", "T9")):
+            sig = FailureSignature(failure_class=fc, task_id=tid)
+            c.record_failure(sig)
+            c.record_failure(sig)
+
+        p = build_circuit_evidence_projection(c)
+        assert p["total_open_circuits"] == 2
+        assert "blocked_by_prereq" in p["occurrence_counts"]
+        assert "context_exhausted" in p["occurrence_counts"]
+        assert p["occurrence_counts"]["blocked_by_prereq"]["T7"] == 2
+        assert p["occurrence_counts"]["context_exhausted"]["T9"] == 2
+
+    def test_none_circuit_projection(self) -> None:
+        from arnold_pipelines.megaplan.execute.policy import build_circuit_evidence_projection
+        p = build_circuit_evidence_projection(None)
+        assert p["total_open_circuits"] == 0
+        assert p["circuit_threshold"] == 2
+
+    def test_projection_is_rebuildable(self) -> None:
+        """Projection metadata must be a plain dict with no non-serializable types."""
+        from arnold_pipelines.megaplan.execute.policy import build_circuit_evidence_projection
+        from arnold_pipelines.megaplan.orchestration.plan_circuit import FailureSignature
+        import json
+
+        c = self._circuit()
+        sig = FailureSignature(failure_class="test", task_id="T1", blocker_digest="abc123")
+        c.record_failure(sig)
+        c.record_failure(sig)
+
+        p = build_circuit_evidence_projection(c)
+        # Must be JSON-serializable
+        serialized = json.dumps(p, default=str)
+        assert isinstance(serialized, str)
+        # Roundtrip
+        restored = json.loads(serialized)
+        assert restored["total_open_circuits"] == 1
+        assert restored["open_signatures"][0]["task_id"] == "T1"
+
+
+class TestCircuitIntegration:
+    """End-to-end circuit integration: before-dispatch check + after-failure record."""
+
+    @staticmethod
+    def _circuit():
+        from arnold_pipelines.megaplan.orchestration.plan_circuit import PlanCircuit
+        return PlanCircuit()
+
+    @staticmethod
+    def _err(**kw):
+        from types import SimpleNamespace
+        return SimpleNamespace(**kw)
+
+    def test_full_circuit_lifecycle(self) -> None:
+        """Simulate the full circuit lifecycle: dispatch, failure, circuit open, blocked."""
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitDispatchOutcome,
+            CircuitFailureOutcome,
+            evaluate_circuit_before_dispatch,
+            evaluate_circuit_after_failure,
+        )
+
+        c = self._circuit()
+        err = self._err(halt_kind="worker_budget_exhausted")
+
+        # First run: circuit empty, dispatch proceeds
+        d1 = evaluate_circuit_before_dispatch(c, task_ids=["T7"])
+        assert d1.outcome == CircuitDispatchOutcome.PROCEED
+
+        # After first failure: retry allowed
+        f1 = evaluate_circuit_after_failure(c, err, task_id="T7", batch_id="B1")
+        assert f1.outcome == CircuitFailureOutcome.ALLOW_RETRY
+
+        # Second run: circuit still not open (1 occurrence), dispatch proceeds
+        d2 = evaluate_circuit_before_dispatch(c, task_ids=["T7"])
+        assert d2.outcome == CircuitDispatchOutcome.PROCEED
+
+        # Second failure: circuit opens
+        f2 = evaluate_circuit_after_failure(c, err, task_id="T7", batch_id="B1")
+        assert f2.outcome == CircuitFailureOutcome.CIRCUIT_OPEN
+
+        # Third run: circuit open, dispatch blocked
+        d3 = evaluate_circuit_before_dispatch(c, task_ids=["T7"])
+        assert d3.outcome == CircuitDispatchOutcome.CIRCUIT_OPEN
+        assert not d3.may_dispatch
+
+    def test_circuit_does_not_block_unrelated_tasks(self) -> None:
+        """T7 circuit open should not block T12 dispatch."""
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitDispatchOutcome,
+            evaluate_circuit_before_dispatch,
+            evaluate_circuit_after_failure,
+        )
+
+        c = self._circuit()
+        err = self._err(halt_kind="worker_budget_exhausted")
+
+        evaluate_circuit_after_failure(c, err, task_id="T7")
+        evaluate_circuit_after_failure(c, err, task_id="T7")  # T7 circuit open
+
+        d = evaluate_circuit_before_dispatch(c, task_ids=["T12"])
+        assert d.outcome == CircuitDispatchOutcome.PROCEED
+
+    def test_equivalent_failures_preserve_exact_identity(self) -> None:
+        """Two failures with same class, task, blocker share the same circuit."""
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitFailureOutcome,
+            evaluate_circuit_after_failure,
+        )
+
+        c = self._circuit()
+        err = self._err(halt_kind="worker_budget_exhausted")
+        blocker = {"kind": "budget_exhausted", "task_id": "T7"}
+
+        f1 = evaluate_circuit_after_failure(
+            c, err, task_id="T7", batch_id="B3", blocker=blocker
+        )
+        assert f1.outcome == CircuitFailureOutcome.ALLOW_RETRY
+
+        # Same identity, second occurrence opens circuit
+        f2 = evaluate_circuit_after_failure(
+            c, err, task_id="T7", batch_id="B3", blocker=blocker
+        )
+        assert f2.outcome == CircuitFailureOutcome.CIRCUIT_OPEN
+
+    def test_different_blockers_no_collision(self) -> None:
+        """Different blocker payloads, different digests, independent circuits."""
+        from arnold_pipelines.megaplan.execute.policy import (
+            CircuitFailureOutcome,
+            evaluate_circuit_after_failure,
+        )
+
+        c = self._circuit()
+        err = self._err(halt_kind="worker_budget_exhausted")
+
+        f1 = evaluate_circuit_after_failure(
+            c, err, task_id="T7", blocker={"kind": "reason_a"}
+        )
+        assert f1.outcome == CircuitFailureOutcome.ALLOW_RETRY
+
+        f2 = evaluate_circuit_after_failure(
+            c, err, task_id="T7", blocker={"kind": "reason_b"}
+        )
+        # Different blocker means different signature, so still first occurrence
+        assert f2.outcome == CircuitFailureOutcome.ALLOW_RETRY
+        assert f2.occurrence_count == 1

@@ -106,6 +106,88 @@ def test_dependency_requires_semantic_evidence_and_rejects_routing_reason() -> N
     assert "dependency_reason_missing" in _codes(report)
 
 
+def test_non_mapping_dependency_evidence_rejected_as_routing() -> None:
+    """A dependency_reasons entry that is not a Mapping must be rejected
+    with routing_dependency_forbidden — it is not semantic evidence."""
+    task = _task("T2", depends_on=["T1"])
+    task["dependency_reasons"]["T1"] = "just a string, not evidence"  # type: ignore[dict-item]
+    report = compile_task_feasibility(_payload([_task("T1"), task]))
+    codes = _codes(report)
+    assert "routing_dependency_forbidden" in codes
+    assert report["admitted"] is False
+
+
+def test_non_semantic_kind_rejected_as_routing_forbidden() -> None:
+    """A dependency with a kind outside _DEPENDENCY_KINDS must be rejected
+    with routing_dependency_forbidden."""
+    task = _task("T2", depends_on=["T1"])
+    task["dependency_reasons"]["T1"]["kind"] = "routing"
+    report = compile_task_feasibility(_payload([_task("T1"), task]))
+    codes = _codes(report)
+    assert "routing_dependency_forbidden" in codes
+    assert "dependency_reason_invalid" not in codes
+    assert report["admitted"] is False
+
+
+@pytest.mark.parametrize(
+    "valid_kind",
+    ["consumes_output", "write_conflict", "human_prerequisite"],
+)
+def test_semantic_dependency_kinds_are_admitted(valid_kind: str) -> None:
+    """All three semantic dependency kinds must produce an admitted graph
+    when the rest of the evidence is well-formed."""
+    task = _task("T2", depends_on=["T1"])
+    task["dependency_reasons"]["T1"]["kind"] = valid_kind
+    task["dependency_reasons"]["T1"]["reason"] = f"Semantic reason for {valid_kind}."
+    task["dependency_reasons"]["T1"]["required_output"] = "src/t1.py"
+    report = compile_task_feasibility(_payload([_task("T1"), task]))
+    assert report["admitted"] is True
+    assert "routing_dependency_forbidden" not in _codes(report)
+
+
+def test_routing_group_is_non_authoritative_metadata_only() -> None:
+    """routing_group must never create or authorize a dependency edge.
+    It may only suppress the unordered-write-overlap diagnostic when
+    two tasks share identical routing_group values."""
+    left = _task("T1", paths=["src/shared.py"])
+    right = _task("T2", paths=["src/shared.py"])
+    # Without routing_group: must warn about unordered overlap
+    report = compile_task_feasibility(_payload([left, right]))
+    assert "write_overlap_unordered" in _codes(report)
+
+    # With a shared routing_group: overlap diagnostic suppressed
+    left["routing_group"] = right["routing_group"] = "shared-contract"
+    report = compile_task_feasibility(_payload([left, right]))
+    assert report["admitted"] is True
+    assert "write_overlap_unordered" not in _codes(report)
+
+    # routing_group must never manufacture a dependency edge
+    assert right.get("depends_on", []) == []
+    assert report["edge_count"] == 0
+
+
+def test_report_diagnostic_ordering_is_deterministic() -> None:
+    """Multiple compilations of the same payload must produce identical
+    diagnostic lists in the same order."""
+    tasks = []
+    for i in range(1, 5):
+        task = _task(f"T{i}", depends_on=[f"T{i-1}"] if i > 1 else [], minutes=1)
+        if i == 3:
+            # Inject a routing reason
+            task["dependency_reasons"][f"T{i-1}"]["reason"] = "Keep T3 and T2 in same batch."
+        if i == 4:
+            # Inject non-Mapping evidence
+            task["dependency_reasons"] = {f"T{i-1}": None}  # type: ignore[dict-item]
+        tasks.append(task)
+
+    report_a = compile_task_feasibility(_payload(tasks))
+    report_b = compile_task_feasibility(_payload(tasks))
+
+    assert report_a["diagnostics"] == report_b["diagnostics"]
+    assert report_a["task_contract_hash"] == report_b["task_contract_hash"]
+    assert report_a["admitted"] == report_b["admitted"]
+
+
 @pytest.mark.parametrize(
     ("mutation", "code"),
     [

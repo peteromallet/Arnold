@@ -56,6 +56,12 @@ from arnold_pipelines.megaplan.orchestration.test_selection import (
 from arnold_pipelines.megaplan.orchestration.task_feasibility import (
     compile_task_feasibility,
 )
+from arnold_pipelines.megaplan.orchestration.task_splitter import (
+    split_high_complexity_tasks,
+)
+from arnold_pipelines.megaplan.orchestration.validation_compiler import (
+    compile_validation_jobs,
+)
 from arnold_pipelines.megaplan.orchestration.critique_custody import (
     CritiqueCustodyError,
     bind_finalize_custody,
@@ -2005,12 +2011,34 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
         _ensure_user_actions_post_gate_task(payload, state)
     _apply_programmatic_coverage(payload, plan_dir, state)
     _normalize_task_complexity(payload)
+    # --- M8A: split high-complexity tasks before feasibility admission ---
+    split_tasks, split_diagnostics = split_high_complexity_tasks(payload)
+    # Proof subtasks have kind="test" but write_set paths=[]; feasibility
+    # requires test tasks to declare paths.  Re-classify proof subtasks as
+    # "audit" (read-only verification producing executor_notes evidence).
+    for task in split_tasks:
+        if (
+            isinstance(task, dict)
+            and isinstance(task.get("id"), str)
+            and task["id"].endswith("_proof")
+            and task.get("kind") == "test"
+            and isinstance(task.get("write_set"), dict)
+            and task["write_set"].get("paths") == []
+        ):
+            task["kind"] = "audit"
+    payload["tasks"] = split_tasks
+    # --- M8A: compile deterministic validation jobs ---
+    validation_compilation = compile_validation_jobs(payload)
     if state["config"].get("mode", "code") == "code":
         feasibility = compile_task_feasibility(payload, state.get("config", {}))
         atomic_write_json(plan_dir / "task_feasibility.json", feasibility)
         if not feasibility["admitted"]:
             raise TaskFeasibilityError(feasibility)
-        payload["graph_report"] = feasibility
+        payload["graph_report"] = {
+            **feasibility,
+            "splitter_diagnostics": [d.as_dict() for d in split_diagnostics],
+            "validation_compilation": validation_compilation,
+        }
 
     if state["config"].get("mode") in {"doc", "joke"}:
         payload["baseline_test_failures"] = None
@@ -2054,6 +2082,20 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
     _attach_calibration_route_reports(plan_dir, payload, state)
     _write_capability_claims_from_finalize(plan_dir, payload, state)
     _reconcile_validation_after_mutation(payload)
+    # --- M8A: re-split and re-compile after baseline/mutation passes ---
+    split_tasks, split_diagnostics = split_high_complexity_tasks(payload)
+    for task in split_tasks:
+        if (
+            isinstance(task, dict)
+            and isinstance(task.get("id"), str)
+            and task["id"].endswith("_proof")
+            and task.get("kind") == "test"
+            and isinstance(task.get("write_set"), dict)
+            and task["write_set"].get("paths") == []
+        ):
+            task["kind"] = "audit"
+    payload["tasks"] = split_tasks
+    validation_compilation = compile_validation_jobs(payload)
     # Finalization and baseline helpers may mutate the graph after the first
     # feasibility pass. Recompile at the final persistence boundary and bind
     # critique clearance only to these exact bytes.
@@ -2062,7 +2104,11 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
         atomic_write_json(plan_dir / "task_feasibility.json", feasibility)
         if not feasibility["admitted"]:
             raise TaskFeasibilityError(feasibility)
-        payload["graph_report"] = feasibility
+        payload["graph_report"] = {
+            **feasibility,
+            "splitter_diagnostics": [d.as_dict() for d in split_diagnostics],
+            "validation_compilation": validation_compilation,
+        }
     clearance_path = plan_dir / "critique_clearance.json"
     if clearance_path.exists():
         bind_finalize_custody(plan_dir, payload, read_json(clearance_path))

@@ -412,7 +412,7 @@ def compute_receipt_digest(receipt: RepairReceipt) -> str:
         "custody_lease_id": receipt.custody_lease_id,
         "custody_epoch": receipt.custody_epoch,
         "target_digest": receipt.target.target_digest,
-        "occurrence_digest": receipt.occurrence_key.occurrence_digest,
+        "occurrence_digest": receipt.occurrence_key.key,
     }
     plain = json.dumps(
         evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=False
