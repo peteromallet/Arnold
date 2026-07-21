@@ -2146,6 +2146,14 @@ def test_build_ordinary_repair_verdict_for_escalated_outcome() -> None:
     )
     assert verdict_thb.verdict_kind == repair_contract.REPAIR_VERDICT_ESCALATED
 
+    verdict_source = repair_contract.build_ordinary_repair_verdict(
+        repair_data_payload={
+            "outcome": "deterministic_failure_source_fix_needed",
+            "blocker_id": "blocker-source",
+        },
+    )
+    assert verdict_source.verdict_kind == repair_contract.REPAIR_VERDICT_ESCALATED
+
 
 def test_build_ordinary_repair_verdict_detects_stale_repair_data() -> None:
     """When repair data is stale, the verdict flags stale_detected."""

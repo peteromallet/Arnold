@@ -9047,7 +9047,10 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'logger=lambda message: print(f"repair_recurrence: {message}", file=sys.stderr)' in text
     assert "repair_recurrence.atomic_write_json(data_path, payload)" in text
     assert "repair_recurrence.atomic_write_json(progress_path, session_snapshot)" in text
-    assert '"${ARNOLD_REPAIR_L2_REPLAN_EPOCH:-0}" <<\'PY\'' in text
+    assert (
+        '"${ARNOLD_REPAIR_L2_REPLAN_EPOCH:-0}" '
+        '"${INVESTIGATOR_RECOMMENDED_ACTION:-}" <<\'PY\''
+    ) in text
     assert 'session_snapshot["replan_epoch"] = replan_epoch' in text
     assert 'if isinstance(attempt.get("recurrence"), dict)' in text
     assert '"replan_epoch": replan_epoch' in text
@@ -10515,6 +10518,61 @@ def test_compute_meta_repair_trigger_routes_first_deterministic_replan_to_l2(
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "TRIGGER:l1_custody_failure"
+
+
+def test_compute_meta_repair_trigger_routes_source_fix_breaker_to_l2(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    (repair_data_dir / "source-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "source-session",
+                "outcome": "deterministic_failure_source_fix_needed",
+                "investigation": {
+                    "status": "accepted",
+                    "recommended_action": "repair_source",
+                },
+                "attempts": [{"attempt_id": 1}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    observation = json.dumps(
+        {
+            "authoritative_source": "chain_state",
+            "current_refs": {
+                "current_plan_name": "demo-plan",
+                "chain_current_plan_name": "demo-plan",
+                "plan_current_state": "blocked",
+                "chain_last_state": "blocked",
+            },
+            "plan_state": {"present": True},
+            "chain_state": {"present": True},
+            "active_step_heartbeat": {"active": False},
+        }
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until(
+                "compute_meta_repair_trigger", "dispatch_meta_repair"
+            ),
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                "compute_meta_repair_trigger source-session "
+                f"{shlex.quote(observation)} stopped"
+            ),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "TRIGGER:repair_goal_circuit_breaker"
 
 
 def test_compute_meta_repair_trigger_detects_semantic_fingerprint_recurrence(

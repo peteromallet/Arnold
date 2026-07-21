@@ -467,6 +467,35 @@ def test_layer3_breaker_does_not_trip_when_no_prior_attempts() -> None:
     assert result["deterministic_failure_breaker"] is False
 
 
+def test_layer3_breaker_surfaces_source_repair_escalation_hint() -> None:
+    signature = repair_recurrence.build_problem_signature(_failure_context())
+    attempts = [{"attempt_id": 1, "problem_signature": signature}]
+
+    result = repair_recurrence.evaluate_recurrence(
+        signature,
+        attempts,
+        {},
+        recommended_action="repair_source",
+    )
+
+    assert result["deterministic_failure_breaker"] is True
+    assert result["escalation_hint"] == "source_repair_needed"
+
+
+def test_source_repair_does_not_escalate_before_deterministic_breaker() -> None:
+    signature = repair_recurrence.build_problem_signature(_failure_context())
+
+    result = repair_recurrence.evaluate_recurrence(
+        signature,
+        [],
+        {},
+        recommended_action="repair_source",
+    )
+
+    assert result["deterministic_failure_breaker"] is False
+    assert result["escalation_hint"] == ""
+
+
 def test_detected_rollup_unaffected_by_layer3_breaker() -> None:
     signature = repair_recurrence.build_problem_signature(_failure_context())
     attempts = [{"attempt_id": 1, "problem_signature": signature}]

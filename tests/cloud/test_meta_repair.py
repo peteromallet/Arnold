@@ -248,6 +248,21 @@ class TestClassifyRepairTimeout:
         assert result.should_dispatch is False
 
 
+class TestClassifySourceRepairCircuitBreaker:
+    def test_source_repair_breaker_dispatches_without_recurrence_threshold(self) -> None:
+        result = classify_repair_system_failure(
+            session="source-repair-session",
+            repair_outcome="deterministic_failure_source_fix_needed",
+            failure_kinds=["execution_blocked"],
+            attempt_outcomes=["deterministic_failure_source_fix_needed"],
+        )
+
+        assert result.trigger == MetaRepairTrigger.REPAIR_GOAL_CIRCUIT_BREAKER
+        assert result.should_dispatch is True
+        assert result.trigger_label == "repair_goal_circuit_breaker"
+        assert "source changes beyond L1 reach" in " ".join(result.rationale)
+
+
 class TestClassifyPersistentRecurringRetry:
     def test_recurring_retry_triggers(self) -> None:
         result = classify_repair_system_failure(
