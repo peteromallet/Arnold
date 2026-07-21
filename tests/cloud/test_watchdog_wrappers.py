@@ -9028,6 +9028,8 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert "write_needs_human_marker_payload(" in text
     assert "repair_recurrence_prepare_attempt()" in text
     assert "render_recurrence_block()" in text
+    assert "normalize_bounded_json_object_artifact" in text
+    assert "Absolute paths and target_workspace:. are invalid." in text
     assert "repair_exhausted_should_retry_without_human()" in text
     assert "collect_failure_context_json()" in text
     assert "PLAN_STATUS_STATE_MISMATCH" in _wrapper("arnold-watchdog")

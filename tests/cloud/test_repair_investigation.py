@@ -33,6 +33,22 @@ def _write(path: Path, value: dict) -> None:
     path.write_text(json.dumps(value) + "\n", encoding="utf-8")
 
 
+def test_normalize_bounded_json_object_artifact_accepts_only_exact_fence(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "receipt.json"
+    artifact.write_text('```json\n{"action": "repair_target"}\n```\n', encoding="utf-8")
+
+    assert repair_investigation.normalize_bounded_json_object_artifact(artifact) is True
+    assert json.loads(artifact.read_text(encoding="utf-8")) == {
+        "action": "repair_target"
+    }
+
+    artifact.write_text('prefix\n```json\n{"action": "repair_target"}\n```', encoding="utf-8")
+    with pytest.raises(ValueError, match="neither raw JSON nor one exact JSON fence"):
+        repair_investigation.normalize_bounded_json_object_artifact(artifact)
+
+
 def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
     workspace = tmp_path / "workspace"
     plan = "current-m5a"

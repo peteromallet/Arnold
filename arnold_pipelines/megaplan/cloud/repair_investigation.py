@@ -170,6 +170,52 @@ def _load_bounded_json(path: str | Path, *, max_bytes: int, label: str) -> dict[
     return value
 
 
+def normalize_bounded_json_object_artifact(
+    path: str | Path,
+    *,
+    max_bytes: int = MAX_RECEIPT_BYTES,
+) -> bool:
+    """Canonicalize a raw or exactly fenced JSON object artifact.
+
+    Model transports occasionally wrap an otherwise valid receipt in one
+    Markdown JSON fence despite the raw-JSON contract.  Accept only that exact
+    wrapper (no leading/trailing prose), preserve the byte bound, require an
+    object, and rewrite atomically.  Returns whether the file changed.
+    """
+
+    source = Path(path)
+    try:
+        encoded = source.open("rb").read(max_bytes + 1)
+    except OSError as exc:
+        raise ValueError(f"cannot read JSON artifact: {source}") from exc
+    if len(encoded) > max_bytes:
+        raise ValueError(f"JSON artifact exceeds {max_bytes}-byte bound")
+    try:
+        text = encoded.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("JSON artifact is not valid UTF-8") from exc
+
+    candidate = text.strip()
+    changed = candidate != text
+    try:
+        value = json.loads(candidate)
+    except json.JSONDecodeError:
+        lines = candidate.splitlines()
+        if len(lines) < 3 or lines[0].strip().lower() != "```json" or lines[-1].strip() != "```":
+            raise ValueError("JSON artifact is neither raw JSON nor one exact JSON fence")
+        candidate = "\n".join(lines[1:-1]).strip()
+        try:
+            value = json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            raise ValueError("fenced JSON artifact does not contain valid JSON") from exc
+        changed = True
+    if not isinstance(value, dict):
+        raise ValueError("JSON artifact must contain one object")
+    if changed:
+        _atomic_write(source, value)
+    return changed
+
+
 def _digest(value: Mapping[str, Any]) -> str:
     return hashlib.sha256(
         json.dumps(dict(value), sort_keys=True, separators=(",", ":"), default=str).encode()
@@ -2472,6 +2518,7 @@ if __name__ == "__main__":
 __all__ = [
     "MAX_CONTEXT_BYTES",
     "MAX_RECEIPT_BYTES",
+    "normalize_bounded_json_object_artifact",
     "META_REPAIR_INVESTIGATION_ENVELOPE_SCHEMA",
     "REPAIR_INVESTIGATION_CONTEXT_SCHEMA",
     "REPAIR_INVESTIGATOR_RECEIPT_SCHEMA",

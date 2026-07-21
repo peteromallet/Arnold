@@ -7252,6 +7252,15 @@ EOF
     log "repair investigator dispatch failed session=$SESSION run_id=${investigator_run_id:-unknown}"
     return 1
   fi
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
+    "$MEGAPLAN_SUPERVISOR_PYTHON" -P - "$INVESTIGATOR_RECEIPT_PATH" <<'PY' \
+    2>>"$LOG" || true
+import sys
+from arnold_pipelines.megaplan.cloud.repair_investigation import (
+    normalize_bounded_json_object_artifact,
+)
+normalize_bounded_json_object_artifact(sys.argv[1])
+PY
   validation_output="$(
     PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
       "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
@@ -7307,6 +7316,7 @@ Authoritative bounded artifacts (all are inside the read-only sandbox root):
 - type: validator_error; path: $validation_error_path; bytes: $validation_error_bytes; sha256: $validation_error_sha256
 
 Read those artifacts. Preserve every already-valid field, JSON container type, evidence-grounded diagnosis, authority boundary, and safety guard. Change only the validator-named contract defect. evidence_sources[].kind must be exactly one of: live_process, session_marker, chain_state, plan_state, phase_result, review_artifact, event_log, chain_log, repair_data, repair_queue, repair_goal, meta_repair, source_tree, source_contract, resident_delegation, automatic_system, external_state. historical_failure_recovery is analysis embedded in the authoritative plan_state context, not an evidence kind; cite its details under plan_state. prior_repairs_considered must remain a non-empty JSON array of non-empty strings; use ["none"] when there are no prior repairs, never the string "none". Return ONLY one complete JSON object matching schema_version="arnold-repair-investigator-receipt-v2".
+For repair_target, each allowed mutation must be target_workspace:<concrete repo-relative file or bounded component directory already named in the evidence>. Absolute paths and target_workspace:. are invalid. Do not use Markdown or code fences.
 EOF
     if [[ "$investigator_mode" == "brokered_no_tools" ]]; then
       cat >>"$correction_prompt_path" <<'EOF'
@@ -7356,6 +7366,15 @@ EOF
         "$validation_error_path" "$context_digest" "$investigator_run_id"
       return 1
     fi
+    PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
+      "$MEGAPLAN_SUPERVISOR_PYTHON" -P - "$INVESTIGATOR_RECEIPT_PATH" <<'PY' \
+      2>>"$LOG" || true
+import sys
+from arnold_pipelines.megaplan.cloud.repair_investigation import (
+    normalize_bounded_json_object_artifact,
+)
+normalize_bounded_json_object_artifact(sys.argv[1])
+PY
     investigator_run_id="$(cat "$run_id_file" 2>/dev/null || true)"
     if ! PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
       "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
