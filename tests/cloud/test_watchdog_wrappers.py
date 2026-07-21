@@ -5301,6 +5301,43 @@ def test_supervise_deterministic_binding_failure_does_not_retry(tmp_path: Path) 
     assert "error retry" not in result.stdout
 
 
+def test_supervise_durable_chain_stop_is_not_misclassified_as_historical_quota(
+    tmp_path: Path,
+) -> None:
+    command = tmp_path / "blocked-chain"
+    command.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' '[chain] plan demo is already durably blocked with no active step; preserving the stop without replaying the plan'\n"
+        "printf '%s\\n' '{\"history\":\"old quota_exceeded task text\"}'\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    command.chmod(command.stat().st_mode | stat.S_IXUSR)
+    env = dict(os.environ)
+    env.update(
+        {
+            "PYTHONPATH": f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}",
+            "ARNOLD_AUTONOMY": "1",
+            "ARNOLD_REPAIR_TRIGGER_ENABLED": "1",
+            "ARNOLD_SUPERVISE_LOG": str(tmp_path / "supervise.log"),
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(WRAPPER_DIR / "arnold-supervise"), "blocked", str(command)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 1
+    assert "deterministic failure (durable_chain_blocked_stop)" in result.stdout
+    assert "quota_exceeded retry" not in result.stdout
+    assert "sleeping" not in result.stdout
+
+
 def test_supervise_durable_review_quality_block_does_not_retry(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
