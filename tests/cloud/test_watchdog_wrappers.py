@@ -15227,6 +15227,22 @@ def test_meta_repair_wrapper_has_retrigger_verification_policy() -> None:
     assert text.count('--context "$META_INVESTIGATION_CONTEXT_PATH"') >= 2
 
 
+def test_meta_repair_wrapper_pins_investigation_contract_import_to_source() -> None:
+    text = _meta_repair_wrapper()
+
+    assert (
+        'META_REPAIR_PYTHONPATH="$ARNOLD_SRC:$WRAPPER_REPO_ROOT:${PYTHONPATH:-}"'
+        in text
+    )
+    assert 'from arnold_pipelines.megaplan.cloud import repair_investigation' in text
+    assert 'Path(repair_investigation.__file__).resolve()' in text
+    assert 'if ! attest_meta_repair_python_source; then' in text
+    assert 'PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}"' not in text
+    assert text.index('if ! attest_meta_repair_python_source; then') < text.index(
+        'load_resident_delegation_context() {'
+    )
+
+
 def test_meta_repair_snapshot_ignores_inherited_foreign_snapshot_custody() -> None:
     text = _meta_repair_wrapper()
 

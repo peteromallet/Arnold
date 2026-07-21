@@ -138,11 +138,36 @@ META_INVESTIGATION_RUN_ID_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-investigator-run-
 META_INVESTIGATION_CONTEXT_DIGEST=""
 META_INVESTIGATION_RUN_ID=""
 META_INVESTIGATION_MAX_BYTES=65536
+META_REPAIR_PYTHONPATH="$ARNOLD_SRC:$WRAPPER_REPO_ROOT:${PYTHONPATH:-}"
+
+attest_meta_repair_python_source() {
+  PYTHONSAFEPATH=1 PYTHONPATH="$META_REPAIR_PYTHONPATH" \
+    "$MEGAPLAN_SUPERVISOR_PYTHON" -P - "$ARNOLD_SRC" <<'PY'
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud import repair_investigation
+
+source_root = Path(sys.argv[1]).resolve()
+expected = (source_root / "arnold_pipelines/megaplan/cloud/repair_investigation.py").resolve()
+actual = Path(repair_investigation.__file__).resolve()
+if actual != expected:
+    raise SystemExit(
+        "meta-repair investigation contract import disagrees with source custody: "
+        f"expected={expected} actual={actual}"
+    )
+PY
+}
+
+if ! attest_meta_repair_python_source; then
+  echo "arnold-meta-repair-loop: source-custody attestation failed" >&2
+  exit 78
+fi
 
 load_resident_delegation_context() {
   local marker_path encoded rc
   marker_path="$MARKER_DIR/$SESSION.json"
-  encoded="$(PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
+  encoded="$(PYTHONSAFEPATH=1 PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 -P - \
     "$marker_path" "${ARNOLD_MANAGED_AGENT_MANIFEST:-}" <<'PY'
 import json
 import os
@@ -206,13 +231,13 @@ PY
 }
 
 l2_mutation_authorized() {
-  PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P -c \
+  PYTHONSAFEPATH=1 PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 -P -c \
     'from arnold_pipelines.megaplan.cloud.feature_flags import MUTATION_PATH_L2, mutation_authorized; raise SystemExit(0 if mutation_authorized(MUTATION_PATH_L2) else 1)'
 }
 
 load_resident_delegation_context || exit $?
 
-if PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$MARKER_DIR/$SESSION.json" <<'PY'
+if PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 - "$MARKER_DIR/$SESSION.json" <<'PY'
 import json
 import subprocess
 import sys
@@ -242,7 +267,7 @@ log() {
 }
 
 redact_inline_text() {
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$1" <<'PY'
+  PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 - "$1" <<'PY'
 import sys
 
 from arnold_pipelines.megaplan.cloud.redact import redact_text
@@ -256,7 +281,7 @@ redact_file_in_place() {
   if [[ -z "$path" || ! -f "$path" ]]; then
     return 0
   fi
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$path" <<'PY'
+  PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 - "$path" <<'PY'
 from pathlib import Path
 import sys
 
@@ -281,7 +306,7 @@ log "meta-repair starting session=$SESSION"
 # dispatch token is provenance, not authority, and may describe an older
 # blocker episode in the same long-lived session.
 SUPPLIED_BLOCKER_ID="${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}"
-if ! BLOCKER_RESOLUTION="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$SESSION" "$REPAIR_DATA_DIR" "$SUPPLIED_BLOCKER_ID" <<'PY'
+if ! BLOCKER_RESOLUTION="$(PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 -P - "$SESSION" "$REPAIR_DATA_DIR" "$SUPPLIED_BLOCKER_ID" <<'PY'
 import sys
 from arnold_pipelines.megaplan.cloud.meta_repair_policy import resolve_authoritative_blocker_id
 blocker, drift = resolve_authoritative_blocker_id(
@@ -302,7 +327,7 @@ fi
 
 # ---- early gate: recursion guard --------------------------------------------
 recursion_check() {
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_DATA_DIR" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'PY'
+  PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 - "$SESSION" "$REPAIR_DATA_DIR" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'PY'
 import sys
 
 from arnold_pipelines.megaplan.cloud.meta_repair_policy import (
@@ -331,7 +356,7 @@ if [[ "$RECURSION_OUTPUT" == RECURSION:* ]]; then
   log "recursion guard: $RECURSION_OUTPUT"
   log "escalating to NEEDS_HUMAN instead of recursing"
 
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_DATA_DIR" "$RECURSION_OUTPUT" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'PY'
+  PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 - "$SESSION" "$REPAIR_DATA_DIR" "$RECURSION_OUTPUT" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'PY'
 import json, sys, uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -363,7 +388,7 @@ log "recursion guard: $RECURSION_OUTPUT"
 # trigger classification. The same check runs again when the prompt pointer is
 # assembled, so a changed artifact fails closed before model dispatch.
 validate_l3_dispatch_context() {
-  PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
+  PYTHONSAFEPATH=1 PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 -P - \
     "$SESSION" \
     "${ARNOLD_L3_REPAIR_CONTEXT_PATH:-}" \
     "${ARNOLD_L3_REPAIR_CONTEXT_DIGEST:-}" \
@@ -426,7 +451,7 @@ fi
 # ---- classify failure + build redacted prompt via Python handoff -------------
 classification_and_prompt() {
   local force_emergency="${1:-0}"
-  FORCE_EMERGENCY="$force_emergency" PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" "$MARKER_DIR" "$META_REPAIR_ENABLED_VAR" "$WATCHDOG_TRIGGER" <<'PY'
+  FORCE_EMERGENCY="$force_emergency" PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" "$MARKER_DIR" "$META_REPAIR_ENABLED_VAR" "$WATCHDOG_TRIGGER" <<'PY'
 import json, os, sys
 
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
@@ -506,7 +531,7 @@ TRIGGER_TYPE="$(echo "$CLASSIFICATION_RESULT" | sed -n 's/^TRIGGER://p')"
 log "trigger=$TRIGGER_TYPE"
 
 run_meta_repair_investigation() {
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+  PYTHONPATH="$META_REPAIR_PYTHONPATH" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
     arnold_pipelines.megaplan.cloud.repair_investigation build-meta \
     --session "$SESSION" --trigger "$TRIGGER_TYPE" \
     --repair-data-dir "$REPAIR_DATA_DIR" --marker-dir "$MARKER_DIR" \
@@ -514,7 +539,7 @@ run_meta_repair_investigation() {
     --request-id "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" \
     --blocker-id "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" \
     --output "$META_INVESTIGATION_CONTEXT_PATH" >/dev/null 2>>"$RUN_LOG" || return 1
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
+  PYTHONPATH="$META_REPAIR_PYTHONPATH" "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
     arnold_pipelines.megaplan.cloud.repair_investigation observe-meta \
     --context "$META_INVESTIGATION_CONTEXT_PATH" \
     --output "$META_INVESTIGATION_OBSERVATION_PATH" >/dev/null 2>>"$RUN_LOG" || return 1
@@ -608,7 +633,7 @@ EOF
   META_INVESTIGATION_RUN_ID="$(cat "$META_INVESTIGATION_RUN_ID_PATH" 2>/dev/null || true)"
   local validation_output="" correction_prompt_path="" invalid_receipt_path=""
   if ! validation_output="$(
-    PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
+    PYTHONPATH="$META_REPAIR_PYTHONPATH" \
       "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
       arnold_pipelines.megaplan.cloud.repair_investigation validate \
       --receipt "$META_INVESTIGATION_RECEIPT_PATH" \
@@ -661,7 +686,7 @@ EOF
     log "L2 investigator receipt failed schema validation; launching one bounded correction session=$SESSION invalid_receipt=$invalid_receipt_path"
     (cd "$ARNOLD_SRC" && "${correction_cmd[@]}") >>"$RUN_LOG" 2>&1 || return 1
     META_INVESTIGATION_RUN_ID="$(cat "$META_INVESTIGATION_RUN_ID_PATH" 2>/dev/null || true)"
-    PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
+    PYTHONPATH="$META_REPAIR_PYTHONPATH" \
       "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
       arnold_pipelines.megaplan.cloud.repair_investigation validate \
       --receipt "$META_INVESTIGATION_RECEIPT_PATH" \
@@ -671,7 +696,7 @@ EOF
   else
     printf '%s\n' "$validation_output" >>"$RUN_LOG"
   fi
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
+  PYTHONPATH="$META_REPAIR_PYTHONPATH" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
     "$REPAIR_DATA_PATH" "$META_INVESTIGATION_CONTEXT_PATH" "$META_INVESTIGATION_RECEIPT_PATH" \
     "$META_INVESTIGATION_CONTEXT_DIGEST" "$META_INVESTIGATION_RUN_ID" "$investigator_mode" \
     "$META_INVESTIGATION_OBSERVATION_PATH" <<'PY' >>"$RUN_LOG" 2>&1 || return 1
@@ -710,7 +735,7 @@ PY
 }
 
 require_meta_investigation_before_mutation() {
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
+  PYTHONPATH="$META_REPAIR_PYTHONPATH" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
     "$META_INVESTIGATION_CONTEXT_PATH" "$META_INVESTIGATION_RECEIPT_PATH" "$META_INVESTIGATION_CONTEXT_DIGEST" <<'PY' >>"$RUN_LOG" 2>&1
 import hashlib
 import json
@@ -753,7 +778,7 @@ PY
 persist_meta_investigation_failure() {
   local reason="${1:-investigation failed}"
   META_INVESTIGATION_RUN_ID="${META_INVESTIGATION_RUN_ID:-$(cat "$META_INVESTIGATION_RUN_ID_PATH" 2>/dev/null || true)}"
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
+  PYTHONPATH="$META_REPAIR_PYTHONPATH" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
     "$REPAIR_DATA_PATH" "$META_INVESTIGATION_CONTEXT_PATH" "$META_INVESTIGATION_RECEIPT_PATH" \
     "$META_INVESTIGATION_CONTEXT_DIGEST" "$META_INVESTIGATION_RUN_ID" "$reason" "$RUN_LOG" <<'PY' >>"$RUN_LOG" 2>&1
 import pathlib
@@ -793,7 +818,7 @@ if ! run_meta_repair_investigation; then
   log "L2 investigation failed or returned no valid receipt; refusing all repair mutation"
   exit 1
 fi
-META_INVESTIGATION_ACTION="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - "$META_INVESTIGATION_RECEIPT_PATH" <<'PY'
+META_INVESTIGATION_ACTION="$(PYTHONPATH="$META_REPAIR_PYTHONPATH" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - "$META_INVESTIGATION_RECEIPT_PATH" <<'PY'
 import json, sys
 print(str(json.load(open(sys.argv[1], encoding="utf-8")).get("recommended_action") or ""))
 PY
@@ -802,7 +827,7 @@ if [[ "$META_INVESTIGATION_ACTION" == "replan" ]]; then
   # A replan receipt is a non-mutating L2 custody handoff.  It must not enter
   # the source fixer; it retriggers ordinary L1 with the newly persisted,
   # verified external evidence so L1 owns the target repair.
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
+  PYTHONPATH="$META_REPAIR_PYTHONPATH" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
     "$META_INVESTIGATION_RECEIPT_PATH" "$META_INVESTIGATION_OBSERVATION_PATH" \
     "$META_INVESTIGATION_CONTEXT_DIGEST" <<'PY' >>"$RUN_LOG" 2>&1 || exit 1
 import json, sys
@@ -822,7 +847,7 @@ PY
     log "observed: L2 replan effects blocked by master-plus-path authorization gate session=$SESSION"
     exit 77
   fi
-  REPLAN_RECONCILIATION="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
+  REPLAN_RECONCILIATION="$(PYTHONPATH="$META_REPAIR_PYTHONPATH" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
     "$REPAIR_DATA_PATH" "$MARKER_DIR/$SESSION.json" "$SESSION" "$META_INVESTIGATION_CONTEXT_DIGEST" "$META_INVESTIGATION_RECEIPT_PATH" <<'PY'
 import json
 import sys
@@ -860,7 +885,7 @@ PY
   fi
   REPLAN_RUN_ID_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-ordinary-retrigger-run-id"
   IFS=$'\t' read -r REPLAN_WORKSPACE REPLAN_REMOTE_SPEC < <(
-    PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
+    PYTHONPATH="$META_REPAIR_PYTHONPATH" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
       "$MARKER_DIR/$SESSION.json" <<'PY'
 import json, sys
 value = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -901,7 +926,7 @@ PY
   REPLAN_RC=$?
   unset ARNOLD_REPAIR_L2_HANDOFF_PATH ARNOLD_REPAIR_L2_CONTEXT_DIGEST ARNOLD_REPAIR_L2_REPLAN_EPOCH
   REPLAN_RUN_ID="$(cat "$REPLAN_RUN_ID_PATH" 2>/dev/null || true)"
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
+  PYTHONPATH="$META_REPAIR_PYTHONPATH" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
     "$REPAIR_DATA_PATH" "$META_INVESTIGATION_CONTEXT_DIGEST" "$REPLAN_RUN_ID" "$REPLAN_RC" "$REPLAN_EPOCH" <<'PY' >>"$RUN_LOG" 2>&1
 import pathlib, sys
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
@@ -945,7 +970,7 @@ append_l3_repair_contract() {
     echo "L3 repair pointer changed after trigger validation" >&2
     return 65
   fi
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
+  PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 - \
     "$revalidated_pointer" "$SUPERFIXER_SKILL" <<'PY'
 import json
 import sys
@@ -1161,7 +1186,7 @@ fi
 
 # ---- commit gate check ------------------------------------------------------
 commit_gate_check() {
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" <<'PY'
+  PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 - "$SESSION" <<'PY'
 import sys
 
 from arnold_pipelines.megaplan.cloud.meta_repair_policy import can_commit_changes, can_push_changes
@@ -1281,7 +1306,7 @@ runpy.run_path(launcher, run_name="__main__")
 }
 
 persist_unrecordable_launch_failure() {
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
+  PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 - \
     "$SESSION" "$TRIGGER_TYPE" "$REPAIR_DATA_DIR" "$RESP_PATH" "$ERR_PATH" <<'PY'
 import os
 import sys
@@ -1355,7 +1380,7 @@ print(f'{spec}\t{workspace}')
   if [[ -z "$remote_spec" || ! -f "$remote_spec" ]]; then
     return 0
   fi
-  gate_json="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$remote_spec" "$workspace" "meta_repair" <<'PY'
+  gate_json="$(PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 -P - "$remote_spec" "$workspace" "meta_repair" <<'PY'
 import json, sys
 from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import check_wrapper_acceptance_gate
 spec_path, workspace, caller = sys.argv[1:4]
@@ -1495,7 +1520,7 @@ else
   log "verdict=UNKNOWN (first line: ${VERDICT:0:80})"
 fi
 
-COMMIT_CUSTODY_JSON="$(PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$ARNOLD_SRC" "$SOURCE_BASELINE_HEAD" "$VERDICT" "$PUSH_ALLOWED" <<'PY'
+COMMIT_CUSTODY_JSON="$(PYTHONSAFEPATH=1 PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 -P - "$ARNOLD_SRC" "$SOURCE_BASELINE_HEAD" "$VERDICT" "$PUSH_ALLOWED" <<'PY'
 import json, sys
 from arnold_pipelines.megaplan.cloud.meta_repair import verify_meta_repair_commit_custody
 repo, baseline, verdict, push_allowed = sys.argv[1:5]
@@ -1523,7 +1548,7 @@ export INSTALL_SYNC_JSON="{}"
 if [[ "$VERDICT" == FIXED* && "$COMMIT_CUSTODY_ACCEPTED" == "true" ]]; then
   log "verdict=FIXED; checking for source commits before install sync"
 
-  INSTALL_SYNC_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$ARNOLD_SRC" "$WRAPPER_REPO_ROOT" <<'PY'
+  INSTALL_SYNC_RESULT="$(PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 - "$SESSION" "$ARNOLD_SRC" "$WRAPPER_REPO_ROOT" <<'PY'
 import json, subprocess, sys
 from pathlib import Path
 
@@ -1601,7 +1626,7 @@ fi
 
 # ---- persist meta-repair record ---------------------------------------------
 persist_record() {
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$TRIGGER_TYPE" "$VERDICT" "$RESP_PATH" "$BRIEF_PATH" "$REPAIR_DATA_DIR" "$META_WORKER_RUN_ID" "$META_WORKER_MANIFEST" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'PY'
+  PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 - "$SESSION" "$TRIGGER_TYPE" "$VERDICT" "$RESP_PATH" "$BRIEF_PATH" "$REPAIR_DATA_DIR" "$META_WORKER_RUN_ID" "$META_WORKER_MANIFEST" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'PY'
 import json, os, sys, uuid
 from pathlib import Path
 
@@ -1758,7 +1783,7 @@ if [[ "$VERDICT" == FIXED* ]]; then
   else
     log "emitting repair_retriggered and retriggering ordinary repair session=$SESSION"
 
-    RETRIGGER_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_LOOP_BIN" "$WRAPPER_REPO_ROOT" "$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_PATH" "$MARKER_DIR" "$META_INVESTIGATION_OBSERVATION_PATH" "$META_INVESTIGATION_CONTEXT_DIGEST" "$META_INVESTIGATION_RECEIPT_PATH" <<'PY'
+    RETRIGGER_RESULT="$(PYTHONPATH="$META_REPAIR_PYTHONPATH" python3 - "$SESSION" "$REPAIR_LOOP_BIN" "$WRAPPER_REPO_ROOT" "$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_PATH" "$MARKER_DIR" "$META_INVESTIGATION_OBSERVATION_PATH" "$META_INVESTIGATION_CONTEXT_DIGEST" "$META_INVESTIGATION_RECEIPT_PATH" <<'PY'
 import datetime as dt
 import json, os, subprocess, sys
 from pathlib import Path

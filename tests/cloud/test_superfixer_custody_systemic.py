@@ -196,6 +196,20 @@ def test_meta_wrapper_uses_bounded_broker_without_tool_authority() -> None:
     assert "enabled_toolsets=toolset_list or None" not in launcher
 
 
+def test_meta_wrapper_validates_l2_receipts_with_pinned_source_contract() -> None:
+    wrapper = Path(
+        "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        'META_REPAIR_PYTHONPATH="$ARNOLD_SRC:$WRAPPER_REPO_ROOT:${PYTHONPATH:-}"'
+        in wrapper
+    )
+    assert 'PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}"' not in wrapper
+    assert "source-custody attestation failed" in wrapper
+    assert "repair_investigation.__file__" in wrapper
+
+
 def test_meta_dispatch_retries_failed_generation_without_false_receipt() -> None:
     watchdog = Path(
         "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog"
