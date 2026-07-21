@@ -7,6 +7,35 @@ initiative because that initiative already owns the authority-lineage audit,
 migration matrix, canonical run-state/custody foundation, and the original
 residual migration design.
 
+## Current execution evidence (not authorization)
+
+At `2026-07-21T21:20:50Z`, the live chain had accepted M8 and moved from the
+frozen 5-of-10 `awaiting_pr_merge` cursor to milestone index 6 with six accepted
+milestones. Its current plan was
+`m8a-planner-compiler-and-20260721-2116`, with an exact live runner. The raw
+sources are:
+
+- chain state:
+  `/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/.chains/chain-1e998199f544.json`;
+- pinned launch/runtime marker:
+  `/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.json`;
+- PR publication: GitHub PR #290, merged as
+  `86c1de74ce8fdeae48750c2f4c0555e82fc9cf87` at
+  `2026-07-21T21:02:34Z` into
+  `consolidate/arnold-runtime-activation-20260714`;
+- ordinary-relaunch transcript:
+  `/workspace/custody-control-plane-20260714/Arnold/.megaplan/cloud-chain-custody-control-plane-20260714.log`;
+- current status projection: `/workspace/.megaplan/status/cloud-status.json`,
+  which reports `status=running`, `completed_count=6`, and a live runner; and
+- recurrence owner: active schedule
+  `sched_pinned_e894_epics_babysit_3h` revision 17, whose success predicate
+  requires real cursor/status advancement and whose resident-health clause uses
+  only the scoped canonical resident restart path.
+
+These records describe observed custody and recovery. Neither this document nor
+an artifact, process, test, schedule occurrence, or PR label grants execution,
+merge, deployment, restart, or acceptance authority.
+
 ## What already exists
 
 - Custody M1-M4 delivered the canonical run-state resolver, coherent evidence
