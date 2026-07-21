@@ -129,6 +129,12 @@ python3 -c 'import arnold_pipelines; print(arnold_pipelines.__file__)'
 def test_watchdog_fails_before_heartbeat_when_runtime_is_not_ready(tmp_path: Path) -> None:
     status_dir = tmp_path / "status"
     env = os.environ.copy()
+    for name in (
+        "ARNOLD_WATCHDOG_ORIGIN",
+        "ARNOLD_WATCHDOG_SNAPSHOT_ACTIVE",
+        "ARNOLD_WATCHDOG_SNAPSHOT_PATH",
+    ):
+        env.pop(name, None)
     env.update(
         {
             "CLOUD_WATCHDOG_ARNOLD_SRC": str(REPO_ROOT),
@@ -384,10 +390,87 @@ def test_l2_and_l3_run_dependency_independent_gap_detection_before_model_work() 
     assert "Dependency-independent launch-gap evidence" in meta
     assert "SUPERVISOR_GAP_EVIDENCE" in auditor
     assert "_dependency_independent_launch_gap_reason" in auditor
+    assert '--arnold-src "$ARNOLD_SRC"' in meta
+    assert '--arnold-src "$ARNOLD_SRC"' in auditor
     for text, component in ((meta, "meta-repair-loop"), (auditor, "progress-auditor")):
         scan = text.index('"$MEGAPLAN_SUPERVISOR_STDLIB_PYTHON" -P "$SUPERVISOR_GAP_SCAN"')
         readiness = text.index(f'arnold_supervisor_runtime_init {component} ')
         assert scan < readiness
+
+
+def test_dependency_independent_scan_reports_installed_repair_wrapper_drift(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    source_root = tmp_path / "source"
+    source_wrappers = (
+        source_root / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
+    )
+    installed_wrappers = tmp_path / "installed"
+    marker_dir.mkdir()
+    chain_dir.mkdir(parents=True)
+    source_wrappers.mkdir(parents=True)
+    installed_wrappers.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps(
+            {
+                "session": "demo",
+                "workspace": str(workspace),
+                "remote_spec": str(workspace / "chain.yaml"),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (chain_dir / "chain.json").write_text("{}\n", encoding="utf-8")
+    (source_wrappers / "arnold-meta-repair-loop").write_text(
+        "custody source\n", encoding="utf-8"
+    )
+    (installed_wrappers / "arnold-meta-repair-loop").write_text(
+        "stale installed\n", encoding="utf-8"
+    )
+    output = tmp_path / "gaps.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(WRAPPERS / "arnold-supervisor-gap-scan"),
+            "--marker-dir",
+            str(marker_dir),
+            "--session",
+            "demo",
+            "--arnold-src",
+            str(source_root),
+            "--installed-wrapper-dir",
+            str(installed_wrappers),
+            "--output",
+            str(output),
+        ],
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["status"] == "unhealthy"
+    finding = next(
+        item
+        for item in payload["findings"]
+        if item["reason"] == "installed_repair_wrapper_drift"
+    )
+    assert finding["session"] == "demo"
+    assert finding["wrapper_mismatches"] == [
+        {
+            "component": "arnold-meta-repair-loop",
+            "installed_path": str(installed_wrappers / "arnold-meta-repair-loop"),
+            "installed_present": True,
+            "installed_sha256": hashlib.sha256(b"stale installed\n").hexdigest(),
+            "source_path": str(source_wrappers / "arnold-meta-repair-loop"),
+            "source_sha256": hashlib.sha256(b"custody source\n").hexdigest(),
+        }
+    ]
 
 
 def test_supervisor_wrappers_do_not_launch_python_before_runtime_init() -> None:

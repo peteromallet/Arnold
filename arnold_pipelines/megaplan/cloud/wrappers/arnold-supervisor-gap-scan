@@ -14,6 +14,15 @@ import subprocess
 import tempfile
 
 
+CRITICAL_REPAIR_WRAPPERS = (
+    "arnold-watchdog",
+    "arnold-repair-loop",
+    "arnold-meta-repair-loop",
+    "arnold-progress-auditor",
+    "arnold-supervisor-runtime-lib",
+)
+
+
 def _load(path: pathlib.Path) -> dict[str, object]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -61,6 +70,45 @@ def _atomic_write(path: pathlib.Path, payload: dict[str, object]) -> None:
             os.unlink(tmp)
         except FileNotFoundError:
             pass
+
+
+def _sha256(path: pathlib.Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def _wrapper_mismatches(
+    source_root: pathlib.Path | None,
+    installed_wrapper_dir: pathlib.Path,
+) -> list[dict[str, object]]:
+    if source_root is None:
+        return []
+    source_dir = source_root / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
+    if not source_dir.is_dir():
+        return []
+    mismatches: list[dict[str, object]] = []
+    for component in CRITICAL_REPAIR_WRAPPERS:
+        source = source_dir / component
+        installed = installed_wrapper_dir / component
+        if not source.is_file():
+            continue
+        source_digest = _sha256(source)
+        installed_digest = _sha256(installed)
+        if source_digest and source_digest == installed_digest:
+            continue
+        mismatches.append(
+            {
+                "component": component,
+                "installed_path": str(installed),
+                "installed_present": installed.is_file(),
+                "installed_sha256": installed_digest,
+                "source_path": str(source),
+                "source_sha256": source_digest,
+            }
+        )
+    return mismatches
 
 
 def _binding_gap(
@@ -168,9 +216,17 @@ def _binding_gap(
     return None
 
 
-def scan(marker_dir: pathlib.Path, session_filter: str = "") -> dict[str, object]:
+def scan(
+    marker_dir: pathlib.Path,
+    session_filter: str = "",
+    *,
+    source_root: pathlib.Path | None = None,
+    installed_wrapper_dir: pathlib.Path = pathlib.Path("/usr/local/bin"),
+) -> dict[str, object]:
     findings: list[dict[str, object]] = []
     checked = 0
+    wrapper_mismatches = _wrapper_mismatches(source_root, installed_wrapper_dir)
+    wrapper_findings_added: set[str] = set()
     for marker_path in sorted(marker_dir.glob("*.json")):
         marker = _load(marker_path)
         session = str(marker.get("session") or marker_path.stem).strip()
@@ -181,6 +237,18 @@ def scan(marker_dir: pathlib.Path, session_filter: str = "") -> dict[str, object
         if marker.get("should_run") is False:
             continue
         checked += 1
+        if wrapper_mismatches and session not in wrapper_findings_added:
+            findings.append(
+                {
+                    "marker_path": str(marker_path),
+                    "reason": "installed_repair_wrapper_drift",
+                    "session": session,
+                    "source_root": str(source_root),
+                    "unhealthy": True,
+                    "wrapper_mismatches": wrapper_mismatches,
+                }
+            )
+            wrapper_findings_added.add(session)
         workspace = pathlib.Path(str(marker.get("workspace") or ""))
         chain_paths = list((workspace / ".megaplan" / "plans" / ".chains").glob("*.json")) if workspace else []
         repair_root = marker_dir / "repair-data"
@@ -233,8 +301,15 @@ def main() -> int:
     parser.add_argument("--marker-dir", default="/workspace/.megaplan/cloud-sessions")
     parser.add_argument("--output", required=True)
     parser.add_argument("--session", default="")
+    parser.add_argument("--arnold-src", default="")
+    parser.add_argument("--installed-wrapper-dir", default="/usr/local/bin")
     args = parser.parse_args()
-    payload = scan(pathlib.Path(args.marker_dir), args.session)
+    payload = scan(
+        pathlib.Path(args.marker_dir),
+        args.session,
+        source_root=pathlib.Path(args.arnold_src).resolve() if args.arnold_src else None,
+        installed_wrapper_dir=pathlib.Path(args.installed_wrapper_dir),
+    )
     _atomic_write(pathlib.Path(args.output), payload)
     print(json.dumps(payload, sort_keys=True))
     return 0

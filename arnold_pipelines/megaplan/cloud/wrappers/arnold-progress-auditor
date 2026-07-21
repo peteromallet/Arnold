@@ -117,7 +117,8 @@ fi
 SUPERVISOR_GAP_EVIDENCE="$REPORT_DIR/${TS}-dependency-independent-gaps.json"
 if [[ -x "$SUPERVISOR_GAP_SCAN" ]]; then
   "$MEGAPLAN_SUPERVISOR_STDLIB_PYTHON" -P "$SUPERVISOR_GAP_SCAN" \
-    --marker-dir "$MARKER_DIR" --output "$SUPERVISOR_GAP_EVIDENCE" >/dev/null 2>&1 || true
+    --marker-dir "$MARKER_DIR" --arnold-src "$ARNOLD_SRC" \
+    --output "$SUPERVISOR_GAP_EVIDENCE" >/dev/null 2>&1 || true
 fi
 arnold_supervisor_runtime_init progress-auditor "$ARNOLD_SRC" || exit $?
 DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
@@ -4643,6 +4644,17 @@ def _dependency_independent_launch_gap_reason(ev):
     if not finding:
         return ""
     ev["dependency_independent_launch_gap"] = finding
+    if finding.get("reason") == "installed_repair_wrapper_drift":
+        components = ",".join(
+            str(item.get("component") or "unknown")
+            for item in finding.get("wrapper_mismatches") or []
+            if isinstance(item, dict)
+        )
+        return (
+            "installed_repair_wrapper_drift: dependency-independent scan found "
+            "installed repair wrappers that differ from custody-bound source; "
+            f"session={session} components={components or 'unknown'}"
+        )
     return (
         "dependency_independent_launch_gap: stopped marker has no chain or repair state; "
         f"session={session} reason={finding.get('reason') or 'unknown'}"

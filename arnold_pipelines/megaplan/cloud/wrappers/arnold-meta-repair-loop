@@ -74,6 +74,30 @@ fi
 MARKER_DIR="${MEGAPLAN_META_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${MEGAPLAN_META_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
 ARNOLD_SRC="${MEGAPLAN_META_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"
+
+# An installed meta-repair wrapper can lag the custody-bound source checkout.
+# Continue through the source wrapper before any investigation or mutation so
+# a stale /usr/local copy cannot validate receipts with an older contract.
+META_REPAIR_SOURCE_SELF="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
+META_REPAIR_RUNNING_SELF="${BASH_SOURCE[0]:-$0}"
+META_REPAIR_ORIGIN_SELF="$ARNOLD_META_REPAIR_LOOP_ORIGIN"
+if command -v readlink >/dev/null 2>&1; then
+  META_REPAIR_SOURCE_SELF="$(readlink -f "$META_REPAIR_SOURCE_SELF" 2>/dev/null || printf '%s' "$META_REPAIR_SOURCE_SELF")"
+  META_REPAIR_RUNNING_SELF="$(readlink -f "$META_REPAIR_RUNNING_SELF" 2>/dev/null || printf '%s' "$META_REPAIR_RUNNING_SELF")"
+  META_REPAIR_ORIGIN_SELF="$(readlink -f "$META_REPAIR_ORIGIN_SELF" 2>/dev/null || printf '%s' "$META_REPAIR_ORIGIN_SELF")"
+fi
+if [[ "$META_REPAIR_RUNNING_SELF" != "$META_REPAIR_SOURCE_SELF" \
+  && -x "$META_REPAIR_SOURCE_SELF" ]]; then
+  if [[ ! -f "$META_REPAIR_ORIGIN_SELF" ]] \
+    || ! cmp -s -- "$META_REPAIR_ORIGIN_SELF" "$META_REPAIR_SOURCE_SELF"; then
+    if ! bash -n "$META_REPAIR_SOURCE_SELF"; then
+      echo "arnold-meta-repair-loop: custody-bound source wrapper failed syntax validation" >&2
+      exit 78
+    fi
+    export MEGAPLAN_META_SELF_PATH="$META_REPAIR_SOURCE_SELF"
+    exec bash "$META_REPAIR_SOURCE_SELF" "$@"
+  fi
+fi
 SELF_PATH="${MEGAPLAN_META_SELF_PATH:-$ARNOLD_META_REPAIR_LOOP_ORIGIN}"
 if command -v readlink >/dev/null 2>&1; then
   SELF_PATH="$(readlink -f "$SELF_PATH" 2>/dev/null || printf '%s' "$SELF_PATH")"
@@ -102,6 +126,7 @@ SUPERVISOR_GAP_EVIDENCE="$REPAIR_DATA_DIR/${SAFE_SESSION}.supervisor-gap.json"
 if [[ -x "$SUPERVISOR_GAP_SCAN" ]]; then
   "$MEGAPLAN_SUPERVISOR_STDLIB_PYTHON" -P "$SUPERVISOR_GAP_SCAN" \
     --marker-dir "$MARKER_DIR" --session "$SESSION" \
+    --arnold-src "$ARNOLD_SRC" \
     --output "$SUPERVISOR_GAP_EVIDENCE" >/dev/null 2>&1 || true
 fi
 arnold_supervisor_runtime_init meta-repair-loop "$ARNOLD_SRC" || exit $?

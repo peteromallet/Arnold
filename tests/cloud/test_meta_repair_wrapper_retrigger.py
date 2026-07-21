@@ -97,6 +97,51 @@ def test_repair_loop_bin_rejects_stale_installed_override(tmp_path: Path) -> Non
     assert "ignoring repair-loop override that differs from repaired source" in result.stderr
 
 
+def test_stale_installed_meta_wrapper_hands_off_to_custody_source(
+    tmp_path: Path,
+) -> None:
+    text = _meta_repair_wrapper()
+    start = text.index('ARNOLD_SRC="${MEGAPLAN_META_ARNOLD_SRC:-')
+    end = text.index('SELF_PATH="${MEGAPLAN_META_SELF_PATH:-', start)
+    handoff = text[start:end]
+    source_root = tmp_path / "source"
+    source_wrapper = (
+        source_root
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "wrappers"
+        / "arnold-meta-repair-loop"
+    )
+    source_wrapper.parent.mkdir(parents=True)
+    source_wrapper.write_text(
+        "#!/usr/bin/env bash\nprintf 'custody-source:%s\\n' \"$*\"\n",
+        encoding="utf-8",
+    )
+    source_wrapper.chmod(0o755)
+    installed = tmp_path / "arnold-meta-repair-loop"
+    installed.write_text("#!/usr/bin/env bash\nexit 99\n", encoding="utf-8")
+    installed.chmod(0o755)
+    script = "\n".join(
+        [
+            "set -eu",
+            "set -- demo-session l1_custody_failure",
+            f"MEGAPLAN_META_ARNOLD_SRC={shlex.quote(str(source_root))}",
+            f"ARNOLD_META_REPAIR_LOOP_ORIGIN={shlex.quote(str(installed))}",
+            handoff,
+            "echo stale-wrapper-continued",
+        ]
+    )
+
+    result = subprocess.run(
+        ["bash", "-c", script], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "custody-source:demo-session l1_custody_failure"
+    assert "stale-wrapper-continued" not in result.stdout
+
+
 def test_unrecordable_codex_response_dispatches_direct_hermes() -> None:
     text = _meta_repair_wrapper()
 
