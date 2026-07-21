@@ -2075,6 +2075,23 @@ def _finalize_review_outcome(
             "evidence_cursor": dict(state["latest_failure"]["evidence_cursor"]),
         }
     state["current_state"] = next_state
+    try:
+        from arnold_pipelines.megaplan.observability.work_ledger import emit_transition_activity
+
+        emit_transition_activity(
+            plan_dir,
+            phase="review",
+            transition="review_outcome",
+            from_state=STATE_EXECUTED,
+            to_state=next_state,
+            metadata={
+                "result": result,
+                "review_verdict": review_verdict,
+                "route_signal": str(decision.route_signal),
+            },
+        )
+    except Exception:
+        log.debug("Work ledger review transition event emission skipped", exc_info=True)
     if result != ReviewDecisionResult.BLOCKED and next_state != STATE_BLOCKED:
         state["latest_failure"] = None
         state.pop("resume_cursor", None)
@@ -2272,32 +2289,25 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 read_only=True,
             )
 
-            # --- M9: work ledger — review/proof event ---
+            # --- M9: work ledger — review/proof inference event ---
             try:
-                from arnold_pipelines.megaplan.observability.work_ledger import emit_review_proof
+                from arnold_pipelines.megaplan.observability.work_ledger import (
+                    WorkClass,
+                    emit_worker_inference,
+                )
 
-                _rwl_cost = worker.cost_usd if worker.cost_usd else None
-                _rwl_tokens = worker.total_tokens if worker.total_tokens else None
-                _rwl_unavailable: str | None = None
-                if _rwl_tokens is None and _rwl_cost is None:
-                    _rwl_unavailable = "worker_did_not_report_usage"
-                emit_review_proof(
+                emit_worker_inference(
                     plan_dir,
+                    phase="review",
+                    worker=worker,
+                    work_class=WorkClass.REVIEW_PROOF,
                     task_id=None,  # plan-scoped
                     batch_id=None,
                     attempt_id=state.get("meta", {}).get("current_invocation_id"),
-                    elapsed_ms=worker.duration_ms if worker.duration_ms else None,
-                    model_calls=1,
-                    prompt_tokens=worker.prompt_tokens if worker.prompt_tokens else None,
-                    completion_tokens=worker.completion_tokens if worker.completion_tokens else None,
-                    total_tokens=_rwl_tokens,
-                    cost_usd=_rwl_cost,
-                    unavailable_reason=_rwl_unavailable,
+                    agent=agent,
                     metadata={
-                        "agent": agent,
-                        "model_actual": worker.model_actual,
-                        "phase": "review",
                         "robustness": robustness,
+                        "boundary": "review_worker",
                     },
                 )
             except Exception:
@@ -2368,32 +2378,25 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     read_only=True,
                 )
 
-                # --- M9: work ledger — review/proof event (extreme path) ---
+                # --- M9: work ledger — review/proof inference event (extreme path) ---
                 try:
-                    from arnold_pipelines.megaplan.observability.work_ledger import emit_review_proof
+                    from arnold_pipelines.megaplan.observability.work_ledger import (
+                        WorkClass,
+                        emit_worker_inference,
+                    )
 
-                    _rwl2_cost = worker.cost_usd if worker.cost_usd else None
-                    _rwl2_tokens = worker.total_tokens if worker.total_tokens else None
-                    _rwl2_unavailable: str | None = None
-                    if _rwl2_tokens is None and _rwl2_cost is None:
-                        _rwl2_unavailable = "worker_did_not_report_usage"
-                    emit_review_proof(
+                    emit_worker_inference(
                         plan_dir,
+                        phase="review",
+                        worker=worker,
+                        work_class=WorkClass.REVIEW_PROOF,
                         task_id=None,
                         batch_id=None,
                         attempt_id=state.get("meta", {}).get("current_invocation_id"),
-                        elapsed_ms=worker.duration_ms if worker.duration_ms else None,
-                        model_calls=1,
-                        prompt_tokens=worker.prompt_tokens if worker.prompt_tokens else None,
-                        completion_tokens=worker.completion_tokens if worker.completion_tokens else None,
-                        total_tokens=_rwl2_tokens,
-                        cost_usd=_rwl2_cost,
-                        unavailable_reason=_rwl2_unavailable,
+                        agent=agent,
                         metadata={
-                            "agent": agent,
-                            "model_actual": worker.model_actual,
-                            "phase": "review",
                             "robustness": robustness,
+                            "boundary": "review_worker_extreme",
                         },
                     )
                 except Exception:
@@ -2476,33 +2479,27 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     checks=checks,
                     pre_check_flags=pre_check_flags,
                 )
-                # --- M9: work ledger — review/proof event (parallel extreme) ---
+                # --- M9: work ledger — review/proof inference event (parallel extreme) ---
                 try:
-                    from arnold_pipelines.megaplan.observability.work_ledger import emit_review_proof
+                    from arnold_pipelines.megaplan.observability.work_ledger import (
+                        WorkClass,
+                        emit_worker_inference,
+                    )
 
-                    _prwl_cost = parallel_result.cost_usd if getattr(parallel_result, 'cost_usd', None) else None
-                    _prwl_tokens = parallel_result.total_tokens if getattr(parallel_result, 'total_tokens', None) else None
-                    _prwl_unavailable: str | None = None
-                    if _prwl_tokens is None and _prwl_cost is None:
-                        _prwl_unavailable = "parallel_review_did_not_report_usage"
-                    emit_review_proof(
+                    emit_worker_inference(
                         plan_dir,
+                        phase="review",
+                        worker=parallel_result,
+                        work_class=WorkClass.REVIEW_PROOF,
                         task_id=None,
                         batch_id=None,
                         attempt_id=run_id,
-                        elapsed_ms=parallel_result.duration_ms if getattr(parallel_result, 'duration_ms', None) else None,
+                        agent=agent_type,
                         model_calls=len(checks) if checks else 1,
-                        prompt_tokens=parallel_result.prompt_tokens if getattr(parallel_result, 'prompt_tokens', None) else None,
-                        completion_tokens=parallel_result.completion_tokens if getattr(parallel_result, 'completion_tokens', None) else None,
-                        total_tokens=_prwl_tokens,
-                        cost_usd=_prwl_cost,
-                        unavailable_reason=_prwl_unavailable,
                         metadata={
-                            "agent": agent_type,
-                            "model_actual": getattr(parallel_result, 'model_actual', None),
-                            "phase": "review",
                             "robustness": robustness,
                             "parallel_checks": len(checks) if checks else 0,
+                            "boundary": "parallel_review",
                         },
                     )
                 except Exception:

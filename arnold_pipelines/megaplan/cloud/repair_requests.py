@@ -31,6 +31,7 @@ from arnold_pipelines.megaplan.cloud.repair_recurrence import (
     PROBLEM_SIGNATURE_FIELDS,
     build_acceptance_predicate_signature,
 )
+from arnold_pipelines.megaplan.run_state.model import NormalizedFailureToken
 
 QUEUE_DIR_NAME = "repair-queue"
 REQUESTS_DIR_NAME = "requests"
@@ -297,6 +298,319 @@ def exact_repair_identity_available(
         current_refs.get("fence_token"),
     )
     return bool(plan_revision and coordinator_fence_token)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# T18 / Step 11 — canonical repair dispatch identity contract.
+#
+# Repair dispatch can mutate control flow and external work.  The contract
+# below binds every dispatch decision to the *exact live occurrence tuple*
+# observed at dispatch time, and forces callers to present a fresh source
+# reread before any of the five mutating action kinds (repair / retry /
+# escalation / cancellation / adoption).  Compatibility fallbacks such as
+# plan fingerprints, blocker ids, or target ids are deliberately excluded
+# — only explicit current evidence participates in the canonical tuple.
+# ──────────────────────────────────────────────────────────────────────
+
+# The five dispatch action kinds that may mutate repair control flow.
+REPAIR_ACTION_REPAIR = "repair"
+REPAIR_ACTION_RETRY = "retry"
+REPAIR_ACTION_ESCALATION = "escalation"
+REPAIR_ACTION_CANCELLATION = "cancellation"
+REPAIR_ACTION_ADOPTION = "adoption"
+REPAIR_ACTION_KINDS: frozenset[str] = frozenset(
+    {
+        REPAIR_ACTION_REPAIR,
+        REPAIR_ACTION_RETRY,
+        REPAIR_ACTION_ESCALATION,
+        REPAIR_ACTION_CANCELLATION,
+        REPAIR_ACTION_ADOPTION,
+    }
+)
+
+# When present, a phase-result digest takes precedence over a blocker digest
+# (a task that failed via a phase result rather than a human blocker still
+# needs an exact occurrence anchor).
+_DISPATCH_DIGEST_KIND_BLOCKER = "blocker"
+_DISPATCH_DIGEST_KIND_PHASE_RESULT = "phase_result"
+
+
+@dataclass(frozen=True)
+class RepairDispatchIdentity:
+    """Exact live occurrence tuple for a repair dispatch decision.
+
+    Every mutating repair action (repair / retry / escalation / cancellation /
+    adoption) binds to one of these tuples.  The tuple carries the full
+    occurrence identity observed at dispatch time so a stale attempt, a
+    recycled fence token, or a different plan revision cannot reuse a prior
+    dispatch.
+
+    The tuple is deliberately exact: ``plan_revision`` and
+    ``coordinator_fence_token`` must come from explicit current evidence
+    (no fingerprint / blocker-id fallbacks).  ``normalized_failure_kind``
+    is the canonical token derived via
+    :class:`~arnold_pipelines.megaplan.run_state.model.NormalizedFailureToken`
+    so ``fail`` / ``failed`` / ``failed: <detail>`` / ``error: <detail>``
+    collapse predictably while the raw form is preserved for diagnostics.
+    """
+
+    environment_id: str
+    session_id: str
+    chain_id: str
+    plan_revision: str
+    phase: str
+    task_id: str
+    attempt_number: int
+    normalized_failure_kind: str
+    dispatch_digest_kind: str
+    dispatch_digest: str
+    coordinator_fence_token: str
+    # Provenance — the source reread that produced this tuple.  These fields
+    # are display/diagnostic only; they never grant authority.
+    source_reread_at: str = ""
+    source_digest: str = ""
+    raw_failure_kind: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "environment_id": self.environment_id,
+            "session_id": self.session_id,
+            "chain_id": self.chain_id,
+            "plan_revision": self.plan_revision,
+            "phase": self.phase,
+            "task_id": self.task_id,
+            "attempt_number": self.attempt_number,
+            "normalized_failure_kind": self.normalized_failure_kind,
+            "dispatch_digest_kind": self.dispatch_digest_kind,
+            "dispatch_digest": self.dispatch_digest,
+            "coordinator_fence_token": self.coordinator_fence_token,
+            "source_reread_at": self.source_reread_at,
+            "source_digest": self.source_digest,
+            "raw_failure_kind": self.raw_failure_kind,
+            "authority": "evidence_extracted_non_authoritative",
+        }
+
+
+@dataclass(frozen=True)
+class SourceRereadVerdict:
+    """Outcome of :func:`require_source_reread_for_action`.
+
+    ``permitted`` is True only when a fresh source reread was presented whose
+    tuple matches the current observed tuple and whose fence token agrees.
+    Every other outcome sets ``permitted`` to False and supplies a precise
+    ``reason`` the dispatch layer can record.
+    """
+
+    action: str
+    permitted: bool
+    reason: str
+    current_fence_token: str = ""
+    fresh_fence_token: str = ""
+    current_tuple_digest: str = ""
+    fresh_tuple_digest: str = ""
+
+
+def _dispatch_digest(
+    *,
+    blocker_digest: str,
+    phase_result_digest: str,
+) -> tuple[str, str]:
+    """Pick the (kind, digest) anchor for a dispatch tuple.
+
+    A phase-result digest takes precedence over a blocker digest so a task
+    that failed via a phase result rather than a human blocker still gets an
+    exact anchor.  Returns ``("", "")`` when neither is present (the caller
+    treats that as an unverifiable occurrence and refuses dispatch).
+    """
+    if phase_result_digest:
+        return _DISPATCH_DIGEST_KIND_PHASE_RESULT, phase_result_digest
+    if blocker_digest:
+        return _DISPATCH_DIGEST_KIND_BLOCKER, blocker_digest
+    return "", ""
+
+
+def derive_dispatch_identity_from_source_reread(
+    *,
+    environment_id: str,
+    session_id: str,
+    chain_id: str,
+    plan_revision: str,
+    phase: str,
+    task_id: str,
+    attempt_number: int,
+    raw_failure_kind: str,
+    blocker_digest: str = "",
+    phase_result_digest: str = "",
+    coordinator_fence_token: str,
+    source_reread_at: str,
+    source_digest: str,
+) -> RepairDispatchIdentity | None:
+    """Build a canonical :class:`RepairDispatchIdentity` from a fresh reread.
+
+    This is the *only* function permitted to mint a dispatch identity, and it
+    requires explicit provenance: ``source_reread_at`` (an ISO-8601 timestamp
+    of the fresh source read) and ``source_digest`` (a content digest of the
+    source records read).  Returns ``None`` when required exact-evidence
+    fields are missing — callers must treat ``None`` as "refuse dispatch".
+
+    ``plan_revision`` and ``coordinator_fence_token`` must come from explicit
+    current evidence; the caller is responsible for not falling back to
+    fingerprints / blocker ids / target ids before invoking this function
+    (see :func:`exact_repair_identity_available` for the predicate).
+    """
+    if not (environment_id and session_id and chain_id and plan_revision and phase):
+        return None
+    if not coordinator_fence_token:
+        return None
+    if not source_reread_at or not source_digest:
+        return None
+    try:
+        attempt = int(attempt_number)
+    except (TypeError, ValueError):
+        return None
+    if attempt <= 0:
+        return None
+    digest_kind, digest = _dispatch_digest(
+        blocker_digest=blocker_digest,
+        phase_result_digest=phase_result_digest,
+    )
+    if not digest:
+        # No anchor — the occurrence cannot be bound exactly.
+        return None
+    token = NormalizedFailureToken.normalize(raw_failure_kind or "")
+    return RepairDispatchIdentity(
+        environment_id=environment_id,
+        session_id=session_id,
+        chain_id=chain_id,
+        plan_revision=plan_revision,
+        phase=phase,
+        task_id=task_id or "",
+        attempt_number=attempt,
+        normalized_failure_kind=token.canonical,
+        dispatch_digest_kind=digest_kind,
+        dispatch_digest=digest,
+        coordinator_fence_token=coordinator_fence_token,
+        source_reread_at=source_reread_at,
+        source_digest=source_digest,
+        raw_failure_kind=token.raw,
+    )
+
+
+def repair_dispatch_identity_key(identity: RepairDispatchIdentity | None) -> str:
+    """Return a stable digest over the exact occurrence tuple.
+
+    The digest covers every authority-bearing field of the tuple but never
+    the provenance fields (``source_reread_at`` / ``source_digest``).  Two
+    identities with the same occurrence but reread at different times must
+    compare equal.
+    """
+    if identity is None:
+        return ""
+    payload = json.dumps(
+        {
+            "environment_id": identity.environment_id,
+            "session_id": identity.session_id,
+            "chain_id": identity.chain_id,
+            "plan_revision": identity.plan_revision,
+            "phase": identity.phase,
+            "task_id": identity.task_id,
+            "attempt_number": identity.attempt_number,
+            "normalized_failure_kind": identity.normalized_failure_kind,
+            "dispatch_digest_kind": identity.dispatch_digest_kind,
+            "dispatch_digest": identity.dispatch_digest,
+            "coordinator_fence_token": identity.coordinator_fence_token,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def require_source_reread_for_action(
+    action: str,
+    *,
+    current_identity: RepairDispatchIdentity | None,
+    fresh_identity: RepairDispatchIdentity | None,
+) -> SourceRereadVerdict:
+    """Gate a mutating repair action on a fresh, agreeing source reread.
+
+    The five mutating action kinds (repair / retry / escalation / cancellation
+    / adoption) must present a ``fresh_identity`` derived from a *new* source
+    reread.  The verdict permits the action only when:
+
+    * both ``current_identity`` and ``fresh_identity`` are present,
+    * the fresh tuple digest equals the current tuple digest (same occurrence),
+    * the fresh fence token equals the current fence token (no fence drift),
+    * the fresh ``source_reread_at`` is not earlier than the current one
+      (the reread is actually fresh).
+
+    Any disagreement quarantines the action with a precise reason.  This is a
+    read-only gate — it never mutates state and never grants authority beyond
+    "the occurrence tuple is still live".
+    """
+    if action not in REPAIR_ACTION_KINDS:
+        return SourceRereadVerdict(
+            action=action,
+            permitted=False,
+            reason=f"unknown repair action kind: {action!r}",
+        )
+    if fresh_identity is None:
+        return SourceRereadVerdict(
+            action=action,
+            permitted=False,
+            reason="no fresh source reread supplied for dispatch action",
+        )
+    if current_identity is None:
+        return SourceRereadVerdict(
+            action=action,
+            permitted=False,
+            reason="no current occurrence tuple to bind dispatch action against",
+        )
+    current_key = repair_dispatch_identity_key(current_identity)
+    fresh_key = repair_dispatch_identity_key(fresh_identity)
+    if current_key != fresh_key:
+        return SourceRereadVerdict(
+            action=action,
+            permitted=False,
+            reason="fresh source reread occurrence tuple disagrees with current tuple",
+            current_fence_token=current_identity.coordinator_fence_token,
+            fresh_fence_token=fresh_identity.coordinator_fence_token,
+            current_tuple_digest=current_key,
+            fresh_tuple_digest=fresh_key,
+        )
+    if current_identity.coordinator_fence_token != fresh_identity.coordinator_fence_token:
+        return SourceRereadVerdict(
+            action=action,
+            permitted=False,
+            reason="coordinator fence token drifted between current and fresh reread",
+            current_fence_token=current_identity.coordinator_fence_token,
+            fresh_fence_token=fresh_identity.coordinator_fence_token,
+            current_tuple_digest=current_key,
+            fresh_tuple_digest=fresh_key,
+        )
+    if (
+        current_identity.source_reread_at
+        and fresh_identity.source_reread_at
+        and fresh_identity.source_reread_at < current_identity.source_reread_at
+    ):
+        return SourceRereadVerdict(
+            action=action,
+            permitted=False,
+            reason="fresh source reread predates the current reread (stale)",
+            current_fence_token=current_identity.coordinator_fence_token,
+            fresh_fence_token=fresh_identity.coordinator_fence_token,
+            current_tuple_digest=current_key,
+            fresh_tuple_digest=fresh_key,
+        )
+    return SourceRereadVerdict(
+        action=action,
+        permitted=True,
+        reason="fresh source reread occurrence tuple matches current tuple",
+        current_fence_token=current_identity.coordinator_fence_token,
+        fresh_fence_token=fresh_identity.coordinator_fence_token,
+        current_tuple_digest=current_key,
+        fresh_tuple_digest=fresh_key,
+    )
 
 
 def utc_now() -> str:

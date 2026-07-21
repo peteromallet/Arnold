@@ -1095,6 +1095,22 @@ def _replay_proven_batch_artifacts(
                 list(merge_result.issues),
             )
         proven_payloads.append(merge_result.payload or payload)
+        try:
+            from arnold_pipelines.megaplan.observability.work_ledger import emit_replay
+
+            emit_replay(
+                plan_dir,
+                batch_id=str(batch_artifact_index(artifact_path) or ""),
+                elapsed_ms=0,
+                unavailable_reason="replay_uses_existing_batch_artifact",
+                metadata={
+                    "phase": "execute",
+                    "artifact_path": str(artifact_path),
+                    "replay_boundary": "proven_batch_artifact",
+                },
+            )
+        except Exception:
+            log.debug("Work ledger replay event emission skipped", exc_info=True)
     return proven_payloads
 
 
@@ -1823,6 +1839,21 @@ def _run_and_merge_batch(
     else:
         before_snapshot, before_error = capture_git_status_snapshot_fn(project_dir)
         before_line_counts = capture_before_line_counts(project_dir, before_snapshot.keys())
+        try:
+            from arnold_pipelines.megaplan.observability.work_ledger import emit_git_activity
+
+            emit_git_activity(
+                plan_dir,
+                phase="execute",
+                operation="status_before_batch",
+                metadata={
+                    "batch_number": batch_number,
+                    "path_count": len(before_snapshot),
+                    "error": before_error,
+                },
+            )
+        except Exception:
+            log.debug("Work ledger git status event emission skipped", exc_info=True)
     # Pass a full AgentMode (with effort + resolved_model) rather than a bare
     # 4-tuple. The 4-tuple form drops both fields downstream, which causes
     # ``run_codex_step`` to be invoked with ``model=None`` / ``effort=None`` and
@@ -1868,23 +1899,24 @@ def _run_and_merge_batch(
         compiled_validation_jobs,
         project_dir=project_dir,
     )
-    # --- M9: work ledger — validation event ---
+    # --- M9: work ledger — validation/tool event ---
     try:
-        from arnold_pipelines.megaplan.observability.work_ledger import emit_validation
+        from arnold_pipelines.megaplan.observability.work_ledger import emit_tool_activity
 
         _vl_elapsed: int | None = None
         if validation_report and hasattr(validation_report, 'total_duration_ms'):
             _vl_elapsed = validation_report.total_duration_ms
         elif validation_report and hasattr(validation_report, 'elapsed_ms'):
             _vl_elapsed = validation_report.elapsed_ms
-        emit_validation(
+        emit_tool_activity(
             plan_dir,
+            phase="execute",
+            tool_name="compiled_validation_jobs",
             task_id=None,  # batch-scoped
             batch_id=str(batch_number),
             attempt_id=None,  # no worker dispatch yet
             elapsed_ms=_vl_elapsed,
             metadata={
-                "phase": "execute",
                 "job_count": len(compiled_validation_jobs),
             },
         )
@@ -1901,37 +1933,30 @@ def _run_and_merge_batch(
         prompt_override=rendered_prompt_override,
         wbc_dispatch=wbc_dispatch,
     )
-    # --- M9: work ledger — productive execution event ---
+    # --- M9: work ledger — productive execution/inference event ---
     try:
-        from arnold_pipelines.megaplan.observability.work_ledger import emit_productive
+        from arnold_pipelines.megaplan.observability.work_ledger import (
+            WorkClass,
+            emit_worker_inference,
+        )
 
         _wl_attempt_id: str | None = None
         if isinstance(worker.auth_metadata, dict):
             _wl_wbc = worker.auth_metadata.get("wbc_dispatch", {})
             if isinstance(_wl_wbc, dict):
                 _wl_attempt_id = _wl_wbc.get("attempt_id")
-        _wl_cost = worker.cost_usd if worker.cost_usd else None
-        _wl_tokens = worker.total_tokens if worker.total_tokens else None
-        _wl_unavailable: str | None = None
-        if _wl_tokens is None and _wl_cost is None:
-            _wl_unavailable = "worker_did_not_report_usage"
-        emit_productive(
+        emit_worker_inference(
             plan_dir,
+            phase="execute",
+            worker=worker,
+            work_class=WorkClass.PRODUCTIVE,
             task_id=None,  # batch-scoped
             batch_id=str(batch_number),
             attempt_id=_wl_attempt_id,
-            elapsed_ms=worker.duration_ms if worker.duration_ms else None,
-            model_calls=1,
-            prompt_tokens=worker.prompt_tokens if worker.prompt_tokens else None,
-            completion_tokens=worker.completion_tokens if worker.completion_tokens else None,
-            total_tokens=_wl_tokens,
-            cost_usd=_wl_cost,
-            unavailable_reason=_wl_unavailable,
+            agent=agent,
             metadata={
-                "agent": agent,
-                "model_actual": worker.model_actual,
-                "phase": "execute",
                 "batch_task_ids": batch_task_ids,
+                "boundary": "execute_batch_worker",
             },
         )
     except Exception:
@@ -2076,6 +2101,21 @@ def _run_and_merge_batch(
                 state=state,
             )
         )
+        try:
+            from arnold_pipelines.megaplan.observability.work_ledger import emit_git_activity
+
+            emit_git_activity(
+                plan_dir,
+                phase="execute",
+                operation="observe_changes_after_batch",
+                metadata={
+                    "batch_number": batch_number,
+                    "batches_total": batches_total,
+                    "deviation_count": len(deviations),
+                },
+            )
+        except Exception:
+            log.debug("Work ledger git observe event emission skipped", exc_info=True)
     pre_existing_ids = _pre_existing_task_ids(plan_dir)
     if is_prose_mode(state):
         missing_task_evidence = _check_done_task_evidence(
@@ -3463,6 +3503,19 @@ def _handle_unroutable_review_rework(
             "unrunnable_rework_task_ids": sorted(set(unrunnable_task_ids)),
         },
     )
+    try:
+        from arnold_pipelines.megaplan.observability.work_ledger import emit_transition_activity
+
+        emit_transition_activity(
+            plan_dir,
+            phase="execute",
+            transition="unroutable_review_rework",
+            from_state=STATE_FINALIZED,
+            to_state=STATE_BLOCKED,
+            metadata={"attempt": attempts},
+        )
+    except Exception:
+        log.debug("Work ledger transition event emission skipped", exc_info=True)
     response = _block_no_runnable_rework(
         plan_dir=plan_dir,
         state=state,
@@ -3500,6 +3553,19 @@ def _escalate_persistent_unroutable_rework(
             "runnable_rework_task_ids": sorted(set(runnable_task_ids)),
         },
     )
+    try:
+        from arnold_pipelines.megaplan.observability.work_ledger import emit_transition_activity
+
+        emit_transition_activity(
+            plan_dir,
+            phase="execute",
+            transition="unroutable_review_rework_mixed",
+            from_state=STATE_FINALIZED,
+            to_state=STATE_BLOCKED,
+            metadata={"max_attempts": _MAX_UNROUTABLE_REWORK_RERUNS},
+        )
+    except Exception:
+        log.debug("Work ledger transition event emission skipped", exc_info=True)
     response = _block_no_runnable_rework(
         plan_dir=plan_dir,
         state=state,
@@ -3553,6 +3619,19 @@ def _escalate_persistent_unroutable_rework(
             "runnable_rework_task_ids": sorted(set(runnable_task_ids)),
         },
     )
+    try:
+        from arnold_pipelines.megaplan.observability.work_ledger import emit_transition_activity
+
+        emit_transition_activity(
+            plan_dir,
+            phase="execute",
+            transition="unroutable_review_rework_mixed",
+            from_state=STATE_FINALIZED,
+            to_state=STATE_BLOCKED,
+            metadata={"max_attempts": _MAX_UNROUTABLE_REWORK_RERUNS},
+        )
+    except Exception:
+        log.debug("Work ledger transition event emission skipped", exc_info=True)
     response = _block_no_runnable_rework(
         plan_dir=plan_dir,
         state=state,

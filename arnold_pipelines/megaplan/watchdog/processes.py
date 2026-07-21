@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -21,6 +22,26 @@ class ProcessRecord:
     ppid: int | None = None
     elapsed_seconds: float | None = None
     cpu_seconds: float | None = None
+    # M9 — correlated-evidence fields. None of these grant success, repair, or
+    # completion authority: they are facts extracted from the process namespace
+    # so the watchdog can *correlate* a process to a WBC attempt identity. The
+    # correlation verdict is computed in ``watchdog.correlate`` and is always
+    # classified as unknown/lost for recycled, hung, dead, or unrelated workers.
+    # ``birth_time_seconds`` is the process start time (epoch seconds) used to
+    # detect recycled PIDs against an attempt's recorded start time.
+    birth_time_seconds: float | None = None
+    # Environment/session token extracted best-effort from the cmdline/env.
+    session_token: str | None = None
+    # Runner lease / epoch reference extracted best-effort from the cmdline/env.
+    runner_lease_ref: str | None = None
+    # Heartbeat freshness: True when a recent heartbeat file/line was observed.
+    heartbeat_fresh: bool | None = None
+    # Age in seconds of the most recent heartbeat sample observed for the pid.
+    heartbeat_age_seconds: float | None = None
+    # tmux session name hosting the process, when discoverable.
+    tmux_session: str | None = None
+    # Age in seconds of the tmux session / last client activity.
+    tmux_age_seconds: float | None = None
 
 
 _CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -87,6 +108,46 @@ def _extract_cwd_from_cmdline(cmdline: str) -> str | None:
     matches = re.findall(r"\bcd\s+['\"]([^'\"]+)['\"]", cmdline)
     if matches:
         return matches[-1]
+    return None
+
+
+def _extract_session_token(cmdline: str) -> str | None:
+    """Best-effort extraction of an environment/session token from a cmdline.
+
+    Recognizes common shapes such as ``--session <tok>``, ``--session-id <tok>``,
+    ``MEGAPLAN_SESSION=<tok>``, ``ARNOLD_SESSION=<tok>``, and
+    ``--env MEGAPLAN_SESSION=<tok>``. Returns ``None`` when no token is found.
+    The extracted token is correlated *evidence only* — it never authorizes a
+    terminal/completion transition.
+    """
+    for flag in ("--session-id", "--session"):
+        match = re.search(rf'{re.escape(flag)}\s+([A-Za-z0-9_.\-:]+)', cmdline)
+        if match:
+            return match.group(1)
+    for env_name in ("MEGAPLAN_SESSION", "ARNOLD_SESSION", "RUN_SESSION"):
+        match = re.search(rf'(?:^|\s){env_name}=([A-Za-z0-9_.\-:]+)', cmdline)
+        if match:
+            return match.group(1)
+        match = re.search(rf'--env\s+{env_name}=([A-Za-z0-9_.\-:]+)', cmdline)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _extract_runner_lease_ref(cmdline: str) -> str | None:
+    """Best-effort extraction of a runner lease / epoch reference from a cmdline.
+
+    Recognizes ``--lease <ref>``, ``--runner-lease <ref>``, ``--lease-id <ref>``,
+    and ``RUNNER_LEASE=<ref>``. Returns ``None`` when no ref is found. The ref
+    is correlated evidence only.
+    """
+    for flag in ("--runner-lease", "--lease-id", "--lease"):
+        match = re.search(rf'{re.escape(flag)}\s+([A-Za-z0-9_.\-:]+)', cmdline)
+        if match:
+            return match.group(1)
+    match = re.search(r'(?:^|\s)RUNNER_LEASE=([A-Za-z0-9_.\-:]+)', cmdline)
+    if match:
+        return match.group(1)
     return None
 
 
@@ -207,6 +268,16 @@ def scan_processes(ps_lines: Iterable[str] | None = None) -> tuple[ProcessRecord
         if category is None:
             continue
         cwd = _extract_cwd_from_cmdline(cmdline) or _get_cwd(pid)
+        session_token = _extract_session_token(cmdline)
+        runner_lease_ref = _extract_runner_lease_ref(cmdline)
+        # Derive birth time from elapsed seconds so the liveness classifier can
+        # detect recycled PIDs. None when ``etime`` is unavailable.
+        birth_time_seconds: float | None = None
+        if elapsed_seconds is not None:
+            try:
+                birth_time_seconds = time.time() - elapsed_seconds
+            except Exception:
+                birth_time_seconds = None
         records.append(
             ProcessRecord(
                 pid=pid,
@@ -217,6 +288,9 @@ def scan_processes(ps_lines: Iterable[str] | None = None) -> tuple[ProcessRecord
                 ppid=ppid,
                 elapsed_seconds=elapsed_seconds,
                 cpu_seconds=cpu_seconds,
+                birth_time_seconds=birth_time_seconds,
+                session_token=session_token,
+                runner_lease_ref=runner_lease_ref,
             )
         )
     return tuple(records)
@@ -225,4 +299,6 @@ def scan_processes(ps_lines: Iterable[str] | None = None) -> tuple[ProcessRecord
 __all__ = [
     "ProcessRecord",
     "scan_processes",
+    "_extract_session_token",
+    "_extract_runner_lease_ref",
 ]

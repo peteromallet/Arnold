@@ -13,14 +13,18 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
+from arnold_pipelines.megaplan.observability.events import EventKind, read_events
 from arnold_pipelines.megaplan.observability.work_ledger import (
     LEDGER_FILE,
+    PRODUCER_CONTRACTS,
     WorkClass,
     WorkLedgerEvent,
+    emit_git_activity,
     emit_compaction,
     emit_productive,
     emit_queue_idle,
@@ -28,8 +32,13 @@ from arnold_pipelines.megaplan.observability.work_ledger import (
     emit_replay,
     emit_retry_wait,
     emit_review_proof,
+    emit_strategy_m4_baseline_events,
+    emit_tool_activity,
+    emit_transition_activity,
     emit_validation,
+    emit_worker_inference,
     emit_work_ledger_event,
+    validate_producer_contract,
 )
 
 
@@ -137,10 +146,11 @@ class TestWorkLedgerEvent:
             work_class=WorkClass.PRODUCTIVE,
             elapsed_ms=100,
             model_calls=1,
-            prompt_tokens=10,
-            completion_tokens=20,
-            total_tokens=30,
+            prompt_tokens=500,
+            completion_tokens=200,
+            total_tokens=700,
             cost_usd=0.001,
+            accepted_output_delta=0,
         )
         assert event.validate() == []
 
@@ -316,6 +326,7 @@ class TestConvenienceBuilders:
             assert record["model_calls"] == 0
             assert record["total_tokens"] == 0
             assert record["cost_usd"] == 0.0
+            assert record["unavailable_reason"] == "queue_idle_no_model_no_output_delta"
 
     def test_emit_retry_wait(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -330,6 +341,7 @@ class TestConvenienceBuilders:
             assert record["work_class"] == "retry_wait"
             assert record["elapsed_ms"] == 60000
             assert record["model_calls"] == 0
+            assert record["unavailable_reason"] == "retry_wait_no_model_no_output_delta"
 
     def test_emit_compaction(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -386,6 +398,28 @@ class TestConvenienceBuilders:
             )
             assert record["work_class"] == "replay"
 
+    def test_emit_strategy_m4_baseline_preserves_non_waste_classes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan_dir = Path(tmpdir)
+            emit_strategy_m4_baseline_events(plan_dir)
+
+            records = [
+                json.loads(line)
+                for line in (plan_dir / LEDGER_FILE).read_text(encoding="utf-8").splitlines()
+            ]
+            assert [record["work_class"] for record in records] == [
+                "productive",
+                "review_proof",
+            ]
+            assert records[0]["elapsed_ms"] == 7_397_000
+            assert records[0]["metadata"]["duration_label"] == "2h03m17s"
+            assert records[0]["metadata"]["classification_guard"] == (
+                "productive_implementation_not_waste"
+            )
+            assert records[1]["metadata"]["classification_guard"] == (
+                "required_review_not_waste"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Never zero for missing measures
@@ -433,6 +467,7 @@ class TestNeverZeroForMissing:
             assert d1["model_calls"] == 0
             assert d1["total_tokens"] == 0
             assert d1["cost_usd"] == 0.0
+            assert d1["unavailable_reason"] == "queue_idle_no_model_no_output_delta"
 
         # Validation — via convenience emitter
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -444,7 +479,222 @@ class TestNeverZeroForMissing:
             assert d2["total_tokens"] == 0
             assert d2["cost_usd"] == 0.0
 
+    def test_no_model_contract_events_validate_without_warnings(self) -> None:
+        """Concrete no-model producer rows satisfy the declared contracts."""
+        examples = [
+            WorkLedgerEvent(
+                work_class=WorkClass.QUEUE_IDLE,
+                elapsed_ms=100,
+                model_calls=0,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                cost_usd=0.0,
+                unavailable_reason="queue_idle_no_model_no_output_delta",
+            ),
+            WorkLedgerEvent(
+                work_class=WorkClass.RETRY_WAIT,
+                elapsed_ms=100,
+                model_calls=0,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                cost_usd=0.0,
+                unavailable_reason="retry_wait_no_model_no_output_delta",
+            ),
+            WorkLedgerEvent(
+                work_class=WorkClass.VALIDATION,
+                elapsed_ms=100,
+                model_calls=0,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                cost_usd=0.0,
+                unavailable_reason="subprocess_validation_no_model",
+            ),
+            WorkLedgerEvent(
+                work_class=WorkClass.REPAIR_VERIFICATION,
+                elapsed_ms=100,
+                model_calls=0,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                cost_usd=0.0,
+                unavailable_reason="read_only_verification_no_model",
+            ),
+        ]
+        for event in examples:
+            assert event.validate() == []
+            assert validate_producer_contract(event) == []
+
     def test_no_waste_class(self) -> None:
         """There is no 'waste' work class — missing measures are 'unavailable'."""
         classes = {c.value for c in WorkClass}
         assert "waste" not in classes
+
+
+class TestNaturalBoundaryEmitters:
+    """Runtime checks for the helper emitters used by producer call sites."""
+
+    def _ledger_records(self, plan_dir: Path) -> list[dict]:
+        return [
+            json.loads(line)
+            for line in (plan_dir / LEDGER_FILE).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    def test_every_work_class_has_a_producer_contract(self) -> None:
+        assert set(PRODUCER_CONTRACTS) == set(WorkClass)
+
+    def test_worker_inference_emits_session_inference_and_productive_rows(self) -> None:
+        worker = SimpleNamespace(
+            auth_metadata={"wbc_dispatch": {"attempt_id": "attempt-1"}},
+            cost_usd=0.012,
+            duration_ms=1234,
+            model_actual="gpt-test",
+            prompt_tokens=100,
+            completion_tokens=40,
+            total_tokens=140,
+            session_id="session-1",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan_dir = Path(tmpdir)
+            emit_worker_inference(
+                plan_dir,
+                phase="execute",
+                worker=worker,
+                work_class=WorkClass.PRODUCTIVE,
+                batch_id="25",
+                accepted_output_delta=55,
+                agent="codex",
+                metadata={"boundary": "execute_batch_worker"},
+            )
+
+            ledger = self._ledger_records(plan_dir)
+            assert len(ledger) == 1
+            assert ledger[0]["work_class"] == "productive"
+            assert ledger[0]["attempt_id"] == "attempt-1"
+            assert ledger[0]["accepted_output_delta"] == 55
+            assert "unavailable_reason" not in ledger[0]
+
+            events = list(
+                read_events(
+                    plan_dir,
+                    kinds=[EventKind.SESSION_START, EventKind.INFERENCE],
+                )
+            )
+            assert [event["kind"] for event in events] == [
+                EventKind.SESSION_START,
+                EventKind.INFERENCE,
+            ]
+            inference_payload = events[1]["payload"]
+            assert inference_payload["tokens_in"] == 100
+            assert inference_payload["tokens_out"] == 40
+            assert inference_payload["duration_s"] == 1.234
+            assert inference_payload["boundary"] == "execute_batch_worker"
+
+    def test_tool_git_and_transition_emit_companion_events_and_validation_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan_dir = Path(tmpdir)
+            emit_tool_activity(
+                plan_dir,
+                phase="execute",
+                tool_name="compiled_validation_jobs",
+                elapsed_ms=10,
+                batch_id="25",
+            )
+            emit_git_activity(
+                plan_dir,
+                phase="execute",
+                operation="status_before_batch",
+                elapsed_ms=20,
+            )
+            emit_transition_activity(
+                plan_dir,
+                phase="review",
+                transition="review_outcome",
+                from_state="executed",
+                to_state="reviewed",
+            )
+
+            ledger = self._ledger_records(plan_dir)
+            assert [record["work_class"] for record in ledger] == [
+                "validation",
+                "validation",
+                "validation",
+            ]
+            assert all(
+                record["unavailable_reason"] == "subprocess_validation_no_model"
+                for record in ledger
+            )
+
+            events = list(
+                read_events(
+                    plan_dir,
+                    kinds=[EventKind.TOOL, EventKind.GIT, EventKind.TRANSITION],
+                )
+            )
+            assert [event["kind"] for event in events] == [
+                EventKind.TOOL,
+                EventKind.GIT,
+                EventKind.TOOL,
+                EventKind.TRANSITION,
+                EventKind.TOOL,
+            ]
+            assert events[0]["payload"]["duration_s"] == 0.01
+            assert events[1]["payload"]["operation"] == "status_before_batch"
+            assert events[3]["payload"]["transition"] == "review_outcome"
+
+
+class TestProducerWiring:
+    """Producer call sites cover the M9 natural execution boundaries."""
+
+    TARGET_FILES = {
+        "auto.py": Path("arnold_pipelines/megaplan/auto.py"),
+        "chain/__init__.py": Path("arnold_pipelines/megaplan/chain/__init__.py"),
+        "execute/batch.py": Path("arnold_pipelines/megaplan/execute/batch.py"),
+        "handlers/execute.py": Path("arnold_pipelines/megaplan/handlers/execute.py"),
+        "handlers/review.py": Path("arnold_pipelines/megaplan/handlers/review.py"),
+        "handlers/gate.py": Path("arnold_pipelines/megaplan/handlers/gate.py"),
+        "handlers/finalize.py": Path("arnold_pipelines/megaplan/handlers/finalize.py"),
+    }
+
+    def _source(self, name: str) -> str:
+        return self.TARGET_FILES[name].read_text(encoding="utf-8")
+
+    def test_auto_driver_emits_wait_retry_compaction_and_transition_boundaries(self) -> None:
+        source = self._source("auto.py")
+        assert "emit_queue_idle" in source
+        assert "emit_retry_wait" in source
+        assert "emit_compaction" in source
+        assert "emit_transition_activity" in source
+        assert "auto_driver_wait_no_model" in source
+        assert "auto_context_retry_usage_unavailable" in source
+
+    def test_chain_driver_emits_session_git_retry_transition_and_replay_boundaries(self) -> None:
+        source = self._source("chain/__init__.py")
+        assert "emit_session_start" in source
+        assert "emit_git_activity" in source
+        assert "emit_retry_wait" in source
+        assert "emit_transition_activity" in source
+        assert "emit_replay" in source
+        assert "blocked_plan_replay_suppressed" in source
+
+    def test_handlers_and_batch_emit_worker_tool_git_and_transition_boundaries(self) -> None:
+        expected = {
+            "execute/batch.py": [
+                "emit_worker_inference",
+                "emit_tool_activity",
+                "emit_git_activity",
+                "emit_transition_activity",
+                "emit_replay",
+            ],
+            "handlers/execute.py": ["emit_tool_activity", "REPAIR_VERIFICATION"],
+            "handlers/review.py": ["emit_worker_inference", "emit_transition_activity"],
+            "handlers/gate.py": ["emit_worker_inference", "emit_transition_activity"],
+            "handlers/finalize.py": ["emit_worker_inference", "emit_transition_activity"],
+        }
+        for name, needles in expected.items():
+            source = self._source(name)
+            for needle in needles:
+                assert needle in source, f"{needle} missing from {name}"

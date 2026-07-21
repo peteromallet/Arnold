@@ -1149,6 +1149,41 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
         _merge_resolution_tradeoffs_into_payload(gate_summary, worker.payload)
         _write_gate_carry(plan_dir, gate_summary, iteration=iteration)
         gate_hash = _write_gate_json(plan_dir, gate_summary)
+        try:
+            from arnold_pipelines.megaplan.observability.work_ledger import (
+                WorkClass,
+                emit_transition_activity,
+                emit_worker_inference,
+            )
+
+            emit_worker_inference(
+                plan_dir,
+                phase="gate",
+                worker=worker,
+                work_class=WorkClass.REVIEW_PROOF,
+                attempt_id=state.get("meta", {}).get("current_invocation_id"),
+                agent=agent,
+                model_calls=2 if gate_summary.get("reprompted") else 1,
+                metadata={
+                    "recommendation": gate_summary.get("recommendation"),
+                    "route_signal": route_signal.get("route_signal"),
+                    "boundary": "gate_worker",
+                    "reprompted": bool(gate_summary.get("reprompted")),
+                },
+            )
+            emit_transition_activity(
+                plan_dir,
+                phase="gate",
+                transition="gate_route_signal",
+                from_state=STATE_CRITIQUED,
+                to_state=STATE_GATED if gate_summary.get("recommendation") == "PROCEED" else STATE_PLANNED,
+                metadata={
+                    "recommendation": gate_summary.get("recommendation"),
+                    "route_signal": route_signal.get("route_signal"),
+                },
+            )
+        except Exception:
+            log.debug("Work ledger gate event emission skipped", exc_info=True)
 
         # Emit flag_raised / flag_resolved based on delta vs prior gate pass
         raised: set[str] = set()

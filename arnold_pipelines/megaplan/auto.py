@@ -3911,6 +3911,80 @@ def drive(
         events.append({"msg": msg, **fields})
         writer(f"[auto {plan}] {msg}\n")
 
+    iteration = 0
+
+    def _emit_work_boundary(
+        kind: str,
+        *,
+        phase: str | None = None,
+        elapsed_ms: int | None = None,
+        from_state: str | None = None,
+        to_state: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        if plan_dir is None:
+            return
+        payload = {"boundary": kind, "iteration": iteration, **dict(metadata or {})}
+        try:
+            from arnold_pipelines.megaplan.observability.work_ledger import (
+                emit_compaction,
+                emit_queue_idle,
+                emit_retry_wait,
+                emit_session_start,
+                emit_transition_activity,
+            )
+
+            if kind == "auto_session_start":
+                emit_session_start(
+                    plan_dir,
+                    phase=phase or "auto",
+                    session_id=f"auto:{os.getpid()}:{plan}",
+                    agent="auto",
+                    metadata=payload,
+                )
+            elif kind == "queue_idle":
+                emit_queue_idle(
+                    plan_dir,
+                    elapsed_ms=elapsed_ms,
+                    unavailable_reason="auto_driver_wait_no_model",
+                    metadata=payload,
+                )
+            elif kind == "retry_wait":
+                emit_retry_wait(
+                    plan_dir,
+                    elapsed_ms=elapsed_ms,
+                    unavailable_reason="auto_driver_retry_boundary_no_model",
+                    metadata=payload,
+                )
+            elif kind == "compaction":
+                emit_compaction(
+                    plan_dir,
+                    elapsed_ms=elapsed_ms,
+                    unavailable_reason="auto_context_retry_usage_unavailable",
+                    metadata=payload,
+                )
+            elif kind == "transition":
+                emit_transition_activity(
+                    plan_dir,
+                    phase=phase or "auto",
+                    transition=str(payload.get("transition") or "auto_state_transition"),
+                    from_state=from_state,
+                    to_state=to_state,
+                    elapsed_ms=elapsed_ms,
+                    metadata=payload,
+                )
+        except Exception:
+            _warn_best_effort_emit_failure(
+                "M9_WARN_EMIT_AUTO_WORK_LEDGER",
+                action="auto-work-ledger",
+                plan_dir=plan_dir,
+                phase=phase,
+                event_kind=kind,
+                context=payload,
+            )
+
+    _emit_work_boundary("auto_session_start", phase="auto")
+
     live_phase_models = [
         item for item in (phase_model or []) if isinstance(item, str) and "=" in item
     ]
@@ -4069,7 +4143,6 @@ def drive(
             publish=publish,
         )
 
-    iteration = 0
     while iteration < max_iterations:
         iteration += 1
         try:
@@ -4529,6 +4602,16 @@ def drive(
             reason = active_step.get("recommended_action_reason") or "active step is still healthy"
             log(f"active step '{active_name}' still running — waiting: {reason}")
             if poll_sleep > 0:
+                _emit_work_boundary(
+                    "queue_idle",
+                    phase=active_name,
+                    elapsed_ms=max(0, int(poll_sleep * 1000)),
+                    metadata={
+                        "active_step": active_name,
+                        "reason": reason,
+                        "recommended_action": active_step.get("recommended_action"),
+                    },
+                )
                 time.sleep(poll_sleep)
             iteration -= 1  # healthy wait — don't consume iteration budget
             continue
@@ -4838,6 +4921,13 @@ def drive(
                         plan_dir=plan_dir,
                         payload={"from": last_state, "to": state},
                     )
+                    _emit_work_boundary(
+                        "transition",
+                        phase="auto",
+                        from_state=last_state,
+                        to_state=state,
+                        metadata={"transition": "auto_state_transition"},
+                    )
                 except Exception:
                     _warn_best_effort_emit_failure(
                         "M3A_WARN_EMIT_AUTO_STATE_TRANSITION",
@@ -5068,6 +5158,17 @@ def drive(
                     max_context_retries=max_context_retries,
                     next_context_retry=context_retry_count + 1,
                 )
+                _emit_work_boundary(
+                    "compaction",
+                    phase=next_step,
+                    elapsed_ms=0,
+                    metadata={
+                        "retry": context_retry_count + 1,
+                        "max_retries": max_context_retries,
+                        "retry_strategy": "fresh_session",
+                        "exit_kind": ExitKind.context_exhausted.value,
+                    },
+                )
                 context_retry_count += _ctx_decision.budget_delta
                 if "--fresh" not in cmd:
                     cmd = [*cmd, "--fresh"]
@@ -5117,6 +5218,20 @@ def drive(
                 provider_error_code=provider_error_code,
                 external_retries_used=external_retry_count,
                 max_external_retries=max_external_retries,
+            )
+            _emit_work_boundary(
+                "retry_wait",
+                phase=next_step,
+                elapsed_ms=0,
+                metadata={
+                    "retry": phase_retry_count,
+                    "max_retries": max_external_retries,
+                    "provider": provider,
+                    "error_kind": error_kind,
+                    "error_layer": error_layer,
+                    "provider_error_code": provider_error_code,
+                    "retry_strategy": "fresh_session",
+                },
             )
             if plan_dir is not None:
                 try:
@@ -5748,6 +5863,18 @@ def drive(
                     max_blocked_retries=max_blocked_retries,
                     blocking_reasons=deviations_list,
                 )
+                _emit_work_boundary(
+                    "retry_wait",
+                    phase=next_step,
+                    elapsed_ms=0,
+                    metadata={
+                        "retry": blocked_retry_count,
+                        "max_retries": max_blocked_retries,
+                        "retry_strategy": "fresh_session",
+                        "exit_kind": ek,
+                        "blocking_reasons": deviations_list,
+                    },
+                )
             elif ek == ExitKind.blocked_by_quality.value:
                 # Quality-gate block — retry with cap, using result.deviations
                 # directly (no string prefix matching).
@@ -5801,6 +5928,18 @@ def drive(
                     blocked_retries_used=blocked_retry_count,
                     max_blocked_retries=max_blocked_retries,
                     blocking_reasons=deviations_list,
+                )
+                _emit_work_boundary(
+                    "retry_wait",
+                    phase=next_step,
+                    elapsed_ms=0,
+                    metadata={
+                        "retry": blocked_retry_count,
+                        "max_retries": max_blocked_retries,
+                        "retry_strategy": "fresh_session",
+                        "exit_kind": ek,
+                        "blocking_reasons": deviations_list,
+                    },
                 )
             # timeout, context_exhausted, internal_error already handled above.
 

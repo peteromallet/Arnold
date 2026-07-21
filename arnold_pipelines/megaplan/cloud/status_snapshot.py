@@ -17,31 +17,19 @@ Design rules (see ``docs/ops/elegant-cloud-status-resident-plan.md``):
 - Know nothing about Discord, resident conversations, or CLI rendering. Those
   live in :mod:`arnold_pipelines.megaplan.cloud.status_format` and the resident.
 
-M7: Projection adapters for cloud status snapshot persistence.
-----------------------------------------------------------------------
-OLD-READER / NEW-WRITER METADATA:
-  - Legacy readers (all callers before M7) use load_cloud_status_snapshot()
-    which reads ``cloud-status.json`` directly.  These readers accept the
-    file as authority without cursor validation.
-  - New writers (M7+) supplement each write_cloud_status_snapshot() and
-    build_and_write_snapshot() with cursor-checked projection events
-    appended to an append-only history.
-  - New readers (M7+) can use rebuild_status_snapshot_projection() or
-    status_snapshot_projection_cursor() for cursor-validated reads.
-  - UNCERTAINTY: Legacy readers have no cursor validation; divergence
-    between the snapshot file and projection history is only detectable by
-    the new readers.  Production enforcement remains disabled in M7.
-  - The projection history is an append-only ledger; it never erases
-    prior records, even on rebuild.
-  - The projection is SUPPLEMENTAL evidence, not authority — the
-    cloud-status.json file remains the primary source of truth.
+M9 — canonical projection migration:
+  The snapshot now carries a ``source_cursor_vector`` recording every source file
+  that was read, plus per-session ``evidence_gaps`` for any stale or degraded
+  fields.  Neither field grants dispatch, completion, cancellation, publication,
+  or delivery authority — they are display-only projections (see ``status_projection.py``
+  for the authority contract).  The format module (:mod:`arnold_pipelines.megaplan.cloud.status_format`)
+  renders these gaps as structured evidence annotations.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
 import shutil
 import subprocess
@@ -49,21 +37,6 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
-
-from arnold_pipelines.megaplan._core.io import (
-    ProjectionCursor,
-    ProjectionCursorMismatchError,
-    ProjectionRecord,
-    append_projection_event,
-    deterministic_projection_replay,
-    latest_projection_cursor,
-    load_projection_history,
-    now_utc,
-    projection_history_path,
-    projection_snapshot_path,
-    rebuild_projection_atomically,
-    sha256_file,
-)
 
 from arnold_pipelines.megaplan.authority.views import (
     PlanExecutionDiagnostic,
@@ -129,205 +102,6 @@ PLAN_PROGRESSION_RUNGS: tuple[str, ...] = (
 
 SNAPSHOT_SOURCE = "cloud-local-observer"
 
-log = logging.getLogger("megaplan")
-
-# ── M7 projection constants ───────────────────────────────────────────────
-
-_STATUS_SNAPSHOT_PROJECTION_ID = "cloud-status-snapshot"
-_STATUS_SNAPSHOT_PROJECTION_SCHEMA_VERSION = 1
-
-
-def _status_projection_dir(snapshot_path: Path) -> Path:
-    """Return the projection storage directory for status snapshot events.
-
-    Stores under ``<status_dir>/projections/``.
-    """
-    return snapshot_path.parent / "projections"
-
-
-def _cursor_from_snapshot_file(path: Path) -> ProjectionCursor:
-    """Build a ProjectionCursor from the current state of a snapshot file."""
-    resolved = path.resolve()
-    record_count = 0
-    if resolved.exists():
-        try:
-            text = resolved.read_text(encoding="utf-8")
-            lines = [line for line in text.splitlines() if line.strip()]
-            record_count = len(lines)
-        except (FileNotFoundError, OSError):
-            pass
-    source_digest = (
-        sha256_file(resolved)
-        if resolved.exists()
-        else "sha256:" + hashlib.sha256(b"").hexdigest()
-    )
-    return ProjectionCursor(
-        source_path=str(resolved),
-        source_record_count=record_count,
-        source_digest=source_digest,
-        last_appended_at=now_utc(),
-    )
-
-
-def _generate_status_event_id(projection_id: str, event_type: str) -> str:
-    """Generate a deterministic event ID for status snapshot projection events."""
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
-    seed = f"{projection_id}:{event_type}:{ts}"
-    return f"status-proj-{hashlib.sha256(seed.encode('utf-8')).hexdigest()[:12]}"
-
-
-# ── Status snapshot projection ────────────────────────────────────────────
-
-
-def _record_status_snapshot_event(
-    snapshot: Mapping[str, Any],
-    path: Path,
-    *,
-    event_type: str = "snapshot_written",
-    flock: bool = True,
-) -> ProjectionRecord:
-    """Append a cursor-checked projection event recording the status snapshot write.
-
-    The event carries the full snapshot payload and a cursor derived from the
-    current snapshot file.  This is a shadow-side-effect — it supplements
-    the existing atomic file write without replacing it.
-    """
-    path = Path(path)
-    projection_dir = _status_projection_dir(path)
-
-    source_cursor = None
-    if path.exists():
-        try:
-            source_cursor = _cursor_from_snapshot_file(path)
-        except (FileNotFoundError, OSError):
-            pass
-
-    event_id = _generate_status_event_id(_STATUS_SNAPSHOT_PROJECTION_ID, event_type)
-    record = ProjectionRecord(
-        event_type=event_type,
-        event_id=event_id,
-        payload={
-            "schema_version": _STATUS_SNAPSHOT_PROJECTION_SCHEMA_VERSION,
-            "snapshot_path": str(path),
-            "generated_at": snapshot.get("generated_at"),
-            "source": snapshot.get("source"),
-            "summary": dict(snapshot.get("summary") or {}),
-            "session_count": len(snapshot.get("sessions") or []),
-        },
-        occurred_at=now_utc(),
-        cursor=source_cursor,
-        idempotency_key=f"status-snapshot-{path.name}-{event_id}",
-    )
-    return append_projection_event(
-        projection_dir,
-        _STATUS_SNAPSHOT_PROJECTION_ID,
-        record,
-        source_path=path,
-        flock=flock,
-        snapshot_dir=projection_dir,
-    )
-
-
-def rebuild_status_snapshot_projection(
-    path: Path | str = DEFAULT_SNAPSHOT_PATH,
-    *,
-    flock: bool = True,
-) -> dict[str, Any]:
-    """Atomically rebuild the status snapshot projection from the append-only history.
-
-    Returns a dict with keys:
-      - ``status``: ``"rebuilt"`` | ``"no_history"`` | ``"error"``
-      - ``snapshot_path``: path to the written snapshot (if rebuilt)
-      - ``projection``: the complete projected state (if rebuilt)
-      - ``cursor``: the latest source cursor (if available)
-      - ``record_count``: number of projection records processed
-      - ``diagnostics``: list of diagnostic messages
-    """
-    path = Path(path)
-    projection_dir = _status_projection_dir(path)
-    diagnostics: list[str] = []
-    records = load_projection_history(projection_dir, _STATUS_SNAPSHOT_PROJECTION_ID)
-    if not records:
-        return {
-            "status": "no_history",
-            "snapshot_path": None,
-            "projection": None,
-            "cursor": None,
-            "record_count": 0,
-            "diagnostics": [
-                "No status snapshot projection history found — nothing to rebuild"
-            ],
-        }
-
-    def _fold_status_snapshot(
-        acc: dict[str, Any], record: ProjectionRecord
-    ) -> dict[str, Any]:
-        """Fold: last snapshot payload wins."""
-        payload = record.payload
-        if isinstance(payload, dict):
-            acc.update(payload)
-        return acc
-
-    try:
-        projection_data = deterministic_projection_replay(
-            projection_dir,
-            _STATUS_SNAPSHOT_PROJECTION_ID,
-            fold_fn=_fold_status_snapshot,
-        )
-    except Exception as exc:
-        return {
-            "status": "error",
-            "snapshot_path": None,
-            "projection": None,
-            "cursor": None,
-            "record_count": len(records),
-            "diagnostics": [f"Status snapshot replay failed: {exc}"],
-        }
-
-    last_cursor = latest_projection_cursor(
-        projection_dir, _STATUS_SNAPSHOT_PROJECTION_ID
-    )
-    snapshot_path = rebuild_projection_atomically(
-        projection_dir,
-        _STATUS_SNAPSHOT_PROJECTION_ID,
-        projection_data,
-        cursor=last_cursor,
-    )
-    return {
-        "status": "rebuilt",
-        "snapshot_path": str(snapshot_path),
-        "projection": dict(projection_data),
-        "cursor": last_cursor.to_dict() if last_cursor else None,
-        "record_count": len(records),
-        "diagnostics": diagnostics,
-    }
-
-
-def status_snapshot_projection_cursor(
-    path: Path | str = DEFAULT_SNAPSHOT_PATH,
-) -> ProjectionCursor | None:
-    """Return the latest cursor from the status snapshot projection history."""
-    path = Path(path)
-    projection_dir = _status_projection_dir(path)
-    return latest_projection_cursor(projection_dir, _STATUS_SNAPSHOT_PROJECTION_ID)
-
-
-def status_snapshot_projection_snapshot(
-    path: Path | str = DEFAULT_SNAPSHOT_PATH,
-) -> dict[str, Any] | None:
-    """Return the most recent status snapshot projection snapshot, or None."""
-    path = Path(path)
-    projection_dir = _status_projection_dir(path)
-    snapshot_path = projection_snapshot_path(
-        projection_dir, _STATUS_SNAPSHOT_PROJECTION_ID
-    )
-    if not snapshot_path.exists():
-        return None
-    try:
-        return json.loads(snapshot_path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
-        return None
-
 
 def is_trusted_container() -> bool:
     """True when this process is the cloud worker itself (local observation fits).
@@ -381,12 +155,20 @@ def build_cloud_status_snapshot(
     now: datetime | None = None,
     liveness_probe: LivenessProbe | None = None,
     history_path: Path | str | None = None,
+    source_cursor_vector: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the canonical cloud status snapshot from local observation only.
 
     All file reads are defensive: a missing or malformed source file degrades a
     session to ``attention`` rather than raising. The function never raises on
     absent inputs — callers may inspect the top-level ``degraded`` field.
+
+    *source_cursor_vector* is an optional M9 canonical projection cursor
+    recording which source files were read, their record counts, and digests.
+    When supplied, it is attached as ``source_cursor_vector`` in the snapshot
+    so downstream consumers (format module, resident) can trace evidence
+    provenance without repeating the read.  It never grants authority — this
+    is a display-only projection.
     """
     now = now or _utcnow()
     # Resolve defaults at call time so tests (and in-container callers) see the
@@ -435,6 +217,11 @@ def build_cloud_status_snapshot(
         if deltas:
             progress.update(deltas)
 
+    # Attach per-session evidence gaps (stale/degraded display fields as
+    # structured evidence annotations — never authority).
+    for entry in sessions:
+        entry["evidence_gaps"] = _collect_session_evidence_gaps(entry)
+
     summary = _summarize(sessions)
     snapshot: dict[str, Any] = {
         "generated_at": _isoformat(now),
@@ -444,6 +231,7 @@ def build_cloud_status_snapshot(
         "summary": summary,
         "sessions": sessions,
         "degraded": {"reasons": degraded_reasons} if degraded_reasons else None,
+        "source_cursor_vector": _format_source_cursor(source_cursor_vector),
     }
     if watchdog_report is not None:
         snapshot["watchdog_generated_at"] = watchdog_report.get("timestamp_utc") or ""
@@ -456,7 +244,6 @@ def write_cloud_status_snapshot(
     path: Path | str = DEFAULT_SNAPSHOT_PATH,
     *,
     previous_path: Path | str | None = DEFAULT_PREVIOUS_SNAPSHOT_PATH,
-    _record_projection: bool = True,
 ) -> Path:
     """Atomically write ``snapshot`` to ``path``, rotating the prior file.
 
@@ -464,11 +251,6 @@ def write_cloud_status_snapshot(
     writes are never observable. When ``previous_path`` is set, the existing
     snapshot (if any) is moved there first so consumers can diff consecutive
     sweeps. Returns the final path written.
-
-    M7 (shadow): In addition to the atomic write, this function appends a
-    cursor-checked projection event to an append-only history.  The projection
-    event is recorded *after* the file write succeeds.  Set
-    ``_record_projection=False`` to skip this side-effect.
     """
     target = Path(path)
     previous = Path(previous_path) if previous_path else None
@@ -494,24 +276,6 @@ def write_cloud_status_snapshot(
         except OSError:
             pass
         raise
-
-    # ── M7 projection side-effect ────────────────────────────────────────
-    if _record_projection:
-        try:
-            _record_status_snapshot_event(snapshot, target)
-        except ProjectionCursorMismatchError as exc:
-            log.warning(
-                "M7 status-snapshot projection append blocked by cursor mismatch: %s. "
-                "Snapshot file is intact; projection history may need reconciliation.",
-                exc,
-            )
-        except Exception:
-            log.warning(
-                "M7 status-snapshot projection append failed (non-fatal). "
-                "Snapshot file is intact.",
-                exc_info=True,
-            )
-
     return target
 
 
@@ -523,6 +287,7 @@ def build_and_write_snapshot(
     previous_path: Path | str | None = DEFAULT_PREVIOUS_SNAPSHOT_PATH,
     history_path: Path | str | None = None,
     now: datetime | None = None,
+    source_cursor_vector: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the snapshot and atomically write it + the previous rotation.
 
@@ -535,6 +300,7 @@ def build_and_write_snapshot(
         watchdog_report_path=watchdog_report_path,
         now=now,
         history_path=history_path,
+        source_cursor_vector=source_cursor_vector,
     )
     write_cloud_status_snapshot(snapshot, path=path, previous_path=previous_path)
     append_progress_history(snapshot, history_path or DEFAULT_HISTORY_PATH, now=now)
@@ -2951,3 +2717,122 @@ def _as_path(value: object) -> Path | None:
     if isinstance(value, Path):
         return value
     return None
+
+
+# ── M9: canonical projection helpers ──────────────────────────────────────
+
+
+def _format_source_cursor(
+    cursor_vector: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Format a source cursor vector for the snapshot, never granting authority.
+
+    When no cursor vector is supplied the field is an explicit ``absent``
+    sentinel so consumers never mistake a missing cursor for a verified read.
+    """
+    if isinstance(cursor_vector, Mapping) and cursor_vector:
+        return {
+            "authority": "evidence_extracted_display_only",
+            "value": dict(cursor_vector),
+        }
+    return {
+        "authority": "absent",
+        "reason": "no_source_cursor_vector_provided",
+    }
+
+
+def _collect_session_evidence_gaps(
+    entry: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Collect structured evidence gaps for one session entry.
+
+    Returns a dict whose keys name degraded dimensions and whose values are
+    ``{gap, reason, evidence_status}`` triples.  Gaps are pure display
+    annotations — they never feed dispatch, completion, cancellation,
+    publication, or delivery.
+    """
+    gaps: dict[str, Any] = {}
+
+    # --- tmux liveness gap ---
+    tmux_value = entry.get("tmux")
+    if tmux_value is None and not isinstance(entry.get("evidence"), Mapping):
+        gaps["tmux_liveness"] = {
+            "gap": "tmux_liveness_unavailable",
+            "reason": "no tmux probe result; process namespace unavailable",
+            "evidence_status": "missing",
+        }
+
+    # --- process liveness gap ---
+    process_value = entry.get("process")
+    if process_value is None and not isinstance(entry.get("evidence"), Mapping):
+        gaps["process_liveness"] = {
+            "gap": "process_liveness_unavailable",
+            "reason": "no process probe result; process namespace unavailable",
+            "evidence_status": "missing",
+        }
+
+    # --- watchdog status gap ---
+    watchdog_status = entry.get("watchdog")
+    if watchdog_status is None:
+        gaps["watchdog_status"] = {
+            "gap": "watchdog_status_unavailable",
+            "reason": "no watchdog report for this session",
+            "evidence_status": "missing",
+        }
+    elif watchdog_status == "stale":
+        gaps["watchdog_status"] = {
+            "gap": "watchdog_status_stale",
+            "reason": "watchdog report describes an earlier sweep; not current runner truth",
+            "evidence_status": "stale",
+        }
+
+    # --- chain-health gap ---
+    chain_complete = entry.get("chain_complete")
+    if chain_complete is None:
+        gaps["chain_health"] = {
+            "gap": "chain_health_unavailable",
+            "reason": "no chain-health sidecar for this session",
+            "evidence_status": "missing",
+        }
+
+    # --- plan state gap ---
+    plan_state = entry.get("plan_state")
+    if plan_state is None:
+        evidence = entry.get("evidence")
+        if isinstance(evidence, Mapping) and evidence.get("marker"):
+            gaps["plan_state"] = {
+                "gap": "plan_state_unavailable",
+                "reason": "plan state file missing or unreadable",
+                "evidence_status": "missing",
+            }
+
+    # --- custody mismatch ---
+    if entry.get("custody_mismatch"):
+        gaps["custody_mismatch"] = {
+            "gap": "chain_custody_mismatch",
+            "reason": (
+                "terminal chain state with incomplete milestone count; "
+                "plan state label suppressed"
+            ),
+            "evidence_status": "degraded",
+        }
+
+    # --- repair projection degraded ---
+    repair_degraded = entry.get("repair_projection_degraded")
+    if isinstance(repair_degraded, Mapping) and repair_degraded:
+        gaps["repair_projection"] = {
+            "gap": "repair_projection_degraded",
+            "reason": str(repair_degraded.get("reason") or "canonical repair projection unavailable"),
+            "evidence_status": "degraded",
+        }
+
+    # --- superseded sibling ---
+    evidence = entry.get("evidence")
+    if isinstance(evidence, Mapping) and evidence.get("superseded_by"):
+        gaps["superseded_by"] = {
+            "gap": "session_superseded",
+            "reason": f"superseded by sibling: {evidence['superseded_by']}",
+            "evidence_status": "superseded",
+        }
+
+    return gaps

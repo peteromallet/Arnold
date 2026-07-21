@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from arnold_pipelines.megaplan.chain.spec import ChainSpec, ChainState, load_chain_state, load_spec
+from arnold_pipelines.megaplan.chain.spec import ChainSpec, ChainState, load_spec
 from arnold_pipelines.megaplan.custody.process_adapter_wbc import begin_process_adapter_attempt
 from arnold_pipelines.megaplan.orchestration.completion_contract import (
     PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
@@ -83,6 +83,15 @@ def _resolve_state_path(
         if candidate.exists():
             return candidate
     return None
+
+
+def _load_resolved_chain_state(state_path: Path) -> ChainState:
+    """Load an already-resolved chain-state JSON file."""
+
+    raw = json.loads(state_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("chain state must be a JSON object")
+    return ChainState.from_dict(raw)
 
 
 def check_wrapper_acceptance_gate(
@@ -167,13 +176,31 @@ def check_wrapper_acceptance_gate(
         return _finish(True, "no chain state yet")
 
     try:
-        state = load_chain_state(state_path)
-    except Exception:
-        # If the state can't be loaded (e.g. because of atomic-mode
-        # validation rejecting completed records without acceptance
-        # receipts), the Python-level gate inside run_chain will handle
-        # it.  The wrapper should allow the restart.
-        return _finish(True, "chain state unreadable; gate open")
+        state = _load_resolved_chain_state(state_path)
+    except Exception as exc:
+        blocker_kind = BLOCKER_KIND_BY_CALLER.get(
+            caller_kind, BLOCKER_KIND_BY_CALLER["cloud_wrapper"]
+        )
+        blocker_event = {
+            "kind": blocker_kind,
+            "predicate_kind": PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
+            "evidence_kind": f"cloud_wrapper_{caller_kind}",
+            "summary": (
+                f"cloud wrapper {caller_kind!r} blocked: chain-state evidence "
+                f"could not be read at the acceptance boundary"
+            ),
+            "details": {
+                "caller_kind": caller_kind,
+                "spec_path": str(spec),
+                "chain_state_path": str(state_path),
+                "error": str(exc),
+            },
+        }
+        return _finish(
+            False,
+            "chain state unreadable; gate closed",
+            blocker_event=blocker_event,
+        )
 
     # ── check mode ─────────────────────────────────────────────────────
     mode = normalize_contract_mode(state.completion_contract_mode)

@@ -5613,3 +5613,64 @@ __all__ = [
     "is_t12_admission_reference",
     "validate_t7_t12_cross_binding",
 ]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# T18 / Step 11 — re-export the canonical repair dispatch identity contract.
+#
+# Re-export is performed *lazily* via a module-level ``__getattr__``
+# (PEP 562) rather than an eager ``from repair_requests import (...)``.
+# An eager import — whether at module top *or* module end — creates a
+# hard circular-import failure whenever ``repair_requests`` (or
+# ``repair_revalidation``, which imports repair_requests) is imported
+# *first*: repair_requests line 15 imports repair_contract, which then
+# tries to re-import the still-partially-initialized repair_requests
+# before repair_requests has finished binding its symbols
+# (``ImportError: cannot import name 'REPAIR_ACTION_ADOPTION' from
+# partially initialized module …``). That breaks ``python -c "import
+# …repair_requests"`` and any test file that imports repair_requests
+# first — i.e. it breaks standalone recovery/repair imports.
+#
+# Lazy resolution breaks the cycle unconditionally while preserving the
+# public surface: ``from …repair_contract import RepairDispatchIdentity``
+# and ``hasattr(repair_contract, "RepairDispatchIdentity")`` both still
+# work, and ``dir(repair_contract)`` lists the re-exported names.
+# repair_contract itself never references these symbols internally — the
+# block is pure API convenience — so deferred resolution is safe.
+# ──────────────────────────────────────────────────────────────────────
+_REPAIR_DISPATCH_IDENTITY_REEXPORTS = frozenset(
+    {
+        "REPAIR_ACTION_ADOPTION",
+        "REPAIR_ACTION_CANCELLATION",
+        "REPAIR_ACTION_ESCALATION",
+        "REPAIR_ACTION_KINDS",
+        "REPAIR_ACTION_REPAIR",
+        "REPAIR_ACTION_RETRY",
+        "RepairDispatchIdentity",
+        "SourceRereadVerdict",
+        "derive_dispatch_identity_from_source_reread",
+        "repair_dispatch_identity_key",
+        "require_source_reread_for_action",
+    }
+)
+
+
+def __getattr__(name):  # noqa: D401  (PEP 562 module-level lazy attribute)
+    if name in _REPAIR_DISPATCH_IDENTITY_REEXPORTS:
+        from arnold_pipelines.megaplan.cloud import repair_requests
+
+        try:
+            value = getattr(repair_requests, name)
+        except AttributeError as exc:  # pragma: no cover - defensive
+            raise AttributeError(
+                f"module {__name__!r} has no attribute {name!r}"
+            ) from exc
+        # Cache in module dict so subsequent accesses bypass __getattr__.
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    module_names = list(globals().keys())
+    return sorted(set(module_names) | set(_REPAIR_DISPATCH_IDENTITY_REEXPORTS))
