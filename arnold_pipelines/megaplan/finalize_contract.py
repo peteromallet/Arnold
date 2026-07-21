@@ -71,7 +71,37 @@ FINALIZE_MODEL_OUTPUT_SCHEMA: dict[str, Any] = {
                 },
             },
         },
-        "validation_jobs": {"type": "array"},
+        "validation_jobs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "command",
+                    "environment",
+                    "cwd",
+                    "timeout_seconds",
+                    "expected_output_paths",
+                    "content_addressed_evidence",
+                ],
+                "properties": {
+                    "id": {"type": "string"},
+                    "command": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "environment": {"type": "object"},
+                    "cwd": {"type": "string"},
+                    "timeout_seconds": {"type": "integer"},
+                    "expected_output_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "content_addressed_evidence": {"type": "boolean"},
+                },
+                "additionalProperties": False,
+            },
+        },
         "critique_resolution_coverage": {
             "type": "array",
             "items": {

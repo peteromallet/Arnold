@@ -2924,6 +2924,99 @@ def _ensure_published_claimed_changes_for_pr_progression(
     )
 
 
+def _validate_pr_progression_wbc(
+    *,
+    root: Path,
+    spec_path: Path,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    plan_name: str,
+    pr_number: int,
+    transition_name: str,
+) -> dict[str, Any]:
+    from arnold_pipelines.megaplan.chain.execution_binding import (
+        execution_binding_report,
+    )
+    from arnold_pipelines.megaplan.chain.wbc import (
+        GIT_PR_READY_SURFACE,
+        GIT_PR_READY_WRITER_ID,
+        ChainWbcRule,
+        finalize_artifact_candidates,
+        finalize_receipt_candidates,
+        record_chain_wbc_evidence,
+        validate_chain_wbc_transition,
+    )
+
+    plan_dir = resolve_plan_dir(root, plan_name)
+    plan_state = _plan_state_payload_from_name(root, plan_name)
+    current_state = plan_state.get("current_state")
+    binding = execution_binding_report(spec_path, state)
+    finalize_receipts = finalize_receipt_candidates(plan_dir)
+    finalize_artifacts = finalize_artifact_candidates(plan_dir)
+    binding_ok = (
+        binding.get("status") in {"match", "reconcile_required"}
+        if binding.get("required")
+        else True
+    )
+    evidence = validate_chain_wbc_transition(
+        writer_id=GIT_PR_READY_WRITER_ID,
+        surface_name=GIT_PR_READY_SURFACE,
+        transition_name=transition_name,
+        subject=f"{milestone.label}:pr#{pr_number}",
+        source_path=spec_path,
+        project_dir=root,
+        rules=(
+            ChainWbcRule(
+                "plan_state_terminal",
+                f"{STATE_FINALIZED}|{STATE_DONE}|{STATE_AWAITING_PR_MERGE}",
+                current_state,
+                current_state in {STATE_FINALIZED, STATE_DONE, STATE_AWAITING_PR_MERGE},
+            ),
+            ChainWbcRule(
+                "finalize_receipt_present",
+                True,
+                bool(finalize_receipts),
+                bool(finalize_receipts),
+                "finalize promotion must persist a durable receipt before PR actions",
+            ),
+            ChainWbcRule(
+                "finalize_artifacts_present",
+                True,
+                bool(finalize_artifacts),
+                bool(finalize_artifacts),
+                "finalize promotion must leave canonical artifacts behind",
+            ),
+            ChainWbcRule(
+                "execution_binding_current",
+                True,
+                binding.get("status"),
+                binding_ok,
+                "chain execution binding must still match before PR progression",
+            ),
+            ChainWbcRule(
+                "pr_number_bound",
+                pr_number,
+                state.pr_number,
+                state.pr_number == pr_number,
+            ),
+        ),
+        extra={
+            "milestone_label": milestone.label,
+            "plan_name": plan_name,
+            "plan_dir": str(plan_dir),
+            "finalize_receipts": finalize_receipts,
+            "finalize_artifacts": finalize_artifacts,
+            "execution_binding_status": binding.get("status"),
+        },
+    )
+    record_chain_wbc_evidence(
+        state.metadata,
+        entry_key=f"{transition_name}:{milestone.label}:{pr_number}",
+        evidence=evidence,
+    )
+    return evidence
+
+
 def _recover_stale_merged_pr_for_unfinished_plan(
     root: Path,
     spec_path: Path,
@@ -3175,6 +3268,48 @@ def _append_completed_with_guard(
             state.last_state = "authority_divergence"
             writer(f"[chain] completion guard blocked {label}: {reason}\n")
             return False, reason
+        if spec_path is not None and plan_dir is not None:
+            from arnold_pipelines.megaplan.chain.wbc import (
+                CHAIN_ADVANCE_SURFACE,
+                CHAIN_ADVANCE_WRITER_ID,
+                ChainWbcRule,
+                record_chain_wbc_evidence,
+                validate_chain_wbc_transition,
+            )
+
+            validation_evidence = validate_chain_wbc_transition(
+                writer_id=CHAIN_ADVANCE_WRITER_ID,
+                surface_name=CHAIN_ADVANCE_SURFACE,
+                transition_name="chain_milestone_advance",
+                subject=label,
+                source_path=Path(spec_path),
+                project_dir=root,
+                rules=(
+                    ChainWbcRule("completion_guard", True, ok, ok),
+                    ChainWbcRule(
+                        "plan_name_bound",
+                        True,
+                        bool(record.get("plan")),
+                        bool(record.get("plan")),
+                    ),
+                    ChainWbcRule(
+                        "milestone_index_known",
+                        True,
+                        milestone_index is not None,
+                        milestone_index is not None,
+                    ),
+                ),
+                extra={
+                    "plan_name": str(record.get("plan") or ""),
+                    "milestone_index": milestone_index,
+                    "guard_reason": reason,
+                },
+            )
+            record_chain_wbc_evidence(
+                state.metadata,
+                entry_key=f"chain_advance:{label}:{milestone_index}",
+                evidence=validation_evidence,
+            )
         state.completed.append(record)
         return True, reason
 
@@ -3314,6 +3449,55 @@ def _append_completed_with_guard(
     # (5) Commit succeeded.  Mirror the durably-committed completion fields
     #     into the in-memory state so downstream callers observe the same
     #     state that was just written under the CAS guard.
+    from arnold_pipelines.megaplan.chain.wbc import (
+        CHAIN_ADVANCE_SURFACE,
+        CHAIN_ADVANCE_WRITER_ID,
+        ChainWbcRule,
+        record_chain_wbc_evidence,
+        validate_chain_wbc_transition,
+    )
+
+    validation_evidence = validate_chain_wbc_transition(
+        writer_id=CHAIN_ADVANCE_WRITER_ID,
+        surface_name=CHAIN_ADVANCE_SURFACE,
+        transition_name="chain_milestone_advance",
+        subject=label,
+        source_path=Path(spec_path),
+        project_dir=root,
+        rules=(
+            ChainWbcRule("completion_guard", True, ok, ok),
+            ChainWbcRule(
+                "acceptance_commit_committed",
+                True,
+                bool(getattr(cas_result, "committed", False)),
+                bool(getattr(cas_result, "committed", False)),
+            ),
+            ChainWbcRule(
+                "accepted_boundary_present",
+                True,
+                acceptance_result is not None,
+                acceptance_result is not None,
+            ),
+            ChainWbcRule(
+                "milestone_index_known",
+                True,
+                milestone_index is not None,
+                milestone_index is not None,
+            ),
+        ),
+        extra={
+            "plan_name": str(record.get("plan") or ""),
+            "milestone_index": milestone_index,
+            "acceptance_transaction_id": acceptance_transaction_id,
+            "acceptance_snapshot_hash": acceptance_snapshot_hash,
+            "guard_reason": reason,
+        },
+    )
+    record_chain_wbc_evidence(
+        state.metadata,
+        entry_key=f"chain_advance:{label}:{milestone_index}",
+        evidence=validation_evidence,
+    )
     _apply_committed_acceptance_state(state, commit_plan.new_state)
     return True, reason
 
@@ -6112,6 +6296,82 @@ def run_chain(
         events.append({"msg": msg, **fields})
         writer(f"[chain] {msg}\n")
 
+    def _emit_chain_work_boundary(
+        kind: str,
+        *,
+        plan_name: str | None = None,
+        phase: str | None = "chain",
+        elapsed_ms: int | None = None,
+        operation: str | None = None,
+        from_state: str | None = None,
+        to_state: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        target_plan = plan_name or state.current_plan_name
+        if not target_plan:
+            return
+        try:
+            plan_dir = resolve_plan_dir(root, target_plan)
+        except CliError:
+            return
+        payload = {
+            "boundary": kind,
+            "chain_spec": str(spec_path),
+            "current_plan_name": target_plan,
+            **dict(metadata or {}),
+        }
+        try:
+            from arnold_pipelines.megaplan.observability.work_ledger import (
+                emit_git_activity,
+                emit_replay,
+                emit_retry_wait,
+                emit_session_start,
+                emit_transition_activity,
+            )
+
+            if kind == "chain_session_start":
+                emit_session_start(
+                    plan_dir,
+                    phase=phase,
+                    session_id=f"chain:{os.getpid()}:{spec_path.name}",
+                    agent="chain",
+                    metadata=payload,
+                )
+            elif kind == "git":
+                emit_git_activity(
+                    plan_dir,
+                    phase=phase or "chain",
+                    operation=operation or "chain_git_boundary",
+                    elapsed_ms=elapsed_ms,
+                    metadata=payload,
+                )
+            elif kind == "retry_wait":
+                emit_retry_wait(
+                    plan_dir,
+                    elapsed_ms=elapsed_ms,
+                    unavailable_reason="chain_retry_boundary_no_model",
+                    metadata=payload,
+                )
+            elif kind == "replay":
+                emit_replay(
+                    plan_dir,
+                    elapsed_ms=elapsed_ms,
+                    unavailable_reason="chain_replay_boundary_usage_unavailable",
+                    metadata=payload,
+                )
+            elif kind == "transition":
+                emit_transition_activity(
+                    plan_dir,
+                    phase=phase,
+                    transition=str(payload.get("transition") or "chain_transition"),
+                    from_state=from_state,
+                    to_state=to_state,
+                    elapsed_ms=elapsed_ms,
+                    metadata=payload,
+                )
+        except Exception:
+            log.debug("Work ledger chain event emission skipped", exc_info=True)
+
     # ---- Seed phase ----
     if spec.seed_plan and state.current_milestone_index < 0:
         seed_state = _plan_state(root, spec.seed_plan, timeout=spec.status_timeout)
@@ -6119,6 +6379,18 @@ def run_chain(
         if seed_state not in TERMINAL_SKIP_STATES:
             state.current_plan_name = spec.seed_plan
             chain_spec.save_chain_state(spec_path, state)
+            _emit_chain_work_boundary(
+                "chain_session_start",
+                plan_name=spec.seed_plan,
+                metadata={"boundary": "seed_plan_start", "seed_state": seed_state},
+            )
+            _emit_chain_work_boundary(
+                "transition",
+                plan_name=spec.seed_plan,
+                from_state=seed_state,
+                to_state="chain_driving_seed",
+                metadata={"transition": "chain_seed_start"},
+            )
             outcome = _drive_plan_with_blocked_execute_recovery(
                 root,
                 spec_path,
@@ -6154,6 +6426,15 @@ def run_chain(
                 )
             if decision == "retry":
                 # Recursive retry kept simple: re-drive seed once.
+                _emit_chain_work_boundary(
+                    "retry_wait",
+                    plan_name=spec.seed_plan,
+                    elapsed_ms=0,
+                    metadata={
+                        "milestone_label": "seed",
+                        "retry_strategy": "seed_recursive_retry",
+                    },
+                )
                 outcome = _drive_plan_with_blocked_execute_recovery(
                     root,
                     spec_path,
@@ -6513,9 +6794,31 @@ def run_chain(
                     if publish_reason.startswith("published "):
                         state = chain_spec.load_chain_state(spec_path)
                     if _automatic_pr_progression_permitted(spec, spec_path):
+                        validation_evidence = _validate_pr_progression_wbc(
+                            root=root,
+                            spec_path=spec_path,
+                            state=state,
+                            milestone=milestone,
+                            plan_name=state.current_plan_name or "",
+                            pr_number=state.pr_number,
+                            transition_name="chain_pr_ready",
+                        )
+                        _pr_ready_evidence = _capture_pr_ready_evidence(
+                            root,
+                            state.pr_number,
+                            writer=writer,
+                            ci_readiness_state="ready",
+                            validation_evidence=validation_evidence,
+                        )
                         _mark_pr_ready(root, state.pr_number, writer=writer)
                         state.pr_state = _enable_auto_merge(
                             root, state.pr_number, writer=writer
+                        )
+                        _pr_merged_evidence = _capture_pr_merged_evidence(
+                            root,
+                            state.pr_number,
+                            writer=writer,
+                            validation_evidence=validation_evidence,
                         )
                         chain_spec.save_chain_state(spec_path, state)
                         pr_state = _pr_state(root, state.pr_number, writer=writer)
@@ -6744,6 +7047,16 @@ def run_chain(
                     _rearm_fresh_session_execute_block(plan_dir, writer=writer)
                 plan_state = _plan_state_payload_from_name(root, plan_name)
                 if _blocked_plan_replay_would_be_redundant(state, plan_state=plan_state):
+                    _emit_chain_work_boundary(
+                        "replay",
+                        plan_name=plan_name,
+                        elapsed_ms=0,
+                        metadata={
+                            "milestone_label": milestone.label,
+                            "replay_boundary": "blocked_plan_replay_suppressed",
+                            "plan_state": plan_state.get("current_state"),
+                        },
+                    )
                     _append_reconciliation_audit(
                         state,
                         plan_name=plan_name,
@@ -6770,6 +7083,26 @@ def run_chain(
                     writer=writer,
                 )
                 log(f"resuming existing plan {plan_name} for {milestone.label}")
+                _emit_chain_work_boundary(
+                    "chain_session_start",
+                    plan_name=plan_name,
+                    metadata={
+                        "boundary": "milestone_resume",
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                    },
+                )
+                _emit_chain_work_boundary(
+                    "transition",
+                    plan_name=plan_name,
+                    from_state=str(plan_state.get("current_state") or ""),
+                    to_state="chain_resuming_milestone",
+                    metadata={
+                        "transition": "chain_milestone_resume",
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                    },
+                )
                 _emit_milestone_start_evidence(
                     state,
                     milestone_label=milestone.label,
@@ -6895,7 +7228,28 @@ def run_chain(
                     plan_name=plan_name,
                 )
                 chain_spec.save_chain_state(spec_path, state)
+                _emit_chain_work_boundary(
+                    "chain_session_start",
+                    plan_name=plan_name,
+                    metadata={
+                        "boundary": "milestone_init",
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                    },
+                )
+                _emit_chain_work_boundary(
+                    "transition",
+                    plan_name=plan_name,
+                    from_state=None,
+                    to_state=STATE_PREPPED,
+                    metadata={
+                        "transition": "chain_milestone_init",
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                    },
+                )
                 if use_pr:
+                    _git_start = time.monotonic()
                     _commit_and_push_phase(
                         root,
                         milestone.branch or "",
@@ -6903,6 +7257,17 @@ def run_chain(
                         "init",
                         writer=writer,
                         preexisting_dirty_paths=preexisting_dirty_paths,
+                    )
+                    _emit_chain_work_boundary(
+                        "git",
+                        plan_name=plan_name,
+                        operation="chain_commit_and_push_init",
+                        elapsed_ms=max(0, int((time.monotonic() - _git_start) * 1000)),
+                        metadata={
+                            "milestone_label": milestone.label,
+                            "milestone_index": idx,
+                            "branch": milestone.branch,
+                        },
                     )
                     _capture_sync_state(
                         root, spec_path, branch=milestone.branch, pr_number=state.pr_number
@@ -6931,6 +7296,7 @@ def run_chain(
 
         def phase_callback(phase: str, _code: int, _out: str, _err: str) -> None:
             if use_pr and milestone.branch:
+                _git_start = time.monotonic()
                 _commit_and_push_phase(
                     root,
                     milestone.branch,
@@ -6938,6 +7304,19 @@ def run_chain(
                     phase,
                     writer=writer,
                     preexisting_dirty_paths=preexisting_dirty_paths,
+                )
+                _emit_chain_work_boundary(
+                    "git",
+                    plan_name=plan_name,
+                    operation=f"chain_commit_and_push_{phase}",
+                    phase=phase,
+                    elapsed_ms=max(0, int((time.monotonic() - _git_start) * 1000)),
+                    metadata={
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                        "branch": milestone.branch,
+                        "phase_returncode": _code,
+                    },
                 )
                 _capture_sync_state(
                     root, spec_path, branch=milestone.branch, pr_number=state.pr_number
@@ -7031,8 +7410,27 @@ def run_chain(
                     f"retrying milestone {milestone.label} by resuming plan "
                     f"{state.current_plan_name} from {resumable_state}"
                 )
+                _emit_chain_work_boundary(
+                    "retry_wait",
+                    plan_name=state.current_plan_name,
+                    elapsed_ms=0,
+                    metadata={
+                        "milestone_label": milestone.label,
+                        "retry_strategy": "resume_milestone",
+                        "resumable_state": resumable_state,
+                    },
+                )
             else:
                 log(f"retrying milestone {milestone.label}")
+                _emit_chain_work_boundary(
+                    "retry_wait",
+                    plan_name=state.current_plan_name,
+                    elapsed_ms=0,
+                    metadata={
+                        "milestone_label": milestone.label,
+                        "retry_strategy": "reinit_milestone",
+                    },
+                )
                 _preserve_carried_wip_before_retry(
                     root,
                     spec_path,
@@ -7093,6 +7491,7 @@ def run_chain(
             and not use_pr
             and mode != "plan"
         ):
+            _git_start = time.monotonic()
             local_commit_sha = _commit_phase(
                 root,
                 plan_name,
@@ -7100,7 +7499,19 @@ def run_chain(
                 writer=writer,
                 preexisting_dirty_paths=preexisting_dirty_paths,
             )
+            _emit_chain_work_boundary(
+                "git",
+                plan_name=plan_name,
+                operation="chain_commit_done",
+                elapsed_ms=max(0, int((time.monotonic() - _git_start) * 1000)),
+                metadata={
+                    "milestone_label": milestone.label,
+                    "milestone_index": idx,
+                    "commit_sha": local_commit_sha,
+                },
+            )
         if decision == "advance" and use_pr and state.pr_number is not None:
+            _git_start = time.monotonic()
             _commit_and_push_phase(
                 root,
                 milestone.branch or "",
@@ -7108,6 +7519,18 @@ def run_chain(
                 "done",
                 writer=writer,
                 preexisting_dirty_paths=preexisting_dirty_paths,
+            )
+            _emit_chain_work_boundary(
+                "git",
+                plan_name=plan_name,
+                operation="chain_commit_and_push_done",
+                elapsed_ms=max(0, int((time.monotonic() - _git_start) * 1000)),
+                metadata={
+                    "milestone_label": milestone.label,
+                    "milestone_index": idx,
+                    "branch": milestone.branch,
+                    "pr_number": state.pr_number,
+                },
             )
             _capture_sync_state(
                 root, spec_path, branch=milestone.branch, pr_number=state.pr_number
@@ -7179,6 +7602,22 @@ def run_chain(
                             ),
                         )
                 else:
+                    validation_evidence = _validate_pr_progression_wbc(
+                        root=root,
+                        spec_path=spec_path,
+                        state=state,
+                        milestone=milestone,
+                        plan_name=plan_name,
+                        pr_number=state.pr_number,
+                        transition_name="chain_pr_ready",
+                    )
+                    _pr_ready_evidence = _capture_pr_ready_evidence(
+                        root,
+                        state.pr_number,
+                        writer=writer,
+                        ci_readiness_state="ready",
+                        validation_evidence=validation_evidence,
+                    )
                     _mark_pr_ready(root, state.pr_number, writer=writer)
                     if not _automatic_pr_progression_permitted(spec, spec_path):
                         state.last_state = STATE_AWAITING_PR_MERGE
@@ -7208,6 +7647,12 @@ def run_chain(
                         )
                     state.pr_state = _enable_auto_merge(
                         root, state.pr_number, writer=writer
+                    )
+                    _pr_merged_evidence = _capture_pr_merged_evidence(
+                        root,
+                        state.pr_number,
+                        writer=writer,
+                        validation_evidence=validation_evidence,
                     )
                     chain_spec.save_chain_state(spec_path, state)
                     if state.pr_state != "merged":

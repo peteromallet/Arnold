@@ -465,6 +465,34 @@ def test_resolve_baseline_test_selection_ignores_non_path_selector_when_paths_ex
     assert "ignored non-path selector kind(s) marker" in result["reason"]
 
 
+def test_resolve_baseline_test_selection_keeps_scoped_contract_with_stale_missing_metadata(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write(tmp_path, "tests/test_feature.py")
+    state = _make_state(plan_dir)
+    _write_plan_meta(
+        plan_dir,
+        1,
+        {
+            "strategy": "scoped",
+            "confidence": "low",
+            "selectors": [{"kind": "path", "value": "tests/test_feature.py"}],
+            "changed_surfaces": ["pkg/util.py"],
+            "missing_test_selectors": ["tests/test_missing.py"],
+            "always_run": [],
+            "full_suite_fallback": True,
+            "rationale": "Scoped selectors remain authoritative even when stale missing metadata exists.",
+        },
+    )
+
+    result = resolve_baseline_test_selection(plan_dir, state)
+
+    assert result["mode"] == "scoped"
+    assert result["command_override"] == "pytest tests/test_feature.py"
+
+
 def test_resolve_baseline_test_selection_rejects_non_path_selector_without_paths(
     tmp_path: Path,
 ) -> None:

@@ -3039,6 +3039,9 @@ class MegaplanResidentProfile:
                 "manifest_path": result.manifest_path,
                 "log_path": result.log_path,
                 "result_path": result.result_path,
+                "custody_evidence_path": result.custody_evidence_path,
+                "delivery_owner_run_id": result.delivery_owner_run_id,
+                "parent_owned_delivery": result.parent_owned_delivery,
                 "pid": result.pid,
                 "description": result.description,
                 "todo_resolution": (

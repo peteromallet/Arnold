@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
 from arnold.kernel.effect import EffectDescriptor, EffectKind
 from arnold.kernel.events import EventEnvelope
@@ -35,6 +35,28 @@ class EffectRecord:
     state: EffectRecordState
 
 
+class EffectEvidenceRecorder(Protocol):
+    """Optional recorder used to emit WBC evidence for effect boundaries."""
+
+    def effect_intent(self, name: str, payload: Mapping[str, Any] | None = None) -> None: ...
+
+    def effect_outcome(
+        self,
+        name: str,
+        *,
+        status: str,
+        payload: Mapping[str, Any] | None = None,
+    ) -> None: ...
+
+    def reconciliation(
+        self,
+        name: str,
+        *,
+        outcome: str,
+        payload: Mapping[str, Any] | None = None,
+    ) -> None: ...
+
+
 @dataclass
 class EffectLedger:
     """Folded ledger of external effects derived from the journal.
@@ -44,6 +66,8 @@ class EffectLedger:
     """
 
     _records: dict[str, EffectRecord] = field(default_factory=dict)
+    _evidence: EffectEvidenceRecorder | None = field(default=None, repr=False, compare=False)
+    _boundary_name: str = field(default="kernel.effect_ledger", repr=False, compare=False)
 
     def prerecord(self, effect: EffectDescriptor) -> bool:
         """Record an effect intent before execution.
@@ -52,8 +76,20 @@ class EffectLedger:
         already recorded.
         """
 
+        payload = _effect_payload(effect)
         if effect.idempotency_key in self._records:
+            if self._evidence is not None:
+                self._evidence.reconciliation(
+                    f"{self._boundary_name}.duplicate",
+                    outcome="already_intended",
+                    payload=payload,
+                )
             return False
+        if self._evidence is not None:
+            self._evidence.effect_intent(
+                f"{self._boundary_name}.{effect.effect_id}",
+                payload=payload,
+            )
         self._records[effect.idempotency_key] = EffectRecord(
             descriptor=effect,
             state=EffectRecordState.INTENDED,
@@ -67,6 +103,7 @@ class EffectLedger:
                 descriptor=record.descriptor,
                 state=EffectRecordState.FULFILLED,
             )
+            self._record_outcome(record.descriptor, EffectRecordState.FULFILLED)
 
     def mark_received(self, idempotency_key: str) -> None:
         record = self._records.get(idempotency_key)
@@ -75,6 +112,7 @@ class EffectLedger:
                 descriptor=record.descriptor,
                 state=EffectRecordState.RECEIVED,
             )
+            self._record_outcome(record.descriptor, EffectRecordState.RECEIVED)
 
     def mark_compensated(self, idempotency_key: str) -> None:
         record = self._records.get(idempotency_key)
@@ -83,6 +121,7 @@ class EffectLedger:
                 descriptor=record.descriptor,
                 state=EffectRecordState.COMPENSATED,
             )
+            self._record_outcome(record.descriptor, EffectRecordState.COMPENSATED)
 
     def mark_failed(self, idempotency_key: str) -> None:
         record = self._records.get(idempotency_key)
@@ -91,6 +130,7 @@ class EffectLedger:
                 descriptor=record.descriptor,
                 state=EffectRecordState.FAILED,
             )
+            self._record_outcome(record.descriptor, EffectRecordState.FAILED)
 
     def get(self, idempotency_key: str) -> EffectDescriptor | None:
         record = self._records.get(idempotency_key)
@@ -109,6 +149,21 @@ class EffectLedger:
 
     def __len__(self) -> int:
         return len(self._records)
+
+    def _record_outcome(
+        self,
+        descriptor: EffectDescriptor,
+        state: EffectRecordState,
+    ) -> None:
+        if self._evidence is None:
+            return
+        payload = _effect_payload(descriptor)
+        payload["lifecycle_state"] = state.value
+        self._evidence.effect_outcome(
+            f"{self._boundary_name}.{descriptor.effect_id}",
+            status=state.value,
+            payload=payload,
+        )
 
 
 EFFECT_EVENT_KINDS = frozenset({
@@ -130,6 +185,10 @@ def intent_payload(descriptor: EffectDescriptor) -> Mapping[str, Any]:
         "idempotency_key": descriptor.idempotency_key,
         "payload_schema_hash": descriptor.payload_schema_hash,
     }
+
+
+def _effect_payload(descriptor: EffectDescriptor) -> dict[str, Any]:
+    return dict(intent_payload(descriptor))
 
 
 def fulfillment_payload(

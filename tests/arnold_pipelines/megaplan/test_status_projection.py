@@ -25,11 +25,12 @@ def test_plan_status_presentation_preserves_lifecycle_precedence(
 ):
     projection = plan_status_presentation(plan_state, active_step=active_step)
 
-    assert projection == {
-        "active_phase": active_step["phase"] if active_step else None,
-        "execution_state": execution_state,
-        "display_state": display_state,
-    }
+    assert projection["active_phase"] == (active_step["phase"] if active_step else None)
+    assert projection["execution_state"] == execution_state
+    assert projection["display_state"] == display_state
+    assert projection["display_authority"] == "display_only_non_authoritative"
+    assert isinstance(projection["source_cursor_vector"], dict)
+    assert isinstance(projection["wbc_query_inputs"], dict)
 
 
 def test_plan_status_presentation_distinguishes_review_rework_from_acceptance():

@@ -8,6 +8,7 @@ from arnold_pipelines.megaplan.cloud.progress_auditor_controller import (
     TriggerResult,
     run_escalation_controller,
 )
+from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records
 from tests.cloud.test_progress_auditor_escalation import (
     _approval_gate_after_superfixer_repair,
     _true_stall,
@@ -466,3 +467,47 @@ def test_terminal_attempt_is_closed_when_new_evidence_changes_escalation_id(
     reconciled = json.loads(first_state_path.read_text(encoding="utf-8"))
     assert reconciled["attempts"][-1]["status"] == "failed"
     assert reconciled["attempts"][-1]["outcome"] == "recovery_not_verified"
+
+
+def test_controller_appends_l3_drift_evidence(tmp_path: Path) -> None:
+    queue = tmp_path / ".megaplan" / "repair-queue"
+    state_root = tmp_path / "audit-escalations"
+    finding = _true_stall()
+    finding["incident_audit"] = {
+        "findings": [
+            {
+                "layer": "reconciler",
+                "code": "DRIFT_DETECTED",
+                "source_pair": "l2_fix_vs_resolver",
+                "contradiction": "false_fixed_l2_result",
+                "recommendation": "immediate_repair.repair_attempt",
+                "observed": {"resolver_canonical_state": "RUNNING"},
+                "expected": {"brief_outcome": "started"},
+            }
+        ]
+    }
+
+    result = run_escalation_controller(
+        {"findings": [finding], "green_checks": []},
+        state_root=state_root,
+        queue_root=queue,
+        authorized=True,
+        trigger_argv=None,
+    )
+
+    item = result["l3_escalation_summary"]["items"][0]
+    sidecar_path = state_root.with_name("audit-escalations.d") / "escalations" / "escalations.jsonl"
+    records = read_jsonl_records(sidecar_path)
+    assert item["decision"] == "request_queued"
+    assert item["repair_evidence_path"] == str(sidecar_path)
+    assert records[-1]["reconciler_drift_findings"] == [
+        {
+            "layer": "reconciler",
+            "code": "DRIFT_DETECTED",
+            "source_pair": "l2_fix_vs_resolver",
+            "contradiction": "false_fixed_l2_result",
+            "recommendation": "immediate_repair.repair_attempt",
+            "observed": {"resolver_canonical_state": "RUNNING"},
+            "expected": {"brief_outcome": "started"},
+        }
+    ]

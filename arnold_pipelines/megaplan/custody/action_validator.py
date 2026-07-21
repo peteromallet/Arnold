@@ -1,102 +1,43 @@
-"""Controlled authoritative-writer action-boundary validator (M7 shadow-only).
-
-Provides the central conjunctive gate ``validate_action_boundary(...)`` that
-rereads current Run Authority grant/fence, current Custody lease/epoch, and
-required WBC attempt status immediately before dispatch, repair, completion,
-cancellation, publication, or delivery.
-
-Production enforcement is disabled by default and gated behind the
-``ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT`` environment variable (default
-``"0"``).  When enforcement is off, the validator still performs every
-check and returns the full diagnostics, but the gate result is
-``shadow_pass`` instead of blocking the caller.  This mirrors the
-``ARNOLD_RESOLVER_OBSERVE`` / ``ARNOLD_RESOLVER_ENFORCEMENT`` pattern from
-:mod:`megaplan.cloud.feature_flags`.
-
-North Star alignment
---------------------
-* **Single-owner** — Custody is the sole owner of lease state.
-  Cross-owner references (WBC attempt ids, Run Authority grant ids,
-  coordinator fence tokens) are read-only pointers, never duplicate ledgers.
-* **Conjunctive** — All three sources (Run Authority, Custody, WBC) must
-  agree before an authority boundary action is accepted.
-* **Shadow-first** — Enforcement remains off until M6 proof and M6A
-  operational WBC API are machine-verifiably accepted.
-* **No stale-source acceptance** — Every call rereads current sources
-  immediately; the validator never caches prior results.
-
-Action boundaries
------------------
-==============  ============================================================
-dispatch        An action is about to be dispatched to an executor.
-repair          A repair operation is about to be started or resumed.
-completion      A task/plan completion verdict is about to be published.
-cancellation    A task/plan cancellation is about to be published.
-publication     A chain publication is about to be pushed.
-delivery        A deliverable is about to be delivered to a downstream system.
-==============  ============================================================
-"""
+"""Conjunctive Run Authority, Custody, and WBC action-boundary validation."""
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
+import os
 from pathlib import Path
-from types import MappingProxyType
-from typing import Any, Literal, Mapping, Optional
+from typing import Any, Literal, Mapping
 
-from arnold_pipelines.megaplan.custody.contracts import (
-    CustodyLease,
-    CustodyTargetKey,
-    RepairOccurrenceKey,
-    normalize_custody_target_key,
-)
-from arnold_pipelines.megaplan.custody.lease_store import (
-    CustodyLeaseStore,
-    open_lease_store,
-)
-from arnold_pipelines.megaplan.custody.outbox import (
-    CustodyOutbox,
-    OutboxRecord,
-    open_outbox,
-)
-from arnold_pipelines.run_authority.contracts import (
+from arnold_pipelines.run_authority import (
     CapabilityGrant,
+    ContractError,
     CoordinatorFence,
+    IdentityConflict,
+    RevisionConflict,
+    validate_scope_binding,
 )
 
-# ── Schema version constant ────────────────────────────────────────────────
+from .contracts import CustodyLease, CustodyTargetKey, normalize_custody_target_key
+from .lease_store import CustodyLeaseStore, open_lease_store
+from .outbox import CustodyOutbox, open_outbox
+
 
 ACTION_VALIDATOR_SCHEMA_VERSION = 1
-
-# ── Env-var gate constants ─────────────────────────────────────────────────
-
 _ENV_ENFORCEMENT = "ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT"
-_DISABLE_VALUES: frozenset[str] = frozenset({"0", "false", "no", "off"})
-
-
-def _production_enforcement_enabled() -> bool:
-    """Return ``True`` only when the M7 action validator enforcement flag is on.
-
-    Controlled by ``ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT`` — defaults to
-    OFF (``"0"``).  This follows the same pattern as
-    :func:`~megaplan.cloud.feature_flags.resolver_enforcement_enabled`.
-
-    When disabled (the default), the validator performs every check but
-    the gate result is ``shadow_pass``.  Callers must NOT treat a
-    ``shadow_pass`` as an authoritative authorization.
-    """
-    raw = os.getenv(_ENV_ENFORCEMENT, "").strip().lower()
-    if not raw:
-        return False
-    if raw in _DISABLE_VALUES:
-        return False
-    return True
-
-
-# ── Action boundary types ──────────────────────────────────────────────────
+_DISABLE_VALUES = frozenset({"", "0", "false", "no", "off"})
+_LEASE_TERMINAL_STATUSES = frozenset(
+    {
+        "conflict",
+        "expire",
+        "expired",
+        "quarantine",
+        "quarantined",
+        "reclaim",
+        "release",
+        "released",
+    }
+)
 
 ActionBoundaryType = Literal[
     "dispatch",
@@ -106,24 +47,25 @@ ActionBoundaryType = Literal[
     "publication",
     "delivery",
 ]
-
-ACTION_BOUNDARY_TYPES: frozenset[ActionBoundaryType] = frozenset(
-    {
-        "dispatch",
-        "repair",
-        "completion",
-        "cancellation",
-        "publication",
-        "delivery",
-    }
+ACTION_BOUNDARY_TYPES = frozenset(
+    {"dispatch", "repair", "completion", "cancellation", "publication", "delivery"}
 )
 
-# ── Validation outcome codes ───────────────────────────────────────────────
+
+def _utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _production_enforcement_enabled() -> bool:
+    raw = os.getenv(_ENV_ENFORCEMENT, "").strip().lower()
+    if not raw:
+        return False
+    if raw in _DISABLE_VALUES:
+        return False
+    return True
 
 
 class ValidationOutcome(StrEnum):
-    """Outcome of a single conjunctive check within an action boundary."""
-
     SATISFIED = "satisfied"
     MISSING = "missing"
     STALE = "stale"
@@ -134,49 +76,33 @@ class ValidationOutcome(StrEnum):
     ERROR = "error"
 
 
-# ── Gate result ────────────────────────────────────────────────────────────
-
-
 class GateResult(StrEnum):
-    """Overall gate result for an action boundary validation."""
-
     AUTHORIZED = "authorized"
     SHADOW_PASS = "shadow_pass"
     BLOCKED_MISSING_GRANT = "blocked_missing_grant"
+    BLOCKED_STALE_GRANT = "blocked_stale_grant"
     BLOCKED_FENCE_MISMATCH = "blocked_fence_mismatch"
+    BLOCKED_SUBJECT_SCOPE_MISMATCH = "blocked_subject_scope_mismatch"
+    BLOCKED_CAPABILITY_MISMATCH = "blocked_capability_mismatch"
     BLOCKED_NO_LEASE = "blocked_no_lease"
     BLOCKED_EXPIRED_LEASE = "blocked_expired_lease"
     BLOCKED_STALE_EPOCH = "blocked_stale_epoch"
+    BLOCKED_TARGET_MISMATCH = "blocked_target_mismatch"
     BLOCKED_WBC_MISSING = "blocked_wbc_missing"
     BLOCKED_WBC_CONFLICT = "blocked_wbc_conflict"
+    BLOCKED_WBC_VERSION_MISMATCH = "blocked_wbc_version_mismatch"
     BLOCKED_NOT_OWNER = "blocked_not_owner"
     ERROR = "error"
 
 
-# ── Per-source check result ────────────────────────────────────────────────
-
-
 @dataclass(frozen=True)
 class SourceCheck:
-    """Result of a single source reread within an action-boundary validation."""
-
-    source: str  # "run_authority_grant", "run_authority_fence", "custody_lease", "wbc_attempt"
+    source: str
     outcome: ValidationOutcome
     detail: str = ""
-    observed_at: str = ""
+    observed_at: str = field(default_factory=_utcnow)
     observed_value: Mapping[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if not self.observed_at:
-            object.__setattr__(
-                self,
-                "observed_at",
-                datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            )
-        if not isinstance(self.observed_value, Mapping):
-            object.__setattr__(self, "observed_value", MappingProxyType({}))
-        else:
-            object.__setattr__(self, "observed_value", MappingProxyType(dict(self.observed_value)))
+    identity: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -185,30 +111,12 @@ class SourceCheck:
             "detail": self.detail,
             "observed_at": self.observed_at,
             "observed_value": dict(self.observed_value),
+            "identity": self.identity,
         }
-
-
-# ── Action boundary context ────────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
 class ActionBoundaryContext:
-    """Context required to validate an action boundary.
-
-    All fields are read-only pointers to source state — the validator
-    never duplicates or mutates source ledgers.
-
-    Required fields:
-      - action_type: the type of action being validated
-      - target: the CustodyTargetKey identifying the repair occurrence
-      - run_authority_grant_id: the Run Authority grant that authorizes the action
-      - coordinator_fence_token: the coordinator fence token at the time of the grant
-      - wbc_attempt_reference: the WBC attempt reference (may be empty)
-
-    Optional owner identity:
-      - owner_host, owner_pid, owner_boot_id: current process identity
-    """
-
     action_type: ActionBoundaryType
     target: CustodyTargetKey
     run_authority_grant_id: str
@@ -219,462 +127,582 @@ class ActionBoundaryContext:
     owner_boot_id: str = ""
     expected_custody_epoch: int = 0
     expected_lease_id: str = ""
+    run_authority_grant: CapabilityGrant | None = None
+    coordinator_fence: CoordinatorFence | None = None
+    required_capability: str = ""
+    required_wbc_evidence_version: str = ""
 
     def __post_init__(self) -> None:
         if self.action_type not in ACTION_BOUNDARY_TYPES:
-            raise ValueError(f"unknown action_type {self.action_type!r}")
+            raise ContractError(f"unsupported action boundary {self.action_type!r}")
         if not isinstance(self.target, CustodyTargetKey):
             raise TypeError("target must be a CustodyTargetKey")
-        if not isinstance(self.run_authority_grant_id, str) or not self.run_authority_grant_id.strip():
-            raise ValueError("run_authority_grant_id must be a non-empty string")
-        if not isinstance(self.coordinator_fence_token, int) or isinstance(self.coordinator_fence_token, bool) or self.coordinator_fence_token < 0:
-            raise ValueError("coordinator_fence_token must be a non-negative integer")
-        if not isinstance(self.wbc_attempt_reference, str):
-            raise ValueError("wbc_attempt_reference must be a string")
-        if not isinstance(self.owner_host, str):
-            raise ValueError("owner_host must be a string")
-        if not isinstance(self.owner_pid, str):
-            raise ValueError("owner_pid must be a string")
-        if not isinstance(self.owner_boot_id, str):
-            raise ValueError("owner_boot_id must be a string")
-        if not isinstance(self.expected_custody_epoch, int) or isinstance(self.expected_custody_epoch, bool):
-            raise ValueError("expected_custody_epoch must be an integer")
-        if not isinstance(self.expected_lease_id, str):
-            raise ValueError("expected_lease_id must be a string")
-
-
-# ── Validation result ──────────────────────────────────────────────────────
+        if not isinstance(self.coordinator_fence_token, int) or isinstance(self.coordinator_fence_token, bool):
+            raise ContractError("coordinator_fence_token must be an integer")
+        if self.coordinator_fence_token < 0:
+            raise ContractError("coordinator_fence_token must be non-negative")
+        if self.expected_custody_epoch < 0:
+            raise ContractError("expected_custody_epoch must be non-negative")
 
 
 @dataclass(frozen=True)
 class ActionBoundaryResult:
-    """Result of validating an action boundary.
-
-    Fields:
-      - gate_result: the overall gate result
-      - action_type: the type of action that was validated
-      - target_digest: the deterministic digest of the target
-      - checks: per-source check results (Run Authority grant, fence, Custody lease, WBC attempt)
-      - enforcement_enabled: whether production enforcement was active
-      - validated_at: ISO-8601 timestamp of validation
-      - diagnostics: additional human/machine-readable diagnostics
-    """
-
     gate_result: GateResult
     action_type: ActionBoundaryType
     target_digest: str
     checks: tuple[SourceCheck, ...]
     enforcement_enabled: bool = False
-    validated_at: str = ""
+    validated_at: str = field(default_factory=_utcnow)
     diagnostics: Mapping[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.gate_result, GateResult):
-            raise TypeError("gate_result must be a GateResult")
-        if self.action_type not in ACTION_BOUNDARY_TYPES:
-            raise ValueError(f"unknown action_type {self.action_type!r}")
-        if not isinstance(self.target_digest, str) or not self.target_digest.strip():
-            raise ValueError("target_digest must be a non-empty string")
-        if not self.validated_at:
-            object.__setattr__(
-                self,
-                "validated_at",
-                datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            )
-        if not isinstance(self.diagnostics, Mapping):
-            object.__setattr__(self, "diagnostics", MappingProxyType({}))
-        else:
-            object.__setattr__(self, "diagnostics", MappingProxyType(dict(self.diagnostics)))
-
-    @property
-    def authorized(self) -> bool:
-        """Return ``True`` when the gate result is ``AUTHORIZED``.
-
-        Note: ``SHADOW_PASS`` is NOT authoritative — enforcement must be
-        enabled for ``authorized`` to be ``True``.
-        """
-        return self.gate_result == GateResult.AUTHORIZED
-
-    @property
-    def blocked(self) -> bool:
-        """Return ``True`` when the gate is blocked (any non-pass result)."""
-        return self.gate_result not in {GateResult.AUTHORIZED, GateResult.SHADOW_PASS}
-
-    @property
-    def is_shadow(self) -> bool:
-        """Return ``True`` when the validator ran in shadow mode."""
-        return not self.enforcement_enabled
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "gate_result": self.gate_result.value,
             "action_type": self.action_type,
             "target_digest": self.target_digest,
-            "checks": [c.to_dict() for c in self.checks],
+            "checks": [check.to_dict() for check in self.checks],
             "enforcement_enabled": self.enforcement_enabled,
             "validated_at": self.validated_at,
             "diagnostics": dict(self.diagnostics),
         }
 
 
-# ── Source reread helpers ──────────────────────────────────────────────────
+def _parse_timestamp(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
-def _reread_run_authority_grant(
-    grant_id: str,
-    fence_token: int,
-) -> SourceCheck:
-    """Reread the Run Authority grant and verify its identity.
+def _lease_is_active(lease: CustodyLease) -> bool:
+    status = str(getattr(lease, "status", "")).strip().lower()
+    if status in _LEASE_TERMINAL_STATUSES:
+        return False
+    expires = _parse_timestamp(getattr(lease, "expires_at", ""))
+    return expires is None or expires > datetime.now(timezone.utc)
 
-    Returns a SourceCheck with outcome SATISFIED, MISSING, or ERROR.
-    """
-    if not grant_id.strip():
+
+def _stringify_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
+    return dict(value)
+
+
+def _target_matches(lease: CustodyLease, target: CustodyTargetKey) -> bool:
+    lease_target = getattr(lease, "target_key", None)
+    if lease_target is None:
+        return False
+    return lease_target.to_dict() == target.to_dict()
+
+
+def _reread_run_authority_grant(context: ActionBoundaryContext) -> SourceCheck:
+    grant_id = context.run_authority_grant_id.strip()
+    if not grant_id:
         return SourceCheck(
             source="run_authority_grant",
             outcome=ValidationOutcome.MISSING,
-            detail="Run Authority grant ID is empty",
+            identity="grant_id",
+            detail="missing current Run Authority grant ID",
         )
-
-    # The grant must exist and reference the same fence token.
-    # In M7 shadow mode, we cannot reach into the Run Authority store
-    # to fetch the actual CapabilityGrant record — that store is owned
-    # by Run Authority, not Custody.  Instead we verify that the
-    # grant_id and fence_token are syntactically valid and defer the
-    # actual grant-fetch to the caller-supplied grant record.
-    #
-    # For now, this is a placeholder that returns SATISFIED if the
-    # grant_id and fence_token are syntactically valid.  When M6/M6A
-    # acceptance is machine-verifiable, this will be upgraded to a
-    # real cross-owner read from the Run Authority store.
+    grant = context.run_authority_grant
+    if grant is None:
+        return SourceCheck(
+            source="run_authority_grant",
+            outcome=ValidationOutcome.MISSING,
+            identity="grant",
+            detail=f"missing current Run Authority grant {grant_id!r}",
+            observed_value={"grant_id": grant_id},
+        )
     try:
-        # Validate fence_token is non-negative
-        if not isinstance(fence_token, int) or isinstance(fence_token, bool) or fence_token < 0:
-            return SourceCheck(
-                source="run_authority_grant",
-                outcome=ValidationOutcome.ERROR,
-                detail=f"invalid fence_token: {fence_token!r}",
-            )
+        validate_scope_binding(
+            grant=grant,
+            fence=context.coordinator_fence or CoordinatorFence(
+                grant.run_id,
+                grant.run_revision,
+                grant.coordinator_attempt_id,
+                grant.fence_token,
+            ),
+            expected_grant_id=grant_id,
+            subject_id=context.target.subject_id,
+            fence_token=context.coordinator_fence_token,
+            required_capability=context.required_capability or None,
+        )
+    except RevisionConflict as exc:
+        identity = "grant_id" if grant.grant_id != grant_id else "fence_token"
         return SourceCheck(
             source="run_authority_grant",
-            outcome=ValidationOutcome.SATISFIED,
-            detail=f"grant_id={grant_id!r} syntactically valid; cross-owner grant fetch deferred to M6/M6A",
-            observed_value={"grant_id": grant_id, "fence_token": fence_token},
+            outcome=ValidationOutcome.STALE,
+            identity=identity,
+            detail=str(exc),
+            observed_value={
+                "expected_grant_id": grant_id,
+                "observed_grant_id": grant.grant_id,
+                "subject_id": context.target.subject_id,
+                "fence_token": grant.fence_token,
+            },
         )
-    except Exception as exc:
+    except IdentityConflict as exc:
+        detail = str(exc)
+        identity = "subject_id"
+        outcome = ValidationOutcome.CONFLICT
+        if "capability" in detail:
+            identity = "capability"
         return SourceCheck(
             source="run_authority_grant",
-            outcome=ValidationOutcome.ERROR,
-            detail=f"grant reread error: {type(exc).__name__}: {exc}",
+            outcome=outcome,
+            identity=identity,
+            detail=detail,
+            observed_value={
+                "grant_id": grant.grant_id,
+                "subject_ids": grant.subject_ids,
+                "capabilities": grant.capabilities,
+            },
         )
+    return SourceCheck(
+        source="run_authority_grant",
+        outcome=ValidationOutcome.SATISFIED,
+        identity="grant_id",
+        detail=f"grant {grant.grant_id!r} currently authorizes subject {context.target.subject_id!r}",
+        observed_value={
+            "grant_id": grant.grant_id,
+            "subject_ids": grant.subject_ids,
+            "capabilities": grant.capabilities,
+            "evidence_ids": grant.evidence_ids,
+        },
+    )
 
 
-def _reread_run_authority_fence(
-    fence_token: int,
-    expected_grant_id: str,
-) -> SourceCheck:
-    """Reread the coordinator fence and verify it matches the expected grant.
-
-    Returns a SourceCheck with outcome SATISFIED, FENCED, or ERROR.
-    """
-    if not expected_grant_id.strip():
+def _reread_run_authority_fence(context: ActionBoundaryContext) -> SourceCheck:
+    grant_id = context.run_authority_grant_id.strip()
+    if not grant_id:
         return SourceCheck(
             source="run_authority_fence",
             outcome=ValidationOutcome.MISSING,
-            detail="cannot verify fence without a grant ID",
+            identity="grant_id",
+            detail="cannot validate current fence without a current grant ID",
         )
+    fence = context.coordinator_fence
+    if fence is None:
+        return SourceCheck(
+            source="run_authority_fence",
+            outcome=ValidationOutcome.MISSING,
+            identity="fence",
+            detail=f"missing current coordinator fence for grant {grant_id!r}",
+            observed_value={"grant_id": grant_id},
+        )
+    if fence.token != context.coordinator_fence_token:
+        return SourceCheck(
+            source="run_authority_fence",
+            outcome=ValidationOutcome.FENCED,
+            identity="fence_token",
+            detail=(
+                f"stale coordinator fence token: expected {context.coordinator_fence_token!r}, "
+                f"observed {fence.token!r}"
+            ),
+            observed_value={
+                "grant_id": grant_id,
+                "expected_fence_token": context.coordinator_fence_token,
+                "observed_fence_token": fence.token,
+                "coordinator_attempt_id": fence.coordinator_attempt_id,
+            },
+        )
+    grant = context.run_authority_grant
+    if grant is not None and grant.coordinator_attempt_id != fence.coordinator_attempt_id:
+        return SourceCheck(
+            source="run_authority_fence",
+            outcome=ValidationOutcome.CONFLICT,
+            identity="coordinator_attempt_id",
+            detail=(
+                "grant and fence identify different coordinator attempts: "
+                f"{grant.coordinator_attempt_id!r} vs {fence.coordinator_attempt_id!r}"
+            ),
+            observed_value={
+                "grant_id": grant.grant_id,
+                "grant_coordinator_attempt_id": grant.coordinator_attempt_id,
+                "fence_coordinator_attempt_id": fence.coordinator_attempt_id,
+            },
+        )
+    return SourceCheck(
+        source="run_authority_fence",
+        outcome=ValidationOutcome.SATISFIED,
+        identity="fence_token",
+        detail=f"coordinator fence token {fence.token!r} is current",
+        observed_value={
+            "grant_id": grant_id,
+            "fence_token": fence.token,
+            "coordinator_attempt_id": fence.coordinator_attempt_id,
+        },
+    )
 
-    try:
-        if not isinstance(fence_token, int) or isinstance(fence_token, bool) or fence_token < 0:
-            return SourceCheck(
-                source="run_authority_fence",
-                outcome=ValidationOutcome.ERROR,
-                detail=f"invalid fence_token: {fence_token!r}",
-            )
-        return SourceCheck(
-            source="run_authority_fence",
-            outcome=ValidationOutcome.SATISFIED,
-            detail=f"fence_token={fence_token} syntactically valid; cross-owner fence fetch deferred to M6/M6A",
-            observed_value={"fence_token": fence_token, "grant_id": expected_grant_id},
+
+def _select_current_lease(
+    lease_store: CustodyLeaseStore,
+    context: ActionBoundaryContext,
+) -> tuple[CustodyLease | None, list[CustodyLease]]:
+    if context.expected_lease_id.strip():
+        current = lease_store.current_lease(context.expected_lease_id.strip())
+        candidates = [] if current is None else [current]
+        return current, candidates
+    candidates = [
+        lease
+        for lease in lease_store.find_by_target_key(
+            context.target.subject_type,
+            context.target.subject_id,
+            context.target.action,
+            context.target.target_kind,
+            context.target.target_id,
+            context.target.contract_id,
         )
-    except Exception as exc:
-        return SourceCheck(
-            source="run_authority_fence",
-            outcome=ValidationOutcome.ERROR,
-            detail=f"fence reread error: {type(exc).__name__}: {exc}",
-        )
+        if _lease_is_active(lease)
+    ]
+    if not candidates:
+        return None, []
+    candidates.sort(key=lambda lease: (int(getattr(lease, "epoch", 0)), getattr(lease, "lease_id", "")), reverse=True)
+    return candidates[0], candidates
 
 
 def _reread_custody_lease(
+    context: ActionBoundaryContext,
     lease_store: CustodyLeaseStore | None,
-    target_digest: str,
-    owner_host: str,
-    owner_pid: str,
-    owner_boot_id: str,
-    expected_custody_epoch: int = 0,
-    expected_lease_id: str = "",
 ) -> SourceCheck:
-    """Reread the current Custody lease for the target.
-
-    Returns a SourceCheck with outcome SATISFIED, MISSING, EXPIRED,
-    STALE, NOT_OWNER, or ERROR.
-
-    When *expected_custody_epoch* is provided and > 0, the reread lease's
-    epoch is compared to it; a mismatch yields STALE so callers can detect
-    epoch drift between observation and action-boundary validation.
-    """
     if lease_store is None:
         return SourceCheck(
             source="custody_lease",
             outcome=ValidationOutcome.MISSING,
-            detail="lease store is not available (None)",
+            identity="lease_store",
+            detail="missing current Custody lease store",
         )
-
     try:
-        # Use expected_lease_id if provided, otherwise derive from target digest.
-        if expected_lease_id.strip():
-            lease_id = expected_lease_id.strip()
-        else:
-            lease_id = f"custody-lease-{target_digest[:16]}"
-
-        current = lease_store.current_lease(lease_id)
-        if current is None:
-            return SourceCheck(
-                source="custody_lease",
-                outcome=ValidationOutcome.MISSING,
-                detail=f"no lease found for lease_id={lease_id!r}",
-                observed_value={"lease_id": lease_id, "target_digest": target_digest},
-            )
-
-        # Check expiry
-        if current.is_expired:
-            return SourceCheck(
-                source="custody_lease",
-                outcome=ValidationOutcome.EXPIRED,
-                detail=f"lease {current.lease_id!r} expired at {current.expires_at}",
-                observed_value={
-                    "lease_id": current.lease_id,
-                    "custody_epoch": current.custody_epoch,
-                    "acquired_at": current.acquired_at,
-                    "expires_at": current.expires_at,
-                },
-            )
-
-        # Check stale epoch: compare caller-observed epoch to reread epoch
-        if expected_custody_epoch > 0 and current.custody_epoch != expected_custody_epoch:
-            return SourceCheck(
-                source="custody_lease",
-                outcome=ValidationOutcome.STALE,
-                detail=f"stale custody epoch: caller observed {expected_custody_epoch}, lease store has {current.custody_epoch}",
-                observed_value={
-                    "lease_id": current.lease_id,
-                    "custody_epoch": current.custody_epoch,
-                    "expected_custody_epoch": expected_custody_epoch,
-                },
-            )
-
-        # Check owner identity
-        if owner_host and owner_pid:
-            observed_owner = current.owner_identity
-            # boot_id is best-effort; only compare if both sides provide one
-            if owner_boot_id and current.owner_boot_id:
-                expected_owner = (owner_host, owner_pid, owner_boot_id)
-            else:
-                expected_owner = (owner_host, owner_pid, current.owner_boot_id)
-            if (owner_host != current.owner_host) or (owner_pid != current.owner_pid):
-                return SourceCheck(
-                    source="custody_lease",
-                    outcome=ValidationOutcome.NOT_OWNER,
-                    detail=f"owner mismatch: expected ({owner_host!r}, {owner_pid!r}), observed ({current.owner_host!r}, {current.owner_pid!r})",
-                    observed_value={
-                        "lease_id": current.lease_id,
-                        "custody_epoch": current.custody_epoch,
-                        "owner_host": current.owner_host,
-                        "owner_pid": current.owner_pid,
-                        "owner_boot_id": current.owner_boot_id,
-                    },
-                )
-            # boot_id mismatch is not blocking but worth noting
-            if owner_boot_id and current.owner_boot_id and owner_boot_id != current.owner_boot_id:
-                return SourceCheck(
-                    source="custody_lease",
-                    outcome=ValidationOutcome.SATISFIED,
-                    detail=f"lease {current.lease_id!r} active (epoch={current.custody_epoch}); boot_id differs (ctx={owner_boot_id!r}, lease={current.owner_boot_id!r})",
-                    observed_value={
-                        "lease_id": current.lease_id,
-                        "custody_epoch": current.custody_epoch,
-                        "acquired_at": current.acquired_at,
-                        "expires_at": current.expires_at,
-                        "owner_host": current.owner_host,
-                        "owner_pid": current.owner_pid,
-                        "owner_boot_id": current.owner_boot_id,
-                        "context_boot_id": owner_boot_id,
-                    },
-                )
-
-        return SourceCheck(
-            source="custody_lease",
-            outcome=ValidationOutcome.SATISFIED,
-            detail=f"lease {current.lease_id!r} is active (epoch={current.custody_epoch})",
-            observed_value={
-                "lease_id": current.lease_id,
-                "custody_epoch": current.custody_epoch,
-                "acquired_at": current.acquired_at,
-                "expires_at": current.expires_at,
-                "owner_host": current.owner_host,
-                "owner_pid": current.owner_pid,
-            },
-        )
-    except Exception as exc:
+        lease, candidates = _select_current_lease(lease_store, context)
+    except Exception as exc:  # pragma: no cover - defensive around store adapters
         return SourceCheck(
             source="custody_lease",
             outcome=ValidationOutcome.ERROR,
+            identity="lease_store",
             detail=f"lease reread error: {type(exc).__name__}: {exc}",
         )
+    if lease is None:
+        return SourceCheck(
+            source="custody_lease",
+            outcome=ValidationOutcome.MISSING,
+            identity="lease_id" if context.expected_lease_id.strip() else "target",
+            detail=(
+                f"missing current Custody lease for lease_id {context.expected_lease_id!r}"
+                if context.expected_lease_id.strip()
+                else "missing current Custody lease for exact subject/action target"
+            ),
+            observed_value={"target": context.target.to_dict()},
+        )
+    if len(candidates) > 1 and not context.expected_lease_id.strip():
+        return SourceCheck(
+            source="custody_lease",
+            outcome=ValidationOutcome.CONFLICT,
+            identity="lease_id",
+            detail="multiple active Custody leases exist for the exact subject/action target",
+            observed_value={"lease_ids": [item.lease_id for item in candidates]},
+        )
+    if not _target_matches(lease, context.target):
+        return SourceCheck(
+            source="custody_lease",
+            outcome=ValidationOutcome.CONFLICT,
+            identity="target",
+            detail="current Custody lease target does not match the exact subject/action target",
+            observed_value={
+                "lease_id": lease.lease_id,
+                "expected_target": context.target.to_dict(),
+                "observed_target": lease.target_key.to_dict() if lease.target_key is not None else {},
+            },
+        )
+    if lease.is_expired or not _lease_is_active(lease):
+        return SourceCheck(
+            source="custody_lease",
+            outcome=ValidationOutcome.EXPIRED,
+            identity="lease_id",
+            detail=f"lease {lease.lease_id!r} is expired or terminal",
+            observed_value={
+                "lease_id": lease.lease_id,
+                "custody_epoch": lease.custody_epoch,
+                "expires_at": lease.expires_at,
+                "status": lease.status,
+            },
+        )
+    if context.expected_custody_epoch > 0 and lease.custody_epoch != context.expected_custody_epoch:
+        return SourceCheck(
+            source="custody_lease",
+            outcome=ValidationOutcome.STALE,
+            identity="custody_epoch",
+            detail=(
+                f"stale custody epoch: expected {context.expected_custody_epoch!r}, "
+                f"observed {lease.custody_epoch!r}"
+            ),
+            observed_value={
+                "lease_id": lease.lease_id,
+                "expected_custody_epoch": context.expected_custody_epoch,
+                "observed_custody_epoch": lease.custody_epoch,
+            },
+        )
+    if context.run_authority_grant_id and lease.run_authority_grant_id != context.run_authority_grant_id:
+        return SourceCheck(
+            source="custody_lease",
+            outcome=ValidationOutcome.STALE,
+            identity="grant_id",
+            detail=(
+                f"lease {lease.lease_id!r} is bound to stale Run Authority grant "
+                f"{lease.run_authority_grant_id!r}"
+            ),
+            observed_value={
+                "lease_id": lease.lease_id,
+                "expected_grant_id": context.run_authority_grant_id,
+                "observed_grant_id": lease.run_authority_grant_id,
+            },
+        )
+    if str(lease.fence_token) != str(context.coordinator_fence_token):
+        return SourceCheck(
+            source="custody_lease",
+            outcome=ValidationOutcome.FENCED,
+            identity="fence_token",
+            detail=(
+                f"lease {lease.lease_id!r} is fenced by token {lease.fence_token!r}, "
+                f"not {context.coordinator_fence_token!r}"
+            ),
+            observed_value={"lease_id": lease.lease_id, "observed_fence_token": lease.fence_token},
+        )
+    if context.wbc_attempt_reference and lease.wbc_attempt_reference != context.wbc_attempt_reference:
+        return SourceCheck(
+            source="custody_lease",
+            outcome=ValidationOutcome.CONFLICT,
+            identity="wbc_attempt_reference",
+            detail=(
+                f"lease {lease.lease_id!r} is bound to WBC attempt {lease.wbc_attempt_reference!r}, "
+                f"not {context.wbc_attempt_reference!r}"
+            ),
+            observed_value={
+                "lease_id": lease.lease_id,
+                "observed_wbc_attempt_reference": lease.wbc_attempt_reference,
+            },
+        )
+    if context.owner_host and context.owner_pid:
+        if (lease.owner_host, lease.owner_pid) != (context.owner_host, context.owner_pid):
+            return SourceCheck(
+                source="custody_lease",
+                outcome=ValidationOutcome.NOT_OWNER,
+                identity="owner",
+                detail=(
+                    f"lease owner mismatch: expected {(context.owner_host, context.owner_pid)!r}, "
+                    f"observed {(lease.owner_host, lease.owner_pid)!r}"
+                ),
+                observed_value={
+                    "lease_id": lease.lease_id,
+                    "owner_host": lease.owner_host,
+                    "owner_pid": lease.owner_pid,
+                    "owner_boot_id": lease.owner_boot_id,
+                },
+            )
+    return SourceCheck(
+        source="custody_lease",
+        outcome=ValidationOutcome.SATISFIED,
+        identity="lease_id",
+        detail=f"lease {lease.lease_id!r} is current for the exact subject/action target",
+        observed_value={
+            "lease_id": lease.lease_id,
+            "custody_epoch": lease.custody_epoch,
+            "owner_host": lease.owner_host,
+            "owner_pid": lease.owner_pid,
+            "owner_boot_id": lease.owner_boot_id,
+            "fence_token": lease.fence_token,
+            "run_authority_grant_id": lease.run_authority_grant_id,
+        },
+    )
+
+
+def _record_version(record: Any) -> str:
+    payload = getattr(record, "payload", {}) or {}
+    if not isinstance(payload, Mapping):
+        return ""
+    for key in ("schema_version", "evidence_version", "version"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def _reread_wbc_attempt(
+    context: ActionBoundaryContext,
     outbox: CustodyOutbox | None,
-    wbc_attempt_reference: str,
     target_digest: str,
 ) -> SourceCheck:
-    """Reread the WBC attempt status from the outbox.
-
-    Returns a SourceCheck with outcome SATISFIED, MISSING, CONFLICT,
-    or ERROR.
-    """
     if outbox is None:
-        # When no outbox is available, we treat this as not yet
-        # configured rather than a hard failure — the caller may
-        # not have set up the outbox yet in M7 shadow mode.
         return SourceCheck(
             source="wbc_attempt",
             outcome=ValidationOutcome.MISSING,
-            detail="outbox is not available (None); WBC attempt status cannot be verified",
+            identity="outbox",
+            detail="missing current WBC evidence outbox",
         )
-
-    if not wbc_attempt_reference.strip():
+    if not context.wbc_attempt_reference.strip():
         return SourceCheck(
             source="wbc_attempt",
             outcome=ValidationOutcome.MISSING,
-            detail="no WBC attempt reference provided",
+            identity="wbc_attempt_reference",
+            detail="missing current WBC attempt reference",
             observed_value={"target_digest": target_digest},
         )
-
     try:
-        # Look up outbox records that reference this WBC attempt
-        # The outbox is queried by lease_id, not by WBC attempt reference
-        # directly, so we need to iterate or use a different path.
-        # In M7 shadow mode, we report the reference as present but
-        # cross-owner fetch is deferred.
-        all_records = outbox.list_records()
-        matching = [r for r in all_records if r.wbc_attempt_reference == wbc_attempt_reference]
-
-        if not matching:
-            return SourceCheck(
-                source="wbc_attempt",
-                outcome=ValidationOutcome.MISSING,
-                detail=f"no outbox records found for WBC attempt {wbc_attempt_reference!r}",
-                observed_value={
-                    "wbc_attempt_reference": wbc_attempt_reference,
-                    "target_digest": target_digest,
-                    "outbox_record_count": len(all_records),
-                },
-            )
-
-        # Check for conflicts among the matching records
-        statuses = set(r.status.value for r in matching)
-        if len(statuses) > 1:
-            return SourceCheck(
-                source="wbc_attempt",
-                outcome=ValidationOutcome.CONFLICT,
-                detail=f"conflicting statuses for WBC attempt {wbc_attempt_reference!r}: {sorted(statuses)}",
-                observed_value={
-                    "wbc_attempt_reference": wbc_attempt_reference,
-                    "matching_record_count": len(matching),
-                    "statuses": sorted(statuses),
-                },
-            )
-
-        return SourceCheck(
-            source="wbc_attempt",
-            outcome=ValidationOutcome.SATISFIED,
-            detail=f"WBC attempt {wbc_attempt_reference!r} has consistent status {statuses.pop()!r}",
-            observed_value={
-                "wbc_attempt_reference": wbc_attempt_reference,
-                "matching_record_count": len(matching),
-                "status": statuses.pop() if statuses else "unknown",
-            },
-        )
-    except Exception as exc:
+        all_records = tuple(outbox.list_records())
+    except Exception as exc:  # pragma: no cover - defensive around adapter stores
         return SourceCheck(
             source="wbc_attempt",
             outcome=ValidationOutcome.ERROR,
+            identity="outbox",
             detail=f"WBC attempt reread error: {type(exc).__name__}: {exc}",
         )
+    matching = [r for r in all_records if getattr(r, "wbc_attempt_reference", "") == context.wbc_attempt_reference]
+    if not matching:
+        return SourceCheck(
+            source="wbc_attempt",
+            outcome=ValidationOutcome.MISSING,
+            identity="wbc_attempt_reference",
+            detail=f"missing current WBC evidence for attempt {context.wbc_attempt_reference!r}",
+            observed_value={
+                "wbc_attempt_reference": context.wbc_attempt_reference,
+                "outbox_record_count": len(all_records),
+            },
+        )
+    grant_ids = {getattr(r, "run_authority_grant_id", "") for r in matching if getattr(r, "run_authority_grant_id", "")}
+    if context.run_authority_grant_id and grant_ids and grant_ids != {context.run_authority_grant_id}:
+        return SourceCheck(
+            source="wbc_attempt",
+            outcome=ValidationOutcome.CONFLICT,
+            identity="grant_id",
+            detail=f"WBC evidence is bound to different Run Authority grants: {sorted(grant_ids)!r}",
+            observed_value={"grant_ids": sorted(grant_ids)},
+        )
+    fence_tokens = {
+        int(getattr(r, "coordinator_fence_token"))
+        for r in matching
+        if getattr(r, "coordinator_fence_token", None) not in ("", None)
+    }
+    if fence_tokens and fence_tokens != {context.coordinator_fence_token}:
+        return SourceCheck(
+            source="wbc_attempt",
+            outcome=ValidationOutcome.STALE,
+            identity="fence_token",
+            detail=(
+                f"WBC evidence is bound to stale fence tokens {sorted(fence_tokens)!r}, "
+                f"expected {context.coordinator_fence_token!r}"
+            ),
+            observed_value={"fence_tokens": sorted(fence_tokens)},
+        )
+    versions = {version for version in (_record_version(record) for record in matching) if version}
+    required_version = context.required_wbc_evidence_version.strip()
+    if required_version and not versions:
+        return SourceCheck(
+            source="wbc_attempt",
+            outcome=ValidationOutcome.MISSING,
+            identity="wbc_evidence_version",
+            detail=f"required WBC evidence version {required_version!r} is missing",
+            observed_value={"matching_record_count": len(matching)},
+        )
+    if len(versions) > 1:
+        return SourceCheck(
+            source="wbc_attempt",
+            outcome=ValidationOutcome.CONFLICT,
+            identity="wbc_evidence_version",
+            detail=f"conflicting WBC evidence versions observed: {sorted(versions)!r}",
+            observed_value={"versions": sorted(versions)},
+        )
+    if required_version and versions and next(iter(versions)) != required_version:
+        observed_version = next(iter(versions))
+        return SourceCheck(
+            source="wbc_attempt",
+            outcome=ValidationOutcome.STALE,
+            identity="wbc_evidence_version",
+            detail=(
+                f"stale WBC evidence version: expected {required_version!r}, "
+                f"observed {observed_version!r}"
+            ),
+            observed_value={
+                "expected_wbc_evidence_version": required_version,
+                "observed_wbc_evidence_version": observed_version,
+            },
+        )
+    observed_target_digests = {
+        payload.get("target_digest")
+        for payload in (getattr(record, "payload", {}) or {} for record in matching)
+        if isinstance(payload, Mapping) and isinstance(payload.get("target_digest"), str)
+    }
+    if observed_target_digests and observed_target_digests != {target_digest}:
+        return SourceCheck(
+            source="wbc_attempt",
+            outcome=ValidationOutcome.CONFLICT,
+            identity="target_digest",
+            detail="WBC evidence references a different exact subject/action target",
+            observed_value={"observed_target_digests": sorted(observed_target_digests)},
+        )
+    statuses = {
+        str(getattr(getattr(record, "status", None), "value", getattr(record, "status", "")))
+        for record in matching
+    }
+    statuses.discard("")
+    if len(statuses) > 1:
+        return SourceCheck(
+            source="wbc_attempt",
+            outcome=ValidationOutcome.CONFLICT,
+            identity="status",
+            detail=f"conflicting WBC evidence statuses observed: {sorted(statuses)!r}",
+            observed_value={"statuses": sorted(statuses)},
+        )
+    observed_version = next(iter(versions)) if versions else ""
+    return SourceCheck(
+        source="wbc_attempt",
+        outcome=ValidationOutcome.SATISFIED,
+        identity="wbc_attempt_reference",
+        detail=f"WBC evidence is current for attempt {context.wbc_attempt_reference!r}",
+        observed_value={
+            "wbc_attempt_reference": context.wbc_attempt_reference,
+            "matching_record_count": len(matching),
+            "status": next(iter(statuses)) if statuses else "",
+            "wbc_evidence_version": observed_version,
+        },
+    )
 
 
-# ── Conjunctive gate ───────────────────────────────────────────────────────
-
-
-def _compute_gate_result(
-    checks: tuple[SourceCheck, ...],
-    enforcement_enabled: bool,
-) -> GateResult:
-    """Compute the overall gate result from per-source checks.
-
-    The order of precedence is:
-      1. If enforcement is disabled → SHADOW_PASS (regardless of check outcomes)
-      2. If any check has ERROR → ERROR
-      3. If run_authority_grant is MISSING → BLOCKED_MISSING_GRANT
-      4. If run_authority_fence is FENCED → BLOCKED_FENCE_MISMATCH
-      5. If custody_lease is MISSING → BLOCKED_NO_LEASE
-      6. If custody_lease is EXPIRED → BLOCKED_EXPIRED_LEASE
-      7. If custody_lease is STALE → BLOCKED_STALE_EPOCH
-      8. If custody_lease is NOT_OWNER → BLOCKED_NOT_OWNER
-      9. If wbc_attempt is MISSING → BLOCKED_WBC_MISSING
-     10. If wbc_attempt is CONFLICT → BLOCKED_WBC_CONFLICT
-     11. Otherwise → AUTHORIZED
-    """
+def _compute_gate_result(checks: tuple[SourceCheck, ...], enforcement_enabled: bool) -> GateResult:
+    if any(check.outcome == ValidationOutcome.ERROR for check in checks):
+        return GateResult.ERROR
     if not enforcement_enabled:
         return GateResult.SHADOW_PASS
-
-    checks_by_source: dict[str, SourceCheck] = {c.source: c for c in checks}
-
-    # ERROR takes precedence
-    for c in checks:
-        if c.outcome == ValidationOutcome.ERROR:
-            return GateResult.ERROR
-
-    # Run Authority grant
-    grant = checks_by_source.get("run_authority_grant")
-    if grant is not None and grant.outcome == ValidationOutcome.MISSING:
-        return GateResult.BLOCKED_MISSING_GRANT
-
-    # Run Authority fence
-    fence = checks_by_source.get("run_authority_fence")
-    if fence is not None and fence.outcome == ValidationOutcome.FENCED:
-        return GateResult.BLOCKED_FENCE_MISMATCH
-
-    # Custody lease
-    lease = checks_by_source.get("custody_lease")
-    if lease is not None:
-        if lease.outcome == ValidationOutcome.MISSING:
-            return GateResult.BLOCKED_NO_LEASE
-        if lease.outcome == ValidationOutcome.EXPIRED:
-            return GateResult.BLOCKED_EXPIRED_LEASE
-        if lease.outcome == ValidationOutcome.STALE:
+    for check in checks:
+        if check.outcome == ValidationOutcome.SATISFIED:
+            continue
+        if check.source == "run_authority_grant":
+            if check.outcome == ValidationOutcome.MISSING:
+                return GateResult.BLOCKED_MISSING_GRANT
+            if check.identity == "capability":
+                return GateResult.BLOCKED_CAPABILITY_MISMATCH
+            if check.identity == "subject_id":
+                return GateResult.BLOCKED_SUBJECT_SCOPE_MISMATCH
+            return GateResult.BLOCKED_STALE_GRANT
+        if check.source == "run_authority_fence":
+            return GateResult.BLOCKED_FENCE_MISMATCH
+        if check.source == "custody_lease":
+            if check.outcome == ValidationOutcome.MISSING:
+                return GateResult.BLOCKED_NO_LEASE
+            if check.outcome == ValidationOutcome.EXPIRED:
+                return GateResult.BLOCKED_EXPIRED_LEASE
+            if check.outcome == ValidationOutcome.NOT_OWNER:
+                return GateResult.BLOCKED_NOT_OWNER
+            if check.identity == "target":
+                return GateResult.BLOCKED_TARGET_MISMATCH
             return GateResult.BLOCKED_STALE_EPOCH
-        if lease.outcome == ValidationOutcome.NOT_OWNER:
-            return GateResult.BLOCKED_NOT_OWNER
-
-    # WBC attempt
-    wbc = checks_by_source.get("wbc_attempt")
-    if wbc is not None:
-        if wbc.outcome == ValidationOutcome.MISSING:
-            return GateResult.BLOCKED_WBC_MISSING
-        if wbc.outcome == ValidationOutcome.CONFLICT:
+        if check.source == "wbc_attempt":
+            if check.outcome == ValidationOutcome.MISSING:
+                return GateResult.BLOCKED_WBC_MISSING
+            if check.identity == "wbc_evidence_version":
+                return GateResult.BLOCKED_WBC_VERSION_MISMATCH
             return GateResult.BLOCKED_WBC_CONFLICT
-
     return GateResult.AUTHORIZED
 
 
@@ -683,26 +711,18 @@ def _build_diagnostics(
     enforcement_enabled: bool,
     action_type: ActionBoundaryType,
 ) -> dict[str, Any]:
-    """Build diagnostic metadata for the validation result."""
-    diag: dict[str, Any] = {
+    denials = [check.to_dict() for check in checks if check.outcome != ValidationOutcome.SATISFIED]
+    diagnostics: dict[str, Any] = {
         "m7_schema_version": ACTION_VALIDATOR_SCHEMA_VERSION,
         "shadow_enforcement": not enforcement_enabled,
         "enforcement_env_var": _ENV_ENFORCEMENT,
         "action_boundary": action_type,
-        "checks_summary": {
-            c.source: c.outcome.value for c in checks
-        },
+        "checks_summary": {check.source: check.outcome.value for check in checks},
     }
-    # Record which sources had non-SATISFIED outcomes
-    issues = [c.source for c in checks if c.outcome != ValidationOutcome.SATISFIED]
-    if issues:
-        diag["sources_with_issues"] = issues
-    return diag
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Public API
-# ═══════════════════════════════════════════════════════════════════════════
+    if denials:
+        diagnostics["denials"] = denials
+        diagnostics["sources_with_issues"] = [check["source"] for check in denials]
+    return diagnostics
 
 
 def validate_action_boundary(
@@ -712,106 +732,28 @@ def validate_action_boundary(
     outbox: CustodyOutbox | None = None,
     enforcement_enabled: bool | None = None,
 ) -> ActionBoundaryResult:
-    """Validate that an action may proceed at this boundary.
-
-    Rereads current Run Authority grant/fence, Custody lease/epoch, and
-    WBC attempt status immediately — never returns a cached or stale
-    result.
-
-    Parameters
-    ----------
-    context:
-        The action boundary context — must include the action type,
-        target, grant ID, fence token, and optional WBC attempt reference.
-    lease_store:
-        An open Custody lease store.  If ``None``, the custody lease
-        check will return ``MISSING``.
-    outbox:
-        An open Custody outbox.  If ``None``, the WBC attempt check
-        will return ``MISSING``.
-    enforcement_enabled:
-        Override the production enforcement flag.  If ``None`` (default),
-        reads ``ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT`` from the
-        environment (defaults to ``False``).
-
-    Returns
-    -------
-    ActionBoundaryResult
-        The full validation result.  When enforcement is disabled, the
-        gate result is always ``SHADOW_PASS`` (non-blocking), but the
-        per-source checks and diagnostics are still fully populated.
-
-        Callers must test ``result.authorized`` — NOT ``result.gate_result
-        == GateResult.SHADOW_PASS`` — before treating the result as
-        authorization to proceed with the action.
-    """
     if enforcement_enabled is None:
         enforcement_enabled = _production_enforcement_enabled()
-
     target_digest = context.target.target_digest
-
-    checks: list[SourceCheck] = []
-
-    # 1. Reread Run Authority grant
-    grant_check = _reread_run_authority_grant(
-        context.run_authority_grant_id,
-        context.coordinator_fence_token,
+    checks = (
+        _reread_run_authority_grant(context),
+        _reread_run_authority_fence(context),
+        _reread_custody_lease(context, lease_store),
+        _reread_wbc_attempt(context, outbox, target_digest),
     )
-    checks.append(grant_check)
-
-    # 2. Reread Run Authority fence
-    fence_check = _reread_run_authority_fence(
-        context.coordinator_fence_token,
-        context.run_authority_grant_id,
-    )
-    checks.append(fence_check)
-
-    # 3. Reread Custody lease
-    lease_check = _reread_custody_lease(
-        lease_store,
-        target_digest,
-        context.owner_host,
-        context.owner_pid,
-        context.owner_boot_id,
-        expected_custody_epoch=context.expected_custody_epoch,
-        expected_lease_id=context.expected_lease_id,
-    )
-    checks.append(lease_check)
-
-    # 4. Reread WBC attempt status
-    wbc_check = _reread_wbc_attempt(
-        outbox,
-        context.wbc_attempt_reference,
-        target_digest,
-    )
-    checks.append(wbc_check)
-
-    # Compute the conjunctive gate result
-    checks_tuple = tuple(checks)
-    gate_result = _compute_gate_result(checks_tuple, enforcement_enabled)
-    diagnostics = _build_diagnostics(checks_tuple, enforcement_enabled, context.action_type)
-
+    diagnostics = _build_diagnostics(checks, enforcement_enabled, context.action_type)
     return ActionBoundaryResult(
-        gate_result=gate_result,
+        gate_result=_compute_gate_result(checks, enforcement_enabled),
         action_type=context.action_type,
         target_digest=target_digest,
-        checks=checks_tuple,
+        checks=checks,
         enforcement_enabled=enforcement_enabled,
         diagnostics=diagnostics,
     )
 
 
 def production_enforcement_enabled() -> bool:
-    """Return ``True`` when M7 action-validator enforcement is active.
-
-    This is the public accessor for the ``ARNOLD_M7_ACTION_VALIDATOR_ENFORCEMENT``
-    env var.  Callers should use this before treating
-    :func:`validate_action_boundary` results as authoritative.
-    """
     return _production_enforcement_enabled()
-
-
-# ── Convenience: validate with minimal setup ───────────────────────────────
 
 
 def validate_action_boundary_simple(
@@ -824,34 +766,6 @@ def validate_action_boundary_simple(
     lease_store_dir: str | Path | None = None,
     outbox_dir: str | Path | None = None,
 ) -> ActionBoundaryResult:
-    """Validate an action boundary with default store/outbox setup.
-
-    This is a convenience wrapper that opens the lease store and outbox
-    from the given directories (or defaults), builds the context, and
-    calls :func:`validate_action_boundary`.
-
-    Parameters
-    ----------
-    action_type:
-        The type of action being validated.
-    target:
-        The custody target — either a ``CustodyTargetKey`` or a dict
-        that will be normalized into one.
-    run_authority_grant_id:
-        The Run Authority grant ID.
-    coordinator_fence_token:
-        The coordinator fence token.
-    wbc_attempt_reference:
-        The WBC attempt reference (optional).
-    lease_store_dir:
-        Directory for the lease store (default: ``~/.megaplan/custody/leases``).
-    outbox_dir:
-        Directory for the outbox (default: ``~/.megaplan/custody/outbox``).
-
-    Returns
-    -------
-    ActionBoundaryResult
-    """
     if isinstance(target, CustodyTargetKey):
         custody_target = target
     elif isinstance(target, Mapping):
@@ -866,6 +780,7 @@ def validate_action_boundary_simple(
                     SourceCheck(
                         source="target",
                         outcome=ValidationOutcome.ERROR,
+                        identity="target",
                         detail="invalid target: could not normalize to CustodyTargetKey",
                     ),
                 ),
@@ -875,18 +790,19 @@ def validate_action_boundary_simple(
     else:
         raise TypeError("target must be a CustodyTargetKey or a Mapping")
 
-    # Build context
-    import os as _os
-    import socket as _socket
-
     owner_host = ""
     owner_pid = ""
     owner_boot_id = ""
     try:
-        owner_host = _socket.gethostname()
+        import socket
+
+        owner_host = socket.gethostname()
     except Exception:
         pass
-    owner_pid = str(_os.getpid())
+    try:
+        owner_pid = str(os.getpid())
+    except Exception:
+        pass
     try:
         owner_boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
     except Exception:
@@ -903,15 +819,9 @@ def validate_action_boundary_simple(
         owner_boot_id=owner_boot_id,
     )
 
-    # Open stores
-    ls = None
-    if lease_store_dir is not None:
-        ls = open_lease_store(Path(lease_store_dir), flock=False)
-    ob = None
-    if outbox_dir is not None:
-        ob = open_outbox(Path(outbox_dir), flock=False)
-
-    return validate_action_boundary(context, lease_store=ls, outbox=ob)
+    lease_store = None if lease_store_dir is None else open_lease_store(Path(lease_store_dir))
+    outbox = None if outbox_dir is None else open_outbox(Path(outbox_dir))
+    return validate_action_boundary(context, lease_store=lease_store, outbox=outbox)
 
 
 __all__ = [

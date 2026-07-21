@@ -2618,6 +2618,18 @@ def run_hermes_step(
     except Exception:
         pass
 
+    effective_model = result.get("model") or effective_resolved_model or resolved_model
+    provider = (
+        str(effective_model).split(":", 1)[0]
+        if isinstance(effective_model, str) and effective_model
+        else "unknown"
+    )
+    auth_metadata = {
+        "worker_channel": "hermes",
+        "auth_channel": provider,
+        "provider": provider,
+        "resolved_model": effective_model,
+    }
     return WorkerResult(
         payload=payload,
         raw_output=raw_output,
@@ -2629,6 +2641,9 @@ def run_hermes_step(
         total_tokens=total_tokens,
         rendered_prompt=rendered_prompt,
         model_actual=result.get("model"),
+        worker_channel=auth_metadata["worker_channel"],
+        auth_channel=auth_metadata["auth_channel"],
+        auth_metadata=auth_metadata,
     )
 
 

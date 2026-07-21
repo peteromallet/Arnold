@@ -778,6 +778,75 @@ def rebind_execution_identity(
             "chain rebind refused: guarded successor is already completed or current",
         )
 
+    from arnold_pipelines.megaplan.chain.wbc import (
+        ChainWbcRule,
+        EXECUTION_REBIND_SURFACE,
+        EXECUTION_REBIND_WRITER_ID,
+        record_chain_wbc_evidence,
+        validate_chain_wbc_transition,
+    )
+
+    validation_evidence = validate_chain_wbc_transition(
+        writer_id=EXECUTION_REBIND_WRITER_ID,
+        surface_name=EXECUTION_REBIND_SURFACE,
+        transition_name="execution_rebind",
+        subject=f"{expected_current_milestone}->{expected_next_milestone}",
+        source_path=spec_path,
+        project_dir=_project_root(spec_path),
+        rules=(
+            ChainWbcRule(
+                "binding_required",
+                True,
+                bool(report.get("required")),
+                bool(report.get("required")),
+                "execution binding must remain required for guarded rebinds",
+            ),
+            ChainWbcRule(
+                "binding_status",
+                "drift|reconcile_required",
+                report.get("status"),
+                report.get("status") in {"drift", "reconcile_required"},
+                "rebinds only repair a drifted or reconcile-required identity",
+            ),
+            ChainWbcRule(
+                "previous_bundle_sha256",
+                expected_previous_bundle_sha256,
+                previous.get("bundle_sha256"),
+                previous.get("bundle_sha256") == expected_previous_bundle_sha256,
+            ),
+            ChainWbcRule(
+                "active_bundle_sha256",
+                expected_active_bundle_sha256,
+                active.get("bundle_sha256"),
+                active.get("bundle_sha256") == expected_active_bundle_sha256,
+            ),
+            ChainWbcRule(
+                "active_ready",
+                True,
+                bool(active.get("ready")),
+                bool(active.get("ready")),
+            ),
+            ChainWbcRule(
+                "current_milestone",
+                expected_current_milestone,
+                active_labels[current_index],
+                active_labels[current_index] == expected_current_milestone,
+            ),
+            ChainWbcRule(
+                "next_milestone",
+                expected_next_milestone,
+                active_labels[next_index],
+                active_labels[next_index] == expected_next_milestone,
+            ),
+        ),
+        extra={
+            "actor": actor,
+            "reason": reason,
+            "completed_prefix": completed_labels,
+            "current_plan": guarded_current_plan,
+        },
+    )
+
     rebound_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     event_core = {
         "schema": REBIND_SCHEMA,
@@ -810,6 +879,11 @@ def rebind_execution_identity(
             "last_rebound_at": rebound_at,
             "rebind_events": events,
         }
+    )
+    record_chain_wbc_evidence(
+        binding,
+        entry_key=f"execution_rebind:{expected_current_milestone}:{expected_next_milestone}",
+        evidence=validation_evidence,
     )
     metadata["execution_binding"] = binding
     state.metadata = metadata

@@ -21,6 +21,9 @@ from arnold.workflow.boundary_evidence import (
     TemplateCompatibility,
 )
 from arnold.workflow.boundary_templates import (
+    DEFAULT_WBC_INVENTORY_PATH,
+    InventoryRowAssessment,
+    InventoryRowCompleteness,
     TEMPLATES_BY_KIND,
     REQUIRED_FIELDS_BY_KIND,
     REQUIRED_FIELDS_APPROVAL_BOUNDARY,
@@ -36,6 +39,8 @@ from arnold.workflow.boundary_templates import (
     BoundaryTemplateKind,
     TemplateSelection,
     TemplateVersionPin,
+    WbcInventoryInvariant,
+    assess_inventory_rows,
     check_contract_conformance,
     check_template_upgrade,
     classify_boundary_kind,
@@ -43,6 +48,8 @@ from arnold.workflow.boundary_templates import (
     get_required_fields,
     get_template,
     list_template_kinds,
+    load_wbc_boundary_inventory,
+    select_inventory_rows,
     pin_template_version,
     select_template,
 )
@@ -63,6 +70,9 @@ def test_module_importable_with_all_public_symbols() -> None:
     assert BoundaryTemplateKind.EXECUTION_CUSTODY == "execution_custody"
     assert BoundaryTemplateKind.GRAPH_JOIN_FANOUT == "graph_join_fanout"
     assert BoundaryTemplateKind.EXTERNAL_WITNESS == "external_witness"
+    assert WbcInventoryInvariant.START_BEFORE_DISPATCH == "start_before_dispatch"
+    assert InventoryRowCompleteness.COMPLETE == "complete"
+    assert DEFAULT_WBC_INVENTORY_PATH.name == "wbc-boundary-inventory.json"
 
 
 def test_no_megaplan_imports_in_module_source() -> None:
@@ -261,6 +271,105 @@ def test_list_template_kinds_stable_order() -> None:
     a = list_template_kinds()
     b = list_template_kinds()
     assert a == b
+
+
+# ── Inventory helpers ────────────────────────────────────────────────────
+
+
+def test_load_wbc_boundary_inventory_missing_returns_none(tmp_path) -> None:
+    """Missing generated inventory is treated as unavailable, not fatal."""
+    assert load_wbc_boundary_inventory(tmp_path / "missing.json") is None
+
+
+def test_select_inventory_rows_matches_boundary_id_and_step_id() -> None:
+    """Inventory row selection supports both boundary_id and step_id lookups."""
+    inventory = {
+        "rows": [
+            {"row_kind": "boundary_contract", "boundary_id": "prep_to_plan"},
+            {"row_kind": "manifest_entry", "step_id": "megaplan.s2.prep_to_plan"},
+        ]
+    }
+    assert len(select_inventory_rows(inventory, boundary_id="prep_to_plan")) == 1
+    assert len(select_inventory_rows(inventory, step_id="megaplan.s2.prep_to_plan")) == 1
+
+
+def test_assess_inventory_rows_manual_emit_is_incomplete() -> None:
+    """Manual-emission inventory rows are incomplete adoption state."""
+    assessment = assess_inventory_rows(
+        (
+            {
+                "row_kind": "boundary_contract",
+                "boundary_id": "execute_approval",
+                "producer_category": "manual_emit",
+            },
+        )
+    )
+    assert isinstance(assessment, InventoryRowAssessment)
+    assert assessment.completeness == InventoryRowCompleteness.INCOMPLETE
+    assert "manual-emission" in assessment.reasons
+
+
+def test_assess_inventory_rows_support_manifest_only_schema_row_is_incomplete() -> None:
+    """Manifest-only schema rows remain incomplete even when labeled supported."""
+    assessment = assess_inventory_rows(
+        (
+            {
+                "row_kind": "manifest_entry",
+                "step_id": "arnold.workflow.execution_attempt_ledger",
+                "producer_path": "arnold/workflow/execution_attempt_ledger.py",
+                "support_is_non_authoritative": True,
+                "support_status": "supported",
+            },
+        )
+    )
+    assert assessment.completeness == InventoryRowCompleteness.INCOMPLETE
+    assert "schema-only" in assessment.reasons
+    assert "support-manifest-only" in assessment.reasons
+
+
+def test_assess_inventory_rows_auto_matched_with_proof_is_complete() -> None:
+    """Auto-matched rows with proven invariants are complete."""
+    assessment = assess_inventory_rows(
+        (
+            {
+                "row_kind": "boundary_contract",
+                "boundary_id": "prep_to_plan",
+                "producer_category": "auto_matched",
+                "inventory_proof": {
+                    "start_before_dispatch": True,
+                    "exactly_one_terminal": True,
+                },
+            },
+        ),
+        required_invariants=[
+            WbcInventoryInvariant.START_BEFORE_DISPATCH,
+            WbcInventoryInvariant.EXACTLY_ONE_TERMINAL,
+        ],
+    )
+    assert assessment.completeness == InventoryRowCompleteness.COMPLETE
+    assert assessment.missing_invariants == ()
+
+
+def test_assess_inventory_rows_missing_required_invariant_is_reported() -> None:
+    """Required invariants fail closed when the inventory proof is absent or false."""
+    assessment = assess_inventory_rows(
+        (
+            {
+                "row_kind": "boundary_contract",
+                "boundary_id": "prep_to_plan",
+                "producer_category": "auto_matched",
+                "inventory_proof": {"start_before_dispatch": True},
+            },
+        ),
+        required_invariants=[
+            WbcInventoryInvariant.START_BEFORE_DISPATCH,
+            WbcInventoryInvariant.POST_TRANSITION_REREAD,
+        ],
+    )
+    assert assessment.completeness == InventoryRowCompleteness.INCOMPLETE
+    assert assessment.missing_invariants == (
+        WbcInventoryInvariant.POST_TRANSITION_REREAD,
+    )
 
 
 # ── check_contract_conformance ───────────────────────────────────────────

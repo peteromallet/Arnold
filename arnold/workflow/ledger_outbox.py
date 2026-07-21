@@ -90,7 +90,9 @@ class OutboxStatus(Enum):
 
     PENDING = "pending"
     DISPATCHED = "dispatched"
+    DELIVERED = "delivered"
     FAILED = "failed"
+    TOMBSTONED = "tombstoned"
 
 
 @dataclass(frozen=True)
@@ -789,11 +791,24 @@ def _row_to_outbox_record(row: tuple[Any, ...]) -> OutboxRecord:
     )
 
 
+# M9 adds a small file-backed payload-publication outbox alongside the
+# transactional M6 outbox.  Keep the established M6 API intact and expose the
+# additive implementation under distinct type names.
+from arnold.workflow._ledger_outbox_m9 import (  # noqa: E402
+    FileBackedLedgerOutbox,
+    LEDGER_OUTBOX_SCHEMA_VERSION,
+    LedgerOutboxRecord,
+)
+
+
 # ── Public API surface ─────────────────────────────────────────────────────
 
 __all__ = [
     "AppendWithOutboxResult",
+    "FileBackedLedgerOutbox",
+    "LEDGER_OUTBOX_SCHEMA_VERSION",
     "LedgerOutbox",
+    "LedgerOutboxRecord",
     "MAX_RETRY_COUNT",
     "OutboxRecord",
     "OutboxStatus",

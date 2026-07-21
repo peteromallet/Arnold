@@ -36,15 +36,18 @@ No ``megaplan`` imports.  No forbidden vocabulary literals.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from arnold.kernel.effect import EffectDescriptor, EffectKind
 from arnold.kernel.effect_ledger import EffectLedger, EffectRecordState
 from arnold.pipeline.native.ir import NativeInstruction
+from arnold.workflow.native_wbc import NativeWbcAttempt, begin_native_wbc_attempt
 
 __all__ = [
     "DuplicateFulfilledAction",
     "EffectLedgerHooks",
+    "NativeWbcHooks",
     "NativeRuntimeHooks",
     "NullNativeRuntimeHooks",
 ]
@@ -310,6 +313,161 @@ class NullNativeRuntimeHooks:
         return None
 
 
+class NativeWbcHooks:
+    """Hook wrapper that emits append-only WBC evidence for hook callbacks."""
+
+    halt_reason: str | None
+
+    def __init__(
+        self,
+        inner: NativeRuntimeHooks | None = None,
+        *,
+        artifact_root: str | Path,
+        program_name: str,
+        run_id: str = "",
+        plugin_id: str = "",
+        manifest_hash: str = "",
+    ) -> None:
+        self._inner: NativeRuntimeHooks = (
+            inner if inner is not None else NullNativeRuntimeHooks()
+        )
+        self._attempt: NativeWbcAttempt = begin_native_wbc_attempt(
+            artifact_root,
+            producer_family="arnold_native",
+            surface="hooks",
+            run_id=run_id,
+            plugin_id=plugin_id,
+            manifest_hash=manifest_hash,
+            subject={"program": program_name},
+            metadata={"wrapper": self.__class__.__name__},
+        )
+        self.halt_reason = getattr(self._inner, "halt_reason", None)
+
+    def close(self, *, status: str, outcome: str, payload: dict[str, Any] | None = None) -> None:
+        self._attempt.terminal(status=status, outcome=outcome, payload=payload or {})
+        close_inner = getattr(self._inner, "close", None)
+        if callable(close_inner):
+            close_inner(status=status, outcome=outcome, payload=payload or {})
+
+    def on_step_start(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._attempt.effect("on_step_start", {"step": instr.name, "op": instr.op})
+        return self._inner.on_step_start(instr, ctx)
+
+    def on_step_end(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+        result: Any,
+    ) -> Any:
+        result = self._inner.on_step_end(instr, ctx, result)
+        self._attempt.effect("on_step_end", {"step": instr.name, "op": instr.op})
+        return result
+
+    def on_step_error(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+        exc: BaseException,
+    ) -> None:
+        self._inner.on_step_error(instr, ctx, exc)
+        self._attempt.effect(
+            "on_step_error",
+            {"step": instr.name, "op": instr.op, "error_type": exc.__class__.__name__},
+        )
+
+    def merge_state(
+        self,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        outputs: dict[str, Any],
+        owned_keys: frozenset[str],
+    ) -> tuple[dict[str, Any], frozenset[str]]:
+        merged = self._inner.merge_state(instr, state, outputs, owned_keys)
+        self._attempt.effect(
+            "merge_state",
+            {"step": instr.name, "op": instr.op, "output_keys": sorted(outputs.keys())},
+        )
+        return merged
+
+    def join_envelope(
+        self,
+        instr: NativeInstruction,
+        current_envelope: Any,
+        step_envelope: Any,
+    ) -> Any:
+        joined = self._inner.join_envelope(instr, current_envelope, step_envelope)
+        self._attempt.effect("join_envelope", {"step": instr.name, "op": instr.op})
+        return joined
+
+    def should_suspend(
+        self,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        result: Any,
+    ) -> tuple[bool, str | None]:
+        decision = self._inner.should_suspend(instr, state, result)
+        if decision[0]:
+            self._attempt.effect(
+                "should_suspend",
+                {"step": instr.name, "reason": decision[1]},
+            )
+        return decision
+
+    def should_halt_loop(
+        self,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        iteration: int,
+    ) -> tuple[bool, str | None]:
+        decision = self._inner.should_halt_loop(instr, state, iteration)
+        if decision[0]:
+            self._attempt.effect(
+                "should_halt_loop",
+                {"step": instr.name, "iteration": iteration, "reason": decision[1]},
+            )
+        return decision
+
+    def on_stage_complete(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+        result: Any,
+        state: dict[str, Any],
+        owned_keys: frozenset[str],
+    ) -> None:
+        self._inner.on_stage_complete(instr, ctx, result, state, owned_keys)
+        self._attempt.effect("on_stage_complete", {"step": instr.name, "op": instr.op})
+
+    def on_checkpoint(
+        self,
+        cursor: dict[str, Any],
+        state: dict[str, Any],
+    ) -> None:
+        self._inner.on_checkpoint(cursor, state)
+        self._attempt.effect(
+            "on_checkpoint",
+            {"stage": cursor.get("stage"), "pc": cursor.get("pc")},
+        )
+
+    def record_cancellation(
+        self,
+        cancellation: dict[str, Any],
+        *,
+        state: dict[str, Any] | None = None,
+    ) -> None:
+        callback = getattr(self._inner, "record_cancellation", None)
+        if callable(callback):
+            callback(cancellation, state=state)
+        self._attempt.effect(
+            "record_cancellation",
+            {"reason": cancellation.get("reason"), "boundary": cancellation.get("boundary")},
+        )
+
+
 class EffectLedgerHooks:
     """Hook wrapper that tracks side-effect lifecycle in an EffectLedger."""
 
@@ -320,6 +478,11 @@ class EffectLedgerHooks:
         inner: NativeRuntimeHooks | None = None,
         *,
         duplicate_fulfilled_action: DuplicateFulfilledAction = "skip",
+        artifact_root: str | Path | None = None,
+        program_name: str = "native_program",
+        run_id: str = "",
+        plugin_id: str = "",
+        manifest_hash: str = "",
     ) -> None:
         if duplicate_fulfilled_action not in _VALID_DUPLICATE_ACTIONS:
             raise ValueError(
@@ -328,7 +491,24 @@ class EffectLedgerHooks:
         self._inner: NativeRuntimeHooks = (
             inner if inner is not None else NullNativeRuntimeHooks()
         )
-        self._ledger = EffectLedger()
+        self._attempt = (
+            begin_native_wbc_attempt(
+                artifact_root,
+                producer_family="arnold_native",
+                surface="effect_ledger_hooks",
+                run_id=run_id,
+                plugin_id=plugin_id,
+                manifest_hash=manifest_hash,
+                subject={"program": program_name},
+                metadata={"wrapper": self.__class__.__name__},
+            )
+            if artifact_root is not None
+            else None
+        )
+        self._ledger = EffectLedger(
+            _evidence=self._attempt,
+            _boundary_name="native.effect_ledger",
+        )
         self._duplicate_fulfilled_action = duplicate_fulfilled_action
         self._active_effect_metadata: dict[str, Any] | None = None
         self._last_effect_metadata: dict[str, Any] | None = None
@@ -371,6 +551,10 @@ class EffectLedgerHooks:
             return None
         return dict(self._last_effect_metadata)
 
+    def close(self, *, status: str, outcome: str, payload: dict[str, Any] | None = None) -> None:
+        if self._attempt is not None:
+            self._attempt.terminal(status=status, outcome=outcome, payload=payload or {})
+
     def on_step_start(
         self,
         instr: NativeInstruction,
@@ -401,6 +585,12 @@ class EffectLedgerHooks:
             lifecycle_state=lifecycle_state,
             duplicate_action=duplicate_action,
         )
+        if self._attempt is not None and duplicate_action is not None:
+            self._attempt.reconciliation(
+                "native.effect_ledger.duplicate_action",
+                outcome=duplicate_action,
+                payload=metadata,
+            )
         ctx["effect"] = dict(metadata)
         self._active_effect_metadata = dict(metadata)
         self._last_effect_metadata = dict(metadata)

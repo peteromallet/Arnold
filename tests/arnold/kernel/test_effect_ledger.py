@@ -20,6 +20,23 @@ from arnold.kernel import (
 )
 
 
+class _Recorder:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str, str | None]] = []
+
+    def effect_intent(self, name: str, payload=None) -> None:
+        del payload
+        self.events.append(("effect_intent", name, None))
+
+    def effect_outcome(self, name: str, *, status: str, payload=None) -> None:
+        del payload
+        self.events.append(("effect_outcome", name, status))
+
+    def reconciliation(self, name: str, *, outcome: str, payload=None) -> None:
+        del payload
+        self.events.append(("reconciliation", name, outcome))
+
+
 def _event(kind: str, payload: dict) -> EventEnvelope:
     return EventEnvelope(
         event_id=f"evt:{kind}",
@@ -147,3 +164,19 @@ def test_deduped_effect_is_not_re_executed() -> None:
     assert ledger.prerecord(effect) is True
     assert ledger.prerecord(effect) is False
     assert len(ledger) == 1
+
+
+def test_effect_ledger_optional_recorder_emits_intent_outcome_and_reconciliation() -> None:
+    recorder = _Recorder()
+    ledger = EffectLedger(_evidence=recorder, _boundary_name="kernel.effect")
+    effect = _descriptor()
+
+    assert ledger.prerecord(effect) is True
+    ledger.mark_fulfilled(effect.idempotency_key)
+    assert ledger.prerecord(effect) is False
+
+    assert recorder.events == [
+        ("effect_intent", "kernel.effect.write-1", None),
+        ("effect_outcome", "kernel.effect.write-1", "fulfilled"),
+        ("reconciliation", "kernel.effect.duplicate", "already_intended"),
+    ]

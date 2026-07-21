@@ -70,6 +70,7 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     REPAIRING,
     atomic_write_json,
     merge_additive_fields,
+    read_jsonl_records,
     read_repair_index,
     save_repair_data,
 )
@@ -1765,9 +1766,10 @@ class TestEdgeCases:
             "repair_goal_owner_missing",
             "repair_context_target_mismatch",
             "repair_goal_circuit_breaker",
+            "post_fixer_recovery_gate_failed",
             "l3_progress_auditor",
         }
-        assert len(triggers) == 11
+        assert len(triggers) == 12
 
     def test_trigger_label_for_non_trigger(self) -> None:
         result = classify_repair_system_failure(session="edge-5")
@@ -2204,6 +2206,30 @@ class TestPersistMetaRepairRecord:
         assert session_entry["latest_meta_outcome"] == "fixed"
         assert session_entry["latest_meta_recorded_at"] == "2026-07-01T12:00:00+00:00"
         assert session_entry["latest_meta_record_path"].endswith("/repair-data/meta/mr-indexed.json")
+
+    def test_persist_meta_repair_record_appends_attempt_evidence(self, tmp_path: Path) -> None:
+        repair_dir = tmp_path / "repair-data"
+        repair_dir.mkdir(parents=True)
+        record = MetaRepairRecord(
+            meta_repair_id="mr-sidecar-1",
+            session="sidecar-session",
+            trigger=MetaRepairTrigger.STATE_INSPECTION_FAILURE,
+            blocker_id="blocker:1",
+            diagnosis="Snapshot read error",
+            outcome="fixed",
+            created_at="2026-07-01T12:34:56+00:00",
+        )
+
+        persist_meta_repair_record(record, repair_data_dir=repair_dir)
+
+        sidecar_path = repair_dir.with_name("repair-data.d") / "attempts" / "attempts.jsonl"
+        records = read_jsonl_records(sidecar_path)
+        assert records[-1]["session_id"] == "sidecar-session"
+        assert records[-1]["attempt_id"] == "mr-sidecar-1"
+        assert records[-1]["actor"] == "meta_repair"
+        assert records[-1]["state"] == "succeeded"
+        assert records[-1]["outcome"] == "fixed"
+        assert records[-1]["record_path"].endswith("/repair-data/meta/mr-sidecar-1.json")
 
     def test_load_persisted_record_roundtrip(self, tmp_path: Path) -> None:
         repair_dir = tmp_path / "repair-data"
@@ -2910,6 +2936,8 @@ class TestCanCommitChanges:
     """Commit gating: commits require META_REPAIR_COMMIT_ENABLED."""
 
     def test_commit_allowed_when_flag_unset(self) -> None:
+        os.environ.pop("ARNOLD_AUTONOMY", None)
+        os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
         os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
         result = can_commit_changes()
         assert result.allowed is False

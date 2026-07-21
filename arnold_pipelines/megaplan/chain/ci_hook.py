@@ -54,6 +54,12 @@ from pathlib import Path
 from typing import Callable, List, Optional, Sequence, Tuple
 
 from arnold_pipelines.megaplan.observability.fold import fold_equivalence_oracle
+from arnold_pipelines.megaplan.chain.wbc import (
+    CHAIN_CI_SURFACE,
+    CHAIN_CI_WRITER_ID,
+    ChainWbcRule,
+    validate_chain_wbc_transition,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -142,6 +148,7 @@ class ChainCIResult:
 
     passed: bool
     gate_outcomes: List[GateOutcome] = field(default_factory=list)
+    validation_evidence: dict[str, object] | None = None
 
     @property
     def failures(self) -> List[GateOutcome]:
@@ -149,7 +156,12 @@ class ChainCIResult:
 
     def commit_label(self) -> str:
         """Return the hinge-gate stamp iff all gates are green."""
-        return HINGE_GATE_GREEN_STAMP if self.passed else ""
+        validated = (
+            bool(self.validation_evidence.get("rules"))
+            if isinstance(self.validation_evidence, dict)
+            else self.passed
+        )
+        return HINGE_GATE_GREEN_STAMP if self.passed and validated else ""
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +367,43 @@ def run_chain_ci(
             outcome = GateOutcome(name=_name, ok=False, detail=f"gate raised: {exc!r}")
         outcomes.append(outcome)
     passed = all(g.ok for g in outcomes)
-    return ChainCIResult(passed=passed, gate_outcomes=outcomes)
+    validation_evidence = validate_chain_wbc_transition(
+        writer_id=CHAIN_CI_WRITER_ID,
+        surface_name=CHAIN_CI_SURFACE,
+        transition_name="chain_ci_result",
+        subject="green" if passed else "red",
+        source_path=Path(__file__),
+        project_dir=REPO_ROOT,
+        rules=(
+            ChainWbcRule(
+                "gate_count",
+                len(chosen),
+                len(outcomes),
+                len(outcomes) == len(chosen),
+            ),
+            ChainWbcRule(
+                "gate_names_unique",
+                True,
+                len({outcome.name for outcome in outcomes}) == len(outcomes),
+                len({outcome.name for outcome in outcomes}) == len(outcomes),
+            ),
+            ChainWbcRule(
+                "green_label_requires_all_green",
+                passed,
+                all(outcome.ok for outcome in outcomes),
+                all(outcome.ok for outcome in outcomes) == passed,
+            ),
+        ),
+        extra={
+            "gate_names": [outcome.name for outcome in outcomes],
+            "failed_gates": [outcome.name for outcome in outcomes if not outcome.ok],
+        },
+    )
+    return ChainCIResult(
+        passed=passed,
+        gate_outcomes=outcomes,
+        validation_evidence=validation_evidence,
+    )
 
 
 __all__ = [

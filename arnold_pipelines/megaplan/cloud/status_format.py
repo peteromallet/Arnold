@@ -203,6 +203,21 @@ def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
         _append_s4_warnings(out, entry, generated_at)
 
         _append_shadow_views(out, entry)
+
+        # --- M9: evidence gaps (structured degraded-display annotations) ---
+        _append_evidence_gaps(out, entry)
+
+    # --- M9: source cursor vector ---
+    cursor = snapshot.get("source_cursor_vector")
+    if isinstance(cursor, Mapping) and cursor:
+        authority = cursor.get("authority")
+        if authority == "evidence_extracted_display_only" and isinstance(cursor.get("value"), Mapping):
+            out.append("")
+            out.append("source_cursor_vector [display-only, non-authoritative]: evidence provenance attached")
+        elif authority == "absent":
+            out.append("")
+            out.append(f"source_cursor_vector: absent ({cursor.get('reason', 'not provided')})")
+
     return "\n".join(out)
 
 
@@ -358,6 +373,30 @@ def _append_s4_warnings(
 
     if warnings:
         out.append("      warnings: " + "; ".join(warnings))
+
+
+# ── M9: evidence gaps ──────────────────────────────────────────────────────
+
+
+def _append_evidence_gaps(out: list[str], entry: Mapping[str, Any]) -> None:
+    """Render structured evidence gaps for one session entry.
+
+    Gaps are pure display annotations — they never feed dispatch, completion,
+    cancellation, publication, or delivery.  Each gap is rendered as a single
+    line prefixed with ``evidence_gap:`` so operators can distinguish degraded
+    fields from live data.
+    """
+    gaps = entry.get("evidence_gaps")
+    if not isinstance(gaps, Mapping) or not gaps:
+        return
+    for gap_key in sorted(gaps.keys()):
+        gap = gaps[gap_key]
+        if not isinstance(gap, Mapping):
+            continue
+        gap_id = gap.get("gap", gap_key)
+        reason = gap.get("reason", "")
+        status = gap.get("evidence_status", "unknown")
+        out.append(f"      evidence_gap: {gap_id} [{status}] — {reason}")
 
 
 # ── ISO parsing helper ──────────────────────────────────────────────────────

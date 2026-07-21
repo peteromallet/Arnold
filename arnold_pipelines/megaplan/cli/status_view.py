@@ -962,9 +962,39 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
     plan_mode = state.get("config", {}).get("mode", "code")
     plan_output_path = state.get("config", {}).get("output_path")
     anchors = anchor_summary(state, plan_dir)
+    # Build the source cursor vector from the observed workflow phase and the
+    # current state.  This is a display-only evidence trace — it does not grant
+    # dispatch, completion, cancellation, publication, or delivery authority.
+    source_cursor_vector: dict[str, Any] = {
+        "observed_phase": observed_phase,
+        "plan_state": state.get("current_state"),
+        "workflow_cursor": (
+            workflow_cursor(observed_phase).to_dict()
+            if workflow_cursor(observed_phase) is not None
+            else None
+        ),
+        "extracted_at": state.get("meta", {}).get("updated_at") or state.get("updated_at"),
+    }
+    # Build canonical WBC query inputs for the status display.  These are
+    # evidence-level metadata — never an authority grant.
+    wbc_query_inputs: dict[str, Any] = {
+        "environment": state.get("environment"),
+        "session": state.get("session_id") or state.get("session"),
+        "chain": state.get("chain"),
+        "plan_revision": state.get("plan_revision") or (
+            state.get("plan_versions", [{}])[-1].get("hash")
+            if isinstance(state.get("plan_versions"), list) and state.get("plan_versions")
+            else None
+        ),
+        "phase": observed_phase,
+        "ledger_sequence": state.get("ledger_sequence") or state.get("attempt_ledger_sequence"),
+        "evidence_ids": state.get("evidence_ids", []),
+    }
     presentation = plan_status_presentation(
         state.get("current_state"),
         active_step=active_step,
+        source_cursor_vector=source_cursor_vector,
+        wbc_query_inputs=wbc_query_inputs,
     )
     summary = f"Plan '{state['name']}' is currently {presentation['display_state']}"
     if presentation["display_state"] != state["current_state"]:

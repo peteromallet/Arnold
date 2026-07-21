@@ -1357,11 +1357,39 @@ INSERT INTO payload_blobs (
             )
 
 
+# M9's encrypted local byte store is an additive implementation.  It shares
+# the established PayloadExpiredError so callers can catch the public error
+# consistently across both stores.
+from arnold.workflow._ledger_payload_store_m9 import (  # noqa: E402
+    DigestMismatchError,
+    FileBackedLedgerPayloadStore,
+    KeyUnavailableError,
+    LEDGER_PAYLOAD_STORE_SCHEMA_VERSION,
+    LegacyHistoryUnbackfillableError,
+    LedgerPayloadStoreError,
+    LegalHoldError,
+    LocalPayloadKey,
+    LocalPayloadKeyring,
+    PayloadTombstonedError,
+    StoredPayloadMetadata,
+    TenantIsolationError,
+)
+
+
 __all__ = [
     "AccessContext",
     "DeletionEvidence",
+    "DigestMismatchError",
     "EncryptionProvider",
+    "FileBackedLedgerPayloadStore",
+    "KeyUnavailableError",
+    "LEDGER_PAYLOAD_STORE_SCHEMA_VERSION",
+    "LegacyHistoryUnbackfillableError",
     "LedgerPayloadStore",
+    "LedgerPayloadStoreError",
+    "LegalHoldError",
+    "LocalPayloadKey",
+    "LocalPayloadKeyring",
     "PAYLOAD_STORE_VERSION",
     "PROTECTED_PRIVACY_CLASSES",
     "PayloadDigestOnlyError",
@@ -1375,8 +1403,11 @@ __all__ = [
     "PayloadStoreError",
     "PayloadTenantAccessError",
     "PayloadTombstoneError",
+    "PayloadTombstonedError",
     "REDACTION_MARKER",
     "SqliteLedgerPayloadStore",
     "StaticKeyEncryptionProvider",
     "StoredPayload",
+    "StoredPayloadMetadata",
+    "TenantIsolationError",
 ]

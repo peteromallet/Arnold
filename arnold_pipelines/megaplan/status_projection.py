@@ -5,6 +5,12 @@ phase answer different questions.  In particular, ``finalized`` is the correct
 durable state while an ``execute`` step consumes the finalized task document.
 Consumers should retain those raw facts and use this projection for labels
 shown to people.
+
+Every projection returned by this module is a **display-only projection**.
+Neither ``execution_state`` nor ``display_state`` grant dispatch, completion,
+cancellation, publication, or delivery authority.  Callers that need authority
+decisions MUST cross-reference source records (WBC terminal/start gates,
+custody lease records, Run Authority source documents) — never display labels.
 """
 
 from __future__ import annotations
@@ -17,6 +23,9 @@ _PAUSED_STATES = {"paused", "awaiting_human", "awaiting_human_verify"}
 _COMPLETED_STATES = {"done", "complete", "completed"}
 _BLOCKED_STATES = {"blocked", "clarifying"}
 
+# Sentinel for absent source cursor vectors.
+_MISSING_CURSOR: dict[str, Any] = {"authority": "absent", "reason": "no_source_cursor_vector_provided"}
+
 
 def plan_status_presentation(
     plan_state: Any,
@@ -25,8 +34,22 @@ def plan_status_presentation(
     active_phase: Any = None,
     review_verdict: Any = None,
     completed: bool = False,
-) -> dict[str, str | None]:
-    """Project lifecycle, review truth, and live phase into a display contract."""
+    source_cursor_vector: Mapping[str, Any] | None = None,
+    wbc_query_inputs: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Project lifecycle, review truth, and live phase into a display contract.
+
+    The *source_cursor_vector* and *wbc_query_inputs* are threaded into the
+    output so consumers can trace which evidence produced this label.  They
+    never grant authority — this is a pure display projection.
+
+    The review/rework behavior (``reviewing``, ``reworking``, ``rework_required``)
+    preserves the semantics from the adjacent-review/rework commit
+    ``07f428d361f63c465b0dafaca9783585efeaa4b9``: an active ``execute`` phase
+    with a ``needs_rework`` verdict produces ``reworking``, an active ``review``
+    phase produces ``reviewing``, and a standalone ``needs_rework`` verdict
+    produces ``rework_required``.
+    """
 
     raw_state = str(plan_state or "").strip().lower()
     phase_value = active_phase
@@ -65,10 +88,33 @@ def plan_status_presentation(
         execution_state = "inactive"
         display_state = raw_state or None
 
+    # Build the source cursor entry — always present, never authority.
+    cursor_vector: dict[str, Any]
+    if isinstance(source_cursor_vector, Mapping) and source_cursor_vector:
+        cursor_vector = {
+            "authority": "evidence_extracted_display_only",
+            "value": dict(source_cursor_vector),
+        }
+    else:
+        cursor_vector = dict(_MISSING_CURSOR)
+
+    # Build the WBC query inputs entry.
+    wbc_inputs: dict[str, Any]
+    if isinstance(wbc_query_inputs, Mapping) and wbc_query_inputs:
+        wbc_inputs = {
+            "authority": "wbc_query_display_only",
+            "value": dict(wbc_query_inputs),
+        }
+    else:
+        wbc_inputs = {"authority": "absent", "reason": "no_wbc_query_inputs_provided"}
+
     return {
         "active_phase": phase,
         "execution_state": execution_state,
         "display_state": display_state,
+        "display_authority": "display_only_non_authoritative",
+        "source_cursor_vector": cursor_vector,
+        "wbc_query_inputs": wbc_inputs,
     }
 
 

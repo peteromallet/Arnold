@@ -421,12 +421,14 @@ def test_l3_actionable_finding_reaches_claim_attempt_and_terminal_decision(
     assert managed["difficulty"] == 9
     assert managed["authority"]["child_difficulty_ceiling"] == 9
     assert managed["links"]["audit_escalation_id"] == "l3-escalation-demo-m3"
+    assert managed["links"]["repair_identity_key"] == request["repair_identity_key"]
     claim_path = repair_requests.active_repair_claim_lock_dir(
         _queue_root(workspace), attempt["blocker_id"]
     ) / "owner.json"
     claim = _read_json_eventually(claim_path)
     assert claim["request_id"] == request["request_id"]
     assert claim["blocker_id"] == attempt["blocker_id"]
+    assert claim["repair_identity_key"] == request["repair_identity_key"]
     decisions = [
         item["decision"]
         for item in _decisions(marker_dir)

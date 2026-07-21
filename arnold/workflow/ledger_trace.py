@@ -485,3 +485,27 @@ def trace_from_json(data: str) -> LedgerTrace:
     if stored_digest:
         object.__setattr__(trace, "digest", stored_digest)
     return trace
+
+
+# M9 byte-store access traces are additive evidence and do not replace the
+# content-addressed M6 ledger trace surface.
+from arnold.workflow._ledger_trace_m9 import (  # noqa: E402
+    FileLedgerTrace,
+    LedgerTraceEvent,
+)
+
+
+__all__ = [
+    "FileLedgerTrace",
+    "LEDGER_TRACE_SCHEMA_VERSION",
+    "LedgerTrace",
+    "LedgerTraceEvent",
+    "TraceOperation",
+    "build_append_trace",
+    "build_query_trace",
+    "build_reconcile_trace",
+    "compute_trace_digest",
+    "make_trace_with_digest",
+    "trace_from_json",
+    "trace_to_json",
+]

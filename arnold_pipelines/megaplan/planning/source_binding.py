@@ -10,6 +10,14 @@ from pathlib import Path
 from typing import Any, Mapping, MutableMapping
 
 from arnold_pipelines.megaplan._core import now_utc
+from arnold_pipelines.megaplan.custody.admission_control import (
+    AdmissionFence,
+    SOURCE_BINDING_ADMISSION_SURFACE,
+    SOURCE_BINDING_ADMISSION_WRITER_ID,
+    record_admission_evidence,
+    register_admission_writers,
+    validate_admission_mutation,
+)
 from arnold_pipelines.megaplan.types import CliError, PlanState
 
 
@@ -103,6 +111,28 @@ def capture_canonical_source_binding(
             "canonical_source_unavailable",
             f"Cannot bind canonical source {source_path}: {identity.get('errors')}",
         )
+    register_admission_writers()
+    evidence = validate_admission_mutation(
+        writer_id=SOURCE_BINDING_ADMISSION_WRITER_ID,
+        surface_name=SOURCE_BINDING_ADMISSION_SURFACE,
+        selector=str(source_path),
+        source_record=identity,
+        fences=(
+            AdmissionFence(
+                identity="canonical_source_available",
+                expected=True,
+                observed=bool(identity["exists"]) and not bool(identity.get("errors")),
+                satisfied=bool(identity["exists"]) and not bool(identity.get("errors")),
+                detail="source binding requires an exact readable source record",
+            ),
+        ),
+        extra={"project_dir": str(project_dir.resolve(strict=False))},
+    )
+    record_admission_evidence(
+        state,
+        entry_key="source_binding.capture",
+        evidence=evidence,
+    )
     meta = state.setdefault("meta", {})
     meta["canonical_source_binding"] = {
         "schema": SOURCE_BINDING_SCHEMA,

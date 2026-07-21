@@ -10,6 +10,7 @@ import math
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from arnold_pipelines.megaplan.cloud.repair_contract import append_incident_record
 from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
 from arnold_pipelines.megaplan.incident.projection import build_brief, rebuild_projections
 
@@ -1830,6 +1831,7 @@ class SixHourAuditorCompletionEvidence:
     repair_dispatch_refs: tuple[str, ...] = ()
     escalation_verdict_count: int = 0
     escalation_verdict_refs: tuple[str, ...] = ()
+    drift_findings: tuple[dict[str, Any], ...] = ()
     missing_repair_verdict_findings: tuple[dict[str, Any], ...] = ()
     stale_repair_data_findings: tuple[dict[str, Any], ...] = ()
     evidence_timestamp: str = ""
@@ -1848,6 +1850,7 @@ class SixHourAuditorCompletionEvidence:
             "repair_dispatch_refs": list(self.repair_dispatch_refs),
             "escalation_verdict_count": self.escalation_verdict_count,
             "escalation_verdict_refs": list(self.escalation_verdict_refs),
+            "drift_findings": [dict(finding) for finding in self.drift_findings],
             "missing_repair_verdict_findings": [
                 dict(finding) for finding in self.missing_repair_verdict_findings
             ],
@@ -1894,6 +1897,11 @@ class SixHourAuditorCompletionEvidence:
                     payload.get("escalation_verdict_refs")
                 )
                 if _auditor_evidence_text(item)
+            ),
+            drift_findings=tuple(
+                dict(item)
+                for item in _auditor_evidence_list(payload.get("drift_findings"))
+                if isinstance(item, dict)
             ),
             missing_repair_verdict_findings=tuple(
                 dict(item)
@@ -1993,6 +2001,29 @@ def _extract_missing_repair_verdict_findings(
     return extracted
 
 
+def _extract_drift_findings(
+    audit_findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    extracted: list[dict[str, Any]] = []
+    for finding in audit_findings:
+        if not isinstance(finding, dict):
+            continue
+        if _auditor_evidence_text(finding.get("code")) != "DRIFT_DETECTED":
+            continue
+        extracted.append(
+            {
+                "layer": _auditor_evidence_text(finding.get("layer")),
+                "code": "DRIFT_DETECTED",
+                "source_pair": _auditor_evidence_text(finding.get("source_pair")),
+                "contradiction": _auditor_evidence_text(finding.get("contradiction")),
+                "recommendation": _auditor_evidence_text(finding.get("recommendation")),
+                "observed": _auditor_evidence_mapping(finding.get("observed")),
+                "expected": _auditor_evidence_mapping(finding.get("expected")),
+            }
+        )
+    return extracted
+
+
 def _extract_stale_repair_data_findings(
     audit_findings: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -2080,6 +2111,7 @@ def build_auditor_completion_evidence(
         )
 
     missing_repair_verdict = _extract_missing_repair_verdict_findings(findings)
+    drift_findings = _extract_drift_findings(findings)
     stale_repair_data = _extract_stale_repair_data_findings(findings)
 
     return SixHourAuditorCompletionEvidence(
@@ -2104,6 +2136,7 @@ def build_auditor_completion_evidence(
             if _auditor_evidence_text(finding.get("recommendation"))
             == "auditor_escalate_to_human"
         ),
+        drift_findings=tuple(drift_findings),
         missing_repair_verdict_findings=tuple(missing_repair_verdict),
         stale_repair_data_findings=tuple(stale_repair_data),
         evidence_timestamp=evidence_ts,
@@ -2115,6 +2148,9 @@ def save_auditor_completion_evidence(
     evidence: SixHourAuditorCompletionEvidence,
     *,
     redactor: Callable[[str], str] | None = None,
+    sidecar_dir: str | Path | None = None,
+    session: str = "",
+    plan: str = "",
 ) -> dict[str, Any]:
     """Validate, redact, and persist auditor completion evidence to *path*.
 
@@ -2125,6 +2161,22 @@ def save_auditor_completion_evidence(
     if redactor is not None:
         prepared = _redact_auditor_evidence_payload(prepared, redactor)
     _auditor_atomic_write_json(path, prepared)
+    if sidecar_dir is not None:
+        append_incident_record(
+            sidecar_dir,
+            {
+                "session": session,
+                "kind": "auditor_6h_completion",
+                "summary": evidence.outcome or "audit_cycle_complete",
+                "plan": plan,
+                "record_path": str(path),
+                "next_expected_event": evidence.next_expected_event,
+                "repair_dispatch_count": evidence.repair_dispatch_count,
+                "escalation_verdict_refs": list(evidence.escalation_verdict_refs),
+                "drift_findings": [dict(finding) for finding in evidence.drift_findings],
+                "recorded_at": evidence.evidence_timestamp,
+            },
+        )
     return prepared
 
 

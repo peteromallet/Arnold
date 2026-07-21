@@ -119,13 +119,22 @@ class Incident:
     plan_entry: PlanEntry
     signals: SignalBundle
     triage: Triage
+    # M9 — display-only liveness correlation summary. Never authority: a live
+    # process or fresh heartbeat is *evidence* of an in-flight attempt, never a
+    # success/repair verdict. Populated by the watchdog snapshot builder when
+    # canonical WBC attempt identity is supplied; defaults to empty so legacy
+    # snapshots round-trip unchanged.
+    liveness_authority: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "plan_entry": self.plan_entry.to_dict(),
             "signals": self.signals.to_dict(),
             "triage": self.triage.value,
         }
+        if self.liveness_authority:
+            result["liveness_authority"] = dict(self.liveness_authority)
+        return result
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Incident":
@@ -133,6 +142,7 @@ class Incident:
             plan_entry=PlanEntry.from_dict(data["plan_entry"]),
             signals=SignalBundle.from_dict(data["signals"]),
             triage=Triage(data["triage"]),
+            liveness_authority=dict(data.get("liveness_authority") or {}),
         )
 
 
@@ -212,13 +222,26 @@ class Snapshot:
     scan_ts_utc: str
     plans: tuple[PlanEntry, ...]
     incidents: tuple[Incident, ...]
+    # M9 — display-only annotations. ``source_cursor_vector`` records the
+    # canonical source cursors (ledger / projection history) the snapshot was
+    # built against; ``liveness_authority`` summarizes the per-plan liveness
+    # correlation. Both are *evidence only* — they never feed dispatch,
+    # completion, cancellation, publication, or delivery. Default to empty so
+    # legacy snapshots round-trip unchanged.
+    source_cursor_vector: dict[str, Any] = field(default_factory=dict)
+    liveness_authority: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "scan_ts_utc": self.scan_ts_utc,
             "plans": [p.to_dict() for p in self.plans],
             "incidents": [i.to_dict() for i in self.incidents],
         }
+        if self.source_cursor_vector:
+            result["source_cursor_vector"] = dict(self.source_cursor_vector)
+        if self.liveness_authority:
+            result["liveness_authority"] = dict(self.liveness_authority)
+        return result
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Snapshot":
@@ -226,6 +249,8 @@ class Snapshot:
             scan_ts_utc=data["scan_ts_utc"],
             plans=tuple(PlanEntry.from_dict(p) for p in data.get("plans", [])),
             incidents=tuple(Incident.from_dict(i) for i in data.get("incidents", [])),
+            source_cursor_vector=dict(data.get("source_cursor_vector") or {}),
+            liveness_authority=dict(data.get("liveness_authority") or {}),
         )
 
     @classmethod

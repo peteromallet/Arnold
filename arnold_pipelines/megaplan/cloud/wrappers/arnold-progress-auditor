@@ -7031,6 +7031,8 @@ save_auditor_completion_evidence(
     evidence_out,
     evidence,
     redactor=redact_text,
+    sidecar_dir=str(pathlib.Path(repair_data_dir).with_name(f"{pathlib.Path(repair_data_dir).name}.d")),
+    session="progress_auditor",
 )
 PY
 
