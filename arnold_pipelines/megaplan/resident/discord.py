@@ -1474,8 +1474,12 @@ class ResidentDiscordService:
 
         await interaction.response.defer(thinking=True, ephemeral=True)
         try:
+            timezone_name = TimezoneService(
+                getattr(self.runtime, "store", None),
+                getattr(self.runtime, "config", None),
+            ).resolve(user_id=user_id, guild_id=guild_id).name
             report = await collect_currently_running(self.runtime)
-            rendered = render_currently_running(report)
+            rendered = render_currently_running(report, timezone_name=timezone_name)
         except Exception:
             LOGGER.exception("Resident whats-cooking command failed")
             rendered = (

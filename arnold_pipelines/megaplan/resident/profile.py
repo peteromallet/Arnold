@@ -1201,6 +1201,9 @@ class MegaplanResidentProfile:
         default=None, init=False, repr=False
     )
     _snapshot_refresh_started_at: float = field(default=0.0, init=False, repr=False)
+    _snapshot_refresh_lock: threading.Lock = field(
+        default_factory=threading.Lock, init=False, repr=False
+    )
     _context_source_cache: dict[str, dict[str, Any]] = field(
         default_factory=dict, init=False, repr=False
     )
@@ -1841,6 +1844,18 @@ class MegaplanResidentProfile:
         if degraded_reason:
             return _sanitize_stale_snapshot(snapshot, degraded_reason), degraded_reason
         return snapshot, None
+
+    def collect_fresh_cloud_status_root(self) -> dict[str, Any]:
+        """Build a bounded status root from live local evidence for one command."""
+
+        if not status_snapshot.has_local_markers():
+            raise RuntimeError("local cloud status markers are unavailable")
+        with self._snapshot_refresh_lock:
+            snapshot = status_snapshot.build_cloud_status_snapshot()
+        root = compact_cloud_status_snapshot(snapshot)
+        if root is None:  # pragma: no cover - build contract is a mapping
+            raise RuntimeError("cloud status build returned no bounded root")
+        return root
 
     def _schedule_cloud_status_snapshot_refresh(self) -> None:
         if not status_snapshot.has_local_markers():

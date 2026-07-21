@@ -1023,28 +1023,17 @@ def test_degraded_status_is_labeled_without_hiding_available_canonical_items() -
     assert "`degraded-epic`\n  `planned` · 12% overall" in rendered
 
 
-def test_collection_uses_typed_bounded_status_tool_and_managed_agent_inventory(
+def test_collection_uses_fresh_status_root_and_managed_agent_inventory(
     monkeypatch, tmp_path
 ) -> None:
-    calls: list[object] = []
+    calls: list[str] = []
 
-    class InputModel:
-        def __init__(self, **values):
-            self.__dict__.update(values)
+    def collect_fresh_root():
+        calls.append("fresh")
+        return {"node_id": "root", "sessions": []}
 
-    def status_handler(payload):
-        calls.append(payload)
-        return SimpleNamespace(
-            ok=True,
-            data={"node": {"node_id": "root", "sessions": []}},
-        )
-
-    registration = SimpleNamespace(input_model=InputModel, handler=status_handler)
-    registry = SimpleNamespace(
-        get=lambda name: registration if name == "read_cloud_status_node" else None
-    )
     runtime = SimpleNamespace(
-        profile=SimpleNamespace(tools=lambda: registry),
+        profile=SimpleNamespace(collect_fresh_cloud_status_root=collect_fresh_root),
         project_root=tmp_path,
     )
     monkeypatch.setattr(
@@ -1060,9 +1049,7 @@ def test_collection_uses_typed_bounded_status_tool_and_managed_agent_inventory(
 
     assert report.status_node == {"node_id": "root", "sessions": []}
     assert report.managed_agents["project_root_seen"] == str(tmp_path)
-    assert len(calls) == 1
-    assert calls[0].node_id == "root"
-    assert calls[0].limit == 25
+    assert calls == ["fresh"]
 
 
 def test_collection_replaces_opaque_agent_label_from_exact_inbound_source(
@@ -1404,3 +1391,64 @@ def test_repairing_signal_overrides_stale_failed_state_but_not_genuine_failure()
     assert "`repairing` · overall progress unavailable" in rendered
     assert "failed" not in rendered
     assert "`failed` · overall progress unavailable" in module._render_session(failed)
+
+
+def test_collect_currently_running_rebuilds_fresh_status_each_time(monkeypatch) -> None:
+    collections: list[int] = []
+
+    def collect_fresh_root():
+        collections.append(len(collections) + 1)
+        return {"generated_at": f"fresh-{collections[-1]}", "sessions": []}
+
+    monkeypatch.setattr(
+        module,
+        "list_managed_resident_agents",
+        lambda **_kwargs: {"running": []},
+    )
+    runtime = SimpleNamespace(
+        profile=SimpleNamespace(collect_fresh_cloud_status_root=collect_fresh_root),
+        project_root=".",
+    )
+
+    first = asyncio.run(collect_currently_running(runtime))
+    second = asyncio.run(collect_currently_running(runtime))
+
+    assert collections == [1, 2]
+    assert first.status_node["generated_at"] == "fresh-1"
+    assert second.status_node["generated_at"] == "fresh-2"
+
+
+def test_fresh_root_does_not_read_or_write_the_cached_snapshot(monkeypatch) -> None:
+    from arnold_pipelines.megaplan.cloud import status_snapshot
+    from arnold_pipelines.megaplan.resident.profile import MegaplanResidentProfile
+
+    builds: list[int] = []
+
+    def build_snapshot():
+        builds.append(len(builds) + 1)
+        return {"generated_at": f"fresh-{builds[-1]}", "sessions": []}
+
+    monkeypatch.setattr(status_snapshot, "has_local_markers", lambda: True)
+    monkeypatch.setattr(
+        status_snapshot,
+        "build_cloud_status_snapshot",
+        build_snapshot,
+    )
+    monkeypatch.setattr(
+        status_snapshot,
+        "load_cloud_status_snapshot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("cache read")),
+    )
+    monkeypatch.setattr(
+        status_snapshot,
+        "write_cloud_status_snapshot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("cache write")),
+    )
+
+    profile = MegaplanResidentProfile()
+    first = profile.collect_fresh_cloud_status_root()
+    second = profile.collect_fresh_cloud_status_root()
+
+    assert builds == [1, 2]
+    assert first["generated_at"] == "fresh-1"
+    assert second["generated_at"] == "fresh-2"

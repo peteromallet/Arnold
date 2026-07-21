@@ -15,7 +15,6 @@ from typing import Any
 
 from agentbox.redaction import redact_text
 
-from .status_tree import MAX_NODE_LIMIT
 from .subagent import list_managed_resident_agents
 from .timezone import format_timestamp
 
@@ -69,34 +68,22 @@ class _ManagedAgentTree:
 
 
 async def collect_currently_running(runtime: Any) -> CurrentlyRunningReport:
-    """Read only the bounded status root and the managed-agent inventory.
-
-    The status read deliberately goes through the resident's typed
-    ``read_cloud_status_node`` registration.  Discord must not know the path or
-    schema of the complete watchdog JSON.
-    """
+    """Collect a fresh bounded status root and the managed-agent inventory."""
 
     async def read_status_node() -> tuple[Mapping[str, Any] | None, str | None]:
         try:
-            registration = runtime.profile.tools().get("read_cloud_status_node")
-            payload = registration.input_model(
-                node_id="root", cursor=0, limit=MAX_NODE_LIMIT
-            )
-            if inspect.iscoroutinefunction(registration.handler):
-                result = await registration.handler(payload)
+            collector = runtime.profile.collect_fresh_cloud_status_root
+            if inspect.iscoroutinefunction(collector):
+                node = await collector()
             else:
-                result = await asyncio.to_thread(registration.handler, payload)
-            if inspect.isawaitable(result):
-                result = await result
-            if not getattr(result, "ok", False):
-                return None, "canonical status node is unavailable"
-            data = getattr(result, "data", None)
-            node = data.get("node") if isinstance(data, Mapping) else None
+                node = await asyncio.to_thread(collector)
+            if inspect.isawaitable(node):
+                node = await node
             if not isinstance(node, Mapping):
-                return None, "canonical status node returned no bounded root"
+                return None, "fresh canonical status collection returned no bounded root"
             return node, None
         except Exception as exc:  # command must degrade independently by source
-            return None, f"canonical status node read failed ({exc.__class__.__name__})"
+            return None, f"fresh canonical status collection failed ({exc.__class__.__name__})"
 
     async def read_managed_agents() -> tuple[Mapping[str, Any] | None, str | None]:
         project_root = Path(getattr(runtime, "project_root", Path.cwd()))
