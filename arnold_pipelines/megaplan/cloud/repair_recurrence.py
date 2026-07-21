@@ -806,6 +806,32 @@ def _attempt_is_after_epoch(
     return when > epoch
 
 
+def _any_prior_attempt_replan_classification(
+    prior_attempts: list[Mapping[str, Any]],
+) -> bool:
+    """Return True when any prior attempt's dev-report signals replan/repeat.
+
+    The Codex fixer classifies its own report with strings like
+    ``replan_deterministic_progress_token_repeated``.  When a prior attempt
+    already self-identified as a deterministic repeat of an unfixable problem,
+    the L1->L2 escalation should fire without waiting for an explicit
+    investigator recommendation.
+    """
+    replan_needles = (
+        "replan_deterministic_progress_token_repeated",
+        "replan_required_deterministic_progress_repeat",
+        "replan_deterministic_progress_token_repeated_and_mutation_scope_mismatch",
+    )
+    for attempt in prior_attempts:
+        dev_report = _as_dict(attempt.get("dev_report"))
+        classification = _as_text(dev_report.get("classification"))
+        if classification and any(
+            needle in classification for needle in replan_needles
+        ):
+            return True
+    return False
+
+
 def evaluate_recurrence(
     current_signature: Mapping[str, Any],
     attempts: list[Mapping[str, Any]] | None,
@@ -879,16 +905,24 @@ def evaluate_recurrence(
     empty_batch_detected = len(empty_batch_streak) >= empty_batch_threshold
     layer3_detected = same_signature_detected or empty_batch_detected
 
-    # When the deterministic breaker fires and the investigator already
-    # determined the fix requires Arnold source changes (beyond L1's reach),
-    # surface an escalation hint so the repair loop can signal meta-repair
-    # directly instead of gating on generic recurrence thresholds.
-    # Also surface the hint when the investigator recommends replan and the
-    # breaker trips: a repeated replan on the same signature means L1 cannot
-    # resolve the root cause and L2/meta-repair must take over.
+    # When the deterministic breaker fires, surface an escalation hint so the
+    # repair loop can signal meta-repair directly instead of gating on generic
+    # recurrence thresholds.  The breaker itself is sufficient evidence that L1
+    # cannot make progress: a repeated identical signature means another
+    # mechanical re-drive cannot help.
+    #
+    # Explicit investigator recommendations ("repair_source", "replan")
+    # provide additional authority but are not required.  When the investigator
+    # has not yet run or its recommendation is unavailable (empty string), a
+    # tripped breaker alone justifies escalation.  We also inspect prior-attempt
+    # dev-report classifications for replan/repeat evidence so that the first
+    # breaker trip after a Codex-identified stalemate escalates immediately.
     escalation_hint = ""
-    if layer3_detected and recommended_action in {"repair_source", "replan"}:
-        escalation_hint = "source_repair_needed"
+    if layer3_detected:
+        if recommended_action in {"repair_source", "replan"}:
+            escalation_hint = "source_repair_needed"
+        elif _any_prior_attempt_replan_classification(prior_by_id):
+            escalation_hint = "source_repair_needed"
 
     return {
         "detected": layer1_detected or layer2_detected,
