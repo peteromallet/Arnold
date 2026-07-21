@@ -28,6 +28,7 @@ from arnold.pipeline.types import (
     StepResult,
 )
 from arnold.runtime.state_persistence import atomic_write_json
+from arnold.workflow.native_wbc import begin_native_wbc_attempt
 
 _LOG = logging.getLogger(__name__)
 
@@ -257,6 +258,14 @@ class HumanGateStep:
         choice as the ``next`` edge label and cleans up.
         """
         checkpoint_path = Path(ctx.artifact_root) / self._checkpoint_filename
+        attempt = begin_native_wbc_attempt(
+            ctx.artifact_root,
+            producer_family="arnold_pipeline",
+            surface="human_gate_step",
+            run_id="",
+            subject={"step": self.name, "artifact_stage": self._artifact_stage},
+            metadata={"pipeline_name": self._pipeline_name, "choices": list(self._choices)},
+        )
 
         # ── resolve the resume choice ──
         choice: str | None = self._resume_choice
@@ -274,10 +283,17 @@ class HumanGateStep:
             object.__setattr__(self, "_resume_choice", None)
             if checkpoint_path.exists():
                 checkpoint_path.unlink()
-            return StepResult(
+            attempt.effect("resume_choice", {"choice": choice, "checkpoint": str(checkpoint_path)})
+            result = StepResult(
                 outputs={},
                 next=choice,
             )
+            attempt.terminal(
+                status="completed",
+                outcome="resumed",
+                payload={"choice": choice},
+            )
+            return result
 
         # ── pause path ──
         write_human_gate_checkpoint(
@@ -302,7 +318,8 @@ class HumanGateStep:
             step_name=self.name,
             prompt=self._prompt,
         )
-        return StepResult(
+        attempt.effect("checkpoint_written", {"checkpoint": str(checkpoint_path)})
+        result = StepResult(
             outputs={"awaiting_user": str(checkpoint_path)},
             next="halt",
             state_patch={
@@ -310,6 +327,12 @@ class HumanGateStep:
                 "_pipeline_paused_stage": self.name,
             },
         )
+        attempt.terminal(
+            status="suspended",
+            outcome="awaiting_user",
+            payload={"checkpoint": str(checkpoint_path)},
+        )
+        return result
 
 
 def _enqueue_human_gate_repair_request(

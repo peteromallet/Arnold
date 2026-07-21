@@ -1,12 +1,600 @@
 {
-  "adapters": [],
+  "adapters": [
+    {
+      "adapter_class": "filename",
+      "adapter_id": "historical-filename-reader",
+      "approver": "operational-approval-required",
+      "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
+      "diagnostics": [
+        "Filename or path heuristics remain compatibility-only and cannot prove freshness, ownership, or terminal success.",
+        "Canonical reads must bind to exact WBC source identity instead of implicit latest filenames."
+      ],
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M9",
+        "status": "compatible"
+      },
+      "observed_read_operations": [
+        "next_plan_artifact_name"
+      ],
+      "owner": "custody-control-plane",
+      "path_symbols": [
+        "arnold_pipelines/megaplan/execute/step_edit.py"
+      ],
+      "permitted_read_operations": [
+        "next_plan_artifact_name"
+      ],
+      "reader_name": "Filename Compatibility Consumer",
+      "supported_versions": [
+        "legacy",
+        "shadow"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "c1_compatibility_readers": [],
+        "callsite_count": 2,
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "projection_ids": [],
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "marker",
+      "adapter_id": "historical-marker-reader",
+      "approver": "operational-approval-required",
+      "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
+      "diagnostics": [
+        "Marker presence is corroboration only and cannot outrank canonical WBC or custody state.",
+        "Stale or missing markers must degrade to UNKNOWN rather than silently refreshing activity."
+      ],
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M9",
+        "status": "compatible"
+      },
+      "observed_read_operations": [
+        "has_megaplan_step_io_self_validation_marker",
+        "load_cloud_status_snapshot",
+        "load_megaplan_step_io_policy"
+      ],
+      "owner": "custody-control-plane",
+      "path_symbols": [
+        "arnold_pipelines/megaplan/runtime/step_io_policy_adapter.py",
+        "arnold_pipelines/megaplan/cloud/status_snapshot.py"
+      ],
+      "permitted_read_operations": [
+        "has_megaplan_step_io_self_validation_marker",
+        "load_cloud_status_snapshot",
+        "load_megaplan_step_io_policy"
+      ],
+      "reader_name": "Marker Compatibility Consumer",
+      "supported_versions": [
+        "legacy",
+        "shadow"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "c1_compatibility_readers": [],
+        "callsite_count": 2,
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "projection_ids": [],
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "mutable_receipt",
+      "adapter_id": "historical-mutable-receipt-reader",
+      "approver": "operational-approval-required",
+      "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
+      "diagnostics": [
+        "Mutable receipts cannot prove exact-version authority because they may be rewritten or superseded.",
+        "Canonical WBC rereads must remain the only source for authority-increasing transitions."
+      ],
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M9",
+        "status": "compatible"
+      },
+      "observed_read_operations": [
+        "_collect_dispatch_receipts",
+        "_collect_receipts",
+        "_safe_read_json",
+        "load_and_extract"
+      ],
+      "owner": "custody-control-plane",
+      "path_symbols": [
+        "arnold_pipelines/megaplan/receipts/report.py",
+        "arnold_pipelines/megaplan/receipts/extractors.py"
+      ],
+      "permitted_read_operations": [
+        "_collect_dispatch_receipts",
+        "_collect_receipts",
+        "_safe_read_json",
+        "load_and_extract"
+      ],
+      "reader_name": "Mutable Receipt Consumer",
+      "supported_versions": [
+        "legacy",
+        "shadow"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "c1_compatibility_readers": [],
+        "callsite_count": 10,
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "projection_ids": [],
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "process",
+      "adapter_id": "historical-process-reader",
+      "approver": "operational-approval-required",
+      "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
+      "diagnostics": [
+        "Process liveness is corroboration only and cannot grant retry, repair, resume, or completion authority.",
+        "Disagreement between process facts and canonical evidence must remain drift, not auto-repair authority."
+      ],
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M9",
+        "status": "compatible"
+      },
+      "observed_read_operations": [
+        "build_snapshot",
+        "correlate_processes_to_plans",
+        "infer_plan_dirs_from_processes",
+        "scan_processes"
+      ],
+      "owner": "custody-control-plane",
+      "path_symbols": [
+        "arnold_pipelines/megaplan/watchdog/processes.py",
+        "arnold_pipelines/megaplan/watchdog/correlate.py",
+        "arnold_pipelines/megaplan/watchdog/snapshot.py"
+      ],
+      "permitted_read_operations": [
+        "build_snapshot",
+        "correlate_processes_to_plans",
+        "infer_plan_dirs_from_processes",
+        "scan_processes"
+      ],
+      "reader_name": "Process Observation Consumer",
+      "supported_versions": [
+        "legacy",
+        "shadow"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "c1_compatibility_readers": [],
+        "callsite_count": 2,
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "projection_ids": [],
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "prose",
+      "adapter_id": "historical-prose-reader",
+      "approver": "operational-approval-required",
+      "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
+      "diagnostics": [
+        "Consumes prose-mode or narrative evidence only for observation; never as launch or completion authority.",
+        "Missing canonical WBC evidence must remain UNKNOWN rather than inferred from prose text."
+      ],
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M9",
+        "status": "compatible"
+      },
+      "observed_read_operations": [
+        "is_creative_mode",
+        "is_prose_mode",
+        "phase_quality_deviations_for_current_attempt"
+      ],
+      "owner": "custody-control-plane",
+      "path_symbols": [
+        "arnold_pipelines/megaplan/_core/modes.py",
+        "arnold_pipelines/megaplan/execute/aggregation.py"
+      ],
+      "permitted_read_operations": [
+        "is_creative_mode",
+        "is_prose_mode",
+        "phase_quality_deviations_for_current_attempt"
+      ],
+      "reader_name": "Prose Classification Consumer",
+      "supported_versions": [
+        "legacy",
+        "shadow"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "c1_compatibility_readers": [],
+        "callsite_count": 29,
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "projection_ids": [],
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "token",
+      "adapter_id": "historical-token-reader",
+      "approver": "operational-approval-required",
+      "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
+      "diagnostics": [
+        "Raw token totals are accounting evidence only and cannot classify success, repair ownership, or task completion.",
+        "Any missing denominator or mismatched session usage must remain diagnostic-only."
+      ],
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M9",
+        "status": "compatible"
+      },
+      "observed_read_operations": [
+        "_tokens",
+        "_totals",
+        "cost_from_codex_usage_dict",
+        "cost_from_usage",
+        "estimate_tokens_from_cost"
+      ],
+      "owner": "custody-control-plane",
+      "path_symbols": [
+        "arnold_pipelines/megaplan/pricing/codex.py",
+        "arnold_pipelines/megaplan/pricing/claude.py",
+        "arnold_pipelines/megaplan/pricing/fireworks.py",
+        "arnold_pipelines/megaplan/receipts/report.py"
+      ],
+      "permitted_read_operations": [
+        "_tokens",
+        "_totals",
+        "cost_from_codex_usage_dict",
+        "cost_from_usage",
+        "estimate_tokens_from_cost"
+      ],
+      "reader_name": "Token and Cost Consumer",
+      "supported_versions": [
+        "legacy",
+        "shadow"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "c1_compatibility_readers": [],
+        "callsite_count": 11,
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "projection_ids": [],
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "raw_json",
+      "adapter_id": "legacy-bakeoff-state-reader",
+      "approver": "operational-approval-required",
+      "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
+      "diagnostics": [
+        "Historical state-reader compatibility remains read-only and cannot increase authority.",
+        "Canonical WBC rereads must replace direct legacy JSON or lock-based observations before expiry."
+      ],
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M8",
+        "status": "compatible"
+      },
+      "observed_read_operations": [
+        "load_bakeoff_state",
+        "load_channel_shadow_state"
+      ],
+      "owner": "custody-control-plane",
+      "path_symbols": [
+        "arnold_pipelines/megaplan/bakeoff/state.py"
+      ],
+      "permitted_read_operations": [
+        "load_bakeoff_state",
+        "load_channel_shadow_state"
+      ],
+      "reader_name": "Bakeoff State Consumer",
+      "supported_versions": [
+        "legacy",
+        "shadow"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "c1_compatibility_readers": [
+          "authority_readers"
+        ],
+        "callsite_count": 7,
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "projection_ids": [
+          "bakeoff-state-projection",
+          "channel-shadow-projection"
+        ],
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "raw_json",
+      "adapter_id": "legacy-chain-state-reader",
+      "approver": "operational-approval-required",
+      "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
+      "diagnostics": [
+        "Historical state-reader compatibility remains read-only and cannot increase authority.",
+        "Canonical WBC rereads must replace direct legacy JSON or lock-based observations before expiry."
+      ],
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M8",
+        "status": "compatible"
+      },
+      "observed_read_operations": [
+        "_load_chain_state_file",
+        "load_chain_state",
+        "load_runtime_policy",
+        "load_spec"
+      ],
+      "owner": "custody-control-plane",
+      "path_symbols": [
+        "arnold_pipelines/megaplan/chain/spec.py"
+      ],
+      "permitted_read_operations": [
+        "_load_chain_state_file",
+        "load_chain_state",
+        "load_runtime_policy",
+        "load_spec"
+      ],
+      "reader_name": "Chain State Consumer",
+      "supported_versions": [
+        "legacy",
+        "shadow"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "c1_compatibility_readers": [
+          "authority_readers"
+        ],
+        "callsite_count": 20,
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "projection_ids": [
+          "chain-state-projection"
+        ],
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "raw_json",
+      "adapter_id": "legacy-heartbeat-state-reader",
+      "approver": "operational-approval-required",
+      "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
+      "diagnostics": [
+        "Historical state-reader compatibility remains read-only and cannot increase authority.",
+        "Canonical WBC rereads must replace direct legacy JSON or lock-based observations before expiry."
+      ],
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M8",
+        "status": "compatible"
+      },
+      "observed_read_operations": [
+        "load_plan",
+        "load_plan_from_dir",
+        "load_plan_locked",
+        "load_state_as_projection"
+      ],
+      "owner": "custody-control-plane",
+      "path_symbols": [
+        "arnold_pipelines/megaplan/_core/state.py"
+      ],
+      "permitted_read_operations": [
+        "load_plan",
+        "load_plan_from_dir",
+        "load_plan_locked",
+        "load_state_as_projection"
+      ],
+      "reader_name": "Heartbeat State Consumer",
+      "supported_versions": [
+        "legacy",
+        "shadow"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "c1_compatibility_readers": [
+          "authority_readers"
+        ],
+        "callsite_count": 20,
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "projection_ids": [
+          "heartbeat-projection"
+        ],
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "process",
+      "adapter_id": "legacy-repair-lock-reader",
+      "approver": "operational-approval-required",
+      "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
+      "diagnostics": [
+        "Historical state-reader compatibility remains read-only and cannot increase authority.",
+        "Canonical WBC rereads must replace direct legacy JSON or lock-based observations before expiry."
+      ],
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M8",
+        "status": "compatible"
+      },
+      "observed_read_operations": [
+        "repair_lock"
+      ],
+      "owner": "custody-control-plane",
+      "path_symbols": [
+        "arnold_pipelines/megaplan/cloud/repair_lock.py"
+      ],
+      "permitted_read_operations": [
+        "repair_lock"
+      ],
+      "reader_name": "Repair Lock Consumer",
+      "supported_versions": [
+        "legacy",
+        "shadow"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "c1_compatibility_readers": [
+          "authority_readers"
+        ],
+        "callsite_count": 0,
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "projection_ids": [],
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "raw_json",
+      "adapter_id": "legacy-status-snapshot-reader",
+      "approver": "operational-approval-required",
+      "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
+      "diagnostics": [
+        "Historical state-reader compatibility remains read-only and cannot increase authority.",
+        "Canonical WBC rereads must replace direct legacy JSON or lock-based observations before expiry."
+      ],
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M8",
+        "status": "compatible"
+      },
+      "observed_read_operations": [
+        "_load_current_plan_review",
+        "_load_current_plan_state",
+        "_load_json",
+        "_load_latest_chain_state",
+        "_load_progress_history",
+        "_load_session_markers",
+        "_load_watchdog_report",
+        "load_cloud_status_snapshot"
+      ],
+      "owner": "custody-control-plane",
+      "path_symbols": [
+        "arnold_pipelines/megaplan/cloud/status_snapshot.py"
+      ],
+      "permitted_read_operations": [
+        "_load_current_plan_review",
+        "_load_current_plan_state",
+        "_load_json",
+        "_load_latest_chain_state",
+        "_load_progress_history",
+        "_load_session_markers",
+        "_load_watchdog_report",
+        "load_cloud_status_snapshot"
+      ],
+      "reader_name": "Cloud Status Snapshot Consumer",
+      "supported_versions": [
+        "legacy",
+        "shadow"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "c1_compatibility_readers": [
+          "authority_readers"
+        ],
+        "callsite_count": 19,
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "projection_ids": [
+          "status-snapshot-projection"
+        ],
+        "read_only": true,
+        "read_only_verified": true
+      }
+    },
+    {
+      "adapter_class": "raw_json",
+      "adapter_id": "legacy-supervisor-state-reader",
+      "approver": "operational-approval-required",
+      "deletion_gate": "Delete after the matching migration family is adopted, the reader callsite count reaches zero, and the negative bypass gate proves no authority-increasing compatibility reads remain.",
+      "diagnostics": [
+        "Historical state-reader compatibility remains read-only and cannot increase authority.",
+        "Canonical WBC rereads must replace direct legacy JSON or lock-based observations before expiry."
+      ],
+      "expiry": {
+        "current_milestone": "M7",
+        "milestone": "M8",
+        "status": "compatible"
+      },
+      "observed_read_operations": [
+        "load_supervisor_state"
+      ],
+      "owner": "custody-control-plane",
+      "path_symbols": [
+        "arnold_pipelines/megaplan/supervisor/state.py"
+      ],
+      "permitted_read_operations": [
+        "load_supervisor_state"
+      ],
+      "reader_name": "Supervisor State Consumer",
+      "supported_versions": [
+        "legacy",
+        "shadow"
+      ],
+      "zero_authority_caller_proof": {
+        "authority_increasing_write_allowed": false,
+        "authority_increasing_writes_detected": [],
+        "c1_compatibility_readers": [
+          "authority_readers"
+        ],
+        "callsite_count": 1,
+        "diagnostic_only": true,
+        "mode": "shadow",
+        "projection_ids": [
+          "supervisor-state-projection"
+        ],
+        "read_only": true,
+        "read_only_verified": true
+      }
+    }
+  ],
   "meta": {
-    "adapter_count": 0,
-    "description": "Historical adapter allowlist for WBC boundary. Each adapter requires: path/symbol, permitted read operations and versions, proof of zero authority-increasing callers, named owner/approver, expiry, and deletion gate. Default-empty because no read-only adapters have been proven at this milestone.",
-    "generated_by": "M6 Step 6 (T7) \u2014 generate_wbc_boundary_inventory.py",
-    "schema": "m6.wbc-historical-adapters.v1",
-    "status": "default_empty",
-    "status_detail": "No read-only adapters have been proven with the required evidence fields. Set to empty until proof is provided.",
-    "timestamp_utc": "2026-07-19T22:34:48.008510+00:00"
+    "adapter_classes_present": [
+      "filename",
+      "marker",
+      "mutable_receipt",
+      "process",
+      "prose",
+      "raw_json",
+      "token"
+    ],
+    "adapter_count": 12,
+    "expired_adapter_count": 0,
+    "generated_at": "2026-07-21T00:01:43.840454+00:00",
+    "generated_by": "M8 Step 8 (T8) \u2014 generate_wbc_boundary_inventory.py",
+    "read_only_verified_count": 12,
+    "schema": "m8.wbc-historical-adapters.v1"
   }
 }

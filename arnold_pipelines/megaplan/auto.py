@@ -66,6 +66,14 @@ from arnold_pipelines.megaplan.types import (
     CliError,
 )
 from arnold_pipelines.megaplan.control_interface import read_valid_targets
+from arnold_pipelines.megaplan.custody.admission_control import (
+    AUTO_ADMISSION_SURFACE,
+    AUTO_ADMISSION_WRITER_ID,
+    AdmissionFence,
+    register_admission_writers,
+    synthetic_text_source_record,
+    validate_admission_mutation,
+)
 from arnold_pipelines.megaplan.workflows.events import (
     resolve_workflow_phase,
     workflow_cursor,
@@ -1548,6 +1556,60 @@ def _read_state_data(plan_dir: Path | None) -> dict[str, Any] | None:
     except (CliError, json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def _admit_auto_driver(plan_dir: Path | None, plan: str) -> dict[str, Any] | None:
+    """Fail closed before auto mutates a stale or mismatched plan."""
+
+    state_data = _read_state_data(plan_dir)
+    if plan_dir is None or state_data is None:
+        return None
+
+    register_admission_writers()
+    source_record = synthetic_text_source_record(
+        selector=plan,
+        label="auto-state",
+        text=json.dumps(state_data, sort_keys=True, separators=(",", ":")),
+    )
+    fences = [
+        AdmissionFence(
+            identity="plan_name",
+            expected=plan,
+            observed=state_data.get("name"),
+            satisfied=str(state_data.get("name") or "") == plan,
+            detail="auto must mutate the exact requested plan",
+        )
+    ]
+
+    binding = (state_data.get("meta") or {}).get("canonical_source_binding")
+    if isinstance(binding, Mapping):
+        from arnold_pipelines.megaplan.planning.source_binding import assert_canonical_source_current
+
+        report = assert_canonical_source_current(plan_dir, state_data, operation="auto")
+        current = report.get("current")
+        bound = report.get("bound")
+        if isinstance(current, Mapping):
+            source_record = dict(current)
+        elif isinstance(bound, Mapping):
+            source_record = dict(bound)
+        fences.append(
+            AdmissionFence(
+                identity="canonical_source_status",
+                expected="match",
+                observed=report.get("status"),
+                satisfied=report.get("status") == "match",
+                detail="auto requires the bound canonical source to remain current",
+            )
+        )
+
+    return validate_admission_mutation(
+        writer_id=AUTO_ADMISSION_WRITER_ID,
+        surface_name=AUTO_ADMISSION_SURFACE,
+        selector=plan,
+        source_record=source_record,
+        fences=tuple(fences),
+        extra={"plan_dir": str(plan_dir)},
+    )
 
 
 def _normalize_failure_message(value: object) -> str:
@@ -3832,6 +3894,7 @@ def drive(
     # review cycle finished since we last observed the state.
     plan_dir = _resolve_plan_dir(plan, cwd)
     if plan_dir is not None:
+        _admit_auto_driver(plan_dir, plan)
         emit_event(EventKind.INIT, plan_dir=plan_dir, payload={"plan_name": plan})
     from arnold_pipelines.megaplan.orchestration.progress import ProgressEmitter
     progress_emitter = ProgressEmitter.from_env(progress_env)

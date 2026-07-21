@@ -1,0 +1,315 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-20T07:30:00Z",
+  "source": "M6 inventory bytecode (.pyc files in tools/__pycache__/)",
+  "purpose": "Compatibility evidence for rebuilt M6 inventory modules. Bytecode is compatibility evidence, NOT authority — North Star invariants override recovered API behavior.",
+  "modules": {
+    "generate_wbc_boundary_inventory": {
+      "source_pyc": "tools/__pycache__/generate_wbc_boundary_inventory.cpython-311.pyc",
+      "description": "WBC boundary inventory generator (M6 — T4 + T5). Joins three WBC declaration inputs into deterministic boundary inventory.",
+      "public_constants": [
+        {"name": "REPO_ROOT", "type": "Path"},
+        {"name": "EVIDENCE_DIR", "type": "Path", "value": "evidence/"},
+        {"name": "BOUNDARY_CONTRACTS_PATH", "type": "Path"},
+        {"name": "CONTRACT_MATRIX_PATH", "type": "Path"},
+        {"name": "SUPPORT_MANIFEST_PATH", "type": "Path"},
+        {"name": "DISCOVERY_RULES_PATH", "type": "Path"},
+        {"name": "HISTORICAL_ADAPTERS_PATH", "type": "Path"},
+        {"name": "DEFAULT_OUTPUT", "type": "Path", "value": "evidence/wbc-boundary-inventory.json"},
+        {"name": "SURFACE_RECEIPT_WRITER", "value": "receipt_writer"},
+        {"name": "SURFACE_DURABLE_REF", "value": "durable_ref"},
+        {"name": "SURFACE_PAYLOAD_POLICY", "value": "payload_policy"},
+        {"name": "SURFACE_LEDGER", "value": "ledger"},
+        {"name": "SURFACE_JOURNAL", "value": "journal"},
+        {"name": "SURFACE_PROJECTION", "value": "projection"},
+        {"name": "SURFACE_REPAIR_QUEUE", "value": "repair_queue"},
+        {"name": "SURFACE_AUTHORITY_READER", "value": "authority_reader"},
+        {"name": "SURFACE_CONSUMER", "value": "consumer"},
+        {"name": "SURFACE_PRODUCER", "value": "producer"},
+        {"name": "SURFACE_AUTHORITY_WRITER", "value": "authority_writer"},
+        {"name": "SURFACE_COMPATIBILITY_SHIM", "value": "compatibility_shim"},
+        {"name": "SURFACE_UNKNOWN", "value": "unknown"},
+        {"name": "NON_AUTHORITY_SURFACES", "type": "frozenset"},
+        {"name": "AUTHORITY_ADJACENT_SURFACES", "type": "frozenset"},
+        {"name": "DISCOVERY_ROOTS", "type": "dict"},
+        {"name": "WRAPPER_SHELL_ROOTS", "type": "dict"},
+        {"name": "WRAPPER_EXTENSIONS", "type": "list"}
+      ],
+      "public_functions": [
+        {"name": "parse_boundary_contracts", "signature": "() -> list[dict]", "description": "Parse boundary contract instances from BOUNDARY_CONTRACTS_PATH."},
+        {"name": "parse_contract_matrix", "signature": "() -> list[dict]", "description": "Parse the C1 contract-to-producer matrix (immutable audited baseline)."},
+        {"name": "parse_support_manifest", "signature": "() -> list[dict]", "description": "Parse the support manifest listing declared-support rows."},
+        {"name": "generate", "signature": "(output_path: Path | None = None) -> dict", "description": "Generate the full WBC boundary inventory JSON. Main entry point."},
+        {"name": "main", "signature": "() -> None", "description": "CLI entry point."}
+      ]
+    },
+    "generate_m6_controlled_registries": {
+      "source_pyc": "tools/__pycache__/generate_m6_controlled_registries.cpython-311.pyc",
+      "description": "M6 controlled-writer registry generator (T11 — Step 10). Produces evidence/controlled-writer-registry.json.",
+      "public_constants": [
+        {"name": "REPO_ROOT", "type": "Path"},
+        {"name": "EVIDENCE_DIR", "type": "Path", "value": "evidence/"},
+        {"name": "WBC_INVENTORY_PATH", "type": "Path"},
+        {"name": "DEFAULT_OUTPUT", "type": "Path", "value": "evidence/controlled-writer-registry.json"},
+        {"name": "SCHEMA", "type": "dict"},
+        {"name": "WRITER_CATEGORY_PYTHON", "value": "python"},
+        {"name": "WRITER_CATEGORY_SHELL", "value": "shell"},
+        {"name": "WRITER_CATEGORY_RESIDENT", "value": "resident"},
+        {"name": "WRITER_CATEGORY_CLOUD", "value": "cloud"},
+        {"name": "WRITER_CATEGORY_PROVIDER", "value": "provider"},
+        {"name": "WRITER_CATEGORY_COMPATIBILITY", "value": "compatibility"},
+        {"name": "WRITER_SURFACE_TYPES", "type": "frozenset"},
+        {"name": "CONTROLLED_SURFACE_TYPES", "type": "frozenset"},
+        {"name": "KNOWN_OWNERS", "type": "frozenset"},
+        {"name": "READER_SCHEMA", "type": "dict"},
+        {"name": "READER_CATEGORY_PYTHON", "value": "python"},
+        {"name": "READER_CATEGORY_SHELL", "value": "shell"},
+        {"name": "READER_CATEGORY_RESIDENT", "value": "resident"},
+        {"name": "READER_CATEGORY_CLOUD", "value": "cloud"},
+        {"name": "READER_CATEGORY_PROVIDER", "value": "provider"},
+        {"name": "READER_CATEGORY_PROJECTION", "value": "projection"},
+        {"name": "READER_CATEGORY_COMPATIBILITY", "value": "compatibility"},
+        {"name": "READER_CATEGORY_HISTORICAL", "value": "historical"},
+        {"name": "NON_AUTHORITATIVE_READER_SURFACES", "type": "frozenset"}
+      ],
+      "public_functions": [
+        {"name": "generate_registry", "signature": "(output_path: Path | None = None) -> dict", "description": "Generate the controlled-writer registry JSON."},
+        {"name": "generate_reader_registry", "signature": "(output_path: Path | None = None) -> dict", "description": "Generate the controlled-reader registry JSON."},
+        {"name": "main", "signature": "() -> None", "description": "CLI entry point."}
+      ]
+    },
+    "generate_m6_finding_register": {
+      "source_pyc": "tools/__pycache__/generate_m6_finding_register.cpython-311.pyc",
+      "description": "M6 finding-prevention register generator (T10 — Step 9). Produces evidence/finding-prevention-register.json.",
+      "public_constants": [
+        {"name": "REPO_ROOT", "type": "Path"},
+        {"name": "EVIDENCE_DIR", "type": "Path", "value": "evidence/"},
+        {"name": "RESEARCH_DOC", "type": "Path"},
+        {"name": "DEFAULT_OUTPUT", "type": "Path", "value": "evidence/finding-prevention-register.json"},
+        {"name": "SCHEMA", "type": "dict"}
+      ],
+      "public_functions": [
+        {"name": "generate_register", "signature": "(output_path: Path | None = None) -> dict", "description": "Generate the finding-prevention register JSON."},
+        {"name": "main", "signature": "() -> None", "description": "CLI entry point."}
+      ]
+    },
+    "generate_m6_ownership_decision": {
+      "source_pyc": "tools/__pycache__/generate_m6_ownership_decision.cpython-311.pyc",
+      "description": "M6 ownership decision generator (T14 — Step 13). Produces pc-scope-decision.json and ownership-decision.json.",
+      "public_constants": [
+        {"name": "REPO_ROOT", "type": "Path"},
+        {"name": "EVIDENCE_DIR", "type": "Path", "value": "evidence/"},
+        {"name": "PREREQ_PATH", "type": "Path", "value": "evidence/m6-prerequisite-verification.json"},
+        {"name": "WBC_INVENTORY_PATH", "type": "Path", "value": "evidence/wbc-boundary-inventory.json"},
+        {"name": "WRITER_REGISTRY_PATH", "type": "Path"},
+        {"name": "READER_REGISTRY_PATH", "type": "Path"},
+        {"name": "FINDING_REGISTER_PATH", "type": "Path"},
+        {"name": "MIGRATION_MATRIX_PATH", "type": "Path"},
+        {"name": "REPLAY_TX_PATH", "type": "Path"},
+        {"name": "REPLAY_STRATEGY_PATH", "type": "Path"},
+        {"name": "AUTHORITY_RESEARCH_PATH", "type": "Path"},
+        {"name": "LINEAGE_AUDIT_PATH", "type": "Path"},
+        {"name": "DEFAULT_OUTPUT_DIR", "type": "Path", "value": "evidence/"},
+        {"name": "PC_SCOPE_PATH", "type": "Path", "value": "evidence/pc-scope-decision.json"},
+        {"name": "OWNERSHIP_PATH", "type": "Path", "value": "evidence/ownership-decision.json"},
+        {"name": "PC_SCOPE_SCHEMA", "type": "dict"},
+        {"name": "OWNERSHIP_SCHEMA", "type": "dict"}
+      ],
+      "public_functions": [
+        {"name": "main", "signature": "() -> None", "description": "CLI entry point."}
+      ]
+    },
+    "generate_m6_replay_fixtures": {
+      "source_pyc": "tools/__pycache__/generate_m6_replay_fixtures.cpython-311.pyc",
+      "description": "M6 replay fixture generators (T8 — Transaction Spine, T9 — Strategy Roadmap). Produces evidence/replay/ artifacts.",
+      "public_constants": [
+        {"name": "REPO_ROOT", "type": "Path"},
+        {"name": "EVIDENCE_DIR", "type": "Path", "value": "evidence/"},
+        {"name": "REPLAY_DIR", "type": "Path", "value": "evidence/replay/"},
+        {"name": "HANDOFF_DIR", "type": "Path"},
+        {"name": "TRANSACTION_SPINE_HANDOFF", "type": "Path"},
+        {"name": "ACTIVE_EPICS_HANDOFF", "type": "Path"},
+        {"name": "INCIDENT_SUMMARIES_DIR", "type": "Path"},
+        {"name": "PROBLEM_SUMMARIES_DIR", "type": "Path"},
+        {"name": "INCIDENT_INDEX", "type": "Path"},
+        {"name": "INCIDENTS_LEDGER", "type": "Path"},
+        {"name": "DEFAULT_OUTPUT", "type": "Path", "value": "evidence/replay/transaction-spine.json"},
+        {"name": "DEFAULT_STRATEGY_OUTPUT", "type": "Path", "value": "evidence/replay/strategy-roadmap.json"},
+        {"name": "STRATEGY_INITIATIVE_DIR", "type": "Path"},
+        {"name": "STRATEGY_CHAIN_YAML", "type": "str", "value": "chain.yaml"},
+        {"name": "STRATEGY_STRATEGY_MD", "type": "str", "value": "strategy.md"},
+        {"name": "STRATEGY_NORTHSTAR_MD", "type": "str", "value": "NORTHSTAR.md"},
+        {"name": "STRATEGY_README_MD", "type": "str", "value": "README.md"}
+      ],
+      "public_functions": [
+        {"name": "generate_transaction_spine", "signature": "(output_path: Path | None = None) -> dict", "description": "Generate transaction spine replay fixture."},
+        {"name": "generate_strategy_roadmap", "signature": "(output_path: Path | None = None) -> dict", "description": "Generate strategy roadmap replay fixture."},
+        {"name": "main", "signature": "() -> None", "description": "CLI entry point."}
+      ]
+    },
+    "generate_m6_rollout_register": {
+      "source_pyc": "tools/__pycache__/generate_m6_rollout_register.cpython-311.pyc",
+      "description": "M6 rollout/deletion register, work-ledger vocabulary, and proof index generator (T15). Produces evidence/rollout-register.json, evidence/work-ledger-vocabulary.json, evidence/proof-index.json.",
+      "public_constants": [
+        {"name": "REPO_ROOT", "type": "Path"},
+        {"name": "EVIDENCE_DIR", "type": "Path", "value": "evidence/"},
+        {"name": "PREREQ_PATH", "type": "Path", "value": "evidence/m6-prerequisite-verification.json"},
+        {"name": "WBC_INVENTORY_PATH", "type": "Path", "value": "evidence/wbc-boundary-inventory.json"},
+        {"name": "WRITER_REGISTRY_PATH", "type": "Path"},
+        {"name": "READER_REGISTRY_PATH", "type": "Path"},
+        {"name": "FINDING_REGISTER_PATH", "type": "Path"},
+        {"name": "MIGRATION_MATRIX_PATH", "type": "Path"},
+        {"name": "REPLAY_TX_PATH", "type": "Path"},
+        {"name": "REPLAY_STRATEGY_PATH", "type": "Path"},
+        {"name": "PC_SCOPE_PATH", "type": "Path", "value": "evidence/pc-scope-decision.json"},
+        {"name": "OWNERSHIP_PATH", "type": "Path", "value": "evidence/ownership-decision.json"},
+        {"name": "HISTORICAL_ADAPTERS_PATH", "type": "Path"},
+        {"name": "DISCOVERY_RULES_PATH", "type": "Path"},
+        {"name": "INVENTORY_VALIDATION_PATH", "type": "Path"},
+        {"name": "AUTHORITY_RESEARCH_PATH", "type": "Path"},
+        {"name": "ROLLOUT_PATH", "type": "Path", "value": "evidence/rollout-register.json"},
+        {"name": "WORK_LEDGER_PATH", "type": "Path", "value": "evidence/work-ledger-vocabulary.json"},
+        {"name": "PROOF_INDEX_PATH", "type": "Path", "value": "evidence/proof-index.json"},
+        {"name": "ROLLOUT_SCHEMA", "type": "dict"},
+        {"name": "WORK_LEDGER_SCHEMA", "type": "dict"},
+        {"name": "PROOF_INDEX_SCHEMA", "type": "dict"}
+      ],
+      "public_functions": [
+        {"name": "main", "signature": "() -> None", "description": "CLI entry point."}
+      ]
+    },
+    "reconcile_m6_migration_matrix": {
+      "source_pyc": "tools/__pycache__/reconcile_m6_migration_matrix.cpython-311.pyc",
+      "description": "M6 migration matrix reconciler (T13 — Step 12). Produces evidence/migration-matrix-reconciled.json.",
+      "public_constants": [
+        {"name": "REPO_ROOT", "type": "Path"},
+        {"name": "EVIDENCE_DIR", "type": "Path", "value": "evidence/"},
+        {"name": "MATRIX_PATH", "type": "Path", "value": ".megaplan/initiatives/custody-control-plane/research/migration-matrix.md"},
+        {"name": "PREREQ_PATH", "type": "Path", "value": "evidence/m6-prerequisite-verification.json"},
+        {"name": "WBC_INVENTORY_PATH", "type": "Path", "value": "evidence/wbc-boundary-inventory.json"},
+        {"name": "WRITER_REGISTRY_PATH", "type": "Path"},
+        {"name": "READER_REGISTRY_PATH", "type": "Path"},
+        {"name": "FINDING_REGISTER_PATH", "type": "Path"},
+        {"name": "REPLAY_TX_PATH", "type": "Path"},
+        {"name": "REPLAY_STRATEGY_PATH", "type": "Path"},
+        {"name": "DEFAULT_OUTPUT", "type": "Path", "value": "evidence/migration-matrix-reconciled.json"},
+        {"name": "CLASS_PREREQ_SATISFIED", "value": "prereq_satisfied"},
+        {"name": "CLASS_RESIDUAL", "value": "residual"},
+        {"name": "CLASS_BLOCKED", "value": "blocked"},
+        {"name": "CLASS_RETIRED", "value": "retired"},
+        {"name": "CLASS_OUT_OF_SCOPE", "value": "out_of_scope"},
+        {"name": "NORMATIVE_FAIL_CLOSED", "type": "dict"},
+        {"name": "NORMATIVE_ROLLBACK", "type": "dict"},
+        {"name": "NORMATIVE_MIXED_VERSION", "type": "dict"},
+        {"name": "OWNER_NORMALIZATION", "type": "dict"}
+      ],
+      "public_functions": [
+        {"name": "generate_reconciled_matrix", "signature": "(output_path: Path | None = None) -> dict", "description": "Generate reconciled migration matrix."},
+        {"name": "validate_artifact", "signature": "(artifact: dict) -> list[str]", "description": "Validate a reconciled matrix artifact; returns list of error messages."},
+        {"name": "main", "signature": "() -> None", "description": "CLI entry point."}
+      ]
+    },
+    "validate_m6_evidence": {
+      "source_pyc": "tools/__pycache__/validate_m6_evidence.cpython-311.pyc",
+      "description": "M6 aggregate evidence validator (T16). Validates the complete M6 evidence bundle.",
+      "public_constants": [
+        {"name": "REPO_ROOT", "type": "Path"},
+        {"name": "EVIDENCE_DIR", "type": "Path", "value": "evidence/"},
+        {"name": "REPLAY_DIR", "type": "Path", "value": "evidence/replay/"},
+        {"name": "M6_ARTIFACTS", "type": "dict"},
+        {"name": "WBC_INTEGRATION_COMMIT", "type": "str"},
+        {"name": "WBC_EXPECTED_FIRST_PARENT", "type": "str"},
+        {"name": "WBC_EXPECTED_SECOND_PARENT", "type": "str"},
+        {"name": "PROOF_INDEX_SCHEMA", "type": "dict"}
+      ],
+      "public_functions": [
+        {"name": "current_head", "signature": "() -> str", "description": "Return current HEAD commit SHA."},
+        {"name": "commit_exists", "signature": "(sha: str) -> bool", "description": "Check if a commit exists."},
+        {"name": "is_ancestor", "signature": "(maybe_ancestor: str, descendant: str) -> bool", "description": "Check if maybe_ancestor is an ancestor of descendant."},
+        {"name": "merge_parents", "signature": "(sha: str) -> list[str]", "description": "Return merge parents of a commit."},
+        {"name": "validate_all_evidence", "signature": "(strict: bool = True) -> dict", "description": "Validate the complete M6 evidence bundle."},
+        {"name": "main", "signature": "() -> None", "description": "CLI entry point."}
+      ]
+    },
+    "verify_m6_prerequisites": {
+      "source_pyc": "tools/__pycache__/verify_m6_prerequisites.cpython-311.pyc",
+      "description": "Read-only M6 prerequisite verifier. Checks HEAD, M5 attestation, reconciliation artifacts, WBC merge evidence, activation receipts.",
+      "public_constants": [
+        {"name": "REPO_ROOT", "type": "Path"},
+        {"name": "EVIDENCE_DIR", "type": "Path", "value": "evidence/"},
+        {"name": "M5_HANDOFF_DIR", "type": "Path"},
+        {"name": "M5_FINAL_ATTESTATION", "type": "Path"},
+        {"name": "M5_ATTESTATION", "type": "Path"},
+        {"name": "M5_RECONCILIATION_FILES", "type": "list"},
+        {"name": "WBC_MERGE_EVIDENCE", "type": "Path"},
+        {"name": "WBC_INTEGRATION_COMMIT", "type": "str"},
+        {"name": "ACTIVATION_EVIDENCE_PATH", "type": "Path", "value": "evidence/m6-activation-receipt-evidence.json"},
+        {"name": "WBC_BOUNDARY_FILES", "type": "list"},
+        {"name": "WBC_RUNTIME_FILES", "type": "list"},
+        {"name": "WBC_SCHEMA_FILES", "type": "list"},
+        {"name": "WBC_SUPPORT_FILES", "type": "list"},
+        {"name": "ALL_WBC_FILES", "type": "list"}
+      ],
+      "public_functions": [
+        {"name": "current_head", "signature": "() -> str", "description": "Return current HEAD commit SHA."},
+        {"name": "commit_exists", "signature": "(sha: str) -> bool", "description": "Check if a commit exists."},
+        {"name": "is_ancestor", "signature": "(maybe_ancestor: str, descendant: str) -> bool", "description": "Check if maybe_ancestor is an ancestor of descendant."},
+        {"name": "merge_parents", "signature": "(sha: str) -> list[str]", "description": "Return merge parents of a commit."},
+        {"name": "file_content_at_commit", "signature": "(sha: str, path: str) -> str | None", "description": "Read file content at a given commit."},
+        {"name": "check_current_head", "signature": "() -> dict", "description": "Check current HEAD."},
+        {"name": "check_m5_final_attestation", "signature": "() -> dict", "description": "Check M5 final attestation."},
+        {"name": "check_m5_bound_head_vs_current_head", "signature": "() -> dict", "description": "Check M5 bound HEAD vs current HEAD."},
+        {"name": "check_m5_milestone_attestation", "signature": "() -> dict", "description": "Check M5 milestone attestation."},
+        {"name": "check_m5_reconciliation_artifacts", "signature": "() -> dict", "description": "Check M5 reconciliation artifacts."},
+        {"name": "check_wbc_merge_evidence", "signature": "() -> dict", "description": "Check WBC merge evidence."},
+        {"name": "check_wbc_ancestry", "signature": "() -> dict", "description": "Check WBC ancestry."},
+        {"name": "check_wbc_package_metadata", "signature": "() -> dict", "description": "Check WBC package metadata."},
+        {"name": "check_wbc_file_hashes", "signature": "() -> dict", "description": "Check WBC file hashes."},
+        {"name": "check_activation_receipt_evidence", "signature": "() -> dict", "description": "Check activation receipt evidence."},
+        {"name": "run_all_checks", "signature": "() -> dict", "description": "Run all prerequisite checks."},
+        {"name": "emit", "signature": "(output_path: Path | None = None) -> dict", "description": "Emit prerequisite verification result."},
+        {"name": "main", "signature": "() -> None", "description": "CLI entry point."}
+      ]
+    },
+    "wbc_ledger_cli": {
+      "source_pyc": "tools/__pycache__/wbc_ledger_cli.cpython-311.pyc",
+      "description": "WBC Transactional Ledger CLI — JSON stdin/stdout shell adapter exposing M6A ledger through a shell-safe interface.",
+      "public_enums": [
+        {
+          "name": "ExitCode",
+          "members": ["SUCCESS", "INCOMPLETE", "INDETERMINATE", "INCOHERENT", "VALIDATION_FAILURE"]
+        }
+      ],
+      "public_functions": [
+        {"name": "main", "signature": "(argv: list[str] | None = None) -> int", "description": "CLI entry point; returns ExitCode."}
+      ],
+      "public_operations": [
+        {"name": "append", "description": "Append a typed event to the ledger"},
+        {"name": "read", "description": "Read events by attempt ID"},
+        {"name": "query", "description": "Query events with filters"},
+        {"name": "reconcile", "description": "Verify checksums and sequence integrity"},
+        {"name": "migrate", "description": "Apply schema migrations"}
+      ],
+      "dependencies": [
+        "arnold.adapters.ledger_store_adapter (LedgerStoreAdapter)",
+        "arnold.workflow.attempt_ledger_store (SqliteAttemptLedgerStore, GateStatus)",
+        "arnold.workflow.execution_attempt_ledger (LedgerEvent, AttemptEventType)",
+        "arnold.workflow.ledger_migrations (SqliteLedgerMigrator)"
+      ]
+    }
+  },
+  "cross_module_dependencies": {
+    "generate_wbc_boundary_inventory": ["yaml (optional)"],
+    "generate_m6_controlled_registries": ["generate_wbc_boundary_inventory (WBC_INVENTORY_PATH)"],
+    "generate_m6_finding_register": [],
+    "generate_m6_ownership_decision": ["generate_wbc_boundary_inventory", "generate_m6_controlled_registries", "generate_m6_finding_register", "reconcile_m6_migration_matrix", "generate_m6_replay_fixtures", "verify_m6_prerequisites"],
+    "generate_m6_replay_fixtures": [],
+    "generate_m6_rollout_register": ["verify_m6_prerequisites", "generate_wbc_boundary_inventory", "generate_m6_controlled_registries", "generate_m6_finding_register", "reconcile_m6_migration_matrix", "generate_m6_replay_fixtures", "generate_m6_ownership_decision"],
+    "reconcile_m6_migration_matrix": ["verify_m6_prerequisites", "generate_wbc_boundary_inventory", "generate_m6_controlled_registries", "generate_m6_finding_register", "generate_m6_replay_fixtures"],
+    "validate_m6_evidence": ["verify_m6_prerequisites", "generate_m6_rollout_register", "generate_m6_ownership_decision"],
+    "verify_m6_prerequisites": ["subprocess (git)"],
+    "wbc_ledger_cli": ["arnold.adapters.ledger_store_adapter", "arnold.workflow.attempt_ledger_store", "arnold.workflow.execution_attempt_ledger", "arnold.workflow.ledger_migrations"]
+  },
+  "north_star_overrides_note": "Bytecode-derived interfaces are compatibility evidence only. The M6 inventory tools are read-only generators and validators. The C1 contract-to-producer matrix remains immutable audited input. Generated inventory becomes the living source of truth for migration completeness."
+}
+

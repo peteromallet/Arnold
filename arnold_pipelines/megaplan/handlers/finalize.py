@@ -1581,7 +1581,11 @@ def _require_explicit_finalize_baseline_selection(test_selection: dict[str, Any]
 def _route_finalize_baseline_selection_failure_to_revise(
     plan_dir: Path,
     state: PlanState,
+    args: argparse.Namespace,
     worker: WorkerResult,
+    agent: str,
+    mode: str,
+    refreshed: bool,
     error: FinalizeBaselineSelectionError,
 ) -> StepResponse:
     projection = _finalize_revise_fallback_projection()
@@ -1692,6 +1696,32 @@ def _route_finalize_baseline_selection_failure_to_revise(
             "test_selection": error.test_selection,
         },
     )
+    response = _finish_step(
+        plan_dir,
+        state,
+        args,
+        step="finalize",
+        worker=worker,
+        agent=agent,
+        mode=mode,
+        refreshed=refreshed,
+        summary=message,
+        artifacts=["gate.json", "gate_carry.json", "finalize_revise_feedback.json"],
+        output_file="finalize_revise_feedback.json",
+        artifact_hash=sha256_file(plan_dir / "finalize_revise_feedback.json"),
+        result="plan_contract_revise_needed",
+        success=False,
+        next_step=projection["next_step"],
+        response_fields={
+            "result": "plan_contract_revise_needed",
+            "route_signal": projection["route_signal"],
+            "details": {
+                "code": "missing_scoped_baseline_test_contract",
+                "test_selection": error.test_selection,
+            },
+            "iteration": state["iteration"],
+        },
+    )
     record_step_failure(
         plan_dir,
         state,
@@ -1705,29 +1735,17 @@ def _route_finalize_baseline_selection_failure_to_revise(
         ),
         duration_ms=worker.duration_ms,
     )
-    response: StepResponse = {
-        "success": False,
-        "step": "finalize",
-        "result": "plan_contract_revise_needed",
-        "route_signal": projection["route_signal"],
-        "summary": message,
-        "artifacts": ["gate.json", "gate_carry.json", "finalize_revise_feedback.json"],
-        "next_step": projection["next_step"],
-        "state": projection["state"],
-        "iteration": state["iteration"],
-        "details": {
-            "code": "missing_scoped_baseline_test_contract",
-            "test_selection": error.test_selection,
-        },
-    }
-    _attach_next_step_runtime(response)
     return response
 
 
 def _route_finalize_task_feasibility_failure_to_revise(
     plan_dir: Path,
     state: PlanState,
+    args: argparse.Namespace,
     worker: WorkerResult,
+    agent: str,
+    mode: str,
+    refreshed: bool,
     error: TaskFeasibilityError,
 ) -> StepResponse:
     """Persist final-stage sense-check evidence and route an infeasible DAG to revise."""
@@ -1828,6 +1846,37 @@ def _route_finalize_task_feasibility_failure_to_revise(
             "report_artifact": "task_feasibility.json",
         },
     )
+    response = _finish_step(
+        plan_dir,
+        state,
+        args,
+        step="finalize",
+        worker=worker,
+        agent=agent,
+        mode=mode,
+        refreshed=refreshed,
+        summary=message,
+        artifacts=[
+            "task_feasibility.json",
+            "gate.json",
+            "gate_carry.json",
+            "finalize_revise_feedback.json",
+        ],
+        output_file="finalize_revise_feedback.json",
+        artifact_hash=sha256_file(plan_dir / "finalize_revise_feedback.json"),
+        result="plan_contract_revise_needed",
+        success=False,
+        next_step=projection["next_step"],
+        response_fields={
+            "result": "plan_contract_revise_needed",
+            "route_signal": projection["route_signal"],
+            "details": {
+                "code": "finalized_task_feasibility_failed",
+                "diagnostic_codes": codes,
+            },
+            "iteration": state["iteration"],
+        },
+    )
     record_step_failure(
         plan_dir,
         state,
@@ -1841,24 +1890,6 @@ def _route_finalize_task_feasibility_failure_to_revise(
         ),
         duration_ms=worker.duration_ms,
     )
-    response: StepResponse = {
-        "success": False,
-        "step": "finalize",
-        "result": "plan_contract_revise_needed",
-        "route_signal": projection["route_signal"],
-        "summary": message,
-        "artifacts": [
-            "task_feasibility.json",
-            "gate.json",
-            "gate_carry.json",
-            "finalize_revise_feedback.json",
-        ],
-        "next_step": projection["next_step"],
-        "state": projection["state"],
-        "iteration": state["iteration"],
-        "details": {"code": "finalized_task_feasibility_failed", "diagnostic_codes": codes},
-    }
-    _attach_next_step_runtime(response)
     return response
 
 
@@ -2186,14 +2217,22 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
             return _route_finalize_task_feasibility_failure_to_revise(
                 plan_dir,
                 state,
+                args,
                 worker,
+                agent,
+                mode,
+                refreshed,
                 error,
             )
         except FinalizeBaselineSelectionError as error:
             return _route_finalize_baseline_selection_failure_to_revise(
                 plan_dir,
                 state,
+                args,
                 worker,
+                agent,
+                mode,
+                refreshed,
                 error,
             )
         success_projection = _finalize_success_projection()
@@ -2212,4 +2251,5 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
             artifact_hash=artifact_hash,
             next_step=success_projection["next_step"],
             response_fields={"route_signal": success_projection["route_signal"]},
+            extra_boundary_ids=("final_projection",),
         )

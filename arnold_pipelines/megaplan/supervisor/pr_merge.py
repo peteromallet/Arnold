@@ -18,6 +18,14 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.chain import git_ops
+from arnold_pipelines.megaplan.chain.wbc import (
+    GIT_PR_READY_SURFACE,
+    GIT_PR_READY_WRITER_ID,
+    ChainWbcRule,
+    finalize_artifact_candidates,
+    finalize_receipt_candidates,
+    validate_chain_wbc_transition,
+)
 from arnold.control.interface import ControlBinding, RunStateView
 from arnold.runtime.outcome import RunOutcome
 from arnold_pipelines.megaplan.supervisor.ladder import (
@@ -39,6 +47,47 @@ _PR_WAIT_CURSOR_KINDS = frozenset(
 )
 
 _GREEN_MERGE_STATE_STATUSES = frozenset({"clean", "has_hooks"})
+
+
+def _pr_progression_validation_evidence(
+    *,
+    root: Path,
+    plan_dir: Path,
+    pr_number: int,
+    transition_name: str,
+) -> dict[str, Any]:
+    plan_dir_exists = plan_dir.exists()
+    receipts = finalize_receipt_candidates(plan_dir)
+    artifacts = finalize_artifact_candidates(plan_dir)
+    finalize_evidence_present = bool(receipts) or bool(artifacts) or not plan_dir_exists
+    return validate_chain_wbc_transition(
+        writer_id=GIT_PR_READY_WRITER_ID,
+        surface_name=GIT_PR_READY_SURFACE,
+        transition_name=transition_name,
+        subject=f"pr#{pr_number}",
+        source_path=Path(__file__),
+        project_dir=root,
+        rules=(
+            ChainWbcRule(
+                "plan_dir_or_explicit_cursor",
+                True,
+                plan_dir_exists or bool(str(plan_dir)),
+                plan_dir_exists or bool(str(plan_dir)),
+            ),
+            ChainWbcRule(
+                "finalize_evidence_present",
+                True,
+                finalize_evidence_present,
+                finalize_evidence_present,
+            ),
+        ),
+        extra={
+            "plan_dir": str(plan_dir),
+            "plan_dir_exists": plan_dir_exists,
+            "finalize_receipts": receipts,
+            "finalize_artifacts": artifacts,
+        },
+    )
 
 
 @dataclass(frozen=True)
@@ -126,8 +175,17 @@ def maybe_resolve_pr_merge_wait(
 
     if pr_state == "merged":
         # Capture merged PR evidence: merge commit and tip containment check.
+        validation_evidence = _pr_progression_validation_evidence(
+            root=root,
+            plan_dir=plan_dir,
+            pr_number=pr_number,
+            transition_name="supervisor_pr_merged",
+        )
         merged_evidence = git_ops._capture_pr_merged_evidence(
-            root, pr_number, writer=writer
+            root,
+            pr_number,
+            writer=writer,
+            validation_evidence=validation_evidence,
         )
         return PRMergeResolution(
             handled=True,
@@ -166,8 +224,18 @@ def maybe_resolve_pr_merge_wait(
         )
 
     # Capture PR-ready evidence before marking ready.
+    validation_evidence = _pr_progression_validation_evidence(
+        root=root,
+        plan_dir=plan_dir,
+        pr_number=pr_number,
+        transition_name="supervisor_pr_ready",
+    )
     pr_ready_evidence = git_ops._capture_pr_ready_evidence(
-        root, pr_number, writer=writer, ci_readiness_state=readiness,
+        root,
+        pr_number,
+        writer=writer,
+        ci_readiness_state=readiness,
+        validation_evidence=validation_evidence,
     )
     # Capture PR head before merge so merged evidence can reference it.
     pr_head_sha, _last_pushed = git_ops._capture_pr_head_evidence(
@@ -192,7 +260,11 @@ def maybe_resolve_pr_merge_wait(
 
     # Capture merged evidence with tip containment after merge succeeds.
     merged_evidence = git_ops._capture_pr_merged_evidence(
-        root, pr_number, writer=writer, pr_head_sha=pr_head_sha,
+        root,
+        pr_number,
+        writer=writer,
+        pr_head_sha=pr_head_sha,
+        validation_evidence=validation_evidence,
     )
 
     return PRMergeResolution(

@@ -20,6 +20,13 @@ from arnold_pipelines.megaplan.bakeoff.state import (
     save_bakeoff_state,
     worktree_root,
 )
+from arnold_pipelines.megaplan.bakeoff.wbc import (
+    BAKEOFF_RUN_SURFACE,
+    BAKEOFF_RUN_WRITER_ID,
+    BakeoffWbcRule,
+    record_bakeoff_wbc_evidence,
+    validate_bakeoff_transition,
+)
 from arnold_pipelines.megaplan.bakeoff.worktree import (
     capture_base_sha,
     create_worktree,
@@ -80,6 +87,39 @@ async def run_bakeoff(
         "merged_at": None,
         "judge_model": None,
     }
+    run_evidence = validate_bakeoff_transition(
+        writer_id=BAKEOFF_RUN_WRITER_ID,
+        surface_name=BAKEOFF_RUN_SURFACE,
+        transition_name="run_bakeoff",
+        subject=experiment_id,
+        source_path=Path(__file__),
+        project_dir=root,
+        destructive=True,
+        rules=(
+            BakeoffWbcRule(
+                "idea_exists",
+                True,
+                idea.exists(),
+                idea.exists(),
+            ),
+            BakeoffWbcRule(
+                "mode_supported",
+                True,
+                mode in {"code", "doc"},
+                mode in {"code", "doc"},
+            ),
+        ),
+        extra={
+            "mode": mode,
+            "profile_count": len(profiles),
+            "output_path": output,
+        },
+    )
+    record_bakeoff_wbc_evidence(
+        state,
+        entry_key=f"run:{experiment_id}",
+        evidence=run_evidence,
+    )
     save_bakeoff_state(root, state)
 
     created_worktrees: list[Path] = []
@@ -147,6 +187,34 @@ async def _init_profile(
     mode: str = "code",
     output: str | None = None,
 ) -> BakeoffProfileRecord:
+    init_evidence = validate_bakeoff_transition(
+        writer_id=BAKEOFF_RUN_WRITER_ID,
+        surface_name=BAKEOFF_RUN_SURFACE,
+        transition_name="init_profile",
+        subject=f"{experiment_id}:{profile}",
+        source_path=Path(__file__),
+        project_dir=root,
+        destructive=True,
+        rules=(
+            BakeoffWbcRule(
+                "profile_name_present",
+                True,
+                bool(str(profile).strip()),
+                bool(str(profile).strip()),
+            ),
+            BakeoffWbcRule(
+                "base_sha_present",
+                True,
+                bool(str(base_sha).strip()),
+                bool(str(base_sha).strip()),
+            ),
+        ),
+        extra={
+            "mode": mode,
+            "output_path": output,
+            "robustness": robustness,
+        },
+    )
     worktree = worktree_root(root, experiment_id) / profile
     profile_archive = bakeoff_root(root, experiment_id) / profile
     profile_archive.mkdir(parents=True, exist_ok=True)
@@ -208,6 +276,9 @@ async def _init_profile(
         "outcome": None,
         "log_path": str(profile_archive / "auto.log"),
         "outcome_path": str(profile_archive / "outcome.json"),
+        "wbc_transition_evidence": {
+            "init_profile": init_evidence,
+        },
     }
 
 
@@ -219,6 +290,34 @@ async def _launch_profile_auto(
     worktree = Path(record["worktree"])
     log_path = Path(record["log_path"])
     outcome_path = Path(record["outcome_path"])
+    launch_evidence = validate_bakeoff_transition(
+        writer_id=BAKEOFF_RUN_WRITER_ID,
+        surface_name=BAKEOFF_RUN_SURFACE,
+        transition_name="launch_profile_auto",
+        subject=f"{state['experiment_id']}:{record['name']}",
+        source_path=Path(__file__),
+        project_dir=root,
+        destructive=True,
+        rules=(
+            BakeoffWbcRule(
+                "worktree_exists",
+                True,
+                worktree.exists(),
+                worktree.exists(),
+            ),
+            BakeoffWbcRule(
+                "plan_id_present",
+                True,
+                bool(str(record.get("plan_id") or "").strip()),
+                bool(str(record.get("plan_id") or "").strip()),
+            ),
+        ),
+        extra={
+            "worktree": str(worktree),
+            "log_path": str(log_path),
+            "outcome_path": str(outcome_path),
+        },
+    )
     try:
         spawned = await _spawn_auto(worktree, record["plan_id"], log_path, outcome_path)
     except Exception as exc:
@@ -231,6 +330,11 @@ async def _launch_profile_auto(
     process, _ = spawned
     record["pid"] = getattr(process, "pid", None)
     record["launched_at"] = now_utc()
+    record_bakeoff_wbc_evidence(
+        record,
+        entry_key="launch_profile_auto",
+        evidence=launch_evidence,
+    )
     save_bakeoff_state(root, state)
     return asyncio.create_task(_wait_profile(record, spawned))
 

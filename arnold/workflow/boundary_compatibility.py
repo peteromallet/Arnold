@@ -26,6 +26,14 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from arnold.workflow.boundary_templates import (
+    DEFAULT_WBC_INVENTORY_PATH,
+    WbcInventoryInvariant,
+    assess_inventory_rows,
+    load_wbc_boundary_inventory,
+    select_inventory_rows,
+)
+
 
 # ── Compatibility status vocabulary ──────────────────────────────────────
 
@@ -83,6 +91,13 @@ class CompatibilityDiagnosticCode(StrEnum):
     DECLARED_ONLY_NO_PRODUCER = "CBC013_DECLARED_ONLY_NO_PRODUCER"
     UNKNOWN_PRODUCER_CATEGORY = "CBC014_UNKNOWN_PRODUCER_CATEGORY"
     VISIBLE_NON_CONFORMANCE = "CBC015_VISIBLE_NON_CONFORMANCE"
+    INCOMPLETE_INVENTORY_ROW = "CBC016_INCOMPLETE_INVENTORY_ROW"
+    START_BEFORE_DISPATCH_UNVERIFIED = "CBC017_START_BEFORE_DISPATCH_UNVERIFIED"
+    EXACTLY_ONE_TERMINAL_UNVERIFIED = "CBC018_EXACTLY_ONE_TERMINAL_UNVERIFIED"
+    GRANT_LEASE_GATE_UNVERIFIED = "CBC019_GRANT_LEASE_GATE_UNVERIFIED"
+    EXACT_VERSION_LOOKUP_UNVERIFIED = "CBC020_EXACT_VERSION_LOOKUP_UNVERIFIED"
+    CAUSAL_EVIDENCE_UNVERIFIED = "CBC021_CAUSAL_EVIDENCE_UNVERIFIED"
+    POST_TRANSITION_REREAD_UNVERIFIED = "CBC022_POST_TRANSITION_REREAD_UNVERIFIED"
 
 
 # ── Critical categories for compatibility evaluation ─────────────────────
@@ -185,6 +200,7 @@ class CompatibilityEvaluator:
         self,
         fixture_dir: str | Path | None = None,
         contract_matrix_path: str | Path | None = None,
+        inventory_path: str | Path | None = None,
     ) -> None:
         """Create a read-only evaluator.
 
@@ -203,11 +219,18 @@ class CompatibilityEvaluator:
                 "arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json"
             )
         self._contract_matrix_path = Path(contract_matrix_path)
+        self._inventory_path = (
+            Path(inventory_path)
+            if inventory_path is not None
+            else DEFAULT_WBC_INVENTORY_PATH
+        )
 
         # Load the contract matrix once (read-only)
         self._contract_matrix: dict[str, Any] = {}
         self._contracts_by_boundary_id: dict[str, dict[str, Any]] = {}
+        self._inventory: dict[str, Any] | None = None
         self._load_contract_matrix()
+        self._load_inventory()
 
     # ── public API ────────────────────────────────────────────────────
 
@@ -312,7 +335,7 @@ class CompatibilityEvaluator:
         # ── Step 5: Check contract matrix alignment ────────────────────
 
         contract = self._contracts_by_boundary_id.get(boundary_id)
-        contract_issues, contract_status = self._check_contract_alignment(
+        contract_issues, contract_status, contract_detail = self._check_contract_alignment(
             boundary_id, contract
         )
 
@@ -333,12 +356,11 @@ class CompatibilityEvaluator:
                 details=MappingProxyType(
                     {
                         "producer_category": (
-                            contract.get("producer_category", "unknown")
-                            if contract
-                            else "not_found"
+                            contract_detail.get("producer_category", "unknown")
                         ),
                         "structural_issues": list(structural_issues),
                         "contract_issues": list(contract_issues),
+                        **contract_detail,
                     }
                 ),
             )
@@ -358,12 +380,11 @@ class CompatibilityEvaluator:
                 details=MappingProxyType(
                     {
                         "producer_category": (
-                            contract.get("producer_category", "unknown")
-                            if contract
-                            else "not_found"
+                            contract_detail.get("producer_category", "unknown")
                         ),
                         "structural_issues": list(structural_issues),
                         "contract_issues": list(contract_issues),
+                        **contract_detail,
                     }
                 ),
             )
@@ -403,10 +424,9 @@ class CompatibilityEvaluator:
             details=MappingProxyType(
                 {
                     "producer_category": (
-                        contract.get("producer_category", "unknown")
-                        if contract
-                        else "not_found"
+                        contract_detail.get("producer_category", "unknown")
                     ),
+                    **contract_detail,
                 }
             ),
         )
@@ -425,6 +445,10 @@ class CompatibilityEvaluator:
         self._contracts_by_boundary_id = {
             c["boundary_id"]: c for c in contracts if "boundary_id" in c
         }
+
+    def _load_inventory(self) -> None:
+        """Load the generated inventory (read-only)."""
+        self._inventory = load_wbc_boundary_inventory(self._inventory_path)
 
     @staticmethod
     def _read_fixture(path: Path) -> dict[str, Any] | None:
@@ -557,11 +581,11 @@ class CompatibilityEvaluator:
 
         return tuple(issues)
 
-    @staticmethod
     def _check_contract_alignment(
+        self,
         boundary_id: str,
         contract: dict[str, Any] | None,
-    ) -> tuple[tuple[str, ...], CompatibilityStatus | None]:
+    ) -> tuple[tuple[str, ...], CompatibilityStatus | None, Mapping[str, Any]]:
         """Check alignment between a fixture and its contract matrix entry.
 
         Returns a tuple of (diagnostic_codes, contract_status_or_None).
@@ -569,12 +593,47 @@ class CompatibilityEvaluator:
         compatibility status (NON_CONFORMANT or UNKNOWN due to producer
         category).
         """
+        inventory_rows = select_inventory_rows(self._inventory, boundary_id=boundary_id)
+        if inventory_rows:
+            assessment = assess_inventory_rows(inventory_rows)
+            authoritative = inventory_rows[0]
+            detail: dict[str, Any] = {
+                "inventory_ref": f"inventory:{boundary_id}",
+                "inventory_row_kind": authoritative.get("row_kind"),
+                "producer_category": assessment.producer_category or (
+                    contract.get("producer_category", "unknown") if contract else "not_found"
+                ),
+                "inventory_reasons": list(assessment.reasons),
+            }
+            diags: list[str] = []
+            status: CompatibilityStatus | None = None
+
+            if assessment.producer_category == "declared_only":
+                diags.append(CompatibilityDiagnosticCode.DECLARED_ONLY_NO_PRODUCER)
+                status = CompatibilityStatus.NON_CONFORMANT
+            elif assessment.producer_category == "unknown":
+                diags.append(CompatibilityDiagnosticCode.UNKNOWN_PRODUCER_CATEGORY)
+                status = CompatibilityStatus.UNKNOWN
+            elif assessment.reasons:
+                diags.append(CompatibilityDiagnosticCode.INCOMPLETE_INVENTORY_ROW)
+                status = CompatibilityStatus.NON_CONFORMANT
+
+            invariant_diags = self._diagnostics_for_inventory_invariants(assessment.missing_invariants)
+            if invariant_diags:
+                diags.extend(invariant_diags)
+                status = CompatibilityStatus.NON_CONFORMANT
+
+            visible_non_conformant = contract.get("visible_non_conformant", []) if contract else []
+            if visible_non_conformant:
+                diags.append(CompatibilityDiagnosticCode.VISIBLE_NON_CONFORMANCE)
+                if status is None:
+                    status = CompatibilityStatus.NON_CONFORMANT
+            detail["visible_non_conformant"] = list(visible_non_conformant)
+            return tuple(dict.fromkeys(diags)), status, MappingProxyType(detail)
+
         if contract is None:
             # Contract not in matrix — unknown alignment
-            return (
-                (),
-                CompatibilityStatus.UNKNOWN,
-            )
+            return (), CompatibilityStatus.UNKNOWN, MappingProxyType({"producer_category": "not_found"})
 
         diags: list[str] = []
         status: CompatibilityStatus | None = None
@@ -600,7 +659,31 @@ class CompatibilityEvaluator:
             if status is None:
                 status = CompatibilityStatus.NON_CONFORMANT
 
-        return (tuple(diags), status)
+        return (
+            tuple(diags),
+            status,
+            MappingProxyType(
+                {
+                    "producer_category": producer_category or "not_found",
+                    "visible_non_conformant": list(visible_non_conformant),
+                }
+            ),
+        )
+
+    @staticmethod
+    def _diagnostics_for_inventory_invariants(
+        missing_invariants: tuple[WbcInventoryInvariant, ...],
+    ) -> tuple[str, ...]:
+        mapping = {
+            WbcInventoryInvariant.START_BEFORE_DISPATCH: CompatibilityDiagnosticCode.START_BEFORE_DISPATCH_UNVERIFIED,
+            WbcInventoryInvariant.EXACTLY_ONE_TERMINAL: CompatibilityDiagnosticCode.EXACTLY_ONE_TERMINAL_UNVERIFIED,
+            WbcInventoryInvariant.GRANT_LEASE_GATE: CompatibilityDiagnosticCode.GRANT_LEASE_GATE_UNVERIFIED,
+            WbcInventoryInvariant.EXACT_VERSION_LOOKUP: CompatibilityDiagnosticCode.EXACT_VERSION_LOOKUP_UNVERIFIED,
+            WbcInventoryInvariant.CAUSAL_EVIDENCE: CompatibilityDiagnosticCode.CAUSAL_EVIDENCE_UNVERIFIED,
+            WbcInventoryInvariant.POST_TRANSITION_REREAD: CompatibilityDiagnosticCode.POST_TRANSITION_REREAD_UNVERIFIED,
+        }
+        return tuple(mapping[invariant] for invariant in missing_invariants)
+
 
     @staticmethod
     def _build_unknown_result(
@@ -626,6 +709,7 @@ class CompatibilityEvaluator:
 def evaluate_boundary_compatibility(
     fixture_dir: str | Path | None = None,
     contract_matrix_path: str | Path | None = None,
+    inventory_path: str | Path | None = None,
 ) -> tuple[CompatibilityResult, ...]:
     """Evaluate all captured fixture bundles for boundary compatibility.
 
@@ -636,6 +720,7 @@ def evaluate_boundary_compatibility(
     evaluator = CompatibilityEvaluator(
         fixture_dir=fixture_dir,
         contract_matrix_path=contract_matrix_path,
+        inventory_path=inventory_path,
     )
     return evaluator.evaluate_all()
 

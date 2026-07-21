@@ -26,6 +26,7 @@ from .cloud import (
 )
 from .config import ResidentConfig
 from .runtime import EmitProtocol, InboundEvent, OutboundMessage, OutboundSink, ResidentRuntime
+from .reply_chain import reply_chain_projection
 from . import vp_todo
 
 JobHandler = Callable[[dict[str, Any]], Awaitable[None]]
@@ -977,6 +978,7 @@ def _todo_authoritative_inbound(
         "source_record_id": source_record_id,
         "resident_conversation_id": conversation_id,
         "reply_to_message_id": reply_target,
+        "reply_chain_custody": reply_chain_projection(source.discord_reply_provenance),
         "delegation_allowed": True,
     }
 

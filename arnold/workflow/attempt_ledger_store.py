@@ -47,6 +47,7 @@ from typing import Any, Optional
 
 from arnold.workflow.execution_attempt_ledger import (
     LEDGER_SCHEMA_VERSION,
+    _LIFECYCLE_PRECEDENCE,
     AdapterKind,
     AttemptEventType,
     AttemptIdentity,
@@ -155,6 +156,13 @@ _TERMINAL_EVENT_TYPE_VALUES: tuple[str, ...] = (
     AttemptEventType.FAILED.value,
     AttemptEventType.CANCELLED.value,
 )
+_TERMINAL_EVENT_TYPES: frozenset[AttemptEventType] = frozenset(
+    {
+        AttemptEventType.COMPLETED,
+        AttemptEventType.FAILED,
+        AttemptEventType.CANCELLED,
+    }
+)
 
 
 # ── Typed errors ──────────────────────────────────────────────────────────
@@ -177,12 +185,28 @@ class MonotonicSequenceError(AttemptLedgerError):
     """
 
 
+class SequenceGapError(AttemptLedgerError):
+    """Raised when an appended event skips one or more sequence numbers."""
+
+
+class MissingStartEventError(AttemptLedgerError):
+    """Raised when lifecycle-required predecessor evidence is absent."""
+
+
+class CausalPredecessorError(AttemptLedgerError):
+    """Raised when causal_predecessor_sequence is not joined to the tip."""
+
+
 class PostTerminalAppendError(AttemptLedgerError):
     """Raised when any append is attempted after a terminal event.
 
     Covers both second-terminal attempts and post-terminal non-terminal
     events. The single terminal event is final.
     """
+
+
+class DuplicateTerminalError(PostTerminalAppendError):
+    """Raised when a second terminal event is appended to an attempt."""
 
 
 # ── Gate types (Step 5: durable start and terminal verification) ───────────
@@ -1028,7 +1052,7 @@ class SqliteAttemptLedgerStore(AttemptLedgerStore):
     def _append_tx(
         self, attempt_id: str, event: LedgerEvent
     ) -> AppendResult:
-        """Enforce all Step 4 invariants inside ONE ``BEGIN IMMEDIATE``.
+        """Enforce append invariants inside ONE ``BEGIN IMMEDIATE``.
 
         Order of checks (dedup wins over rejection):
 
@@ -1037,11 +1061,12 @@ class SqliteAttemptLedgerStore(AttemptLedgerStore):
            (with embedded busy-retry for separate-process contention).
         3. Idempotency-key dedup — if ``(attempt_id, idempotency_key)``
            already exists, return the existing event (no raise).
-        4. Post-terminal rejection — if any terminal event exists for
-           ``attempt_id``, raise :class:`PostTerminalAppendError`.
-        5. Monotonic sequence — ``event.sequence`` must exceed the
-           current max sequence, else :class:`MonotonicSequenceError`.
-        6. INSERT + COMMIT.
+        4. Read the durable tip state for ``attempt_id``.
+        5. Reject second terminals and post-terminal appends.
+        6. Enforce exact sequence continuity.
+        7. Enforce lifecycle-required predecessor evidence.
+        8. Enforce joined causal_predecessor_sequence at the durable tip.
+        9. INSERT + COMMIT.
         """
         if event.identity.attempt_id != attempt_id:
             raise ValueError(
@@ -1075,33 +1100,79 @@ class SqliteAttemptLedgerStore(AttemptLedgerStore):
                     is_duplicate=True,
                 )
 
-            # (4) Post-terminal rejection — once terminal, no new events.
             cur.execute(
-                f"SELECT 1 FROM attempt_events WHERE attempt_id = ? AND event_type IN ({','.join('?' * len(_TERMINAL_EVENT_TYPE_VALUES))}) LIMIT 1",
-                (attempt_id, *_TERMINAL_EVENT_TYPE_VALUES),
+                "SELECT sequence, event_type FROM attempt_events WHERE attempt_id = ? ORDER BY sequence ASC",
+                (attempt_id,),
             )
-            if cur.fetchone() is not None:
+            persisted_rows = cur.fetchall()
+            last_seq = int(persisted_rows[-1][0]) if persisted_rows else 0
+            seen_event_types = {
+                AttemptEventType(str(row[1])) for row in persisted_rows
+            }
+            has_terminal = any(
+                AttemptEventType(str(row[1])) in _TERMINAL_EVENT_TYPES
+                for row in persisted_rows
+            )
+
+            # (5) Reject any append after a durable terminal. A second
+            # terminal is called out separately for the invariant suite.
+            if has_terminal and event.event_type in _TERMINAL_EVENT_TYPES:
+                conn.execute("ROLLBACK")
+                raise DuplicateTerminalError(
+                    f"Attempt {attempt_id!r} already has a terminal event; "
+                    f"second terminal {event.event_type.value!r} is rejected."
+                )
+            if has_terminal:
                 conn.execute("ROLLBACK")
                 raise PostTerminalAppendError(
                     f"Attempt {attempt_id!r} already has a terminal event; "
-                    f"further appends are rejected (idempotency_key={event.idempotency_key!r})."
+                    f"no further events are allowed "
+                    f"(idempotency_key={event.idempotency_key!r})."
                 )
 
-            # (5) Monotonic sequence — strictly greater than max.
-            cur.execute(
-                "SELECT COALESCE(MAX(sequence), 0) FROM attempt_events WHERE attempt_id = ?",
-                (attempt_id,),
-            )
-            last_seq_row = cur.fetchone()
-            last_seq = int(last_seq_row[0]) if last_seq_row is not None else 0
+            # (6) Sequence continuity — exact tip + 1, not merely monotonic.
+            expected_sequence = last_seq + 1
             if event.sequence <= last_seq:
                 conn.execute("ROLLBACK")
                 raise MonotonicSequenceError(
                     f"Event sequence {event.sequence} for attempt {attempt_id!r} "
-                    f"is not strictly greater than the current max {last_seq}."
+                    f"is not monotonic with current max sequence {last_seq}."
+                )
+            if event.sequence != expected_sequence:
+                conn.execute("ROLLBACK")
+                raise SequenceGapError(
+                    f"Event sequence {event.sequence} for attempt {attempt_id!r} "
+                    f"would create a gap; expected {expected_sequence}."
                 )
 
-            # (6) INSERT.
+            # (7) Lifecycle-required predecessor evidence must already be
+            # durable for this attempt before the new event is appended.
+            required_predecessors = _LIFECYCLE_PRECEDENCE.get(event.event_type, frozenset())
+            missing_predecessors = required_predecessors - seen_event_types
+            if missing_predecessors:
+                conn.execute("ROLLBACK")
+                missing_values = ", ".join(
+                    sorted(predecessor.value for predecessor in missing_predecessors)
+                )
+                if missing_predecessors == frozenset({AttemptEventType.STARTED}):
+                    raise MissingStartEventError(
+                        f"Event type {event.event_type.value!r} requires a durable STARTED event."
+                    )
+                raise MissingStartEventError(
+                    f"Event type {event.event_type.value!r} requires a durable "
+                    f"'{missing_values}' event."
+                )
+
+            # (8) Causal predecessor joins must point at the current durable
+            # tip so callers cannot append against stale or forked evidence.
+            if event.causal_predecessor_sequence != last_seq:
+                conn.execute("ROLLBACK")
+                raise CausalPredecessorError(
+                    f"Event causal_predecessor_sequence {event.causal_predecessor_sequence} "
+                    f"for attempt {attempt_id!r} must equal current max sequence {last_seq}."
+                )
+
+            # (9) INSERT.
             cur.execute(
                 """\
 INSERT INTO attempt_events
@@ -1118,7 +1189,15 @@ VALUES (?, ?, ?, ?, ?, ?)
                 ),
             )
             conn.execute("COMMIT")
-        except (PostTerminalAppendError, MonotonicSequenceError, ValueError):
+        except (
+            CausalPredecessorError,
+            DuplicateTerminalError,
+            MissingStartEventError,
+            MonotonicSequenceError,
+            PostTerminalAppendError,
+            SequenceGapError,
+            ValueError,
+        ):
             # Transaction already rolled back inside the handler for
             # typed store errors and pre-condition ValueErrors.
             raise
@@ -1973,10 +2052,14 @@ __all__ = [
     "AttemptLedgerError",
     "AttemptLedgerStore",
     "AttemptReservation",
+    "CausalPredecessorError",
+    "DuplicateTerminalError",
     "GapEntry",
     "GateStatus",
+    "MissingStartEventError",
     "MonotonicSequenceError",
     "PostTerminalAppendError",
+    "SequenceGapError",
     "SourceCursor",
     "SqliteAttemptLedgerStore",
     "StartGateResult",

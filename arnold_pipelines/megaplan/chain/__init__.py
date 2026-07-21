@@ -2924,6 +2924,99 @@ def _ensure_published_claimed_changes_for_pr_progression(
     )
 
 
+def _validate_pr_progression_wbc(
+    *,
+    root: Path,
+    spec_path: Path,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    plan_name: str,
+    pr_number: int,
+    transition_name: str,
+) -> dict[str, Any]:
+    from arnold_pipelines.megaplan.chain.execution_binding import (
+        execution_binding_report,
+    )
+    from arnold_pipelines.megaplan.chain.wbc import (
+        GIT_PR_READY_SURFACE,
+        GIT_PR_READY_WRITER_ID,
+        ChainWbcRule,
+        finalize_artifact_candidates,
+        finalize_receipt_candidates,
+        record_chain_wbc_evidence,
+        validate_chain_wbc_transition,
+    )
+
+    plan_dir = resolve_plan_dir(root, plan_name)
+    plan_state = _plan_state_payload_from_name(root, plan_name)
+    current_state = plan_state.get("current_state")
+    binding = execution_binding_report(spec_path, state)
+    finalize_receipts = finalize_receipt_candidates(plan_dir)
+    finalize_artifacts = finalize_artifact_candidates(plan_dir)
+    binding_ok = (
+        binding.get("status") in {"match", "reconcile_required"}
+        if binding.get("required")
+        else True
+    )
+    evidence = validate_chain_wbc_transition(
+        writer_id=GIT_PR_READY_WRITER_ID,
+        surface_name=GIT_PR_READY_SURFACE,
+        transition_name=transition_name,
+        subject=f"{milestone.label}:pr#{pr_number}",
+        source_path=spec_path,
+        project_dir=root,
+        rules=(
+            ChainWbcRule(
+                "plan_state_terminal",
+                f"{STATE_FINALIZED}|{STATE_DONE}|{STATE_AWAITING_PR_MERGE}",
+                current_state,
+                current_state in {STATE_FINALIZED, STATE_DONE, STATE_AWAITING_PR_MERGE},
+            ),
+            ChainWbcRule(
+                "finalize_receipt_present",
+                True,
+                bool(finalize_receipts),
+                bool(finalize_receipts),
+                "finalize promotion must persist a durable receipt before PR actions",
+            ),
+            ChainWbcRule(
+                "finalize_artifacts_present",
+                True,
+                bool(finalize_artifacts),
+                bool(finalize_artifacts),
+                "finalize promotion must leave canonical artifacts behind",
+            ),
+            ChainWbcRule(
+                "execution_binding_current",
+                True,
+                binding.get("status"),
+                binding_ok,
+                "chain execution binding must still match before PR progression",
+            ),
+            ChainWbcRule(
+                "pr_number_bound",
+                pr_number,
+                state.pr_number,
+                state.pr_number == pr_number,
+            ),
+        ),
+        extra={
+            "milestone_label": milestone.label,
+            "plan_name": plan_name,
+            "plan_dir": str(plan_dir),
+            "finalize_receipts": finalize_receipts,
+            "finalize_artifacts": finalize_artifacts,
+            "execution_binding_status": binding.get("status"),
+        },
+    )
+    record_chain_wbc_evidence(
+        state.metadata,
+        entry_key=f"{transition_name}:{milestone.label}:{pr_number}",
+        evidence=evidence,
+    )
+    return evidence
+
+
 def _recover_stale_merged_pr_for_unfinished_plan(
     root: Path,
     spec_path: Path,
@@ -3175,6 +3268,48 @@ def _append_completed_with_guard(
             state.last_state = "authority_divergence"
             writer(f"[chain] completion guard blocked {label}: {reason}\n")
             return False, reason
+        if spec_path is not None and plan_dir is not None:
+            from arnold_pipelines.megaplan.chain.wbc import (
+                CHAIN_ADVANCE_SURFACE,
+                CHAIN_ADVANCE_WRITER_ID,
+                ChainWbcRule,
+                record_chain_wbc_evidence,
+                validate_chain_wbc_transition,
+            )
+
+            validation_evidence = validate_chain_wbc_transition(
+                writer_id=CHAIN_ADVANCE_WRITER_ID,
+                surface_name=CHAIN_ADVANCE_SURFACE,
+                transition_name="chain_milestone_advance",
+                subject=label,
+                source_path=Path(spec_path),
+                project_dir=root,
+                rules=(
+                    ChainWbcRule("completion_guard", True, ok, ok),
+                    ChainWbcRule(
+                        "plan_name_bound",
+                        True,
+                        bool(record.get("plan")),
+                        bool(record.get("plan")),
+                    ),
+                    ChainWbcRule(
+                        "milestone_index_known",
+                        True,
+                        milestone_index is not None,
+                        milestone_index is not None,
+                    ),
+                ),
+                extra={
+                    "plan_name": str(record.get("plan") or ""),
+                    "milestone_index": milestone_index,
+                    "guard_reason": reason,
+                },
+            )
+            record_chain_wbc_evidence(
+                state.metadata,
+                entry_key=f"chain_advance:{label}:{milestone_index}",
+                evidence=validation_evidence,
+            )
         state.completed.append(record)
         return True, reason
 
@@ -3314,6 +3449,55 @@ def _append_completed_with_guard(
     # (5) Commit succeeded.  Mirror the durably-committed completion fields
     #     into the in-memory state so downstream callers observe the same
     #     state that was just written under the CAS guard.
+    from arnold_pipelines.megaplan.chain.wbc import (
+        CHAIN_ADVANCE_SURFACE,
+        CHAIN_ADVANCE_WRITER_ID,
+        ChainWbcRule,
+        record_chain_wbc_evidence,
+        validate_chain_wbc_transition,
+    )
+
+    validation_evidence = validate_chain_wbc_transition(
+        writer_id=CHAIN_ADVANCE_WRITER_ID,
+        surface_name=CHAIN_ADVANCE_SURFACE,
+        transition_name="chain_milestone_advance",
+        subject=label,
+        source_path=Path(spec_path),
+        project_dir=root,
+        rules=(
+            ChainWbcRule("completion_guard", True, ok, ok),
+            ChainWbcRule(
+                "acceptance_commit_committed",
+                True,
+                bool(getattr(cas_result, "committed", False)),
+                bool(getattr(cas_result, "committed", False)),
+            ),
+            ChainWbcRule(
+                "accepted_boundary_present",
+                True,
+                acceptance_result is not None,
+                acceptance_result is not None,
+            ),
+            ChainWbcRule(
+                "milestone_index_known",
+                True,
+                milestone_index is not None,
+                milestone_index is not None,
+            ),
+        ),
+        extra={
+            "plan_name": str(record.get("plan") or ""),
+            "milestone_index": milestone_index,
+            "acceptance_transaction_id": acceptance_transaction_id,
+            "acceptance_snapshot_hash": acceptance_snapshot_hash,
+            "guard_reason": reason,
+        },
+    )
+    record_chain_wbc_evidence(
+        state.metadata,
+        entry_key=f"chain_advance:{label}:{milestone_index}",
+        evidence=validation_evidence,
+    )
     _apply_committed_acceptance_state(state, commit_plan.new_state)
     return True, reason
 
@@ -6513,9 +6697,31 @@ def run_chain(
                     if publish_reason.startswith("published "):
                         state = chain_spec.load_chain_state(spec_path)
                     if _automatic_pr_progression_permitted(spec, spec_path):
+                        validation_evidence = _validate_pr_progression_wbc(
+                            root=root,
+                            spec_path=spec_path,
+                            state=state,
+                            milestone=milestone,
+                            plan_name=state.current_plan_name or "",
+                            pr_number=state.pr_number,
+                            transition_name="chain_pr_ready",
+                        )
+                        _pr_ready_evidence = _capture_pr_ready_evidence(
+                            root,
+                            state.pr_number,
+                            writer=writer,
+                            ci_readiness_state="ready",
+                            validation_evidence=validation_evidence,
+                        )
                         _mark_pr_ready(root, state.pr_number, writer=writer)
                         state.pr_state = _enable_auto_merge(
                             root, state.pr_number, writer=writer
+                        )
+                        _pr_merged_evidence = _capture_pr_merged_evidence(
+                            root,
+                            state.pr_number,
+                            writer=writer,
+                            validation_evidence=validation_evidence,
                         )
                         chain_spec.save_chain_state(spec_path, state)
                         pr_state = _pr_state(root, state.pr_number, writer=writer)
@@ -7179,6 +7385,22 @@ def run_chain(
                             ),
                         )
                 else:
+                    validation_evidence = _validate_pr_progression_wbc(
+                        root=root,
+                        spec_path=spec_path,
+                        state=state,
+                        milestone=milestone,
+                        plan_name=plan_name,
+                        pr_number=state.pr_number,
+                        transition_name="chain_pr_ready",
+                    )
+                    _pr_ready_evidence = _capture_pr_ready_evidence(
+                        root,
+                        state.pr_number,
+                        writer=writer,
+                        ci_readiness_state="ready",
+                        validation_evidence=validation_evidence,
+                    )
                     _mark_pr_ready(root, state.pr_number, writer=writer)
                     if not _automatic_pr_progression_permitted(spec, spec_path):
                         state.last_state = STATE_AWAITING_PR_MERGE
@@ -7208,6 +7430,12 @@ def run_chain(
                         )
                     state.pr_state = _enable_auto_merge(
                         root, state.pr_number, writer=writer
+                    )
+                    _pr_merged_evidence = _capture_pr_merged_evidence(
+                        root,
+                        state.pr_number,
+                        writer=writer,
+                        validation_evidence=validation_evidence,
                     )
                     chain_spec.save_chain_state(spec_path, state)
                     if state.pr_state != "merged":

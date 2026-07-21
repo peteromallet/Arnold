@@ -41,6 +41,7 @@ from arnold.pipeline.native.checkpoint import (
 )
 from arnold.pipeline.native.context import require_native_runtime
 from arnold.pipeline.native.hooks import (
+    NativeWbcHooks,
     NativeRuntimeHooks,
     NullNativeRuntimeHooks,
 )
@@ -77,6 +78,10 @@ from arnold.supervisor.cancellation import (
     CancellationRequested,
     cancellation_result_payload,
     cancelled_contract_result,
+)
+from arnold.workflow.native_wbc import (
+    NativeWbcAttempt,
+    begin_native_wbc_attempt,
 )
 
 _MAX_SUBPIPELINE_DEPTH = PACK_CLOSURE_MAX_DEPTH
@@ -885,9 +890,30 @@ def run_native_pipeline(
         _persistence_backend if persistence_backend is not None else None
     )
 
+    _runtime_wbc: NativeWbcAttempt = begin_native_wbc_attempt(
+        artifact_root,
+        producer_family="arnold_native",
+        surface="runtime",
+        run_id=getattr(initial_envelope, "run_id", "") or "",
+        plugin_id=getattr(initial_envelope, "plugin_id", "") or "",
+        manifest_hash=getattr(initial_envelope, "manifest_hash", "") or "",
+        subject={"program": program.name, "resume": resume, "run_path": current_run_path},
+        metadata={"trace_run_kind": _trace_run_kind},
+        start_payload={"artifact_root": str(artifact_root), "resume": resume},
+    )
+
     # Resolve hooks — always have a hooks instance so the runtime never
     # needs None-guards around callback invocations.
     _hooks: NativeRuntimeHooks = hooks if hooks is not None else NullNativeRuntimeHooks()
+    _wbc_hooks = NativeWbcHooks(
+        _hooks,
+        artifact_root=artifact_root,
+        program_name=program.name,
+        run_id=getattr(initial_envelope, "run_id", "") or "",
+        plugin_id=getattr(initial_envelope, "plugin_id", "") or "",
+        manifest_hash=getattr(initial_envelope, "manifest_hash", "") or "",
+    )
+    _hooks = _wbc_hooks
 
     # ── Wrap with trace hooks when trace_dir is set ────────────────
     if trace_dir is not None:
@@ -1047,6 +1073,17 @@ def run_native_pipeline(
             _native = resume_cursor_data.get("native", {})
             if isinstance(_native, dict) and _native.get("suspension_kind") == "human_gate":
                 _human_gate_resume = True
+            _runtime_wbc.effect(
+                "resume_cursor_restored",
+                {
+                    "suspension_kind": (
+                        _native.get("suspension_kind")
+                        if isinstance(_native, dict)
+                        else None
+                    ),
+                    "pc": start_pc,
+                },
+            )
         if _cursor_id is None:
             _cursor_id = uuid4().hex
 
@@ -1571,6 +1608,14 @@ def run_native_pipeline(
                         extra={**_hg_path_metadata, **_hg_cursor_extra},
                     )
                     _hooks.on_checkpoint(_hg_cursor, dict(_pause_state))
+                    _runtime_wbc.effect(
+                        "human_gate_checkpoint_written",
+                        {
+                            "stage": _hg_name,
+                            "choices": list(_hg_choices),
+                            "checkpoint": str(_checkpoint_path),
+                        },
+                    )
                     if isinstance(_hooks, NativeTraceHooks):
                         _hooks.emit_pipeline_suspended(
                             reason="human_gate",
@@ -1642,7 +1687,15 @@ def run_native_pipeline(
                         state.pop("_pipeline_paused_stage", None)
                         state.pop("awaiting_user", None)
                         _human_gate_resume = False
-    
+                        _runtime_wbc.effect(
+                            "human_gate_resume_selected",
+                            {
+                                "stage": instr.name,
+                                "label": _resume_label,
+                                "source": _resume_source,
+                            },
+                        )
+
                         if target_pc is not None:
                             _maybe_count_loop_iteration(
                                 instr=instr,
@@ -2616,7 +2669,53 @@ def run_native_pipeline(
             cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
             envelope=envelope,
         )
+    except BaseException as exc:
+        trace_status = "failed"
+        raise
     finally:
+        terminal_payload = {
+            "pc": locals().get("pc", 0),
+            "stages_completed": len(stages),
+            "run_path": current_run_path,
+        }
+        if trace_status == "completed":
+            _runtime_wbc.terminal(
+                status="completed",
+                outcome="result",
+                payload=terminal_payload,
+            )
+        elif trace_status == "suspended":
+            _runtime_wbc.terminal(
+                status="suspended",
+                outcome="checkpoint",
+                payload=terminal_payload,
+            )
+        elif trace_status == "cancelled":
+            _runtime_wbc.terminal(
+                status="cancelled",
+                outcome="cancelled",
+                payload=terminal_payload,
+            )
+        else:
+            _runtime_wbc.terminal(
+                status="failed",
+                outcome="error",
+                payload=terminal_payload,
+            )
+        close_wbc = getattr(_wbc_hooks, "close", None)
+        if callable(close_wbc):
+            if trace_status == "completed":
+                close_wbc(status="completed", outcome="result", payload=terminal_payload)
+            elif trace_status == "suspended":
+                close_wbc(status="suspended", outcome="checkpoint", payload=terminal_payload)
+            elif trace_status == "cancelled":
+                close_wbc(
+                    status="cancelled",
+                    outcome="cancelled",
+                    payload=terminal_payload,
+                )
+            else:
+                close_wbc(status="failed", outcome="error", payload=terminal_payload)
         if isinstance(_hooks, NativeTraceHooks):
             _hooks.on_run_exit(program, run_path=trace_run_path, status=trace_status)
 

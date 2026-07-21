@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from arnold_pipelines.megaplan.notification_safety import classify_user_notification
+from arnold_pipelines.megaplan.notification_safety import classify_fixture_safety, classify_user_notification
 
 
 def test_pytest_fixture_workspace_is_never_user_notifiable() -> None:
@@ -39,4 +39,24 @@ def test_genuine_demo_chain_workspace_remains_user_notifiable() -> None:
     )
 
     assert decision.allowed is True
+    assert decision.reason == ""
+
+
+def test_fixture_safety_authorizes_explicit_fixture_context() -> None:
+    decision = classify_fixture_safety(
+        payload={"notification_context": {"fixture_execution": True}},
+        env={},
+    )
+
+    assert decision.authorized is True
+    assert decision.reason == "explicit_test_context:fixture_execution"
+
+
+def test_fixture_safety_denies_non_fixture_workspace_without_test_env() -> None:
+    decision = classify_fixture_safety(
+        workspace="/workspace/production-chain",
+        env={},
+    )
+
+    assert decision.authorized is False
     assert decision.reason == ""

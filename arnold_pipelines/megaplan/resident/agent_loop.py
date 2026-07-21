@@ -713,7 +713,7 @@ def _openai_tool_schema(registration: Any) -> dict[str, Any]:
     }
 
 
-_DURABLE_LAUNCH_STATUSES = frozenset({"launching", "running", "completed"})
+_DURABLE_LAUNCH_STATUSES = frozenset({"queued", "launching", "running", "completed"})
 
 
 def _durable_launch_run_id(record: ToolCallAuditRecord) -> str | None:
@@ -810,6 +810,32 @@ def _durable_launch_handoff_response(
     }
     if model:
         metadata["model"] = model
+    custody_paths = [
+        str(
+            (
+                (record.result.get("data") if isinstance(record.result, dict) else {}) or {}
+            ).get("custody_evidence_path")
+            or ""
+        )
+        for record in all_tool_calls
+        if _durable_launch_run_id(record) in run_ids
+    ]
+    owner_run_ids = [
+        str(
+            (
+                (record.result.get("data") if isinstance(record.result, dict) else {}) or {}
+            ).get("delivery_owner_run_id")
+            or ""
+        )
+        for record in all_tool_calls
+        if _durable_launch_run_id(record) in run_ids
+    ]
+    metadata["managed_child_custody_evidence_paths"] = [
+        path for path in custody_paths if path
+    ]
+    metadata["managed_child_delivery_owner_run_ids"] = [
+        run_id for run_id in owner_run_ids if run_id
+    ]
     return AgentResponse(
         final_text=(
             f"Launched resident-managed {noun} {rendered_ids}. {delivery_sentence}"

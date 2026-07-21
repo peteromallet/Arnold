@@ -39,6 +39,12 @@ from arnold_pipelines.megaplan.observability.fold import (
     OracleResult,
     fold_equivalence_oracle,
 )
+from arnold_pipelines.megaplan.chain.wbc import (
+    HINGE_GATE_SURFACE,
+    HINGE_GATE_WRITER_ID,
+    ChainWbcRule,
+    validate_chain_wbc_transition,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -64,11 +70,17 @@ class HingeGateResult:
     passed: bool
     failures: List[OracleOutcome] = field(default_factory=list)
     outcomes: List[OracleOutcome] = field(default_factory=list)
+    validation_evidence: dict[str, object] | None = None
 
     @property
     def r1_flip_allowed(self) -> bool:
         """Green gate ALLOWS but does NOT auto-flip R1 authority."""
-        return self.passed
+        validated = (
+            bool(self.validation_evidence.get("rules"))
+            if isinstance(self.validation_evidence, dict)
+            else self.passed
+        )
+        return self.passed and validated
 
 
 # ---------------------------------------------------------------------------
@@ -146,10 +158,43 @@ def run_hinge_gate(
         outcomes.append(outcome)
         if not outcome.ok:
             failures.append(outcome)
+    validation_evidence = validate_chain_wbc_transition(
+        writer_id=HINGE_GATE_WRITER_ID,
+        surface_name=HINGE_GATE_SURFACE,
+        transition_name="hinge_gate_result",
+        subject="green" if not failures else "red",
+        source_path=Path(__file__),
+        project_dir=REPO_ROOT,
+        rules=(
+            ChainWbcRule(
+                "oracle_count",
+                len(chosen),
+                len(outcomes),
+                len(outcomes) == len(chosen),
+            ),
+            ChainWbcRule(
+                "oracle_names_unique",
+                True,
+                len({outcome.name for outcome in outcomes}) == len(outcomes),
+                len({outcome.name for outcome in outcomes}) == len(outcomes),
+            ),
+            ChainWbcRule(
+                "failure_projection_consistent",
+                len(failures),
+                len([outcome for outcome in outcomes if not outcome.ok]),
+                len(failures) == len([outcome for outcome in outcomes if not outcome.ok]),
+            ),
+        ),
+        extra={
+            "oracle_names": [outcome.name for outcome in outcomes],
+            "failed_oracles": [outcome.name for outcome in failures],
+        },
+    )
     return HingeGateResult(
         passed=not failures,
         failures=failures,
         outcomes=outcomes,
+        validation_evidence=validation_evidence,
     )
 
 
@@ -171,6 +216,7 @@ class EscalationOutcome:
     final_result: HingeGateResult
     steps: List[EscalationStep] = field(default_factory=list)
     ticket_path: Optional[Path] = None
+    validation_evidence: dict[str, object] | None = None
 
 
 def _write_auto_ticket(ticket_dir: Path, result: HingeGateResult, steps: Sequence[EscalationStep]) -> Path:
@@ -220,27 +266,78 @@ def run_with_escalation(
     result = run_gate()
     steps.append(EscalationStep(kind="retry", attempt=0, result=result))
     if result.passed:
-        return EscalationOutcome(passed=True, final_result=result, steps=steps)
+        return EscalationOutcome(
+            passed=True,
+            final_result=result,
+            steps=steps,
+            validation_evidence=result.validation_evidence,
+        )
 
     for attempt in range(1, max_retries + 1):
         result = run_gate()
         steps.append(EscalationStep(kind="retry", attempt=attempt, result=result))
         if result.passed:
-            return EscalationOutcome(passed=True, final_result=result, steps=steps)
+            return EscalationOutcome(
+                passed=True,
+                final_result=result,
+                steps=steps,
+                validation_evidence=result.validation_evidence,
+            )
 
     if bump_tier is not None:
         bump_tier()
     result = run_gate()
     steps.append(EscalationStep(kind="bump_tier", attempt=max_retries + 1, result=result))
     if result.passed:
-        return EscalationOutcome(passed=True, final_result=result, steps=steps)
+        return EscalationOutcome(
+            passed=True,
+            final_result=result,
+            steps=steps,
+            validation_evidence=result.validation_evidence,
+        )
 
     if stop_chain is not None:
         stop_chain(result)
     ticket = _write_auto_ticket(ticket_dir, result, steps)
     steps.append(EscalationStep(kind="stop_chain", attempt=max_retries + 2, result=result))
+    validation_evidence = validate_chain_wbc_transition(
+        writer_id=HINGE_GATE_WRITER_ID,
+        surface_name=HINGE_GATE_SURFACE,
+        transition_name="hinge_gate_escalation",
+        subject="ladder_exhausted",
+        source_path=Path(__file__),
+        project_dir=REPO_ROOT,
+        rules=(
+            ChainWbcRule(
+                "final_result_red",
+                False,
+                result.passed,
+                result.passed is False,
+            ),
+            ChainWbcRule(
+                "ticket_written",
+                True,
+                ticket.exists(),
+                ticket.exists(),
+            ),
+            ChainWbcRule(
+                "stop_step_present",
+                True,
+                any(step.kind == "stop_chain" for step in steps),
+                any(step.kind == "stop_chain" for step in steps),
+            ),
+        ),
+        extra={
+            "step_kinds": [step.kind for step in steps],
+            "ticket_path": str(ticket),
+        },
+    )
     return EscalationOutcome(
-        passed=False, final_result=result, steps=steps, ticket_path=ticket
+        passed=False,
+        final_result=result,
+        steps=steps,
+        ticket_path=ticket,
+        validation_evidence=validation_evidence,
     )
 
 

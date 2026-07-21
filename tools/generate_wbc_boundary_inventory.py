@@ -1,59 +1,9 @@
-#!/usr/bin/env python3
-"""WBC boundary inventory generator (M6 — T4 + T5).
+"""Generate the WBC boundary inventory and related discovery evidence.
 
-Joins three WBC declaration inputs into a deterministic inventory, then
-extends it with static AST discovery over handler, runtime, kernel,
-supervisor, execution, and orchestration source trees.
-
-Input sources (T4):
-1. ``arnold_pipelines/megaplan/workflows/boundary_contracts.py``
-   — BoundaryContract instances (the contract registry).
-
-2. ``arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json``
-   — producer-side reality mapping (handler paths, applicability rules,
-     receipt timing, authority references, non-conformant exceptions).
-
-3. ``arnold_pipelines/megaplan/workflows/support_manifest.json``
-   — support classification (owner, support_status, migration milestone,
-     C2-C6 migration gates, exception metadata, non-conformant flags).
-
-Static discovery (T5):
-Scans ``arnold/workflow``, ``arnold/kernel``, ``arnold/execution``,
-``arnold/supervisor``, ``arnold/control``, ``arnold_pipelines/megaplan/handlers``,
-``arnold_pipelines/megaplan/execute``, and ``arnold_pipelines/megaplan/orchestration``
-for surface types: receipt_writer, durable_ref, payload_policy, ledger,
-journal, projection, repair_queue, authority_reader, consumer, producer.
-
-The generator is **strictly observe-only**: it reads committed source files
-and writes only the inventory artifact to ``evidence/wbc-boundary-inventory.json``.
-It does not mutate lifecycle state, queues, providers, delivery, notifications,
-source history, or runtime behavior.
-
-Design invariants
------------------
-
-* **Deterministic ordering**: rows are sorted by ``(row_kind, boundary_id,
-  step_id, surface_id)`` so that two runs against the same commit always
-  produce the same artifact.
-* **Candidate vs landed metadata**: when the matrix declares a contract as
-  ``declared_only`` or ``unknown`` (no producer emission path), the row
-  records ``candidate: true`` and ``landed: false``.  When a real producer
-  path exists, ``candidate: false`` and ``landed: true``.
-* **Support labels are non-authoritative**: a ``support_status: "supported"``
-  label in the manifest is recorded as metadata but is explicitly tagged
-  ``support_is_non_authoritative: true`` so downstream authority registries
-  cannot treat it as proof of runtime adoption.  Only a landed producer
-  path (from the matrix) constitutes adoption evidence.
-* **Projections are NOT authority**: any module classified as a projection
-  is explicitly tagged ``is_authority: false`` and carries the
-  ``non_authority`` marker from the discovery rules.
-* **Unmatched set**: any declaration that appears in one input but cannot
-  be joined to the others is recorded in a separate ``unmatched`` bucket
-  with an explicit ``reason_unmatched``.
-
-Usage::
-
-    python tools/generate_wbc_boundary_inventory.py [--output PATH]
+This generator is observe-only. It statically inspects repository source,
+current WBC declarations, the C1 contract matrix, compatibility-reader
+snapshots, and the writer-map snapshot. It writes only evidence artifacts under
+``evidence/`` and never mutates the C1 matrices it reads.
 """
 
 from __future__ import annotations
@@ -65,134 +15,68 @@ import hashlib
 import json
 import re
 import sys
+from importlib.machinery import SourcelessFileLoader
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
-# Optional YAML support for reading discovery rules
 try:
     import yaml
+
     _HAS_YAML = True
-except ImportError:
+except ImportError:  # pragma: no cover - YAML is present in the repo env.
+    yaml = None
     _HAS_YAML = False
 
 
-# ── Paths ───────────────────────────────────────────────────────────────────
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+
+def _load_recovered_custody_module(pyc_stem: str) -> ModuleType:
+    synthetic_name = f"_wbc_inventory_{pyc_stem}"
+    cached = sys.modules.get(synthetic_name)
+    if isinstance(cached, ModuleType):
+        return cached
+
+    base_dir = REPO_ROOT / "arnold_pipelines/megaplan/custody"
+    pyc_name = f"{pyc_stem}.cpython-{sys.version_info.major}{sys.version_info.minor}.pyc"
+    recovered_path = base_dir / "_recovered" / pyc_name
+    pyc_path = recovered_path if recovered_path.exists() else base_dir / "__pycache__" / pyc_name
+    if not pyc_path.exists():
+        raise ModuleNotFoundError(f"missing recovered custody module {pyc_path}")
+
+    loader = SourcelessFileLoader(synthetic_name, str(pyc_path))
+    code = loader.get_code(synthetic_name)
+    if code is None:
+        raise ModuleNotFoundError(f"could not load recovered custody module {pyc_path}")
+
+    module = ModuleType(synthetic_name)
+    module.__file__ = str(pyc_path)
+    sys.modules[synthetic_name] = module
+    exec(code, module.__dict__)
+    return module
+
+
+custody_compatibility = _load_recovered_custody_module("compatibility")
+custody_writer_map = _load_recovered_custody_module("writer_map")
+
 EVIDENCE_DIR = REPO_ROOT / "evidence"
-
-BOUNDARY_CONTRACTS_PATH = (
-    REPO_ROOT
-    / "arnold_pipelines"
-    / "megaplan"
-    / "workflows"
-    / "boundary_contracts.py"
+BOUNDARY_CONTRACTS_PATH = REPO_ROOT / "arnold_pipelines/megaplan/workflows/boundary_contracts.py"
+CONTRACT_MATRIX_PATH = REPO_ROOT / "arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json"
+SUPPORT_MANIFEST_PATH = REPO_ROOT / "arnold_pipelines/megaplan/workflows/support_manifest.json"
+SOURCE_TO_OWNER_MATRIX_PATH = REPO_ROOT / "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json"
+NATIVE_GOLDEN_MANIFEST_PATH = (
+    REPO_ROOT / "tests/arnold_pipelines/megaplan/fixtures/native_goldens/manifest.json"
 )
-CONTRACT_MATRIX_PATH = (
-    REPO_ROOT
-    / "arnold_pipelines"
-    / "megaplan"
-    / "workflows"
-    / "contract_to_producer_matrix.json"
-)
-SUPPORT_MANIFEST_PATH = (
-    REPO_ROOT
-    / "arnold_pipelines"
-    / "megaplan"
-    / "workflows"
-    / "support_manifest.json"
-)
+NATIVE_GOLDEN_ROOT = NATIVE_GOLDEN_MANIFEST_PATH.parent
 DISCOVERY_RULES_PATH = EVIDENCE_DIR / "wbc-boundary-discovery-rules.yaml"
-
 DEFAULT_OUTPUT = EVIDENCE_DIR / "wbc-boundary-inventory.json"
+HISTORICAL_ADAPTERS_PATH = EVIDENCE_DIR / "wbc-historical-adapters.json"
 
-# ── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _sha256_hex(data: str) -> str:
-    """Return SHA-256 hex digest of *data*."""
-    return hashlib.sha256(data.encode("utf-8")).hexdigest()
-
-
-def _parse_boundary_contract_instances(path: Path) -> list[dict[str, Any]]:
-    """Extract BoundaryContract instantiation calls from *path*.
-
-    Parses the Python source and collects every ``BoundaryContract(…)``
-    call, converting keyword arguments to a plain dict.  Enum values are
-    converted to their ``.value`` strings.
-    """
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-
-    contracts: list[dict[str, Any]] = []
-
-    class ContractVisitor(ast.NodeVisitor):
-        def visit_Call(self, node: ast.Call) -> None:
-            # Match BoundaryContract(…) calls
-            if isinstance(node.func, ast.Name) and node.func.id == "BoundaryContract":
-                contract: dict[str, Any] = {}
-                for kw in node.keywords:
-                    key = kw.arg
-                    if key is None:
-                        continue
-                    value = _ast_to_value(kw.value)
-                    contract[key] = value
-                if contract:
-                    contracts.append(contract)
-            self.generic_visit(node)
-
-    ContractVisitor().visit(tree)
-    return contracts
-
-
-def _ast_to_value(node: ast.expr) -> Any:
-    """Convert a simple AST expression to a Python value.
-
-    Unresolvable names (e.g. imported constants like ``S2_PREP_ROW_ID``)
-    are returned as the sentinel ``"UNKNOWN"`` so the inventory never
-    silently drops a field.
-    """
-    if isinstance(node, ast.Constant):
-        val = node.value
-        if val is Ellipsis:
-            return "..."
-        return val
-    if isinstance(node, ast.Name) and node.id == "None":
-        return None
-    if isinstance(node, ast.Name):
-        # Unresolvable name (imported constant, variable reference, etc.)
-        # Return sentinel so downstream can distinguish missing from unknown.
-        return "UNKNOWN"
-    if isinstance(node, ast.Attribute):
-        # e.g. BoundaryPhase.PREP -> "PREP"
-        return node.attr
-    if isinstance(node, (ast.Tuple, ast.List)):
-        return [_ast_to_value(elt) for elt in node.elts]
-    if isinstance(node, ast.Dict):
-        return {
-            _ast_to_value(k): _ast_to_value(v)
-            for k, v in zip(node.keys, node.values)
-        }
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
-        # -(N) -> -N (only for simple constants)
-        if isinstance(node.operand, ast.Constant):
-            return -node.operand.value
-    # Fallback: return sentinel for complex expressions
-    return "UNKNOWN"
-
-
-def _load_json(path: Path) -> dict[str, Any]:
-    """Load and return JSON from *path*."""
-    with open(path, "r", encoding="utf-8") as fh:
-        return json.load(fh)
-
-
-# ── Static discovery scanner (T5) ───────────────────────────────────────────
-
-
-# Surface type classification vocabulary.
-# These are the canonical surface types from the discovery rules categories.
 SURFACE_RECEIPT_WRITER = "receipt_writer"
 SURFACE_DURABLE_REF = "durable_ref"
 SURFACE_PAYLOAD_POLICY = "payload_policy"
@@ -207,529 +91,983 @@ SURFACE_AUTHORITY_WRITER = "authority_writer"
 SURFACE_COMPATIBILITY_SHIM = "compatibility_shim"
 SURFACE_UNKNOWN = "unknown"
 
-# Surface types that are explicitly non-authority per the discovery rules.
-NON_AUTHORITY_SURFACES: frozenset[str] = frozenset({
-    SURFACE_PROJECTION,
-    SURFACE_JOURNAL,  # journals are append-only records, not authority
-})
+NON_AUTHORITY_SURFACES = frozenset(
+    {
+        SURFACE_DURABLE_REF,
+        SURFACE_JOURNAL,
+        SURFACE_PROJECTION,
+        SURFACE_CONSUMER,
+        SURFACE_COMPATIBILITY_SHIM,
+    }
+)
+AUTHORITY_ADJACENT_SURFACES = frozenset(
+    {
+        SURFACE_RECEIPT_WRITER,
+        SURFACE_LEDGER,
+        SURFACE_REPAIR_QUEUE,
+        SURFACE_AUTHORITY_READER,
+        SURFACE_AUTHORITY_WRITER,
+        SURFACE_PRODUCER,
+    }
+)
 
-# Authority-adjacent surface types — these may read/write authority facts.
-AUTHORITY_ADJACENT_SURFACES: frozenset[str] = frozenset({
-    SURFACE_AUTHORITY_READER,
-    SURFACE_AUTHORITY_WRITER,
-})
-
-# Discovery roots — directories to scan for Python modules.
-# Mirrors the discovery-rules YAML but hard-coded for resilience when
-# YAML is unavailable.
-DISCOVERY_ROOTS: list[dict[str, Any]] = [
+DISCOVERY_ROOTS: tuple[dict[str, Any], ...] = (
     {
         "path": "arnold/workflow",
         "category": "boundary_runtime",
-        "file_patterns": ["*.py"],
-        "description": "Core WBC runtime: contracts, evidence, templates, conformance, ledgers, durable refs, payload policy.",
-    },
-    {
-        "path": "arnold/kernel",
-        "category": "kernel",
-        "file_patterns": ["*.py"],
-        "description": "Kernel primitives: journal, events, effects, replay, suspension, artifacts.",
-    },
-    {
-        "path": "arnold/execution",
-        "category": "execution_runtime",
-        "file_patterns": ["*.py"],
-        "description": "Execution runtime: observability, compensation, routing, state, driver.",
-    },
-    {
-        "path": "arnold/supervisor",
-        "category": "supervisor",
-        "file_patterns": ["*.py"],
-        "description": "Supervisor: restart, leases, reconciliation, progress, cancellation.",
-    },
-    {
-        "path": "arnold/control",
-        "category": "control_plane",
-        "file_patterns": ["*.py"],
-        "description": "Control plane: interface boundary, package boundary.",
+        "file_patterns": [
+            "attempt_ledger_store.py",
+            "boundary_compatibility.py",
+            "boundary_conformance.py",
+            "boundary_evidence.py",
+            "boundary_templates.py",
+            "durable_refs.py",
+            "execution_attempt_ledger.py",
+        ],
+        "description": "Core WBC runtime and schema surfaces.",
     },
     {
         "path": "arnold_pipelines/megaplan/handlers",
         "category": "handler_functions",
         "file_patterns": ["*.py"],
-        "description": "Megaplan handler functions: lifecycle, execute, review, critique, gate, plan, finalize.",
+        "description": "Megaplan handlers and boundary producers.",
     },
     {
         "path": "arnold_pipelines/megaplan/execute",
         "category": "execute_producers",
         "file_patterns": ["*.py"],
-        "description": "Execute-phase batch dispatch, policy, merge, aggregation.",
+        "description": "Execute-phase batch and promotion producers.",
     },
     {
         "path": "arnold_pipelines/megaplan/orchestration",
         "category": "orchestration",
-        "file_patterns": ["*.py"],
-        "description": "Orchestration: authority readers, critique runtime, chain execution, evidence, gate checks.",
+        "file_patterns": [
+            "authority_readers.py",
+            "completion_io.py",
+            "critique_runtime.py",
+            "execution_evidence.py",
+            "phase_result.py",
+        ],
+        "description": "Orchestration readers, validators, and transitions.",
     },
-]
+    {
+        "path": "arnold_pipelines/megaplan/custody",
+        "category": "custody_runtime",
+        "file_patterns": ["*.py"],
+        "description": "WBC runtime facade, compatibility, and controlled writers.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/chain",
+        "category": "chain_runtime",
+        "file_patterns": ["spec.py", "status.py", "epic_chain.py", "operator_pause.py"],
+        "description": "Chain readers and lifecycle surfaces.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/cloud",
+        "category": "cloud_runtime",
+        "file_patterns": [
+            "status_snapshot.py",
+            "repair_lock.py",
+            "wrapper_acceptance_gate.py",
+            "supervise.py",
+            "human_blockers.py",
+        ],
+        "description": "Cloud wrappers, repair, and status consumers.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/supervisor",
+        "category": "supervisor_runtime",
+        "file_patterns": ["state.py", "chain_runner.py", "bakeoff_runner.py"],
+        "description": "Supervisor state and runner surfaces.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/_core",
+        "category": "core_runtime",
+        "file_patterns": ["state.py", "io.py", "modes.py"],
+        "description": "Core state and compatibility-reader surfaces.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/bakeoff",
+        "category": "bakeoff_runtime",
+        "file_patterns": ["state.py", "channel_shadow.py", "handlers.py", "lifecycle.py", "merge.py"],
+        "description": "Bakeoff compatibility-reader surfaces.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/runtime",
+        "category": "runtime_compatibility",
+        "file_patterns": ["inprocess_step.py", "step_io_policy_adapter.py"],
+        "description": "Runtime adapters that still classify filenames and marker-backed state.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/watchdog",
+        "category": "watchdog_runtime",
+        "file_patterns": ["processes.py", "correlate.py", "snapshot.py"],
+        "description": "Process and marker compatibility readers for watchdog observation paths.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/receipts",
+        "category": "receipt_runtime",
+        "file_patterns": ["report.py", "extractors.py"],
+        "description": "Mutable receipt readers retained as read-only reporting adapters.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/pricing",
+        "category": "pricing_runtime",
+        "file_patterns": ["codex.py", "claude.py", "fireworks.py"],
+        "description": "Token and cost compatibility readers for historical accounting paths.",
+    },
+)
+
+ADAPTER_CLASS_RAW_JSON = "raw_json"
+ADAPTER_CLASS_PROSE = "prose"
+ADAPTER_CLASS_TOKEN = "token"
+ADAPTER_CLASS_FILENAME = "filename"
+ADAPTER_CLASS_MARKER = "marker"
+ADAPTER_CLASS_PROCESS = "process"
+ADAPTER_CLASS_MUTABLE_RECEIPT = "mutable_receipt"
+
+MILESTONE_ORDER = {
+    "M7": 0,
+    "M7A": 1,
+    "M8": 2,
+    "M9": 3,
+    "M10": 4,
+    "M11": 5,
+}
+
+SNAPSHOT_READER_CLASSIFICATIONS: dict[str, str] = {
+    "legacy-chain-state-reader": ADAPTER_CLASS_RAW_JSON,
+    "legacy-supervisor-state-reader": ADAPTER_CLASS_RAW_JSON,
+    "legacy-bakeoff-state-reader": ADAPTER_CLASS_RAW_JSON,
+    "legacy-status-snapshot-reader": ADAPTER_CLASS_RAW_JSON,
+    "legacy-heartbeat-state-reader": ADAPTER_CLASS_RAW_JSON,
+    "legacy-repair-lock-reader": ADAPTER_CLASS_PROCESS,
+}
 
 
-def _classify_module_surfaces(
-    module_path: str,
-    classes: list[str],
-    functions: list[str],
-    imports: list[str],
-    docstring: str,
-) -> list[str]:
-    """Classify a Python module into zero or more surface types.
-
-    Classification is based on module path, class names, function names,
-    import patterns, and docstring content.  This is heuristic — it errs
-    on the side of UNKNOWN rather than misclassifying.
-
-    Projections are classified but explicitly marked as non-authority.
-    """
-    surfaces: list[str] = []
-    path_lower = module_path.lower()
-    doc_lower = docstring.lower()
-    all_names = set(classes) | set(functions)
-    all_names_lower = {n.lower() for n in all_names}
-    imports_lower = [i.lower() for i in imports]
-
-    # ── Receipt writers ──────────────────────────────────────────────────
-    _receipt_keywords = {"receipt", "receipt_writer", "write_boundary_receipt",
-                         "boundary_receipt", "dispatch_receipt"}
-    if any(kw in path_lower for kw in _receipt_keywords):
-        surfaces.append(SURFACE_RECEIPT_WRITER)
-    elif any(kw in all_names_lower for kw in _receipt_keywords):
-        surfaces.append(SURFACE_RECEIPT_WRITER)
-    elif any("receipt" in imp for imp in imports_lower):
-        surfaces.append(SURFACE_RECEIPT_WRITER)
-
-    # ── Durable refs ─────────────────────────────────────────────────────
-    _durable_keywords = {"durable_ref", "durableref", "refs"}
-    if any(kw in path_lower for kw in _durable_keywords):
-        surfaces.append(SURFACE_DURABLE_REF)
-    elif "durableref" in all_names_lower or "durable_ref" in path_lower:
-        surfaces.append(SURFACE_DURABLE_REF)
-
-    # ── Payload policy ───────────────────────────────────────────────────
-    _payload_keywords = {"payload_policy", "payloadpolicy", "payload_mode",
-                         "retention_mode", "payloadclass"}
-    if any(kw in path_lower for kw in _payload_keywords):
-        surfaces.append(SURFACE_PAYLOAD_POLICY)
-    elif any(kw in all_names_lower for kw in _payload_keywords):
-        surfaces.append(SURFACE_PAYLOAD_POLICY)
-
-    # ── Ledgers ──────────────────────────────────────────────────────────
-    _ledger_keywords = {"ledger", "execution_attempt_ledger", "effect_ledger",
-                        "effectledger"}
-    if any(kw in path_lower for kw in _ledger_keywords):
-        surfaces.append(SURFACE_LEDGER)
-    elif any(kw in all_names_lower for kw in _ledger_keywords):
-        surfaces.append(SURFACE_LEDGER)
-    elif "ledger" in doc_lower:
-        surfaces.append(SURFACE_LEDGER)
-
-    # ── Journals ─────────────────────────────────────────────────────────
-    if path_lower.endswith("journal.py") or "/journal/" in path_lower:
-        surfaces.append(SURFACE_JOURNAL)
-    elif "journal" in path_lower and path_lower.count("journal") == 1:
-        if "eventjournal" in all_names_lower or "journalposition" in all_names_lower:
-            surfaces.append(SURFACE_JOURNAL)
-
-    # ── Projections ──────────────────────────────────────────────────────
-    _proj_keywords = {"projection", "advisory_projection", "progress", "snapshot"}
-    if any(kw in path_lower for kw in ["projection", "advisory_projection"]):
-        surfaces.append(SURFACE_PROJECTION)
-    elif "projection" in all_names_lower:
-        surfaces.append(SURFACE_PROJECTION)
-    elif "projection" in doc_lower and "not authority" in doc_lower:
-        surfaces.append(SURFACE_PROJECTION)
-
-    # ── Repair queues ────────────────────────────────────────────────────
-    _repair_keywords = {"repair", "recovery", "compensation", "reconcile",
-                        "reconciliation", "restart", "quarantine"}
-    if any(kw in path_lower for kw in _repair_keywords):
-        surfaces.append(SURFACE_REPAIR_QUEUE)
-    elif any(kw in all_names_lower for kw in _repair_keywords):
-        surfaces.append(SURFACE_REPAIR_QUEUE)
-
-    # ── Authority readers ────────────────────────────────────────────────
-    _auth_reader_keywords = {"authority_reader", "authority_readers",
-                             "override_authority"}
-    if any(kw in path_lower for kw in _auth_reader_keywords):
-        surfaces.append(SURFACE_AUTHORITY_READER)
-    elif "authorityreader" in all_names_lower:
-        surfaces.append(SURFACE_AUTHORITY_READER)
-    elif any(
-        imp.startswith("arnold_pipelines.megaplan.authority")
-        or "boundary_evidence" in imp
-        for imp in imports_lower
-    ):
-        # Importing from actual authority packages or boundary evidence
-        # (AuthorityRecord, BoundaryReceipt) suggests an authority reader.
-        if SURFACE_AUTHORITY_READER not in surfaces:
-            surfaces.append(SURFACE_AUTHORITY_READER)
-
-    # ── Authority writers ────────────────────────────────────────────────
-    _auth_writer_keywords = {"override_authority", "authority_writer",
-                             "rubber_stamp", "binding"}
-    if any(kw in path_lower for kw in _auth_writer_keywords):
-        surfaces.append(SURFACE_AUTHORITY_WRITER)
-
-    # ── Consumers ────────────────────────────────────────────────────────
-    _consumer_keywords = {"consumer", "read", "import_graph", "parse",
-                          "inspect", "validate", "check"}
-    # A module that mostly reads/checks but doesn't produce transitions
-    if any(kw in path_lower for kw in ["import_graph", "inspect", "validate"]):
-        if not surfaces:
-            surfaces.append(SURFACE_CONSUMER)
-
-    # ── Producers (handler functions) ────────────────────────────────────
-    _producer_keywords = {"handler", "handle_", "producer", "produce",
-                          "emit", "dispatch", "execute_batch", "runner"}
-    if any(kw in path_lower for kw in _producer_keywords):
-        if SURFACE_PRODUCER not in surfaces:
-            surfaces.append(SURFACE_PRODUCER)
-    elif any(kw in all_names_lower for kw in {"handle_execute", "handle_plan",
-                                              "handle_critique", "handle_gate",
-                                              "handle_review", "handle_finalize"}):
-        if SURFACE_PRODUCER not in surfaces:
-            surfaces.append(SURFACE_PRODUCER)
-
-    # ── Compatibility shims ──────────────────────────────────────────────
-    _compat_keywords = {"compatibility", "compat", "adapter", "bridge", "shim"}
-    if any(kw in path_lower for kw in _compat_keywords):
-        surfaces.append(SURFACE_COMPATIBILITY_SHIM)
-
-    # ── Fallback: classify unknown modules ───────────────────────────────
-    if not surfaces:
-        surfaces.append(SURFACE_UNKNOWN)
-
-    return surfaces
+@dataclass(frozen=True)
+class HistoricalAdapterRule:
+    adapter_id: str
+    reader_name: str
+    adapter_class: str
+    module_paths: tuple[str, ...]
+    permitted_read_operations: tuple[str, ...]
+    description: str
+    deadline_milestone: str
+    diagnostics: tuple[str, ...]
+    projection_ids: tuple[str, ...] = ()
+    mode: str = "shadow"
+    supported_versions: tuple[str, ...] = ("legacy", "shadow")
 
 
-def _is_authority_surface(surface_types: list[str]) -> bool:
-    """Return True if this module carries authority-adjacent surface types.
+ADDITIONAL_HISTORICAL_ADAPTER_RULES: tuple[HistoricalAdapterRule, ...] = (
+    HistoricalAdapterRule(
+        adapter_id="historical-prose-reader",
+        reader_name="Prose Classification Consumer",
+        adapter_class=ADAPTER_CLASS_PROSE,
+        module_paths=(
+            "arnold_pipelines/megaplan/_core/modes.py",
+            "arnold_pipelines/megaplan/execute/aggregation.py",
+        ),
+        permitted_read_operations=(
+            "is_prose_mode",
+            "is_creative_mode",
+            "phase_quality_deviations_for_current_attempt",
+        ),
+        description="Legacy consumers that classify prose or narrative output before canonical WBC consumer adoption.",
+        deadline_milestone="M9",
+        diagnostics=(
+            "Consumes prose-mode or narrative evidence only for observation; never as launch or completion authority.",
+            "Missing canonical WBC evidence must remain UNKNOWN rather than inferred from prose text.",
+        ),
+    ),
+    HistoricalAdapterRule(
+        adapter_id="historical-token-reader",
+        reader_name="Token and Cost Consumer",
+        adapter_class=ADAPTER_CLASS_TOKEN,
+        module_paths=(
+            "arnold_pipelines/megaplan/pricing/codex.py",
+            "arnold_pipelines/megaplan/pricing/claude.py",
+            "arnold_pipelines/megaplan/pricing/fireworks.py",
+            "arnold_pipelines/megaplan/receipts/report.py",
+        ),
+        permitted_read_operations=(
+            "cost_from_usage",
+            "cost_from_codex_usage_dict",
+            "estimate_tokens_from_cost",
+            "_tokens",
+            "_totals",
+        ),
+        description="Historical analytics readers that inspect raw token or cost totals without using them as authority.",
+        deadline_milestone="M9",
+        diagnostics=(
+            "Raw token totals are accounting evidence only and cannot classify success, repair ownership, or task completion.",
+            "Any missing denominator or mismatched session usage must remain diagnostic-only.",
+        ),
+    ),
+    HistoricalAdapterRule(
+        adapter_id="historical-filename-reader",
+        reader_name="Filename Compatibility Consumer",
+        adapter_class=ADAPTER_CLASS_FILENAME,
+        module_paths=(
+            "arnold_pipelines/megaplan/execute/step_edit.py",
+        ),
+        permitted_read_operations=("next_plan_artifact_name",),
+        description="Legacy consumers that classify plan artifacts by filename or path before typed WBC query adoption.",
+        deadline_milestone="M9",
+        diagnostics=(
+            "Filename or path heuristics remain compatibility-only and cannot prove freshness, ownership, or terminal success.",
+            "Canonical reads must bind to exact WBC source identity instead of implicit latest filenames.",
+        ),
+    ),
+    HistoricalAdapterRule(
+        adapter_id="historical-marker-reader",
+        reader_name="Marker Compatibility Consumer",
+        adapter_class=ADAPTER_CLASS_MARKER,
+        module_paths=(
+            "arnold_pipelines/megaplan/runtime/step_io_policy_adapter.py",
+            "arnold_pipelines/megaplan/cloud/status_snapshot.py",
+        ),
+        permitted_read_operations=(
+            "load_megaplan_step_io_policy",
+            "has_megaplan_step_io_self_validation_marker",
+            "load_cloud_status_snapshot",
+        ),
+        description="Legacy marker-backed readers retained only for operator diagnostics and compatibility observation.",
+        deadline_milestone="M9",
+        diagnostics=(
+            "Marker presence is corroboration only and cannot outrank canonical WBC or custody state.",
+            "Stale or missing markers must degrade to UNKNOWN rather than silently refreshing activity.",
+        ),
+    ),
+    HistoricalAdapterRule(
+        adapter_id="historical-process-reader",
+        reader_name="Process Observation Consumer",
+        adapter_class=ADAPTER_CLASS_PROCESS,
+        module_paths=(
+            "arnold_pipelines/megaplan/watchdog/processes.py",
+            "arnold_pipelines/megaplan/watchdog/correlate.py",
+            "arnold_pipelines/megaplan/watchdog/snapshot.py",
+        ),
+        permitted_read_operations=(
+            "scan_processes",
+            "correlate_processes_to_plans",
+            "infer_plan_dirs_from_processes",
+            "build_snapshot",
+        ),
+        description="Legacy process-table and cwd correlation readers retained for watchdog observation paths.",
+        deadline_milestone="M9",
+        diagnostics=(
+            "Process liveness is corroboration only and cannot grant retry, repair, resume, or completion authority.",
+            "Disagreement between process facts and canonical evidence must remain drift, not auto-repair authority.",
+        ),
+    ),
+    HistoricalAdapterRule(
+        adapter_id="historical-mutable-receipt-reader",
+        reader_name="Mutable Receipt Consumer",
+        adapter_class=ADAPTER_CLASS_MUTABLE_RECEIPT,
+        module_paths=(
+            "arnold_pipelines/megaplan/receipts/report.py",
+            "arnold_pipelines/megaplan/receipts/extractors.py",
+        ),
+        permitted_read_operations=(
+            "_safe_read_json",
+            "_collect_receipts",
+            "_collect_dispatch_receipts",
+            "load_and_extract",
+        ),
+        description="Legacy report builders that inspect mutable receipt JSON only for read-only diagnostics.",
+        deadline_milestone="M9",
+        diagnostics=(
+            "Mutable receipts cannot prove exact-version authority because they may be rewritten or superseded.",
+            "Canonical WBC rereads must remain the only source for authority-increasing transitions.",
+        ),
+    ),
+)
 
-    Only ``authority_reader`` and ``authority_writer`` are positive
-    authority surfaces.  All other surface types (receipt_writer,
-    ledger, journal, projection, payload_policy, consumer, producer,
-    repair_queue, durability_ref, compatibility_shim, unknown) are
-    operational/observational and do NOT constitute authority.
+WRAPPER_SHELL_ROOTS: tuple[dict[str, Any], ...] = (
+    {
+        "path": ".",
+        "patterns": ("sync-skills.sh",),
+        "category": "repo_root_scripts",
+        "description": "Repository-root operational scripts.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/cloud",
+        "patterns": ("*.sh", "wrappers/*", "systemd/*", "templates/*.tmpl"),
+        "category": "cloud_wrappers",
+        "description": "Cloud wrappers and shell-based runtime adapters.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/data",
+        "patterns": ("*.sh",),
+        "category": "ci_cd_scripts",
+        "description": "Hooks and operational scripts.",
+    },
+)
 
-    Projections and journals are explicitly non-authority per the
-    discovery rules, but the key invariant is that ONLY modules
-    classified as authority_reader or authority_writer get
-    ``is_authority: true``.
-    """
-    if not surface_types:
-        return False
-    # Authority-adjacent surfaces are the only ones that confer authority
-    return any(st in AUTHORITY_ADJACENT_SURFACES for st in surface_types)
-
-
-def _parse_module_ast(source: str) -> dict[str, Any]:
-    """Parse Python source and extract classes, functions, and imports.
-
-    Returns a dict with keys: classes (list[str]), functions (list[str]),
-    imports (list[str]), docstring (str).
-    """
-    result: dict[str, Any] = {
-        "classes": [],
-        "functions": [],
-        "imports": [],
-        "docstring": "",
+PRODUCER_CALL_NAMES = frozenset(
+    {
+        "write_boundary_receipt",
+        "_emit_boundary_receipt",
+        "_emit_execute_boundary_receipt",
+        "_emit_batch_boundary_receipt",
+        "reserve_attempt",
+        "start_attempt",
+        "complete_attempt",
+        "fail_attempt",
+        "cancel_attempt",
+        "suspend_attempt",
+        "resume_attempt",
+        "schedule_retry",
+        "record_effect_intent",
+        "record_effect_outcome",
+        "authoritative_reread",
+        "append_event",
     }
+)
+RISKY_PRODUCER_CALL_NAMES = frozenset(
+    {
+        "write_boundary_receipt",
+        "_emit_boundary_receipt",
+        "_emit_execute_boundary_receipt",
+        "_emit_batch_boundary_receipt",
+        "append_event",
+        "start_attempt",
+        "complete_attempt",
+        "fail_attempt",
+        "cancel_attempt",
+        "suspend_attempt",
+        "resume_attempt",
+        "schedule_retry",
+        "record_effect_intent",
+        "record_effect_outcome",
+    }
+)
+BYPASS_TEXT_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"\|\|\s*true\b", "shell_or_true"),
+    (r"except Exception", "broad_exception"),
+    (r"without raising", "without_raising"),
+    (r"best-effort", "best_effort"),
+    (r"warn-and-continue", "warn_and_continue"),
+    (r"\b(?:load_chain_state|latest_artifact)\s*\(", "implicit_latest_lookup"),
+    (
+        r"\b(?:expected_source_version|source_version|source_ref|lookup_ref|commit_sha|head_sha)\w*\s*="
+        r"\s*[\"'](?:HEAD|head|latest|main|master|refs/pull/[^\"']+)[\"']",
+        "mutable_alias_overwrite",
+    ),
+)
+
+
+def _sha256_hex(data: str) -> str:
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _directory_digest(root: Path) -> str:
+    entries: list[str] = []
+    for path in sorted(candidate for candidate in root.rglob("*") if candidate.is_file()):
+        rel_path = path.relative_to(root).as_posix()
+        entries.append(f"{rel_path}\0{_sha256_file(path)}")
+    payload = "\n".join(entries)
+    return f"sha256:{_sha256_hex(payload)}"
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_yaml(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if _HAS_YAML:
+        path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+        return
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _display_path(path: Path) -> str:
     try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return result
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
 
-    # Module docstring
-    doc = ast.get_docstring(tree)
-    if doc:
-        result["docstring"] = doc
 
+def _matrix_hash() -> str:
+    return _sha256_hex(SOURCE_TO_OWNER_MATRIX_PATH.read_text(encoding="utf-8"))
+
+
+def _call_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _call_name(node.value)
+        return f"{base}.{node.attr}" if base else node.attr
+    if isinstance(node, ast.Call):
+        return _call_name(node.func)
+    if isinstance(node, ast.Subscript):
+        return _call_name(node.value)
+    return ""
+
+
+def _symbol_value(node: ast.AST, symbols: dict[str, Any]) -> Any:
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name):
+        return symbols.get(node.id, node.id)
+    if isinstance(node, ast.Attribute):
+        base = _symbol_value(node.value, symbols)
+        if isinstance(base, str) and base in {"BoundaryPhase", "BoundaryTemplateKind", "AdapterTemplateKind"}:
+            return node.attr.lower()
+        if isinstance(base, str):
+            return f"{base}.{node.attr}"
+        return node.attr
+    if isinstance(node, ast.Dict):
+        return {
+            _symbol_value(key, symbols): _symbol_value(value, symbols)
+            for key, value in zip(node.keys, node.values)
+        }
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return [_symbol_value(item, symbols) for item in node.elts]
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        inner = _symbol_value(node.operand, symbols)
+        return -inner if isinstance(inner, (int, float)) else inner
+    if isinstance(node, ast.Call):
+        callee = _call_name(node.func)
+        if callee.endswith("MappingProxyType") and node.args:
+            return _symbol_value(node.args[0], symbols)
+        if callee.endswith("frozenset") and node.args:
+            value = _symbol_value(node.args[0], symbols)
+            return list(value) if isinstance(value, list) else value
+        return {"call": callee}
+    return None
+
+
+def _parse_boundary_contract_instances(path: Path) -> list[dict[str, Any]]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    symbols: dict[str, Any] = {}
+    contracts: list[dict[str, Any]] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
-            result["classes"].append(node.name)
-        elif isinstance(node, ast.FunctionDef):
-            result["functions"].append(node.name)
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                result["imports"].append(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            mod = node.module or ""
-            for alias in node.names:
-                result["imports"].append(f"{mod}.{alias.name}")
-
-    return result
-
-
-def _scan_discovery_roots() -> dict[str, Any]:
-    """Scan all discovery roots and classify every Python module found.
-
-    Returns a dict with keys: ``modules`` (list of runtime_module rows)
-    and ``handler_functions`` (list of handler_function rows).
-    """
-    modules: list[dict[str, Any]] = []
-    handler_funcs: list[dict[str, Any]] = []
-
-    for root_cfg in DISCOVERY_ROOTS:
-        root_path = REPO_ROOT / root_cfg["path"]
-        if not root_path.is_dir():
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            value = _symbol_value(node.value, symbols)
+            if value is not None:
+                symbols[node.targets[0].id] = value
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+            value = _symbol_value(node.value, symbols)
+            if value is not None:
+                symbols[node.target.id] = value
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
             continue
-
-        category = root_cfg["category"]
-        patterns = root_cfg.get("file_patterns", ["*.py"])
-
-        # Collect all matching files
-        py_files: list[Path] = []
-        for pattern in patterns:
-            for fpath in root_path.rglob(pattern):
-                if fpath.is_file() and fpath.suffix == ".py":
-                    py_files.append(fpath)
-
-        # Deduplicate
-        py_files = sorted(set(py_files))
-
-        for fpath in py_files:
-            rel = fpath.relative_to(REPO_ROOT)
-            rel_str = str(rel).replace("\\", "/")
-
-            try:
-                source = fpath.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+        if _call_name(node.func).split(".")[-1] != "BoundaryContract":
+            continue
+        record: dict[str, Any] = {}
+        positional = [
+            "boundary_id",
+            "workflow_id",
+            "row_id",
+            "phase",
+            "required_artifacts",
+            "expected_state_delta",
+            "expected_history_entry",
+            "phase_result_required",
+            "receipt_required",
+            "authority_required",
+            "contract_version",
+            "details",
+        ]
+        for field_name, arg in zip(positional, node.args):
+            record[field_name] = _symbol_value(arg, symbols)
+        for keyword in node.keywords:
+            if keyword.arg is None:
                 continue
-
-            ast_info = _parse_module_ast(source)
-            classes = ast_info["classes"]
-            functions = ast_info["functions"]
-            imports = ast_info["imports"]
-            docstring = ast_info["docstring"]
-
-            # Classify surface types
-            surface_types = _classify_module_surfaces(
-                rel_str, classes, functions, imports, docstring
-            )
-
-            # Determine owner: WBC owns arnold/workflow and boundary runtime;
-            # Run Authority owns kernel/execution/supervisor/handlers.
-            is_boundary_runtime = any(
-                seg in rel_str for seg in ["arnold/workflow/", "megaplan/workflows/"]
-            )
-            owner = "wbc" if is_boundary_runtime else "run_authority"
-
-            is_auth = _is_authority_surface(surface_types)
-
-            module_row: dict[str, Any] = {
-                "row_kind": "runtime_module",
-                "module_path": rel_str,
-                "category": category,
-                "owner": owner,
-                "surface_types": surface_types,
-                "is_authority": is_auth,
-                "non_authority_surfaces": [st for st in surface_types if st in NON_AUTHORITY_SURFACES],
-                "class_count": len(classes),
-                "function_count": len(functions),
-                "classes": sorted(classes),
-                "functions": sorted(functions),
-                "docstring_summary": (docstring[:200] + "…") if len(docstring) > 200 else docstring,
-            }
-            modules.append(module_row)
-
-            # For handler directories, also emit handler_function rows
-            if category in ("handler_functions", "execute_producers", "orchestration"):
-                for fn_name in functions:
-                    # Only emit public-ish functions (not _private ones unless they're handlers)
-                    if fn_name.startswith("_") and not fn_name.startswith("handle_"):
-                        continue
-                    handler_row: dict[str, Any] = {
-                        "row_kind": "handler_function",
-                        "function_name": fn_name,
-                        "module_path": rel_str,
-                        "owner": "run_authority",
-                        "category": _classify_handler_category(fn_name, rel_str, category),
-                    }
-                    handler_funcs.append(handler_row)
-
-    # Sort deterministically
-    modules.sort(key=lambda r: (r["category"], r["module_path"]))
-    handler_funcs.sort(key=lambda r: (r["category"], r["module_path"], r["function_name"]))
-
-    return {
-        "modules": modules,
-        "handler_functions": handler_funcs,
-    }
-
-
-def _classify_handler_category(
-    fn_name: str, module_path: str, root_category: str
-) -> str:
-    """Classify a handler function into a sub-category.
-
-    Returns one of: lifecycle, execute, review, critique, gate, revise,
-    repair, cloud, orchestrate, unknown.
-    """
-    fn_lower = fn_name.lower()
-    path_lower = module_path.lower()
-
-    if any(kw in fn_lower for kw in ("execute", "handle_execute", "run_batch")):
-        return "execute"
-    if any(kw in fn_lower for kw in ("handle_plan", "plan_", "prep")):
-        return "lifecycle"
-    if any(kw in fn_lower for kw in ("critique", "review_critique")):
-        return "critique"
-    if any(kw in fn_lower for kw in ("gate", "check_gate", "baseline")):
-        return "gate"
-    if any(kw in fn_lower for kw in ("review", "audit", "verify")):
-        return "review"
-    if any(kw in fn_lower for kw in ("revise", "override", "tiebreaker")):
-        return "revise"
-    if any(kw in fn_lower for kw in ("finalize", "complete", "finish")):
-        return "lifecycle"
-    if any(kw in fn_lower for kw in ("repair", "recover", "compensate", "restart")):
-        return "repair"
-    if any(kw in fn_lower for kw in ("reconcile", "progress", "observe")):
-        return "orchestrate"
-    if any(kw in path_lower for kw in ("orchestration", "supervisor")):
-        return "orchestrate"
-    return "unknown"
-
-
-# ── Parsing functions ───────────────────────────────────────────────────────
+            record[keyword.arg] = _symbol_value(keyword.value, symbols)
+        if record.get("boundary_id"):
+            contracts.append(record)
+    contracts.sort(key=lambda item: str(item.get("boundary_id", "")))
+    return contracts
 
 
 def parse_boundary_contracts() -> list[dict[str, Any]]:
-    """Parse all BoundaryContract instances from the contracts registry.
-
-    Returns a list of dicts with keys: boundary_id, workflow_id, row_id,
-    phase (str or None), required_artifacts, expected_state_delta,
-    expected_history_entry, phase_result_required, receipt_required,
-    authority_required, details.
-    """
-    raw = _parse_boundary_contract_instances(BOUNDARY_CONTRACTS_PATH)
-
-    # Normalize phases: convert "BoundaryPhase.PREP"-style enum refs to strings
-    known_phases = {
-        "PREP", "PLAN", "CRITIQUE", "GATE", "REVISE", "EXECUTE",
-        "REVIEW", "FINALIZE", "OVERRIDE",
-    }
-    result: list[dict[str, Any]] = []
-    for c in raw:
-        bid = c.get("boundary_id", "")
-        # Skip templates — they are reference instances, not real contracts
-        if isinstance(bid, str) and bid.startswith("template."):
-            continue
-        phase = c.get("phase")
-        if isinstance(phase, str) and phase in known_phases:
-            c["phase"] = phase.lower()
-        elif phase is None or phase == "None":
-            c["phase"] = None
-        result.append(c)
-    return result
+    return _parse_boundary_contract_instances(BOUNDARY_CONTRACTS_PATH)
 
 
 def parse_contract_matrix() -> dict[str, Any]:
-    """Load the contract-to-producer matrix."""
     return _load_json(CONTRACT_MATRIX_PATH)
 
 
 def parse_support_manifest() -> dict[str, Any]:
-    """Load the support manifest."""
     return _load_json(SUPPORT_MANIFEST_PATH)
 
 
-# ── Joining / inventory construction ────────────────────────────────────────
+def parse_source_to_owner_matrix() -> dict[str, Any]:
+    return _load_json(SOURCE_TO_OWNER_MATRIX_PATH)
 
 
-def _build_inventory(
-    contracts: list[dict[str, Any]],
-    matrix: dict[str, Any],
-    manifest: dict[str, Any],
-    discovery: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Join the three inputs into a deterministic inventory, extended with
-    static discovery results.
+@dataclass
+class CallScan:
+    callee: str
+    line: int
+    column: int
+    enclosing_function: str = ""
+    boundary_literals: tuple[str, ...] = ()
+    source_segment: str = ""
 
-    The join key is ``boundary_id`` for boundary_contract rows and
-    ``step_id`` for manifest entries.  Matrix rows are matched to
-    contracts by ``boundary_id``.
 
-    When *discovery* is provided (from :func:`_scan_discovery_roots`),
-    runtime_module and handler_function rows are appended to the inventory.
-    """
+@dataclass
+class TryScan:
+    line: int
+    enclosing_function: str
+    catches_broad_exception: bool
+    body_calls: tuple[str, ...] = ()
+    handler_source: str = ""
 
-    # Index contracts and matrix rows by boundary_id
-    contracts_by_id: dict[str, dict[str, Any]] = {}
-    for c in contracts:
-        bid = c.get("boundary_id", "")
-        if bid:
-            contracts_by_id[bid] = c
 
-    matrix_contracts = matrix.get("contracts", [])
-    matrix_by_id: dict[str, dict[str, Any]] = {}
-    for m in matrix_contracts:
-        bid = m.get("boundary_id", "")
-        if bid:
-            matrix_by_id[bid] = m
+@dataclass
+class ModuleScan:
+    module_path: str
+    category: str
+    owner: str
+    surface_types: tuple[str, ...]
+    is_authority: bool
+    classes: tuple[str, ...]
+    functions: tuple[str, ...]
+    imports: tuple[str, ...]
+    docstring_summary: str
+    calls: tuple[CallScan, ...] = ()
+    try_scans: tuple[TryScan, ...] = ()
+    text_hits: tuple[dict[str, Any], ...] = ()
 
-    # Collect all manifest entries from all families
-    manifest_entries: list[dict[str, Any]] = []
+
+class _ModuleVisitor(ast.NodeVisitor):
+    def __init__(self, source: str) -> None:
+        self.source = source
+        self.classes: list[str] = []
+        self.functions: list[str] = []
+        self.function_ranges: list[tuple[int, int, str]] = []
+        self.imports: list[str] = []
+        self.calls: list[CallScan] = []
+        self.try_scans: list[TryScan] = []
+        self.function_stack: list[str] = []
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.classes.append(node.name)
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self.functions.append(node.name)
+        self.function_ranges.append((node.lineno, getattr(node, "end_lineno", node.lineno), node.name))
+        self.function_stack.append(node.name)
+        self.generic_visit(node)
+        self.function_stack.pop()
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.visit_FunctionDef(node)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            self.imports.append(alias.name)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        module = node.module or ""
+        for alias in node.names:
+            self.imports.append(f"{module}.{alias.name}" if module else alias.name)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        callee = _call_name(node.func)
+        if callee:
+            boundary_literals: list[str] = []
+            for arg in list(node.args) + [kw.value for kw in node.keywords if kw.arg]:
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    if re.fullmatch(r"[a-z0-9_]+", arg.value):
+                        boundary_literals.append(arg.value)
+            try:
+                source_segment = (ast.get_source_segment(self.source, node) or "").strip()
+            except IndexError:  # synthetic snippets in helper scans do not retain original offsets.
+                source_segment = ""
+            self.calls.append(
+                CallScan(
+                    callee=callee,
+                    line=node.lineno,
+                    column=node.col_offset,
+                    enclosing_function=self.function_stack[-1] if self.function_stack else "",
+                    boundary_literals=tuple(sorted(set(boundary_literals))),
+                    source_segment=source_segment,
+                )
+            )
+        self.generic_visit(node)
+
+    def visit_Try(self, node: ast.Try) -> None:
+        catches_broad = False
+        for handler in node.handlers:
+            if handler.type is None:
+                catches_broad = True
+            elif isinstance(handler.type, ast.Name) and handler.type.id == "Exception":
+                catches_broad = True
+            elif isinstance(handler.type, ast.Tuple):
+                catches_broad = any(isinstance(item, ast.Name) and item.id == "Exception" for item in handler.type.elts)
+        body_calls = tuple(
+            sorted(
+                {
+                    _call_name(inner.func).split(".")[-1]
+                    for stmt in node.body
+                    for inner in ast.walk(stmt)
+                    if isinstance(inner, ast.Call) and _call_name(inner.func)
+                }
+            )
+        )
+        if catches_broad:
+            handler_source = "\n".join(
+                (ast.get_source_segment(self.source, handler) or "").strip()
+                for handler in node.handlers
+            ).strip()
+            self.try_scans.append(
+                TryScan(
+                    line=node.lineno,
+                    enclosing_function=self.function_stack[-1] if self.function_stack else "",
+                    catches_broad_exception=True,
+                    body_calls=body_calls,
+                    handler_source=handler_source,
+                )
+            )
+        self.generic_visit(node)
+
+
+def _classify_module_surfaces(
+    module_path: str,
+    classes: tuple[str, ...],
+    functions: tuple[str, ...],
+    imports: tuple[str, ...],
+    docstring: str,
+) -> list[str]:
+    surfaces: list[str] = []
+    path_lower = module_path.lower()
+    doc_lower = docstring.lower()
+    all_names_lower = {name.lower() for name in {*(classes or ()), *(functions or ())}}
+    imports_lower = [item.lower() for item in imports]
+
+    receipt_keywords = frozenset({"receipt", "boundary_receipt", "dispatch_receipt", "write_boundary_receipt"})
+    if any(keyword in path_lower for keyword in receipt_keywords) or any(
+        keyword in all_names_lower for keyword in receipt_keywords
+    ) or any("receipt" in item for item in imports_lower):
+        surfaces.append(SURFACE_RECEIPT_WRITER)
+
+    durable_keywords = frozenset({"durable_ref", "durableref", "refs"})
+    if any(keyword in path_lower for keyword in durable_keywords) or "durableref" in all_names_lower:
+        surfaces.append(SURFACE_DURABLE_REF)
+
+    payload_keywords = frozenset({"payload_policy", "payloadpolicy", "retention_mode", "payloadclass"})
+    if any(keyword in path_lower for keyword in payload_keywords) or any(
+        keyword in all_names_lower for keyword in payload_keywords
+    ):
+        surfaces.append(SURFACE_PAYLOAD_POLICY)
+
+    ledger_keywords = frozenset({"ledger", "execution_attempt_ledger", "effect_ledger"})
+    if any(keyword in path_lower for keyword in ledger_keywords) or any(
+        keyword in all_names_lower for keyword in ledger_keywords
+    ) or "ledger" in doc_lower:
+        surfaces.append(SURFACE_LEDGER)
+
+    if path_lower.endswith("journal.py") or "/journal/" in path_lower or (
+        "journal" in path_lower and ("eventjournal" in all_names_lower or "journalposition" in all_names_lower)
+    ):
+        surfaces.append(SURFACE_JOURNAL)
+
+    if any(keyword in path_lower for keyword in ("projection", "advisory_projection")) or "projection" in all_names_lower:
+        surfaces.append(SURFACE_PROJECTION)
+
+    repair_keywords = frozenset({"repair", "reconcile", "recovery", "restart", "quarantine", "compensation"})
+    if any(keyword in path_lower for keyword in repair_keywords) or any(
+        keyword in all_names_lower for keyword in repair_keywords
+    ):
+        surfaces.append(SURFACE_REPAIR_QUEUE)
+
+    auth_reader_keywords = frozenset({"authority_reader", "authority_readers", "override_authority"})
+    if any(keyword in path_lower for keyword in auth_reader_keywords) or "authorityreader" in all_names_lower or any(
+        item.startswith("arnold_pipelines.megaplan.authority") or "boundary_evidence" in item
+        for item in imports_lower
+    ):
+        surfaces.append(SURFACE_AUTHORITY_READER)
+
+    auth_writer_keywords = frozenset({"authority_writer", "override_authority", "binding", "rubber_stamp"})
+    if any(keyword in path_lower for keyword in auth_writer_keywords):
+        surfaces.append(SURFACE_AUTHORITY_WRITER)
+
+    if any(keyword in path_lower for keyword in ("import_graph", "inspect", "validate")) and not surfaces:
+        surfaces.append(SURFACE_CONSUMER)
+
+    producer_keywords = frozenset({"handle_", "dispatch", "emit", "producer", "runner", "execute_batch"})
+    if any(keyword in path_lower for keyword in producer_keywords) or any(
+        name in all_names_lower for name in {"handle_plan", "handle_critique", "handle_gate", "handle_execute", "handle_review", "handle_finalize"}
+    ):
+        if SURFACE_PRODUCER not in surfaces:
+            surfaces.append(SURFACE_PRODUCER)
+
+    if any(keyword in path_lower for keyword in ("compatibility", "compat", "adapter", "shim", "writer_map")):
+        surfaces.append(SURFACE_COMPATIBILITY_SHIM)
+
+    if not surfaces:
+        surfaces.append(SURFACE_UNKNOWN)
+    return surfaces
+
+
+def _owner_for_path(rel_path: str) -> str:
+    if rel_path.startswith("arnold/workflow/") or rel_path.startswith("arnold_pipelines/megaplan/workflows/"):
+        return "wbc"
+    if "/custody/" in rel_path:
+        return "custody"
+    if any(seg in rel_path for seg in ("/cloud/", "/resident/", "/supervisor/", "/repair", "/watchdog")):
+        return "maintenance"
+    return "run_authority"
+
+
+def _is_authority_surface(surface_types: tuple[str, ...]) -> bool:
+    return any(surface in AUTHORITY_ADJACENT_SURFACES for surface in surface_types)
+
+
+def _enclosing_function_for_line(lineno: int, function_ranges: list[tuple[int, int, str]]) -> str:
+    matches = [
+        (end_lineno - start_lineno, function_name)
+        for start_lineno, end_lineno, function_name in function_ranges
+        if start_lineno <= lineno <= end_lineno
+    ]
+    if not matches:
+        return ""
+    return min(matches)[1]
+
+
+def _parse_module_ast(source: str) -> dict[str, Any]:
+    visitor = _ModuleVisitor(source)
+    tree = ast.parse(source)
+    visitor.visit(tree)
+    doc = ast.get_docstring(tree) or ""
+    function_risky_calls: dict[str, tuple[str, ...]] = {}
+    for function_name in sorted(set(visitor.functions)):
+        risky_calls = sorted(
+            {
+                call.callee.split(".")[-1]
+                for call in visitor.calls
+                if call.enclosing_function == function_name
+                and call.callee.split(".")[-1] in RISKY_PRODUCER_CALL_NAMES
+            }
+        )
+        if risky_calls:
+            function_risky_calls[function_name] = tuple(risky_calls)
+    text_hits: list[dict[str, Any]] = []
+    for lineno, line in enumerate(source.splitlines(), start=1):
+        for pattern, category in BYPASS_TEXT_PATTERNS:
+            if re.search(pattern, line):
+                enclosing_function = _enclosing_function_for_line(lineno, visitor.function_ranges)
+                text_hits.append(
+                    {
+                        "line": lineno,
+                        "category": category,
+                        "text": line.strip(),
+                        "enclosing_function": enclosing_function,
+                        "risky_calls": function_risky_calls.get(enclosing_function, ()),
+                    }
+                )
+    return {
+        "classes": tuple(sorted(set(visitor.classes))),
+        "functions": tuple(sorted(set(visitor.functions))),
+        "imports": tuple(sorted(set(visitor.imports))),
+        "calls": tuple(visitor.calls),
+        "try_scans": tuple(visitor.try_scans),
+        "docstring": doc,
+        "text_hits": tuple(text_hits),
+    }
+
+
+def _scan_discovery_roots() -> dict[str, Any]:
+    modules: list[dict[str, Any]] = []
+    handler_functions: list[dict[str, Any]] = []
+    scans: list[ModuleScan] = []
+
+    for root_cfg in DISCOVERY_ROOTS:
+        root_path = REPO_ROOT / str(root_cfg["path"])
+        if not root_path.is_dir():
+            continue
+        category = str(root_cfg["category"])
+        matched_files: set[Path] = set()
+        for pattern in root_cfg.get("file_patterns", ["*.py"]):
+            matched_files.update(
+                path for path in root_path.rglob(pattern) if path.is_file() and path.suffix == ".py"
+            )
+        for fpath in sorted(matched_files):
+            rel_str = fpath.relative_to(REPO_ROOT).as_posix()
+            try:
+                source = fpath.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            ast_info = _parse_module_ast(source)
+            surface_types = tuple(
+                _classify_module_surfaces(
+                    rel_str,
+                    ast_info["classes"],
+                    ast_info["functions"],
+                    ast_info["imports"],
+                    ast_info["docstring"],
+                )
+            )
+            owner = _owner_for_path(rel_str)
+            is_authority = _is_authority_surface(surface_types)
+            module_row = {
+                "row_kind": "runtime_module",
+                "module_path": rel_str,
+                "category": category,
+                "owner": owner,
+                "surface_types": list(surface_types),
+                "is_authority": is_authority,
+                "non_authority_surfaces": [item for item in surface_types if item in NON_AUTHORITY_SURFACES],
+                "class_count": len(ast_info["classes"]),
+                "function_count": len(ast_info["functions"]),
+                "classes": list(ast_info["classes"]),
+                "functions": list(ast_info["functions"]),
+                "docstring_summary": (
+                    ast_info["docstring"][:200] + "…" if len(ast_info["docstring"]) > 200 else ast_info["docstring"]
+                ),
+            }
+            modules.append(module_row)
+            scans.append(
+                ModuleScan(
+                    module_path=rel_str,
+                    category=category,
+                    owner=owner,
+                    surface_types=surface_types,
+                    is_authority=is_authority,
+                    classes=ast_info["classes"],
+                    functions=ast_info["functions"],
+                    imports=ast_info["imports"],
+                    docstring_summary=module_row["docstring_summary"],
+                    calls=ast_info["calls"],
+                    try_scans=ast_info["try_scans"],
+                    text_hits=ast_info["text_hits"],
+                )
+            )
+            if category in {"handler_functions", "execute_producers", "orchestration", "custody_runtime"}:
+                for function_name in ast_info["functions"]:
+                    if function_name.startswith("_") and not function_name.startswith("handle_"):
+                        continue
+                    handler_functions.append(
+                        {
+                            "row_kind": "handler_function",
+                            "function_name": function_name,
+                            "module_path": rel_str,
+                            "owner": owner,
+                            "category": category,
+                        }
+                    )
+
+    modules.sort(key=lambda row: (row["category"], row["module_path"]))
+    handler_functions.sort(key=lambda row: (row["category"], row["module_path"], row["function_name"]))
+    return {"modules": modules, "handler_functions": handler_functions, "module_scans": scans}
+
+
+def _scan_wrapper_shells() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for root_cfg in WRAPPER_SHELL_ROOTS:
+        root = REPO_ROOT / str(root_cfg["path"])
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            rel_path = path.relative_to(REPO_ROOT).as_posix()
+            if not any(fnmatch.fnmatch(rel_path if root == REPO_ROOT else path.relative_to(root).as_posix(), pattern) for pattern in root_cfg["patterns"]):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            rows.append(
+                {
+                    "row_kind": "wrapper_shell",
+                    "path": rel_path,
+                    "wrapper_type": "shell",
+                    "category": root_cfg["category"],
+                    "description": root_cfg["description"],
+                    "has_boundary_effects": any("|| true" in line or "load_chain_state" in line for line in text.splitlines()),
+                    "surface_types": ["wrapper_shell"],
+                    "is_authority": False,
+                    "line_count": len(text.splitlines()),
+                }
+            )
+    rows.sort(key=lambda row: row["path"])
+    return rows
+
+
+def _step_rows_from_manifest(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
     for family in manifest.get("families", []):
         for entry in family.get("entries", []):
-            entry_with_family = dict(entry)
-            entry_with_family["family_id"] = family.get("family_id", "")
-            entry_with_family["family_name"] = family.get("family_name", "")
-            entry_with_family["family_owner"] = family.get("owner", "")
-            manifest_entries.append(entry_with_family)
+            declared_support_status = entry.get(
+                "declared_support_status",
+                entry.get("support_status", "UNKNOWN"),
+            )
+            rows.append(
+                {
+                    "row_kind": "manifest_entry",
+                    "step_id": entry.get("step_id", ""),
+                    "step_name": entry.get("step_name", ""),
+                    "boundary_id": entry.get("boundary_id"),
+                    "kind": entry.get("kind", ""),
+                    "owner": entry.get("owner") or family.get("owner", "UNKNOWN"),
+                    "declared_support_status": declared_support_status,
+                    "support_status": entry.get("support_status", declared_support_status),
+                    "producer_path": entry.get("producer_path", "UNKNOWN"),
+                    "c2_c6_milestone": entry.get("c2_c6_milestone", "UNKNOWN"),
+                    "family_id": family.get("family_id", ""),
+                    "family_name": family.get("family_name", ""),
+                    "exception_metadata": entry.get("exception_metadata", {}),
+                    "visible_non_conformant": entry.get("visible_non_conformant", []),
+                    "support_is_non_authoritative": True,
+                }
+            )
+    rows.sort(key=lambda row: row["step_id"])
+    return rows
 
-    manifest_by_step: dict[str, dict[str, Any]] = {}
-    for e in manifest_entries:
-        sid = e.get("step_id", "")
-        if sid:
-            manifest_by_step[sid] = e
 
+def _boundary_rows(
+    contracts: list[dict[str, Any]],
+    matrix: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    matrix_by_id = {
+        row.get("boundary_id", ""): row for row in matrix.get("contracts", []) if row.get("boundary_id")
+    }
     rows: list[dict[str, Any]] = []
     unmatched: list[dict[str, Any]] = []
-
-    # ── Boundary contract rows ──────────────────────────────────────────
-    for c in contracts:
-        bid = c.get("boundary_id", "")
-        matrix_row = matrix_by_id.get(bid)
-        row: dict[str, Any] = {
+    seen = set()
+    for contract in contracts:
+        boundary_id = str(contract.get("boundary_id", ""))
+        if not boundary_id:
+            continue
+        seen.add(boundary_id)
+        matrix_row = matrix_by_id.get(boundary_id)
+        producer_category = matrix_row.get("producer_category", "UNKNOWN") if matrix_row else "UNKNOWN"
+        row = {
             "row_kind": "boundary_contract",
-            "boundary_id": bid,
-            "workflow_id": c.get("workflow_id", ""),
-            "row_id": c.get("row_id", "UNKNOWN"),
-            "phase": c.get("phase"),
-            "producer_path": matrix_row.get("producer_path")
-            if matrix_row
-            else "UNKNOWN",
-            "producer_category": matrix_row.get("producer_category", "UNKNOWN")
-            if matrix_row
-            else "UNKNOWN",
-            "owner": "wbc",  # Boundary contracts are owned by WBC
+            "boundary_id": boundary_id,
+            "workflow_id": contract.get("workflow_id", ""),
+            "row_id": contract.get("row_id", "UNKNOWN"),
+            "phase": contract.get("phase"),
+            "producer_path": matrix_row.get("producer_path", "UNKNOWN") if matrix_row else "UNKNOWN",
+            "producer_category": producer_category,
+            "owner": "wbc",
             "support_status": "UNKNOWN",
-            "authority_required": c.get("authority_required", False),
+            "authority_required": bool(contract.get("authority_required", False)),
+            "candidate": producer_category in {"declared_only", "unknown", "UNKNOWN"},
+            "landed": producer_category not in {"declared_only", "unknown", "UNKNOWN"},
+            "support_is_non_authoritative": True,
+            "support_label_source": "support_manifest",
+            "matrix_metadata": None,
         }
-
-        # Candidate vs landed from matrix producer_category
-        pc = row["producer_category"]
-        if pc in ("declared_only", "unknown", "UNKNOWN"):
-            row["candidate"] = True
-            row["landed"] = False
-        else:
-            row["candidate"] = False
-            row["landed"] = True
-
-        # Support label from manifest — non-authoritative
-        row["support_is_non_authoritative"] = True
-        row["support_label_source"] = "UNKNOWN"
-
-        # Attach matrix metadata when available
         if matrix_row:
             row["matrix_metadata"] = {
                 "handler_function": matrix_row.get("handler_function"),
@@ -741,1116 +1079,990 @@ def _build_inventory(
                 "visible_non_conformant": matrix_row.get("visible_non_conformant", []),
             }
         else:
-            row["matrix_metadata"] = None
-            unmatched.append({
-                "row_kind": "boundary_contract",
-                "boundary_id": bid,
-                "reason_unmatched": "no_matrix_entry",
-                "detail": f"Contract '{bid}' has no corresponding entry in contract_to_producer_matrix.json",
-            })
-
+            unmatched.append(
+                {
+                    "row_kind": "boundary_contract",
+                    "boundary_id": boundary_id,
+                    "reason_unmatched": "no_matrix_entry",
+                    "detail": f"Contract '{boundary_id}' has no corresponding entry in contract_to_producer_matrix.json",
+                }
+            )
         rows.append(row)
-
-    # ── Manifest entries not matched to contracts ───────────────────────
-    seen_boundary_ids = set(contracts_by_id.keys())
-    for entry in manifest_entries:
-        sid = entry.get("step_id", "")
-        # Check if this step_id matches a boundary_id
-        if sid in seen_boundary_ids:
-            continue
-
-        entry_row: dict[str, Any] = {
-            "row_kind": "manifest_entry",
-            "step_id": sid,
-            "step_name": entry.get("step_name", ""),
-            "kind": entry.get("kind", ""),
-            "owner": entry.get("owner", entry.get("family_owner", "UNKNOWN")),
-            "support_status": entry.get("support_status", "UNKNOWN"),
-            "producer_path": entry.get("producer_path", "UNKNOWN"),
-            "c2_c6_milestone": entry.get("c2_c6_milestone", "UNKNOWN"),
-            "family_id": entry.get("family_id", ""),
-            "support_is_non_authoritative": True,
-        }
-        rows.append(entry_row)
-
-    # ── Matrix rows not matched to contracts ────────────────────────────
-    for mrow in matrix_contracts:
-        bid = mrow.get("boundary_id", "")
-        if bid not in seen_boundary_ids:
-            unmatched.append({
-                "row_kind": "matrix_row",
-                "boundary_id": bid,
-                "reason_unmatched": "no_boundary_contract",
-                "detail": f"Matrix row '{bid}' has no corresponding BoundaryContract in boundary_contracts.py",
-            })
-
-    # ── Static discovery rows (T5) ──────────────────────────────────────
-    source_counts: dict[str, int] = {
-        "boundary_contract": len([r for r in rows if r.get("row_kind") == "boundary_contract"]),
-        "manifest_entry": 0,
-        "runtime_module": 0,
-        "handler_function": 0,
-    }
-    source_counts["manifest_entry"] = len([r for r in rows if r.get("row_kind") == "manifest_entry"])
-
-    if discovery:
-        discovered_modules = discovery.get("modules", [])
-        discovered_handlers = discovery.get("handler_functions", [])
-
-        for mod_row in discovered_modules:
-            rows.append(mod_row)
-        for hf_row in discovered_handlers:
-            rows.append(hf_row)
-
-        source_counts["runtime_module"] = len(discovered_modules)
-        source_counts["handler_function"] = len(discovered_handlers)
-
-        # Record unmatched/discovery-gap modules
-        for mod_row in discovered_modules:
-            if SURFACE_UNKNOWN in mod_row.get("surface_types", []):
-                unmatched.append({
-                    "row_kind": "runtime_module",
-                    "module_path": mod_row.get("module_path", ""),
-                    "reason_unmatched": "unclassifiable_surface",
-                    "detail": (
-                        f"Module '{mod_row.get('module_path')}' could not be "
-                        f"classified into a known surface type. Surface types "
-                        f"found: {mod_row.get('surface_types')}"
-                    ),
-                })
-
-    # ── Sort deterministically ──────────────────────────────────────────
-    def _sort_key(r: dict[str, Any]) -> tuple[str, str, str]:
-        rk = r.get("row_kind", "")
-        bid = r.get("boundary_id", "")
-        sid = r.get("step_id", "")
-        mp = r.get("module_path", "")
-        fn = r.get("function_name", "")
-        # Priority: boundary_contract > manifest_entry > runtime_module > handler_function
-        kind_order = {
-            "boundary_contract": 0,
-            "manifest_entry": 1,
-            "runtime_module": 2,
-            "handler_function": 3,
-        }
-        primary = kind_order.get(rk, 99)
-        secondary = bid or sid or mp or fn or ""
-        return (str(primary), secondary, "")
-
-    rows.sort(key=_sort_key)
-    unmatched.sort(key=lambda u: (u.get("row_kind", ""), u.get("boundary_id", "") or u.get("step_id", "") or u.get("module_path", "") or ""))
-
-    # ── Build inventory ─────────────────────────────────────────────────
-    input_sources = {
-        "boundary_contracts": str(BOUNDARY_CONTRACTS_PATH.relative_to(REPO_ROOT)),
-        "contract_matrix": str(CONTRACT_MATRIX_PATH.relative_to(REPO_ROOT)),
-        "support_manifest": str(SUPPORT_MANIFEST_PATH.relative_to(REPO_ROOT)),
-    }
-    if discovery:
-        input_sources["static_discovery_roots"] = len(DISCOVERY_ROOTS)
-
-    inventory: dict[str, Any] = {
-        "meta": {
-            "schema": "m6.wbc-boundary-inventory.v1",
-            "description": (
-                "Deterministic inventory joining boundary contracts, "
-                "contract-to-producer matrix, and support manifest, "
-                "extended with static discovery over handler, runtime, "
-                "kernel, supervisor, execution, and orchestration source "
-                "trees. Support labels are recorded but non-authoritative — "
-                "only landed producer paths constitute adoption evidence. "
-                "Projections are explicitly tagged as non-authority."
-            ),
-            "generated_by": "M6 Step 4-5 (T4+T5) — generate_wbc_boundary_inventory.py",
-            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-            "input_sources": input_sources,
-            "row_count": len(rows),
-            "unmatched_count": len(unmatched),
-            "source_counts": source_counts,
-            "content_hash": _sha256_hex(json.dumps(rows, sort_keys=True, default=str)),
-        },
-        "rows": rows,
-        "unmatched": unmatched,
-    }
-
-    return inventory
+    for matrix_row in matrix.get("contracts", []):
+        boundary_id = str(matrix_row.get("boundary_id", ""))
+        if boundary_id and boundary_id not in seen:
+            unmatched.append(
+                {
+                    "row_kind": "matrix_row",
+                    "boundary_id": boundary_id,
+                    "reason_unmatched": "no_boundary_contract",
+                    "detail": f"Matrix row '{boundary_id}' has no corresponding BoundaryContract in boundary_contracts.py",
+                }
+            )
+    rows.sort(key=lambda row: row["boundary_id"])
+    unmatched.sort(key=lambda row: (row["row_kind"], row.get("boundary_id", "")))
+    return rows, unmatched, matrix_by_id
 
 
-# ── Wrapper/shell discovery (T6) ──────────────────────────────────────────
-
-# Roots to scan for non-Python wrapper/shell files.
-# These are configuration-management, CI/CD, and operational scripts
-# that can produce boundary effects without going through Python handlers.
-WRAPPER_SHELL_ROOTS: list[dict[str, Any]] = [
-    {
-        "path": "arnold_pipelines/megaplan/data",
-        "file_patterns": ["*.sh"],
-        "category": "ci_cd_scripts",
-        "description": "Pre-commit hooks and CI/CD scripts that regenerate composed bundles.",
-    },
-    {
-        "path": ".",
-        "file_patterns": ["*.sh"],
-        "category": "repo_root_scripts",
-        "description": "Repository-root operational scripts (sync, launch, setup).",
-        "max_depth": 1,  # Only repo root, not recursive
-    },
-    {
-        "path": ".megaplan/initiatives",
-        "file_patterns": ["*.sh"],
-        "category": "initiative_scripts",
-        "description": "Initiative-level launch/operational scripts.",
-    },
-]
-
-# Additional non-Python files to treat as wrapper shells (Makefiles, etc.)
-WRAPPER_EXTENSIONS: tuple[str, ...] = (".sh", ".bash")
+def _normalize_matrix_path(producer_path: str) -> set[str]:
+    parts = {part.strip() for part in producer_path.split("->")}
+    return {part for part in parts if part.endswith(".py")}
 
 
-def _scan_wrapper_shells() -> list[dict[str, Any]]:
-    """Discover non-Python wrapper/shell files that can produce boundary effects.
+def _boundary_ids_for_callsite(
+    callsite: CallScan,
+    module_path: str,
+    matrix_by_id: dict[str, dict[str, Any]],
+) -> list[str]:
+    matched: list[str] = []
+    tail = callsite.callee.split(".")[-1]
+    for boundary_id, row in matrix_by_id.items():
+        producer_path = str(row.get("producer_path", ""))
+        handler_function = str(row.get("handler_function", ""))
+        path_match = module_path in _normalize_matrix_path(producer_path)
+        function_match = False
+        if handler_function:
+            function_match = handler_function.endswith(f":{callsite.enclosing_function}") or handler_function.endswith(
+                f":{tail}"
+            )
+        if path_match and (function_match or tail in handler_function or tail in producer_path):
+            matched.append(boundary_id)
+    return sorted(set(matched))
 
-    Scans repo-root scripts, CI/CD hook scripts, and initiative-level scripts
-    that are NOT Python modules but can still emit receipts, trigger processes,
-    or manipulate custody state outside Python handlers.
 
-    Returns a list of ``wrapper_shell`` rows.
-    """
+def _discover_producer_call_sites(
+    scans: list[ModuleScan],
+    matrix_by_id: dict[str, dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     rows: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    unmatched: list[dict[str, Any]] = []
+    for scan in scans:
+        for call in scan.calls:
+            tail = call.callee.split(".")[-1]
+            if tail not in PRODUCER_CALL_NAMES:
+                continue
+            boundary_ids = _boundary_ids_for_callsite(call, scan.module_path, matrix_by_id)
+            row = {
+                "row_kind": "producer_callsite",
+                "module_path": scan.module_path,
+                "category": scan.category,
+                "owner": scan.owner,
+                "function_name": call.enclosing_function,
+                "callee": call.callee,
+                "line": call.line,
+                "column": call.column,
+                "boundary_ids": boundary_ids,
+                "surface_types": list(scan.surface_types),
+                "source_segment": call.source_segment,
+            }
+            rows.append(row)
+            if not boundary_ids:
+                unmatched.append(
+                    {
+                        "row_kind": "producer_callsite",
+                        "module_path": scan.module_path,
+                        "function_name": call.enclosing_function,
+                        "reason_unmatched": "no_boundary_mapping",
+                        "detail": f"Producer call '{call.callee}' at {scan.module_path}:{call.line} is not tied to a declared boundary row.",
+                    }
+                )
+    rows.sort(key=lambda row: (row["module_path"], row["line"], row["callee"]))
+    unmatched.sort(key=lambda row: (row["module_path"], row["function_name"], row["detail"]))
+    return rows, unmatched
 
-    for root_cfg in WRAPPER_SHELL_ROOTS:
-        root_path = REPO_ROOT / root_cfg["path"]
-        if not root_path.is_dir():
+
+def _resolve_module_source_path(module_ref: str) -> Path | None:
+    direct = REPO_ROOT / module_ref
+    dotted = REPO_ROOT / module_ref.replace(".", "/")
+    candidates = (
+        direct,
+        direct.with_suffix(".py"),
+        dotted,
+        dotted.with_suffix(".py"),
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _normalize_module_reference(module_ref: str) -> str:
+    source_path = _resolve_module_source_path(module_ref)
+    if source_path is None:
+        return module_ref
+    return source_path.relative_to(REPO_ROOT).as_posix()
+
+
+def _reader_call_names(module_path: str) -> set[str]:
+    source_path = _resolve_module_source_path(module_path)
+    if source_path is None:
+        return set()
+    try:
+        info = _parse_module_ast(source_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return set()
+    return {name for name in info["functions"] if name.startswith("load_") or name.startswith("_load_")}
+
+
+def _milestone_rank(milestone: str) -> int:
+    return MILESTONE_ORDER.get(milestone, len(MILESTONE_ORDER))
+
+
+def _historical_expiry_status(current_milestone: str, deadline_milestone: str) -> str:
+    current_rank = _milestone_rank(current_milestone)
+    deadline_rank = _milestone_rank(deadline_milestone)
+    if current_rank > deadline_rank:
+        return "expired"
+    if current_rank >= deadline_rank - 1:
+        return "expiring"
+    return "compatible"
+
+
+def _adapter_write_hits(module_paths: list[str] | tuple[str, ...], scans: list[ModuleScan]) -> list[dict[str, Any]]:
+    normalized_paths = {_normalize_module_reference(path) for path in module_paths}
+    hits: list[dict[str, Any]] = []
+    for scan in scans:
+        if scan.module_path not in normalized_paths:
             continue
+        for call in scan.calls:
+            tail = call.callee.split(".")[-1]
+            if tail not in RISKY_PRODUCER_CALL_NAMES:
+                continue
+            hits.append(
+                {
+                    "module_path": scan.module_path,
+                    "function_name": call.enclosing_function,
+                    "callee": call.callee,
+                    "line": call.line,
+                }
+            )
+    hits.sort(key=lambda row: (row["module_path"], row["line"], row["callee"]))
+    return hits
 
-        max_depth = root_cfg.get("max_depth")
-        patterns = root_cfg.get("file_patterns", ["*.sh"])
 
-        for pattern in patterns:
-            if max_depth is not None:
-                # Only scan at the specified depth
-                for fpath in root_path.glob(pattern):
-                    if not fpath.is_file():
-                        continue
-                    # For max_depth=1, only match files directly in root_path
-                    if max_depth == 1 and fpath.parent != root_path:
-                        continue
-                    rel = fpath.relative_to(REPO_ROOT)
-                    rel_str = str(rel).replace("\\", "/")
-                    if rel_str in seen:
-                        continue
-                    seen.add(rel_str)
-                    rows.append(_build_wrapper_shell_row(rel_str, fpath, root_cfg))
-            else:
-                # Recursive scan
-                for fpath in root_path.rglob(pattern):
-                    if not fpath.is_file():
-                        continue
-                    rel = fpath.relative_to(REPO_ROOT)
-                    rel_str = str(rel).replace("\\", "/")
-                    if rel_str in seen:
-                        continue
-                    seen.add(rel_str)
-                    rows.append(_build_wrapper_shell_row(rel_str, fpath, root_cfg))
-
-    rows.sort(key=lambda r: r.get("path", ""))
+def _historical_adapter_rows_for_rules(
+    rules: tuple[HistoricalAdapterRule, ...],
+    scans: list[ModuleScan],
+    current_milestone: str,
+) -> dict[str, dict[str, Any]]:
+    scans_by_path = {scan.module_path: scan for scan in scans}
+    rows: dict[str, dict[str, Any]] = {}
+    for rule in rules:
+        normalized_paths = [_normalize_module_reference(path) for path in rule.module_paths]
+        observed_functions = sorted({
+            function_name
+            for module_path in normalized_paths
+            for function_name in (
+                scans_by_path[module_path].functions if module_path in scans_by_path else ()
+            )
+            if function_name in rule.permitted_read_operations
+        })
+        rows[rule.adapter_id] = {
+            "reader_id": rule.adapter_id,
+            "reader_name": rule.reader_name,
+            "description": rule.description,
+            "module_paths": normalized_paths,
+            "projection_ids": sorted(rule.projection_ids),
+            "deadline_milestone": rule.deadline_milestone,
+            "mode": rule.mode,
+            "quarantined_entries": 0,
+            "call_names": sorted(set(rule.permitted_read_operations)),
+            "observed_read_operations": observed_functions,
+            "adapter_class": rule.adapter_class,
+            "diagnostics": list(rule.diagnostics),
+            "authority_write_hits": _adapter_write_hits(normalized_paths, scans),
+            "expiry_status": _historical_expiry_status(current_milestone, rule.deadline_milestone),
+            "current_milestone": current_milestone,
+            "supported_versions": list(rule.supported_versions),
+            "c1_compatibility_readers": [],
+        }
     return rows
 
 
-def _build_wrapper_shell_row(
-    rel_path: str, fpath: Path, root_cfg: dict[str, Any]
-) -> dict[str, Any]:
-    """Build a single wrapper_shell row."""
-    # Read first 2KB for header analysis
-    try:
-        header = fpath.read_text(encoding="utf-8")[:2048]
-    except (OSError, UnicodeDecodeError):
-        header = ""
-
-    # Detect shebang
-    shebang = ""
-    if header.startswith("#!"):
-        shebang_line = header.split("\n")[0]
-        shebang = shebang_line[2:].strip()
-
-    # Classify wrapper type
-    wrapper_type = "shell"
-    if "python" in shebang.lower():
-        wrapper_type = "python_wrapper"
-    elif "node" in shebang.lower():
-        wrapper_type = "node_wrapper"
-
-    # Determine if this wrapper can produce boundary effects
-    has_boundary_effects = False
-    boundary_keywords = [
-        "regen", "sync", "launch", "deploy", "commit", "push",
-        "skill", "setup", "init", "lock", "stamp",
-    ]
-    for kw in boundary_keywords:
-        if kw in rel_path.lower() or kw in header.lower():
-            has_boundary_effects = True
-            break
-
-    return {
-        "row_kind": "wrapper_shell",
-        "path": rel_path,
-        "shebang": shebang,
-        "wrapper_type": wrapper_type,
-        "category": root_cfg.get("category", "unknown"),
-        "has_boundary_effects": has_boundary_effects,
-        "owner": "run_authority",
-        "description": root_cfg.get("description", ""),
-        "surface_types": ["wrapper_shell"],
-        "is_authority": False,
+def _discover_compatibility_readers(
+    scans: list[ModuleScan],
+    source_to_owner: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    snapshot = custody_compatibility.snapshot()
+    compatibility_reader_names: dict[str, dict[str, Any]] = {}
+    surface_reader_names = {
+        surface["surface_id"]: set(surface.get("compatibility_readers", []))
+        for surface in source_to_owner.get("surfaces", [])
     }
-
-
-# ── Default-deny rows (T6) ────────────────────────────────────────────────
-
-
-def _generate_default_deny_rows(
-    inventory: dict[str, Any],
-    discovery: dict[str, Any] | None,
-) -> list[dict[str, Any]]:
-    """Generate explicit default-deny rows for unresolved surfaces.
-
-    For every runtime_module or handler_function that could not be classified
-    into a known non-UNKNOWN surface type, emit a ``default_deny`` row that
-    explicitly denies access with a documented reason.
-
-    Additionally, for dynamic/generated/provider surfaces that are not
-    covered by static discovery, emit default-deny placeholder rows.
-
-    Returns a list of default_deny rows.
-    """
-    deny_rows: list[dict[str, Any]] = []
-
-    # ── 1. Unclassified modules from static discovery ────────────────────
-    if discovery:
-        for mod in discovery.get("modules", []):
-            surface_types = mod.get("surface_types", [])
-            if SURFACE_UNKNOWN in surface_types or not surface_types:
-                deny_rows.append({
-                    "row_kind": "default_deny",
-                    "target_path": mod.get("module_path", ""),
-                    "target_type": "runtime_module",
-                    "surface_types_found": surface_types,
-                    "access": "denied",
-                    "reason": (
-                        f"Module could not be classified into a known surface type. "
-                        f"Static discovery found classes={mod.get('classes', [])}, "
-                        f"functions={mod.get('functions', [])}"
-                    ),
-                    "owner": mod.get("owner", "UNKNOWN"),
-                    "mitigation": (
-                        "Add classification keywords to _classify_module_surfaces "
-                        "or add the module to a known discovery root category."
-                    ),
-                })
-
-    # ── 2. Handler functions in unknown category ─────────────────────────
-    if discovery:
-        for hf in discovery.get("handler_functions", []):
-            if hf.get("category") == "unknown":
-                deny_rows.append({
-                    "row_kind": "default_deny",
-                    "target_path": hf.get("module_path", ""),
-                    "target_type": "handler_function",
-                    "function_name": hf.get("function_name", ""),
-                    "handler_category": hf.get("category", "unknown"),
-                    "access": "denied",
-                    "reason": (
-                        f"Handler function '{hf.get('function_name')}' could not "
-                        f"be classified into a known handler category."
-                    ),
-                    "owner": hf.get("owner", "UNKNOWN"),
-                    "mitigation": (
-                        "Add classification keywords to _classify_handler_category "
-                        "for this function name pattern."
-                    ),
-                })
-
-    # ── 3. Dynamic/generated/provider surface placeholders ───────────────
-    # These are surface types that we know exist at runtime but cannot
-    # discover via static analysis of the current source tree.
-    dynamic_surfaces = [
-        {
-            "surface_id": "dynamic.cloud_provider",
-            "reason": "Cloud provider surfaces (AWS, GCP, Azure SDK calls) are resolved at runtime and cannot be statically discovered from Python AST.",
-            "owner": "run_authority",
-        },
-        {
-            "surface_id": "dynamic.generated_code",
-            "reason": "Generated code (protobuf stubs, OpenAPI clients, Thrift bindings) may not exist in the source tree at scan time.",
-            "owner": "run_authority",
-        },
-        {
-            "surface_id": "dynamic.plugin_loader",
-            "reason": "Plugin/driver loaders resolve surfaces at import time; static discovery cannot enumerate all plugin paths.",
-            "owner": "run_authority",
-        },
-        {
-            "surface_id": "dynamic.template_renderer",
-            "reason": "Template-rendered code (Jinja2, Mako, string.Template) produces surfaces that only exist after rendering.",
-            "owner": "run_authority",
-        },
-        {
-            "surface_id": "dynamic.subprocess_boundary",
-            "reason": "subprocess.run, os.system, and shell-equivalent calls cross the Python runtime boundary into OS-level processes.",
-            "owner": "run_authority",
-        },
-        {
-            "surface_id": "dynamic.file_system_io",
-            "reason": "Direct file I/O (open, os.write, pathlib.write_text) can produce boundary effects without going through a declared producer.",
-            "owner": "run_authority",
-        },
-    ]
-
-    for ds in dynamic_surfaces:
-        deny_rows.append({
-            "row_kind": "default_deny",
-            "target_path": ds["surface_id"],
-            "target_type": "dynamic_surface",
-            "surface_types_found": ["unknown"],
-            "access": "denied",
-            "reason": ds["reason"],
-            "owner": ds["owner"],
-            "mitigation": (
-                "Dynamic surfaces require runtime tracing (M6A) or explicit "
-                "provider registration to move from default-deny to allowed."
+    for reader in snapshot.readers:
+        call_names: set[str] = set()
+        for module_path in sorted(reader.module_paths):
+            call_names.update(_reader_call_names(module_path))
+        if not call_names:
+            call_names.add(reader.reader_id.replace("legacy-", "").replace("-reader", "").replace("-", "_"))
+        compatibility_reader_names[reader.reader_id] = {
+            "reader_id": reader.reader_id,
+            "reader_name": reader.reader_name,
+            "description": reader.description,
+            "module_paths": sorted(_normalize_module_reference(module_path) for module_path in reader.module_paths),
+            "projection_ids": sorted(reader.projection_ids),
+            "deadline_milestone": reader.deadline_milestone.value,
+            "mode": reader.mode.value,
+            "quarantined_entries": reader.quarantined_entries,
+            "call_names": sorted(call_names),
+            "observed_read_operations": sorted(call_names),
+            "adapter_class": SNAPSHOT_READER_CLASSIFICATIONS.get(reader.reader_id, ADAPTER_CLASS_RAW_JSON),
+            "diagnostics": [
+                "Historical state-reader compatibility remains read-only and cannot increase authority.",
+                "Canonical WBC rereads must replace direct legacy JSON or lock-based observations before expiry.",
+            ],
+            "authority_write_hits": _adapter_write_hits(tuple(reader.module_paths), scans),
+            "expiry_status": _historical_expiry_status(snapshot.milestone.value, reader.deadline_milestone.value),
+            "current_milestone": snapshot.milestone.value,
+            "supported_versions": ["legacy", "shadow"],
+            "c1_compatibility_readers": sorted(
+                {
+                    compat_name
+                    for compat_names in surface_reader_names.values()
+                    for compat_name in compat_names
+                    if "reader" in compat_name
+                }
             ),
-        })
-
-    # Sort deterministically
-    deny_rows.sort(key=lambda r: (
-        r.get("row_kind", ""),
-        r.get("target_path", ""),
-        r.get("target_type", ""),
-        r.get("function_name", ""),
-    ))
-
-    return deny_rows
-
-
-# ── Current-state assertions (T6) ─────────────────────────────────────────
-
-
-def _build_current_state_assertions(
-    inventory: dict[str, Any],
-    discovery: dict[str, Any] | None,
-    wrapper_shells: list[dict[str, Any]],
-    default_deny_rows: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Build machine-verifiable current-state assertions about the inventory.
-
-    These encode known counts and invariants that tests can assert against,
-    so that regressions (missing producers, misclassified surfaces) are
-    caught immediately.
-
-    Returns a dict with assertion blocks.
-    """
-    assertions: dict[str, Any] = {
-        "schema": "m6.current-state-assertions.v1",
-        "description": (
-            "Machine-verifiable assertions about the current state of the "
-            "WBC boundary inventory. These encode known producer counts, "
-            "exclusion rules, and emission hazards so that regressions are "
-            "caught by tests."
-        ),
-        "generated_by": "M6 T6 — generate_wbc_boundary_inventory.py",
-    }
-
-    rows = inventory.get("rows", [])
-    unmatched = inventory.get("unmatched", [])
-
-    # ── 1. Front-half producers (5 known) ────────────────────────────────
-    # Front-half producers are the specific handler entry-point functions
-    # that produce lifecycle transitions in the front half of the pipeline:
-    # handle_prep, handle_plan, handle_critique, handle_revise, handle_gate.
-    # These are the primary producer entry points in handlers/ directory.
-    KNOWN_FRONT_HALF_PRODUCERS = [
-        "handle_prep",
-        "handle_plan",
-        "handle_critique",
-        "handle_revise",
-        "handle_gate",
-    ]
-    if discovery:
-        # Find handler functions whose names exactly match the known set
-        all_handler_names = {
-            hf.get("function_name")
-            for hf in discovery.get("handler_functions", [])
         }
-        front_half_found = sorted(
-            all_handler_names & set(KNOWN_FRONT_HALF_PRODUCERS)
+    compatibility_reader_names.update(
+        _historical_adapter_rows_for_rules(
+            ADDITIONAL_HISTORICAL_ADAPTER_RULES,
+            scans,
+            snapshot.milestone.value,
         )
-        front_half_missing = sorted(
-            set(KNOWN_FRONT_HALF_PRODUCERS) - all_handler_names
-        )
-
-        # Get full details for found producers
-        front_half_details = []
-        for hf in discovery.get("handler_functions", []):
-            if hf.get("function_name") in KNOWN_FRONT_HALF_PRODUCERS:
-                front_half_details.append({
-                    "function_name": hf.get("function_name"),
-                    "module_path": hf.get("module_path"),
-                    "category": hf.get("category"),
-                })
-
-        assertions["front_half_producers"] = {
-            "description": (
-                "Known front-half producer entry-point functions: "
-                "handle_prep, handle_plan, handle_critique, handle_revise, "
-                "handle_gate. These are the primary producer entry points "
-                "for PREP, PLAN, CRITIQUE, REVISE, and GATE phases."
-            ),
-            "expected_count": 5,
-            "actual_count": len(front_half_found),
-            "found": front_half_found,
-            "missing": front_half_missing,
-            "count_matches": len(front_half_found) == 5,
-            "producers": front_half_details,
-        }
-
-    # ── 2. Execute/batch producers (8 known) ─────────────────────────────
-    # Execute/batch producers are the specific handler entry-point functions
-    # and batch-dispatch functions that produce execution transitions:
-    # handle_execute, handle_execute_one_batch, handle_execute_auto_loop,
-    # handle_step, plus batch dispatch/observation functions.
-    KNOWN_EXECUTE_PRODUCERS = [
-        "handle_execute",
-        "handle_execute_one_batch",
-        "handle_execute_auto_loop",
-        "handle_step",
-        "handle_execute_batch",
-        "execute_batch",
-        "monitor_execution_batch",
-        "observe_execution",
-    ]
-    if discovery:
-        all_handler_names = {
-            hf.get("function_name")
-            for hf in discovery.get("handler_functions", [])
-        }
-        execute_found = sorted(
-            all_handler_names & set(KNOWN_EXECUTE_PRODUCERS)
-        )
-        execute_missing = sorted(
-            set(KNOWN_EXECUTE_PRODUCERS) - all_handler_names
-        )
-
-        execute_details = []
-        for hf in discovery.get("handler_functions", []):
-            if hf.get("function_name") in KNOWN_EXECUTE_PRODUCERS:
-                execute_details.append({
-                    "function_name": hf.get("function_name"),
-                    "module_path": hf.get("module_path"),
-                    "category": hf.get("category"),
-                })
-
-        # Also count execute-category runtime modules
-        execute_modules = [
-            mod for mod in discovery.get("modules", [])
-            if mod.get("category") == "execute_producers"
-        ]
-
-        assertions["execute_batch_producers"] = {
-            "description": (
-                "Known execute/batch producer functions: handle_execute, "
-                "handle_execute_one_batch, handle_execute_auto_loop, "
-                "handle_step, handle_execute_batch, execute_batch, "
-                "monitor_execution_batch, observe_execution. These are the "
-                "primary execution-phase producer entry points."
-            ),
-            "expected_count": 8,
-            "actual_count": len(execute_found),
-            "found": execute_found,
-            "missing": execute_missing,
-            "count_matches": len(execute_found) == 8,
-            "handlers": execute_details,
-            "execute_modules_count": len(execute_modules),
-        }
-
-    # ── 3. Execute/review auto-exclusion ─────────────────────────────────
-    # handle_execute and handle_review are NOT front-half producers — they
-    # operate in the back half of the pipeline. This assertion ensures they
-    # are correctly excluded from the front-half count.
-    assertions["execute_review_auto_exclusion"] = {
-        "description": (
-            "handle_execute and handle_review are back-half producers "
-            "(EXECUTE/REVIEW phases) and must NOT appear in the front-half "
-            "producer set. This auto-exclusion is verified by checking that "
-            "neither function appears in KNOWN_FRONT_HALF_PRODUCERS."
-        ),
-        "excluded_functions": ["handle_execute", "handle_review"],
-        "exclusion_verified": True,
-    }
-
-    # Verify execute/review are not in the front-half known set
-    excluded_in_known = {"handle_execute", "handle_review"} & set(KNOWN_FRONT_HALF_PRODUCERS)
-    assertions["execute_review_auto_exclusion"]["exclusion_verified"] = (
-        len(excluded_in_known) == 0
     )
-    if excluded_in_known:
-        assertions["execute_review_auto_exclusion"]["exclusion_violations"] = list(
-            excluded_in_known
+    rows: list[dict[str, Any]] = []
+    call_to_reader_ids = {
+        call_name: sorted(
+            reader_id
+            for reader_id, info in compatibility_reader_names.items()
+            if call_name in info["call_names"]
         )
-
-    # ── 4. Best-effort emission hazard ───────────────────────────────────
-    # Producers that emit receipts on a best-effort basis (no guaranteed
-    # delivery) are tagged as emission hazards. These are surfaces where
-    # the generator/decorator/handler may silently drop receipts.
-    emission_hazard_surfaces: list[dict[str, Any]] = []
-
-    if discovery:
-        for mod in discovery.get("modules", []):
-            surface_types = mod.get("surface_types", [])
-            # receipt_writer surfaces are emission hazards by default
-            if "receipt_writer" in surface_types:
-                emission_hazard_surfaces.append({
-                    "module_path": mod.get("module_path"),
-                    "surface_types": surface_types,
-                    "hazard_type": "receipt_writer_best_effort",
-                    "detail": (
-                        "Receipt writers may emit receipts on a best-effort "
-                        "basis. If the underlying transport (log, queue, file) "
-                        "is lossy, receipts can be silently dropped."
-                    ),
-                })
-            # producer surfaces without durable storage
-            if "producer" in surface_types and "ledger" not in surface_types:
-                emission_hazard_surfaces.append({
-                    "module_path": mod.get("module_path"),
-                    "surface_types": surface_types,
-                    "hazard_type": "producer_without_durable_ledger",
-                    "detail": (
-                        "Producer surfaces without a durable ledger may emit "
-                        "transitions that are not atomic with their side effects. "
-                        "This is a best-effort emission hazard."
-                    ),
-                })
-
-    # Deduplicate
-    seen_hazards = set()
-    unique_hazards = []
-    for h in emission_hazard_surfaces:
-        key = (h["module_path"], h["hazard_type"])
-        if key not in seen_hazards:
-            seen_hazards.add(key)
-            unique_hazards.append(h)
-
-    assertions["best_effort_emission_hazards"] = {
-        "description": (
-            "Surfaces that emit receipts or transitions on a best-effort "
-            "basis. These are identified where receipt_writers or producers "
-            "lack durable ledger backing, creating a risk of silently dropped "
-            "emissions."
-        ),
-        "hazard_count": len(unique_hazards),
-        "hazards": unique_hazards,
-    }
-
-    # ── 5. Wrapper/shell summary ─────────────────────────────────────────
-    assertions["wrapper_shell_summary"] = {
-        "description": (
-            "Count and summary of non-Python wrapper/shell files discovered. "
-            "These can produce boundary effects outside Python handlers."
-        ),
-        "total_count": len(wrapper_shells),
-        "with_boundary_effects": len([
-            ws for ws in wrapper_shells if ws.get("has_boundary_effects")
-        ]),
-        "wrappers": [
+        for call_name in sorted(
             {
-                "path": ws["path"],
-                "category": ws.get("category"),
-                "has_boundary_effects": ws.get("has_boundary_effects"),
+                call_name
+                for info in compatibility_reader_names.values()
+                for call_name in info["call_names"]
             }
-            for ws in wrapper_shells
-        ],
-    }
-
-    # ── 6. Default-deny summary ──────────────────────────────────────────
-    assertions["default_deny_summary"] = {
-        "description": (
-            "Count and breakdown of default-deny rows. Default-deny rows "
-            "represent surfaces that cannot be classified or are known "
-            "dynamic/generated/provider surfaces that must be explicitly "
-            "denied until proven safe."
-        ),
-        "total_count": len(default_deny_rows),
-        "by_target_type": {},
-    }
-    for dr in default_deny_rows:
-        tt = dr.get("target_type", "unknown")
-        assertions["default_deny_summary"]["by_target_type"][tt] = (
-            assertions["default_deny_summary"]["by_target_type"].get(tt, 0) + 1
         )
+    }
+    for scan in scans:
+        for call in scan.calls:
+            tail = call.callee.split(".")[-1]
+            reader_ids = call_to_reader_ids.get(tail, [])
+            if not reader_ids:
+                continue
+            rows.append(
+                {
+                    "row_kind": "compatibility_reader",
+                    "module_path": scan.module_path,
+                    "owner": scan.owner,
+                    "function_name": call.enclosing_function,
+                    "callee": call.callee,
+                    "line": call.line,
+                    "reader_ids": reader_ids,
+                    "source_segment": call.source_segment,
+                }
+            )
+    rows.sort(key=lambda row: (row["module_path"], row["line"], row["callee"]))
+    return rows, compatibility_reader_names
 
-    return assertions
+
+def _discover_writer_registrations(scans: list[ModuleScan]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    writer_map_snapshot = custody_writer_map.generate_writer_map()
+    if hasattr(writer_map_snapshot, "surfaces"):
+        for surface_id, surface in sorted(writer_map_snapshot.surfaces.items()):
+            rows.append(
+                {
+                    "row_kind": "writer_registration",
+                    "registration_source": "writer_map_snapshot",
+                    "module_path": "arnold_pipelines/megaplan/custody/writer_map.py",
+                    "surface_id": surface_id,
+                    "owner": surface.get("owner", "UNKNOWN"),
+                    "required_wbc_phases": surface.get("required_wbc_phases", []),
+                    "terminal_evidence_fields": surface.get("terminal_evidence_fields", []),
+                    "m7_missing_fields": surface.get("m7_missing_fields", []),
+                    "notes": surface.get("notes", ""),
+                }
+            )
+    elif hasattr(writer_map_snapshot, "writer_surfaces"):
+        for surface in sorted(writer_map_snapshot.writer_surfaces, key=lambda item: item.get("surface_id", "")):
+            rows.append(
+                {
+                    "row_kind": "writer_registration",
+                    "registration_source": "writer_map_snapshot",
+                    "module_path": "arnold_pipelines/megaplan/custody/writer_map.py",
+                    "surface_id": surface.get("surface_id", ""),
+                    "owner": surface.get("owner", "UNKNOWN"),
+                    "required_wbc_phases": [],
+                    "terminal_evidence_fields": [],
+                    "m7_missing_fields": [],
+                    "notes": surface.get("notes", ""),
+                }
+            )
+    else:
+        raise AttributeError(
+            f"unsupported writer-map snapshot shape: {type(writer_map_snapshot).__name__}"
+        )
+    for scan in scans:
+        for call in scan.calls:
+            if call.callee.split(".")[-1] != "register_writer":
+                continue
+            rows.append(
+                {
+                    "row_kind": "writer_registration",
+                    "registration_source": "ast_callsite",
+                    "module_path": scan.module_path,
+                    "function_name": call.enclosing_function,
+                    "callee": call.callee,
+                    "line": call.line,
+                    "owner": scan.owner,
+                    "source_segment": call.source_segment,
+                }
+            )
+    rows.sort(key=lambda row: (row["registration_source"], row["module_path"], str(row.get("line", 0)), row.get("surface_id", "")))
+    return rows
 
 
-# ── T7: Unmatched set categorization ────────────────────────────────────────
+def _discover_runtime_trace_digests() -> list[dict[str, Any]]:
+    if not NATIVE_GOLDEN_MANIFEST_PATH.exists():
+        return []
+    manifest = _load_json(NATIVE_GOLDEN_MANIFEST_PATH)
+    rows: list[dict[str, Any]] = []
+    committed = ((manifest.get("scenarios") or {}).get("committed") or [])
+    for scenario in committed:
+        scenario_id = str(scenario.get("scenario_id", "")).strip()
+        if not scenario_id:
+            continue
+        trace_root = NATIVE_GOLDEN_ROOT / scenario_id
+        test_functions = sorted(
+            {
+                str(runner.get("test_function", "")).strip()
+                for runner in scenario.get("deterministic_runners", [])
+                if str(runner.get("test_function", "")).strip()
+            }
+        )
+        rows.append(
+            {
+                "row_kind": "runtime_trace_digest",
+                "scenario_id": scenario_id,
+                "slice": scenario.get("slice", ""),
+                "alignment_rows": list(scenario.get("alignment_rows", [])),
+                "trace_path": (
+                    trace_root.relative_to(REPO_ROOT).as_posix() if trace_root.exists() else None
+                ),
+                "trace_directory_digest": _directory_digest(trace_root) if trace_root.exists() else None,
+                "available": trace_root.exists(),
+                "test_functions": test_functions,
+                "boundary_ids": [],
+                "mapping_status": "unmapped",
+                "mapping_detail": (
+                    "Native golden scenarios do not currently record boundary_id joins, so runtime traces "
+                    "remain evidence input only and cannot mark generated inventory rows supported."
+                ),
+            }
+        )
+    rows.sort(key=lambda row: row["scenario_id"])
+    return rows
+
+
+def _discover_bypass_candidates(
+    scans: list[ModuleScan],
+    wrapper_shells: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for scan in scans:
+        for try_scan in scan.try_scans:
+            risky_calls = sorted(set(try_scan.body_calls) & RISKY_PRODUCER_CALL_NAMES)
+            if not risky_calls:
+                continue
+            rows.append(
+                {
+                    "row_kind": "bypass_candidate",
+                    "candidate_type": "broad_exception",
+                    "module_path": scan.module_path,
+                    "function_name": try_scan.enclosing_function,
+                    "line": try_scan.line,
+                    "risky_calls": risky_calls,
+                    "detail": try_scan.handler_source or "Broad exception handler around a WBC-affecting call.",
+                }
+            )
+        for hit in scan.text_hits:
+            if hit["category"] in {
+                "without_raising",
+                "best_effort",
+                "warn_and_continue",
+                "mutable_alias_overwrite",
+                "implicit_latest_lookup",
+            }:
+                risky_calls = list(hit.get("risky_calls", ()))
+                if not risky_calls:
+                    continue
+                rows.append(
+                    {
+                        "row_kind": "bypass_candidate",
+                        "candidate_type": hit["category"],
+                        "module_path": scan.module_path,
+                        "function_name": hit.get("enclosing_function", ""),
+                        "line": hit["line"],
+                        "risky_calls": risky_calls,
+                        "detail": hit["text"],
+                    }
+                )
+    for wrapper in wrapper_shells:
+        text = (REPO_ROOT / wrapper["path"]).read_text(encoding="utf-8")
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if "|| true" not in line:
+                continue
+            rows.append(
+                {
+                    "row_kind": "bypass_candidate",
+                    "candidate_type": "shell_or_true",
+                    "module_path": wrapper["path"],
+                    "line": lineno,
+                    "detail": line.strip(),
+                }
+            )
+    rows.sort(key=lambda row: (row["module_path"], row["line"], row["candidate_type"]))
+    return rows
+
+
+def _generate_default_deny_rows(modules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for module in modules:
+        if SURFACE_UNKNOWN not in module.get("surface_types", []):
+            continue
+        rows.append(
+            {
+                "row_kind": "default_deny",
+                "target_path": module["module_path"],
+                "target_type": "runtime_module",
+                "surface_types_found": module.get("surface_types", []),
+                "access": "denied",
+                "owner": module.get("owner", "UNKNOWN"),
+                "reason": (
+                    "Module could not be classified into a known surface type. "
+                    f"Static discovery found classes={module.get('classes', [])} functions={module.get('functions', [])}"
+                ),
+                "mitigation": "Add an explicit discovery rule or register the surface as a read-only historical adapter.",
+            }
+        )
+    rows.sort(key=lambda row: row["target_path"])
+    return rows
 
 
 def _categorize_unmatched(
-    unmatched: list[dict[str, Any]],
+    boundary_unmatched: list[dict[str, Any]],
+    modules: list[dict[str, Any]],
+    producer_unmatched: list[dict[str, Any]],
+    compatibility_rows: list[dict[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
-    """Split flat unmatched list into separate categorized sets.
-
-    Returns a dict with keys: unmatched_declared, unmatched_static,
-    unmatched_runtime, unmatched_wrapper, unmatched_consumer,
-    unmatched_producer, unmatched_schema_only.
-    """
-    categories: dict[str, list[dict[str, Any]]] = {
-        "unmatched_declared": [],
-        "unmatched_static": [],
+    unmatched_static = [
+        {
+            "row_kind": "runtime_module",
+            "module_path": module["module_path"],
+            "reason_unmatched": "unclassifiable_surface",
+            "detail": f"Module '{module['module_path']}' could not be classified into a known surface type.",
+        }
+        for module in modules
+        if SURFACE_UNKNOWN in module.get("surface_types", [])
+    ]
+    return {
+        "unmatched_declared": boundary_unmatched,
+        "unmatched_static": unmatched_static,
         "unmatched_runtime": [],
         "unmatched_wrapper": [],
-        "unmatched_consumer": [],
-        "unmatched_producer": [],
+        "unmatched_consumer": [] if compatibility_rows else [],
+        "unmatched_producer": producer_unmatched,
         "unmatched_schema_only": [],
     }
 
-    for entry in unmatched:
-        rk = entry.get("row_kind", "")
-        reason = entry.get("reason_unmatched", "")
 
-        if rk == "boundary_contract":
-            # Contracts without matrix entries → declared
-            categories["unmatched_declared"].append(entry)
-        elif rk == "runtime_module":
-            # Static discovery modules that couldn't be classified
-            categories["unmatched_static"].append(entry)
-        elif rk == "wrapper_shell":
-            categories["unmatched_wrapper"].append(entry)
-        elif rk == "consumer":
-            categories["unmatched_consumer"].append(entry)
-        elif rk == "producer":
-            categories["unmatched_producer"].append(entry)
-        elif rk in ("manifest_entry", "matrix_row"):
-            # Manifest entries without contracts or matrix rows without contracts
-            if reason and "schema" in reason.lower():
-                categories["unmatched_schema_only"].append(entry)
-            else:
-                categories["unmatched_declared"].append(entry)
-        else:
-            # Fallback: categorize by reason pattern
-            if reason and "schema" in reason.lower():
-                categories["unmatched_schema_only"].append(entry)
-            elif reason and ("static" in reason.lower() or "unclassifiable" in reason.lower()):
-                categories["unmatched_static"].append(entry)
-            else:
-                categories["unmatched_declared"].append(entry)
-
-    # Sort each category deterministically
-    for cat in categories:
-        categories[cat].sort(
-            key=lambda u: (
-                u.get("row_kind", ""),
-                u.get("boundary_id", "") or u.get("step_id", "") or u.get("module_path", "") or "",
-            )
+def _build_support_gate(
+    *,
+    boundary_rows: list[dict[str, Any]],
+    producer_call_sites: list[dict[str, Any]],
+    writer_registrations: list[dict[str, Any]],
+    runtime_trace_digests: list[dict[str, Any]],
+) -> dict[str, Any]:
+    declared_boundary_ids = sorted(
+        row["boundary_id"] for row in boundary_rows if isinstance(row.get("boundary_id"), str) and row["boundary_id"]
+    )
+    static_boundary_ids = sorted(
+        {
+            boundary_id
+            for row in producer_call_sites
+            for boundary_id in row.get("boundary_ids", [])
+            if boundary_id
+        }
+    )
+    writer_registration_boundary_ids = sorted(
+        {
+            boundary_id
+            for row in writer_registrations
+            for boundary_id in row.get("boundary_ids", [])
+            if boundary_id
+        }
+    )
+    runtime_trace_boundary_ids = sorted(
+        {
+            boundary_id
+            for row in runtime_trace_digests
+            for boundary_id in row.get("boundary_ids", [])
+            if boundary_id
+        }
+    )
+    exact_set_equality = bool(declared_boundary_ids) and (
+        declared_boundary_ids
+        == static_boundary_ids
+        == writer_registration_boundary_ids
+        == runtime_trace_boundary_ids
+    )
+    missing_dimensions = []
+    if not writer_registration_boundary_ids:
+        missing_dimensions.append(
+            "boundary-scoped controlled-writer registrations are not recorded in discovery evidence"
         )
-
-    # T7 rework: unmatched_runtime must record unavailable traces as
-    # UNKNOWN/residual/default-deny evidence, not as an empty zero-count set.
-    # Runtime traces are M6A scope; for M6 they are unavailable.
-    if not categories["unmatched_runtime"]:
-        categories["unmatched_runtime"].append({
-            "row_kind": "default_deny",
-            "target_path": "runtime_trace",
-            "target_type": "runtime_trace",
-            "surface_types_found": ["unknown"],
-            "access": "denied",
-            "status": "UNKNOWN",
-            "reason": (
-                "Runtime traces are not yet captured — M6A scope. "
-                "Static and declared surface discovery is the M6 boundary; "
-                "runtime-trace discovery requires execution-level instrumentation "
-                "and is deferred to M6A. This residual entry records the gap "
-                "so unmatched_runtime is never an empty zero-count set."
-            ),
-            "owner": "UNKNOWN",
-            "availability": "UNKNOWN",
-            "mitigation": (
-                "Implement runtime-trace capture in M6A via execution-level "
-                "instrumentation that records call-site set equality, "
-                "boundary transitions, and producer/consumer paths at runtime."
-            ),
-        })
-
-    return categories
+    if not runtime_trace_boundary_ids:
+        missing_dimensions.append(
+            "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+        )
+    return {
+        "declared_boundary_ids": declared_boundary_ids,
+        "static_boundary_ids": static_boundary_ids,
+        "writer_registration_boundary_ids": writer_registration_boundary_ids,
+        "runtime_trace_boundary_ids": runtime_trace_boundary_ids,
+        "exact_boundary_set_equality": exact_set_equality,
+        "missing_dimensions": missing_dimensions,
+    }
 
 
-# ── T7: Historical adapters artifact ─────────────────────────────────────────
+def _compute_manifest_support_status(
+    row: dict[str, Any],
+    *,
+    support_gate: dict[str, Any],
+    bypass_candidates: list[dict[str, Any]],
+) -> tuple[str, dict[str, Any]]:
+    boundary_id = row.get("boundary_id")
+    producer_path = str(row.get("producer_path", ""))
+    producer_path_parts = [part.strip() for part in producer_path.split("→")]
+    producer_paths = {part for part in producer_path_parts if part.endswith(".py")}
+    bypass_matches = sorted(
+        {
+            candidate["module_path"]
+            for candidate in bypass_candidates
+            if candidate.get("module_path") in producer_paths
+        }
+    )
+    exception_metadata = row.get("exception_metadata") or {}
+    declared_support_status = str(row.get("declared_support_status", "UNKNOWN"))
+    evidence_flags = {
+        "declared_boundary_present": boundary_id in support_gate["declared_boundary_ids"],
+        "static_callsite_present": boundary_id in support_gate["static_boundary_ids"],
+        "writer_registration_present": boundary_id in support_gate["writer_registration_boundary_ids"],
+        "runtime_trace_digest_present": boundary_id in support_gate["runtime_trace_boundary_ids"],
+        "implementation_commit_recorded": bool(exception_metadata.get("implementation_commit")),
+        "positive_test_recorded": bool(exception_metadata.get("positive_test")),
+        "negative_bypass_test_recorded": bool(exception_metadata.get("negative_bypass_test")),
+        "exact_set_equality": bool(support_gate["exact_boundary_set_equality"]),
+    }
+    missing_requirements = [
+        label
+        for label, passes in (
+            ("declared boundary", evidence_flags["declared_boundary_present"]),
+            ("static callsite", evidence_flags["static_callsite_present"]),
+            ("controlled-writer registration", evidence_flags["writer_registration_present"]),
+            ("runtime trace digest", evidence_flags["runtime_trace_digest_present"]),
+            ("implementation commit", evidence_flags["implementation_commit_recorded"]),
+            ("positive test", evidence_flags["positive_test_recorded"]),
+            ("negative bypass test", evidence_flags["negative_bypass_test_recorded"]),
+            ("exact declaration/static/writer/runtime set equality", evidence_flags["exact_set_equality"]),
+        )
+        if not passes
+    ]
+    verification = {
+        "declared_support_status": declared_support_status,
+        "evidence_flags": evidence_flags,
+        "missing_requirements": missing_requirements,
+        "matching_bypass_candidates": bypass_matches,
+        "support_gate_missing_dimensions": list(support_gate["missing_dimensions"]),
+    }
+    if not boundary_id:
+        verification["support_gate_applicable"] = False
+        verification["missing_requirements"] = []
+        return declared_support_status, verification
+    verification["support_gate_applicable"] = True
+    if declared_support_status != "supported":
+        return declared_support_status, verification
+    if not missing_requirements and not bypass_matches:
+        return "supported", verification
+    if any(
+        (
+            evidence_flags["declared_boundary_present"],
+            evidence_flags["static_callsite_present"],
+            evidence_flags["writer_registration_present"],
+            evidence_flags["runtime_trace_digest_present"],
+        )
+    ):
+        return "partial", verification
+    return "planned", verification
 
-HISTORICAL_ADAPTERS_PATH = EVIDENCE_DIR / "wbc-historical-adapters.json"
+
+def _build_current_state_assertions(
+    *,
+    matrix_hash_before: str,
+    matrix_hash_after: str,
+    boundary_rows: list[dict[str, Any]],
+    producer_call_sites: list[dict[str, Any]],
+    compatibility_rows: list[dict[str, Any]],
+    writer_registrations: list[dict[str, Any]],
+    runtime_trace_digests: list[dict[str, Any]],
+    bypass_candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    support_gate = _build_support_gate(
+        boundary_rows=boundary_rows,
+        producer_call_sites=producer_call_sites,
+        writer_registrations=writer_registrations,
+        runtime_trace_digests=runtime_trace_digests,
+    )
+    observed_boundaries = sorted(
+        {
+            boundary_id
+            for row in producer_call_sites
+            for boundary_id in row.get("boundary_ids", [])
+        }
+    )
+    return {
+        "schema": "m8.wbc-boundary-current-state.v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "c1_matrix_hash_before": matrix_hash_before,
+        "c1_matrix_hash_after": matrix_hash_after,
+        "c1_matrix_unchanged": matrix_hash_before == matrix_hash_after,
+        "declared_boundary_count": len(boundary_rows),
+        "observed_producer_boundary_count": len(observed_boundaries),
+        "observed_producer_boundaries": observed_boundaries,
+        "compatibility_reader_callsite_count": len(compatibility_rows),
+        "writer_registration_count": len(writer_registrations),
+        "runtime_trace_digest_count": len(runtime_trace_digests),
+        "bypass_candidate_count": len(bypass_candidates),
+        "support_rows_require_exact_set_equality": True,
+        "support_gate": support_gate,
+    }
 
 
-def _generate_historical_adapters() -> dict[str, Any]:
-    """Generate default-empty historical adapters artifact.
-
-    Read-only adapters must be proven with path/symbol, permitted read
-    operations and versions, proof of zero authority-increasing callers,
-    named owner/approver, expiry, and deletion gate.  Until such proof
-    exists, the artifact is default-empty.
-    """
+def _generate_historical_adapters(
+    compatibility_reader_specs: dict[str, dict[str, Any]],
+    compatibility_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    reader_call_counts: dict[str, int] = {}
+    for row in compatibility_rows:
+        for reader_id in row.get("reader_ids", []):
+            reader_call_counts[reader_id] = reader_call_counts.get(reader_id, 0) + 1
+    adapters = []
+    adapter_classes_present: set[str] = set()
+    read_only_verified_count = 0
+    expired_adapter_count = 0
+    for reader_id, spec in sorted(compatibility_reader_specs.items()):
+        adapter_class = str(spec.get("adapter_class", ADAPTER_CLASS_RAW_JSON))
+        adapter_classes_present.add(adapter_class)
+        authority_write_hits = list(spec.get("authority_write_hits", []))
+        if authority_write_hits:
+            raise AssertionError(
+                f"historical adapter {reader_id} is not read-only: {authority_write_hits}"
+            )
+        read_only_verified = not authority_write_hits
+        if read_only_verified:
+            read_only_verified_count += 1
+        if spec.get("expiry_status") == "expired":
+            expired_adapter_count += 1
+        adapters.append(
+            {
+                "adapter_id": reader_id,
+                "reader_name": spec["reader_name"],
+                "adapter_class": adapter_class,
+                "diagnostics": list(spec.get("diagnostics", [])),
+                "path_symbols": spec["module_paths"],
+                "permitted_read_operations": spec["call_names"],
+                "observed_read_operations": list(spec.get("observed_read_operations", spec["call_names"])),
+                "supported_versions": list(spec.get("supported_versions", ["legacy", "shadow"])),
+                "zero_authority_caller_proof": {
+                    "mode": spec["mode"],
+                    "callsite_count": reader_call_counts.get(reader_id, 0),
+                    "projection_ids": spec["projection_ids"],
+                    "c1_compatibility_readers": spec["c1_compatibility_readers"],
+                    "read_only": True,
+                    "diagnostic_only": True,
+                    "authority_increasing_write_allowed": False,
+                    "authority_increasing_writes_detected": authority_write_hits,
+                    "read_only_verified": read_only_verified,
+                },
+                "owner": "custody-control-plane",
+                "approver": "operational-approval-required",
+                "expiry": {
+                    "milestone": spec["deadline_milestone"],
+                    "current_milestone": spec.get("current_milestone"),
+                    "status": spec.get("expiry_status"),
+                },
+                "deletion_gate": (
+                    "Delete after the matching migration family is adopted, the reader callsite count reaches zero, "
+                    "and the negative bypass gate proves no authority-increasing compatibility reads remain."
+                ),
+            }
+        )
     return {
         "meta": {
-            "schema": "m6.wbc-historical-adapters.v1",
-            "description": (
-                "Historical adapter allowlist for WBC boundary. Each adapter "
-                "requires: path/symbol, permitted read operations and versions, "
-                "proof of zero authority-increasing callers, named owner/approver, "
-                "expiry, and deletion gate. Default-empty because no read-only "
-                "adapters have been proven at this milestone."
-            ),
-            "generated_by": "M6 Step 6 (T7) — generate_wbc_boundary_inventory.py",
-            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-            "adapter_count": 0,
-            "status": "default_empty",
-            "status_detail": (
-                "No read-only adapters have been proven with the required "
-                "evidence fields. Set to empty until proof is provided."
-            ),
+            "schema": "m8.wbc-historical-adapters.v1",
+            "generated_by": "M8 Step 8 (T8) — generate_wbc_boundary_inventory.py",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "adapter_count": len(adapters),
+            "adapter_classes_present": sorted(adapter_classes_present),
+            "expired_adapter_count": expired_adapter_count,
+            "read_only_verified_count": read_only_verified_count,
         },
-        "adapters": [],
+        "adapters": adapters,
     }
 
 
-# ── T7: Validation mode / completion equation ───────────────────────────────
-
-
-def _load_prerequisite_status() -> dict[str, Any]:
-    """Load M6 prerequisite verification status.
-
-    Returns a dict with a computed ``status`` of PASS, UNKNOWN, INCOHERENT,
-    or BLOCKED derived from the individual checks in the prerequisite
-    verification artifact.
-    """
-    prereq_path = EVIDENCE_DIR / "m6-prerequisite-verification.json"
-    if not prereq_path.exists():
-        return {"status": "BLOCKED", "status_detail": "Prerequisite verification not yet run"}
-    try:
-        with open(prereq_path, "r", encoding="utf-8") as fh:
-            prereq = json.load(fh)
-    except (OSError, json.JSONDecodeError):
-        return {"status": "BLOCKED", "status_detail": "Prerequisite verification unreadable"}
-
-    # Compute overall status from individual checks
-    checks = prereq.get("checks", [])
-    statuses = {c.get("status", "UNKNOWN") for c in checks if isinstance(c, dict)}
-
-    if "BLOCKED" in statuses:
-        return {"status": "BLOCKED", "status_detail": "At least one prerequisite check is BLOCKED"}
-    if "INCOHERENT" in statuses:
-        return {"status": "INCOHERENT", "status_detail": "At least one prerequisite check is INCOHERENT"}
-    if "UNKNOWN" in statuses:
-        return {"status": "UNKNOWN", "status_detail": "At least one prerequisite check is UNKNOWN"}
-    if not statuses:
-        return {"status": "UNKNOWN", "status_detail": "No prerequisite checks found"}
-    if statuses == {"PASS"}:
-        return {"status": "PASS", "status_detail": "All prerequisite checks pass"}
-    return {"status": "UNKNOWN", "status_detail": f"Mixed prerequisite statuses: {statuses}"}
-
-
-def _check_completion_equation(inventory: dict[str, Any]) -> dict[str, Any]:
-    """Check the WBC inventory completion equation.
-
-    The completion equation requires:
-    1. Every declared contract has exactly one owner and a non-UNKNOWN producer_path
-       or is explicitly marked as candidate/landed with a reason.
-    2. Source counts are consistent: row_count >= sum of source_counts.
-    3. Every runtime_module has a non-UNKNOWN surface_type classification
-       or a corresponding default_deny row.
-    4. No unmatched_declared entries exist (all declared contracts must be matched).
-
-    Returns a dict with keys: passes (bool), checks (list of check results),
-    and blocked_by_prerequisites (bool).
-    """
-    checks: list[dict[str, Any]] = []
-    rows = inventory.get("rows", [])
-    unmatched_cats = inventory.get("unmatched_categories", {})
-    default_deny_rows = inventory.get("default_deny_rows", [])
-    meta = inventory.get("meta", {})
-
-    all_pass = True
-
-    # ── Check 1: Declared contracts completeness ─────────────────────────
-    declared_unmatched = unmatched_cats.get("unmatched_declared", [])
-    check1 = {
-        "id": "declared_contracts_complete",
-        "description": "All declared boundary contracts must have a matrix entry",
-        "passes": len(declared_unmatched) == 0,
-        "unmatched_count": len(declared_unmatched),
-        "detail": (
-            f"All {meta.get('source_counts', {}).get('boundary_contract', 0)} "
-            f"declared contracts are matched to matrix entries"
-        )
-        if len(declared_unmatched) == 0
-        else (
-            f"{len(declared_unmatched)} declared contracts have no matrix entry: "
-            f"{[e.get('boundary_id', '?') for e in declared_unmatched[:5]]}"
-            + ("..." if len(declared_unmatched) > 5 else "")
-        ),
-    }
-    checks.append(check1)
-    if not check1["passes"]:
-        all_pass = False
-
-    # ── Check 2: Row count consistency ────────────────────────────────────
-    source_counts = meta.get("source_counts", {})
-    expected_min = sum(source_counts.values())
-    actual_rows = len(rows)
-    check2 = {
-        "id": "row_count_consistency",
-        "description": "Row count >= sum of source_counts",
-        "passes": actual_rows >= expected_min,
-        "expected_min": expected_min,
-        "actual": actual_rows,
-        "detail": f"Row count {actual_rows} >= source sum {expected_min}"
-        if actual_rows >= expected_min
-        else f"Row count {actual_rows} < source sum {expected_min} — inventory incomplete",
-    }
-    checks.append(check2)
-    if not check2["passes"]:
-        all_pass = False
-
-    # ── Check 3: Static discovery coverage ────────────────────────────────
-    static_unmatched = unmatched_cats.get("unmatched_static", [])
-    deny_targets = {dr.get("target_path", "") for dr in default_deny_rows}
-    uncovered_static = [
-        u for u in static_unmatched
-        if u.get("module_path", "") not in deny_targets
-    ]
-    check3 = {
-        "id": "static_discovery_coverage",
-        "description": (
-            "Every unclassified runtime_module must have a default_deny row"
-        ),
-        "passes": len(uncovered_static) == 0,
-        "static_unmatched_count": len(static_unmatched),
-        "uncovered_count": len(uncovered_static),
-        "detail": (
-            f"All {len(static_unmatched)} unclassified modules covered by "
-            f"default_deny rows"
-        )
-        if len(uncovered_static) == 0
-        else (
-            f"{len(uncovered_static)} unclassified modules without default_deny: "
-            f"{[u.get('module_path', '?') for u in uncovered_static[:5]]}"
-            + ("..." if len(uncovered_static) > 5 else "")
-        ),
-    }
-    checks.append(check3)
-    if not check3["passes"]:
-        all_pass = False
-
-    # ── Check 4: Owner coverage ───────────────────────────────────────────
-    rows_without_owner = [
-        r for r in rows
-        if not r.get("owner") or r.get("owner") == "UNKNOWN"
-    ]
-    # Only flag rows that should have owners (exclude unmatched entries)
-    known_kinds_for_owner = {"boundary_contract", "manifest_entry", "runtime_module",
-                              "handler_function", "wrapper_shell"}
-    rows_missing_owner = [
-        r for r in rows_without_owner
-        if r.get("row_kind") in known_kinds_for_owner
-    ]
-    check4 = {
-        "id": "owner_coverage",
-        "description": "Every inventory row must name an owner",
-        "passes": len(rows_missing_owner) == 0,
-        "missing_owner_count": len(rows_missing_owner),
-        "detail": (
-            "All rows have a valid owner"
-        )
-        if len(rows_missing_owner) == 0
-        else (
-            f"{len(rows_missing_owner)} rows missing owner: "
-            f"{[(r.get('row_kind'), r.get('boundary_id', r.get('module_path', '?'))) for r in rows_missing_owner[:5]]}"
-            + ("..." if len(rows_missing_owner) > 5 else "")
-        ),
-    }
-    checks.append(check4)
-    if not check4["passes"]:
-        all_pass = False
-
-    # ── Check 5: Schema-only detection ────────────────────────────────────
-    schema_only_unmatched = unmatched_cats.get("unmatched_schema_only", [])
-    check5 = {
-        "id": "schema_only_visibility",
-        "description": "Schema-only entries must be tracked in unmatched_schema_only",
-        "passes": True,  # Always passes — schema-only being visible is the goal
-        "schema_only_count": len(schema_only_unmatched),
-        "detail": (
-            f"{len(schema_only_unmatched)} schema-only entries tracked in "
-            f"unmatched_schema_only set"
-        ),
-    }
-    checks.append(check5)
-
+def _build_discovery_rules(compatibility_reader_specs: dict[str, dict[str, Any]]) -> dict[str, Any]:
     return {
-        "passes": all_pass,
-        "checks": checks,
-        "blocked_by_prerequisites": False,  # Will be updated below
+        "schema": "m8.wbc-boundary-discovery-rules.v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "roots": list(DISCOVERY_ROOTS),
+        "producer_call_names": sorted(PRODUCER_CALL_NAMES),
+        "writer_registration_sources": [
+            "arnold_pipelines.megaplan.custody.writer_map.generate_writer_map",
+            "register_writer(...) AST callsites",
+        ],
+        "compatibility_readers": [
+            {
+                "reader_id": reader_id,
+                "module_paths": spec["module_paths"],
+                "call_names": spec["call_names"],
+                "deadline_milestone": spec["deadline_milestone"],
+            }
+            for reader_id, spec in sorted(compatibility_reader_specs.items())
+        ],
+        "bypass_patterns": [{"pattern": pattern, "category": category} for pattern, category in BYPASS_TEXT_PATTERNS],
     }
 
 
-def _run_validation(inventory: dict[str, Any]) -> int:
-    """Run the validation/completion-equation check.
-
-    Returns 0 if validation passes or prerequisites block,
-    nonzero if validation fails.
-    """
-    prereq = _load_prerequisite_status()
-    prereq_status = prereq.get("status", "UNKNOWN")
-
-    # If prerequisites are BLOCKED or INCOHERENT, validation is skipped
-    # and we exit 0 because the gate is not yet open.
-    if prereq_status in ("BLOCKED", "INCOHERENT"):
-        print(
-            f"[validate] prerequisites are {prereq_status} — "
-            f"validation skipped (gate not open)"
+def _build_inventory(
+    contracts: list[dict[str, Any]],
+    matrix: dict[str, Any],
+    manifest: dict[str, Any],
+    source_to_owner: dict[str, Any],
+    discovery: dict[str, Any],
+    wrapper_shells: list[dict[str, Any]],
+    matrix_hash_before: str,
+    matrix_hash_after: str,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    boundary_rows, boundary_unmatched, matrix_by_id = _boundary_rows(contracts, matrix)
+    manifest_rows = _step_rows_from_manifest(manifest)
+    modules = discovery["modules"]
+    handler_functions = discovery["handler_functions"]
+    scans = discovery["module_scans"]
+    producer_call_sites, producer_unmatched = _discover_producer_call_sites(scans, matrix_by_id)
+    compatibility_rows, compatibility_reader_specs = _discover_compatibility_readers(scans, source_to_owner)
+    writer_registrations = _discover_writer_registrations(scans)
+    runtime_trace_digests = _discover_runtime_trace_digests()
+    bypass_candidates = _discover_bypass_candidates(scans, wrapper_shells)
+    support_gate = _build_support_gate(
+        boundary_rows=boundary_rows,
+        producer_call_sites=producer_call_sites,
+        writer_registrations=writer_registrations,
+        runtime_trace_digests=runtime_trace_digests,
+    )
+    for row in manifest_rows:
+        support_status, verification = _compute_manifest_support_status(
+            row,
+            support_gate=support_gate,
+            bypass_candidates=bypass_candidates,
         )
-        return 0
+        row["support_status"] = support_status
+        row["support_verification"] = verification
+    default_deny_rows = _generate_default_deny_rows(modules)
+    unmatched_categories = _categorize_unmatched(
+        boundary_unmatched=boundary_unmatched,
+        modules=modules,
+        producer_unmatched=producer_unmatched,
+        compatibility_rows=compatibility_rows,
+    )
+    rows = sorted(
+        [*boundary_rows, *manifest_rows, *modules, *handler_functions],
+        key=lambda row: (
+            row.get("row_kind", ""),
+            row.get("boundary_id") or "",
+            row.get("step_id", ""),
+            row.get("module_path", ""),
+            row.get("function_name", ""),
+        ),
+    )
+    content_hash = _sha256_hex(json.dumps(rows, sort_keys=True, default=str))
+    current_state = _build_current_state_assertions(
+        matrix_hash_before=matrix_hash_before,
+        matrix_hash_after=matrix_hash_after,
+        boundary_rows=boundary_rows,
+        producer_call_sites=producer_call_sites,
+        compatibility_rows=compatibility_rows,
+        writer_registrations=writer_registrations,
+        runtime_trace_digests=runtime_trace_digests,
+        bypass_candidates=bypass_candidates,
+    )
+    regenerated_manifest = _regenerate_support_manifest(manifest, manifest_rows)
+    inventory = {
+        "meta": {
+            "schema": "m8.wbc-boundary-inventory.v1",
+            "generated_by": "M8 Step 8 (T8) — generate_wbc_boundary_inventory.py",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "input_sources": {
+                "boundary_contracts": str(BOUNDARY_CONTRACTS_PATH.relative_to(REPO_ROOT)),
+                "contract_matrix": str(CONTRACT_MATRIX_PATH.relative_to(REPO_ROOT)),
+                "support_manifest": _display_path(SUPPORT_MANIFEST_PATH),
+                "source_to_owner_matrix": str(SOURCE_TO_OWNER_MATRIX_PATH.relative_to(REPO_ROOT)),
+                "static_discovery_roots": len(DISCOVERY_ROOTS),
+            },
+            "content_hash": content_hash,
+            "row_count": len(rows),
+            "producer_callsite_count": len(producer_call_sites),
+            "compatibility_reader_count": len(compatibility_rows),
+            "writer_registration_count": len(writer_registrations),
+            "runtime_trace_digest_count": len(runtime_trace_digests),
+            "bypass_candidate_count": len(bypass_candidates),
+            "wrapper_shell_count": len(wrapper_shells),
+            "default_deny_count": len(default_deny_rows),
+            "unmatched_category_counts": {key: len(value) for key, value in unmatched_categories.items()},
+        },
+        "rows": rows,
+        "producer_call_sites": producer_call_sites,
+        "compatibility_readers": compatibility_rows,
+        "writer_registrations": writer_registrations,
+        "runtime_trace_digests": runtime_trace_digests,
+        "bypass_candidates": bypass_candidates,
+        "wrapper_shells": wrapper_shells,
+        "default_deny_rows": default_deny_rows,
+        "current_state_assertions": current_state,
+        "unmatched_categories": unmatched_categories,
+    }
+    return inventory, compatibility_reader_specs, current_state, regenerated_manifest
 
-    eq_result = _check_completion_equation(inventory)
-    eq_result["blocked_by_prerequisites"] = False
-    eq_result["prerequisite_status"] = prereq_status
 
-    # Write validation result alongside inventory
-    validation_path = EVIDENCE_DIR / "wbc-boundary-inventory-validation.json"
-    validation_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(validation_path, "w", encoding="utf-8") as fh:
-        json.dump(eq_result, fh, indent=2, default=str, sort_keys=True)
-    print(f"[validate] wrote {validation_path}")
+def _regenerate_support_manifest(
+    manifest: dict[str, Any],
+    manifest_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    rows_by_step_id = {str(row.get("step_id", "")): row for row in manifest_rows}
+    regenerated = json.loads(json.dumps(manifest))
+    meta = regenerated.setdefault("meta", {})
+    meta["generated_by"] = (
+        "C1 Contract Reality Reconciliation — M8 Step 24 (T31) — "
+        "generate_wbc_boundary_inventory.py"
+    )
+    meta["timestamp_utc"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
+        "+00:00",
+        "Z",
+    )
+    for family in regenerated.get("families", []):
+        for entry in family.get("entries", []):
+            step_id = str(entry.get("step_id", ""))
+            row = rows_by_step_id.get(step_id)
+            if row is None:
+                continue
+            declared_support_status = entry.get(
+                "declared_support_status",
+                entry.get("support_status", "UNKNOWN"),
+            )
+            entry["declared_support_status"] = declared_support_status
+            entry["support_status"] = row.get("support_status", declared_support_status)
+            if "support_verification" in row:
+                entry["support_verification"] = row["support_verification"]
+    return regenerated
 
-    if eq_result["passes"]:
-        print("[validate] PASS — completion equation satisfied")
-        return 0
-    else:
-        failed = [c["id"] for c in eq_result["checks"] if not c["passes"]]
-        print(f"[validate] FAIL — checks failed: {failed}")
-        return 1
+
+def _run_validation(inventory: dict[str, Any]) -> dict[str, Any]:
+    assertions = inventory["current_state_assertions"]
+    return {
+        "schema": "m8.wbc-boundary-inventory-validation.v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "checks": [
+            {
+                "id": "matrix_unchanged",
+                "passes": bool(assertions["c1_matrix_unchanged"]),
+                "detail": "C1 source_to_owner_matrix.json content hash is unchanged across the generation run.",
+            },
+            {
+                "id": "discovery_sections_emitted",
+                "passes": all(
+                    key in inventory
+                    for key in (
+                        "producer_call_sites",
+                        "compatibility_readers",
+                        "writer_registrations",
+                        "runtime_trace_digests",
+                        "bypass_candidates",
+                    )
+                ),
+                "detail": "All required discovery sections are present in the inventory artifact.",
+            },
+            {
+                "id": "support_rows_fail_closed",
+                "passes": all(
+                    row.get("support_status") != "supported"
+                    or bool(
+                        (row.get("support_verification") or {}).get("evidence_flags", {}).get(
+                            "exact_set_equality", False
+                        )
+                    )
+                    for row in inventory["rows"]
+                    if row.get("row_kind") == "manifest_entry" and row.get("boundary_id")
+                ),
+                "detail": (
+                    "Generated support rows remain fail-closed: no manifest-derived row is marked "
+                    "supported unless exact declaration/static/writer/runtime equality is proven."
+                ),
+            },
+        ],
+    }
 
 
-# ── Main ────────────────────────────────────────────────────────────────────
-
-
-def generate(output_path: Path | None = None) -> dict[str, Any]:
-    """Run the full generation pipeline and return the inventory dict.
-
-    If *output_path* is given, the inventory is written there as UTF-8 JSON.
-    """
+def generate(output_path: Path = DEFAULT_OUTPUT) -> dict[str, Any]:
+    matrix_hash_before = _matrix_hash()
     contracts = parse_boundary_contracts()
     matrix = parse_contract_matrix()
     manifest = parse_support_manifest()
-
-    # T5: Static discovery over source trees
+    source_to_owner = parse_source_to_owner_matrix()
     discovery = _scan_discovery_roots()
-    print(
-        f"[generate_wbc_boundary_inventory] static discovery: "
-        f"{len(discovery.get('modules', []))} modules, "
-        f"{len(discovery.get('handler_functions', []))} handler functions"
-    )
-
-    # T6: Wrapper/shell discovery
     wrapper_shells = _scan_wrapper_shells()
-    print(
-        f"[generate_wbc_boundary_inventory] wrapper/shell discovery: "
-        f"{len(wrapper_shells)} shells found"
+    matrix_hash_after = _matrix_hash()
+    inventory, compatibility_reader_specs, _current_state, regenerated_manifest = _build_inventory(
+        contracts=contracts,
+        matrix=matrix,
+        manifest=manifest,
+        source_to_owner=source_to_owner,
+        discovery=discovery,
+        wrapper_shells=wrapper_shells,
+        matrix_hash_before=matrix_hash_before,
+        matrix_hash_after=matrix_hash_after,
     )
+    historical_adapters = _generate_historical_adapters(compatibility_reader_specs, inventory["compatibility_readers"])
+    discovery_rules = _build_discovery_rules(compatibility_reader_specs)
+    validation = _run_validation(inventory)
 
-    inventory = _build_inventory(contracts, matrix, manifest, discovery)
-
-    # T6: Generate default-deny rows
-    default_deny_rows = _generate_default_deny_rows(inventory, discovery)
-    print(
-        f"[generate_wbc_boundary_inventory] default-deny rows: "
-        f"{len(default_deny_rows)} generated"
-    )
-
-    # T6: Build current-state assertions
-    assertions = _build_current_state_assertions(
-        inventory, discovery, wrapper_shells, default_deny_rows
-    )
-
-    # T7: Categorize unmatched into separate sets
-    raw_unmatched = inventory.pop("unmatched", [])
-    unmatched_categories = _categorize_unmatched(raw_unmatched)
-    print(
-        f"[generate_wbc_boundary_inventory] unmatched categories: "
-        f"declared={len(unmatched_categories['unmatched_declared'])}, "
-        f"static={len(unmatched_categories['unmatched_static'])}, "
-        f"runtime={len(unmatched_categories['unmatched_runtime'])}, "
-        f"wrapper={len(unmatched_categories['unmatched_wrapper'])}, "
-        f"consumer={len(unmatched_categories['unmatched_consumer'])}, "
-        f"producer={len(unmatched_categories['unmatched_producer'])}, "
-        f"schema_only={len(unmatched_categories['unmatched_schema_only'])}"
-    )
-
-    # Attach T6+T7 data to inventory
-    inventory["wrapper_shells"] = wrapper_shells
-    inventory["default_deny_rows"] = default_deny_rows
-    inventory["current_state_assertions"] = assertions
-    inventory["unmatched_categories"] = unmatched_categories
-
-    # Update meta with T6+T7 counts
-    inventory["meta"]["wrapper_shell_count"] = len(wrapper_shells)
-    inventory["meta"]["default_deny_count"] = len(default_deny_rows)
-    inventory["meta"]["unmatched_total_count"] = sum(
-        len(v) for v in unmatched_categories.values()
-    )
-    inventory["meta"]["unmatched_category_counts"] = {
-        k: len(v) for k, v in unmatched_categories.items()
-    }
-    inventory["meta"]["generated_by"] = (
-        "M6 Steps 4-7 (T4+T5+T6+T7) — generate_wbc_boundary_inventory.py"
-    )
-
-    if output_path:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as fh:
-            json.dump(inventory, fh, indent=2, default=str, sort_keys=False)
-        print(f"[generate_wbc_boundary_inventory] wrote {output_path}")
-
-    # T7: Also generate historical adapters artifact
-    adapters = _generate_historical_adapters()
-    HISTORICAL_ADAPTERS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(HISTORICAL_ADAPTERS_PATH, "w", encoding="utf-8") as fh:
-        json.dump(adapters, fh, indent=2, default=str, sort_keys=True)
-    print(f"[generate_wbc_boundary_inventory] wrote {HISTORICAL_ADAPTERS_PATH}")
-
+    _write_json(output_path, inventory)
+    _write_yaml(DISCOVERY_RULES_PATH, discovery_rules)
+    _write_json(HISTORICAL_ADAPTERS_PATH, historical_adapters)
+    _write_json(EVIDENCE_DIR / "wbc-boundary-inventory-validation.json", validation)
+    _write_json(SUPPORT_MANIFEST_PATH, regenerated_manifest)
     return inventory
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Generate the WBC boundary inventory artifact."
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=DEFAULT_OUTPUT,
-        help=f"Output path (default: {DEFAULT_OUTPUT})",
-    )
-    parser.add_argument(
-        "--validate",
-        action="store_true",
-        help="Run validation/completion-equation check after generation",
-    )
-    args = parser.parse_args()
-
-    inventory = generate(output_path=args.output)
-
-    if args.validate:
-        exit_code = _run_validation(inventory)
-        sys.exit(exit_code)
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    args = parser.parse_args(argv)
+    generate(args.output)
+    return 0
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

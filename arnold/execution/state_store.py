@@ -13,6 +13,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
+from arnold.workflow.native_wbc import begin_native_wbc_attempt
+
 
 @dataclass(frozen=True)
 class BudgetSnapshot:
@@ -146,24 +148,129 @@ class FileStateStore:
 
     def save(self, checkpoint: RunCheckpoint) -> None:
         path = self._path(checkpoint.run_id)
-        path.write_text(
-            json.dumps(checkpoint.to_dict(), sort_keys=True, indent=2),
-            encoding="utf-8",
+        attempt = begin_native_wbc_attempt(
+            self._directory,
+            producer_family="arnold_execution",
+            surface="state_store",
+            run_id=checkpoint.run_id,
+            subject={"run_id": checkpoint.run_id, "operation": "save"},
+            metadata={"store": self.__class__.__name__},
+            start_payload={"path": str(path), "status": checkpoint.status},
+        )
+        prior_payload: Mapping[str, Any] | None = None
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                loaded = None
+            if isinstance(loaded, Mapping):
+                prior_payload = loaded
+                attempt.reconciliation(
+                    "checkpoint_overwrite",
+                    outcome="superseded",
+                    payload={
+                        "prior_status": loaded.get("status"),
+                        "prior_updated_at": loaded.get("updated_at"),
+                        "path": str(path),
+                    },
+                )
+        try:
+            path.write_text(
+                json.dumps(checkpoint.to_dict(), sort_keys=True, indent=2),
+                encoding="utf-8",
+            )
+        except BaseException as exc:
+            attempt.terminal(
+                status="failed",
+                outcome="error",
+                payload={"error_type": exc.__class__.__name__, "error": str(exc)},
+            )
+            raise
+        attempt.effect_outcome(
+            "checkpoint_save",
+            status="written",
+            payload={
+                "path": str(path),
+                "status": checkpoint.status,
+                "journal_sequence": checkpoint.journal_pointer.sequence,
+                "reconciled_prior_snapshot": prior_payload is not None,
+            },
+        )
+        attempt.terminal(
+            status="completed",
+            outcome="saved",
+            payload={"status": checkpoint.status, "path": str(path)},
         )
 
     def load(self, run_id: str) -> RunCheckpoint | None:
         path = self._path(run_id)
+        attempt = begin_native_wbc_attempt(
+            self._directory,
+            producer_family="arnold_execution",
+            surface="state_store",
+            run_id=run_id,
+            subject={"run_id": run_id, "operation": "load"},
+            metadata={"store": self.__class__.__name__},
+            start_payload={"path": str(path)},
+        )
         if not path.exists():
+            attempt.resume("checkpoint_missing", {"path": str(path)})
+            attempt.terminal(
+                status="completed",
+                outcome="missing",
+                payload={"path": str(path)},
+            )
             return None
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        return RunCheckpoint.from_dict(payload)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except BaseException as exc:
+            attempt.terminal(
+                status="failed",
+                outcome="error",
+                payload={"error_type": exc.__class__.__name__, "error": str(exc)},
+            )
+            raise
+        checkpoint = RunCheckpoint.from_dict(payload)
+        attempt.resume(
+            "checkpoint_loaded",
+            {
+                "path": str(path),
+                "status": checkpoint.status,
+                "journal_sequence": checkpoint.journal_pointer.sequence,
+            },
+        )
+        attempt.terminal(
+            status="completed",
+            outcome="loaded",
+            payload={"status": checkpoint.status, "path": str(path)},
+        )
+        return checkpoint
 
     def list(self) -> list[str]:
-        return sorted(
+        run_ids = sorted(
             path.stem
             for path in self._directory.iterdir()
             if path.is_file() and path.suffix == ".json"
         )
+        attempt = begin_native_wbc_attempt(
+            self._directory,
+            producer_family="arnold_execution",
+            surface="state_store",
+            subject={"operation": "list"},
+            metadata={"store": self.__class__.__name__},
+            start_payload={"directory": str(self._directory)},
+        )
+        attempt.effect_outcome(
+            "checkpoint_list",
+            status="enumerated",
+            payload={"count": len(run_ids)},
+        )
+        attempt.terminal(
+            status="completed",
+            outcome="listed",
+            payload={"count": len(run_ids)},
+        )
+        return run_ids
 
 
 __all__ = [

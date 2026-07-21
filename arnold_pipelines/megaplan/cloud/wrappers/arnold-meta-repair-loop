@@ -407,6 +407,15 @@ elif [[ "${ARNOLD_L3_DEEP_REPAIR:-0}" == "1" ]]; then
   exit 65
 fi
 
+if [[ "$TERMINAL_AUDIT_MODE" == 1 ]]; then
+  PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -m arnold_pipelines.megaplan.cloud.terminal_audit \
+    "$SESSION" \
+    --repair-loop-bin "${ARNOLD_TERMINAL_AUDIT_REPAIR_LOOP_BIN:-${ARNOLD_REPAIR_LOOP_BIN:-arnold-repair-loop}}" \
+    --marker-dir "$MARKER_DIR" \
+    --repair-data-dir "$REPAIR_DATA_DIR"
+  exit $?
+fi
+
 # ---- classify failure + build redacted prompt via Python handoff -------------
 classification_and_prompt() {
   local force_emergency="${1:-0}"

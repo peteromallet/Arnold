@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, TypeAlias, TypedDict, cast
 
 from arnold.runtime.state_persistence import atomic_write_json as _atomic_write_json
+from arnold_pipelines.megaplan.custody.contracts import normalize_repair_occurrence_key
 from arnold_pipelines.megaplan.cloud.redact import redact_payload as canonical_redact_payload
 from arnold_pipelines.megaplan.observability.events import EventKind, emit
 from arnold_pipelines.megaplan.run_state.model import CanonicalRunState, CanonicalState
@@ -267,6 +268,16 @@ def blocker_id_for_fingerprint(payload: Mapping[str, Any] | None) -> str | None:
         json.dumps(canonical_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     return f"{BLOCKER_ID_V1_PREFIX}{digest}"
+
+
+def _normalize_repair_identity(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    normalized = normalize_repair_occurrence_key(payload)
+    return normalized.to_dict() if normalized is not None else None
+
+
+def _repair_identity_key(payload: Mapping[str, Any] | None) -> str:
+    normalized = normalize_repair_occurrence_key(payload)
+    return normalized.key if normalized is not None else ""
 
 
 # ---------------------------------------------------------------------------
@@ -1030,6 +1041,18 @@ def project_repair_custody(
         _as_text(target_current_refs.get("chain_current_plan_name")),
         _as_text(target_current_refs.get("marker_plan_name")),
     )
+    current_repair_identity = repair_requests.derive_repair_identity(
+        session=target_session,
+        plan_state=plan_payload,
+        current_target=target_payload,
+        blocker_id=blocker_id or "",
+        blocker_fingerprint=fingerprint,
+    )
+    current_repair_identity_key = repair_requests.repair_identity_key(current_repair_identity)
+    exact_identity_required = repair_requests.exact_repair_identity_available(
+        plan_state=plan_payload,
+        current_target=target_payload,
+    )
 
     requests: list[RepairCustodyRequestRecord] = []
     for record in queue_requests:
@@ -1074,6 +1097,16 @@ def project_repair_custody(
             problem_signature=problem_signature,
         )
         request_blocker_id = blocker_id_for_fingerprint(request_fingerprint) or ""
+        request_repair_identity = repair_requests.normalize_repair_identity(
+            _as_mapping(record.get("repair_identity"))
+        )
+        request_repair_identity_key = repair_requests.repair_identity_key(request_repair_identity)
+        if (
+            exact_identity_required
+            and current_repair_identity_key
+            and request_repair_identity_key != current_repair_identity_key
+        ):
+            continue
         if blocker_id and request_blocker_id and request_blocker_id != blocker_id:
             continue
         if not blocker_id and current_plan_identity and request_plan_identity and request_plan_identity != current_plan_identity:
@@ -1098,6 +1131,8 @@ def project_repair_custody(
                 "blocker_fingerprint": request_fingerprint,
                 "problem_signature": problem_signature,
                 "target": _stable_mapping(_as_mapping(record.get("target"))),
+                "repair_identity": request_repair_identity or {},
+                "repair_identity_key": request_repair_identity_key,
                 "status": status,
                 "active": status in {REQUEST_STATUS_ACCEPTED, REQUEST_STATUS_DISPATCHED},
                 "decision": latest_decision,
@@ -1138,6 +1173,7 @@ def project_repair_custody(
                     outcome=outcome,
                     recorded_at=recorded_at,
                     raw=raw,
+                    repair_identity=_as_mapping(record.get("repair_identity")),
                 )
             )
     active_claim_request_ids: list[str] = []
@@ -1147,8 +1183,13 @@ def project_repair_custody(
         ) / "owner.json"
         claim_owner = load_json(claim_path, default={})
         if isinstance(claim_owner, Mapping):
+            claim_owner_identity_key = _as_text(claim_owner.get("repair_identity_key"))
             claim_request_id = _as_text(claim_owner.get("request_id"))
-            if claim_request_id:
+            if claim_request_id and (
+                not exact_identity_required
+                or not current_repair_identity_key
+                or claim_owner_identity_key == current_repair_identity_key
+            ):
                 active_claim_request_ids.append(claim_request_id)
     attempts = [
         attempt
@@ -1157,6 +1198,8 @@ def project_repair_custody(
             attempt,
             active_request_ids=set(active_request_ids),
             blocker_id=blocker_id or "",
+            repair_identity_key=current_repair_identity_key,
+            exact_identity_required=exact_identity_required,
         )
     ]
     attempted_request_ids = {
@@ -3866,10 +3909,15 @@ def _attempt_has_current_custody(
     *,
     active_request_ids: set[str],
     blocker_id: str,
+    repair_identity_key: str,
+    exact_identity_required: bool,
 ) -> bool:
     """Reject identity-free legacy attempts that cannot own the current target."""
 
     request_id = _as_text(attempt.get("request_id"))
+    attempt_identity_key = _as_text(attempt.get("repair_identity_key"))
+    if exact_identity_required and repair_identity_key and attempt_identity_key != repair_identity_key:
+        return False
     if request_id:
         return request_id in active_request_ids
     raw = _as_mapping(attempt.get("raw"))
@@ -4191,8 +4239,14 @@ def _build_attempt_record(
     outcome: str,
     recorded_at: str,
     raw: Mapping[str, Any],
+    repair_identity: Mapping[str, Any] | None = None,
 ) -> RepairCustodyAttemptRecord:
     normalized_outcome = outcome or (REPAIRING if state in {ATTEMPT_STATE_CLAIMED, ATTEMPT_STATE_RUNNING} else "")
+    normalized_repair_identity = (
+        _normalize_repair_identity(repair_identity)
+        if repair_identity is not None
+        else _normalize_repair_identity(_as_mapping(raw.get("repair_identity")))
+    )
     return {
         "attempt_id": attempt_id,
         "session": session,
@@ -4200,6 +4254,8 @@ def _build_attempt_record(
         "path": path,
         "blocker_id": blocker_id,
         "blocker_fingerprint": fingerprint,
+        "repair_identity": normalized_repair_identity or {},
+        "repair_identity_key": _repair_identity_key(normalized_repair_identity),
         "request_id": request_id,
         "state": state,
         "outcome": normalized_outcome,

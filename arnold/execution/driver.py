@@ -22,6 +22,7 @@ from typing import Any, Mapping, Protocol, runtime_checkable
 
 from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.runtime.resume import ResumeCursorRef
+from arnold.workflow.native_wbc import begin_native_wbc_attempt
 
 __all__ = [
     "ISOLATION_MODES",
@@ -209,18 +210,40 @@ class PipelineStepwiseDriver:
         from arnold.pipeline.state import StateDelta
         from arnold.pipeline.types import ParallelStage, StepResult
 
+        attempt = begin_native_wbc_attempt(
+            envelope.artifact_root,
+            producer_family="arnold_execution",
+            surface="stepwise_driver.advance",
+            run_id=envelope.run_id,
+            plugin_id=envelope.plugin_id,
+            manifest_hash=envelope.manifest_hash,
+            subject={"stage": self._current_stage, "iteration": self._iteration},
+            metadata={"isolation_mode": self.isolation_mode},
+        )
         if self._current_stage is None:
-            return AdvanceOutcome(kind="halted", payload=self._checkpoint_payload())
+            outcome = AdvanceOutcome(kind="halted", payload=self._checkpoint_payload())
+            attempt.terminal(
+                status="completed",
+                outcome=outcome.kind,
+                payload={"current_stage": self._current_stage},
+            )
+            return outcome
 
         stage = self.pipeline.stages.get(self._current_stage)
         if stage is None:
             missing = self._current_stage
             self._current_stage = None
-            return AdvanceOutcome(
+            outcome = AdvanceOutcome(
                 kind="failed",
                 payload=self._checkpoint_payload(),
                 errors=("missing-stage", str(missing)),
             )
+            attempt.terminal(
+                status="failed",
+                outcome=outcome.kind,
+                payload={"errors": list(outcome.errors)},
+            )
+            return outcome
 
         ctx = _build_ctx(self._state, envelope, self._hook_extensions)
         halt_loop, halt_reason = self.hooks.should_halt_loop(
@@ -238,7 +261,13 @@ class PipelineStepwiseDriver:
                 self._owned_keys,
             )
             self._current_stage = None
-            return AdvanceOutcome(kind="halted", payload=self._checkpoint_payload())
+            outcome = AdvanceOutcome(kind="halted", payload=self._checkpoint_payload())
+            attempt.terminal(
+                status="completed",
+                outcome=outcome.kind,
+                payload={"halt_reason": halt_reason},
+            )
+            return outcome
 
         try:
             if isinstance(stage, ParallelStage):
@@ -269,7 +298,7 @@ class PipelineStepwiseDriver:
                     self._state,
                     self._owned_keys,
                 )
-                return AdvanceOutcome(
+                outcome = AdvanceOutcome(
                     kind="awaiting",
                     payload={
                         **self._checkpoint_payload(),
@@ -277,6 +306,13 @@ class PipelineStepwiseDriver:
                         "halt_reason": halt_reason,
                     },
                 )
+                attempt.effect("suspend", {"stage": stage.name, "halt_reason": halt_reason})
+                attempt.terminal(
+                    status="suspended",
+                    outcome=outcome.kind,
+                    payload={"stage": stage.name, "halt_reason": halt_reason},
+                )
+                return outcome
 
             _enforce_typed_step_io_handoff(
                 pipeline=self.pipeline,
@@ -332,7 +368,13 @@ class PipelineStepwiseDriver:
                     self._owned_keys,
                 )
                 self._current_stage = None
-                return AdvanceOutcome(kind="halted", payload=self._checkpoint_payload())
+                outcome = AdvanceOutcome(kind="halted", payload=self._checkpoint_payload())
+                attempt.terminal(
+                    status="completed",
+                    outcome=outcome.kind,
+                    payload={"stage": stage.name, "next_stage": None},
+                )
+                return outcome
 
             consumer_stage = self.pipeline.stages.get(edge.target)
             if consumer_stage is not None:
@@ -346,24 +388,62 @@ class PipelineStepwiseDriver:
             )
             self._current_stage = edge.target
             self._iteration += 1
-            return AdvanceOutcome(kind="advanced", payload=self._checkpoint_payload())
+            outcome = AdvanceOutcome(kind="advanced", payload=self._checkpoint_payload())
+            attempt.effect("advance", {"stage": stage.name, "next_stage": self._current_stage})
+            attempt.terminal(
+                status="completed",
+                outcome=outcome.kind,
+                payload={"stage": stage.name, "next_stage": self._current_stage},
+            )
+            return outcome
         except BaseException as exc:
-            return AdvanceOutcome(
+            outcome = AdvanceOutcome(
                 kind="failed",
                 payload=self._checkpoint_payload(),
                 errors=(exc.__class__.__name__, str(exc)),
             )
+            attempt.terminal(
+                status="failed",
+                outcome=outcome.kind,
+                payload={"errors": list(outcome.errors)},
+            )
+            return outcome
 
     def checkpoint(self, envelope: RuntimeEnvelope) -> CheckpointOutcome:
-        del envelope
-        return CheckpointOutcome(kind="advanced", payload=self._checkpoint_payload())
+        attempt = begin_native_wbc_attempt(
+            envelope.artifact_root,
+            producer_family="arnold_execution",
+            surface="stepwise_driver.checkpoint",
+            run_id=envelope.run_id,
+            plugin_id=envelope.plugin_id,
+            manifest_hash=envelope.manifest_hash,
+            subject={"stage": self._current_stage, "iteration": self._iteration},
+            metadata={"isolation_mode": self.isolation_mode},
+        )
+        outcome = CheckpointOutcome(kind="advanced", payload=self._checkpoint_payload())
+        attempt.effect("checkpoint", {"current_stage": self._current_stage})
+        attempt.terminal(
+            status="completed",
+            outcome=outcome.kind,
+            payload={"current_stage": self._current_stage},
+        )
+        return outcome
 
     def resume(
         self,
         envelope: RuntimeEnvelope,
         cursor: ResumeCursorRef,
     ) -> RuntimeEnvelope:
-        del envelope
+        attempt = begin_native_wbc_attempt(
+            envelope.artifact_root,
+            producer_family="arnold_execution",
+            surface="stepwise_driver.resume",
+            run_id=cursor.run_id or envelope.run_id,
+            plugin_id=cursor.plugin_id or envelope.plugin_id,
+            manifest_hash=envelope.manifest_hash,
+            subject={"cursor_stage": cursor.cursor.get("stage"), "iteration": self._iteration},
+            metadata={"isolation_mode": self.isolation_mode},
+        )
         cursor_body = dict(cursor.cursor)
         stage = cursor_body.get("stage")
         if isinstance(stage, str) and stage:
@@ -372,11 +452,20 @@ class PipelineStepwiseDriver:
         if isinstance(state, Mapping):
             self._state = dict(state)
         self._iteration = int(cursor_body.get("iteration") or self._iteration)
-        return RuntimeEnvelope(
+        resumed = RuntimeEnvelope(
             plugin_id=cursor.plugin_id,
             run_id=cursor.run_id,
+            manifest_hash=envelope.manifest_hash,
+            artifact_root=envelope.artifact_root,
             resume_cursor=cursor,
         )
+        attempt.effect("resume", {"stage": self._current_stage, "iteration": self._iteration})
+        attempt.terminal(
+            status="completed",
+            outcome="resumed",
+            payload={"stage": self._current_stage, "iteration": self._iteration},
+        )
+        return resumed
 
     def _checkpoint_payload(self) -> dict[str, Any]:
         return {

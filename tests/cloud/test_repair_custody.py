@@ -119,9 +119,13 @@ def _plan_state() -> dict[str, object]:
 
 def _current_target() -> dict[str, object]:
     return {
+        "target_session": "demo-session",
+        "target_id": "demo-session:agentic-replay-viewer",
         "current_refs": {
             "current_plan_name": "agentic-replay-viewer",
             "plan_current_state": "blocked",
+            "workspace": "/workspace/demo",
+            "remote_spec": "/workspace/demo/chain.yaml",
         },
         "event_cursors": {"resume_retry_strategy": "manual_review"},
         "plan_state": {"fingerprint": "sha256:target-proof"},
@@ -180,6 +184,94 @@ def test_custody_projection_reads_plan_state_and_accepted_request_without_migrat
     assert projection["requests"][0]["status"] == "accepted"
     assert projection["requests"][0]["decision"]["decision"] == "accepted"
     assert projection["requests"][0]["problem_signature"]["blocked_task_id"] == "T1"
+
+
+def test_custody_projection_rejects_stale_request_with_mismatched_repair_identity(
+    tmp_path: Path,
+) -> None:
+    queue_root = _queue_root(tmp_path)
+    current_target = _current_target()
+    current_target["current_refs"]["plan_revision"] = "sha256:plan-rev-1"
+    current_target["current_refs"]["fence_token"] = "fence-1"
+    plan_state = _plan_state()
+    plan_state["plan_revision"] = "sha256:plan-rev-1"
+    plan_state["fence_token"] = "fence-1"
+    repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "",
+            "blocked_task_id": "T1",
+        },
+        target={"plan_dir": "/tmp/plan"},
+        root_cause_hint="repairable blocker",
+        repair_identity={
+            "environment_id": "/workspace/demo",
+            "session_id": "demo-session",
+            "chain_id": "/workspace/demo/chain.yaml",
+            "plan_revision": "sha256:stale-plan",
+            "phase": "execute",
+            "task_id": "T1",
+            "attempt_number": 9,
+            "failure_kind": "blocked_recovery_not_resolved",
+            "blocker_digest": "blocker:v1:stale",
+            "coordinator_fence_token": "fence-stale",
+        },
+        created_at="2026-07-04T01:00:00Z",
+    )
+
+    projection = project_repair_custody(
+        plan_state=plan_state,
+        current_target=current_target,
+        queue_root=queue_root,
+        repair_data_dir=tmp_path / "repair-data",
+    )
+
+    assert projection["request_count"] == 0
+    assert projection["active_request_ids"] == []
+
+
+def test_custody_projection_rejects_identity_free_request_when_current_target_has_exact_identity(
+    tmp_path: Path,
+) -> None:
+    queue_root = _queue_root(tmp_path)
+    current_target = _current_target()
+    current_target["current_refs"]["plan_revision"] = "sha256:plan-rev-1"
+    current_target["current_refs"]["fence_token"] = "fence-1"
+    plan_state = _plan_state()
+    plan_state["plan_revision"] = "sha256:plan-rev-1"
+    plan_state["fence_token"] = "fence-1"
+    repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "",
+            "blocked_task_id": "T1",
+        },
+        target={"plan_dir": "/tmp/plan"},
+        root_cause_hint="legacy identity-free request",
+        created_at="2026-07-04T01:00:00Z",
+    )
+
+    projection = project_repair_custody(
+        plan_state=plan_state,
+        current_target=current_target,
+        queue_root=queue_root,
+        repair_data_dir=tmp_path / "repair-data",
+    )
+
+    assert projection["request_count"] == 0
+    assert projection["active_request_ids"] == []
 
 
 def test_advisory_sidecar_canonical_label_does_not_create_repair_custody(

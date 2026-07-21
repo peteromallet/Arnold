@@ -1341,6 +1341,7 @@ def _build_session_entry(
     _completion_contract_mode = "shadow"
     _has_final_acceptance_receipt = False
     _final_milestone_label = None
+    _final_milestone_plan_name = None
     _chain_state_doc: dict[str, Any] | None = None
     if remote_spec and chain_complete:
         try:
@@ -1363,6 +1364,10 @@ def _build_session_entry(
                                 _has_final_acceptance_receipt = isinstance(
                                     _rec.get("acceptance_receipt"), dict
                                 )
+                                if _has_final_acceptance_receipt:
+                                    _final_milestone_plan_name = str(
+                                        _rec.get("plan") or ""
+                                    ).strip() or None
                                 break
         except Exception:
             pass
@@ -1432,6 +1437,61 @@ def _build_session_entry(
         "acceptance_required": _acceptance_required,
         "waiting_for_acceptance": _waiting_for_acceptance,
     }
+    repair_projection = _compose_repair_decision_projection(
+        workspace=workspace,
+        queue_root=marker_dir.parent / "repair-queue",
+        repair_data_dir=repair_data_dir,
+        plan_state=plan_state_doc,
+        current_target=current_target_record,
+    )
+    repair_custody = (
+        repair_projection.get("repair_custody")
+        if isinstance(repair_projection.get("repair_custody"), Mapping)
+        else None
+    )
+    parent_custody: dict[str, Any] | None = None
+    if _has_final_acceptance_receipt and isinstance(repair_custody, Mapping):
+        active_repair_subject_ids: list[str] = []
+        current_target = (
+            repair_custody.get("current_target")
+            if isinstance(repair_custody.get("current_target"), Mapping)
+            else {}
+        )
+        current_refs = (
+            current_target.get("current_refs")
+            if isinstance(current_target, Mapping)
+            and isinstance(current_target.get("current_refs"), Mapping)
+            else {}
+        )
+        repair_plan_state = (
+            repair_custody.get("plan_state")
+            if isinstance(repair_custody.get("plan_state"), Mapping)
+            else {}
+        )
+        for value in (
+            current_refs.get("current_plan_name"),
+            current_refs.get("chain_current_plan_name"),
+            repair_plan_state.get("name"),
+        ):
+            if isinstance(value, str) and value.strip():
+                active_repair_subject_ids.append(value.strip())
+        blocker_id = repair_custody.get("blocker_id")
+        parent_custody = {
+            "accepted_subject_ids": (
+                [_final_milestone_plan_name] if _final_milestone_plan_name else []
+            ),
+            "active_repair_subject_ids": list(
+                dict.fromkeys(active_repair_subject_ids)
+            ),
+            "accepted_repair_occurrence_ids": [],
+            "active_repair_occurrence_ids": (
+                [blocker_id.strip()]
+                if durable_repair_active(repair_custody)
+                and isinstance(blocker_id, str)
+                and blocker_id.strip()
+                else []
+            ),
+        }
     advancement = assess_advancement(
         advancement_policy,
         current_state=plan_current_state,
@@ -1446,6 +1506,7 @@ def _build_session_entry(
         completed_count=completed_count or 0,
         has_final_acceptance_receipt=_has_final_acceptance_receipt,
         final_milestone_label=_final_milestone_label,
+        parent_custody=parent_custody,
     )
     active_step = (
         plan_state_doc.get("active_step")
@@ -1566,13 +1627,6 @@ def _build_session_entry(
             latest_activity=latest_activity,
             now=now,
         )
-    )
-    repair_projection = _compose_repair_decision_projection(
-        workspace=workspace,
-        queue_root=marker_dir.parent / "repair-queue",
-        repair_data_dir=repair_data_dir,
-        plan_state=plan_state_doc,
-        current_target=current_target_record,
     )
     entry.update(repair_projection)
     custody = repair_projection.get("repair_custody")

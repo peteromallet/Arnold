@@ -461,6 +461,12 @@ def _dispatch(
         if isinstance(request.get("blocker_fingerprint"), Mapping)
         else {}
     )
+    repair_identity = (
+        dict(request.get("repair_identity") or {})
+        if isinstance(request.get("repair_identity"), Mapping)
+        else {}
+    )
+    repair_identity_key = str(request.get("repair_identity_key") or "")
     dispatch_intent = str(request.get("dispatch_intent") or "")
     deep_dispatch = dispatch_intent == "deep_superfixer_repair"
     l2_dispatch = dispatch_intent == "broken_superfixer"
@@ -570,6 +576,7 @@ def _dispatch(
         ),
         session=session,
         blocker_fingerprint=blocker_fingerprint,
+        repair_identity=repair_identity,
         pid=os.getpid(),
         command=child_command,
         cwd=workspace,
@@ -796,6 +803,11 @@ def _dispatch(
             "--link",
             f"blocker_id={blocker_id}",
             "--link",
+            f"repair_identity_key={repair_identity_key}",
+            "--link",
+            "repair_identity_json="
+            + json.dumps(repair_identity, sort_keys=True, separators=(",", ":")),
+            "--link",
             f"repair_queue_dir={queue_dir}",
             "--link",
             f"incident_id={request.get('incident_id') or f'inc-{session}'}",
@@ -930,6 +942,7 @@ def _dispatch(
         child_pid=proc.pid,
         managed_run_id=managed_run_id,
         managed_manifest_path=str(managed_manifest),
+        repair_identity=repair_identity,
     )
     decision = repair_requests.write_decision(
         queue_dir,

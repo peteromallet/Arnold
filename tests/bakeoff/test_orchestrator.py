@@ -6,6 +6,7 @@ import pytest
 
 import arnold_pipelines.megaplan.bakeoff.orchestrator as orchestrator
 from arnold_pipelines.megaplan.bakeoff.state import BakeoffState
+from arnold_pipelines.megaplan.notification_safety import FixtureSafetyDecision
 
 
 class FakeProcess:
@@ -239,6 +240,38 @@ def test_run_bakeoff_persists_doc_mode_and_output_in_state(
     )
     assert persisted["mode"] == "doc"
     assert persisted["output_path"] == "docs/foo.md"
+    assert persisted["wbc_transition_evidence"]["run:exp-doc"]["fixture_safety"]["authorized"] is True
+    assert persisted["profiles"][0]["wbc_transition_evidence"]["launch_profile_auto"]["destructive"] is True
+
+
+def test_run_bakeoff_refuses_non_fixture_authorization(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from arnold_pipelines.megaplan.types import CliError
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    idea = root / "idea.md"
+    idea.write_text("design x\n", encoding="utf-8")
+    monkeypatch.setattr(orchestrator, "ensure_main_worktree_clean", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(orchestrator, "capture_base_sha", lambda *_args, **_kwargs: "abc123")
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.bakeoff.wbc.classify_fixture_safety",
+        lambda **_kwargs: FixtureSafetyDecision(False, "not_fixture"),
+    )
+
+    with pytest.raises(CliError) as excinfo:
+        asyncio.run(
+            orchestrator.run_bakeoff(
+                root,
+                idea,
+                ["apex"],
+                "code",
+                "exp-blocked",
+            )
+        )
+
+    assert excinfo.value.code == "bakeoff_wbc_action_off"
 
 
 def test_run_bakeoff_metaplan_mode_rejected(tmp_path: Path) -> None:
