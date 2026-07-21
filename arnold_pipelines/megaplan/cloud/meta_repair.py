@@ -759,23 +759,26 @@ def classify_repair_system_failure(
     repair_budget_exhausted: bool = False,
     now: datetime | None = None,
 ) -> MetaRepairClassification:
-    """Classify a repair-system failure into one of the six trigger types.
+    """Classify a repair-system failure into one of the seven trigger types.
 
     The function applies a prioritized decision tree (first match wins):
 
     1. *discord_delivery_failure* — Discord delivery failed AND the
        escalation is a confirmed TRUE_BLOCKER.
-    2. *repair_timeout* — repair budget exhausted with a timeout outcome.
-    3. *persistent_recurring_retry* — same failure kind repeats across
+    2. *repair_goal_circuit_breaker* — L1 deterministic breaker tripped
+       with a source-repair escalation hint; the fix requires Arnold
+       source changes beyond L1 reach.
+    3. *repair_timeout* — repair budget exhausted with a timeout outcome.
+    4. *persistent_recurring_retry* — same failure kind repeats across
        at least *min_recurring_attempts* attempts without progress.
-    4. *state_inspection_failure* — resolver or snapshot reported an
+    5. *state_inspection_failure* — resolver or snapshot reported an
        error reading repair state.
-    5. *model_tool_launch_failure* — a model or tool subprocess failed
+    6. *model_tool_launch_failure* — a model or tool subprocess failed
        to start.
-    6. *partial_liveness_recurrence* — partial liveness observed across
+    7. *partial_liveness_recurrence* — partial liveness observed across
        at least *min_partial_liveness_ticks* watchdog ticks.
 
-    When none of the six trigger conditions match the evidence, *trigger*
+    When none of the seven trigger conditions match the evidence, *trigger*
     is ``None`` (non-trigger) and *should_dispatch* returns ``False``.
 
     Args:
@@ -863,7 +866,24 @@ def classify_repair_system_failure(
             attempted_at=now.isoformat(),
         )
 
-    # --- 2. Repair timeout --------------------------------------------------
+    # --- 2. Deterministic failure with source-repair escalation hint ---------
+    # L1 repair hit the deterministic breaker and the investigator explicitly
+    # recommended Arnold source repair.  Bypass the normal recurrence thresholds
+    # and escalate immediately — L1 has already proven it cannot fix this.
+    if repair_outcome == "deterministic_failure_source_fix_needed":
+        rationale.append(
+            "L1 deterministic breaker tripped with source-repair escalation hint; "
+            "the fix requires Arnold source changes beyond L1 reach"
+        )
+        return MetaRepairClassification(
+            session=session,
+            trigger=MetaRepairTrigger.REPAIR_GOAL_CIRCUIT_BREAKER,
+            rationale=tuple(rationale),
+            evidence=deepcopy(dict(evidence)) if evidence else {},
+            attempted_at=now.isoformat(),
+        )
+
+    # --- 3. Repair timeout --------------------------------------------------
     if repair_budget_exhausted and repair_outcome in (REPAIR_TIMEOUT, REPAIR_EXHAUSTED):
         rationale.append(
             f"repair budget exhausted with outcome={repair_outcome!r}"
@@ -891,7 +911,7 @@ def classify_repair_system_failure(
             attempted_at=now.isoformat(),
         )
 
-    # --- 3. Persistent recurring retry --------------------------------------
+    # --- 4. Persistent recurring retry --------------------------------------
     if _is_persistent_recurring_retry(
         failure_kinds,
         attempt_outcomes,
@@ -916,7 +936,7 @@ def classify_repair_system_failure(
             attempted_at=now.isoformat(),
         )
 
-    # --- 4. State inspection failure ----------------------------------------
+    # --- 5. State inspection failure ----------------------------------------
     if has_state_inspection_error:
         rationale.append(
             "resolver or snapshot reported a state-inspection error"
@@ -929,7 +949,7 @@ def classify_repair_system_failure(
             attempted_at=now.isoformat(),
         )
 
-    # --- 5. Model/tool launch failure ---------------------------------------
+    # --- 6. Model/tool launch failure ---------------------------------------
     if has_model_tool_launch_error:
         rationale.append(
             "model or tool subprocess failed to launch"
@@ -942,7 +962,7 @@ def classify_repair_system_failure(
             attempted_at=now.isoformat(),
         )
 
-    # --- 6. Partial-liveness recurrence -------------------------------------
+    # --- 7. Partial-liveness recurrence -------------------------------------
     if partial_liveness_ticks >= _MIN_PARTIAL_LIVENESS_TICKS:
         rationale.append(
             f"partial liveness observed across {partial_liveness_ticks} "

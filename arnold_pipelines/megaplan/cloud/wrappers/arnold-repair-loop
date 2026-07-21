@@ -6263,7 +6263,7 @@ repair_recurrence_prepare_attempt() {
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
   failure_context_file="$(mktemp)"
   printf '%s' "$failure_context" > "$failure_context_file"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$failure_context_file" "$iteration" "$requested_model" "$dispatch_model" "$REPAIR_RECURRENCE_MIN_DISPATCHES" "$REPAIR_RECURRENCE_WINDOW_SECS" "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" "${ARNOLD_REPAIR_L2_REPLAN_EPOCH:-0}" <<'PY'
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$failure_context_file" "$iteration" "$requested_model" "$dispatch_model" "$REPAIR_RECURRENCE_MIN_DISPATCHES" "$REPAIR_RECURRENCE_WINDOW_SECS" "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" "${ARNOLD_REPAIR_L2_REPLAN_EPOCH:-0}" "${INVESTIGATOR_RECOMMENDED_ACTION:-}" <<'PY'
 import datetime as dt
 import json
 import pathlib
@@ -6283,7 +6283,9 @@ from arnold_pipelines.megaplan.cloud import repair_recurrence
     request_id,
     blocker_id,
     replan_epoch_raw,
+    recommended_action_raw,
 ) = sys.argv[1:]
+recommended_action = str(recommended_action_raw or "").strip()
 data_path = pathlib.Path(data_path_raw)
 progress_path = pathlib.Path(progress_path_raw)
 failure_context = json.loads(pathlib.Path(failure_context_path_raw).read_text(encoding="utf-8"))
@@ -6334,6 +6336,7 @@ recurrence = repair_recurrence.evaluate_recurrence(
     signature,
     epoch_attempts,
     session_snapshot,
+    recommended_action=recommended_action,
 )
 attempt_id = int(payload.get("attempt_counter") or 0) + 1
 payload["attempt_counter"] = attempt_id
@@ -6361,7 +6364,8 @@ payload["run_recurrence_detected"] = bool(payload.get("run_recurrence_detected")
 repair_recurrence.atomic_write_json(data_path, payload)
 repair_recurrence.atomic_write_json(progress_path, session_snapshot)
 breaker = 1 if recurrence.get("deterministic_failure_breaker") else 0
-print(f"{attempt_id}\t{1 if recurrence.get('detected') else 0}\t{breaker}")
+escalation_hint = str(recurrence.get("escalation_hint") or "")
+print(f"{attempt_id}\t{1 if recurrence.get('detected') else 0}\t{breaker}\t{escalation_hint}")
 PY
   rc=$?
   rm -f "$failure_context_file"
@@ -8534,17 +8538,23 @@ for iteration in 1 2 3; do
     DEV_FALLBACK_REASON=""
   fi
 
-  if ! IFS=$'\t' read -r CURRENT_ATTEMPT_ID CURRENT_RECURRING CURRENT_DETERMINISTIC_BREAKER <<< "$(repair_recurrence_prepare_attempt "$iteration" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL")"; then
+  if ! IFS=$'\t' read -r CURRENT_ATTEMPT_ID CURRENT_RECURRING CURRENT_DETERMINISTIC_BREAKER CURRENT_ESCALATION_HINT <<< "$(repair_recurrence_prepare_attempt "$iteration" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL")"; then
     log "failed to prepare recurrence context; continuing in shallow mode iteration=$iteration"
     CURRENT_ATTEMPT_ID="0"
     CURRENT_RECURRING="0"
     CURRENT_DETERMINISTIC_BREAKER="0"
+    CURRENT_ESCALATION_HINT=""
   fi
   # The bounded investigator has already separated diagnosis from mutation;
   # the single retained owner always runs at high root-cause depth.
   CURRENT_RECURRING="1"
   if [[ "${CURRENT_DETERMINISTIC_BREAKER:-0}" == "1" && "${CLOUD_WATCHDOG_DETERMINISTIC_BREAKER:-1}" == "1" ]]; then
-    repair_data_set_outcome "deterministic_failure"
+    if [[ "${CURRENT_ESCALATION_HINT:-}" == "source_repair_needed" ]]; then
+      repair_data_set_outcome "deterministic_failure_source_fix_needed"
+      log "deterministic-failure breaker tripped with source-repair escalation hint; fix requires Arnold source changes beyond L1 reach session=$SESSION"
+    else
+      repair_data_set_outcome "deterministic_failure"
+    fi
     BREAKER_TRIPPED="1"
     log "deterministic-failure breaker tripped before iteration=$iteration dev-fix; problem signature unchanged from prior iteration session=$SESSION"
     break
@@ -8596,11 +8606,19 @@ exit_if_repair_target_recovered "post-iterations"
 repair_goal_evaluate_or_exit "post-iterations-final-authority-check" || true
 
 if [[ "${BREAKER_TRIPPED:-0}" == "1" ]]; then
-  repair_data_set_outcome "deterministic_failure"
-  repair_goal_record_terminal_failure \
-    "deterministic-owner-circuit-breaker" \
-    "deterministic_failure" \
-    "same repair owner repeated without a new target/progress token; escalate with the original checkpoint unresolved" || true
+  if [[ "${CURRENT_ESCALATION_HINT:-}" == "source_repair_needed" ]]; then
+    repair_data_set_outcome "deterministic_failure_source_fix_needed"
+    repair_goal_record_terminal_failure \
+      "deterministic-owner-circuit-breaker-source-repair" \
+      "deterministic_failure_source_fix_needed" \
+      "same repair owner repeated without a new target/progress token; investigator recommends Arnold source repair; escalate to L2 meta-repair" || true
+  else
+    repair_data_set_outcome "deterministic_failure"
+    repair_goal_record_terminal_failure \
+      "deterministic-owner-circuit-breaker" \
+      "deterministic_failure" \
+      "same repair owner repeated without a new target/progress token; escalate with the original checkpoint unresolved" || true
+  fi
   log "deterministic-failure breaker ended this owner cycle without semantic completion; terminal owner failure recorded against the unresolved checkpoint session=$SESSION goal_id=$ARNOLD_REPAIR_GOAL_ID data=$DATA_FILE"
   exit 1
 fi

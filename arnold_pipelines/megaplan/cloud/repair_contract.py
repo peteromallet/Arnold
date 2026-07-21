@@ -4380,6 +4380,7 @@ _OUTCOME_TO_VERDICT_KIND: dict[str, RepairVerdictKind] = {
     "live_with_fresh_activity": REPAIR_VERDICT_NO_VERDICT,
     "recurring_retry_pending": REPAIR_VERDICT_NO_FIX,
     "deterministic_failure": REPAIR_VERDICT_NO_FIX,
+    "deterministic_failure_source_fix_needed": REPAIR_VERDICT_ESCALATED,
     "discord_escalated": REPAIR_VERDICT_ESCALATED,
 }
 

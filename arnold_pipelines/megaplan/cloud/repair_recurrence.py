@@ -810,6 +810,8 @@ def evaluate_recurrence(
     current_signature: Mapping[str, Any],
     attempts: list[Mapping[str, Any]] | None,
     session_snapshot: Mapping[str, Any] | None,
+    *,
+    recommended_action: str = "",
 ) -> dict[str, Any]:
     normalized_signature = {
         field: _as_text(_as_dict(current_signature).get(field))
@@ -877,9 +879,18 @@ def evaluate_recurrence(
     empty_batch_detected = len(empty_batch_streak) >= empty_batch_threshold
     layer3_detected = same_signature_detected or empty_batch_detected
 
+    # When the deterministic breaker fires and the investigator already
+    # determined the fix requires Arnold source changes (beyond L1's reach),
+    # surface an escalation hint so the repair loop can signal meta-repair
+    # directly instead of gating on generic recurrence thresholds.
+    escalation_hint = ""
+    if layer3_detected and recommended_action == "repair_source":
+        escalation_hint = "source_repair_needed"
+
     return {
         "detected": layer1_detected or layer2_detected,
         "deterministic_failure_breaker": layer3_detected,
+        "escalation_hint": escalation_hint,
         "attempt_number": attempt_number,
         "problem_signature": normalized_signature,
         "layer1": {
