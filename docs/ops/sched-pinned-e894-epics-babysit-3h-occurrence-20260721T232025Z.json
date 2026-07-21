@@ -1,0 +1,335 @@
+{
+  "schema_version": "arnold-resident-schedule-occurrence-result-v1",
+  "occurrence": {
+    "resident_run_id": "subagent-20260721-232025-7a7b9866",
+    "trigger_kind": "fixed_delay_schedule_occurrence",
+    "started_at_utc": "2026-07-21T23:20:25.024555Z",
+    "assessment_completed_at_utc": "2026-07-21T23:26:36.233473Z",
+    "previous_occurrence_run_id": "subagent-20260721-193143-8e6217bb",
+    "one_at_a_time_policy": "serial_interventions_all_targets_with_target_specific_ownership",
+    "final_classification": "strict_success",
+    "decision": "Custody cleared the prior M8/PR-290 custody freeze through the ordinary chain path and is executing M8A with a verified exact worker plus a newer durable source artifact and no current block. Withings and Superpom remain whole-chain complete and validated. No chain intervention was needed in this occurrence."
+  },
+  "schedule": {
+    "schedule_id": "sched_pinned_e894_epics_babysit_3h",
+    "revision": 17,
+    "generation": 3,
+    "state": "active",
+    "cadence": "PT3H",
+    "next_nominal_at_utc": "2026-07-22T01:09:13.047418Z",
+    "prompt_digest": "sha256:ac17fc04fdfeebb17363031e8bc94e4a20e48d18fa0a7616b09571f53a5b3726",
+    "definition_reread_before_action": true,
+    "profile_mutated": false,
+    "recurring_schedule_cancelled": false
+  },
+  "resident_health": {
+    "classification": "healthy",
+    "observed_process_identity": "PID 1807597: python -P -m arnold_pipelines.megaplan resident discord --mode production --store-root /workspace/arnold/.megaplan/resident",
+    "runtime_source_from_process_environment": "/workspace/arnold-runtime-0f050d62",
+    "delegated_runtime_revision": "7a5f9d39c52db851a63bfc3f36619df792e1688c",
+    "health_interface_success": true,
+    "fresh_bounded_context_success": true,
+    "context_generated_at_utc": "2026-07-21T23:06:23.216991Z",
+    "service_interface": "agentbox services list returned status unknown because systemctl is unavailable inside this container; live pinned process identity plus fresh resident health and bounded context reads succeeded",
+    "restart_performed": false,
+    "repoint_performed": false
+  },
+  "assessments": [
+    {
+      "target": "Custody Control Plane",
+      "session": "custody-control-plane-20260714",
+      "workspace": "/workspace/custody-control-plane-20260714/Arnold",
+      "chain_spec": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/chain.yaml",
+      "marker": "/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.json",
+      "current_blocker_or_objective": "Original M8 awaiting_pr_merge cursor is cleared; continue genuine M8A execution without disturbing the live worker.",
+      "semantic_checkpoint": {
+        "observed_at_utc": "2026-07-21T23:20:25.024555Z",
+        "chain_milestone_index": 6,
+        "chain_completed_milestones": 6,
+        "chain_last_state": "done",
+        "plan": "m8a-planner-compiler-and-20260721-2116",
+        "plan_state": "finalized",
+        "latest_failure": null,
+        "active_phase": "execute",
+        "latest_accepted_batch_before_checkpoint": 12,
+        "current_batch_at_checkpoint": 14,
+        "current_batch_result": "pending",
+        "branch_head": "c86afd063ba074e09029834a84627334bb855bed",
+        "target_checkout_dirty": true
+      },
+      "postflight": {
+        "observed_at_utc": "2026-07-21T23:26:36.233473Z",
+        "classification": "strict_success",
+        "strict_progress_predicate": {
+          "evaluation": "passed_alternative_b",
+          "original_m8_blocker_cleared": true,
+          "chain_cursor_advanced_beyond_5": true,
+          "status_projection_cleared_stale_needs_attention": true,
+          "current_chain_state_blocked": false,
+          "verified_live_exact_worker_identity": true,
+          "newer_durable_semantic_artifact_after_checkpoint": true,
+          "reason": "The authoritative chain contains accepted M8 with merged PR 290 at cursor 6, the resident projection reports running/executing, exact PID/tmux command identity names the Custody session/spec/workspace, and execute/batch.py was durably modified at 23:26:36 UTC after the checkpoint with no current blocked/failure receipt."
+        },
+        "chain": {
+          "current_milestone": "m8a-planner-compiler-and-executor-efficiency",
+          "current_milestone_index": 6,
+          "milestone_count": 10,
+          "completed_milestones": 6,
+          "last_state": "done",
+          "current_plan": "m8a-planner-compiler-and-20260721-2116",
+          "plan_state": "finalized",
+          "latest_failure": null,
+          "active_phase": "execute",
+          "active_step_run_id": "9784413b-5905-4c62-8deb-e9da231a834d",
+          "active_step_session_id": "c7ddf98e-1582-41c5-8d35-673f8a1f404b",
+          "state_path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/.chains/chain-1e998199f544.json",
+          "state_sha256": "df7e4a6d38e91c6547e8eb4c6fcbce497342965cc50a160de1e3f04bb0743ca7",
+          "newest_phase_result": {
+            "phase": "finalize",
+            "exit_kind": "success",
+            "mtime_utc": "2026-07-21T22:07:33.281235Z"
+          },
+          "newest_task_and_batch": {
+            "batch": 14,
+            "task": "T14",
+            "result": "pending",
+            "task_path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m8a-planner-compiler-and-20260721-2116/execute_batches/batch_14/tasks_7fe51a276aa4.json",
+            "task_mtime_utc": "2026-07-21T23:20:36.271148Z"
+          },
+          "newer_semantic_artifact": {
+            "path": "/workspace/custody-control-plane-20260714/Arnold/arnold_pipelines/megaplan/execute/batch.py",
+            "mtime_utc": "2026-07-21T23:26:36.233473Z",
+            "sha256": "61754857ad99116d476da1e82141676f108026f2fc2dd62d371ee73ee08a8f01"
+          }
+        },
+        "process_identity": {
+          "worker_pid": 1817146,
+          "worker_output": "1817146 python /workspace/.megaplan/engine-runtimes/f7f0967/venv/bin/python -P -m arnold_pipelines.megaplan chain start --spec /workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/chain.yaml --project-dir /workspace/custody-control-plane-20260714/Arnold --no-git-refresh",
+          "tmux_output": "custody-control-plane-20260714|1817146|python|marker-attested chain start for the exact Custody spec and workspace",
+          "evaluation": "exact_session_spec_workspace_pid_and_command_linkage_present"
+        },
+        "pull_requests": {
+          "m8_pr_290": {
+            "state": "MERGED",
+            "merged_at_utc": "2026-07-21T21:02:34Z",
+            "head_ref": "megaplan/custody-control-plane/m8-runtime-and-boundary-adoption",
+            "base_ref": "consolidate/arnold-runtime-activation-20260714",
+            "merge_commit": "86c1de74ce8fdeae48750c2f4c0555e82fc9cf87"
+          },
+          "m8a_pr_291": {
+            "state": "OPEN",
+            "draft": true,
+            "mergeable": "MERGEABLE",
+            "merge_state_status": "CLEAN",
+            "head_revision": "c86afd063ba074e09029834a84627334bb855bed",
+            "external_action_by_this_occurrence": false
+          }
+        },
+        "resident_status_projection": {
+          "generated_at_utc": "2026-07-21T23:06:23.216991Z",
+          "status": "running",
+          "display_state": "executing",
+          "current_plan": "m8a-planner-compiler-and-20260721-2116",
+          "active_phase": "execute",
+          "attention": false
+        }
+      },
+      "runtime_attestation": {
+        "marker_runtime_root": "/workspace/arnold-engine-running-f7f0967",
+        "marker_runtime_sha": "f7f096701ae3df9925e584620d9c7ac39224338a",
+        "import_path": "/workspace/arnold-engine-running-f7f0967/arnold_pipelines/megaplan/__init__.py",
+        "marker_reason": "validated SHA-specific Custody fallback capsule created without mutating e894",
+        "general_e894_unchanged": true,
+        "marker_relaunch_used": false
+      },
+      "non_regression": {
+        "chain_spec_sha256": "63f15c2df351c9629fe04bb66e11ea8d0a09689b2dc260c83600998b4bd70b2d",
+        "northstar_sha256": "315ed6ba4db2323958448db2ec7aa81fa5ddbc140bc05823ec0de322e78c5f45",
+        "m5_sha256": "2e8f3f96fd360d6d5cab2a5c2ba5f8dde728d0ff576572f7296f6436cd2491b1",
+        "m5a_sha256": "9a337ca44fd83e0e43bbb371232bcab5d414f20706cf676f15c63256b7f82ae6",
+        "m6_sha256": "3fea24d7120fb6dd97a0a876caff200bd9d2847d6fcae37dcb69a63b1b8ec66e"
+      },
+      "agent_assessment": {
+        "assessment_utc": "2026-07-21T23:26:36.233473Z",
+        "classification": "healthy_no_repair",
+        "decision": "Leave the live Custody chain untouched; no duplicate repair owner was launched.",
+        "rationale": "The original PR/cursor blocker is cleared and the exact worker has post-checkpoint durable semantic source output with no blocked/failure receipt. Canonical inventory contains only this schedule occurrence as active; the explicitly linked historical provider-fallback candidate is terminal and has no continuing ownership.",
+        "uncertainty": null,
+        "occupies_one_at_a_time_slot_for_target": false,
+        "candidates": [
+          {
+            "run_id": "subagent-20260720-193054-5b0373d2",
+            "canonical_manifest": "/workspace/arnold-engine-running-e894/.megaplan/plans/resident-subagents/subagent-20260720-193054-5b0373d2/manifest.json",
+            "lifecycle_status": "completed",
+            "substantive_evidence_kind": "terminal result plus verified git custody evidence",
+            "substantive_evidence_path": "/workspace/arnold-engine-running-e894/.megaplan/plans/resident-subagents/subagent-20260720-193054-5b0373d2/result.md",
+            "evidence_utc": "2026-07-20T19:51:37.390328Z",
+            "assessment_utc": "2026-07-21T23:26:36.233473Z",
+            "evidence_age_seconds": 99300,
+            "explicit_match_fields": {
+              "session": "custody-control-plane-20260714",
+              "workspace": "/workspace/custody-control-plane-20260714/Arnold",
+              "declared_recovery_objective": "provider fallback and safe Custody recovery"
+            },
+            "assessment": "terminal_no_continuing_owner"
+          }
+        ],
+        "cancellation_or_supersession_receipt": null,
+        "replacement_run_receipt": null
+      }
+    },
+    {
+      "target": "Withings Health Integration",
+      "session": "withings-health-sync-20260719",
+      "workspace": "/workspace/withings-health-sync-20260719/Pumpernickel",
+      "chain_spec": "/workspace/withings-health-sync-20260719/Pumpernickel/.megaplan/initiatives/withings-health-integration/chain.yaml",
+      "marker": "/workspace/.megaplan/cloud-sessions/withings-health-sync-20260719.json",
+      "current_blocker_or_objective": "No current blocker; preserve terminal completion.",
+      "postflight": {
+        "observed_at_utc": "2026-07-21T23:26:36.233473Z",
+        "classification": "strict_success",
+        "chain_last_state": "done",
+        "milestones_completed": 4,
+        "milestone_count": 4,
+        "remaining": [],
+        "current_plan": null,
+        "latest_plan": "product-hardening-and-rollout-20260721-0841",
+        "latest_plan_state": "done",
+        "latest_failure": null,
+        "newest_phase": "review",
+        "newest_phase_exit_kind": "success",
+        "review_receipt": {
+          "verdict": "approved",
+          "task_verdicts_count": 17,
+          "total_tasks": 17,
+          "missing_evidence_count": 0,
+          "rework_items_count": 0,
+          "timestamp_utc": "2026-07-21T13:06:26.801490Z"
+        },
+        "chain_state_sha256": "1b09a1273171cfaf7a9bf0da69a50c084c04492d9f3df74bd2fc3c8612431192",
+        "phase_result_sha256": "862d1ef8167f70097b172bc3c9a341f874dda62198cc1d96a5f82004031be7c6",
+        "newest_task_result_sha256": "000237088dcc67c644dd701f69b2c625dab7e1396e304582056749a4c4a997ea",
+        "head": "9fa8e70c7ca24a8431a40c705e90ca4b82d1c0a0",
+        "remote_branch_contains_head": true,
+        "workspace_clean": true,
+        "process_identity": {
+          "matching_worker_output": "",
+          "matching_tmux_output": "",
+          "evaluation": "absent_as_expected_for_terminal_done_chain"
+        }
+      },
+      "runtime_attestation": {
+        "marker_runtime_root": "/workspace/arnold-engine-running-97df7a0",
+        "marker_runtime_sha": "97df7a05240f36c7a85a2048de412ba9bf6a2ede",
+        "import_path": "/workspace/arnold-engine-running-97df7a0/arnold_pipelines/megaplan/__init__.py",
+        "trusted_container_contract_preserved": true,
+        "marker_relaunch_used": false
+      },
+      "agent_assessment": {
+        "assessment_utc": "2026-07-21T23:26:36.233473Z",
+        "classification": "healthy_no_repair",
+        "decision": "Leave terminal chain untouched.",
+        "rationale": "Authoritative chain state and approved 17-of-17 review receipt prove whole-chain completion; no active matching repair candidate exists.",
+        "uncertainty": null,
+        "occupies_one_at_a_time_slot_for_target": false,
+        "candidates": []
+      }
+    },
+    {
+      "target": "Superpom Reflections",
+      "session": "superpom-reflections-20260719",
+      "workspace": "/workspace/superpom-reflections-20260719/Pumpernickel",
+      "chain_spec": "/workspace/superpom-reflections-20260719/Pumpernickel/.megaplan/initiatives/superpom-reflections/chain.yaml",
+      "marker": "/workspace/.megaplan/cloud-sessions/superpom-reflections-20260719.json",
+      "current_blocker_or_objective": "No current blocker; preserve terminal completion and accepted exact-target T24 staging evidence.",
+      "postflight": {
+        "observed_at_utc": "2026-07-21T23:26:36.233473Z",
+        "classification": "strict_success",
+        "chain_last_state": "done",
+        "milestones_completed": 4,
+        "milestone_count": 4,
+        "remaining": [],
+        "current_plan": null,
+        "latest_plan": "m4-product-hardening-and-ship-20260720-0926",
+        "latest_plan_state": "done",
+        "latest_failure": null,
+        "newest_phase": "review",
+        "newest_phase_exit_kind": "success",
+        "review_receipt": {
+          "verdict": "approved",
+          "task_verdicts_count": 26,
+          "total_tasks": 26,
+          "missing_evidence_count": 0,
+          "rework_items_count": 0,
+          "timestamp_utc": "2026-07-21T12:01:57.878837Z"
+        },
+        "chain_state_sha256": "51dae71b09e4b8ac49fe1adf5c18df9e052349c2bf0e2127440052e97ae24cad",
+        "phase_result_sha256": "95a894e4397a94fad4654eceb05bd9658b0b9c75c68d8083786615807118c3e2",
+        "head": "3167456b14d8c730899552a54d13d3706880b713",
+        "remote_branch_contains_head": true,
+        "workspace_clean": true,
+        "process_identity": {
+          "matching_worker_output": "",
+          "matching_tmux_output": "",
+          "evaluation": "absent_as_expected_for_terminal_done_chain"
+        },
+        "t24_staging": {
+          "target": "Railway project Veas / environment staging / service Veas-staging",
+          "task": "T24",
+          "task_status": "done",
+          "task_authority_validation": "accepted",
+          "task_artifact": "/workspace/superpom-reflections-20260719/Pumpernickel/.megaplan/plans/m4-product-hardening-and-ship-20260720-0926/execute_batches/batch_24/tasks_d7ddc8dc438d.json",
+          "task_artifact_sha256": "0516af361550679eddd8c766ba780fc9b6da517b0b30b2788f6b5f3e0e8d13b8",
+          "operation_receipt": "deployment 5113bef6-1f98-4925-a0d1-a91fccf62efd SUCCESS",
+          "environment_health_probe": "GET /health 200 OK",
+          "live_replay": "explicit, implicit, and lower-level voice flows accepted with correction/search, embedding, retry/restart, deletion, operator-diagnosis, and no-proactive-outreach evidence"
+        }
+      },
+      "runtime_attestation": {
+        "marker_runtime_root": "/workspace/arnold-engine-running-e894",
+        "marker_runtime_sha": "e894881275e7d6587ee888928ce088af71ae64e9",
+        "import_path": "/workspace/arnold-engine-running-e894/arnold_pipelines/megaplan/__init__.py",
+        "marker_relaunch_used": false
+      },
+      "agent_assessment": {
+        "assessment_utc": "2026-07-21T23:26:36.233473Z",
+        "classification": "healthy_no_repair",
+        "decision": "Leave terminal chain untouched and do not repeat staging mutation.",
+        "rationale": "Chain state, accepted T24 authority evidence, exact-target deployment/health/live-replay evidence, and approved 26-of-26 review receipt prove completion; no active matching repair candidate exists.",
+        "uncertainty": null,
+        "occupies_one_at_a_time_slot_for_target": false,
+        "candidates": []
+      }
+    }
+  ],
+  "verification": {
+    "targets_assessed_serially": true,
+    "targets_reassessed_immediately_before_write": true,
+    "candidate_manifests_and_cited_artifacts_reread": true,
+    "canonical_active_inventory": {
+      "active_run_ids": [
+        "subagent-20260721-232025-7a7b9866"
+      ],
+      "separate_relevant_candidate_count": 0,
+      "ownership_interpretation": "This exact schedule occurrence is the observer; no separate active repair candidate owns any target."
+    },
+    "runtime_attestations": {
+      "custody_f7f0967": "passed with explicit marker runtime PYTHONPATH",
+      "withings_97df7a0": "passed with explicit marker runtime PYTHONPATH",
+      "superpom_e894": "passed with explicit marker runtime PYTHONPATH"
+    },
+    "custody_original_pr_cursor_gate": "passed; PR 290 merged, M8 accepted, cursor advanced 5 to 6, status projection reports running M8A",
+    "custody_current_semantic_gate": "passed alternative B; exact live worker plus post-checkpoint durable source artifact and no block/failure",
+    "withings_terminal_gate": "passed",
+    "superpom_terminal_and_t24_gate": "passed",
+    "resident_restarted_or_repointed": false,
+    "frozen_engine_mutated": false,
+    "profile_mutated": false,
+    "push_performed_by_this_occurrence": false,
+    "remote_merge_attempted_or_performed_by_this_occurrence": false,
+    "staging_mutation_performed_by_this_occurrence": false,
+    "production_effect_performed": false,
+    "credentials_changed_or_exposed": false,
+    "schedule_remains_active": true
+  }
+}
