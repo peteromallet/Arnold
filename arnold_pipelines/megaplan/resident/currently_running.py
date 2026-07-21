@@ -439,7 +439,10 @@ def discover_recently_completed_sessions(
 
 
 def render_currently_running(
-    report: CurrentlyRunningReport, *, now: datetime | None = None
+    report: CurrentlyRunningReport,
+    *,
+    now: datetime | None = None,
+    timezone_name: str = "UTC",
 ) -> str:
     """Render a compact, truthful status card using Discord markdown."""
 
@@ -454,7 +457,7 @@ def render_currently_running(
         # This canonical banner is intentionally verbatim and must be first.
         lines = [stale_banner, "", *lines]
     if isinstance(status_node, Mapping):
-        snapshot = _snapshot_label(status_node)
+        snapshot = _snapshot_label(status_node, timezone_name=timezone_name)
         if snapshot:
             lines.extend((snapshot, ""))
 
@@ -941,8 +944,10 @@ def _source_record_label(record: Mapping[str, Any]) -> str | None:
     return content
 
 
-def _snapshot_label(status_node: Mapping[str, Any]) -> str | None:
-    """Return an honest UTC-formatted freshness line when the root supplies it."""
+def _snapshot_label(
+    status_node: Mapping[str, Any], *, timezone_name: str = "UTC"
+) -> str | None:
+    """Return an honest user-local freshness line when the root supplies it."""
 
     generated_at = status_node.get("generated_at") or status_node.get(
         "watchdog_generated_at"
@@ -950,7 +955,7 @@ def _snapshot_label(status_node: Mapping[str, Any]) -> str | None:
     if not generated_at:
         return None
     try:
-        rendered = format_timestamp(generated_at, "UTC")
+        rendered = format_timestamp(generated_at, timezone_name)
     except (TypeError, ValueError):
         return "_Snapshot time unavailable._"
     return f"_Snapshot generated {rendered}_"

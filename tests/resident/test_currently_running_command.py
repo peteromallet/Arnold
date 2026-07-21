@@ -1319,15 +1319,16 @@ def test_long_lists_include_every_live_agent_and_chunk_safely() -> None:
     assert all(0 < len(chunk) <= DISCORD_MESSAGE_LIMIT for chunk in chunks)
 
 
-def test_snapshot_time_is_displayed_in_utc_with_date_time_and_offset() -> None:
+def test_snapshot_time_is_displayed_in_requested_timezone_with_date_time_and_offset() -> None:
     rendered = render_currently_running(
         CurrentlyRunningReport(
             status_node={"generated_at": "2026-07-14T16:30:45Z", "sessions": []},
             managed_agents={"running": []},
-        )
+        ),
+        timezone_name="Europe/Berlin",
     )
 
-    assert "Snapshot generated 2026-07-14 16:30:45 UTC (UTC+00:00)" in rendered
+    assert "Snapshot generated 2026-07-14 18:30:45 CEST (UTC+02:00)" in rendered
 
 
 def test_repairing_chain_remains_distinct_from_its_progress_display_state() -> None:
