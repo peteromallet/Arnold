@@ -1,0 +1,161 @@
+{
+  "schema_version": "arnold-custody-progress-reconciliation-v1",
+  "recorded_at": "2026-07-21T19:02:05Z",
+  "delegated_run": "subagent-20260721-190205-8707f248",
+  "session": "custody-control-plane-20260714",
+  "classification": "intentional_authoritative_reconciliation_no_execution_artifact_loss",
+  "finding": {
+    "projection_was_stale_or_rewritten": true,
+    "reconciliation_was_intentional": true,
+    "execution_artifacts_lost": false,
+    "authoritative_progress_credit_removed": true,
+    "explanation": "The prior index-8/M10 view credited locally completed plan lifecycles without authoritative PR/acceptance custody. The recovery runner re-read publication evidence, rejected M8 because PR 290 remained open, rejected M8A and M9 because their milestone records lacked PR context, and reconciled the cursor from 8 to 5. The implementation commits and plan artifacts remain present."
+  },
+  "progress_history": [
+    {
+      "ts": "2026-07-21T16:57:16.916282Z",
+      "epic_percent": 79,
+      "plan_percent": 94,
+      "plan_state": "finalized",
+      "current_plan": "m9-rebuildable-projections-20260721-0504"
+    },
+    {
+      "ts": "2026-07-21T17:57:25.213350Z",
+      "epic_percent": 70,
+      "plan_percent": null,
+      "plan_state": null,
+      "current_plan": "m9-rebuildable-projections-20260721-0504"
+    },
+    {
+      "ts": "2026-07-21T17:58:51.558760Z",
+      "epic_percent": 80,
+      "plan_percent": 100,
+      "plan_state": "done",
+      "current_plan": "m9-rebuildable-projections-20260721-0504"
+    },
+    {
+      "ts": "2026-07-21T18:58:59.361588Z",
+      "epic_percent": 60,
+      "plan_percent": 100,
+      "plan_state": "done",
+      "current_plan": "m8-universal-wbc-producer-and-20260720-0646"
+    },
+    {
+      "ts": "2026-07-21T19:00:26.675102Z",
+      "epic_percent": 60,
+      "plan_percent": 100,
+      "plan_state": "done",
+      "current_plan": "m8-universal-wbc-producer-and-20260720-0646"
+    }
+  ],
+  "chain_write_evidence": {
+    "path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/.chains/chain-1e998199f544.json",
+    "sha256": "4a0cc622bf91a2b1a969e37e9c2ef3a9eea55a47528003e96c7a23fe486fe295",
+    "current_milestone_index": 5,
+    "current_plan_name": "m8-universal-wbc-producer-and-20260720-0646",
+    "last_state": "awaiting_pr_merge",
+    "completed_count": 5,
+    "reconciliation_log": [
+      "completed record for m8-runtime-and-boundary-adoption is not authoritative yet: PR #290 state=open",
+      "completed record for m8a-planner-compiler-and-executor-efficiency is not authoritative yet: branch milestone is missing PR context",
+      "completed record for m9-rebuildable-projections-and-liveness is not authoritative yet: branch milestone is missing PR context",
+      "reconciled cursor index: 8 -> 5 from completed milestones"
+    ]
+  },
+  "process_and_runner_evidence": {
+    "reconciliation_runner_started_at": "2026-07-21T18:55:20Z",
+    "command_class": "exact existing chain recovery entrypoint",
+    "outcome": "stopped_after_pr_merge_failure",
+    "current_exact_worker": false,
+    "current_tmux_runner": false,
+    "note": "Process liveness was not counted as progress. The runner attempted configured automatic and immediate squash merge paths; both failed before any merge or push effect."
+  },
+  "publication_and_acceptance": {
+    "m8": {
+      "plan": "m8-universal-wbc-producer-and-20260720-0646",
+      "plan_state": "done",
+      "review_phase_result_sha256": "34cc593dbc78ce857e0bd9202b099acf21e2ddec3cee3192bad3b44911d0ef85",
+      "completion_verdict_sha256": "35c65fe86bdd59fcdabcb1221f557e19632a5bedb0c29cc159b62f5eb03d5252",
+      "publish_sha256": "c29fd7aabe58fb203cb3059c09b415ba1b514f09cc3fe5a5759fafe0214c9d84",
+      "completion_accepted": false,
+      "published_commit": "751a2b833",
+      "publication_base": "3c146f9e1937fa085d8a1fa589db27ca2a45018c",
+      "pr_number": 290,
+      "pr_state": "OPEN",
+      "pr_mergeable": "CONFLICTING"
+    },
+    "m8a": {
+      "plan": "m8a-planner-compiler-and-20260721-0122",
+      "plan_state": "done",
+      "review_phase_result_sha256": "1155b471794eb3b350a17efec194554206e52fcf43bf0c3173ada04672d7d4e5",
+      "completion_verdict_sha256": "fc2d7805e99149320e281a55db5f1969475032239bdce41f27dfc430a198a3aa",
+      "publish_sha256": "33d4a2543ed65b61777640c7ef159adf54374e3a6aae2f4b6a6c3452fe45a19b",
+      "completion_accepted": false,
+      "published_commit": "658f075a1",
+      "publication_base": "751a2b833",
+      "milestone_pr_context": false
+    },
+    "m9": {
+      "plan": "m9-rebuildable-projections-20260721-0504",
+      "plan_state": "done",
+      "review_phase_result_sha256": "46b3764f2889e142b93307100792fa9bf86757f6605ecaadfd97a06f3ed5c4f1",
+      "completion_verdict_sha256": "d78b805a1fad4511a6a7499523354094fd6d0fe2082493b2c0ec03e5301b40f6",
+      "publish_sha256": "9c5da33196c31ee8e2acbe79f050436f49915310e44062e9a112f64f8e95cb65",
+      "completion_accepted": false,
+      "published_commit": "e041ae04c30823064f945b2ed963d1a06195ec25",
+      "publication_base": "658f075a1",
+      "milestone_pr_context": false
+    },
+    "m10": {
+      "plan": "m10-safe-retry-recovery-and-20260721-1759",
+      "plan_state": "planned",
+      "plan_phase_result_sha256": "0b555fe9d33febaa7fa157fbde412b3e513ce9797e46e42b165550fc972c68b5",
+      "accepted_execution_result": false
+    }
+  },
+  "pr_and_ancestry": {
+    "pr_290": {
+      "url": "https://github.com/peteromallet/Arnold/pull/290",
+      "state": "OPEN",
+      "mergeable": "CONFLICTING",
+      "head_ref": "megaplan/custody-control-plane/m8-runtime-and-boundary-adoption",
+      "head_oid": "3c146f9e1937fa085d8a1fa589db27ca2a45018c",
+      "base_ref": "consolidate/arnold-runtime-activation-20260714",
+      "base_oid": "9c99688b67a7c6c7fa37d4b622b68643e787d94c"
+    },
+    "preserved_commit_stack": [
+      "3c146f9e1937fa085d8a1fa589db27ca2a45018c",
+      "751a2b833",
+      "658f075a1",
+      "e041ae04c30823064f945b2ed963d1a06195ec25"
+    ],
+    "pr_head_is_ancestor_of_m9_head": true,
+    "pr_base_is_ancestor_of_pr_head": false,
+    "pr_base_is_ancestor_of_m9_head": false,
+    "pr_head_to_m9_diff": {
+      "files_changed": 303,
+      "insertions": 87885,
+      "deletions": 1403
+    }
+  },
+  "current_correct_state": {
+    "authoritative_completed_milestones": 5,
+    "total_milestones": 10,
+    "status_projection_percent": 60,
+    "chain_index": 5,
+    "current_plan": "m8-universal-wbc-producer-and-20260720-0646",
+    "plan_lifecycle_state": "done",
+    "chain_operational_state": "awaiting_pr_merge",
+    "runner_state": "stopped",
+    "exact_blocker": "PR 290 is open and conflicting. Its reconciliation crosses append-only incident-ledger evidence; safely reconciling those conflicts, updating the remote head, and completing repository acceptance/merge are required before M8 can be authoritative. M8A and M9 then require proper PR and acceptance custody before re-admission.",
+    "authorized_action_taken": "preserved and classified evidence only"
+  },
+  "preservation": {
+    "reset_performed": false,
+    "overwrite_performed": false,
+    "acceptance_bypassed": false,
+    "push_performed": false,
+    "remote_merge_performed": false,
+    "parallel_agent_launched": false
+  }
+}
