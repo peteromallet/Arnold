@@ -883,8 +883,11 @@ def evaluate_recurrence(
     # determined the fix requires Arnold source changes (beyond L1's reach),
     # surface an escalation hint so the repair loop can signal meta-repair
     # directly instead of gating on generic recurrence thresholds.
+    # Also surface the hint when the investigator recommends replan and the
+    # breaker trips: a repeated replan on the same signature means L1 cannot
+    # resolve the root cause and L2/meta-repair must take over.
     escalation_hint = ""
-    if layer3_detected and recommended_action == "repair_source":
+    if layer3_detected and recommended_action in {"repair_source", "replan"}:
         escalation_hint = "source_repair_needed"
 
     return {

@@ -7489,7 +7489,13 @@ PY
   fi
   log "bounded repair investigator receipt accepted session=$SESSION run_id=$investigator_run_id digest=$context_digest action=$recommended_action"
   if [[ "$recommended_action" == "replan" ]]; then
-    repair_data_set_outcome "deterministic_failure"
+    safe_target_kind="$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("safe_repair_target") or {}).get("kind") or "")' "$INVESTIGATOR_RECEIPT_PATH")"
+    if [[ "$safe_target_kind" == "arnold_source" ]]; then
+      repair_data_set_outcome "deterministic_failure_source_fix_needed"
+      log "investigator replan targets Arnold source; escalating to L2 source repair session=$SESSION"
+    else
+      repair_data_set_outcome "deterministic_failure"
+    fi
     return 2
   fi
   return 0
@@ -8356,11 +8362,20 @@ PY
 investigator_rc=0
 run_repair_investigator_turn || investigator_rc=$?
 if [[ "$investigator_rc" == "2" ]]; then
-  repair_goal_record_terminal_failure \
-    "investigator-replan-required" \
-    "replan_required" \
-    "validated investigator requires L2 replan before any target mutation" || true
-  log "investigator requires L2 replan before any target mutation session=$SESSION"
+  safe_target_kind="$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("safe_repair_target") or {}).get("kind") or "")' "$INVESTIGATOR_RECEIPT_PATH")"
+  if [[ "$safe_target_kind" == "arnold_source" ]]; then
+    repair_goal_record_terminal_failure \
+      "investigator-replan-arnold-source" \
+      "deterministic_failure_source_fix_needed" \
+      "validated investigator replan targets Arnold source; escalating to L2 source repair" || true
+    log "investigator replan targets Arnold source; escalating to L2 source repair session=$SESSION"
+  else
+    repair_goal_record_terminal_failure \
+      "investigator-replan-required" \
+      "replan_required" \
+      "validated investigator requires L2 replan before any target mutation" || true
+    log "investigator requires L2 replan before any target mutation session=$SESSION"
+  fi
   exit 1
 elif [[ "$investigator_rc" != "0" ]]; then
   log "investigation failed or produced no valid handoff; target remains unchanged session=$SESSION"

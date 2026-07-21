@@ -496,6 +496,25 @@ def test_source_repair_does_not_escalate_before_deterministic_breaker() -> None:
     assert result["escalation_hint"] == ""
 
 
+def test_layer3_breaker_surfaces_replan_escalation_hint() -> None:
+    """When the investigator recommends replan and the breaker trips,
+    the escalation hint must still surface source_repair_needed so the
+    repair loop can escalate to L2/meta-repair instead of recording a
+    generic deterministic failure."""
+    signature = repair_recurrence.build_problem_signature(_failure_context())
+    attempts = [{"attempt_id": 1, "problem_signature": signature}]
+
+    result = repair_recurrence.evaluate_recurrence(
+        signature,
+        attempts,
+        {},
+        recommended_action="replan",
+    )
+
+    assert result["deterministic_failure_breaker"] is True
+    assert result["escalation_hint"] == "source_repair_needed"
+
+
 def test_detected_rollup_unaffected_by_layer3_breaker() -> None:
     signature = repair_recurrence.build_problem_signature(_failure_context())
     attempts = [{"attempt_id": 1, "problem_signature": signature}]
