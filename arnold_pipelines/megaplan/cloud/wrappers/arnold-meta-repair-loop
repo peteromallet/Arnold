@@ -804,7 +804,10 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from arnold_pipelines.megaplan.cloud.repair_investigation import validate_investigator_receipt
+from arnold_pipelines.megaplan.cloud.repair_investigation import (
+    L2_ARNOLD_SOURCE_COMPONENT_PREFIXES,
+    validate_investigator_receipt,
+)
 context_path, receipt_path, digest = sys.argv[1:]
 context = json.loads(Path(context_path).read_text(encoding="utf-8"))
 validated = validate_investigator_receipt(
@@ -833,6 +836,45 @@ if validated.get("recommended_action") != "repair_source":
     raise SystemExit("L2 investigation did not authorize source mutation")
 if (validated.get("safe_repair_target") or {}).get("kind") not in {"arnold_source", "repair_custody"}:
     raise SystemExit("L2 investigation did not name a safe repair-system target")
+allowed = set(
+    str(item).strip()
+    for item in (validated.get("handoff") or {}).get("allowed_mutations") or []
+    if str(item).strip()
+)
+if not allowed:
+    raise SystemExit("L2 investigation receipt has no allowed_mutations")
+for mutation in allowed:
+    prefix, sep, component = mutation.partition(":")
+    if prefix != "arnold_source" or not sep:
+        raise SystemExit(
+            "L2 allowed_mutations entry is not arnold_source:<component>: " + mutation[:120]
+        )
+    if (
+        not component
+        or component.startswith("/")
+        or "\\" in component
+        or any(ch.isspace() for ch in component)
+    ):
+        raise SystemExit(
+            "L2 allowed_mutations component is not a normalized repo-relative path: "
+            + component[:120]
+        )
+    parts = component.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise SystemExit(
+            "L2 allowed_mutations component contains invalid path segments: "
+            + component[:120]
+        )
+    if not any(
+        component == allowed_prefix
+        or component.startswith(f"{allowed_prefix}/")
+        for allowed_prefix in L2_ARNOLD_SOURCE_COMPONENT_PREFIXES
+    ):
+        raise SystemExit(
+            "L2 allowed_mutations component is outside Arnold repair-system scope; "
+            "a runtime-engine fix must use the replan path, not repair_source: "
+            + component[:120]
+        )
 print(validated.get("receipt_digest"))
 PY
 }
@@ -885,6 +927,37 @@ import json, sys
 print(str(json.load(open(sys.argv[1], encoding="utf-8")).get("recommended_action") or ""))
 PY
 )"
+# When the receipt recommends repair_source but the allowed_mutations name
+# components outside the Arnold repair-system checkout (e.g. runtime-engine
+# code like ReflectionStore), redirect to the replan path.  L2 source repair
+# must stay inside arnold_pipelines/megaplan/cloud/ or tests/cloud/.
+if [[ "$META_INVESTIGATION_ACTION" == "repair_source" ]]; then
+  _ALLOWED_SCOPE_OK=1
+  _ALLOWED_MUTATIONS="$(PYTHONPATH="$META_REPAIR_PYTHONPATH" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - "$META_INVESTIGATION_RECEIPT_PATH" <<'PY'
+import json, sys
+receipt = json.load(open(sys.argv[1], encoding="utf-8"))
+allowed = (receipt.get("handoff") or {}).get("allowed_mutations") or []
+for item in allowed:
+    print(item)
+PY
+)"
+  while IFS= read -r mutation; do
+    [[ -z "$mutation" ]] && continue
+    _COMPONENT="${mutation#arnold_source:}"
+    if [[ "$_COMPONENT" == "$mutation" ]]; then
+      _ALLOWED_SCOPE_OK=0
+      break
+    fi
+    if ! echo "$_COMPONENT" | grep -qE '^(arnold_pipelines/megaplan/cloud|tests/cloud)(/|$)'; then
+      _ALLOWED_SCOPE_OK=0
+      break
+    fi
+  done <<< "$_ALLOWED_MUTATIONS"
+  if [[ "$_ALLOWED_SCOPE_OK" == "0" ]]; then
+    log "L2 receipt recommends repair_source but allowed_mutations are outside repair-system scope; redirecting to replan session=$SESSION"
+    META_INVESTIGATION_ACTION="replan"
+  fi
+fi
 if [[ "$META_INVESTIGATION_ACTION" == "replan" ]]; then
   # A replan receipt is a non-mutating L2 custody handoff.  It must not enter
   # the source fixer; it retriggers ordinary L1 with the newly persisted,
@@ -900,10 +973,11 @@ validated = validate_investigator_receipt(
     expected_context_digest=digest,
     observation_bundle=json.load(open(observation_path, encoding="utf-8")),
 )
-if validated.get("recommended_action") != "replan":
-    raise SystemExit("L2 replan handoff action disagrees")
-if (validated.get("safe_repair_target") or {}).get("kind") != "repair_custody":
-    raise SystemExit("L2 replan handoff did not target repair custody")
+if validated.get("recommended_action") != "replan" and validated.get("recommended_action") != "repair_source":
+    raise SystemExit("L2 replan handoff action disagrees: expected replan or repair_source")
+safe_kind = (validated.get("safe_repair_target") or {}).get("kind")
+if safe_kind not in {"repair_custody", "arnold_source"}:
+    raise SystemExit("L2 replan handoff did not target repair custody or arnold_source")
 PY
   if ! l2_mutation_authorized; then
     log "observed: L2 replan effects blocked by master-plus-path authorization gate session=$SESSION"
