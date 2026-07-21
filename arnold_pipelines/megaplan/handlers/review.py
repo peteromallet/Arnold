@@ -114,6 +114,10 @@ judges the *work product*.  Do not rename or conflate them.
 
 log = logging.getLogger(__name__)
 
+# M8A: Maximum number of review rework waves before the circuit opens.
+# The configured ``max_review_rework_cycles`` may be lower but never higher.
+_MAX_REWORK_WAVES: int = 5
+
 _REVIEW_SCRATCH_EXTENSION_FIELDS: frozenset[str] = frozenset(
     {"review_completion_status"}
 )
@@ -992,12 +996,72 @@ def _force_proceed_blockers(
     return blockers
 
 
+def _normalize_failed_detail_rows(
+    evidence: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Normalize evidence rows into ``failed: <detail>`` quality-block signatures.
+
+    Returns *(normalized_rows, malformed_rows)*.  Each normalized row carries
+    *command*, *criterion*, and content-addressed *artifact_hash*.  Rows that
+    cannot be resolved to a deterministic quality-block signature are typed
+    *unknown* and returned separately.
+    """
+    normalized: list[dict[str, Any]] = []
+    malformed: list[dict[str, Any]] = []
+    for row in evidence:
+        if not isinstance(row, dict):
+            malformed.append({"kind": "unknown", "reason": "non-dict evidence row"})
+            continue
+        command = str(row.get("command") or "").strip()
+        criterion = str(row.get("issue") or row.get("criterion") or row.get("id") or "").strip()
+        if not command:
+            malformed.append(
+                {
+                    "kind": "unknown",
+                    "reason": "missing command",
+                    "task_id": row.get("task_id", ""),
+                    "partial_criterion": criterion or None,
+                }
+            )
+            continue
+        # Content-addressed artifact hash: command + baseline_status + post_status
+        fingerprint = json.dumps(
+            {
+                "command": command,
+                "baseline_status": str(row.get("baseline_status", "")).strip(),
+                "post_status": str(row.get("post_status", "")).strip(),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        artifact_hash = hashlib.sha256(fingerprint).hexdigest()
+        normalized.append(
+            {
+                "kind": "failed",
+                "detail": criterion or "unspecified criterion",
+                "command": command,
+                "criterion": criterion,
+                "artifact_hash": artifact_hash,
+                "task_id": str(row.get("task_id") or ""),
+                "baseline_status": str(row.get("baseline_status") or ""),
+                "post_status": str(row.get("post_status") or ""),
+                "issue": str(row.get("issue") or ""),
+            }
+        )
+    return normalized, malformed
+
+
 def _deterministic_review_block_evidence(
     rework_items: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
-    """Return structured failing checks that a repair worker can reproduce."""
+    """Return structured failing checks that a repair worker can reproduce.
 
-    evidence: list[dict[str, Any]] = []
+    Each evidence row is a ``failed: <detail>`` quality-block signature with
+    command, criterion, and content-addressed artifact hash.  Rows missing a
+    deterministic command are preserved as typed *unknown*.
+    """
+
+    raw_evidence: list[dict[str, Any]] = []
     for item in rework_items or []:
         if not isinstance(item, dict) or not _rework_item_is_blocker(item):
             continue
@@ -1014,7 +1078,7 @@ def _deterministic_review_block_evidence(
             post = str(raw.get("post_status") or "").strip().lower()
             if not command or not ({baseline, post} & {"fail", "failed", "error"}):
                 continue
-            evidence.append(
+            raw_evidence.append(
                 {
                     "command": command,
                     "baseline_status": baseline or "unknown",
@@ -1023,7 +1087,12 @@ def _deterministic_review_block_evidence(
                     "issue": str(item.get("issue") or item.get("flag_id") or ""),
                 }
             )
-    return evidence
+    normalized, malformed = _normalize_failed_detail_rows(raw_evidence)
+    # Attach malformed rows as typed unknown so they are preserved
+    result: list[dict[str, Any]] = list(normalized)
+    for row in malformed:
+        result.append(row)
+    return result
 
 
 def _review_quality_block_failure(
@@ -1287,7 +1356,10 @@ def _resolve_review_outcome(
                 _record_maker_stop(state, plan_dir, defense=stop_data.get("defense", ""))
                 return _review_pass_decision(state, force_done=True)
         cap_key = _review_rework_cap_config_key(robustness)
-        max_review_rework_cycles = get_effective("execution", cap_key)
+        max_review_rework_cycles = min(
+            get_effective("execution", cap_key),
+            _MAX_REWORK_WAVES,
+        )
         prior_rework_count = sum(
             1 for entry in state.get("history", [])
             if entry.get("step") == "review"
@@ -2200,6 +2272,38 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 read_only=True,
             )
 
+            # --- M9: work ledger — review/proof event ---
+            try:
+                from arnold_pipelines.megaplan.observability.work_ledger import emit_review_proof
+
+                _rwl_cost = worker.cost_usd if worker.cost_usd else None
+                _rwl_tokens = worker.total_tokens if worker.total_tokens else None
+                _rwl_unavailable: str | None = None
+                if _rwl_tokens is None and _rwl_cost is None:
+                    _rwl_unavailable = "worker_did_not_report_usage"
+                emit_review_proof(
+                    plan_dir,
+                    task_id=None,  # plan-scoped
+                    batch_id=None,
+                    attempt_id=state.get("meta", {}).get("current_invocation_id"),
+                    elapsed_ms=worker.duration_ms if worker.duration_ms else None,
+                    model_calls=1,
+                    prompt_tokens=worker.prompt_tokens if worker.prompt_tokens else None,
+                    completion_tokens=worker.completion_tokens if worker.completion_tokens else None,
+                    total_tokens=_rwl_tokens,
+                    cost_usd=_rwl_cost,
+                    unavailable_reason=_rwl_unavailable,
+                    metadata={
+                        "agent": agent,
+                        "model_actual": worker.model_actual,
+                        "phase": "review",
+                        "robustness": robustness,
+                    },
+                )
+            except Exception:
+                log.debug("Work ledger review event emission skipped", exc_info=True)
+            # --- end work ledger ---
+
             # ── T11: Scratch promotion for review (single-worker) ──
             # Prefer valid filled review_output.json over worker.payload;
             # fall back to worker.payload when scratch is missing/unmodified;
@@ -2263,6 +2367,38 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     resolved=(agent_type, mode, refreshed, model),
                     read_only=True,
                 )
+
+                # --- M9: work ledger — review/proof event (extreme path) ---
+                try:
+                    from arnold_pipelines.megaplan.observability.work_ledger import emit_review_proof
+
+                    _rwl2_cost = worker.cost_usd if worker.cost_usd else None
+                    _rwl2_tokens = worker.total_tokens if worker.total_tokens else None
+                    _rwl2_unavailable: str | None = None
+                    if _rwl2_tokens is None and _rwl2_cost is None:
+                        _rwl2_unavailable = "worker_did_not_report_usage"
+                    emit_review_proof(
+                        plan_dir,
+                        task_id=None,
+                        batch_id=None,
+                        attempt_id=state.get("meta", {}).get("current_invocation_id"),
+                        elapsed_ms=worker.duration_ms if worker.duration_ms else None,
+                        model_calls=1,
+                        prompt_tokens=worker.prompt_tokens if worker.prompt_tokens else None,
+                        completion_tokens=worker.completion_tokens if worker.completion_tokens else None,
+                        total_tokens=_rwl2_tokens,
+                        cost_usd=_rwl2_cost,
+                        unavailable_reason=_rwl2_unavailable,
+                        metadata={
+                            "agent": agent,
+                            "model_actual": worker.model_actual,
+                            "phase": "review",
+                            "robustness": robustness,
+                        },
+                    )
+                except Exception:
+                    log.debug("Work ledger review event emission skipped", exc_info=True)
+                # --- end work ledger ---
 
                 # ── T11: Scratch promotion for review (single-worker, extreme) ──
                 from arnold_pipelines.megaplan.handlers.structured_output import (
@@ -2340,6 +2476,38 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     checks=checks,
                     pre_check_flags=pre_check_flags,
                 )
+                # --- M9: work ledger — review/proof event (parallel extreme) ---
+                try:
+                    from arnold_pipelines.megaplan.observability.work_ledger import emit_review_proof
+
+                    _prwl_cost = parallel_result.cost_usd if getattr(parallel_result, 'cost_usd', None) else None
+                    _prwl_tokens = parallel_result.total_tokens if getattr(parallel_result, 'total_tokens', None) else None
+                    _prwl_unavailable: str | None = None
+                    if _prwl_tokens is None and _prwl_cost is None:
+                        _prwl_unavailable = "parallel_review_did_not_report_usage"
+                    emit_review_proof(
+                        plan_dir,
+                        task_id=None,
+                        batch_id=None,
+                        attempt_id=run_id,
+                        elapsed_ms=parallel_result.duration_ms if getattr(parallel_result, 'duration_ms', None) else None,
+                        model_calls=len(checks) if checks else 1,
+                        prompt_tokens=parallel_result.prompt_tokens if getattr(parallel_result, 'prompt_tokens', None) else None,
+                        completion_tokens=parallel_result.completion_tokens if getattr(parallel_result, 'completion_tokens', None) else None,
+                        total_tokens=_prwl_tokens,
+                        cost_usd=_prwl_cost,
+                        unavailable_reason=_prwl_unavailable,
+                        metadata={
+                            "agent": agent_type,
+                            "model_actual": getattr(parallel_result, 'model_actual', None),
+                            "phase": "review",
+                            "robustness": robustness,
+                            "parallel_checks": len(checks) if checks else 0,
+                        },
+                    )
+                except Exception:
+                    log.debug("Work ledger parallel review event emission skipped", exc_info=True)
+                # --- end work ledger ---
                 criteria_payload = parallel_result.payload.get("criteria_payload")
                 if not isinstance(criteria_payload, dict):
                     raise CliError("worker_parse_error", "Parallel review did not return a criteria payload object")

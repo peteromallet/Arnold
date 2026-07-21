@@ -114,7 +114,7 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         - Produce structured JSON only.
         - Preserve every cleared critique obligation in the task DAG and watch items. The handler will bind this clearance to the exact final graph and revalidate it before execution; do not omit, reinterpret, or replace finding IDs.
         - Return `critique_resolution_coverage` with exactly one row for every `finding_id` in critique custody clearance. Each row must name one or more real finalized `task_ids` that preserve the resolved plan mutation and a concrete `resolution_evidence` explanation. Return `[]` when clearance has no findings. Partial, duplicate, unknown, or empty mappings fail finalization.
-        - Set `task_contract_version` to `2` and `validation_jobs` to `[]`. The harness derives and runs integration/full-suite validation jobs; model tasks must not duplicate them.
+        - Set `task_contract_version` to `2`. Set `validation_jobs` to `[]` unless you author no-file deterministic checks (lint, type-check, schema validate, etc.) that run a concrete executable with no file outputs. The harness forbids model/human validation, placeholder commands, and file-producing jobs — only deterministic no-file checks are compiled into the execution contract. Integration and full-suite validation are harness-owned; model tasks must not duplicate them.
         - For each `## Step N:` in the plan, emit 1-N tasks.
         - For each task, emit one sense_check.
         - Default `user_actions` to `[]`. Identify a user_action ONLY when the work is genuinely non-mechanical and the executor literally cannot do it (secrets the human alone holds, identity-bound infra access, legal/license signatories, manual UI smoke tests on production). If a check is mechanical, make it a task — not a user_action. See the detailed guidance below.
@@ -127,6 +127,7 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
           1. Isolate heavyweights without inventing dependencies. Keep semantically independent c=7/c=8+ tasks as siblings; the runtime batch cap can place ready siblings in separate batches.
           2. Bundle context-related light work. Several c=2/c=3 tasks touching the same files or contracts batch well together.
           3. A ready frontier wider than 5 is valid when the work is genuinely independent. Preserve that independence; the runtime batcher caps each dispatched batch at 5.
+        - Complexity >= 7 tasks are auto-split by the harness into implementation + proof subtasks before execution. Design such tasks with a single, bounded objective, a complete write_set, and narrow_tests (non-empty selectors with positive max_seconds/max_runs) — these are required for the splitter to form a valid proof subtask. Ambiguous objectives (multi-directive, semicolon-separated), incomplete write_sets, and test-kind tasks that declare write paths cannot be split and will be diagnosed as rejects.
         - Do not include `validation` or `coverage_complete` fields - the harness computes those.
         {final_task_guidance}
         - `tasks` must be an ordered array of task objects. Every task object must include:

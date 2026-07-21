@@ -86,6 +86,15 @@ from arnold_pipelines.megaplan.execute.merge import (
     _merge_batch_results,
     _merge_scoped_batch_artifact_through_validator,
 )
+from arnold_pipelines.megaplan.execute.preflight import (
+    PreflightFailureKind,
+    PreflightReport,
+    run_worker_preflight,
+)
+from arnold_pipelines.megaplan.execute.validation_runner import (
+    extract_compiled_validation_jobs,
+    run_validation_jobs,
+)
 from arnold_pipelines.megaplan.execute.wbc import (
     EXECUTE_PARENT_CUSTODY_KEY,
     EXECUTE_DISPATCH_WBC_KEY,
@@ -1845,6 +1854,43 @@ def _run_and_merge_batch(
         batch_task_ids=batch_task_ids,
         batch_sense_check_ids=batch_sense_check_ids,
     )
+    # --- M8A: worker-launch preflight (source identity before dispatch) ---
+    # Report-only until M8 exact-version runtime/adopter manifest and explicit
+    # canary promotion gate are in place. The preflight report is attached as
+    # projection metadata below — it is NOT enforcement authority.
+    preflight_report = run_worker_preflight(project_dir, strict=False)
+    # --- M8A: execute compiled validation jobs as subprocesses (no model call)
+    # Run validation BEFORE worker dispatch so that validation-only work never
+    # consumes a model call and pre-existing failures are visible before any
+    # model invocation.
+    compiled_validation_jobs = extract_compiled_validation_jobs(finalize_data)
+    validation_report = run_validation_jobs(
+        compiled_validation_jobs,
+        project_dir=project_dir,
+    )
+    # --- M9: work ledger — validation event ---
+    try:
+        from arnold_pipelines.megaplan.observability.work_ledger import emit_validation
+
+        _vl_elapsed: int | None = None
+        if validation_report and hasattr(validation_report, 'total_duration_ms'):
+            _vl_elapsed = validation_report.total_duration_ms
+        elif validation_report and hasattr(validation_report, 'elapsed_ms'):
+            _vl_elapsed = validation_report.elapsed_ms
+        emit_validation(
+            plan_dir,
+            task_id=None,  # batch-scoped
+            batch_id=str(batch_number),
+            attempt_id=None,  # no worker dispatch yet
+            elapsed_ms=_vl_elapsed,
+            metadata={
+                "phase": "execute",
+                "job_count": len(compiled_validation_jobs),
+            },
+        )
+    except Exception:
+        log.debug("Work ledger validation event emission skipped", exc_info=True)
+    # --- end work ledger ---
     worker, agent, mode, refreshed = worker_module.run_step_with_worker(
         "execute",
         state,
@@ -1855,6 +1901,42 @@ def _run_and_merge_batch(
         prompt_override=rendered_prompt_override,
         wbc_dispatch=wbc_dispatch,
     )
+    # --- M9: work ledger — productive execution event ---
+    try:
+        from arnold_pipelines.megaplan.observability.work_ledger import emit_productive
+
+        _wl_attempt_id: str | None = None
+        if isinstance(worker.auth_metadata, dict):
+            _wl_wbc = worker.auth_metadata.get("wbc_dispatch", {})
+            if isinstance(_wl_wbc, dict):
+                _wl_attempt_id = _wl_wbc.get("attempt_id")
+        _wl_cost = worker.cost_usd if worker.cost_usd else None
+        _wl_tokens = worker.total_tokens if worker.total_tokens else None
+        _wl_unavailable: str | None = None
+        if _wl_tokens is None and _wl_cost is None:
+            _wl_unavailable = "worker_did_not_report_usage"
+        emit_productive(
+            plan_dir,
+            task_id=None,  # batch-scoped
+            batch_id=str(batch_number),
+            attempt_id=_wl_attempt_id,
+            elapsed_ms=worker.duration_ms if worker.duration_ms else None,
+            model_calls=1,
+            prompt_tokens=worker.prompt_tokens if worker.prompt_tokens else None,
+            completion_tokens=worker.completion_tokens if worker.completion_tokens else None,
+            total_tokens=_wl_tokens,
+            cost_usd=_wl_cost,
+            unavailable_reason=_wl_unavailable,
+            metadata={
+                "agent": agent,
+                "model_actual": worker.model_actual,
+                "phase": "execute",
+                "batch_task_ids": batch_task_ids,
+            },
+        )
+    except Exception:
+        log.debug("Work ledger productive event emission skipped", exc_info=True)
+    # --- end work ledger ---
     maybe_run_channel_shadow(
         root=root,
         plan_dir=plan_dir,
@@ -1903,6 +1985,10 @@ def _run_and_merge_batch(
         )
     if routing_record is not None:
         payload["routing"] = routing_record
+    # --- M8A: attach preflight report to payload (projection, not authority) ---
+    payload["worker_preflight"] = preflight_report.as_dict()
+    # --- M8A: attach validation run report to payload (projection, not authority) ---
+    payload["validation_run"] = validation_report.as_dict()
     deviations = list(payload.get("deviations", []))
     deviations.extend(routing_degradations)
     batch_task_id_set = set(batch_task_ids)
@@ -4011,6 +4097,28 @@ def handle_execute_auto_loop(
     }
     task_to_batch_number = _task_to_global_batch_number_map(global_batches)
     no_pending_execution = not pending_tasks and not rework_mode
+
+    # --- M8A: Reject oversized grants before worker launch ---
+    if rework_mode and len(review_rework_task_ids) > max_tasks_per_batch:
+        oversized_count = len(review_rework_task_ids)
+        log.warning(
+            "review rework grant oversize: %d tasks requested (ceiling %d); rejecting batch",
+            oversized_count,
+            max_tasks_per_batch,
+        )
+        return _block_no_runnable_rework(
+            plan_dir=plan_dir,
+            state=state,
+            auto_approve=auto_approve,
+            reason=(
+                f"Review rework grant is oversized: {oversized_count} tasks "
+                f"requested but ceiling is {max_tasks_per_batch}. "
+                "Narrow the review rework scope and re-run review, or "
+                "increase the batch size ceiling before retrying execute."
+            ),
+            unrunnable_task_ids=review_rework_task_ids,
+        )
+
     batches_to_run = (
         [review_rework_task_ids]
         if rework_mode
