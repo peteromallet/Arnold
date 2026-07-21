@@ -1,1080 +1,2964 @@
 {
+  "families": [
+    {
+      "description": "Pinned native pipeline constructs from arnold/pipeline/native/ providing compile_pipeline, decision, parallel, phase, and pipeline decorators used by evidence_pack and other pipelines.",
+      "entries": [
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Compiles a native pipeline generator function into a NativeProgram IR for execution. Pinned stability: this is the canonical compilation entrypoint.",
+          "exception_metadata": {},
+          "kind": "native_function",
+          "owner": "wbc",
+          "producer_path": "arnold/pipeline/native/",
+          "step_id": "arnold.pipeline.native.compile_pipeline",
+          "step_name": "compile_pipeline",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Decorator for decision nodes in native pipelines with vocabulary, human_gate, and override_routes support. Used by evidence_pack verdict_is_fail and human_review_decision.",
+          "exception_metadata": {},
+          "kind": "native_function",
+          "owner": "wbc",
+          "producer_path": "arnold/pipeline/native/",
+          "step_id": "arnold.pipeline.native.decision",
+          "step_name": "decision decorator",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "NativeProgram intermediate representation produced by compile_pipeline. The compiled form of native pipeline definitions.",
+          "exception_metadata": {},
+          "kind": "native_type",
+          "owner": "wbc",
+          "producer_path": "arnold/pipeline/native/ir.py",
+          "step_id": "arnold.pipeline.native.ir",
+          "step_name": "NativeProgram IR",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Construct for parallel fanout stages with reducer support. Used by evidence_pack for content_validators parallel block.",
+          "exception_metadata": {},
+          "kind": "native_function",
+          "owner": "wbc",
+          "producer_path": "arnold/pipeline/native/",
+          "step_id": "arnold.pipeline.native.parallel",
+          "step_name": "parallel construct",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Decorator for phase steps in native pipelines with typed Port consumes/produces annotations. Used by all evidence_pack phase functions.",
+          "exception_metadata": {},
+          "kind": "native_function",
+          "owner": "wbc",
+          "producer_path": "arnold/pipeline/native/",
+          "step_id": "arnold.pipeline.native.phase",
+          "step_name": "phase decorator",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Decorator for top-level native pipeline generators. Used by evidence_pack_native.",
+          "exception_metadata": {},
+          "kind": "native_function",
+          "owner": "wbc",
+          "producer_path": "arnold/pipeline/native/",
+          "step_id": "arnold.pipeline.native.pipeline",
+          "step_name": "pipeline decorator",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        }
+      ],
+      "family_id": "arnold_pipeline_native",
+      "family_name": "arnold.pipeline.native (Pinned)",
+      "owner": "wbc"
+    },
+    {
+      "description": "Schema-only and schema-plus-validation modules in arnold/workflow/ that define the public contract surface for workflow identity, ordering, provenance, payloads, refs, and evidence.",
+      "entries": [
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Workflow authoring utilities and conventions.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/authoring.py",
+          "step_id": "arnold.workflow.authoring",
+          "step_name": "Workflow Authoring",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "BoundaryContract, BoundaryReceipt, AuthorityRecord, BoundaryOutcome, BoundaryPhase, SemanticFinding, FindingSeverity types for evidence-based workflow boundary tracking.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/boundary_evidence.py",
+          "step_id": "arnold.workflow.boundary_evidence",
+          "step_name": "Boundary Evidence Schema",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Programmatic workflow construction helpers.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/builder.py",
+          "step_id": "arnold.workflow.builder",
+          "step_name": "Workflow Builder",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "CompileDiagnosticError, compile_pattern_block, compile_pipeline functions for compiling workflow DSL to executable form.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/compiler.py",
+          "step_id": "arnold.workflow.compiler",
+          "step_name": "Workflow Compiler",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Diagnostic utilities for workflow analysis and troubleshooting.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/diagnostics.py",
+          "step_id": "arnold.workflow.diagnostics",
+          "step_name": "Workflow Diagnostics",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c3",
+          "declared_support_status": "supported",
+          "description": "Discovery subpackage with judge_manifest, manifest, and trust modules for workflow discovery.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/discovery/",
+          "step_id": "arnold.workflow.discovery",
+          "step_name": "Workflow Discovery",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "dry_run and to_data functions for simulating workflow execution without side effects.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/dry_run.py",
+          "step_id": "arnold.workflow.dry_run",
+          "step_name": "Dry Run",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Pipeline, Step, Route, Capability, Input, Output types defining the workflow authoring DSL. Includes INTERNAL_EXPORTS, PROVISIONAL_EXPORTS, PUBLIC_EXPORTS.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/dsl.py",
+          "step_id": "arnold.workflow.dsl",
+          "step_name": "Workflow DSL",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Schema-only DurableRef dataclass with enums (PrivacyClass, AvailabilityClass, EncryptionScope, RetentionClass, AccessScope) and validators for retrievability, digest handling, tenant/workflow scope, encryption/access scope, privacy class, and secret exclusion.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/durable_refs.py",
+          "step_id": "arnold.workflow.durable_refs",
+          "step_name": "DurableRef Schema",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c3",
+          "declared_support_status": "supported",
+          "description": "Schema-only ExecutionAttemptLedger covering identity (AttemptIdentity), ordering (LedgerPosition), provenance (AttemptProvenance), runtime adapter (RuntimeAdapter), version anchoring (VersionSet), grant/decision refs (GrantRef), idempotency keys, nine typed payload refs, persistence-failure diagnostics, and reconciliation diagnostics.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/execution_attempt_ledger.py",
+          "step_id": "arnold.workflow.execution_attempt_ledger",
+          "step_name": "Execution Attempt Ledger Schema",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "ExpressionRef and expression_ref helper for typed expression references in workflow manifests.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/expressions.py",
+          "step_id": "arnold.workflow.expressions",
+          "step_name": "Expression Refs",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Handler semantics definitions for workflow step execution contracts.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/handler_semantics.py",
+          "step_id": "arnold.workflow.handler_semantics",
+          "step_name": "Handler Semantics",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "inspect_manifest, to_dot, to_yaml for introspecting workflow manifest structure.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/inspect.py",
+          "step_id": "arnold.workflow.inspect",
+          "step_name": "Workflow Inspection",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Bridge module re-exporting arnold.manifest.manifests types (WorkflowManifest, WorkflowNode, WorkflowEdge, etc.) for workflow manifest handling.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/manifests.py",
+          "step_id": "arnold.workflow.manifests",
+          "step_name": "Workflow Manifests",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "wbc.inline.v1 and wbc.retention.v1 schema validation with 16 KiB canonical JSON inline threshold, retention/redaction/tombstone/legal-hold rules, access-audit requirements, and digest-only preservation rejection.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/payload_policy.py",
+          "step_id": "arnold.workflow.payload_policy",
+          "step_name": "Payload Policy Schema",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "EdgeRef, HookRef, ImportRef, ManifestCoordinate, ManifestCursor, NodeRef, SourceRef, SourceSpan, ValueRef, and helper functions for typed workflow references.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/refs.py",
+          "step_id": "arnold.workflow.refs",
+          "step_name": "Workflow Refs",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Workflow registry for discovering and loading workflow definitions.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/registry.py",
+          "step_id": "arnold.workflow.registry",
+          "step_name": "Workflow Registry",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Stable row ID constants (S2_PREP_ROW_ID, S2_PLAN_ROW_ID, S2_CRITIQUE_ROW_ID, S2_GATE_ROW_ID, S2_REVISE_ROW_ID, S3 tiebreaker rows, S4_EXECUTE_ROW_ID) for semantic evidence table references.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/semantic_evidence.py",
+          "step_id": "arnold.workflow.semantic_evidence",
+          "step_name": "Semantic Evidence Row IDs",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "CheckWorkflowSourceResult, SourceCompileError, SourceCompilationError, check_workflow_file, check_workflow_source, compile_workflow_file, compile_workflow_source, lower_workflow_file, lower_workflow_source for compiling workflow source files.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/source_compiler.py",
+          "step_id": "arnold.workflow.source_compiler",
+          "step_name": "Source Compiler",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "ManifestValidationError, ManifestValidationIssue, RuntimeRef, check_neutral_import_boundary, validate_manifest for validating workflow manifests.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/validation.py",
+          "step_id": "arnold.workflow.validation",
+          "step_name": "Manifest Validation",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Additional workflow validation logic.",
+          "exception_metadata": {},
+          "kind": "schema_module",
+          "owner": "wbc",
+          "producer_path": "arnold/workflow/validator.py",
+          "step_id": "arnold.workflow.validator",
+          "step_name": "Workflow Validator",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        }
+      ],
+      "family_id": "arnold_workflow",
+      "family_name": "arnold.workflow Schema Modules",
+      "owner": "wbc"
+    },
+    {
+      "description": "Model-less verification pipeline for persisted evidence-pack JSON artifacts. Includes both projected shell steps and native phase implementations.",
+      "entries": [
+        {
+          "c2_c6_milestone": "c2",
+          "c2_registry_migration_gate": "registry_entry",
+          "declared_support_status": "supported",
+          "description": "Compiles the evidence_pack_native pipeline generator into a NativeProgram. This is the canonical entrypoint for native execution.",
+          "exception_metadata": {},
+          "kind": "native_entrypoint",
+          "owner": "wbc",
+          "producer_path": "arnold/pipelines/evidence_pack/native.py:build_native_program",
+          "row_id": "ep.native.build_native_program",
+          "step_id": "evidence_pack.native.build_native_program",
+          "step_name": "build_native_program Entrypoint",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "c2_registry_migration_gate": "registry_entry",
+          "declared_support_status": "supported",
+          "description": "Human-gate decision node with resume_input_schema. Reads human_input or checkpoint status to determine emit/failed routing. Override routes map emit\u2192emit_attestation, failed\u2192None.",
+          "exception_metadata": {},
+          "kind": "native_decision",
+          "owner": "wbc",
+          "producer_path": "arnold/pipelines/evidence_pack/native.py:human_review_decision",
+          "row_id": "ep.native.decision_human_review",
+          "step_id": "evidence_pack.native.decision_human_review",
+          "step_name": "human_review_decision Decision",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "decision: emit/failed",
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "c2_registry_migration_gate": "registry_entry",
+          "declared_support_status": "supported",
+          "description": "Decision node reading verdict.json to determine fail/pass routing. Returns 'fail' on missing/invalid verdict as defensive default.",
+          "exception_metadata": {},
+          "kind": "native_decision",
+          "owner": "wbc",
+          "producer_path": "arnold/pipelines/evidence_pack/native.py:verdict_is_fail",
+          "row_id": "ep.native.verdict_is_fail",
+          "step_id": "evidence_pack.native.decision_verdict_is_fail",
+          "step_name": "verdict_is_fail Decision",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "decision: fail/pass",
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "c2_registry_migration_gate": "registry_entry",
+          "declared_support_status": "supported",
+          "description": "Barrier-join reducer for content_validators parallel fanout. Merges all validator outputs and emits StepResult routing to reduce.",
+          "exception_metadata": {},
+          "kind": "native_reducer",
+          "owner": "wbc",
+          "producer_path": "arnold/pipelines/evidence_pack/native.py:_join_validators",
+          "row_id": "ep.native.join_validators",
+          "step_id": "evidence_pack.native.join_validators",
+          "step_name": "_join_validators Reducer",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "c2_registry_migration_gate": "registry_entry",
+          "declared_support_status": "supported",
+          "description": "Five parallel validator variants: structural_audit, budget_enforcement, suspension_propagation, by_ref_validation, human_review_gate. Each produces a checkpoint artifact with pass/fail status and diagnostic.",
+          "exception_metadata": {},
+          "kind": "pipeline_step",
+          "owner": "wbc",
+          "producer_path": "arnold/pipelines/evidence_pack/steps.py:ContentValidatorStep",
+          "row_id": "ep.pipeline.content_validator",
+          "step_id": "evidence_pack.pipeline.content_validator",
+          "step_name": "Content Validator Steps (5 variants)",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "validator \u2192 passed/failed",
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "c2_registry_migration_gate": "registry_entry",
+          "declared_support_status": "supported",
+          "description": "Produces attestation.json with final verdict and all checkpoint results. Terminal step of evidence-pack pipeline.",
+          "exception_metadata": {},
+          "kind": "pipeline_step",
+          "owner": "wbc",
+          "producer_path": "arnold/pipelines/evidence_pack/steps.py:EmitAttestationStep",
+          "row_id": "ep.pipeline.emit_attestation",
+          "step_id": "evidence_pack.pipeline.emit_attestation",
+          "step_name": "Emit Attestation Step",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "emit_attestation \u2192 halt",
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "c2_registry_migration_gate": "registry_entry",
+          "declared_support_status": "supported",
+          "description": "Native-phase adapter placeholder used by the projected shell pipeline definition. Routes to halt as a passthrough.",
+          "exception_metadata": {},
+          "kind": "pipeline_step",
+          "owner": "wbc",
+          "producer_path": "arnold/pipelines/evidence_pack/steps.py:EvidencePackStep",
+          "row_id": "ep.pipeline.evidence_pack_step",
+          "step_id": "evidence_pack.pipeline.evidence_pack_step",
+          "step_name": "EvidencePackStep (Projected Shell)",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "projected shell placeholder \u2192 halt",
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "c2_registry_migration_gate": "registry_entry",
+          "declared_support_status": "supported",
+          "description": "Human review gate: suspends for human input on first invocation, processes approval/rejection on resume. Produces checkpoint with human_review_gate status.",
+          "exception_metadata": {},
+          "kind": "pipeline_step",
+          "owner": "wbc",
+          "producer_path": "arnold/pipelines/evidence_pack/steps.py:HumanReviewStep",
+          "row_id": "ep.pipeline.human_review",
+          "step_id": "evidence_pack.pipeline.human_review",
+          "step_name": "Human Review Step",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "human_review \u2192 suspended / emit / failed",
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "c2_registry_migration_gate": "registry_entry",
+          "declared_support_status": "supported",
+          "description": "Loads evidence_pack_path, validates against EVIDENCE_PACK_SCHEMA, writes normalized copy to artifact root. Produces evidence_pack output with checkpoint_count.",
+          "exception_metadata": {},
+          "kind": "pipeline_step",
+          "owner": "wbc",
+          "producer_path": "arnold/pipelines/evidence_pack/steps.py:IngestStep",
+          "row_id": "ep.pipeline.ingest",
+          "step_id": "evidence_pack.pipeline.ingest",
+          "step_name": "Ingest Step",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "ingest \u2192 validators",
+          "visible_non_conformant": []
+        },
+        {
+          "c2_c6_milestone": "c2",
+          "c2_registry_migration_gate": "registry_entry",
+          "declared_support_status": "supported",
+          "description": "Collects all checkpoint results, produces verdict.json with pass/fail determination. Routes to emit_attestation on pass, human_review on fail.",
+          "exception_metadata": {},
+          "kind": "pipeline_step",
+          "owner": "wbc",
+          "producer_path": "arnold/pipelines/evidence_pack/steps.py:ReduceStep",
+          "row_id": "ep.pipeline.reduce",
+          "step_id": "evidence_pack.pipeline.reduce",
+          "step_name": "Reduce Step",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "reduce \u2192 emit / human_review",
+          "visible_non_conformant": []
+        }
+      ],
+      "family_id": "evidence_pack",
+      "family_name": "evidence_pack Pipeline Steps",
+      "owner": "wbc"
+    },
+    {
+      "description": "Step handlers and boundary transitions in arnold_pipelines/megaplan that produce boundary receipts, phase results, state deltas, and history entries.",
+      "entries": [
+        {
+          "boundary_id": null,
+          "c2_c6_milestone": "c3",
+          "declared_support_status": "supported",
+          "description": "Anchor state management for timeout and resume anchors in execute phase.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "maintenance",
+          "producer_path": "arnold_pipelines/megaplan/handlers/anchors.py",
+          "step_id": "megaplan.anchors",
+          "step_name": "Anchors Handler",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "anchor state management",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": null,
+          "c2_c6_milestone": "c5",
+          "declared_support_status": "supported",
+          "description": "Override command handler dispatching abort, force-proceed, replan, recover-blocked, resume-clarify, adopt-execution actions.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/override.py",
+          "step_id": "megaplan.override_handler",
+          "step_name": "Override Handler",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "override command dispatch",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "critique_to_gate",
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Critique handler dispatches parallel critiques, runs evaluations, triggers adaptive routing, emits critique_to_gate boundary receipt via _finish_step auto-match.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/critique.py \u2192 arnold_pipelines/megaplan/orchestration/critique_runtime.py",
+          "step_id": "megaplan.s2.critique",
+          "step_name": "Critique step handler",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "critique \u2192 gate",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "gate_to_revise",
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Gate handler evaluates quality signals, emits gate_to_revise boundary receipt for iterate/retry/revise outcomes via _finish_step auto-match.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/gate.py",
+          "step_id": "megaplan.s2.gate",
+          "step_name": "Gate step handler",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "gate \u2192 revise",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "plan_to_critique",
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Plan handler produces plan.md, emits plan_to_critique boundary receipt via _finish_step auto-match.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/plan.py",
+          "step_id": "megaplan.s2.plan",
+          "step_name": "Plan step handler",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "plan \u2192 critique",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "prep_to_plan",
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Prep handler produces research.md and brief.md, emits prep_to_plan boundary receipt via _finish_step auto-match.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/init.py",
+          "step_id": "megaplan.s2.prep",
+          "step_name": "Prep step handler",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "prep \u2192 plan",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "revise_to_critique",
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Revise handler produces revised_plan.md and revision_log.md, emits revise_to_critique boundary receipt via _finish_step auto-match.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/plan.py (revise path)",
+          "step_id": "megaplan.s2.revise",
+          "step_name": "Revise step handler",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "revise \u2192 critique",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "parent_rejoin_promotion",
+          "c2_c6_milestone": "c3",
+          "declared_support_status": "supported",
+          "description": "Parent rejoin promotion resumes parent workflow after tiebreaker decision. No phase_result required.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/tiebreaker.py",
+          "step_id": "megaplan.s3.parent_rejoin",
+          "step_name": "Parent Rejoin Promotion",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "tiebreaker \u2192 parent workflow resume",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "replan_authority",
+          "c2_c6_milestone": "c4",
+          "declared_support_status": "supported",
+          "description": "Replan authority boundary: replan decision authorized with evidence. Receipt not required.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
+          "step_id": "megaplan.s3.replan_authority",
+          "step_name": "Replan Authority",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "replan authorization",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "tiebreaker_challenger_to_synthesis",
+          "c2_c6_milestone": "c3",
+          "declared_support_status": "supported",
+          "description": "Tiebreaker challenger produces challenge_findings.json, emits boundary receipt.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/tiebreaker.py \u2192 arnold_pipelines/megaplan/orchestration/tiebreaker_runtime.py",
+          "step_id": "megaplan.s3.tiebreaker_challenger",
+          "step_name": "Tiebreaker Challenger",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "tiebreaker challenger \u2192 synthesis",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "tiebreaker_decision_to_parent",
+          "c2_c6_milestone": "c3",
+          "declared_support_status": "supported",
+          "description": "Tiebreaker decision produces tiebreaker_decisions.json with proceed/iterate/escalate outcomes, emits boundary receipt with parent rejoin promotion.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/tiebreaker.py \u2192 arnold_pipelines/megaplan/orchestration/tiebreaker_runtime.py",
+          "step_id": "megaplan.s3.tiebreaker_decision",
+          "step_name": "Tiebreaker Decision",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "tiebreaker decision \u2192 parent rejoin",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "tiebreaker_researcher_to_challenger",
+          "c2_c6_milestone": "c3",
+          "declared_support_status": "supported",
+          "description": "Tiebreaker researcher produces research_findings.json, emits boundary receipt.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/tiebreaker.py \u2192 arnold_pipelines/megaplan/orchestration/tiebreaker_runtime.py",
+          "step_id": "megaplan.s3.tiebreaker_researcher",
+          "step_name": "Tiebreaker Researcher",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "tiebreaker researcher \u2192 challenger",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "tiebreaker_synthesis_to_decision",
+          "c2_c6_milestone": "c3",
+          "declared_support_status": "supported",
+          "description": "Tiebreaker synthesis produces tiebreaker_payload.json with reducer promotion, emits boundary receipt.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/tiebreaker.py \u2192 arnold_pipelines/megaplan/orchestration/tiebreaker_runtime.py",
+          "step_id": "megaplan.s3.tiebreaker_synthesis",
+          "step_name": "Tiebreaker Synthesis",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "tiebreaker synthesis \u2192 decision",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "execute_aggregate_promotion",
+          "c2_c6_milestone": "c3",
+          "declared_support_status": "supported",
+          "description": "Every batch payload aggregated into a single execute_payload; promoted to review fan-in as items source.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/execute/batch.py",
+          "step_id": "megaplan.s4.execute_aggregate_promotion",
+          "step_name": "Execute Aggregate Promotion",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": true,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [
+              "arnold_pipelines/megaplan/execute/batch.py"
+            ],
+            "missing_requirements": [
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "all batches complete \u2192 review fan-in",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "execute_approval",
+          "c2_c6_milestone": "c3",
+          "declared_support_status": "supported",
+          "description": "Execute approval gate clears destructive confirmation and operator approval. Emits evidence-only receipt via _emit_execute_boundary_receipt before batch dispatch.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/execute.py",
+          "step_id": "megaplan.s4.execute_approval",
+          "step_name": "Execute Approval Gate",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": true,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [
+              "arnold_pipelines/megaplan/handlers/execute.py"
+            ],
+            "missing_requirements": [
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "execute approval cleared \u2192 batch dispatch",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "execute_approval_denial",
+          "c2_c6_milestone": "c3",
+          "declared_support_status": "supported",
+          "description": "Execute approval denial when confirmation or operator approval missing. Evidence-only receipt before CliError propagation.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/execute.py",
+          "step_id": "megaplan.s4.execute_approval_denial",
+          "step_name": "Execute Approval Denial",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": true,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [
+              "arnold_pipelines/megaplan/handlers/execute.py"
+            ],
+            "missing_requirements": [
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "execute approval denied \u2192 halt",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "execute_batch_checkpoint",
+          "c2_c6_milestone": "c3",
+          "declared_support_status": "supported",
+          "description": "One batch completed successfully; additional batches remain. Emitted via _emit_batch_boundary_receipt.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/execute/batch.py",
+          "step_id": "megaplan.s4.execute_batch_checkpoint",
+          "step_name": "Execute Batch Checkpoint",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": true,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [
+              "arnold_pipelines/megaplan/execute/batch.py"
+            ],
+            "missing_requirements": [
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "batch completed \u2192 continuation",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "execute_blocked_anchor",
+          "c2_c6_milestone": "c4",
+          "declared_support_status": "supported",
+          "description": "Worker/transient timeout within retry budget; retry the batch or escalate to override.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/execute/batch.py",
+          "step_id": "megaplan.s4.execute_blocked_anchor",
+          "step_name": "Execute Blocked Anchor",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": true,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [
+              "arnold_pipelines/megaplan/execute/batch.py"
+            ],
+            "missing_requirements": [
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "worker timeout within retry budget \u2192 retry",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "execute_no_review_terminal",
+          "c2_c6_milestone": "c3",
+          "declared_support_status": "supported",
+          "description": "Robustness skips review (bare or light without deferred must criteria); terminates directly or awaits human verification.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/execute/batch.py",
+          "step_id": "megaplan.s4.execute_no_review_terminal",
+          "step_name": "Execute No-Review Terminal",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": true,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [
+              "arnold_pipelines/megaplan/execute/batch.py"
+            ],
+            "missing_requirements": [
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "no review needed \u2192 terminal or awaiting_human_verify",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "execute_partial_failure",
+          "c2_c6_milestone": "c4",
+          "declared_support_status": "supported",
+          "description": "Batch blocked by quality gates; routes to override for recovery. Emitted via _emit_batch_boundary_receipt.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/execute/batch.py",
+          "step_id": "megaplan.s4.execute_partial_failure",
+          "step_name": "Execute Partial Failure",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": true,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [
+              "arnold_pipelines/megaplan/execute/batch.py"
+            ],
+            "missing_requirements": [
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "batch blocked \u2192 override recovery",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "execute_resume_anchor",
+          "c2_c6_milestone": "c4",
+          "declared_support_status": "supported",
+          "description": "Retry requires a fresh worker session; forces new execute session.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/execute/batch.py",
+          "step_id": "megaplan.s4.execute_resume_anchor",
+          "step_name": "Execute Resume Anchor",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": true,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [
+              "arnold_pipelines/megaplan/execute/batch.py"
+            ],
+            "missing_requirements": [
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "fresh session required \u2192 new execute session",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "final_projection",
+          "c2_c6_milestone": "c4",
+          "declared_support_status": "supported",
+          "description": "Terminal or continuation projection visible in finalize policy metadata and durable plan artifacts.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/finalize.py",
+          "step_id": "megaplan.s5.final_projection",
+          "step_name": "Final Projection",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "terminal projection \u2192 done/continue",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "finalize_artifacts",
+          "c2_c6_milestone": "c4",
+          "declared_support_status": "supported",
+          "description": "Finalize publishes canonical plan artifacts declared by the artifact contract.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/finalize.py",
+          "step_id": "megaplan.s5.finalize_artifacts",
+          "step_name": "Finalize Artifacts",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "finalize \u2192 publish",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "finalize_fallback",
+          "c2_c6_milestone": "c5",
+          "declared_support_status": "supported",
+          "description": "Revise fallback evidence persisted as declarative contract rather than hidden finalize branch.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/finalize.py",
+          "step_id": "megaplan.s5.finalize_fallback",
+          "step_name": "Finalize Fallback",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "finalize \u2192 revise fallback",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "review_cap_authority",
+          "c2_c6_milestone": "c4",
+          "declared_support_status": "supported",
+          "description": "Cap exhaustion outcomes carry explicit authority records instead of handler-owned decisions.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/review.py",
+          "step_id": "megaplan.s5.review_cap_authority",
+          "step_name": "Review Cap Authority",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "cap exhaustion \u2192 authority decision",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "review_child_outputs",
+          "c2_c6_milestone": "c4",
+          "declared_support_status": "supported",
+          "description": "Review fanout children produce durable outputs for the visible review fan-in reducer.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/review.py",
+          "step_id": "megaplan.s5.review_child_outputs",
+          "step_name": "Review Child Outputs",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "review fanout children \u2192 fan-in reducer",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "review_human_verification",
+          "c2_c6_milestone": "c4",
+          "declared_support_status": "supported",
+          "description": "Deferred-human review records suspension and resume evidence without becoming a route table.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/review.py",
+          "step_id": "megaplan.s5.review_human_verification",
+          "step_name": "Review Human Verification",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "deferred human review \u2192 suspension",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "review_reducer_promotion",
+          "c2_c6_milestone": "c4",
+          "declared_support_status": "supported",
+          "description": "Authored review fan-in promoted child outputs into canonical review payload.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/review.py",
+          "step_id": "megaplan.s5.review_reducer_promotion",
+          "step_name": "Review Reducer Promotion",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "review fan-in complete \u2192 finalize",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "review_rework_effects",
+          "c2_c6_milestone": "c4",
+          "declared_support_status": "supported",
+          "description": "Review-directed rework cycle projects durable re-execute intent without privately routing it.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/handlers/review.py",
+          "step_id": "megaplan.s5.review_rework_effects",
+          "step_name": "Review Rework Effects",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "review rework cycle \u2192 fresh execute",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "override_abort_authority",
+          "c2_c6_milestone": "c5",
+          "declared_support_status": "supported",
+          "description": "Halting the plan requires a durable authority record bound to the exact state snapshot being aborted.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
+          "step_id": "megaplan.s6.override_abort",
+          "step_name": "Override Abort Authority",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "override abort \u2192 halt",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "override_adopt_execution_authority",
+          "c2_c6_milestone": "c5",
+          "declared_support_status": "supported",
+          "description": "Execution adoption anchored to the exact execution/finalize artifacts being adopted.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
+          "step_id": "megaplan.s6.override_adopt_execution",
+          "step_name": "Override Adopt Execution Authority",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "override adopt-execution \u2192 review",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "override_force_proceed_authority",
+          "c2_c6_milestone": "c5",
+          "declared_support_status": "supported",
+          "description": "Bypassing a blocking gate or review verdict records who accepted the debt against which durable evidence set.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
+          "step_id": "megaplan.s6.override_force_proceed",
+          "step_name": "Override Force Proceed Authority",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "override force-proceed \u2192 bypass gate",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "override_human_gate_authority",
+          "c2_c6_milestone": "c5",
+          "declared_support_status": "supported",
+          "description": "Protected actions and explicit human gates record actor, role, scope, and fresh evidence.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
+          "step_id": "megaplan.s6.override_human_gate",
+          "step_name": "Override Human Gate Authority",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "override human-gate \u2192 approval record",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "override_recover_blocked_authority",
+          "c2_c6_milestone": "c5",
+          "declared_support_status": "supported",
+          "description": "Resuming from blocked binds recovery to the declared resume cursor and blocker evidence.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
+          "step_id": "megaplan.s6.override_recover_blocked",
+          "step_name": "Override Recover Blocked Authority",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "override recover-blocked \u2192 resume",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "override_replan_authority",
+          "c2_c6_milestone": "c5",
+          "declared_support_status": "supported",
+          "description": "Restarting the planning loop records the exact prior state and freshness token that authorized re-entry.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
+          "step_id": "megaplan.s6.override_replan",
+          "step_name": "Override Replan Authority",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "override replan \u2192 revise",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "override_resume_clarify_authority",
+          "c2_c6_milestone": "c5",
+          "declared_support_status": "supported",
+          "description": "Leaving a clarification halt records the answers and freshness token that unlocked plan.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
+          "step_id": "megaplan.s6.override_resume_clarify",
+          "step_name": "Override Resume Clarify Authority",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "override resume-clarify \u2192 plan",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": "override_suspension_authority",
+          "c2_c6_milestone": "c5",
+          "declared_support_status": "supported",
+          "description": "Waiver or deferred-human suspension carries durable authority evidence separate from handler-private state changes.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "run_authority",
+          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
+          "step_id": "megaplan.s6.override_suspension",
+          "step_name": "Override Suspension Authority",
+          "support_status": "partial",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": true,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [
+              "static callsite",
+              "controlled-writer registration",
+              "runtime trace digest",
+              "implementation commit",
+              "positive test",
+              "negative bypass test",
+              "exact declaration/static/writer/runtime set equality"
+            ],
+            "support_gate_applicable": true,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "override suspension-waiver \u2192 resume",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": null,
+          "c2_c6_milestone": "c2",
+          "declared_support_status": "supported",
+          "description": "Ticket management handler for plan-level ticket tracking. Maintenance-owned lifecycle surface.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "maintenance",
+          "producer_path": "arnold_pipelines/megaplan/handlers/tickets.py",
+          "step_id": "megaplan.tickets",
+          "step_name": "Tickets Handler",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "ticket operations",
+          "visible_non_conformant": []
+        },
+        {
+          "boundary_id": null,
+          "c2_c6_milestone": "c3",
+          "declared_support_status": "supported",
+          "description": "Verifiability checks for plan artifacts. WBC-owned evaluation surface.",
+          "exception_metadata": {},
+          "kind": "handler",
+          "owner": "wbc",
+          "producer_path": "arnold_pipelines/megaplan/handlers/verifiability.py",
+          "step_id": "megaplan.verifiability",
+          "step_name": "Verifiability Handler",
+          "support_status": "supported",
+          "support_verification": {
+            "declared_support_status": "supported",
+            "evidence_flags": {
+              "declared_boundary_present": false,
+              "exact_set_equality": false,
+              "implementation_commit_recorded": false,
+              "negative_bypass_test_recorded": false,
+              "positive_test_recorded": false,
+              "runtime_trace_digest_present": false,
+              "static_callsite_present": false,
+              "writer_registration_present": false
+            },
+            "matching_bypass_candidates": [],
+            "missing_requirements": [],
+            "support_gate_applicable": false,
+            "support_gate_missing_dimensions": [
+              "boundary-scoped controlled-writer registrations are not recorded in discovery evidence",
+              "runtime trace digests are not joined to boundary_ids in the native golden manifest"
+            ]
+          },
+          "transition": "verifiability checks",
+          "visible_non_conformant": []
+        }
+      ],
+      "family_id": "megaplan",
+      "family_name": "Megaplan Step/Attempt Transitions",
+      "owner": "run_authority"
+    }
+  ],
   "meta": {
-    "schema_version": "wbc.support_manifest.v1",
-    "manifest_id": "support_manifest",
     "description": "Classifies every supported Megaplan step/attempt transition, arnold.workflow module, pinned arnold.pipeline.native construct, and evidence_pack step with owner, support status, C2-C6 migration milestone, exception metadata, and visible non-conformant status where applicable.",
-    "generated_by": "C1 Contract Reality Reconciliation — T12",
-    "timestamp_utc": "2026-07-11T19:45:00Z",
-    "owners": {
-      "wbc": "Workflow Boundary Contracts — owns declarations, schemas, evidence profiles, findings, and boundary matrices.",
-      "run_authority": "Run Authority — owns authority facts, views, routing decisions, and execution verdicts.",
-      "maintenance": "Maintenance — owns lifecycle, status, repair queues, incident ledger, watchdog, and cloud status."
-    },
-    "support_statuses": {
-      "supported": "Fully supported in the current codebase with real producer code paths.",
-      "partial": "Partially supported — some code paths exist but coverage is incomplete or contains known gaps.",
-      "planned": "Schema/contract declared but no producer emission path yet exists. Targeted for C2-C6 migration.",
-      "deprecated": "No longer actively maintained; retained for backward compatibility only.",
-      "non_conformant": "Visible non-conformance — known deviation from contract expectations."
-    },
+    "generated_by": "C1 Contract Reality Reconciliation \u2014 M8 Step 24 (T31) \u2014 generate_wbc_boundary_inventory.py",
+    "manifest_id": "support_manifest",
     "migration_milestones": {
       "c2": "C2: Schema-aware routing and typed step completion boundary.",
       "c3": "C3: Semantic replay with durable state and evidence replay alignment.",
       "c4": "C4: Authority attestation and human-in-the-loop override formalization.",
       "c5": "C5: Full-suite compatibility replay with evidence-pack attestation.",
       "c6": "C6: Production migration with real producer coverage for all declared contracts."
-    }
-  },
-  "families": [
-    {
-      "family_id": "arnold_pipeline_native",
-      "family_name": "arnold.pipeline.native (Pinned)",
-      "description": "Pinned native pipeline constructs from arnold/pipeline/native/ providing compile_pipeline, decision, parallel, phase, and pipeline decorators used by evidence_pack and other pipelines.",
-      "owner": "wbc",
-      "entries": [
-        {
-          "step_id": "arnold.pipeline.native.compile_pipeline",
-          "step_name": "compile_pipeline",
-          "kind": "native_function",
-          "producer_path": "arnold/pipeline/native/",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "Compiles a native pipeline generator function into a NativeProgram IR for execution. Pinned stability: this is the canonical compilation entrypoint.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.pipeline.native.decision",
-          "step_name": "decision decorator",
-          "kind": "native_function",
-          "producer_path": "arnold/pipeline/native/",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "Decorator for decision nodes in native pipelines with vocabulary, human_gate, and override_routes support. Used by evidence_pack verdict_is_fail and human_review_decision.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.pipeline.native.ir",
-          "step_name": "NativeProgram IR",
-          "kind": "native_type",
-          "producer_path": "arnold/pipeline/native/ir.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "NativeProgram intermediate representation produced by compile_pipeline. The compiled form of native pipeline definitions.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.pipeline.native.parallel",
-          "step_name": "parallel construct",
-          "kind": "native_function",
-          "producer_path": "arnold/pipeline/native/",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "Construct for parallel fanout stages with reducer support. Used by evidence_pack for content_validators parallel block.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.pipeline.native.phase",
-          "step_name": "phase decorator",
-          "kind": "native_function",
-          "producer_path": "arnold/pipeline/native/",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "Decorator for phase steps in native pipelines with typed Port consumes/produces annotations. Used by all evidence_pack phase functions.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.pipeline.native.pipeline",
-          "step_name": "pipeline decorator",
-          "kind": "native_function",
-          "producer_path": "arnold/pipeline/native/",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "Decorator for top-level native pipeline generators. Used by evidence_pack_native.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        }
-      ]
     },
-    {
-      "family_id": "arnold_workflow",
-      "family_name": "arnold.workflow Schema Modules",
-      "description": "Schema-only and schema-plus-validation modules in arnold/workflow/ that define the public contract surface for workflow identity, ordering, provenance, payloads, refs, and evidence.",
-      "owner": "wbc",
-      "entries": [
-        {
-          "step_id": "arnold.workflow.authoring",
-          "step_name": "Workflow Authoring",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/authoring.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "Workflow authoring utilities and conventions.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.boundary_evidence",
-          "step_name": "Boundary Evidence Schema",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/boundary_evidence.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "BoundaryContract, BoundaryReceipt, AuthorityRecord, BoundaryOutcome, BoundaryPhase, SemanticFinding, FindingSeverity types for evidence-based workflow boundary tracking.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.builder",
-          "step_name": "Workflow Builder",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/builder.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "Programmatic workflow construction helpers.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.compiler",
-          "step_name": "Workflow Compiler",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/compiler.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "CompileDiagnosticError, compile_pattern_block, compile_pipeline functions for compiling workflow DSL to executable form.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.diagnostics",
-          "step_name": "Workflow Diagnostics",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/diagnostics.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "Diagnostic utilities for workflow analysis and troubleshooting.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.discovery",
-          "step_name": "Workflow Discovery",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/discovery/",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c3",
-          "description": "Discovery subpackage with judge_manifest, manifest, and trust modules for workflow discovery.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.dry_run",
-          "step_name": "Dry Run",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/dry_run.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "dry_run and to_data functions for simulating workflow execution without side effects.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.dsl",
-          "step_name": "Workflow DSL",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/dsl.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "Pipeline, Step, Route, Capability, Input, Output types defining the workflow authoring DSL. Includes INTERNAL_EXPORTS, PROVISIONAL_EXPORTS, PUBLIC_EXPORTS.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.durable_refs",
-          "step_name": "DurableRef Schema",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/durable_refs.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "Schema-only DurableRef dataclass with enums (PrivacyClass, AvailabilityClass, EncryptionScope, RetentionClass, AccessScope) and validators for retrievability, digest handling, tenant/workflow scope, encryption/access scope, privacy class, and secret exclusion.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.execution_attempt_ledger",
-          "step_name": "Execution Attempt Ledger Schema",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/execution_attempt_ledger.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c3",
-          "description": "Schema-only ExecutionAttemptLedger covering identity (AttemptIdentity), ordering (LedgerPosition), provenance (AttemptProvenance), runtime adapter (RuntimeAdapter), version anchoring (VersionSet), grant/decision refs (GrantRef), idempotency keys, nine typed payload refs, persistence-failure diagnostics, and reconciliation diagnostics.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.expressions",
-          "step_name": "Expression Refs",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/expressions.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "ExpressionRef and expression_ref helper for typed expression references in workflow manifests.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.handler_semantics",
-          "step_name": "Handler Semantics",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/handler_semantics.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "Handler semantics definitions for workflow step execution contracts.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.inspect",
-          "step_name": "Workflow Inspection",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/inspect.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "inspect_manifest, to_dot, to_yaml for introspecting workflow manifest structure.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.manifests",
-          "step_name": "Workflow Manifests",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/manifests.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "Bridge module re-exporting arnold.manifest.manifests types (WorkflowManifest, WorkflowNode, WorkflowEdge, etc.) for workflow manifest handling.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.payload_policy",
-          "step_name": "Payload Policy Schema",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/payload_policy.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "wbc.inline.v1 and wbc.retention.v1 schema validation with 16 KiB canonical JSON inline threshold, retention/redaction/tombstone/legal-hold rules, access-audit requirements, and digest-only preservation rejection.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.refs",
-          "step_name": "Workflow Refs",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/refs.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "EdgeRef, HookRef, ImportRef, ManifestCoordinate, ManifestCursor, NodeRef, SourceRef, SourceSpan, ValueRef, and helper functions for typed workflow references.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.registry",
-          "step_name": "Workflow Registry",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/registry.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "Workflow registry for discovering and loading workflow definitions.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.semantic_evidence",
-          "step_name": "Semantic Evidence Row IDs",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/semantic_evidence.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "Stable row ID constants (S2_PREP_ROW_ID, S2_PLAN_ROW_ID, S2_CRITIQUE_ROW_ID, S2_GATE_ROW_ID, S2_REVISE_ROW_ID, S3 tiebreaker rows, S4_EXECUTE_ROW_ID) for semantic evidence table references.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.source_compiler",
-          "step_name": "Source Compiler",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/source_compiler.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "CheckWorkflowSourceResult, SourceCompileError, SourceCompilationError, check_workflow_file, check_workflow_source, compile_workflow_file, compile_workflow_source, lower_workflow_file, lower_workflow_source for compiling workflow source files.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.validation",
-          "step_name": "Manifest Validation",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/validation.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "ManifestValidationError, ManifestValidationIssue, RuntimeRef, check_neutral_import_boundary, validate_manifest for validating workflow manifests.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "arnold.workflow.validator",
-          "step_name": "Workflow Validator",
-          "kind": "schema_module",
-          "producer_path": "arnold/workflow/validator.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "description": "Additional workflow validation logic.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        }
-      ]
+    "owners": {
+      "maintenance": "Maintenance \u2014 owns lifecycle, status, repair queues, incident ledger, watchdog, and cloud status.",
+      "run_authority": "Run Authority \u2014 owns authority facts, views, routing decisions, and execution verdicts.",
+      "wbc": "Workflow Boundary Contracts \u2014 owns declarations, schemas, evidence profiles, findings, and boundary matrices."
     },
-    {
-      "family_id": "evidence_pack",
-      "family_name": "evidence_pack Pipeline Steps",
-      "description": "Model-less verification pipeline for persisted evidence-pack JSON artifacts. Includes both projected shell steps and native phase implementations.",
-      "owner": "wbc",
-      "entries": [
-        {
-          "row_id": "ep.native.build_native_program",
-          "step_id": "evidence_pack.native.build_native_program",
-          "step_name": "build_native_program Entrypoint",
-          "kind": "native_entrypoint",
-          "producer_path": "arnold/pipelines/evidence_pack/native.py:build_native_program",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "c2_registry_migration_gate": "registry_entry",
-          "description": "Compiles the evidence_pack_native pipeline generator into a NativeProgram. This is the canonical entrypoint for native execution.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "row_id": "ep.native.decision_human_review",
-          "step_id": "evidence_pack.native.decision_human_review",
-          "step_name": "human_review_decision Decision",
-          "kind": "native_decision",
-          "producer_path": "arnold/pipelines/evidence_pack/native.py:human_review_decision",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "c2_registry_migration_gate": "registry_entry",
-          "transition": "decision: emit/failed",
-          "description": "Human-gate decision node with resume_input_schema. Reads human_input or checkpoint status to determine emit/failed routing. Override routes map emit→emit_attestation, failed→None.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "row_id": "ep.native.verdict_is_fail",
-          "step_id": "evidence_pack.native.decision_verdict_is_fail",
-          "step_name": "verdict_is_fail Decision",
-          "kind": "native_decision",
-          "producer_path": "arnold/pipelines/evidence_pack/native.py:verdict_is_fail",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "c2_registry_migration_gate": "registry_entry",
-          "transition": "decision: fail/pass",
-          "description": "Decision node reading verdict.json to determine fail/pass routing. Returns 'fail' on missing/invalid verdict as defensive default.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "row_id": "ep.native.join_validators",
-          "step_id": "evidence_pack.native.join_validators",
-          "step_name": "_join_validators Reducer",
-          "kind": "native_reducer",
-          "producer_path": "arnold/pipelines/evidence_pack/native.py:_join_validators",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "c2_registry_migration_gate": "registry_entry",
-          "description": "Barrier-join reducer for content_validators parallel fanout. Merges all validator outputs and emits StepResult routing to reduce.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "row_id": "ep.pipeline.content_validator",
-          "step_id": "evidence_pack.pipeline.content_validator",
-          "step_name": "Content Validator Steps (5 variants)",
-          "kind": "pipeline_step",
-          "producer_path": "arnold/pipelines/evidence_pack/steps.py:ContentValidatorStep",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "c2_registry_migration_gate": "registry_entry",
-          "transition": "validator → passed/failed",
-          "description": "Five parallel validator variants: structural_audit, budget_enforcement, suspension_propagation, by_ref_validation, human_review_gate. Each produces a checkpoint artifact with pass/fail status and diagnostic.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "row_id": "ep.pipeline.emit_attestation",
-          "step_id": "evidence_pack.pipeline.emit_attestation",
-          "step_name": "Emit Attestation Step",
-          "kind": "pipeline_step",
-          "producer_path": "arnold/pipelines/evidence_pack/steps.py:EmitAttestationStep",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "c2_registry_migration_gate": "registry_entry",
-          "transition": "emit_attestation → halt",
-          "description": "Produces attestation.json with final verdict and all checkpoint results. Terminal step of evidence-pack pipeline.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "row_id": "ep.pipeline.evidence_pack_step",
-          "step_id": "evidence_pack.pipeline.evidence_pack_step",
-          "step_name": "EvidencePackStep (Projected Shell)",
-          "kind": "pipeline_step",
-          "producer_path": "arnold/pipelines/evidence_pack/steps.py:EvidencePackStep",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "c2_registry_migration_gate": "registry_entry",
-          "transition": "projected shell placeholder → halt",
-          "description": "Native-phase adapter placeholder used by the projected shell pipeline definition. Routes to halt as a passthrough.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "row_id": "ep.pipeline.human_review",
-          "step_id": "evidence_pack.pipeline.human_review",
-          "step_name": "Human Review Step",
-          "kind": "pipeline_step",
-          "producer_path": "arnold/pipelines/evidence_pack/steps.py:HumanReviewStep",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "c2_registry_migration_gate": "registry_entry",
-          "transition": "human_review → suspended / emit / failed",
-          "description": "Human review gate: suspends for human input on first invocation, processes approval/rejection on resume. Produces checkpoint with human_review_gate status.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "row_id": "ep.pipeline.ingest",
-          "step_id": "evidence_pack.pipeline.ingest",
-          "step_name": "Ingest Step",
-          "kind": "pipeline_step",
-          "producer_path": "arnold/pipelines/evidence_pack/steps.py:IngestStep",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "c2_registry_migration_gate": "registry_entry",
-          "transition": "ingest → validators",
-          "description": "Loads evidence_pack_path, validates against EVIDENCE_PACK_SCHEMA, writes normalized copy to artifact root. Produces evidence_pack output with checkpoint_count.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "row_id": "ep.pipeline.reduce",
-          "step_id": "evidence_pack.pipeline.reduce",
-          "step_name": "Reduce Step",
-          "kind": "pipeline_step",
-          "producer_path": "arnold/pipelines/evidence_pack/steps.py:ReduceStep",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "c2_registry_migration_gate": "registry_entry",
-          "transition": "reduce → emit / human_review",
-          "description": "Collects all checkpoint results, produces verdict.json with pass/fail determination. Routes to emit_attestation on pass, human_review on fail.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        }
-      ]
+    "schema_version": "wbc.support_manifest.v1",
+    "support_statuses": {
+      "deprecated": "No longer actively maintained; retained for backward compatibility only.",
+      "non_conformant": "Visible non-conformance \u2014 known deviation from contract expectations.",
+      "partial": "Partially supported \u2014 some code paths exist but coverage is incomplete or contains known gaps.",
+      "planned": "Schema/contract declared but no producer emission path yet exists. Targeted for C2-C6 migration.",
+      "supported": "Fully supported in the current codebase with real producer code paths."
     },
-    {
-      "family_id": "megaplan",
-      "family_name": "Megaplan Step/Attempt Transitions",
-      "description": "Step handlers and boundary transitions in arnold_pipelines/megaplan that produce boundary receipts, phase results, state deltas, and history entries.",
-      "owner": "run_authority",
-      "entries": [
-        {
-          "step_id": "megaplan.anchors",
-          "step_name": "Anchors Handler",
-          "boundary_id": null,
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/anchors.py",
-          "owner": "maintenance",
-          "support_status": "supported",
-          "c2_c6_milestone": "c3",
-          "transition": "anchor state management",
-          "description": "Anchor state management for timeout and resume anchors in execute phase.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.override_handler",
-          "step_name": "Override Handler",
-          "boundary_id": null,
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/override.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c5",
-          "transition": "override command dispatch",
-          "description": "Override command handler dispatching abort, force-proceed, replan, recover-blocked, resume-clarify, adopt-execution actions.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s2.critique",
-          "step_name": "Critique step handler",
-          "boundary_id": "critique_to_gate",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/critique.py → arnold_pipelines/megaplan/orchestration/critique_runtime.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "transition": "critique → gate",
-          "description": "Critique handler dispatches parallel critiques, runs evaluations, triggers adaptive routing, emits critique_to_gate boundary receipt via _finish_step auto-match.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s2.gate",
-          "step_name": "Gate step handler",
-          "boundary_id": "gate_to_revise",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/gate.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "transition": "gate → revise",
-          "description": "Gate handler evaluates quality signals, emits gate_to_revise boundary receipt for iterate/retry/revise outcomes via _finish_step auto-match.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s2.plan",
-          "step_name": "Plan step handler",
-          "boundary_id": "plan_to_critique",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/plan.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "transition": "plan → critique",
-          "description": "Plan handler produces plan.md, emits plan_to_critique boundary receipt via _finish_step auto-match.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s2.prep",
-          "step_name": "Prep step handler",
-          "boundary_id": "prep_to_plan",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/init.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "transition": "prep → plan",
-          "description": "Prep handler produces research.md and brief.md, emits prep_to_plan boundary receipt via _finish_step auto-match.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s2.revise",
-          "step_name": "Revise step handler",
-          "boundary_id": "revise_to_critique",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/plan.py (revise path)",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "transition": "revise → critique",
-          "description": "Revise handler produces revised_plan.md and revision_log.md, emits revise_to_critique boundary receipt via _finish_step auto-match.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s3.parent_rejoin",
-          "step_name": "Parent Rejoin Promotion",
-          "boundary_id": "parent_rejoin_promotion",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/tiebreaker.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c3",
-          "transition": "tiebreaker → parent workflow resume",
-          "description": "Parent rejoin promotion resumes parent workflow after tiebreaker decision. No phase_result required.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s3.replan_authority",
-          "step_name": "Replan Authority",
-          "boundary_id": "replan_authority",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c4",
-          "transition": "replan authorization",
-          "description": "Replan authority boundary: replan decision authorized with evidence. Receipt not required.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s3.tiebreaker_challenger",
-          "step_name": "Tiebreaker Challenger",
-          "boundary_id": "tiebreaker_challenger_to_synthesis",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/tiebreaker.py → arnold_pipelines/megaplan/orchestration/tiebreaker_runtime.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c3",
-          "transition": "tiebreaker challenger → synthesis",
-          "description": "Tiebreaker challenger produces challenge_findings.json, emits boundary receipt.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s3.tiebreaker_decision",
-          "step_name": "Tiebreaker Decision",
-          "boundary_id": "tiebreaker_decision_to_parent",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/tiebreaker.py → arnold_pipelines/megaplan/orchestration/tiebreaker_runtime.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c3",
-          "transition": "tiebreaker decision → parent rejoin",
-          "description": "Tiebreaker decision produces tiebreaker_decisions.json with proceed/iterate/escalate outcomes, emits boundary receipt with parent rejoin promotion.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s3.tiebreaker_researcher",
-          "step_name": "Tiebreaker Researcher",
-          "boundary_id": "tiebreaker_researcher_to_challenger",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/tiebreaker.py → arnold_pipelines/megaplan/orchestration/tiebreaker_runtime.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c3",
-          "transition": "tiebreaker researcher → challenger",
-          "description": "Tiebreaker researcher produces research_findings.json, emits boundary receipt.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s3.tiebreaker_synthesis",
-          "step_name": "Tiebreaker Synthesis",
-          "boundary_id": "tiebreaker_synthesis_to_decision",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/tiebreaker.py → arnold_pipelines/megaplan/orchestration/tiebreaker_runtime.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c3",
-          "transition": "tiebreaker synthesis → decision",
-          "description": "Tiebreaker synthesis produces tiebreaker_payload.json with reducer promotion, emits boundary receipt.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s4.execute_aggregate_promotion",
-          "step_name": "Execute Aggregate Promotion",
-          "boundary_id": "execute_aggregate_promotion",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/execute/batch.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c3",
-          "transition": "all batches complete → review fan-in",
-          "description": "Every batch payload aggregated into a single execute_payload; promoted to review fan-in as items source.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s4.execute_approval",
-          "step_name": "Execute Approval Gate",
-          "boundary_id": "execute_approval",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/execute.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c3",
-          "transition": "execute approval cleared → batch dispatch",
-          "description": "Execute approval gate clears destructive confirmation and operator approval. Emits evidence-only receipt via _emit_execute_boundary_receipt before batch dispatch.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s4.execute_approval_denial",
-          "step_name": "Execute Approval Denial",
-          "boundary_id": "execute_approval_denial",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/execute.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c3",
-          "transition": "execute approval denied → halt",
-          "description": "Execute approval denial when confirmation or operator approval missing. Evidence-only receipt before CliError propagation.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s4.execute_batch_checkpoint",
-          "step_name": "Execute Batch Checkpoint",
-          "boundary_id": "execute_batch_checkpoint",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/execute/batch.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c3",
-          "transition": "batch completed → continuation",
-          "description": "One batch completed successfully; additional batches remain. Emitted via _emit_batch_boundary_receipt.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s4.execute_blocked_anchor",
-          "step_name": "Execute Blocked Anchor",
-          "boundary_id": "execute_blocked_anchor",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/execute/batch.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c4",
-          "transition": "worker timeout within retry budget → retry",
-          "description": "Worker/transient timeout within retry budget; retry the batch or escalate to override.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s4.execute_no_review_terminal",
-          "step_name": "Execute No-Review Terminal",
-          "boundary_id": "execute_no_review_terminal",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/execute/batch.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c3",
-          "transition": "no review needed → terminal or awaiting_human_verify",
-          "description": "Robustness skips review (bare or light without deferred must criteria); terminates directly or awaits human verification.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s4.execute_partial_failure",
-          "step_name": "Execute Partial Failure",
-          "boundary_id": "execute_partial_failure",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/execute/batch.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c4",
-          "transition": "batch blocked → override recovery",
-          "description": "Batch blocked by quality gates; routes to override for recovery. Emitted via _emit_batch_boundary_receipt.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s4.execute_resume_anchor",
-          "step_name": "Execute Resume Anchor",
-          "boundary_id": "execute_resume_anchor",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/execute/batch.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c4",
-          "transition": "fresh session required → new execute session",
-          "description": "Retry requires a fresh worker session; forces new execute session.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s5.final_projection",
-          "step_name": "Final Projection",
-          "boundary_id": "final_projection",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/finalize.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c4",
-          "transition": "terminal projection → done/continue",
-          "description": "Terminal or continuation projection visible in finalize policy metadata and durable plan artifacts.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s5.finalize_artifacts",
-          "step_name": "Finalize Artifacts",
-          "boundary_id": "finalize_artifacts",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/finalize.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c4",
-          "transition": "finalize → publish",
-          "description": "Finalize publishes canonical plan artifacts declared by the artifact contract.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s5.finalize_fallback",
-          "step_name": "Finalize Fallback",
-          "boundary_id": "finalize_fallback",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/finalize.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c5",
-          "transition": "finalize → revise fallback",
-          "description": "Revise fallback evidence persisted as declarative contract rather than hidden finalize branch.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s5.review_cap_authority",
-          "step_name": "Review Cap Authority",
-          "boundary_id": "review_cap_authority",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/review.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c4",
-          "transition": "cap exhaustion → authority decision",
-          "description": "Cap exhaustion outcomes carry explicit authority records instead of handler-owned decisions.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s5.review_child_outputs",
-          "step_name": "Review Child Outputs",
-          "boundary_id": "review_child_outputs",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/review.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c4",
-          "transition": "review fanout children → fan-in reducer",
-          "description": "Review fanout children produce durable outputs for the visible review fan-in reducer.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s5.review_human_verification",
-          "step_name": "Review Human Verification",
-          "boundary_id": "review_human_verification",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/review.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c4",
-          "transition": "deferred human review → suspension",
-          "description": "Deferred-human review records suspension and resume evidence without becoming a route table.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s5.review_reducer_promotion",
-          "step_name": "Review Reducer Promotion",
-          "boundary_id": "review_reducer_promotion",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/review.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c4",
-          "transition": "review fan-in complete → finalize",
-          "description": "Authored review fan-in promoted child outputs into canonical review payload.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s5.review_rework_effects",
-          "step_name": "Review Rework Effects",
-          "boundary_id": "review_rework_effects",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/review.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c4",
-          "transition": "review rework cycle → fresh execute",
-          "description": "Review-directed rework cycle projects durable re-execute intent without privately routing it.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s6.override_abort",
-          "step_name": "Override Abort Authority",
-          "boundary_id": "override_abort_authority",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c5",
-          "transition": "override abort → halt",
-          "description": "Halting the plan requires a durable authority record bound to the exact state snapshot being aborted.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s6.override_adopt_execution",
-          "step_name": "Override Adopt Execution Authority",
-          "boundary_id": "override_adopt_execution_authority",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c5",
-          "transition": "override adopt-execution → review",
-          "description": "Execution adoption anchored to the exact execution/finalize artifacts being adopted.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s6.override_force_proceed",
-          "step_name": "Override Force Proceed Authority",
-          "boundary_id": "override_force_proceed_authority",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c5",
-          "transition": "override force-proceed → bypass gate",
-          "description": "Bypassing a blocking gate or review verdict records who accepted the debt against which durable evidence set.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s6.override_human_gate",
-          "step_name": "Override Human Gate Authority",
-          "boundary_id": "override_human_gate_authority",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c5",
-          "transition": "override human-gate → approval record",
-          "description": "Protected actions and explicit human gates record actor, role, scope, and fresh evidence.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s6.override_recover_blocked",
-          "step_name": "Override Recover Blocked Authority",
-          "boundary_id": "override_recover_blocked_authority",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c5",
-          "transition": "override recover-blocked → resume",
-          "description": "Resuming from blocked binds recovery to the declared resume cursor and blocker evidence.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s6.override_replan",
-          "step_name": "Override Replan Authority",
-          "boundary_id": "override_replan_authority",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c5",
-          "transition": "override replan → revise",
-          "description": "Restarting the planning loop records the exact prior state and freshness token that authorized re-entry.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s6.override_resume_clarify",
-          "step_name": "Override Resume Clarify Authority",
-          "boundary_id": "override_resume_clarify_authority",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c5",
-          "transition": "override resume-clarify → plan",
-          "description": "Leaving a clarification halt records the answers and freshness token that unlocked plan.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.s6.override_suspension",
-          "step_name": "Override Suspension Authority",
-          "boundary_id": "override_suspension_authority",
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/orchestration/override_authority.py",
-          "owner": "run_authority",
-          "support_status": "supported",
-          "c2_c6_milestone": "c5",
-          "transition": "override suspension-waiver → resume",
-          "description": "Waiver or deferred-human suspension carries durable authority evidence separate from handler-private state changes.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.tickets",
-          "step_name": "Tickets Handler",
-          "boundary_id": null,
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/tickets.py",
-          "owner": "maintenance",
-          "support_status": "supported",
-          "c2_c6_milestone": "c2",
-          "transition": "ticket operations",
-          "description": "Ticket management handler for plan-level ticket tracking. Maintenance-owned lifecycle surface.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        },
-        {
-          "step_id": "megaplan.verifiability",
-          "step_name": "Verifiability Handler",
-          "boundary_id": null,
-          "kind": "handler",
-          "producer_path": "arnold_pipelines/megaplan/handlers/verifiability.py",
-          "owner": "wbc",
-          "support_status": "supported",
-          "c2_c6_milestone": "c3",
-          "transition": "verifiability checks",
-          "description": "Verifiability checks for plan artifacts. WBC-owned evaluation surface.",
-          "exception_metadata": {},
-          "visible_non_conformant": []
-        }
-      ]
-    }
-  ]
+    "timestamp_utc": "2026-07-21T00:01:43Z"
+  }
 }

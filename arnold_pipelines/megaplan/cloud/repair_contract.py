@@ -14,9 +14,20 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, TypeAlias, TypedDict, cast
 
 from arnold.runtime.state_persistence import atomic_write_json as _atomic_write_json
+from arnold_pipelines.megaplan.custody.contracts import normalize_repair_occurrence_key
 from arnold_pipelines.megaplan.cloud.redact import redact_payload as canonical_redact_payload
 from arnold_pipelines.megaplan.observability.events import EventKind, emit
 from arnold_pipelines.megaplan.run_state.model import CanonicalRunState, CanonicalState
+
+# ── M7 custody contract imports (shadow/report-only) ────────────────────
+from arnold_pipelines.megaplan.custody.contracts import (
+    CustodyTargetKey,
+    RepairOccurrenceKey,
+    build_custody_target_key,
+    build_repair_occurrence_key,
+    occurrence_digest,
+    F01_REPAIR_OCCURRENCE_FIELDS as _F01_REPAIR_OCCURRENCE_FIELDS,
+)
 
 CURRENT_SCHEMA_VERSION = 1
 
@@ -259,6 +270,16 @@ def blocker_id_for_fingerprint(payload: Mapping[str, Any] | None) -> str | None:
     return f"{BLOCKER_ID_V1_PREFIX}{digest}"
 
 
+def _normalize_repair_identity(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    normalized = normalize_repair_occurrence_key(payload)
+    return normalized.to_dict() if normalized is not None else None
+
+
+def _repair_identity_key(payload: Mapping[str, Any] | None) -> str:
+    normalized = normalize_repair_occurrence_key(payload)
+    return normalized.key if normalized is not None else ""
+
+
 # ---------------------------------------------------------------------------
 # BlockerFingerprintV2 — extended repair identity with acceptance context
 # ---------------------------------------------------------------------------
@@ -458,6 +479,314 @@ def blocker_fingerprint_from_acceptance(
         "predecessor_fingerprint_hash": predecessor_fingerprint_hash,
     }
     return normalize_blocker_fingerprint_v2(payload)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# M7 custody helpers — RepairOccurrenceKey construction from repair evidence
+# ═══════════════════════════════════════════════════════════════════════════
+
+#: Known T7 outbox surface identifiers (Custody-04 outbox module).
+_T7_OUTBOX_SURFACE_PREFIXES: tuple[str, ...] = (
+    "outbox:",
+    "custody-outbox:",
+    "custody-04:",
+)
+
+#: Known T12 admission surface identifiers (future Custody admission).
+_T12_ADMISSION_SURFACE_PREFIXES: tuple[str, ...] = (
+    "admission:",
+    "custody-admission:",
+    "repair-admission:",
+)
+
+
+def is_t7_outbox_reference(ref: str) -> bool:
+    """Return True if *ref* identifies a T7 outbox record.
+
+    T7 outbox references are owned by the Custody outbox module and carry
+    ``outbox:``, ``custody-outbox:``, or ``custody-04:`` prefixes.
+
+    This is a read-only classifier — it does not mutate any state.
+    """
+    if not isinstance(ref, str) or not ref.strip():
+        return False
+    cleaned = ref.strip()
+    return any(cleaned.startswith(prefix) for prefix in _T7_OUTBOX_SURFACE_PREFIXES)
+
+
+def is_t12_admission_reference(ref: str) -> bool:
+    """Return True if *ref* identifies a T12 admission surface record.
+
+    T12 admission references are owned by the repair admission surface and
+    carry ``admission:``, ``custody-admission:``, or ``repair-admission:``
+    prefixes.
+
+    This is a read-only classifier — it does not mutate any state.
+    """
+    if not isinstance(ref, str) or not ref.strip():
+        return False
+    cleaned = ref.strip()
+    return any(cleaned.startswith(prefix) for prefix in _T12_ADMISSION_SURFACE_PREFIXES)
+
+
+def validate_t7_t12_cross_binding(
+    *,
+    occurrence_key: RepairOccurrenceKey | None = None,
+    wbc_attempt_reference: str = "",
+    source_surface: str = "",
+) -> list[str]:
+    """Return a list of cross-binding violation descriptions.
+
+    Rejects any attempt to bind T7 outbox references to T12 admission
+    surface identifiers and vice versa.  Stale T7→T12 binding would allow
+    an outbox record to be mistaken for an admission decision, which
+    violates the single-owner boundary.
+
+    Returns an empty list when no violation is detected.
+    """
+    violations: list[str] = []
+    if occurrence_key is None:
+        return violations
+
+    # Classify the source surface if not explicitly provided.
+    effective_source = source_surface.strip() if source_surface else ""
+    if not effective_source:
+        if is_t7_outbox_reference(occurrence_key.wbc_attempt_reference):
+            effective_source = "outbox"
+        elif is_t12_admission_reference(occurrence_key.wbc_attempt_reference):
+            effective_source = "admission"
+
+    # Check wbc_attempt_reference for cross-binding.
+    wbc_ref = (wbc_attempt_reference or occurrence_key.wbc_attempt_reference).strip()
+    if wbc_ref:
+        if effective_source == "outbox" and is_t12_admission_reference(wbc_ref):
+            violations.append(
+                f"T7 outbox source cannot bind T12 admission reference: {wbc_ref!r}"
+            )
+        elif effective_source == "admission" and is_t7_outbox_reference(wbc_ref):
+            violations.append(
+                f"T12 admission source cannot bind T7 outbox reference: {wbc_ref!r}"
+            )
+
+    # Check the occurrence digest for cross-surface contamination.
+    digest = occurrence_key.occurrence_digest
+    if digest:
+        if effective_source == "outbox" and "admission:" in digest:
+            violations.append(
+                f"occurrence_digest carries T12 admission marker: {digest!r}"
+            )
+        elif effective_source == "admission" and "outbox:" in digest:
+            violations.append(
+                f"occurrence_digest carries T7 outbox marker: {digest!r}"
+            )
+
+    return violations
+
+
+def build_custody_target_key_from_repair_evidence(
+    *,
+    plan_state: Mapping[str, Any] | None = None,
+    current_target: Mapping[str, Any] | None = None,
+    problem_signature: Mapping[str, Any] | None = None,
+    chain_identity: str = "",
+) -> CustodyTargetKey | None:
+    """Construct a :class:`CustodyTargetKey` from legacy repair evidence artifacts.
+
+    This is a **read-only adapter** that extracts F01 fields from the same
+    plan_state, current_target, and problem_signature artifacts already used
+    by :func:`blocker_fingerprint_from_evidence`.  Legacy fingerprint
+    normalization is preserved byte-for-byte; this helper adds the M7
+    CustodyTargetKey shape alongside the existing V1/V2 fingerprint paths.
+
+    Returns ``None`` when any required F01 field cannot be resolved.
+    """
+    plan = _as_mapping(plan_state)
+    target = _as_mapping(current_target)
+    signature = _as_mapping(problem_signature)
+
+    target_plan_state = _as_mapping(target.get("plan_state"))
+    target_current_refs = _as_mapping(target.get("current_refs"))
+    chain_state = _as_mapping(target.get("chain_state"))
+    latest_failure = _as_mapping(plan.get("latest_failure"))
+    resume_cursor = _as_mapping(plan.get("resume_cursor"))
+
+    # ── F01 field resolution (mirrors blocker_fingerprint_from_evidence) ──
+    environment = _first_non_empty(
+        _as_text(target_current_refs.get("environment")),
+        _as_text(signature.get("environment")),
+    )
+    session = _first_non_empty(
+        _as_text(target_current_refs.get("session")),
+        _as_text(signature.get("session")),
+    )
+    chain = _first_non_empty(
+        _as_text(target_current_refs.get("chain")),
+        _as_text(chain_state.get("chain_name")),
+        _as_text(signature.get("chain")),
+    )
+    plan_revision = _first_non_empty(
+        _as_text(target_current_refs.get("plan_revision")),
+        _as_text(signature.get("plan_revision")),
+    )
+    phase = _first_non_empty(
+        _as_text(latest_failure.get("phase")),
+        _as_text(plan.get("phase")),
+        _as_text(signature.get("phase_or_step")),
+    )
+    task = _first_non_empty(
+        _as_text(latest_failure.get("blocked_task_id")),
+        _as_text(latest_failure.get("task_id")),
+        _as_text(signature.get("blocked_task_id")),
+    )
+    attempt = _first_non_empty(
+        _as_text(target_current_refs.get("attempt")),
+        _as_text(signature.get("attempt")),
+    )
+    normalized_failure_kind = _first_non_empty(
+        _as_text(latest_failure.get("kind")),
+        _as_text(signature.get("failure_kind")),
+    )
+    blocker_or_phase_result_hash = _first_non_empty(
+        _as_text(target_plan_state.get("fingerprint")),
+        _as_text(chain_state.get("fingerprint")),
+        _as_text(signature.get("target_fingerprint")),
+    )
+    fence = _first_non_empty(
+        _as_text(resume_cursor.get("fence")),
+        _as_text(signature.get("fence")),
+    )
+
+    return build_custody_target_key(
+        environment=environment,
+        session=session,
+        chain=chain,
+        plan_revision=plan_revision,
+        phase=phase,
+        task=task,
+        attempt=attempt,
+        normalized_failure_kind=normalized_failure_kind,
+        blocker_or_phase_result_hash=blocker_or_phase_result_hash,
+        fence=fence,
+        chain_identity=chain_identity,
+    )
+
+
+def build_repair_occurrence_key_from_repair_evidence(
+    *,
+    plan_state: Mapping[str, Any] | None = None,
+    current_target: Mapping[str, Any] | None = None,
+    problem_signature: Mapping[str, Any] | None = None,
+    chain_identity: str = "",
+    run_id: str = "",
+    run_revision: str = "",
+    coordinator_attempt_id: str = "",
+    fence_token: int = 0,
+    wbc_attempt_reference: str = "",
+    source_surface: str = "",
+) -> RepairOccurrenceKey | None:
+    """Construct a full M7 :class:`RepairOccurrenceKey` from repair evidence.
+
+    Builds a :class:`CustodyTargetKey` from the legacy repair artifacts,
+    then wraps it with the current coordinator fence token, run identity,
+    WBC attempt reference, and a deterministic occurrence digest over the
+    F01 fields + fence token + chain identity.
+
+    The returned key structurally includes the fence token and occurrence
+    digest required for M7 identity while preserving the read-only adapter
+    pattern used by existing fingerprint normalization.
+
+    Returns ``None`` when the target key cannot be constructed or when
+    T7/T12 cross-binding is detected.
+
+    Keyword Args:
+        plan_state: Plan-level state (same as blocker_fingerprint_from_evidence).
+        current_target: Current target refs and chain state.
+        problem_signature: Recurrence problem signature dict.
+        chain_identity: Optional chain identity string.
+        run_id: Run Authority run identifier.
+        run_revision: Run Authority run revision.
+        coordinator_attempt_id: Coordinator attempt identifier.
+        fence_token: Current coordinator fence token (non-negative int).
+        wbc_attempt_reference: WBC attempt reference string.
+        source_surface: ``'outbox'`` for T7, ``'admission'`` for T12, or ``''``.
+    """
+    target = build_custody_target_key_from_repair_evidence(
+        plan_state=plan_state,
+        current_target=current_target,
+        problem_signature=problem_signature,
+        chain_identity=chain_identity,
+    )
+    if target is None:
+        return None
+
+    # Resolve run identity from context when not explicitly provided.
+    plan = _as_mapping(plan_state)
+    target_map = _as_mapping(current_target)
+    target_current_refs = _as_mapping(target_map.get("current_refs"))
+    chain_state = _as_mapping(target_map.get("chain_state"))
+    signature = _as_mapping(problem_signature)
+
+    resolved_run_id = _first_non_empty(
+        run_id,
+        _as_text(target_current_refs.get("run_id")),
+        _as_text(chain_state.get("run_id")),
+    )
+    resolved_run_revision = _first_non_empty(
+        run_revision,
+        _as_text(target_current_refs.get("run_revision")),
+        _as_text(chain_state.get("run_revision")),
+        _as_text(signature.get("run_revision")),
+    )
+    resolved_attempt = _first_non_empty(
+        coordinator_attempt_id,
+        _as_text(target_current_refs.get("coordinator_attempt_id")),
+        _as_text(chain_state.get("coordinator_attempt_id")),
+    )
+    def _to_int(value: Any) -> int | None:
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            try:
+                return int(value.strip())
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    resolved_fence_token = (
+        fence_token
+        if fence_token > 0
+        else _to_int(target_current_refs.get("fence_token"))
+        or _to_int(chain_state.get("fence_token"))
+        or 0
+    )
+    resolved_wbc_ref = _first_non_empty(
+        wbc_attempt_reference,
+        _as_text(target_current_refs.get("wbc_attempt_reference")),
+        _as_text(chain_state.get("wbc_attempt_reference")),
+        _as_text(signature.get("wbc_attempt_reference")),
+    )
+
+    occurrence_key = build_repair_occurrence_key(
+        target=target,
+        run_id=resolved_run_id,
+        run_revision=resolved_run_revision,
+        coordinator_attempt_id=resolved_attempt,
+        fence_token=resolved_fence_token,
+        wbc_attempt_reference=resolved_wbc_ref,
+    )
+    if occurrence_key is None:
+        return None
+
+    # T7/T12 cross-binding rejection.
+    violations = validate_t7_t12_cross_binding(
+        occurrence_key=occurrence_key,
+        wbc_attempt_reference=resolved_wbc_ref,
+        source_surface=source_surface,
+    )
+    if violations:
+        return None
+
+    return occurrence_key
 
 
 class RepairRequestDecisionRecord(TypedDict):
@@ -712,6 +1041,18 @@ def project_repair_custody(
         _as_text(target_current_refs.get("chain_current_plan_name")),
         _as_text(target_current_refs.get("marker_plan_name")),
     )
+    current_repair_identity = repair_requests.derive_repair_identity(
+        session=target_session,
+        plan_state=plan_payload,
+        current_target=target_payload,
+        blocker_id=blocker_id or "",
+        blocker_fingerprint=fingerprint,
+    )
+    current_repair_identity_key = repair_requests.repair_identity_key(current_repair_identity)
+    exact_identity_required = repair_requests.exact_repair_identity_available(
+        plan_state=plan_payload,
+        current_target=target_payload,
+    )
 
     requests: list[RepairCustodyRequestRecord] = []
     for record in queue_requests:
@@ -756,6 +1097,16 @@ def project_repair_custody(
             problem_signature=problem_signature,
         )
         request_blocker_id = blocker_id_for_fingerprint(request_fingerprint) or ""
+        request_repair_identity = repair_requests.normalize_repair_identity(
+            _as_mapping(record.get("repair_identity"))
+        )
+        request_repair_identity_key = repair_requests.repair_identity_key(request_repair_identity)
+        if (
+            exact_identity_required
+            and current_repair_identity_key
+            and request_repair_identity_key != current_repair_identity_key
+        ):
+            continue
         if blocker_id and request_blocker_id and request_blocker_id != blocker_id:
             continue
         if not blocker_id and current_plan_identity and request_plan_identity and request_plan_identity != current_plan_identity:
@@ -780,6 +1131,8 @@ def project_repair_custody(
                 "blocker_fingerprint": request_fingerprint,
                 "problem_signature": problem_signature,
                 "target": _stable_mapping(_as_mapping(record.get("target"))),
+                "repair_identity": request_repair_identity or {},
+                "repair_identity_key": request_repair_identity_key,
                 "status": status,
                 "active": status in {REQUEST_STATUS_ACCEPTED, REQUEST_STATUS_DISPATCHED},
                 "decision": latest_decision,
@@ -820,6 +1173,7 @@ def project_repair_custody(
                     outcome=outcome,
                     recorded_at=recorded_at,
                     raw=raw,
+                    repair_identity=_as_mapping(record.get("repair_identity")),
                 )
             )
     active_claim_request_ids: list[str] = []
@@ -829,8 +1183,13 @@ def project_repair_custody(
         ) / "owner.json"
         claim_owner = load_json(claim_path, default={})
         if isinstance(claim_owner, Mapping):
+            claim_owner_identity_key = _as_text(claim_owner.get("repair_identity_key"))
             claim_request_id = _as_text(claim_owner.get("request_id"))
-            if claim_request_id:
+            if claim_request_id and (
+                not exact_identity_required
+                or not current_repair_identity_key
+                or claim_owner_identity_key == current_repair_identity_key
+            ):
                 active_claim_request_ids.append(claim_request_id)
     attempts = [
         attempt
@@ -839,6 +1198,8 @@ def project_repair_custody(
             attempt,
             active_request_ids=set(active_request_ids),
             blocker_id=blocker_id or "",
+            repair_identity_key=current_repair_identity_key,
+            exact_identity_required=exact_identity_required,
         )
     ]
     attempted_request_ids = {
@@ -3548,10 +3909,15 @@ def _attempt_has_current_custody(
     *,
     active_request_ids: set[str],
     blocker_id: str,
+    repair_identity_key: str,
+    exact_identity_required: bool,
 ) -> bool:
     """Reject identity-free legacy attempts that cannot own the current target."""
 
     request_id = _as_text(attempt.get("request_id"))
+    attempt_identity_key = _as_text(attempt.get("repair_identity_key"))
+    if exact_identity_required and repair_identity_key and attempt_identity_key != repair_identity_key:
+        return False
     if request_id:
         return request_id in active_request_ids
     raw = _as_mapping(attempt.get("raw"))
@@ -3873,8 +4239,14 @@ def _build_attempt_record(
     outcome: str,
     recorded_at: str,
     raw: Mapping[str, Any],
+    repair_identity: Mapping[str, Any] | None = None,
 ) -> RepairCustodyAttemptRecord:
     normalized_outcome = outcome or (REPAIRING if state in {ATTEMPT_STATE_CLAIMED, ATTEMPT_STATE_RUNNING} else "")
+    normalized_repair_identity = (
+        _normalize_repair_identity(repair_identity)
+        if repair_identity is not None
+        else _normalize_repair_identity(_as_mapping(raw.get("repair_identity")))
+    )
     return {
         "attempt_id": attempt_id,
         "session": session,
@@ -3882,6 +4254,8 @@ def _build_attempt_record(
         "path": path,
         "blocker_id": blocker_id,
         "blocker_fingerprint": fingerprint,
+        "repair_identity": normalized_repair_identity or {},
+        "repair_identity_key": _repair_identity_key(normalized_repair_identity),
         "request_id": request_id,
         "state": state,
         "outcome": normalized_outcome,
@@ -5232,4 +5606,71 @@ __all__ = [
     # ── S4: semantic-health projection for repair initial facts ──────
     "build_repair_semantic_context",
     "has_repairable_semantic_finding",
+    # ── M7 custody helpers ────────────────────────────────────────────
+    "build_custody_target_key_from_repair_evidence",
+    "build_repair_occurrence_key_from_repair_evidence",
+    "is_t7_outbox_reference",
+    "is_t12_admission_reference",
+    "validate_t7_t12_cross_binding",
 ]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# T18 / Step 11 — re-export the canonical repair dispatch identity contract.
+#
+# Re-export is performed *lazily* via a module-level ``__getattr__``
+# (PEP 562) rather than an eager ``from repair_requests import (...)``.
+# An eager import — whether at module top *or* module end — creates a
+# hard circular-import failure whenever ``repair_requests`` (or
+# ``repair_revalidation``, which imports repair_requests) is imported
+# *first*: repair_requests line 15 imports repair_contract, which then
+# tries to re-import the still-partially-initialized repair_requests
+# before repair_requests has finished binding its symbols
+# (``ImportError: cannot import name 'REPAIR_ACTION_ADOPTION' from
+# partially initialized module …``). That breaks ``python -c "import
+# …repair_requests"`` and any test file that imports repair_requests
+# first — i.e. it breaks standalone recovery/repair imports.
+#
+# Lazy resolution breaks the cycle unconditionally while preserving the
+# public surface: ``from …repair_contract import RepairDispatchIdentity``
+# and ``hasattr(repair_contract, "RepairDispatchIdentity")`` both still
+# work, and ``dir(repair_contract)`` lists the re-exported names.
+# repair_contract itself never references these symbols internally — the
+# block is pure API convenience — so deferred resolution is safe.
+# ──────────────────────────────────────────────────────────────────────
+_REPAIR_DISPATCH_IDENTITY_REEXPORTS = frozenset(
+    {
+        "REPAIR_ACTION_ADOPTION",
+        "REPAIR_ACTION_CANCELLATION",
+        "REPAIR_ACTION_ESCALATION",
+        "REPAIR_ACTION_KINDS",
+        "REPAIR_ACTION_REPAIR",
+        "REPAIR_ACTION_RETRY",
+        "RepairDispatchIdentity",
+        "SourceRereadVerdict",
+        "derive_dispatch_identity_from_source_reread",
+        "repair_dispatch_identity_key",
+        "require_source_reread_for_action",
+    }
+)
+
+
+def __getattr__(name):  # noqa: D401  (PEP 562 module-level lazy attribute)
+    if name in _REPAIR_DISPATCH_IDENTITY_REEXPORTS:
+        from arnold_pipelines.megaplan.cloud import repair_requests
+
+        try:
+            value = getattr(repair_requests, name)
+        except AttributeError as exc:  # pragma: no cover - defensive
+            raise AttributeError(
+                f"module {__name__!r} has no attribute {name!r}"
+            ) from exc
+        # Cache in module dict so subsequent accesses bypass __getattr__.
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    module_names = list(globals().keys())
+    return sorted(set(module_names) | set(_REPAIR_DISPATCH_IDENTITY_REEXPORTS))

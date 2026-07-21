@@ -32,6 +32,7 @@ from arnold_pipelines.megaplan.cloud.progress_auditor_escalation import (
 from arnold_pipelines.megaplan.cloud.progress_auditor_ownership import (
     launch_suppressed_by_existing_owner,
 )
+from arnold_pipelines.megaplan.cloud.repair_contract import append_escalation_record
 from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
     enqueue_audit_repair_request,
 )
@@ -116,6 +117,77 @@ def _state_path(state_root: Path, escalation_id: str) -> Path:
 
 def _context_path(state_root: Path, escalation_id: str) -> Path:
     return _state_path(state_root, escalation_id).with_name("repair-context.json")
+
+
+def _sidecar_dir(state_root: Path) -> Path:
+    return state_root.with_name(f"{state_root.name}.d")
+
+
+def _reconciler_drift_findings(finding: Mapping[str, Any]) -> list[dict[str, Any]]:
+    incident_audit = (
+        finding.get("incident_audit")
+        if isinstance(finding.get("incident_audit"), Mapping)
+        else {}
+    )
+    audit_findings = incident_audit.get("findings") if isinstance(incident_audit, Mapping) else []
+    preserved: list[dict[str, Any]] = []
+    if not isinstance(audit_findings, Sequence):
+        return preserved
+    for item in audit_findings:
+        if not isinstance(item, Mapping):
+            continue
+        if str(item.get("code") or "") != "DRIFT_DETECTED":
+            continue
+        preserved.append(
+            {
+                "layer": str(item.get("layer") or ""),
+                "code": str(item.get("code") or ""),
+                "source_pair": str(item.get("source_pair") or ""),
+                "contradiction": str(item.get("contradiction") or ""),
+                "recommendation": str(item.get("recommendation") or ""),
+                "observed": dict(item.get("observed") or {})
+                if isinstance(item.get("observed"), Mapping)
+                else {},
+                "expected": dict(item.get("expected") or {})
+                if isinstance(item.get("expected"), Mapping)
+                else {},
+            }
+        )
+    return preserved
+
+
+def _append_l3_evidence(
+    state_root: Path,
+    *,
+    gate: Mapping[str, Any],
+    finding: Mapping[str, Any],
+    record: Mapping[str, Any],
+) -> Path:
+    payload: dict[str, Any] = {
+        "session": str(gate.get("session") or record.get("session") or ""),
+        "event": "l3_escalation_decision",
+        "escalation_id": str(gate.get("escalation_id") or record.get("escalation_id") or ""),
+        "plan": str(gate.get("plan") or record.get("plan") or ""),
+        "gate": str(record.get("gate") or gate.get("decision") or ""),
+        "decision": str(record.get("decision") or ""),
+        "reason": str(record.get("reason") or ""),
+        "repair_dispatched": bool(record.get("repair_dispatched") is True),
+        "repair_request_id": str(record.get("repair_request_id") or ""),
+        "managed_run_id": str(record.get("managed_run_id") or ""),
+        "managed_manifest_path": str(record.get("managed_manifest_path") or ""),
+        "reconciler_drift_findings": _reconciler_drift_findings(finding),
+        "resolver_state": dict(finding.get("resolver_state") or {})
+        if isinstance(finding.get("resolver_state"), Mapping)
+        else {},
+        "deterministic_superfixer_evidence": dict(
+            finding.get("deterministic_superfixer_evidence") or {}
+        )
+        if isinstance(finding.get("deterministic_superfixer_evidence"), Mapping)
+        else {},
+    }
+    if isinstance(record.get("reverification"), Mapping):
+        payload["reverification"] = dict(record.get("reverification") or {})
+    return append_escalation_record(_sidecar_dir(state_root), payload)
 
 
 def _default_trigger_runner(argv: Sequence[str]) -> TriggerResult:
@@ -405,6 +477,19 @@ def run_escalation_controller(
         for finding in findings:
             gate = classify_true_stall(finding, policy=selected)
             finding["l3_escalation_gate"] = gate
+
+            def finalize_record(record: dict[str, Any]) -> None:
+                finding["l3_escalation"] = record
+                record["repair_evidence_path"] = str(
+                    _append_l3_evidence(
+                        state_root,
+                        gate=gate,
+                        finding=finding,
+                        record=record,
+                    )
+                )
+                summary.append(record)
+
             if gate.get("decision") == "approval_required":
                 record = {
                     "escalation_id": gate["escalation_id"],
@@ -420,8 +505,7 @@ def run_escalation_controller(
                     "managed_manifest_path": "",
                     "corrective_path": dict(_mapping(gate.get("corrective_path"))),
                 }
-                finding["l3_escalation"] = record
-                summary.append(record)
+                finalize_record(record)
                 continue
             if launch_suppressed_by_existing_owner(finding):
                 ownership = finding.get("existing_agent_ownership") or {}
@@ -439,8 +523,7 @@ def run_escalation_controller(
                         ownership.get("healthy_aligned_run_ids") or [""]
                     )[0],
                 }
-                finding["l3_escalation"] = record
-                summary.append(record)
+                finalize_record(record)
                 continue
             escalation_id = str(gate["escalation_id"])
             if escalation_id in seen_escalations:
@@ -455,8 +538,7 @@ def run_escalation_controller(
                     "managed_run_id": "",
                     "managed_manifest_path": "",
                 }
-                finding["l3_escalation"] = record
-                summary.append(record)
+                finalize_record(record)
                 continue
             seen_escalations.add(escalation_id)
             path = _state_path(state_root, escalation_id)
@@ -492,8 +574,7 @@ def run_escalation_controller(
             if verification is not None:
                 record["reverification"] = verification
             if not dispatch["dispatch"]:
-                finding["l3_escalation"] = record
-                summary.append(record)
+                finalize_record(record)
                 continue
 
             context_path = _context_path(state_root, str(gate["escalation_id"]))
@@ -530,8 +611,7 @@ def run_escalation_controller(
                     policy=selected,
                 )
                 _atomic_json(path, state)
-                finding["l3_escalation"] = record
-                summary.append(record)
+                finalize_record(record)
                 continue
             request = queued.get("request") if isinstance(queued.get("request"), dict) else {}
             request_id = str(request.get("request_id") or "")
@@ -559,8 +639,7 @@ def run_escalation_controller(
                         "reason": "canonical trigger invocation was not configured",
                     }
                 )
-                finding["l3_escalation"] = record
-                summary.append(record)
+                finalize_record(record)
                 continue
 
             trigger = runner([*trigger_argv, "--request-id", request_id])
@@ -645,8 +724,7 @@ def run_escalation_controller(
                 session = str(gate.get("session") or "")
                 active_by_session[session] = active_by_session.get(session, 0) + 1
             _atomic_json(path, state)
-            finding["l3_escalation"] = record
-            summary.append(record)
+            finalize_record(record)
 
         # Healthy observations are still useful for independent re-verification,
         # but they can never create repair custody.

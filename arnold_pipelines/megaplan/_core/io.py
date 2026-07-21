@@ -1811,3 +1811,615 @@ def collect_git_diff_patch(project_dir: Path, base_ref: str | None = None) -> st
 def find_command(name: str) -> str | None:
     import arnold_pipelines.megaplan._core as _core_pkg
     return _core_pkg.shutil.which(name)
+
+
+# ---------------------------------------------------------------------------
+# Projection primitives (M9 — Rebuildable projections and liveness)
+# ---------------------------------------------------------------------------
+#
+# Shared projection infrastructure used by custody projections and later
+# rebuild registries. Every append is cursor-checked; rebuilds are atomic;
+# replay is deterministic; cursor mismatches preserve the prior projection.
+#
+# Storage layout::
+#
+#   <base_dir>/<projection_id>.projection.jsonl   — append-only event stream
+#   <snapshot_dir>/<projection_id>.snapshot.json   — atomic rebuild snapshot
+#   <snapshot_dir>/recovery/
+#     <projection_id>.pre-mismatch-*.snapshot.json — preserved prior projections
+
+_PROJECTION_HISTORY_SUFFIX = ".projection.jsonl"
+_PROJECTION_SNAPSHOT_SUFFIX = ".snapshot.json"
+_PROJECTION_TMP_SUFFIX = ".snapshot.tmp"
+_RECOVERY_DIRNAME = "recovery"
+
+
+# ── Canonical JSON helpers ─────────────────────────────────────────────────
+
+def _projection_canonical_dumps(obj: Any) -> str:
+    """Stable JSON serialization for projection records and cursors."""
+    return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _projection_canonical_bytes(obj: Any) -> bytes:
+    return _projection_canonical_dumps(obj).encode("utf-8")
+
+
+# ── Data types ─────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class ProjectionCursor:
+    """Immutable cursor representing the state of a source record ledger.
+
+    A cursor captures the identity of an accepted-source-record ledger at a
+    point in time — how many records it contains and its content digest —
+    so that projection appends can detect regressions (record-count decrease)
+    and rewrites (digest change under strict validation).
+    """
+
+    source_path: str
+    """Absolute path to the source record ledger."""
+
+    source_record_count: int
+    """Number of records observed in the source ledger."""
+
+    source_digest: str
+    """SHA-256 hex digest of the complete source ledger content (``sha256:...``)."""
+
+    computed_at: str
+    """ISO-8601 UTC timestamp when this cursor was computed."""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_path": self.source_path,
+            "source_record_count": self.source_record_count,
+            "source_digest": self.source_digest,
+            "computed_at": self.computed_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ProjectionCursor":
+        return cls(
+            source_path=str(data["source_path"]),
+            source_record_count=int(data["source_record_count"]),
+            source_digest=str(data["source_digest"]),
+            computed_at=str(data["computed_at"]),
+        )
+
+
+@dataclass
+class ProjectionRecord:
+    """A single event in a projection's append-only history.
+
+    Every record carries a semantic event type, a unique event identifier,
+    the event payload, an occurrence timestamp, an optional source cursor,
+    and an optional idempotency key for repeat detection.
+    """
+
+    event_type: str
+    """Semantic event type (e.g. ``snapshot_built``, ``append_cursor_checked``)."""
+
+    event_id: str
+    """Unique identifier for this event within the projection."""
+
+    payload: Mapping[str, Any]
+    """Arbitrary event payload (will be serialized as stable JSON)."""
+
+    occurred_at: str
+    """ISO-8601 UTC timestamp when the event occurred."""
+
+    cursor: ProjectionCursor | None = None
+    """Source cursor at the time of this event (None for cursor-less appends)."""
+
+    idempotency_key: str = ""
+    """Optional key for idempotent repeat detection."""
+
+    source_digest: str = ""
+    """SHA-256 digest of the serialized record for integrity verification."""
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "event_type": self.event_type,
+            "event_id": self.event_id,
+            "payload": dict(self.payload),
+            "occurred_at": self.occurred_at,
+        }
+        if self.cursor is not None:
+            data["cursor"] = self.cursor.to_dict()
+        if self.idempotency_key:
+            data["idempotency_key"] = self.idempotency_key
+        if self.source_digest:
+            data["source_digest"] = self.source_digest
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ProjectionRecord":
+        cursor_data = data.get("cursor")
+        cursor = ProjectionCursor.from_dict(cursor_data) if isinstance(cursor_data, dict) else None
+        return cls(
+            event_type=str(data["event_type"]),
+            event_id=str(data["event_id"]),
+            payload=dict(data.get("payload", {})),
+            occurred_at=str(data["occurred_at"]),
+            cursor=cursor,
+            idempotency_key=str(data.get("idempotency_key", "")),
+            source_digest=str(data.get("source_digest", "")),
+        )
+
+
+# ── Error types ────────────────────────────────────────────────────────────
+
+
+class ProjectionCursorMismatchError(RuntimeError):
+    """Raised when a projection append fails cursor validation.
+
+    The prior projection snapshot is preserved to ``recovery/`` before this
+    error is raised so the state is never lost.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        projection_id: str,
+        last_cursor: ProjectionCursor | None,
+        current_cursor: ProjectionCursor | None,
+        preserved_snapshot_path: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.projection_id = projection_id
+        self.last_cursor = last_cursor
+        self.current_cursor = current_cursor
+        self.preserved_snapshot_path = preserved_snapshot_path
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "error": str(self),
+            "projection_id": self.projection_id,
+        }
+        if self.last_cursor is not None:
+            result["last_cursor"] = self.last_cursor.to_dict()
+        if self.current_cursor is not None:
+            result["current_cursor"] = self.current_cursor.to_dict()
+        if self.preserved_snapshot_path is not None:
+            result["preserved_snapshot_path"] = self.preserved_snapshot_path
+        return result
+
+
+# ── Path helpers ───────────────────────────────────────────────────────────
+
+
+def projection_history_path(base_dir: Path, projection_id: str) -> Path:
+    """Return the path to the append-only projection history file.
+
+    ``<base_dir>/<projection_id>.projection.jsonl``
+    """
+    return base_dir / f"{projection_id}{_PROJECTION_HISTORY_SUFFIX}"
+
+
+def projection_snapshot_path(snapshot_dir: Path, projection_id: str) -> Path:
+    """Return the path to the atomic rebuild snapshot file.
+
+    ``<snapshot_dir>/<projection_id>.snapshot.json``
+    """
+    return snapshot_dir / f"{projection_id}{_PROJECTION_SNAPSHOT_SUFFIX}"
+
+
+def _projection_recovery_dir(snapshot_dir: Path) -> Path:
+    return snapshot_dir / _RECOVERY_DIRNAME
+
+
+def _projection_recovery_snapshot_path(
+    snapshot_dir: Path, projection_id: str, mismatch_at: str
+) -> Path:
+    """Path for a preserved prior-projection snapshot after cursor mismatch.
+
+    ``<snapshot_dir>/recovery/<projection_id>.pre-mismatch-<timestamp>.snapshot.json``
+    """
+    safe_ts = re.sub(r"[^0-9A-Za-z._-]", "_", mismatch_at)
+    return (
+        _projection_recovery_dir(snapshot_dir)
+        / f"{projection_id}.pre-mismatch-{safe_ts}{_PROJECTION_SNAPSHOT_SUFFIX}"
+    )
+
+
+# ── Source cursor computation ──────────────────────────────────────────────
+
+
+def _projection_cursor_from_path(source_path: Path) -> ProjectionCursor:
+    """Compute a :class:`ProjectionCursor` from the current state of *source_path*.
+
+    The cursor captures the absolute path, the number of records in the file
+    (newline-delimited), and the SHA-256 digest of the file content.
+    """
+    resolved = source_path.resolve()
+    if not resolved.exists():
+        return ProjectionCursor(
+            source_path=str(resolved),
+            source_record_count=0,
+            source_digest="sha256:" + hashlib.sha256(b"").hexdigest(),
+            computed_at=now_utc(),
+        )
+    content = resolved.read_bytes()
+    record_count = 0
+    if content:
+        # Count newline-delimited records (last empty line excluded)
+        record_count = content.count(b"\n")
+        if content and not content.endswith(b"\n"):
+            record_count += 1
+    return ProjectionCursor(
+        source_path=str(resolved),
+        source_record_count=record_count,
+        source_digest="sha256:" + hashlib.sha256(content).hexdigest(),
+        computed_at=now_utc(),
+    )
+
+
+# ── Cursor validation ──────────────────────────────────────────────────────
+
+
+def _validate_projection_cursor(
+    last_cursor: ProjectionCursor,
+    current_cursor: ProjectionCursor,
+    *,
+    strict_digest: bool = False,
+) -> bool:
+    """Validate that *current_cursor* is monotonic relative to *last_cursor*.
+
+    Returns ``True`` when the cursor is valid:
+
+    * ``current_cursor.source_record_count >= last_cursor.source_record_count``
+    * If *strict_digest* is ``True``, ``current_cursor.source_digest == last_cursor.source_digest``
+      (only checked when record counts are equal — a growing file always changes digest).
+
+    Returns ``False`` when either check fails.
+    """
+    if current_cursor.source_record_count < last_cursor.source_record_count:
+        return False
+    if strict_digest:
+        if current_cursor.source_digest != last_cursor.source_digest:
+            return False
+    return True
+
+
+# ── History loading ────────────────────────────────────────────────────────
+
+
+def load_projection_history(
+    base_dir: Path, projection_id: str
+) -> tuple[ProjectionRecord, ...]:
+    """Load all projection event records from the append-only history.
+
+    Returns an empty tuple when the history file does not exist or is empty.
+    """
+    path = projection_history_path(base_dir, projection_id)
+    if not path.exists():
+        return ()
+    records: list[ProjectionRecord] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        try:
+            records.append(ProjectionRecord.from_dict(data))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return tuple(records)
+
+
+def latest_projection_cursor(
+    base_dir: Path, projection_id: str
+) -> ProjectionCursor | None:
+    """Return the cursor from the most recent projection record, or ``None``.
+
+    Only considers records that carry a non-``None`` cursor.
+    """
+    history = load_projection_history(base_dir, projection_id)
+    for record in reversed(history):
+        if record.cursor is not None:
+            return record.cursor
+    return None
+
+
+# ── Atomic rebuild ─────────────────────────────────────────────────────────
+
+
+def rebuild_projection_atomically(
+    snapshot_dir: Path,
+    projection_id: str,
+    projection_data: Mapping[str, Any],
+    *,
+    cursor: ProjectionCursor | None = None,
+) -> Path:
+    """Atomically write a complete projection snapshot.
+
+    Writes to a temporary file then renames into place so consumers see either
+    the complete previous version or the complete new version — never a partial
+    write.
+
+    Parameters
+    ----------
+    snapshot_dir:
+        Directory that holds projection snapshots.
+    projection_id:
+        Unique identifier for this projection.
+    projection_data:
+        The complete projection data to persist.
+    cursor:
+        Optional source cursor to embed in the snapshot envelope.
+
+    Returns
+    -------
+    Path
+        The path to the written snapshot file.
+    """
+    snapshot_path = projection_snapshot_path(snapshot_dir, projection_id)
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+
+    envelope: dict[str, Any] = {
+        "projection_id": projection_id,
+        "schema_version": 1,
+        "built_at": now_utc(),
+        "data": dict(projection_data),
+    }
+    if cursor is not None:
+        envelope["cursor"] = cursor.to_dict()
+
+    payload = _projection_canonical_dumps(envelope) + "\n"
+
+    # Atomic temp-file + rename
+    tmp_path = snapshot_path.with_suffix(_PROJECTION_TMP_SUFFIX)
+    with tmp_path.open("w", encoding="utf-8") as fh:
+        fh.write(payload)
+        fh.flush()
+        _fsync_file_descriptor(fh.fileno())
+    tmp_path.replace(snapshot_path)
+    fsync_dir(snapshot_dir)
+    return snapshot_path
+
+
+# ── Append with cursor checking ────────────────────────────────────────────
+
+
+def append_projection_event(
+    base_dir: Path,
+    projection_id: str,
+    record: ProjectionRecord,
+    *,
+    source_path: Path | None = None,
+    flock: bool = True,
+    snapshot_dir: Path | None = None,
+) -> ProjectionRecord:
+    """Append a cursor-checked projection event to the append-only history.
+
+    When *source_path* is provided, the current accepted-source cursor is
+    computed and validated against the last recorded cursor.  If validation
+    fails, the prior projection snapshot is preserved to ``recovery/`` and
+    :class:`ProjectionCursorMismatchError` is raised.
+
+    The record is serialized as a single stable-JSON line and appended to
+    ``<base_dir>/<projection_id>.projection.jsonl``.
+
+    Parameters
+    ----------
+    base_dir:
+        Directory that holds projection history files.
+    projection_id:
+        Unique identifier for this projection.
+    record:
+        The projection event record to append (cursor will be filled in).
+    source_path:
+        Path to the accepted-source-record ledger for cursor computation.
+    flock:
+        Reserved for future fcntl-based serialization (currently unused).
+    snapshot_dir:
+        Directory holding projection snapshots (required for mismatch preservation).
+
+    Returns
+    -------
+    ProjectionRecord
+        The record as appended with cursor embedded.
+
+    Raises
+    ------
+    ProjectionCursorMismatchError
+        If the source cursor has regressed or (under strict mode) been rewritten.
+    """
+    # Compute current cursor if source_path is available
+    current_cursor: ProjectionCursor | None = None
+    if source_path is not None:
+        current_cursor = _projection_cursor_from_path(source_path)
+
+    # Validate against last cursor
+    if current_cursor is not None:
+        last_cursor = latest_projection_cursor(base_dir, projection_id)
+        if last_cursor is not None:
+            valid = _validate_projection_cursor(last_cursor, current_cursor)
+            if not valid:
+                # Preserve prior projection before raising
+                preserved_path = _preserve_prior_projection(
+                    snapshot_dir, projection_id
+                ) if snapshot_dir is not None else None
+                raise ProjectionCursorMismatchError(
+                    f"Projection cursor mismatch for '{projection_id}': "
+                    f"record_count {last_cursor.source_record_count} → {current_cursor.source_record_count}, "
+                    f"digest {last_cursor.source_digest[:16]}... → {current_cursor.source_digest[:16]}...",
+                    projection_id=projection_id,
+                    last_cursor=last_cursor,
+                    current_cursor=current_cursor,
+                    preserved_snapshot_path=str(preserved_path) if preserved_path is not None else None,
+                )
+
+    # Embed cursor into record
+    record.cursor = current_cursor
+
+    # Compute source digest of the record itself for integrity
+    canonical = _projection_canonical_dumps(record.to_dict())
+    record.source_digest = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    # Append to history file
+    history_path = projection_history_path(base_dir, projection_id)
+    base_dir.mkdir(parents=True, exist_ok=True)
+    line = canonical + "\n"
+    with history_path.open("a", encoding="utf-8") as fh:
+        fh.write(line)
+        fh.flush()
+        _fsync_file_descriptor(fh.fileno())
+    fsync_dir(base_dir)
+
+    return record
+
+
+def _preserve_prior_projection(
+    snapshot_dir: Path | None, projection_id: str
+) -> Path | None:
+    """Copy the current projection snapshot to recovery before a cursor mismatch.
+
+    Returns the recovery path if preservation was successful, ``None`` otherwise.
+    """
+    if snapshot_dir is None:
+        return None
+    snapshot_path = projection_snapshot_path(snapshot_dir, projection_id)
+    if not snapshot_path.exists():
+        return None
+    recovery_dir = _projection_recovery_dir(snapshot_dir)
+    recovery_dir.mkdir(parents=True, exist_ok=True)
+    dest = _projection_recovery_snapshot_path(snapshot_dir, projection_id, now_utc())
+    try:
+        shutil.copy2(snapshot_path, dest)
+        fsync_dir(recovery_dir)
+        return dest
+    except OSError:
+        return None
+
+
+# ── Deterministic replay ───────────────────────────────────────────────────
+
+
+def deterministic_projection_replay(
+    base_dir: Path,
+    projection_id: str,
+    *,
+    fold_fn: Callable[[dict[str, Any], ProjectionRecord], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Deterministically replay the projection history through a fold function.
+
+    Loads all projection records in append order and folds (reduces) them
+    through *fold_fn*.  The accumulator starts as an empty ``dict``.
+
+    When *fold_fn* is ``None``, a default identity fold is used that merges
+    each record's payload into the accumulator via ``{**acc, **record.payload}``.
+
+    Returns the final accumulated state.
+    """
+    history = load_projection_history(base_dir, projection_id)
+    accumulator: dict[str, Any] = {}
+
+    if fold_fn is None:
+        def _default_fold(acc: dict[str, Any], rec: ProjectionRecord) -> dict[str, Any]:
+            return {**acc, **dict(rec.payload)}
+        fold_fn = _default_fold
+
+    for record in history:
+        accumulator = fold_fn(accumulator, record)
+
+    return accumulator
+
+
+# ── Cursor-mismatch recovery ───────────────────────────────────────────────
+
+
+def recover_projection_from_cursor_mismatch(
+    snapshot_dir: Path,
+    projection_id: str,
+    *,
+    source_path: Path | None = None,
+) -> dict[str, Any]:
+    """Attempt to recover from a cursor mismatch using preserved prior snapshots.
+
+    Searches ``<snapshot_dir>/recovery/`` for the most recent preserved
+    pre-mismatch snapshot for *projection_id* and restores it.
+
+    Returns a diagnostic dict with keys:
+
+    * ``status`` — ``"recovered"``, ``"no_snapshot"``, or ``"empty_snapshot"``
+    * ``snapshot_path`` — path to the restored snapshot (if recovered)
+    * ``cursor`` — cursor from the restored snapshot (if available)
+    * ``diagnostics`` — list of human-readable diagnostic messages
+    """
+    diagnostics: list[str] = []
+    recovery_dir = _projection_recovery_dir(snapshot_dir)
+
+    if not recovery_dir.is_dir():
+        return {
+            "status": "no_snapshot",
+            "snapshot_path": None,
+            "cursor": None,
+            "diagnostics": ["No recovery directory exists — nothing to recover from."],
+        }
+
+    # Find most recent pre-mismatch snapshot for this projection
+    prefix = f"{projection_id}.pre-mismatch-"
+    candidates = sorted(
+        p
+        for p in recovery_dir.iterdir()
+        if p.is_file()
+        and p.name.startswith(prefix)
+        and p.suffix == ".json"
+    )
+    if not candidates:
+        return {
+            "status": "no_snapshot",
+            "snapshot_path": None,
+            "cursor": None,
+            "diagnostics": [
+                f"No preserved snapshots found for '{projection_id}' in {recovery_dir}"
+            ],
+        }
+
+    source_path = candidates[-1]  # Most recent (sorted lexicographically by timestamp)
+    diagnostics.append(f"Found preserved snapshot: {source_path}")
+
+    try:
+        envelope = json.loads(source_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return {
+            "status": "empty_snapshot",
+            "snapshot_path": str(source_path),
+            "cursor": None,
+            "diagnostics": [f"Failed to read preserved snapshot {source_path}: {exc}"],
+        }
+
+    if not isinstance(envelope, dict) or not envelope.get("data"):
+        return {
+            "status": "empty_snapshot",
+            "snapshot_path": str(source_path),
+            "cursor": None,
+            "diagnostics": [f"Preserved snapshot {source_path} is empty or malformed."],
+        }
+
+    # Restore the snapshot
+    data = envelope.get("data", {})
+    cursor_data = envelope.get("cursor")
+    cursor = (
+        ProjectionCursor.from_dict(cursor_data)
+        if isinstance(cursor_data, dict)
+        else None
+    )
+
+    rebuild_projection_atomically(snapshot_dir, projection_id, data, cursor=cursor)
+    diagnostics.append(f"Restored projection '{projection_id}' from {source_path}")
+
+    return {
+        "status": "recovered",
+        "snapshot_path": str(source_path),
+        "cursor": cursor.to_dict() if cursor is not None else None,
+        "diagnostics": diagnostics,
+    }

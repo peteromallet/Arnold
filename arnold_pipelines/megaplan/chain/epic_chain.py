@@ -29,6 +29,13 @@ from arnold_pipelines.megaplan.chain.spec import (
     load_runtime_policy,
     load_spec,
 )
+from arnold_pipelines.megaplan.chain.wbc import (
+    ChainWbcRule,
+    EPIC_PROGRESS_SURFACE,
+    EPIC_PROGRESS_WRITER_ID,
+    record_chain_wbc_evidence,
+    validate_chain_wbc_transition,
+)
 from arnold_pipelines.megaplan.chain.status import classify_chain_status
 from arnold_pipelines.megaplan.planning.state import (
     STATE_ABORTED,
@@ -705,7 +712,6 @@ def run_epic_chain(
     one: bool = False,
     start_child: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> dict[str, Any]:
-    del root
     spec = load_epic_chain_spec(spec_path)
     state = load_epic_chain_state(spec_path)
     prefix = _completed_prefix_epic_index(spec, state)
@@ -750,6 +756,39 @@ def run_epic_chain(
             handoff_verified = _verify_handoff(
                 spec, idx, child, parent_spec_path=spec_path
             )
+            completion_evidence = validate_chain_wbc_transition(
+                writer_id=EPIC_PROGRESS_WRITER_ID,
+                surface_name=EPIC_PROGRESS_SURFACE,
+                transition_name="epic_child_complete",
+                subject=epic.id,
+                source_path=spec_path,
+                project_dir=root,
+                rules=(
+                    ChainWbcRule(
+                        "child_status",
+                        "complete",
+                        child.effective_status,
+                        child.effective_status == "complete",
+                    ),
+                    ChainWbcRule(
+                        "observed_spec_exists",
+                        True,
+                        child.observed_spec_path.exists(),
+                        child.observed_spec_path.exists(),
+                    ),
+                ),
+                extra={
+                    "child_spec_path": str(child.spec_path),
+                    "observed_spec_path": str(child.observed_spec_path),
+                    "child_state_path": str(child.state_path),
+                    "handoff_verified": handoff_verified,
+                },
+            )
+            record_chain_wbc_evidence(
+                state.metadata,
+                entry_key=f"epic_complete:{epic.id}:{idx}",
+                evidence=completion_evidence,
+            )
             if epic.id not in _completed_epic_ids(state):
                 state.completed.append(
                     {
@@ -782,6 +821,37 @@ def run_epic_chain(
                 )
             continue
         if child.effective_status == "not_started":
+            launch_evidence = validate_chain_wbc_transition(
+                writer_id=EPIC_PROGRESS_WRITER_ID,
+                surface_name=EPIC_PROGRESS_SURFACE,
+                transition_name="epic_child_launch",
+                subject=epic.id,
+                source_path=spec_path,
+                project_dir=root,
+                rules=(
+                    ChainWbcRule(
+                        "child_status",
+                        "not_started",
+                        child.effective_status,
+                        child.effective_status == "not_started",
+                    ),
+                    ChainWbcRule(
+                        "child_spec_exists",
+                        True,
+                        child.spec_path.exists(),
+                        child.spec_path.exists(),
+                    ),
+                ),
+                extra={
+                    "child_spec_path": str(child.spec_path),
+                    "observed_spec_path": str(child.observed_spec_path),
+                },
+            )
+            record_chain_wbc_evidence(
+                state.metadata,
+                entry_key=f"epic_launch:{epic.id}:{idx}",
+                evidence=launch_evidence,
+            )
             writer(f"[epic-chain] launching child epic {epic.id}\n")
             proc = start_child(epic, parent_spec_path=spec_path)
             if proc.returncode != 0:

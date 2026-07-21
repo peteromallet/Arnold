@@ -8,6 +8,10 @@ request shape used by terminal lifecycle handling, and asks
 
 It never edits plan or chain state, and a deterministic receipt prevents the
 same evidence cursor from being manually dispatched twice.
+
+M7 shadow validation is wired into ``trigger_once`` before the subprocess
+dispatch so that stale-authority paths are diagnosed before the trigger binary
+is invoked.  Production enforcement is always disabled.
 """
 
 from __future__ import annotations
@@ -25,6 +29,15 @@ from typing import Any
 
 from arnold_pipelines.megaplan.cloud import feature_flags, repair_requests
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+
+# ── M7 shadow validator import (enforcement always disabled) ────────────────
+try:
+    from arnold_pipelines.megaplan.custody.action_validator import (
+        validate_action_boundary_simple,
+    )
+    _M7_VALIDATOR_AVAILABLE = True
+except ImportError:
+    _M7_VALIDATOR_AVAILABLE = False
 
 
 RECEIPT_SCHEMA = "arnold-manual-repair-trigger-v1"
@@ -88,13 +101,42 @@ def _evidence_cursor(state: Mapping[str, Any], failure: Mapping[str, Any]) -> di
     return {}
 
 
-def _receipt_id(*, session: str, plan: str, history_index: int, artifact_hash: str) -> str:
+def _receipt_id(
+    *,
+    session: str,
+    plan: str,
+    history_index: int,
+    artifact_hash: str,
+    repair_identity_key: str = "",
+) -> str:
     encoded = json.dumps(
-        [session, plan, history_index, artifact_hash],
+        [session, plan, history_index, artifact_hash, repair_identity_key],
         separators=(",", ":"),
         ensure_ascii=True,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _quarantine_receipt(
+    *,
+    receipt_path: Path,
+    receipt: dict[str, Any],
+    reason: str,
+    observed_repair_identity: Mapping[str, Any] | None = None,
+) -> Path:
+    quarantine_dir = receipt_path.parent / "quarantine"
+    quarantine_path = quarantine_dir / receipt_path.name
+    quarantined = dict(receipt)
+    quarantined["status"] = "quarantined"
+    quarantined["completed_at"] = _utc_now()
+    quarantined["quarantine_reason"] = reason
+    quarantined["observed_repair_identity"] = dict(observed_repair_identity or {})
+    _write_json_atomic(quarantine_path, quarantined)
+    try:
+        receipt_path.unlink()
+    except FileNotFoundError:
+        pass
+    return quarantine_path
 
 
 def _write_json_atomic(path: Path, payload: Mapping[str, Any], *, exclusive: bool = False) -> None:
@@ -140,6 +182,102 @@ def _dispatch_event(stdout: str, request_id: str) -> dict[str, Any] | None:
     return None
 
 
+# ── M7 shadow validator helper (T15) ────────────────────────────────────────
+
+
+def _shadow_validate_manual_trigger_boundary(
+    *,
+    session: str,
+    plan: str,
+    expected_history_index: int,
+    expected_artifact_hash: str,
+    request_id: str,
+) -> dict[str, Any]:
+    """Run the M7 shadow validator before manual repair trigger dispatch (non-blocking).
+
+    Builds a best-effort ``CustodyTargetKey`` from the manual trigger context,
+    calls ``validate_action_boundary_simple`` with ``action_type=\"repair\"``,
+    and returns typed conflict/fence/reconcile diagnostics.  Never raises —
+    all errors are captured as diagnostic metadata.
+
+    Production enforcement is always disabled; this is a shadow-only call.
+    """
+    if not _M7_VALIDATOR_AVAILABLE:
+        return {
+            "m7_validator_available": False,
+            "reason": "action_validator module not importable",
+        }
+
+    import hashlib as _hashlib
+
+    try:
+        target_dict = {
+            "environment": "manual-trigger",
+            "session": session or "unknown",
+            "chain": plan or "unknown",
+            "plan_revision": plan or "unknown",
+            "phase": "manual_trigger",
+            "task": request_id or "unknown",
+            "attempt": str(expected_history_index),
+            "normalized_failure_kind": "manual_trigger",
+            "blocker_or_phase_result_hash": _hashlib.sha256(
+                f"{session}:{plan}:{expected_artifact_hash}".encode("utf-8")
+            ).hexdigest()[:16],
+            "fence": str(expected_history_index),
+        }
+
+        result = validate_action_boundary_simple(
+            action_type="repair",
+            target=target_dict,
+            run_authority_grant_id="manual-trigger-grant",
+            coordinator_fence_token=expected_history_index,
+            wbc_attempt_reference=request_id,
+        )
+
+        typed_events: list[dict[str, Any]] = []
+        for check in result.checks:
+            outcome = check.outcome.value
+            if outcome == "conflict":
+                typed_events.append({
+                    "event_type": "conflict",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+            elif outcome == "fenced":
+                typed_events.append({
+                    "event_type": "fence",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+            elif outcome in ("stale", "expired"):
+                typed_events.append({
+                    "event_type": "reconcile",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+
+        return {
+            "m7_validator_available": True,
+            "gate_result": result.gate_result.value,
+            "enforcement_enabled": result.enforcement_enabled,
+            "shadow_mode": result.is_shadow,
+            "typed_events": typed_events,
+            "checks_summary": {
+                c.source: c.outcome.value for c in result.checks
+            },
+            "validated_at": result.validated_at,
+        }
+    except Exception as exc:
+        return {
+            "m7_validator_available": True,
+            "error": f"{type(exc).__name__}: {exc}",
+            "typed_events": [],
+        }
+
+
 def trigger_once(
     *,
     session: str,
@@ -152,6 +290,7 @@ def trigger_once(
     trigger_bin: Path = Path("/usr/local/bin/arnold-repair-trigger"),
     target_resolver: Callable[..., dict[str, Any]] = resolve_current_target,
     command_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    repair_requests_enqueue: Callable[..., dict[str, Any]] = repair_requests.enqueue_repair_request,
 ) -> dict[str, Any]:
     """Validate, enqueue, and dispatch one exact canonical repair request."""
 
@@ -226,16 +365,34 @@ def trigger_once(
         "blocked_task_id": _blocked_task_id(metadata),
     }
     root_cause_hint = _text(failure.get("message")) or "plan entered a blocked terminal state"
+    repair_identity = repair_requests.derive_repair_identity(
+        session=session,
+        problem_signature=problem_signature,
+        target={
+            "plan_dir": str(plan_path.parent),
+            "plan_name": plan,
+            "workspace_path": str(workspace),
+            "remote_spec": remote_spec,
+            "evidence_cursor": dict(cursor),
+            "phase": _text(failure.get("phase")),
+            "task_id": _blocked_task_id(metadata),
+        },
+        plan_state=state,
+        current_target=target,
+    )
+    repair_identity_key = repair_requests.repair_identity_key(repair_identity)
     request_id = repair_requests.request_id_for(
         session=session,
         problem_signature=problem_signature,
         root_cause_hint=root_cause_hint,
+        repair_identity=repair_identity,
     )
     receipt_id = _receipt_id(
         session=session,
         plan=plan,
         history_index=expected_history_index,
         artifact_hash=artifact_hash,
+        repair_identity_key=repair_identity_key,
     )
     receipt_path = queue_root / RECEIPT_DIR_NAME / f"{receipt_id}.json"
     started_at = _utc_now()
@@ -251,13 +408,15 @@ def trigger_once(
         },
         "plan_state_fingerprint": _text(plan_summary.get("fingerprint")),
         "request_id": request_id,
+        "repair_identity": repair_identity or {},
+        "repair_identity_key": repair_identity_key,
         "queue_root": str(queue_root),
         "trigger_bin": str(trigger_bin),
     }
     _write_json_atomic(receipt_path, receipt, exclusive=True)
 
     try:
-        queued = repair_requests.enqueue_repair_request(
+        queued = repair_requests_enqueue(
             queue_root=queue_root,
             marker_dir=marker_dir,
             session=session,
@@ -270,15 +429,41 @@ def trigger_once(
                 "workspace_path": str(workspace),
                 "remote_spec": remote_spec,
                 "evidence_cursor": dict(cursor),
+                "phase": _text(failure.get("phase")),
+                "task_id": _blocked_task_id(metadata),
             },
             problem_signature=problem_signature,
             root_cause_hint=root_cause_hint,
+            repair_identity=repair_identity,
+            plan_state=state,
+            current_target=target,
         )
         queued_request = _mapping(queued.get("request"))
         if _text(queued_request.get("request_id")) != request_id:
             raise ManualRepairTriggerError("canonical queue returned a different request identity")
+        queued_identity_key = _text(queued_request.get("repair_identity_key"))
+        if repair_identity_key and queued_identity_key != repair_identity_key:
+            quarantine_path = _quarantine_receipt(
+                receipt_path=receipt_path,
+                receipt=receipt,
+                reason="manual trigger repair identity mismatched the queued request",
+                observed_repair_identity=_mapping(queued_request.get("repair_identity")),
+            )
+            raise ManualRepairTriggerError(
+                f"manual trigger receipt quarantined due to repair identity mismatch: {quarantine_path}"
+            )
         if queued.get("status") not in {"queued", "coalesced"}:
             raise ManualRepairTriggerError(f"repair request was not accepted: {queued.get('status')}")
+
+        # ── M7 shadow validation before subprocess dispatch (T15) ──────────
+        m7_shadow = _shadow_validate_manual_trigger_boundary(
+            session=session,
+            plan=plan,
+            expected_history_index=expected_history_index,
+            expected_artifact_hash=artifact_hash,
+            request_id=request_id,
+        )
+        receipt["m7_shadow_validation"] = m7_shadow
 
         command = [
             str(trigger_bin),

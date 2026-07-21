@@ -74,6 +74,7 @@ from arnold.pipeline.types import (
 )
 from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.execution.operations import NullOperationRegistry, OperationRegistry
+from arnold.workflow.native_wbc import begin_native_wbc_attempt
 
 
 def _global_runtime_kill_switch() -> RuntimeOwner | None:
@@ -135,6 +136,18 @@ def _run_native_dispatched(
     from arnold.pipeline.native.ir import NativeProgram
     from arnold.pipeline.native.runtime import run_native_pipeline
 
+    attempt = begin_native_wbc_attempt(
+        envelope.artifact_root,
+        producer_family="arnold_pipeline",
+        surface="executor.native_dispatch",
+        run_id=envelope.run_id,
+        plugin_id=envelope.plugin_id,
+        manifest_hash=envelope.manifest_hash,
+        subject={"entry": pipeline.entry, "resume": resume},
+        metadata={"native_bundle": type(native_bundle).__name__},
+        start_payload={"resume": resume},
+    )
+
     # ``pipeline.native_program`` is the primary contract.  Bare
     # NativeProgram resource bundles remain supported for transitional
     # callers that predate the field.
@@ -153,14 +166,50 @@ def _run_native_dispatched(
     if human_input is not None:
         kwargs["human_input"] = human_input
     if isinstance(native_bundle, NativeProgram):
-        return run_native_pipeline(native_bundle, **kwargs)
+        try:
+            attempt.effect(
+                "dispatch_runtime",
+                {"mode": "program", "program": native_bundle.name, "resume": resume},
+            )
+            result = run_native_pipeline(native_bundle, **kwargs)
+        except BaseException as exc:
+            attempt.terminal(
+                status="failed",
+                outcome="error",
+                payload={"error_type": exc.__class__.__name__, "error": str(exc)},
+            )
+            raise
+        attempt.terminal(
+            status="completed",
+            outcome="result",
+            payload={"result_type": type(result).__name__},
+        )
+        return result
 
     # Runner adapter path: forward the full
     # caller context so adapters can reconstruct pipeline-specific context.
     kwargs["program"] = program
     kwargs.setdefault("schema_registry", None)
     kwargs["initial_context"] = initial_context
-    return native_bundle.run_native_pipeline(**kwargs)
+    try:
+        attempt.effect(
+            "dispatch_runtime",
+            {"mode": "adapter", "adapter": type(native_bundle).__name__, "resume": resume},
+        )
+        result = native_bundle.run_native_pipeline(**kwargs)
+    except BaseException as exc:
+        attempt.terminal(
+            status="failed",
+            outcome="error",
+            payload={"error_type": exc.__class__.__name__, "error": str(exc)},
+        )
+        raise
+    attempt.terminal(
+        status="completed",
+        outcome="result",
+        payload={"result_type": type(result).__name__},
+    )
+    return result
 
 
 def _resolve_executor_marker(
@@ -565,6 +614,17 @@ def run_pipeline_resume(
     (merged into state before the walk, so the entry stage sees them via
     :func:`_build_ctx`).
     """
+    attempt = begin_native_wbc_attempt(
+        envelope.artifact_root,
+        producer_family="arnold_pipeline",
+        surface="executor.resume",
+        run_id=envelope.run_id,
+        plugin_id=envelope.plugin_id,
+        manifest_hash=envelope.manifest_hash,
+        subject={"entry": pipeline.entry},
+        metadata={"entrypoint": "arnold.pipeline.executor.run_pipeline_resume"},
+    )
+
     # ── Resolve cursor ──────────────────────────────────────────────────
     if resume_cursor is None:
         cursor_data: "dict[str, Any] | None" = read_resume_cursor(envelope.artifact_root)
@@ -582,6 +642,10 @@ def run_pipeline_resume(
         input_val = cursor_data.get("input")
         if isinstance(input_val, dict):
             cursor_input = input_val
+    attempt.effect(
+        "resume_cursor_loaded",
+        {"stage": entry_stage, "cursor_present": cursor_data is not None},
+    )
 
     # ── Reconstruct state via event journal fold ────────────────────────
     events = read_event_journal(envelope.artifact_root)
@@ -615,7 +679,7 @@ def run_pipeline_resume(
     if _should_dispatch_native(pipeline, marker):
         native_bundle = _find_native_bundle(pipeline)
         if native_bundle is not None:
-            return _run_native_dispatched(
+            result = _run_native_dispatched(
                 pipeline,
                 native_bundle,
                 initial_state=merged,
@@ -625,6 +689,12 @@ def run_pipeline_resume(
                 schema_registry=schema_registry,
                 human_input=human_input,
             )
+            attempt.terminal(
+                status="completed",
+                outcome="native_resume",
+                payload={"result_type": type(result).__name__},
+            )
+            return result
 
     wrapped_hooks = _wrap_resume_reverify_hooks(
         hooks=_hooks,
@@ -633,7 +703,7 @@ def run_pipeline_resume(
         schema_registry=schema_registry,
     )
 
-    return _step_at(
+    result = _step_at(
         pipeline=pipeline,
         initial_state=merged,
         envelope=envelope,
@@ -643,6 +713,12 @@ def run_pipeline_resume(
         initial_context=initial_context,
         entry_override=entry_stage,
     )
+    attempt.terminal(
+        status="completed",
+        outcome="graph_resume",
+        payload={"result_type": type(result).__name__, "entry_stage": entry_stage},
+    )
+    return result
 
 
 def _step_at(

@@ -1,7 +1,8 @@
 ---
 type: research
-date: 2026-07-14
-schema: custody-control-plane-wbc-boundary-inventory-v1
+date: 2026-07-21
+schema: custody-control-plane-wbc-boundary-inventory-v2
+m9_updated: true
 ---
 
 # Maintained WBC boundary adoption matrix
@@ -23,6 +24,128 @@ declared-only, and 9 unknown contracts. Its 76-entry support manifest therefore
 cannot establish universal runtime adoption. M6 must replace this observational
 baseline with exact landed/source/editable/runtime proof and must reject the old
 four-milestone cloud terminal label as completion of the current C1-C6 chain.
+
+## M9 consumer/projection migration evidence (Step 14 — T23)
+
+This section records the reader inventory and adoption evidence generated during
+M9 Steps 1–13 (T1–T22). Every consumer listed below has been migrated to
+canonical WBC queries with exact source-cursor vectors. Display-only projections
+carry `evidence_extracted_non_authoritative` or `evidence_extracted_display_only`
+authority markers and cannot feed dispatch, completion, cancellation,
+publication, or delivery.
+
+### Canonical WBC query facade (T1–T2)
+- **`arnold/workflow/wbc_queries.py`** — typed read-only facade over
+  `AttemptLedgerStore`/`SqliteAttemptLedgerStore`. Returns immutable envelopes
+  (`WbcStartEnvelope`, `WbcTerminalEnvelope`, `WbcLedgerEnvelope`,
+  `WbcGapEnvelope`, `WbcSourceCursorEnvelope`) with `GateStatus`
+  (`VERIFIED`/`INCOMPLETE`/`INDETERMINATE`/`INCOHERENT`). No second authority
+  store. Exported from `arnold/workflow/__init__.py`. 43 focused tests pass.
+
+### Projection primitives (T3–T4)
+- **`arnold_pipelines/megaplan/_core/io.py`** — 14 shared primitives:
+  `ProjectionCursor`, `ProjectionRecord`, `ProjectionCursorMismatchError`,
+  deterministic serialization (`_projection_canonical_dumps`), atomic
+  append/replay/rebuild, monotonic cursor validation, mismatch preservation.
+  72 focused tests pass.
+
+### Custody projections (T5)
+- **`arnold_pipelines/megaplan/custody/projections.py`** — stabilized against
+  `_core/io.py` primitives. 52 focused tests: append, replay, rebuild, cursor
+  mismatch, recovery snapshots, source-cursor validation, batch append,
+  non-authoritative outputs, store lifecycle, event types. All custody
+  projection outputs are non-authoritative.
+
+### Rebuild registry (T6)
+- **`arnold_pipelines/megaplan/observability/projection_rebuild.py`** —
+  `ProjectionRegistry` for in-scope projection builders, source cursor vectors,
+  ordered view digesting, delete/rebuild comparison. Never mutates source
+  evidence. 45 focused tests pass.
+
+### Run-state model with M9 dimensions (T7–T8)
+- **`arnold_pipelines/megaplan/run_state/model.py`** — extended with
+  `FailureTokenKind`, `NormalizedFailureToken`, `WbcEvidenceRef`,
+  `RunAuthorityRef`, `CustodyRef`, `UncertaintyLevel`. Seven M9 fields added to
+  `CanonicalRunState` (failure_token, wbc_refs, run_authority_ref, custody_ref,
+  freshness_seconds, lag_seconds, uncertainty). Stable to_dict/from_dict
+  round-trips.
+- **`arnold_pipelines/megaplan/run_state/classifiers.py`** — normalized failure
+  token extraction from chain_state/plan_state/run_metadata evidence. Pure
+  read-only resolver. 36 focused tests pass.
+
+### Status/CLI projection migration (T9)
+- **`arnold_pipelines/megaplan/status_projection.py`** — threaded exact source
+  cursor vectors and canonical WBC query inputs. 40 display-fallback authority
+  tests prove display cannot feed dispatch/completion/cancellation/publication/
+  delivery.
+- **`arnold_pipelines/megaplan/cli/status_view.py`** and
+  **`cli/projection.py`** — migrated to canonical inputs. Review/rework behavior
+  preserved from commit `07f428d361f63c465b0dafaca9783585efeaa4b9`.
+
+### Chain status WBC authority (T10)
+- **`arnold_pipelines/megaplan/chain/status.py`** — terminal and completion
+  status reads derive from canonical WBC terminal/gap queries. Drift records
+  emitted when live active attempts invalidate stale terminal labels. Legacy
+  chain JSON is compatibility projection only. 25 focused tests pass.
+
+### CHAIN-01 enforcement and warn-only audit (T11–T14)
+- **CHAIN-01** (`_latest_execution_batch_all_tasks_done` in chain/__init__.py)
+  is the sole enforced positive-authorization route. 22 warn-only routes, 1
+  informational, 5 deferred. All 29 AUTHORITY_ROUTES have traceable
+  dispositions. Zero new failures vs recorded baseline across all verification
+  steps.
+
+### Cloud status/target/blocker migration (T15–T16)
+- **`arnold_pipelines/megaplan/cloud/status_snapshot.py`** and
+  **`status_format.py`** — migrated from marker/watchdog/report/plan-state
+  authority reads to canonical query projections. Stale/degraded display fields
+  preserved as structured evidence gaps.
+- **`arnold_pipelines/megaplan/cloud/current_target.py`** and
+  **`human_blockers.py`** — canonical query projections with typed evidence
+  gaps. Same-input agreement tests against CLI, cloud status, and resident
+  outputs. 41+26+82 = 149 focused tests pass.
+
+### Watchdog liveness correlation (T17)
+- **`arnold_pipelines/megaplan/watchdog/processes.py`**,
+  **`correlate.py`**, **`snapshot.py`** — process/tmux/heartbeat/activity facts
+  are correlated evidence only. `classify_worker_liveness` returns
+  matched/recycled/hung/dead/unrelated; every non-matched class maps to
+  `RUNNER_UNKNOWN` or `RUNNER_LOST`. Never success/repair/complete/verified.
+  56 focused tests pass.
+
+### Repair dispatch identity (T18–T19)
+- **`arnold_pipelines/megaplan/cloud/repair_requests.py`** — `RepairDispatchIdentity`
+  frozen dataclass binding environment/session/chain/plan_revision/phase/task/
+  attempt/normalized_failure_kind/dispatch_digest_kind/dispatch_digest/
+  coordinator_fence_token with provenance.
+- **`arnold_pipelines/megaplan/cloud/repair_contract.py`** and
+  **`repair_revalidation.py`** — require source rereads before repair, retry,
+  escalation, cancellation, or adoption. 66 focused tests pass.
+
+### Projection rebuild metadata (T21–T22)
+- **`arnold_pipelines/megaplan/schema_projection.py`**,
+  **`capsule_projection.py`**, **`strategy/projection.py`** — rebuild metadata
+  (source cursor, freshness/lag, digest) added to deterministic reducers.
+  Reducers kept pure; side effects moved outside rebuild paths. 55+50 = 105
+  focused tests pass.
+- **`arnold_pipelines/megaplan/prompts/_projection.py`**,
+  **`workers/_projection_caps.py`**,
+  **`orchestration/advisory_projection.py`** — rebuild metadata, freshness/lag
+  fields, digest calculation. Reducers pure and side-effect-free. 50 focused
+  tests pass.
+
+### Resident/Discord display verification (T20)
+- Resident views (`currently_running_command`, `status_tree`,
+  `discord_adapter`) verified as display-only. 53 tests pass. No new failures
+  vs recorded baseline.
+
+### Cross-surface test baseline
+- **428 tests** across M9 foundation+consumer+projection surface: all pass.
+- **`tests/arnold/workflow/`**: 1380 passed / 9 failed — exact match to recorded
+  pre-existing baseline (canonical_megaplan_conformance, native_wbc_adoption,
+  source_compiler_api×4, static_scans×3 — none touch wbc_queries.py or M9
+  projection code).
+- `python -m compileall arnold arnold_pipelines tests` — clean, zero errors.
 
 ## Generated artifact and completion equation
 
@@ -131,14 +254,62 @@ read-only, expiring historical-adapter row:
 - a contract marked supported with no implementation commit, static call-site
   case, captured runtime trace, positive test, and negative bypass case.
 
+## M9 historical adapter retirements
+
+As of M9 Step 14 (T23), the following six M8-expiry historical adapters are
+marked **non-authoritative** with **zero-reader gates** and **retired** status:
+
+| Adapter ID | Adapter Class | Expired At | Reader Name | Zero-Reader Gate |
+| --- | --- | --- | --- | --- |
+| `legacy-bakeoff-state-reader` | raw_json | M8→M9 | Bakeoff State Consumer | No dispatch, completion, or lifecycle authority permitted |
+| `legacy-chain-state-reader` | raw_json | M8→M9 | Chain State Consumer | No dispatch, completion, or lifecycle authority permitted |
+| `legacy-heartbeat-state-reader` | raw_json | M8→M9 | Heartbeat State Consumer | No dispatch, completion, or lifecycle authority permitted |
+| `legacy-repair-lock-reader` | process | M8→M9 | Repair Lock Consumer | No dispatch, completion, or lifecycle authority permitted |
+| `legacy-status-snapshot-reader` | raw_json | M8→M9 | Cloud Status Snapshot Consumer | No dispatch, completion, or lifecycle authority permitted |
+| `legacy-supervisor-state-reader` | raw_json | M8→M9 | Supervisor State Consumer | No dispatch, completion, or lifecycle authority permitted |
+
+Six M9-expiry adapters (`historical-filename-reader`, `historical-marker-reader`,
+`historical-mutable-receipt-reader`, `historical-process-reader`,
+`historical-prose-reader`, `historical-token-reader`) remain compatible through
+M9 with read-only diagnostic-only shadow mode. They expire at M9 completion.
+
+All retired adapters have `supported_versions: ["retired"]`,
+`non_authoritative: true`, and `zero_reader_gate` active. The zero-reader gate
+prohibits reads by any dispatch, completion, cancellation, publication, delivery,
+repair, or lifecycle-transition path. Only evidence-extracted non-authoritative
+historical references remain permitted for traceability until deletion.
+
+## Persistence and migration coverage (M9)
+
+The `evidence/wbc-boundary-inventory.json` now classifies all 551 rows with
+typed `persistence_coverage` and `migration_coverage` fields:
+
+- **Persistence coverage:** 0 coherent / 551 indeterminate / 0 incoherent
+- **Migration coverage:** 0 coherent / 551 indeterminate / 0 incoherent
+
+Rows are typed `indeterminate` when they lack canonical WBC query/projection
+coverage with exact source-cursor vectors. Rows become `coherent` only when
+verified via canonical WBC queries. No row is typed `incoherent` (identity
+or cursor disagreement) at this stage. The conservative indeterminate posture
+reflects that M9 consumer migration is in progress; M10 and M11 will move
+indeterminate rows to coherent through runtime trace and cross-contract
+acceptance evidence.
+
 ## Milestone gates
 
 - **M6:** bind the final landed WBC revision and runtime vector; generate the
   exact inventory and classify every row. Unknown or missing proof blocks.
+  **COMPLETE.**
 - **M6A:** make the WBC store/API, payload policy and migrations operational.
+  **COMPLETE.**
 - **M8:** migrate every producer/writer family and attach static plus runtime
-  evidence to each row. No “residual only” or manifest-proven exemption.
+  evidence to each row. No "residual only" or manifest-proven exemption.
+  **COMPLETE.**
 - **M9:** migrate every consumer/projection/retention operational surface.
+  **IN PROGRESS** — Steps 1–13 (T1–T22) complete. Step 14 (T23) retires
+  M8-expiry adapters and classifies persistence/migration coverage.
+  Steps 15+ (T24–T36) pending: work-ledger, auditor reasons, gate wrapper
+  bypasses, and final validation.
 - **M10:** prove crash, failure injection, effect reconciliation, replay,
   cancellation/resume and cross-host recovery behavior.
 - **M11:** run cross-contract and mixed-version acceptance, prove exact static

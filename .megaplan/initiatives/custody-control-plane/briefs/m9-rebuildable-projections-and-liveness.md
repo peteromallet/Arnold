@@ -185,6 +185,30 @@ drift and deterministic-reason evidence, joined latency/work ledger, observer-
 purity proof, false-liveness fixtures, compatibility expiry map, and rollout
 shadow/idle-canary comparisons.
 
+## F01–F17 amendment contract
+
+This milestone is the primary owner for F05, F14, and F16; it supplies F06
+consumer/rebuild acceptance and R3's joined telemetry. M7 owns the F06 writer,
+and M10 owns recovery/effect policy.
+
+- **Prerequisite:** accepted M8 producer registry, M8A exact-identity work
+  events, and M6A query/migration/data-policy interfaces.
+- **First safe action:** with positive control actions disabled, delete and
+  rebuild fixture projections, then shadow-compare every registered consumer on
+  the same owner-source cursor vector.
+- **Deliverables:** `evidence/m9-f01-f17-consumer-cutover.json`, generated reader
+  inventory, reducer/cursor comparison, projection digests and stress metrics,
+  joined productive/replayed ledger, pure exact-evidence reason fixtures,
+  compatibility expiry map, and idle-canary evidence.
+- **Acceptance evidence:** 100% cursor/hash agreement, deterministic rebuild,
+  10,000-heartbeat monotonic reads with zero false stalls, observer purity,
+  forged-projection authorization rejection, once-only exact auditor reasons,
+  same-basename isolation, and totals reconciled or explicitly unavailable.
+- **Component-versus-wiring safeguard:** reducer/views, projection writer,
+  status slices, event types, and cost fragments remain components until all
+  supported consumers use the exact cursor/query API and raw fallbacks cannot
+  grant positive authority.
+
 ## Profile rationale
 
 Difficulty 5/5; `partnered-5/thorough/high @codex`. False liveness and

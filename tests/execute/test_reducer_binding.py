@@ -16,6 +16,8 @@ from typing import Any
 import pytest
 
 from arnold_pipelines.megaplan._core.scheduler.types import Reduce
+from arnold_pipelines.megaplan.authority.batch_scope import DISPATCH_IDENTITY_KEY
+from arnold_pipelines.megaplan.authority.binding import DispatchIdentity
 from arnold_pipelines.megaplan.execute._binding.reducer import (
     BatchOutcome,
     BatchReduceResult,
@@ -27,6 +29,11 @@ from arnold_pipelines.megaplan.execute._binding.reducer import (
     reduce_batch_full,
 )
 from arnold_pipelines.megaplan.execute.batch import BatchResult
+from arnold_pipelines.megaplan.execute.wbc import (
+    EXECUTE_DISPATCH_WBC_KEY,
+    EXECUTE_PARENT_CUSTODY_KEY,
+    EXECUTE_TRANSITION_WBC_KEY,
+)
 from arnold_pipelines.megaplan.planning.state import STATE_EXECUTED
 from arnold_pipelines.megaplan.workers import WorkerResult
 
@@ -45,6 +52,59 @@ def _make_worker() -> WorkerResult:
     )
 
 
+def _execute_wbc_payload(
+    *,
+    transition: str = "review",
+    boundary_id: str = "execute_aggregate_promotion",
+    result_value: str = "success",
+) -> dict[str, Any]:
+    dispatch = DispatchIdentity.create(
+        dispatch_id="dispatch-1",
+        run_id="run-1",
+        run_revision="revision-1",
+        coordinator_attempt_id="coordinator-1",
+        fence_token=3,
+        subject_ids=("T1",),
+        capabilities=("megaplan.task.result",),
+        prerequisite_digest="prereq-1",
+        worker_id="worker-1",
+    )
+    return {
+        DISPATCH_IDENTITY_KEY: dispatch.to_dict(),
+        EXECUTE_DISPATCH_WBC_KEY: {
+            "schema_version": 1,
+            "attempt_id": "execute-attempt",
+            "writer_id": "megaplan.execute.dispatch_wbc",
+            "surface_name": "megaplan.execute.dispatch_wbc",
+            "dispatch_id": dispatch.dispatch_id,
+            "plan_revision": dispatch.plan_revision,
+            "fence_token": dispatch.fence_token,
+            "prerequisite_digest": dispatch.prerequisite_digest,
+            "worker_id": dispatch.worker_id,
+            "expected_source_version": "source.v1",
+            "start_source_lookup_key": "execute-batch:1:start",
+            "terminal_source_lookup_key": "execute-batch:1:complete",
+            "verified_start_sequence": 1,
+            "verified_terminal_sequence": 2,
+            "verified_reread": True,
+        },
+        EXECUTE_TRANSITION_WBC_KEY: {
+            "schema_version": 1,
+            "dispatch_attempt_id": "execute-attempt",
+            "dispatch_id": dispatch.dispatch_id,
+            "plan_revision": dispatch.plan_revision,
+            "fence_token": dispatch.fence_token,
+            "boundary_id": boundary_id,
+            "receipt_path": f"boundary_receipts/{boundary_id}.json",
+            "transition": transition,
+            "result": result_value,
+            "batch_number": 1,
+            "batches_total": 1,
+            "receipt_reread_verified": True,
+        },
+    }
+
+
 def _make_batch_result(
     *,
     merged_task_count: int = 1,
@@ -55,12 +115,15 @@ def _make_batch_result(
     payload: dict[str, Any] | None = None,
     batch_task_ids: list[str] | None = None,
 ) -> BatchResult:
+    base_payload = _execute_wbc_payload()
+    if payload:
+        base_payload.update(payload)
     return BatchResult(
         worker=_make_worker(),
         agent="test-agent",
         mode="test",
         refreshed=False,
-        payload=payload or {},
+        payload=base_payload,
         batch_number=1,
         batch_task_ids=batch_task_ids or ["T1"],
         batch_sense_check_ids=[],
@@ -126,7 +189,14 @@ def _make_batch_result(
             _make_batch_result(
                 merged_task_count=1,
                 total_task_count=1,
-                payload={"_phase_outcome": "timeout"},
+                payload={
+                    "_phase_outcome": "timeout",
+                    **_execute_wbc_payload(
+                        transition="blocked",
+                        boundary_id="execute_resume_anchor",
+                        result_value="blocked",
+                    ),
+                },
                 batch_task_ids=["T1"],
             ),
             {"tasks": [{"id": "T1", "status": "done"}]},
@@ -212,6 +282,49 @@ def test_reduce_batch_raw_done_without_corroboration_is_not_success(tmp_path) ->
     )
 
     assert reduced.value == BatchOutcome.BLOCKED_BY_PREREQ
+
+
+def test_reduce_batch_blocks_when_execute_transition_evidence_is_missing() -> None:
+    result = _make_batch_result(
+        merged_task_count=1,
+        total_task_count=1,
+        payload={EXECUTE_TRANSITION_WBC_KEY: None},
+        batch_task_ids=["T1"],
+    )
+    finalize_data = {"tasks": [{"id": "T1", "status": "done"}]}
+
+    reduced = reduce_batch(
+        result,
+        finalize_data=finalize_data,
+        batch_task_ids=["T1"],
+        completed_task_ids={"T1"},
+    )
+
+    assert reduced.value == BatchOutcome.BLOCKED_BY_QUALITY
+
+
+def test_reduce_batch_blocks_when_parent_custody_conflicts() -> None:
+    result = _make_batch_result(
+        merged_task_count=1,
+        total_task_count=1,
+        payload={
+            EXECUTE_PARENT_CUSTODY_KEY: {
+                "accepted_subject_ids": ["execute-attempt"],
+                "active_repair_subject_ids": ["execute-attempt"],
+            }
+        },
+        batch_task_ids=["T1"],
+    )
+    finalize_data = {"tasks": [{"id": "T1", "status": "done"}]}
+
+    reduced = reduce_batch(
+        result,
+        finalize_data=finalize_data,
+        batch_task_ids=["T1"],
+        completed_task_ids={"T1"},
+    )
+
+    assert reduced.value == BatchOutcome.BLOCKED_BY_QUALITY
 
 
 # ---------------------------------------------------------------------------
@@ -649,6 +762,31 @@ def test_compute_reducer_evidence_repair_domain_separation() -> None:
     assert evidence_repair.repair_domain_separation["repair_domain"] == "repair"
     assert evidence_repair.repair_domain_separation["deviation_task_ids"] == ["T1"]
     assert evidence_repair.repair_domain_separation["deviation_count"] == 1
+
+
+def test_compute_reducer_evidence_carries_parent_custody_conflicts() -> None:
+    result = _make_batch_result(
+        merged_task_count=1,
+        total_task_count=1,
+        payload={
+            EXECUTE_PARENT_CUSTODY_KEY: {
+                "accepted_subject_ids": ["execute-attempt"],
+                "active_repair_subject_ids": ["execute-attempt"],
+            }
+        },
+        batch_task_ids=["T1"],
+    )
+
+    evidence = compute_reducer_evidence(
+        result,
+        finalize_data={"tasks": [{"id": "T1", "status": "done"}]},
+        batch_task_ids=["T1"],
+        completed_task_ids={"T1"},
+    )
+
+    parent_custody = evidence.aggregate_canonical_outputs["parent_custody"]
+    assert parent_custody["conflicting_subject_ids"] == ["execute-attempt"]
+    assert "parent_custody_conflicts" in evidence.repair_domain_separation
 
 
 def test_reduce_batch_full_returns_reducer_outcome() -> None:

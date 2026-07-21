@@ -1,0 +1,248 @@
+schema: m8.wbc-boundary-discovery-rules.v1
+generated_at: '2026-07-21T00:01:43.840459+00:00'
+roots:
+- path: arnold/workflow
+  category: boundary_runtime
+  file_patterns:
+  - attempt_ledger_store.py
+  - boundary_compatibility.py
+  - boundary_conformance.py
+  - boundary_evidence.py
+  - boundary_templates.py
+  - durable_refs.py
+  - execution_attempt_ledger.py
+  description: Core WBC runtime and schema surfaces.
+- path: arnold_pipelines/megaplan/handlers
+  category: handler_functions
+  file_patterns:
+  - '*.py'
+  description: Megaplan handlers and boundary producers.
+- path: arnold_pipelines/megaplan/execute
+  category: execute_producers
+  file_patterns:
+  - '*.py'
+  description: Execute-phase batch and promotion producers.
+- path: arnold_pipelines/megaplan/orchestration
+  category: orchestration
+  file_patterns:
+  - authority_readers.py
+  - completion_io.py
+  - critique_runtime.py
+  - execution_evidence.py
+  - phase_result.py
+  description: Orchestration readers, validators, and transitions.
+- path: arnold_pipelines/megaplan/custody
+  category: custody_runtime
+  file_patterns:
+  - '*.py'
+  description: WBC runtime facade, compatibility, and controlled writers.
+- path: arnold_pipelines/megaplan/chain
+  category: chain_runtime
+  file_patterns:
+  - spec.py
+  - status.py
+  - epic_chain.py
+  - operator_pause.py
+  description: Chain readers and lifecycle surfaces.
+- path: arnold_pipelines/megaplan/cloud
+  category: cloud_runtime
+  file_patterns:
+  - status_snapshot.py
+  - repair_lock.py
+  - wrapper_acceptance_gate.py
+  - supervise.py
+  - human_blockers.py
+  description: Cloud wrappers, repair, and status consumers.
+- path: arnold_pipelines/megaplan/supervisor
+  category: supervisor_runtime
+  file_patterns:
+  - state.py
+  - chain_runner.py
+  - bakeoff_runner.py
+  description: Supervisor state and runner surfaces.
+- path: arnold_pipelines/megaplan/_core
+  category: core_runtime
+  file_patterns:
+  - state.py
+  - io.py
+  - modes.py
+  description: Core state and compatibility-reader surfaces.
+- path: arnold_pipelines/megaplan/bakeoff
+  category: bakeoff_runtime
+  file_patterns:
+  - state.py
+  - channel_shadow.py
+  - handlers.py
+  - lifecycle.py
+  - merge.py
+  description: Bakeoff compatibility-reader surfaces.
+- path: arnold_pipelines/megaplan/runtime
+  category: runtime_compatibility
+  file_patterns:
+  - inprocess_step.py
+  - step_io_policy_adapter.py
+  description: Runtime adapters that still classify filenames and marker-backed state.
+- path: arnold_pipelines/megaplan/watchdog
+  category: watchdog_runtime
+  file_patterns:
+  - processes.py
+  - correlate.py
+  - snapshot.py
+  description: Process and marker compatibility readers for watchdog observation paths.
+- path: arnold_pipelines/megaplan/receipts
+  category: receipt_runtime
+  file_patterns:
+  - report.py
+  - extractors.py
+  description: Mutable receipt readers retained as read-only reporting adapters.
+- path: arnold_pipelines/megaplan/pricing
+  category: pricing_runtime
+  file_patterns:
+  - codex.py
+  - claude.py
+  - fireworks.py
+  description: Token and cost compatibility readers for historical accounting paths.
+producer_call_names:
+- _emit_batch_boundary_receipt
+- _emit_boundary_receipt
+- _emit_execute_boundary_receipt
+- append_event
+- authoritative_reread
+- cancel_attempt
+- complete_attempt
+- fail_attempt
+- record_effect_intent
+- record_effect_outcome
+- reserve_attempt
+- resume_attempt
+- schedule_retry
+- start_attempt
+- suspend_attempt
+- write_boundary_receipt
+writer_registration_sources:
+- arnold_pipelines.megaplan.custody.writer_map.generate_writer_map
+- register_writer(...) AST callsites
+compatibility_readers:
+- reader_id: historical-filename-reader
+  module_paths:
+  - arnold_pipelines/megaplan/execute/step_edit.py
+  call_names:
+  - next_plan_artifact_name
+  deadline_milestone: M9
+- reader_id: historical-marker-reader
+  module_paths:
+  - arnold_pipelines/megaplan/runtime/step_io_policy_adapter.py
+  - arnold_pipelines/megaplan/cloud/status_snapshot.py
+  call_names:
+  - has_megaplan_step_io_self_validation_marker
+  - load_cloud_status_snapshot
+  - load_megaplan_step_io_policy
+  deadline_milestone: M9
+- reader_id: historical-mutable-receipt-reader
+  module_paths:
+  - arnold_pipelines/megaplan/receipts/report.py
+  - arnold_pipelines/megaplan/receipts/extractors.py
+  call_names:
+  - _collect_dispatch_receipts
+  - _collect_receipts
+  - _safe_read_json
+  - load_and_extract
+  deadline_milestone: M9
+- reader_id: historical-process-reader
+  module_paths:
+  - arnold_pipelines/megaplan/watchdog/processes.py
+  - arnold_pipelines/megaplan/watchdog/correlate.py
+  - arnold_pipelines/megaplan/watchdog/snapshot.py
+  call_names:
+  - build_snapshot
+  - correlate_processes_to_plans
+  - infer_plan_dirs_from_processes
+  - scan_processes
+  deadline_milestone: M9
+- reader_id: historical-prose-reader
+  module_paths:
+  - arnold_pipelines/megaplan/_core/modes.py
+  - arnold_pipelines/megaplan/execute/aggregation.py
+  call_names:
+  - is_creative_mode
+  - is_prose_mode
+  - phase_quality_deviations_for_current_attempt
+  deadline_milestone: M9
+- reader_id: historical-token-reader
+  module_paths:
+  - arnold_pipelines/megaplan/pricing/codex.py
+  - arnold_pipelines/megaplan/pricing/claude.py
+  - arnold_pipelines/megaplan/pricing/fireworks.py
+  - arnold_pipelines/megaplan/receipts/report.py
+  call_names:
+  - _tokens
+  - _totals
+  - cost_from_codex_usage_dict
+  - cost_from_usage
+  - estimate_tokens_from_cost
+  deadline_milestone: M9
+- reader_id: legacy-bakeoff-state-reader
+  module_paths:
+  - arnold_pipelines/megaplan/bakeoff/state.py
+  call_names:
+  - load_bakeoff_state
+  - load_channel_shadow_state
+  deadline_milestone: M8
+- reader_id: legacy-chain-state-reader
+  module_paths:
+  - arnold_pipelines/megaplan/chain/spec.py
+  call_names:
+  - _load_chain_state_file
+  - load_chain_state
+  - load_runtime_policy
+  - load_spec
+  deadline_milestone: M8
+- reader_id: legacy-heartbeat-state-reader
+  module_paths:
+  - arnold_pipelines/megaplan/_core/state.py
+  call_names:
+  - load_plan
+  - load_plan_from_dir
+  - load_plan_locked
+  - load_state_as_projection
+  deadline_milestone: M8
+- reader_id: legacy-repair-lock-reader
+  module_paths:
+  - arnold_pipelines/megaplan/cloud/repair_lock.py
+  call_names:
+  - repair_lock
+  deadline_milestone: M8
+- reader_id: legacy-status-snapshot-reader
+  module_paths:
+  - arnold_pipelines/megaplan/cloud/status_snapshot.py
+  call_names:
+  - _load_current_plan_review
+  - _load_current_plan_state
+  - _load_json
+  - _load_latest_chain_state
+  - _load_progress_history
+  - _load_session_markers
+  - _load_watchdog_report
+  - load_cloud_status_snapshot
+  deadline_milestone: M8
+- reader_id: legacy-supervisor-state-reader
+  module_paths:
+  - arnold_pipelines/megaplan/supervisor/state.py
+  call_names:
+  - load_supervisor_state
+  deadline_milestone: M8
+bypass_patterns:
+- pattern: \|\|\s*true\b
+  category: shell_or_true
+- pattern: except Exception
+  category: broad_exception
+- pattern: without raising
+  category: without_raising
+- pattern: best-effort
+  category: best_effort
+- pattern: warn-and-continue
+  category: warn_and_continue
+- pattern: \b(?:load_chain_state|latest_artifact)\s*\(
+  category: implicit_latest_lookup
+- pattern: \b(?:expected_source_version|source_version|source_ref|lookup_ref|commit_sha|head_sha)\w*\s*=\s*[\"'](?:HEAD|head|latest|main|master|refs/pull/[^\"']+)[\"']
+  category: mutable_alias_overwrite

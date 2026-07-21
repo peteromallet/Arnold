@@ -17,9 +17,18 @@ from arnold_pipelines.megaplan.cloud.incident_bridge import (
     append_github_issue_publish_failed,
     append_github_issue_published,
 )
+from arnold_pipelines.megaplan.cloud.github_sync_wbc import (
+    GITHUB_SYNC_COMMENT_SURFACE,
+    GITHUB_SYNC_COMMENT_WRITER_ID,
+    GITHUB_SYNC_CREATE_SURFACE,
+    GITHUB_SYNC_CREATE_WRITER_ID,
+    GitHubSyncRule,
+    validate_github_sync_publication,
+)
 from arnold_pipelines.megaplan.cloud.redact import redact_text
 from arnold_pipelines.megaplan.incident.projection import rebuild_projections
 from arnold_pipelines.megaplan.incident.schema import validate_incident_event
+from arnold_pipelines.megaplan.types import CliError
 
 _INCIDENT_LEDGER_DIR = Path(".megaplan") / "incident-ledger"
 _EVENTS_FILE = "events.jsonl"
@@ -80,6 +89,46 @@ def sync_persistent_problems(
             )
             continue
 
+        writer_id = GITHUB_SYNC_CREATE_WRITER_ID if action == "create" else GITHUB_SYNC_COMMENT_WRITER_ID
+        surface_name = GITHUB_SYNC_CREATE_SURFACE if action == "create" else GITHUB_SYNC_COMMENT_SURFACE
+        try:
+            validation_evidence = validate_github_sync_publication(
+                writer_id=writer_id,
+                surface_name=surface_name,
+                action=action,
+                problem_id=problem_id,
+                project_dir=workspace_root,
+                rules=(
+                    GitHubSyncRule(
+                        "problem_open",
+                        "open",
+                        problem.get("status"),
+                        str(problem.get("status") or "") == "open",
+                    ),
+                    GitHubSyncRule(
+                        "repo_present",
+                        True,
+                        bool(str(config.repo).strip()),
+                        bool(str(config.repo).strip()),
+                    ),
+                ),
+                extra={
+                    "repo": config.repo,
+                    "occurrence_count": int(problem.get("occurrence_count") or 0),
+                },
+            )
+        except CliError as exc:
+            if exc.code != "github_sync_action_off":
+                raise
+            skipped.append(
+                {
+                    "problem_id": problem_id,
+                    "reason": "action_off",
+                    "suppression_reason": exc.message,
+                }
+            )
+            continue
+
         if action == "create":
             issue_title = _issue_title(problem)
             issue_body = _issue_body(problem, incident)
@@ -113,6 +162,15 @@ def sync_persistent_problems(
 
         publication_links = _publication_links(problem, publication, body_text=issue_body)
         event_evidence = _publication_evidence(problem, incident, issue_body)
+        event_evidence.append(
+            {
+                "kind": "github_sync.wbc_validation",
+                "surface_name": surface_name,
+                "action": action,
+                "fixture_safety": validation_evidence["fixture_safety"],
+                "source_record": validation_evidence["source_record"],
+            }
+        )
         if result.get("omitted_labels"):
             publication_links["label_fallback"] = {
                 "omitted_labels": list(result["omitted_labels"]),

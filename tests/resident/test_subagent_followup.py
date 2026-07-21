@@ -188,6 +188,26 @@ def test_continuation_worker_resumes_exact_parent_session_and_records_acceptance
     assert child["model_session"]["session_id"] == SESSION_ID
     inherited = json.loads(captured["env"][DELEGATION_CONTEXT_ENV])
     assert inherited["source_record_id"] == "msg_newfollowupsrc"
+    custody_events = [
+        json.loads(line)
+        for line in Path(child["custody_evidence_path"]).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert any(
+        event["event_kind"] == "start"
+        and event["evidence"] == "manifest_committed_before_process_launch"
+        for event in custody_events
+    )
+    assert any(
+        event["event_kind"] == "effect"
+        and event["evidence"] == "codex_resume_process_started"
+        for event in custody_events
+    )
+    assert any(
+        event["event_kind"] == "terminal"
+        and event["evidence"] == "managed_codex_worker_waited"
+        for event in custody_events
+    )
 
 
 def test_live_followup_queues_exact_parent_interrupt_and_retry_is_idempotent(

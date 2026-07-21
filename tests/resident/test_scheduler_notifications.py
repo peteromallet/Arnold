@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from arnold_pipelines.megaplan.resident.cloud import CloudToolRequest, CloudToolResult
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
 from arnold_pipelines.megaplan.resident.runtime import OutboundMessage
-from arnold_pipelines.megaplan.resident.scheduler import make_store_scheduler
+from arnold_pipelines.megaplan.resident.scheduler import _todo_authoritative_inbound, make_store_scheduler
 from arnold_pipelines.megaplan.store import (
     CloudRunInput,
     FileStore,
@@ -86,3 +86,51 @@ def test_cloud_check_can_notify_every_fire(tmp_path) -> None:
     assert "running" in sent.content
     messages = store.load_messages([store.load_resident_conversation(conversation.id).last_outbound_message_id])
     assert messages[0].content == sent.content
+
+
+def test_authoritative_todo_inbound_exposes_reply_chain_custody(tmp_path) -> None:
+    store = FileStore(tmp_path / "store")
+    conversation = store.upsert_resident_conversation(
+        ResidentConversationInput(
+            transport="discord",
+            conversation_key="discord:dm:user-1",
+            dm_user_id="user-1",
+        )
+    )
+    message = store.create_message(
+        epic_id=None,
+        conversation_id=conversation.id,
+        direction="inbound",
+        content="launch it",
+        discord_message_id="discord-msg-1",
+        discord_reply_provenance={
+            "schema_version": "discord-reply-provenance-v1",
+            "transport": "discord",
+            "source_message_id": "discord-msg-1",
+            "source_author_id": "user-1",
+            "conversation_key": "discord:dm:user-1",
+            "ancestors": [],
+            "captured_ancestor_count": 0,
+            "chain_complete": True,
+            "capture_truncated": False,
+            "termination_reason": "root",
+        },
+        idempotency_key="message-1",
+    )
+
+    inbound = _todo_authoritative_inbound(
+        store,
+        {
+            "launch_provenance": {
+                "applicability": "applicable",
+                "resident_conversation_id": conversation.id,
+                "source_record_id": message.id,
+                "conversation_key": conversation.conversation_key,
+                "reply_to_message_id": "discord-msg-1",
+            }
+        },
+    )
+
+    assert inbound["state"] == "verified"
+    assert inbound["reply_chain_custody"]["source_message_id"] == "discord-msg-1"
+    assert inbound["reply_chain_custody"]["termination_reason"] == "root"

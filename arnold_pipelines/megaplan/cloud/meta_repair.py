@@ -54,6 +54,7 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     REPAIRING,
     SUCCESS_OUTCOMES,
     TRUE_HUMAN_BLOCKER,
+    append_attempt_record,
     atomic_write_json,
     build_verification_record,
     classify_recovery_verification,
@@ -65,6 +66,15 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     remaining_budget_secs,
     update_session_index,
 )
+
+# ── M7 shadow validator import (enforcement always disabled) ────────────────
+try:
+    from arnold_pipelines.megaplan.custody.action_validator import (
+        validate_action_boundary_simple,
+    )
+    _M7_VALIDATOR_AVAILABLE = True
+except ImportError:
+    _M7_VALIDATOR_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
@@ -1797,6 +1807,23 @@ def persist_meta_repair_record(
         verdict_path = meta_dir / _META_REPAIR_COMPLETION_REQUIRED_ARTIFACT
         save_meta_repair_verdict(verdict_path, verdict, redactor=None)
 
+    sidecar_dir = repair_root.with_name(f"{repair_root.name}.d")
+    append_attempt_record(
+        sidecar_dir,
+        {
+            "session_id": record.session,
+            "attempt_id": record.meta_repair_id,
+            "actor": "meta_repair",
+            "state": _meta_repair_attempt_state(record.outcome),
+            "outcome": record.outcome,
+            "trigger": record.trigger.value if record.trigger is not None else "",
+            "blocker_id": record.blocker_id,
+            "record_path": str(file_path),
+            "verdict_kind": verdict.verdict_kind if verdict is not None else "",
+            "recorded_at": record.created_at,
+        },
+    )
+
     update_session_index(
         repair_root / "index.json",
         record.session,
@@ -1812,6 +1839,19 @@ def persist_meta_repair_record(
         },
     )
     return file_path
+
+
+def _meta_repair_attempt_state(outcome: str) -> str:
+    normalized = str(outcome or "").strip().lower()
+    if not normalized:
+        return "failed"
+    if normalized in {"repairing", "running", "pending", "in_progress"}:
+        return "running"
+    if normalized in {"fixed", "complete", "completed", "recovered"}:
+        return "succeeded"
+    if is_success_outcome(normalized):
+        return "succeeded"
+    return "failed"
 
 
 def load_meta_repair_record(
@@ -2234,6 +2274,35 @@ def retrigger_ordinary_repair(
     if not command:
         raise ValueError("command must not be empty")
 
+    # ── M7 shadow validation before repair retrigger ────────────────────
+    if _M7_VALIDATOR_AVAILABLE:
+        try:
+            import hashlib as _hashlib
+            retrigger_target = {
+                "environment": "retrigger",
+                "session": str(cwd or "unknown"),
+                "chain": "retrigger",
+                "plan_revision": "retrigger",
+                "phase": "retrigger",
+                "task": str(expected_lock_pid or "unknown"),
+                "attempt": "1",
+                "normalized_failure_kind": "retrigger",
+                "blocker_or_phase_result_hash": _hashlib.sha256(
+                    " ".join(str(p) for p in command).encode("utf-8")
+                ).hexdigest()[:16],
+                "fence": "0",
+            }
+            _ = validate_action_boundary_simple(
+                action_type="repair",
+                target=retrigger_target,
+                run_authority_grant_id=f"retrigger:{cwd}",
+                coordinator_fence_token=0,
+                wbc_attempt_reference="retrigger",
+            )
+        except Exception:
+            pass  # shadow-only; never block
+    # ────────────────────────────────────────────────────────────────────
+
     # Releasing the L1 lock and starting another repair process are both L2
     # effects.  Keep the check adjacent to those effects so direct and fallback
     # callers cannot bypass the master autonomy gate.
@@ -2427,6 +2496,101 @@ def derive_meta_repair_effective_outcome(
 # ---------------------------------------------------------------------------
 
 
+def _shadow_validate_meta_repair_boundary(
+    *,
+    session: str,
+    trigger: str,
+    repair_data_dir: str | Path,
+    blocker_id: str = "",
+    plan_name: str = "",
+    remote_spec: str = "",
+) -> dict[str, Any]:
+    """Run the M7 shadow validator before meta-repair dispatch (non-blocking).
+
+    Builds a best-effort ``CustodyTargetKey`` from the meta-repair context,
+    calls ``validate_action_boundary_simple`` with ``action_type="repair"``,
+    and returns typed conflict/fence/reconcile diagnostics.  Never raises —
+    all errors are captured as diagnostic metadata.
+
+    Production enforcement is always disabled; this is a shadow-only call.
+    """
+    if not _M7_VALIDATOR_AVAILABLE:
+        return {
+            "m7_validator_available": False,
+            "reason": "action_validator module not importable",
+        }
+
+    import hashlib as _hashlib
+
+    try:
+        target_dict = {
+            "environment": "meta-repair",
+            "session": session or "unknown",
+            "chain": str(remote_spec or plan_name or "unknown"),
+            "plan_revision": plan_name or "unknown",
+            "phase": "meta_repair",
+            "task": blocker_id or "unknown",
+            "attempt": "1",
+            "normalized_failure_kind": trigger or "unknown",
+            "blocker_or_phase_result_hash": _hashlib.sha256(
+                (blocker_id or session).encode("utf-8")
+            ).hexdigest()[:16],
+            "fence": "0",
+        }
+
+        result = validate_action_boundary_simple(
+            action_type="repair",
+            target=target_dict,
+            run_authority_grant_id=f"meta-repair:{session}",
+            coordinator_fence_token=0,
+            wbc_attempt_reference=blocker_id or session,
+        )
+
+        # Emit typed events based on the validation result
+        typed_events: list[dict[str, Any]] = []
+        for check in result.checks:
+            outcome = check.outcome.value
+            if outcome == "conflict":
+                typed_events.append({
+                    "event_type": "conflict",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+            elif outcome == "fenced":
+                typed_events.append({
+                    "event_type": "fence",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+            elif outcome in ("stale", "expired"):
+                typed_events.append({
+                    "event_type": "reconcile",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+
+        return {
+            "m7_validator_available": True,
+            "gate_result": result.gate_result.value,
+            "enforcement_enabled": result.enforcement_enabled,
+            "shadow_mode": result.is_shadow,
+            "typed_events": typed_events,
+            "checks_summary": {
+                c.source: c.outcome.value for c in result.checks
+            },
+            "validated_at": result.validated_at,
+        }
+    except Exception as exc:
+        return {
+            "m7_validator_available": True,
+            "error": f"{type(exc).__name__}: {exc}",
+            "typed_events": [],
+        }
+
+
 def evaluate_meta_repair_triggers(
     session: str,
     *,
@@ -2492,6 +2656,21 @@ def evaluate_meta_repair_triggers(
     if not classification.should_dispatch:
         return classification, None
 
+    # ── M7 shadow validation before meta-repair dispatch ────────────────
+    trigger_label = classification.trigger_label
+    m7_shadow = _shadow_validate_meta_repair_boundary(
+        session=session,
+        trigger=trigger_label,
+        repair_data_dir=repair_data_dir,
+        blocker_id=str(classification.evidence.get("repair_data", {}).get("blocker_id", ""))
+        if isinstance(classification.evidence, Mapping)
+        else "",
+    )
+    # Attach shadow validation to classification evidence for diagnostics
+    if isinstance(classification.evidence, dict):
+        classification.evidence["m7_shadow_validation"] = m7_shadow
+    # ────────────────────────────────────────────────────────────────────
+
     prompt = build_meta_repair_prompt(
         classification,
         repair_data_dir=repair_data_dir,
@@ -2516,6 +2695,7 @@ __all__ = [
     "MetaRepairVerdict",
     "MetaRepairVerdictKind",
     "RetriggerExecutionResult",
+    "_shadow_validate_meta_repair_boundary",
     "build_meta_repair_prompt",
     "build_meta_repair_verdict",
     "classify_repair_system_failure",

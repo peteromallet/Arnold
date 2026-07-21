@@ -303,6 +303,9 @@ def assess_watchdog_accepted_progress(
 
     # ── escalation decision ───────────────────────────────────────────
     escalate = activity_classification in _ESCALATION_ACTIVITY_KINDS
+    drift_reason = ""
+    if (final_accepted or accepted_count > 0) and fixer_infra_active:
+        drift_reason = "accepted_progress_conflicts_with_repair_activity"
 
     if activity_classification == ACTIVITY_CLASSIFICATION_WAITING_FOR_ACCEPTANCE:
         escalation_reason = (
@@ -335,4 +338,6 @@ def assess_watchdog_accepted_progress(
         "acceptance_state": acceptance_state,
         "fixer_infrastructure_active": fixer_infra_active,
         "automatic_continuation_custody": auto_continuation,
+        "drift_detected": bool(drift_reason),
+        "drift_reason": drift_reason,
     }

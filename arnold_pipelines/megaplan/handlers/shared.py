@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import json
 import logging
 import shutil
 import subprocess
@@ -22,6 +23,14 @@ from arnold_pipelines.megaplan.prompts import create_claude_prompt, create_codex
 from arnold_pipelines.megaplan.receipts import build_receipt
 from arnold_pipelines.megaplan.receipts.writer import write_boundary_receipt, write_receipt
 from arnold_pipelines.megaplan.execute.step_edit import next_plan_artifact_name
+from arnold_pipelines.megaplan.custody.phase_wbc import (
+    activate_phase_wbc,
+    complete_phase_wbc,
+    fail_phase_wbc,
+    phase_wbc_required,
+    phase_wbc_state,
+)
+from arnold_pipelines.megaplan.custody.worker_dispatch_wbc import build_worker_dispatch_spec
 from arnold_pipelines.megaplan.types import AgentMode, CliError, MOCK_ENV_VAR, PlanState, StepResponse
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     _emit_phase_result,
@@ -75,6 +84,25 @@ _FRONT_HALF_BOUNDARY_ID_BY_PHASE = {
     "critique": "critique_to_gate",
     "gate": "gate_to_revise",
     "revise": "revise_to_critique",
+}
+
+_TIEBREAKER_BOUNDARY_ID_BY_PHASE = {
+    "tiebreaker_researcher": "tiebreaker_researcher_to_challenger",
+    "tiebreaker_challenger": "tiebreaker_challenger_to_synthesis",
+    "tiebreaker_synthesis": "tiebreaker_synthesis_to_decision",
+    "tiebreaker_decision": "tiebreaker_decision_to_parent",
+}
+
+_TIEBREAKER_EXPECTED_NEXT_STEPS = {
+    "tiebreaker_researcher": frozenset({"tiebreaker_challenger"}),
+    "tiebreaker_challenger": frozenset({"tiebreaker_synthesis"}),
+    "tiebreaker_synthesis": frozenset({"tiebreaker_decision"}),
+    "tiebreaker_decision": frozenset({"finalize", "revise", "override"}),
+}
+
+_FINALIZE_BOUNDARY_ID_BY_NEXT_STEP = {
+    "execute": "finalize_artifacts",
+    "revise": "finalize_fallback",
 }
 
 _ROUTE_SIGNAL_AUTHORITY_STEP_ALIASES = {
@@ -261,6 +289,7 @@ def _run_worker(
     prompt_override: str | None = None,
     prompt_kwargs: dict[str, Any] | None = None,
     read_only: bool = False,
+    wbc_dispatch: Any = None,
 ) -> tuple[WorkerResult, str, str, bool]:
     failure_iteration = state["iteration"] if iteration is None else iteration
     from arnold_pipelines.megaplan import handlers as _handlers_pkg
@@ -281,10 +310,22 @@ def _run_worker(
         **_active_step_fallback_fields(step, args, agent=agent, model=model, effort=effort),
     )
     _emit_phase_notice(step)
-    # Phases hold the lock for many minutes; merge meta to avoid clobbering
-    # concurrent override appends to ``meta.notes`` / ``meta.overrides``.
-    save_state_merge_meta(plan_dir, state)
     try:
+        if phase_wbc_required(step):
+            activate_phase_wbc(state=state, plan_dir=plan_dir, step=step, agent=agent)
+        if wbc_dispatch is None:
+            selected_spec = format_selected_spec(agent, model, effort) or agent
+            wbc_dispatch = build_worker_dispatch_spec(
+                plan_dir=plan_dir,
+                state=state,
+                step=step,
+                agent=agent,
+                selected_spec=selected_spec,
+                route_kind="direct",
+            )
+        # Phases hold the lock for many minutes; merge meta to avoid clobbering
+        # concurrent override appends to ``meta.notes`` / ``meta.overrides``.
+        save_state_merge_meta(plan_dir, state)
         with phase_result_guard(plan_dir):
             run_step_kwargs: dict[str, Any] = {
                 "root": root,
@@ -295,6 +336,8 @@ def _run_worker(
                 run_step_kwargs["prompt_kwargs"] = prompt_kwargs
             if read_only:
                 run_step_kwargs["read_only"] = True
+            if wbc_dispatch is not None:
+                run_step_kwargs["wbc_dispatch"] = wbc_dispatch
             return worker_module.run_step_with_worker(
                 step,
                 state,
@@ -460,9 +503,15 @@ def _emit_receipt(
 def _boundary_contract_by_phase(step: str):
     from arnold_pipelines.megaplan.workflows.boundary_contracts import BOUNDARY_CONTRACTS_BY_ID
 
-    boundary_id = _FRONT_HALF_BOUNDARY_ID_BY_PHASE.get(step)
+    boundary_id = _FRONT_HALF_BOUNDARY_ID_BY_PHASE.get(step) or _TIEBREAKER_BOUNDARY_ID_BY_PHASE.get(step)
     if boundary_id is None:
         return None
+    return BOUNDARY_CONTRACTS_BY_ID.get(boundary_id)
+
+
+def _boundary_contract_from_id(boundary_id: str):
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import BOUNDARY_CONTRACTS_BY_ID
+
     return BOUNDARY_CONTRACTS_BY_ID.get(boundary_id)
 
 
@@ -470,9 +519,19 @@ def _boundary_contract_for_response(
     step: str,
     response: StepResponse,
 ):
+    if step == "finalize":
+        boundary_id = _FINALIZE_BOUNDARY_ID_BY_NEXT_STEP.get(str(response.get("next_step") or ""))
+        if boundary_id is None:
+            return None
+        return _boundary_contract_from_id(boundary_id)
     contract = _boundary_contract_by_phase(step)
     if contract is None:
         return None
+    if step in _TIEBREAKER_EXPECTED_NEXT_STEPS:
+        next_step = response.get("next_step")
+        if next_step not in _TIEBREAKER_EXPECTED_NEXT_STEPS[step]:
+            return None
+        return contract
     expected_next_step = _BOUNDARY_EXPECTED_NEXT_STEP_BY_ID.get(contract.boundary_id)
     if expected_next_step is not None and response.get("next_step") != expected_next_step:
         return None
@@ -589,10 +648,86 @@ def _emit_boundary_receipt(
     response: StepResponse,
     run_id: str | None = None,
     gate_summary: dict[str, Any] | None = None,
-) -> None:
+    strict: bool = False,
+) -> BoundaryReceipt | None:
     contract = _boundary_contract_for_response(step, response)
     if contract is None:
-        return
+        return None
+    return _emit_boundary_receipt_for_contract(
+        contract=contract,
+        plan_dir=plan_dir,
+        state=state,
+        step=step,
+        worker=worker,
+        agent=agent,
+        mode=mode,
+        artifacts=artifacts,
+        output_file=output_file,
+        artifact_hash=artifact_hash,
+        response=response,
+        run_id=run_id,
+        gate_summary=gate_summary,
+        strict=strict,
+    )
+
+
+def _emit_named_boundary_receipt(
+    *,
+    boundary_id: str,
+    plan_dir: Path,
+    state: PlanState,
+    step: str,
+    worker: WorkerResult,
+    agent: str,
+    mode: str,
+    artifacts: list[str],
+    output_file: str,
+    artifact_hash: str,
+    response: StepResponse,
+    run_id: str | None = None,
+    gate_summary: dict[str, Any] | None = None,
+    strict: bool = False,
+) -> BoundaryReceipt | None:
+    contract = _boundary_contract_from_id(boundary_id)
+    if contract is None:
+        if strict:
+            raise RuntimeError(f"unknown boundary contract {boundary_id!r}")
+        return None
+    return _emit_boundary_receipt_for_contract(
+        contract=contract,
+        plan_dir=plan_dir,
+        state=state,
+        step=step,
+        worker=worker,
+        agent=agent,
+        mode=mode,
+        artifacts=artifacts,
+        output_file=output_file,
+        artifact_hash=artifact_hash,
+        response=response,
+        run_id=run_id,
+        gate_summary=gate_summary,
+        strict=strict,
+    )
+
+
+def _emit_boundary_receipt_for_contract(
+    *,
+    contract: Any,
+    plan_dir: Path,
+    state: PlanState,
+    step: str,
+    worker: WorkerResult,
+    agent: str,
+    mode: str,
+    artifacts: list[str],
+    output_file: str,
+    artifact_hash: str,
+    response: StepResponse,
+    run_id: str | None = None,
+    gate_summary: dict[str, Any] | None = None,
+    strict: bool = False,
+) -> BoundaryReceipt | None:
     try:
         project_dir = Path(state["config"]["project_dir"])
         history_entry = _boundary_history_snapshot(state)
@@ -662,7 +797,20 @@ def _emit_boundary_receipt(
             details=details_dict,
         )
         write_boundary_receipt(plan_dir, receipt, project_dir=project_dir)
+        if strict:
+            receipt_path = plan_dir / "boundary_receipts" / f"{contract.boundary_id}.json"
+            if not receipt_path.exists():
+                raise RuntimeError(f"boundary receipt {contract.boundary_id!r} was not durably persisted")
+            persisted = json.loads(receipt_path.read_text(encoding="utf-8"))
+            if persisted.get("boundary_id") != contract.boundary_id:
+                raise RuntimeError(
+                    f"boundary receipt reread mismatch: expected {contract.boundary_id!r}, "
+                    f"observed {persisted.get('boundary_id')!r}"
+                )
+        return receipt
     except Exception:
+        if strict:
+            raise
         _warn_best_effort_emit_failure(
             "M3A_WARN_EMIT_BOUNDARY_RECEIPT",
             action="boundary-receipt",
@@ -670,6 +818,7 @@ def _emit_boundary_receipt(
             phase=step,
             context={"boundary_id": contract.boundary_id},
         )
+        return None
 
 
 def _finish_step(
@@ -693,18 +842,15 @@ def _finish_step(
     history_fields: dict[str, Any] | None = None,
     run_id: str | None = None,
     gate_summary: dict[str, Any] | None = None,
+    extra_boundary_ids: tuple[str, ...] = (),
 ) -> StepResponse:
-    # Capture run_id from state before clearing the active step.
-    # Handlers that call _run_worker already have run_id stored in
-    # state["active_step"]["run_id"]; extract it as a fallback so
-    # boundary receipts carry the correct run_id for audit cross-
-    # referencing without requiring every caller to plumb it explicitly.
+    # Capture run_id before the active step is cleared so downstream
+    # evidence writes can join on the same lifecycle identity.
     effective_run_id = run_id
     if effective_run_id is None:
         active = state.get("active_step")
         if isinstance(active, dict):
             effective_run_id = active.get("run_id")
-    clear_active_step(state, run_id=run_id)
     if success and result == "success":
         state["latest_failure"] = None
         state.pop("resume_cursor", None)
@@ -750,7 +896,6 @@ def _finish_step(
             artifact_hash=artifact_hash,
             verdict=(history_fields or {}).get("verdict"),
         )
-    save_state_merge_meta(plan_dir, state)
     resolved_next = next_step
     if resolved_next is _AUTO_NEXT_STEP:
         next_steps = workflow_next(state)
@@ -786,20 +931,85 @@ def _finish_step(
         artifacts_written=tuple(artifacts),
         cli_provenance=_snapshot_cli_provenance(state),
     )
-    _emit_boundary_receipt(
-        plan_dir=plan_dir,
-        state=state,
-        step=step,
-        worker=worker,
-        agent=agent,
-        mode=mode,
-        artifacts=artifacts,
-        output_file=output_file,
-        artifact_hash=artifact_hash,
-        response=response,
-        run_id=effective_run_id,
-        gate_summary=gate_summary,
-    )
+    try:
+        strict_boundary_receipt = phase_wbc_required(step) and phase_wbc_state(state, step=step) is not None
+        receipt = _emit_boundary_receipt(
+            plan_dir=plan_dir,
+            state=state,
+            step=step,
+            worker=worker,
+            agent=agent,
+            mode=mode,
+            artifacts=artifacts,
+            output_file=output_file,
+            artifact_hash=artifact_hash,
+            response=response,
+            run_id=effective_run_id,
+            gate_summary=gate_summary,
+            strict=strict_boundary_receipt,
+        )
+        extra_receipts = tuple(
+            _emit_named_boundary_receipt(
+                boundary_id=boundary_id,
+                plan_dir=plan_dir,
+                state=state,
+                step=step,
+                worker=worker,
+                agent=agent,
+                mode=mode,
+                artifacts=artifacts,
+                output_file=output_file,
+                artifact_hash=artifact_hash,
+                response=response,
+                run_id=effective_run_id,
+                gate_summary=gate_summary,
+                strict=strict_boundary_receipt,
+            )
+            for boundary_id in extra_boundary_ids
+        )
+    except Exception as exc:
+        fail_phase_wbc(
+            state=state,
+            plan_dir=plan_dir,
+            step=step,
+            agent=agent,
+            payload={
+                "phase": step,
+                "status": "failed",
+                "failure_stage": "result_evidence",
+                "error_class": type(exc).__name__,
+                "message": str(exc),
+                "phase_result_ref": "phase_result.json",
+            },
+        )
+        raise
+    else:
+        if phase_wbc_required(step):
+            receipt_ids = [
+                emitted.boundary_id
+                for emitted in (receipt, *extra_receipts)
+                if emitted is not None
+            ]
+            complete_phase_wbc(
+                state=state,
+                plan_dir=plan_dir,
+                step=step,
+                agent=agent,
+                payload={
+                    "phase": step,
+                    "status": "completed",
+                    "summary": summary,
+                    "next_step": response.get("next_step"),
+                    "phase_result_ref": "phase_result.json",
+                    "boundary_receipt_id": receipt.boundary_id if receipt is not None else None,
+                    "boundary_receipt_ids": receipt_ids,
+                    "artifacts_written": list(artifacts),
+                    "output_file": output_file,
+                    "artifact_hash": artifact_hash,
+                },
+            )
+    clear_active_step(state, run_id=run_id)
+    save_state_merge_meta(plan_dir, state)
     return response
 
 

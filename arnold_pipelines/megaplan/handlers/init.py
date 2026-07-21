@@ -12,6 +12,16 @@ from arnold_pipelines.megaplan.runtime.doc_assembly import extract_settled_decis
 from arnold_pipelines.megaplan.runtime.execution_environment import (
     persist_plan_isolation_evidence,
 )
+from arnold_pipelines.megaplan.custody.admission_control import (
+    AdmissionFence,
+    INIT_ADMISSION_SURFACE,
+    INIT_ADMISSION_WRITER_ID,
+    record_admission_evidence,
+    register_admission_writers,
+    source_record_for_path,
+    synthetic_text_source_record,
+    validate_admission_mutation,
+)
 from arnold_pipelines.megaplan.forms import available_form_ids
 from arnold_pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING, apply_profile_expansion, load_profile_metadata
 from arnold_pipelines.megaplan.profiles import ROBUSTNESS_LEVELS, normalize_robustness
@@ -446,6 +456,32 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     plan_dir = plans_root(root) / plan_name
     if plan_dir.exists():
         raise CliError("duplicate_plan", f"Plan directory already exists: {plan_name}")
+    register_admission_writers()
+    init_source_record = (
+        source_record_for_path(source_path=idea_source_path, project_dir=project_dir)
+        if idea_source_path is not None
+        else synthetic_text_source_record(
+            selector=plan_name,
+            label="init-idea",
+            text=idea_text,
+        )
+    )
+    init_admission_evidence = validate_admission_mutation(
+        writer_id=INIT_ADMISSION_WRITER_ID,
+        surface_name=INIT_ADMISSION_SURFACE,
+        selector=plan_name,
+        source_record=init_source_record,
+        fences=(
+            AdmissionFence(
+                identity="plan_dir_absent",
+                expected=False,
+                observed=plan_dir.exists(),
+                satisfied=not plan_dir.exists(),
+                detail="init admission must materialize a new plan directory",
+            ),
+        ),
+        extra={"project_dir": str(project_dir.resolve(strict=False))},
+    )
     plan_dir.mkdir(parents=True, exist_ok=False)
     idea_snapshot_path = "idea_snapshot.md"
     (plan_dir / idea_snapshot_path).write_text(idea_text, encoding="utf-8")
@@ -472,6 +508,11 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         },
         "last_gate": {},
     }
+    record_admission_evidence(
+        state,
+        entry_key="init",
+        evidence=init_admission_evidence,
+    )
     if idea_source_path is not None:
         from arnold_pipelines.megaplan.planning.source_binding import (
             capture_canonical_source_binding,

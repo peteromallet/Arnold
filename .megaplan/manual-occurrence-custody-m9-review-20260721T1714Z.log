@@ -1,0 +1,22 @@
+[megaplan] Could not locate codex rollout for session 019f85b9-c921-7c70-aafe-7d994004807f; step cost will be recorded as $0.00
+{
+  "success": true,
+  "step": "review",
+  "summary": "Review complete: 17/22 success criteria passed (2 waived, 2 deferred to human, 1 failed but non-blocking).",
+  "artifacts": [
+    "review.json",
+    "finalize.json",
+    "final.md"
+  ],
+  "monitor_hint": "Use `megaplan status --plan m9-rebuildable-projections-20260721-0504` for updates.",
+  "next_step": null,
+  "route_signal": "pass",
+  "state": "done",
+  "issues": [
+    "Advisory: T34 was skipped and the exact planned cross-surface/captured-regression M9 tests and fixtures are absent; existing status/cloud/resident tests pass but do not satisfy that fixture requirement exactly.",
+    "Advisory: review_evidence.json records the broader verification suite as timeout/uncomputable, so full-suite promotion remains unverified in this review.",
+    "Advisory: landed diff is very large and includes incidental/unclaimed workspace artifacts; focused criteria-backed checks passed and no deterministic baseline regression was proven.",
+    "Advisory: verifiability-0 and verifiability-1 remain disputed because they require subjective human judgment rather than a deterministic diff-resolved check."
+  ],
+  "rework_items": []
+}

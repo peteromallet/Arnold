@@ -16,6 +16,14 @@ Design rules (see ``docs/ops/elegant-cloud-status-resident-plan.md``):
 - Be unit-testable with fixture directories and an injectable liveness probe.
 - Know nothing about Discord, resident conversations, or CLI rendering. Those
   live in :mod:`arnold_pipelines.megaplan.cloud.status_format` and the resident.
+
+M9 — canonical projection migration:
+  The snapshot now carries a ``source_cursor_vector`` recording every source file
+  that was read, plus per-session ``evidence_gaps`` for any stale or degraded
+  fields.  Neither field grants dispatch, completion, cancellation, publication,
+  or delivery authority — they are display-only projections (see ``status_projection.py``
+  for the authority contract).  The format module (:mod:`arnold_pipelines.megaplan.cloud.status_format`)
+  renders these gaps as structured evidence annotations.
 """
 
 from __future__ import annotations
@@ -147,12 +155,20 @@ def build_cloud_status_snapshot(
     now: datetime | None = None,
     liveness_probe: LivenessProbe | None = None,
     history_path: Path | str | None = None,
+    source_cursor_vector: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the canonical cloud status snapshot from local observation only.
 
     All file reads are defensive: a missing or malformed source file degrades a
     session to ``attention`` rather than raising. The function never raises on
     absent inputs — callers may inspect the top-level ``degraded`` field.
+
+    *source_cursor_vector* is an optional M9 canonical projection cursor
+    recording which source files were read, their record counts, and digests.
+    When supplied, it is attached as ``source_cursor_vector`` in the snapshot
+    so downstream consumers (format module, resident) can trace evidence
+    provenance without repeating the read.  It never grants authority — this
+    is a display-only projection.
     """
     now = now or _utcnow()
     # Resolve defaults at call time so tests (and in-container callers) see the
@@ -201,6 +217,11 @@ def build_cloud_status_snapshot(
         if deltas:
             progress.update(deltas)
 
+    # Attach per-session evidence gaps (stale/degraded display fields as
+    # structured evidence annotations — never authority).
+    for entry in sessions:
+        entry["evidence_gaps"] = _collect_session_evidence_gaps(entry)
+
     summary = _summarize(sessions)
     snapshot: dict[str, Any] = {
         "generated_at": _isoformat(now),
@@ -210,6 +231,7 @@ def build_cloud_status_snapshot(
         "summary": summary,
         "sessions": sessions,
         "degraded": {"reasons": degraded_reasons} if degraded_reasons else None,
+        "source_cursor_vector": _format_source_cursor(source_cursor_vector),
     }
     if watchdog_report is not None:
         snapshot["watchdog_generated_at"] = watchdog_report.get("timestamp_utc") or ""
@@ -265,6 +287,7 @@ def build_and_write_snapshot(
     previous_path: Path | str | None = DEFAULT_PREVIOUS_SNAPSHOT_PATH,
     history_path: Path | str | None = None,
     now: datetime | None = None,
+    source_cursor_vector: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the snapshot and atomically write it + the previous rotation.
 
@@ -277,6 +300,7 @@ def build_and_write_snapshot(
         watchdog_report_path=watchdog_report_path,
         now=now,
         history_path=history_path,
+        source_cursor_vector=source_cursor_vector,
     )
     write_cloud_status_snapshot(snapshot, path=path, previous_path=previous_path)
     append_progress_history(snapshot, history_path or DEFAULT_HISTORY_PATH, now=now)
@@ -1083,6 +1107,7 @@ def _build_session_entry(
     _completion_contract_mode = "shadow"
     _has_final_acceptance_receipt = False
     _final_milestone_label = None
+    _final_milestone_plan_name = None
     _chain_state_doc: dict[str, Any] | None = None
     if remote_spec and chain_complete:
         try:
@@ -1105,6 +1130,10 @@ def _build_session_entry(
                                 _has_final_acceptance_receipt = isinstance(
                                     _rec.get("acceptance_receipt"), dict
                                 )
+                                if _has_final_acceptance_receipt:
+                                    _final_milestone_plan_name = str(
+                                        _rec.get("plan") or ""
+                                    ).strip() or None
                                 break
         except Exception:
             pass
@@ -1174,6 +1203,61 @@ def _build_session_entry(
         "acceptance_required": _acceptance_required,
         "waiting_for_acceptance": _waiting_for_acceptance,
     }
+    repair_projection = _compose_repair_decision_projection(
+        workspace=workspace,
+        queue_root=marker_dir.parent / "repair-queue",
+        repair_data_dir=repair_data_dir,
+        plan_state=plan_state_doc,
+        current_target=current_target_record,
+    )
+    repair_custody = (
+        repair_projection.get("repair_custody")
+        if isinstance(repair_projection.get("repair_custody"), Mapping)
+        else None
+    )
+    parent_custody: dict[str, Any] | None = None
+    if _has_final_acceptance_receipt and isinstance(repair_custody, Mapping):
+        active_repair_subject_ids: list[str] = []
+        current_target = (
+            repair_custody.get("current_target")
+            if isinstance(repair_custody.get("current_target"), Mapping)
+            else {}
+        )
+        current_refs = (
+            current_target.get("current_refs")
+            if isinstance(current_target, Mapping)
+            and isinstance(current_target.get("current_refs"), Mapping)
+            else {}
+        )
+        repair_plan_state = (
+            repair_custody.get("plan_state")
+            if isinstance(repair_custody.get("plan_state"), Mapping)
+            else {}
+        )
+        for value in (
+            current_refs.get("current_plan_name"),
+            current_refs.get("chain_current_plan_name"),
+            repair_plan_state.get("name"),
+        ):
+            if isinstance(value, str) and value.strip():
+                active_repair_subject_ids.append(value.strip())
+        blocker_id = repair_custody.get("blocker_id")
+        parent_custody = {
+            "accepted_subject_ids": (
+                [_final_milestone_plan_name] if _final_milestone_plan_name else []
+            ),
+            "active_repair_subject_ids": list(
+                dict.fromkeys(active_repair_subject_ids)
+            ),
+            "accepted_repair_occurrence_ids": [],
+            "active_repair_occurrence_ids": (
+                [blocker_id.strip()]
+                if durable_repair_active(repair_custody)
+                and isinstance(blocker_id, str)
+                and blocker_id.strip()
+                else []
+            ),
+        }
     advancement = assess_advancement(
         advancement_policy,
         current_state=plan_current_state,
@@ -1188,6 +1272,7 @@ def _build_session_entry(
         completed_count=completed_count or 0,
         has_final_acceptance_receipt=_has_final_acceptance_receipt,
         final_milestone_label=_final_milestone_label,
+        parent_custody=parent_custody,
     )
     active_step = (
         plan_state_doc.get("active_step")
@@ -1308,13 +1393,6 @@ def _build_session_entry(
             latest_activity=latest_activity,
             now=now,
         )
-    )
-    repair_projection = _compose_repair_decision_projection(
-        workspace=workspace,
-        queue_root=marker_dir.parent / "repair-queue",
-        repair_data_dir=repair_data_dir,
-        plan_state=plan_state_doc,
-        current_target=current_target_record,
     )
     entry.update(repair_projection)
     custody = repair_projection.get("repair_custody")
@@ -2639,3 +2717,122 @@ def _as_path(value: object) -> Path | None:
     if isinstance(value, Path):
         return value
     return None
+
+
+# ── M9: canonical projection helpers ──────────────────────────────────────
+
+
+def _format_source_cursor(
+    cursor_vector: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Format a source cursor vector for the snapshot, never granting authority.
+
+    When no cursor vector is supplied the field is an explicit ``absent``
+    sentinel so consumers never mistake a missing cursor for a verified read.
+    """
+    if isinstance(cursor_vector, Mapping) and cursor_vector:
+        return {
+            "authority": "evidence_extracted_display_only",
+            "value": dict(cursor_vector),
+        }
+    return {
+        "authority": "absent",
+        "reason": "no_source_cursor_vector_provided",
+    }
+
+
+def _collect_session_evidence_gaps(
+    entry: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Collect structured evidence gaps for one session entry.
+
+    Returns a dict whose keys name degraded dimensions and whose values are
+    ``{gap, reason, evidence_status}`` triples.  Gaps are pure display
+    annotations — they never feed dispatch, completion, cancellation,
+    publication, or delivery.
+    """
+    gaps: dict[str, Any] = {}
+
+    # --- tmux liveness gap ---
+    tmux_value = entry.get("tmux")
+    if tmux_value is None and not isinstance(entry.get("evidence"), Mapping):
+        gaps["tmux_liveness"] = {
+            "gap": "tmux_liveness_unavailable",
+            "reason": "no tmux probe result; process namespace unavailable",
+            "evidence_status": "missing",
+        }
+
+    # --- process liveness gap ---
+    process_value = entry.get("process")
+    if process_value is None and not isinstance(entry.get("evidence"), Mapping):
+        gaps["process_liveness"] = {
+            "gap": "process_liveness_unavailable",
+            "reason": "no process probe result; process namespace unavailable",
+            "evidence_status": "missing",
+        }
+
+    # --- watchdog status gap ---
+    watchdog_status = entry.get("watchdog")
+    if watchdog_status is None:
+        gaps["watchdog_status"] = {
+            "gap": "watchdog_status_unavailable",
+            "reason": "no watchdog report for this session",
+            "evidence_status": "missing",
+        }
+    elif watchdog_status == "stale":
+        gaps["watchdog_status"] = {
+            "gap": "watchdog_status_stale",
+            "reason": "watchdog report describes an earlier sweep; not current runner truth",
+            "evidence_status": "stale",
+        }
+
+    # --- chain-health gap ---
+    chain_complete = entry.get("chain_complete")
+    if chain_complete is None:
+        gaps["chain_health"] = {
+            "gap": "chain_health_unavailable",
+            "reason": "no chain-health sidecar for this session",
+            "evidence_status": "missing",
+        }
+
+    # --- plan state gap ---
+    plan_state = entry.get("plan_state")
+    if plan_state is None:
+        evidence = entry.get("evidence")
+        if isinstance(evidence, Mapping) and evidence.get("marker"):
+            gaps["plan_state"] = {
+                "gap": "plan_state_unavailable",
+                "reason": "plan state file missing or unreadable",
+                "evidence_status": "missing",
+            }
+
+    # --- custody mismatch ---
+    if entry.get("custody_mismatch"):
+        gaps["custody_mismatch"] = {
+            "gap": "chain_custody_mismatch",
+            "reason": (
+                "terminal chain state with incomplete milestone count; "
+                "plan state label suppressed"
+            ),
+            "evidence_status": "degraded",
+        }
+
+    # --- repair projection degraded ---
+    repair_degraded = entry.get("repair_projection_degraded")
+    if isinstance(repair_degraded, Mapping) and repair_degraded:
+        gaps["repair_projection"] = {
+            "gap": "repair_projection_degraded",
+            "reason": str(repair_degraded.get("reason") or "canonical repair projection unavailable"),
+            "evidence_status": "degraded",
+        }
+
+    # --- superseded sibling ---
+    evidence = entry.get("evidence")
+    if isinstance(evidence, Mapping) and evidence.get("superseded_by"):
+        gaps["superseded_by"] = {
+            "gap": "session_superseded",
+            "reason": f"superseded by sibling: {evidence['superseded_by']}",
+            "evidence_status": "superseded",
+        }
+
+    return gaps

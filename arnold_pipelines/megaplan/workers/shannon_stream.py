@@ -411,6 +411,7 @@ def _shannon_stream_auth_metadata(config: ShannonStreamConfig) -> dict[str, Any]
     return {
         "worker_channel": "shannon_stream",
         "auth_channel": config.auth_channel,
+        "provider": "claude",
         "api_key_present": config.auth_channel == "api_key" and bool(key),
         "api_key_source": source if config.auth_channel == "api_key" else None,
         "dry_run": config.auth_channel == "api_key" and config.api_key_dry_run and not key,
@@ -1132,6 +1133,9 @@ def run_shannon_stream_step(
         cfg=config,
         rng=session_rng,
     )
+    auth_metadata["resolved_model"] = model
+    auth_metadata["session_agent"] = session_agent
+    auth_metadata["session_strategy"] = plan.kind
     main_turn = dataclasses.replace(plan.main, body=prompt, delivery="stdin")
     session_id = main_turn.session_id
 

@@ -1,0 +1,21 @@
+{
+  "checks": [
+    {
+      "detail": "C1 source_to_owner_matrix.json content hash is unchanged across the generation run.",
+      "id": "matrix_unchanged",
+      "passes": true
+    },
+    {
+      "detail": "All required discovery sections are present in the inventory artifact.",
+      "id": "discovery_sections_emitted",
+      "passes": true
+    },
+    {
+      "detail": "Generated support rows remain fail-closed: no manifest-derived row is marked supported unless exact declaration/static/writer/runtime equality is proven.",
+      "id": "support_rows_fail_closed",
+      "passes": true
+    }
+  ],
+  "generated_at": "2026-07-21T00:01:43.840472+00:00",
+  "schema": "m8.wbc-boundary-inventory-validation.v1"
+}

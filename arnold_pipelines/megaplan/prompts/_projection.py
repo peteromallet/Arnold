@@ -17,7 +17,14 @@ import json
 import os
 import textwrap
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
+from typing import Any, Mapping
+
+from arnold_pipelines.megaplan._core.io import (
+    ProjectionCursor,
+    _projection_canonical_dumps,
+    now_utc,
+)
 
 # ---------------------------------------------------------------------------
 # Character budgets for inline text fields
@@ -902,3 +909,118 @@ def check_prompt_size(
             "max_chars": max_chars,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Rebuild metadata & digest helpers (pure, no side effects)
+# ---------------------------------------------------------------------------
+
+REBUILD_METADATA_SCHEMA_VERSION = 1
+
+
+def compute_prompt_projection_digest(projection: Mapping[str, Any]) -> str:
+    """Compute a deterministic SHA-256 digest of a prompt projection view.
+
+    The digest is computed over the canonical (stable, sorted-key,
+    no-whitespace) JSON representation of *projection*, making it
+    byte-for-byte comparable across rebuilds.
+
+    Parameters
+    ----------
+    projection:
+        A projection dict produced by any prompt projection function
+        (e.g. ``project_execute_context``, ``project_review_context``).
+
+    Returns
+    -------
+    str
+        ``"sha256:<hex>"`` digest string.
+    """
+    canonical = _projection_canonical_dumps(dict(projection))
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def capture_prompt_source_cursor(source_path: str | Path) -> ProjectionCursor:
+    """Capture a :class:`ProjectionCursor` for a prompt source file.
+
+    Computes a cursor from the file at *source_path* that captures its
+    absolute path, record count, and content digest.
+
+    This function is **read-only** — it never mutates the source file.
+
+    Parameters
+    ----------
+    source_path:
+        Path to the source file (e.g. ``finalize.json`` or an
+        execution output JSON file).
+
+    Returns
+    -------
+    ProjectionCursor
+        An immutable cursor capturing the source file state.
+    """
+    from arnold_pipelines.megaplan._core.io import _projection_cursor_from_path
+
+    return _projection_cursor_from_path(Path(source_path))
+
+
+def prompt_rebuild_metadata(
+    source_path: str | Path,
+    *,
+    projection_digest: str = "",
+    computed_at: str | None = None,
+) -> dict[str, Any]:
+    """Produce rebuild metadata (cursor, freshness, lag, digest) for a prompt projection.
+
+    This is a **pure function** — it never mutates source evidence or
+    writes to the filesystem.  The caller is responsible for attaching
+    the returned metadata to a projection view.
+
+    Parameters
+    ----------
+    source_path:
+        Path to the source file driving the prompt projection.
+    projection_digest:
+        Pre-computed digest of the projection view. When empty, the
+        returned metadata will not include a digest.
+    computed_at:
+        ISO-8601 timestamp for the rebuild. When ``None``, ``now_utc()``
+        is used.
+
+    Returns
+    -------
+    dict
+        A metadata dict with keys ``source_cursor`` (``ProjectionCursor``
+        as dict), ``rebuilt_at``, ``freshness_seconds``, ``lag_seconds``,
+        ``projection_digest`` (when non-empty), and
+        ``rebuild_schema_version``.
+    """
+    from datetime import datetime
+
+    cursor = capture_prompt_source_cursor(source_path)
+    rebuilt_at = computed_at or now_utc()
+
+    freshness_seconds = 0.0
+
+    try:
+        source_path_obj = Path(source_path)
+        if source_path_obj.exists():
+            source_mtime = source_path_obj.stat().st_mtime
+            rebuild_epoch = datetime.fromisoformat(rebuilt_at).timestamp()
+            lag_seconds = max(0.0, rebuild_epoch - source_mtime)
+        else:
+            lag_seconds = 0.0
+    except (OSError, ValueError):
+        lag_seconds = 0.0
+
+    metadata: dict[str, Any] = {
+        "rebuild_schema_version": REBUILD_METADATA_SCHEMA_VERSION,
+        "source_cursor": cursor.to_dict(),
+        "rebuilt_at": rebuilt_at,
+        "freshness_seconds": freshness_seconds,
+        "lag_seconds": lag_seconds,
+    }
+    if projection_digest:
+        metadata["projection_digest"] = projection_digest
+
+    return metadata
