@@ -1,0 +1,297 @@
+{
+  "schema_version": "arnold-resident-schedule-occurrence-result-v1",
+  "occurrence": {
+    "resident_run_id": "subagent-20260721-184850-8f9102ee",
+    "trigger_kind": "operator_authorized_manual_exact_contract",
+    "started_at_utc": "2026-07-21T18:48:50Z",
+    "assessment_completed_at_utc": "2026-07-21T18:57:42Z",
+    "previous_scheduled_occurrence_run_id": "subagent-20260721-160918-7d54ceab",
+    "interrupted_prior_owner_run_id": "subagent-20260721-152426-394bab94",
+    "one_at_a_time_policy": "serial_interventions_all_targets_with_target_specific_ownership",
+    "final_classification": "partial",
+    "decision": "Withings Health Integration and Superpom Reflections remain whole-chain complete and validated. Custody Control Plane is blocked-external at M8: authoritative chain reconciliation proved PR 290 is open and conflicting, while this occurrence forbids push and remote merge. No worker remains and no post-checkpoint accepted semantic result exists."
+  },
+  "schedule": {
+    "schedule_id": "sched_pinned_e894_epics_babysit_3h",
+    "revision": 15,
+    "generation": 3,
+    "state": "active",
+    "cadence": "PT3H",
+    "prompt_digest": "sha256:26e4e3af2535259d5b1a7a7b4399e6e03b5e86b8c364cad7ea5fdc538350a69f",
+    "definition_reread_before_action": true,
+    "profile_mutated": false,
+    "recurring_schedule_cancelled": false
+  },
+  "prior_owner_verification": {
+    "run_id": "subagent-20260721-152426-394bab94",
+    "canonical_manifest": "/workspace/arnold/.megaplan/plans/resident-subagents/subagent-20260721-152426-394bab94/manifest.json",
+    "manifest_sha256": "661bcd7e41dd64f38de6061cdbba516048879c5fcc1e0f06eb84d0bb071a21f2",
+    "occurrence_result_sha256": "e50c1a27030e06e105b46e86a54e90f4826057b5ac27659131455342e6b88fd8",
+    "status": "interrupted",
+    "status_updated_at_utc": "2026-07-21T17:51:03.142580Z",
+    "delivery_status": "superseded",
+    "superseded_at_utc": "2026-07-21T17:51:02.860229Z",
+    "superseded_by_run_id": "subagent-20260721-175101-94548403",
+    "matching_process_identity": null,
+    "continuing_recovery_owner": false,
+    "decision": "Treat as terminal prior evidence only; its stop continuation is not a recovery owner and took no action in this occurrence."
+  },
+  "assessments": [
+    {
+      "target": "Custody Control Plane",
+      "session": "custody-control-plane-20260714",
+      "workspace": "/workspace/custody-control-plane-20260714/Arnold",
+      "chain_spec": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/chain.yaml",
+      "marker": "/workspace/.megaplan/cloud-sessions/custody-control-plane-20260714.json",
+      "current_blocker_or_objective": "Recover the stopped M10 plan without resetting preserved work, while retaining authoritative chain custody and avoiding remote effects.",
+      "semantic_checkpoint": {
+        "observed_at_utc": "2026-07-21T18:54:49Z",
+        "chain_milestone_index": 8,
+        "chain_completed_milestones": 8,
+        "chain_last_state": "initialized",
+        "plan": "m10-safe-retry-recovery-and-20260721-1759",
+        "plan_state": "planned",
+        "latest_failure": null,
+        "active_phase": "critique_evaluator",
+        "active_phase_liveness": "stalled",
+        "exact_worker_identity": null,
+        "current_phase_result": {
+          "phase": "plan",
+          "exit_kind": "success",
+          "sha256": "0b555fe9d33febaa7fa157fbde412b3e513ce9797e46e42b165550fc972c68b5"
+        },
+        "newest_semantic_artifact": {
+          "path": "evaluator_verdict.json",
+          "written_at_utc": "2026-07-21T18:21:35.374911766Z",
+          "sha256": "c8b2766c69fb12d84523be9ef1de2d4f3c79c3055ac0de6bbbf88274e0cc2375"
+        },
+        "task_result": null,
+        "batch_result": null
+      },
+      "preservation": {
+        "head": "e041ae04c30823064f945b2ed963d1a06195ec25",
+        "dirty_paths": [
+          ".megaplan/incident-ledger/.events.seq",
+          ".megaplan/incident-ledger/events.jsonl"
+        ],
+        "preintervention_tracked_patch_sha256": "bb9892b5cfd8faa081f85ffe96f5fcad683fa37760619944e19c16a067ce0fd7",
+        "preintervention_dirty_archive_sha256": "825b139a76c2d7535c3df0da660e252808aeb0c6647003c20bd2b0345283518f",
+        "postflight_tracked_patch_sha256": "bb9892b5cfd8faa081f85ffe96f5fcad683fa37760619944e19c16a067ce0fd7",
+        "postflight_dirty_archive_sha256": "825b139a76c2d7535c3df0da660e252808aeb0c6647003c20bd2b0345283518f",
+        "preservation_predicate": "passed_exact_pre_post_match"
+      },
+      "intervention": {
+        "kind": "exact_marker_relaunch_after_runtime_attestation",
+        "marker_runtime_root": "/workspace/arnold-engine-running-f7f0967",
+        "marker_runtime_sha": "f7f096701ae3df9925e584620d9c7ac39224338a",
+        "import_path": "/workspace/arnold-engine-running-f7f0967/arnold_pipelines/megaplan/__init__.py",
+        "result": "failed_before_semantic_recovery",
+        "chain_reconciliation": "cursor 8 to 5; current plan M10 to M8",
+        "remote_merge_attempted_by_existing_marker_route": true,
+        "remote_merge_effect_performed": false,
+        "marker_failure": "gh_pr_merge_failed"
+      },
+      "postflight": {
+        "observed_at_utc": "2026-07-21T18:57:42Z",
+        "classification": "blocked-external",
+        "strict_progress_predicate": {
+          "evaluation": "failed",
+          "accepted_task_batch_phase_or_milestone_after_checkpoint": false,
+          "current_chain_state_blocked": true,
+          "exact_worker_identity": null,
+          "newer_durable_semantic_artifact_after_checkpoint": false,
+          "reason": "The chain is awaiting a conflicted remote PR merge; the marker process exited and M10 has no post-checkpoint semantic result."
+        },
+        "chain": {
+          "current_milestone": "m8-runtime-and-boundary-adoption",
+          "current_milestone_index": 5,
+          "milestone_count": 10,
+          "completed_milestones": 5,
+          "last_state": "awaiting_pr_merge",
+          "current_plan": "m8-universal-wbc-producer-and-20260720-0646",
+          "state_path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/.chains/chain-1e998199f544.json",
+          "state_sha256": "391cee5dc5a9e46e6ce7b5acc98b97076228c50f7aa12c96daf927ed8acab61e"
+        },
+        "pull_request": {
+          "repository": "peteromallet/Arnold",
+          "number": 290,
+          "state": "OPEN",
+          "mergeable": "CONFLICTING",
+          "head_ref": "megaplan/custody-control-plane/m8-runtime-and-boundary-adoption",
+          "head_revision": "3c146f9e1937fa085d8a1fa589db27ca2a45018c",
+          "base_ref": "consolidate/arnold-runtime-activation-20260714",
+          "base_revision": "9c99688b67a7c6c7fa37d4b622b68643e787d94c"
+        },
+        "exact_remaining_blocker": "PR 290 must have its append-only incident-ledger conflicts reconciled, its remote head updated, and the PR merged before the authoritative chain can advance. Push and remote merge are outside this occurrence's authority; blindly resolving the ledger conflicts locally would risk fabricating or dropping custody evidence."
+      },
+      "non_regression": {
+        "chain_spec_sha256": "63f15c2df351c9629fe04bb66e11ea8d0a09689b2dc260c83600998b4bd70b2d",
+        "northstar_sha256": "315ed6ba4db2323958448db2ec7aa81fa5ddbc140bc05823ec0de322e78c5f45",
+        "m5_sha256": "2e8f3f96fd360d6d5cab2a5c2ba5f8dde728d0ff576572f7296f6436cd2491b1",
+        "m5a_sha256": "9a337ca44fd83e0e43bbb371232bcab5d414f20706cf676f15c63256b7f82ae6",
+        "m6_sha256": "3fea24d7120fb6dd97a0a876caff200bd9d2847d6fcae37dcb69a63b1b8ec66e"
+      },
+      "agent_assessment": {
+        "assessment_utc": "2026-07-21T18:57:42Z",
+        "classification": "repair_without_candidate",
+        "decision": "The current occurrence owned the serial recovery attempt; no separate active or plausible matching owner existed.",
+        "rationale": "The unified canonical inventory contained only this occurrence. The explicitly named prior owner is interrupted, superseded, has no process identity, and was directed to take no action.",
+        "uncertainty": null,
+        "occupies_one_at_a_time_slot_for_target": true,
+        "candidates": [
+          {
+            "run_id": "subagent-20260721-152426-394bab94",
+            "canonical_manifest": "/workspace/arnold/.megaplan/plans/resident-subagents/subagent-20260721-152426-394bab94/manifest.json",
+            "manifest_sha256": "661bcd7e41dd64f38de6061cdbba516048879c5fcc1e0f06eb84d0bb071a21f2",
+            "explicit_match_fields": {
+              "session": "custody-control-plane-20260714",
+              "workspace": "/workspace/custody-control-plane-20260714/Arnold",
+              "declared_recovery_objective": "recover Custody with accepted semantic evidence"
+            },
+            "lifecycle_status": "interrupted",
+            "substantive_evidence_path": "/workspace/arnold/.megaplan/plans/resident-subagents/subagent-20260721-152426-394bab94/occurrence-result.json",
+            "substantive_evidence_sha256": "e50c1a27030e06e105b46e86a54e90f4826057b5ac27659131455342e6b88fd8",
+            "evidence_utc": "2026-07-21T17:51:03.142580Z",
+            "assessment": "terminal_prior_owner_no_continuing_ownership"
+          }
+        ],
+        "cancellation_or_supersession_receipt": "manifest completion_delivery superseded at 2026-07-21T17:51:02.860229Z",
+        "replacement_run_receipt": null
+      }
+    },
+    {
+      "target": "Withings Health Integration",
+      "session": "withings-health-sync-20260719",
+      "workspace": "/workspace/withings-health-sync-20260719/Pumpernickel",
+      "chain_spec": "/workspace/withings-health-sync-20260719/Pumpernickel/.megaplan/initiatives/withings-health-integration/chain.yaml",
+      "marker": "/workspace/.megaplan/cloud-sessions/withings-health-sync-20260719.json",
+      "current_blocker_or_objective": "No current blocker; preserve terminal completion.",
+      "postflight": {
+        "observed_at_utc": "2026-07-21T18:57:42Z",
+        "classification": "strict_success",
+        "chain_last_state": "done",
+        "milestones_completed": 4,
+        "milestone_count": 4,
+        "current_plan": null,
+        "newest_phase": "review",
+        "newest_phase_exit_kind": "success",
+        "chain_state_sha256": "1b09a1273171cfaf7a9bf0da69a50c084c04492d9f3df74bd2fc3c8612431192",
+        "phase_result_sha256": "862d1ef8167f70097b172bc3c9a341f874dda62198cc1d96a5f82004031be7c6",
+        "head": "9fa8e70c7ca24a8431a40c705e90ca4b82d1c0a0",
+        "upstream": "9fa8e70c7ca24a8431a40c705e90ca4b82d1c0a0",
+        "workspace_clean": true,
+        "process_identity": "absent_as_expected_for_terminal_done_chain"
+      },
+      "runtime_attestation": {
+        "marker_runtime_root": "/workspace/arnold-engine-running-97df7a0",
+        "marker_runtime_sha": "97df7a05240f36c7a85a2048de412ba9bf6a2ede",
+        "import_path": "/workspace/arnold-engine-running-97df7a0/arnold_pipelines/megaplan/__init__.py",
+        "trusted_container_contract_preserved": true,
+        "marker_relaunch_used": false
+      },
+      "agent_assessment": {
+        "assessment_utc": "2026-07-21T18:57:42Z",
+        "classification": "healthy_no_repair",
+        "decision": "Leave terminal chain untouched.",
+        "rationale": "Chain, terminal phase, clean checkout, and upstream containment prove completion; no active matching candidate exists.",
+        "uncertainty": null,
+        "occupies_one_at_a_time_slot_for_target": false,
+        "candidates": []
+      }
+    },
+    {
+      "target": "Superpom Reflections",
+      "session": "superpom-reflections-20260719",
+      "workspace": "/workspace/superpom-reflections-20260719/Pumpernickel",
+      "chain_spec": "/workspace/superpom-reflections-20260719/Pumpernickel/.megaplan/initiatives/superpom-reflections/chain.yaml",
+      "marker": "/workspace/.megaplan/cloud-sessions/superpom-reflections-20260719.json",
+      "current_blocker_or_objective": "No current blocker; preserve terminal completion and accepted T24 staging evidence.",
+      "postflight": {
+        "observed_at_utc": "2026-07-21T18:57:42Z",
+        "classification": "strict_success",
+        "chain_last_state": "done",
+        "milestones_completed": 4,
+        "milestone_count": 4,
+        "current_plan": null,
+        "newest_phase": "review",
+        "newest_phase_exit_kind": "success",
+        "chain_state_sha256": "51dae71b09e4b8ac49fe1adf5c18df9e052349c2bf0e2127440052e97ae24cad",
+        "phase_result_sha256": "95a894e4397a94fad4654eceb05bd9658b0b9c75c68d8083786615807118c3e2",
+        "head": "3167456b14d8c730899552a54d13d3706880b713",
+        "upstream": "3167456b14d8c730899552a54d13d3706880b713",
+        "workspace_clean": true,
+        "process_identity": "absent_as_expected_for_terminal_done_chain",
+        "t24_staging": {
+          "target": "Railway project Veas / environment staging / service Veas-staging",
+          "task": "T24",
+          "task_authority": "accepted",
+          "task_envelope_digest": "d7bef1ddbbe7bec3a131844f1fd4a7c614ccb97cc73de785826bc6febd338cae",
+          "sense_check": "SC24",
+          "sense_check_authority": "accepted",
+          "sense_check_envelope_digest": "ecb29122a96cd557d743990102218d8deb0993e6b87beb53c96affd3353fe5c2",
+          "artifact_sha256": "0516af361550679eddd8c766ba780fc9b6da517b0b30b2788f6b5f3e0e8d13b8"
+        }
+      },
+      "runtime_attestation": {
+        "marker_runtime_root": "/workspace/arnold-engine-running-e894",
+        "marker_runtime_sha": "e894881275e7d6587ee888928ce088af71ae64e9",
+        "import_path": "/workspace/arnold-engine-running-e894/arnold_pipelines/megaplan/__init__.py",
+        "marker_relaunch_used": false
+      },
+      "agent_assessment": {
+        "assessment_utc": "2026-07-21T18:57:42Z",
+        "classification": "healthy_no_repair",
+        "decision": "Leave terminal chain untouched; do not repeat staging mutation.",
+        "rationale": "Chain, terminal phase, accepted T24 evidence, clean checkout, and upstream containment prove completion. The newest automatic-repair run is terminal failed and has no continuing ownership.",
+        "uncertainty": null,
+        "occupies_one_at_a_time_slot_for_target": false,
+        "candidates": [
+          {
+            "run_id": "managed-automatic-repair-3bcab0df37a3b32570cf",
+            "canonical_manifest": "/workspace/superpom-reflections-20260719/Pumpernickel/.megaplan/plans/resident-subagents/managed-automatic-repair-3bcab0df37a3b32570cf/manifest.json",
+            "manifest_sha256": "5cff4654dc70373c0dd106e32075455ff8dc5e08d14a74cc4552b397a3e91f48",
+            "explicit_match_fields": {
+              "session": "superpom-reflections-20260719",
+              "workspace": "/workspace/superpom-reflections-20260719/Pumpernickel",
+              "chain_spec": "/workspace/superpom-reflections-20260719/Pumpernickel/.megaplan/initiatives/superpom-reflections/chain.yaml"
+            },
+            "lifecycle_status": "failed",
+            "started_at_utc": "2026-07-21T10:46:10.128842Z",
+            "finished_at_utc": "2026-07-21T10:46:36.150919Z",
+            "assessment": "terminal_prior_repair_no_continuing_ownership"
+          }
+        ]
+      }
+    }
+  ],
+  "verification": {
+    "targets_assessed_serially": true,
+    "targets_reassessed_immediately_before_write": true,
+    "final_three_target_recheck_at_utc": "2026-07-21T18:57:42Z",
+    "candidate_manifests_and_cited_artifacts_reread": true,
+    "canonical_active_inventory": {
+      "observed_at_utc": "2026-07-21T18:57:42Z",
+      "active_run_ids": [
+        "subagent-20260721-184850-8f9102ee"
+      ],
+      "separate_relevant_candidate_count": 0
+    },
+    "runtime_attestations": {
+      "general_e894": "passed",
+      "custody_f7f0967_marker_capsule": "passed",
+      "withings_97df7a0": "passed"
+    },
+    "custody_strict_gate": "failed; blocked-external on conflicted PR 290 with no live worker or post-checkpoint accepted semantic result",
+    "withings_terminal_gate": "passed",
+    "superpom_terminal_and_t24_gate": "passed",
+    "resident_restarted_or_repointed": false,
+    "frozen_engine_mutated": false,
+    "profile_mutated": false,
+    "push_performed": false,
+    "remote_merge_effect_performed": false,
+    "staging_mutation_performed_by_this_occurrence": false,
+    "production_effect_performed": false,
+    "credentials_changed_or_exposed": false,
+    "schedule_remains_active": true
+  }
+}
