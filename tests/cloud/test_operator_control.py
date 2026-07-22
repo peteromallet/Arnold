@@ -104,3 +104,48 @@ def test_resume_no_push_preserves_dirty_milestone_checkout(
     assert result["no_push"] is True
     assert "MEGAPLAN_CHAIN_NO_PUSH=1" in launch
     assert launch[-1] == "python -m demo"
+
+
+def test_resume_authority_only_does_not_start_runner(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    marker_path = tmp_path / ".megaplan" / "cloud-sessions" / "demo.json"
+    marker_path.parent.mkdir(parents=True)
+    marker_path.write_text(
+        json.dumps(
+            {
+                "session": "demo",
+                "operator_pause": {"active": True},
+                "should_run": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        operator_control,
+        "resume_chain",
+        lambda *args, **kwargs: {"changed": True, "paused": False},
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        operator_control.subprocess,
+        "run",
+        lambda argv, **kwargs: calls.append(list(argv)),
+    )
+
+    result = operator_control.resume_session(
+        spec=tmp_path / "chain.yaml",
+        workspace=workspace,
+        session="demo",
+        marker_path=marker_path,
+        actor="test",
+        start_runner=False,
+    )
+
+    assert calls == []
+    assert result["runner_started"] is False
+    assert result["authority_only"] is True
+    updated = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert "operator_pause" not in updated
+    assert updated["should_run"] is False
