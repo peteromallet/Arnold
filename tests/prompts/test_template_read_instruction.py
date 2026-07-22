@@ -72,6 +72,23 @@ def test_gate_prompt_distinguishes_north_star_and_critique_severity_enums(
     )
 
 
+def test_gate_prompt_treats_finalize_feasibility_as_post_gate_evidence(
+    tmp_path: Path,
+) -> None:
+    state = _minimal_state(tmp_path)
+    plan_dir = tmp_path / "plan"
+
+    prompt = _gate_prompt(state, plan_dir, root=tmp_path)
+
+    assert "Respect phase-order custody" in prompt
+    assert "`task_feasibility.json`" in prompt
+    assert "are post-gate" in prompt
+    assert "Do not block gate merely because finalize has" in prompt
+    assert "not yet regenerated them" in prompt
+    assert "Finalizer and execute remain fail-closed" not in prompt
+    assert "Finalize and execute remain fail-closed" in prompt
+
+
 def test_critique_evaluator_prompt_pairs_template_path_with_exact_read_file_call(
     tmp_path: Path,
 ) -> None:

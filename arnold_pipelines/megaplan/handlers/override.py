@@ -88,6 +88,7 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
 )
 from arnold_pipelines.megaplan.replan_state import (
     blocked_iterate_gate_replan_allowed,
+    invalidate_replan_derived_artifacts,
     reset_replan_loop_state,
 )
 from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effort_emit_failure, _write_gate_json
@@ -1171,6 +1172,10 @@ def _override_replan(
         state,
         reason=reason,
     )
+    artifact_invalidation = invalidate_replan_derived_artifacts(
+        plan_dir,
+        timestamp=timestamp,
+    )
     reset_replan_loop_state(state, target_state=STATE_PLANNED)
     save_state_merge_meta(plan_dir, state)
     try:
@@ -1193,6 +1198,8 @@ def _override_replan(
     }
     if source_reconciliation is not None:
         response["canonical_source_binding"] = source_reconciliation
+    if artifact_invalidation is not None:
+        response["artifact_invalidation"] = artifact_invalidation
     return response
 
 

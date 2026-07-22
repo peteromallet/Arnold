@@ -233,6 +233,14 @@ def _gate_prompt(
         If you cannot use file tools, return the populated JSON structure inline as your response instead.
 
         Requirements:
+        - Respect phase-order custody. `finalize_output.json`, `finalize.json`,
+          `finalize_snapshot.json`, and `task_feasibility.json` are post-gate
+          artifacts. During planned/critiqued gate evaluation they are not
+          evidence for the current planning epoch, even if preserved in an
+          invalidation archive. Do not block gate merely because finalize has
+          not yet regenerated them; instead verify that the plan requires the
+          ordinary finalizer's deterministic feasibility admission before
+          execution. Finalize and execute remain fail-closed on that admission.
         - Decide exactly one of: PROCEED, ITERATE, ESCALATE, TIEBREAKER.
         - Use the weighted score, flag details (including `evidence`), plan delta, recurring critiques, and preflight results as judgment context.
         - PROCEED when execution should move forward now.
