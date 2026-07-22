@@ -189,6 +189,31 @@ def _plan_version_unified_diff(plan_dir: Path, iteration: int) -> str:
     return "".join(diff)
 
 
+def _revise_retry_feedback(state: PlanState) -> str:
+    """Return actionable feedback for the most recent failed revise attempt."""
+    history = state.get("history")
+    if not isinstance(history, list):
+        return ""
+    for entry in reversed(history):
+        if not isinstance(entry, dict) or entry.get("step") != "revise":
+            continue
+        if entry.get("result") != "error":
+            return ""
+        message = entry.get("message")
+        if not isinstance(message, str) or "structural validation" not in message:
+            return ""
+        return textwrap.dedent(
+            f"""
+            PRIOR REVISE ATTEMPT FAILED STRUCTURAL VALIDATION:
+            {message}
+            Correct that exact failure in this retry. The `plan` field must contain
+            at least one concrete numbered step heading, for example:
+            `## Step 1: Implement and verify the scoped change`.
+            """
+        ).strip()
+    return ""
+
+
 def _build_verification_delta_block(
     delta: dict[str, Any] | None,
     raw_log_path: str | None,
@@ -313,6 +338,7 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
     # carried form). Fall back to gate.json when no carry file exists.
     north_star_actions = read_carried_north_star_actions(plan_dir)
     north_star_block = _build_north_star_actions_block(north_star_actions)
+    retry_feedback = _revise_retry_feedback(state)
 
     return textwrap.dedent(
         f"""
@@ -340,6 +366,8 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         {delta_block}
 
         {north_star_block}
+
+        {retry_feedback}
 
         Requirements:
         - Before addressing individual flags, check: does any flag suggest the plan is targeting the wrong code or the wrong root cause? If so, consider whether the plan needs a new approach rather than adjustments. Explain your reasoning.

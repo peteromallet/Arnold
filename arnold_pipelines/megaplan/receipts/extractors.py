@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan.prep_payload import suggested_approach_lines
+from arnold_pipelines.megaplan.receipts.schema import registered_plan_artifact_path
 
 
 def _safe(fn):
@@ -356,7 +357,7 @@ def load_and_extract(plan_dir: Path, phase: str, iteration: int, *, drift_report
     if phase == "revise":
         return {}
     paths = {
-        "plan": plan_dir / f"plan_v{iteration}.md",
+        "plan": registered_plan_artifact_path(plan_dir, iteration),
         "critique": plan_dir / f"critique_v{iteration}.json",
         "gate": plan_dir / f"gate_v{iteration}.json",
         "finalize": plan_dir / "finalize.json",
