@@ -123,6 +123,13 @@ That marker records adoption of an already-complete gate after a worker failure;
 retaining it after a genuine newer gate made the operational projection stale.
 All unrelated metadata is preserved.
 
+Focused verification also exposed a baseline fail-open normalizer: the Hermes
+cleaner synthesized missing required gate fields (including
+`north_star_actions`) before structural validation. Gate fields encode review
+and custody decisions, so gate payloads now bypass generic required-field
+defaulting and fail structural validation when the worker omits them. Other
+phase envelopes retain their established empty-value normalization.
+
 ## Recovery result
 
 The existing initiative and plan were recovered without resetting or replaying
@@ -155,6 +162,7 @@ Implementation commits, in order, are `55e9b6e31`, `c1d7e8163`, `ba602a3cd`,
 - Critique evidence custody, handler behavior, gate freshness, prompt contract,
   and schema projections: 141 tests in the combined focused suite.
 - Fresh-gate recovery-marker clearing plus handler regressions: 102 tests.
+- Gate schema, North Star action, and prompt fail-closed regressions: 63 tests.
 - Python bytecode compilation and `git diff --check` passed.
 
 No push, remote merge, deployment, resident restart, credential change, or
