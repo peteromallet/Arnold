@@ -36,6 +36,7 @@ from arnold_pipelines.megaplan._core import (
     active_phase_name,
     find_plan_dir,
     list_batch_artifacts,
+    sha256_file,
 )
 from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
 from arnold.runtime.envelope import (
@@ -2685,6 +2686,33 @@ def _recover_completed_gate_artifact_after_failure(plan_dir: Path | None) -> boo
         return False
     if gate_data.get("unresolved_flags"):
         return False
+    iteration = state_data.get("iteration")
+    if not isinstance(iteration, int) or iteration < 1:
+        return False
+    custody_path = plan_dir / f"critique_custody_v{iteration}.json"
+    signals_path = plan_dir / f"gate_signals_v{iteration}.json"
+    try:
+        gate_signals = json.loads(signals_path.read_text(encoding="utf-8"))
+        custody_digest = sha256_file(custody_path)
+        custody_mtime = custody_path.stat().st_mtime_ns
+        signals_mtime = signals_path.stat().st_mtime_ns
+        gate_mtime = (plan_dir / "gate.json").stat().st_mtime_ns
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(gate_signals, dict):
+        return False
+    custody_binding = gate_signals.get("critique_custody")
+    if not isinstance(custody_binding, dict):
+        return False
+    if (
+        custody_binding.get("receipt") != custody_path.name
+        or custody_binding.get("receipt_sha256") != custody_digest
+        or custody_binding.get("admitted") is not True
+        or custody_binding.get("loss_count") != 0
+    ):
+        return False
+    if not (custody_mtime <= signals_mtime <= gate_mtime):
+        return False
 
     def _patch(current: dict[str, Any]) -> bool:
         current["current_state"] = STATE_GATED
@@ -2692,6 +2720,8 @@ def _recover_completed_gate_artifact_after_failure(plan_dir: Path | None) -> boo
         current.setdefault("meta", {})["gate_artifact_recovery"] = {
             "reason": "adopted passing gate.json after worker failure",
             "gate_recommendation": gate_data.get("recommendation"),
+            "critique_custody_receipt": custody_path.name,
+            "critique_custody_sha256": custody_digest,
         }
         return True
 

@@ -101,6 +101,15 @@ critique custody. The helper now records the exact criterion index, criterion
 text, priority, and sorted `requires` values. Custody validation remains strict;
 no empty field is admitted and no evidence is inferred from unrelated prose.
 
+After the repaired critique produced an admitted seven-finding receipt,
+automation incorrectly adopted the passing `gate.json` written at 08:42 UTC,
+more than an hour before the new critique/receipt written at 10:06 UTC. Gate
+artifact recovery now requires the same-iteration `gate_signals` artifact to
+bind the exact current critique-custody filename and SHA-256 with admitted,
+zero-loss status, and requires custody receipt -> gate signals -> gate artifact
+mtime ordering. A stale passing gate can no longer skip gate evaluation for a
+new critique.
+
 ## Recovery result
 
 Pending execution and post-recovery re-read.

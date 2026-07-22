@@ -2278,7 +2278,26 @@ class TestAutoExecuteRecovery:
                 {
                     "current_state": "critiqued",
                     "active_step": {"phase": "gate"},
+                    "iteration": 2,
                     "meta": {},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        custody_path = plan_dir / "critique_custody_v2.json"
+        custody_path.write_text('{"admitted": true}\n', encoding="utf-8")
+        from arnold_pipelines.megaplan._core import sha256_file
+
+        (plan_dir / "gate_signals_v2.json").write_text(
+            json.dumps(
+                {
+                    "critique_custody": {
+                        "receipt": custody_path.name,
+                        "receipt_sha256": sha256_file(custody_path),
+                        "admitted": True,
+                        "loss_count": 0,
+                    }
                 }
             )
             + "\n",
@@ -2302,6 +2321,59 @@ class TestAutoExecuteRecovery:
         assert state["current_state"] == "gated"
         assert "active_step" not in state
         assert state["meta"]["gate_artifact_recovery"]["gate_recommendation"] == "PROCEED"
+        assert state["meta"]["gate_artifact_recovery"]["critique_custody_sha256"] == (
+            sha256_file(custody_path)
+        )
+
+    def test_stale_passing_gate_is_not_adopted_for_new_critique(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.auto import (
+            _recover_completed_gate_artifact_after_failure,
+        )
+        from arnold_pipelines.megaplan._core import sha256_file
+
+        plan_dir = tmp_path / ".megaplan" / "plans" / "p"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "current_state": "critiqued",
+                    "active_step": {"phase": "gate"},
+                    "iteration": 2,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        custody_path = plan_dir / "critique_custody_v2.json"
+        custody_path.write_text('{"receipt": "old"}\n', encoding="utf-8")
+        (plan_dir / "gate_signals_v2.json").write_text(
+            json.dumps(
+                {
+                    "critique_custody": {
+                        "receipt": custody_path.name,
+                        "receipt_sha256": sha256_file(custody_path),
+                        "admitted": True,
+                        "loss_count": 0,
+                    }
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "gate.json").write_text(
+            json.dumps(
+                {"recommendation": "PROCEED", "passed": True, "unresolved_flags": []}
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        custody_path.write_text('{"receipt": "new"}\n', encoding="utf-8")
+
+        assert _recover_completed_gate_artifact_after_failure(plan_dir) is False
+        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        assert state["current_state"] == "critiqued"
 
     def test_non_proceed_gate_artifact_is_not_adopted_after_worker_failure(
         self, tmp_path: Path
