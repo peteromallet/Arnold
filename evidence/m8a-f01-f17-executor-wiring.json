@@ -1,6 +1,6 @@
 {
   "schema": "m8a.f01-f17-executor-wiring.v1",
-  "generated_at": "2026-07-22T00:22:59Z",
+  "generated_at": "2026-07-22T01:29:41Z",
   "generator": "arnold_pipelines.megaplan.orchestration.m8a_report._build_executor_wiring",
   "rebuildable": true,
   "north_star_guard": "This wiring map is evidence only. It maps findings to canonical owners and exercise fixtures but does not dispatch, enforce, or substitute authority. Enforcement starts only on newly finalized canary v2 plans (SD2).",
