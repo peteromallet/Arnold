@@ -507,11 +507,20 @@ class TestValidationEventVocabulary:
             WORK_LEDGER_EVENT_CLASSES,
         )
 
+        # M8A T17 expanded the vocabulary from 4 to 12 event classes.
         assert WORK_LEDGER_EVENT_CLASSES == frozenset({
             "validation",
             "repair_verify",
             "productive",
             "unavailable_reason",
+            "review_proof",
+            "queue",
+            "retry_wait",
+            "compaction",
+            "replay",
+            "tool",
+            "git",
+            "transition",
         })
 
     def test_reject_unknown_event_class(self) -> None:
