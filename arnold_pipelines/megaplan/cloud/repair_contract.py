@@ -1784,6 +1784,12 @@ def _classify_repair_dispatch_canonical(
             failure_kind=failure_kind,
             current_target=current_target,
             semantic_findings=semantic_findings,
+        ) or _is_exact_phase_request_shape(
+            custody=custody,
+            request_id=request_id,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
         ):
             if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody=custody):
                 return _make_dispatch_decision(
@@ -4618,6 +4624,39 @@ def _is_known_repairable_shape(
                 return _has_current_target_evidence(current_target)
 
     return False
+
+
+def _is_exact_phase_request_shape(
+    *,
+    custody: Mapping[str, Any],
+    request_id: str,
+    current_state: str,
+    retry_strategy: str,
+    failure_kind: str,
+) -> bool:
+    """Recognize an immutable taskless phase occurrence under UNKNOWN.
+
+    The resolver can remain UNKNOWN while a chain-level phase failure has an
+    exact accepted request but no task id.  The exact-request adapter fences
+    that occurrence with both the request id and an explicit phase subject.
+    Never infer this shape for the general queue projection.
+    """
+
+    fingerprint = normalize_blocker_fingerprint_v1(
+        _as_mapping(custody.get("blocker_fingerprint"))
+    )
+    if fingerprint is None or not request_id:
+        return False
+    return bool(
+        fingerprint["target_fingerprint"] == f"repair-request:{request_id}"
+        and fingerprint["blocked_task_id"]
+        == f"phase:{fingerprint['phase_or_step']}"
+        and fingerprint["current_state"] == current_state
+        and fingerprint["retry_strategy"] == retry_strategy
+        and fingerprint["failure_kind"] == failure_kind
+        and failure_kind in {"phase_failed", "deterministic_phase_failure"}
+        and retry_strategy in {"rerun_phase", "repair_phase_contract"}
+    )
 
 
 def _has_terminality_contradiction(current_target: Mapping[str, Any]) -> bool:
