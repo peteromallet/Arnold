@@ -110,6 +110,54 @@ zero-loss status, and requires custody receipt -> gate signals -> gate artifact
 mtime ordering. A stale passing gate can no longer skip gate evaluation for a
 new critique.
 
+The direct fresh gate then made a substantive `ITERATE` decision but its first
+structured output copied critique severities (`significant`) into the North
+Star action severity field, whose only valid values are `blocking` and
+`advisory`. The structural audit failed closed. The gate prompt now states the
+two enums independently and expressly forbids copying critique severities. The
+retry emitted schema-valid advisory North Star actions without weakening the
+structural validator.
+
+Finally, a fresh gate evaluation now clears `meta.gate_artifact_recovery`.
+That marker records adoption of an already-complete gate after a worker failure;
+retaining it after a genuine newer gate made the operational projection stale.
+All unrelated metadata is preserved.
+
 ## Recovery result
 
-Pending execution and post-recovery re-read.
+The existing initiative and plan were recovered without resetting or replaying
+the earlier M9 branch:
+
+- At 10:15:07 UTC, a genuine iteration-2 critique completed. The admitted
+  `critique_custody_v2.json` receipt has SHA-256
+  `27cb23b251a2d045157c9b255215fcf6c0bd7b816b2b3320d25de38be0637422`,
+  binds critique SHA-256
+  `791af134701edb443bbb133410bd2f881c6b92b9f5603a5592b6669fc12cbc5a`,
+  records 11 findings, and has zero custody loss.
+- At 10:23:10 UTC, the corresponding fresh gate completed with `ITERATE`.
+  `gate_signals_v2.json` binds that exact custody receipt; `gate.json` has
+  SHA-256 `ae1619aee6fbd2ff0791e6b83793052050dbf40632274a7d08863ef91b539772`.
+  The decision preserves fail-closed prerequisite handling and identifies
+  consumer inventory, bounded task decomposition, and explicit evidence
+  generation as plan-quality work.
+- At 10:27:02 UTC, the supported revise transition completed and wrote semantic
+  plan iteration 3. `plan_v3.md` has SHA-256
+  `7152a5431778f32927bddf2d7dc233c0995968668212298c395e4d96792320ad`;
+  its metadata records all 10 gate flags as addressed and routes to a fresh
+  critique for verification rather than accepting them by assertion.
+
+Implementation commits, in order, are `55e9b6e31`, `c1d7e8163`, `ba602a3cd`,
+`9ec052617`, `35ec35257`, and `9e3631ac9`. Focused verification passed:
+
+- Finalize capture-schema equality and recursive array typing: 6 tests.
+- Exact state-only phase-contract recovery and fail-closed negative cases:
+  45 tests.
+- Critique evidence custody, handler behavior, gate freshness, prompt contract,
+  and schema projections: 141 tests in the combined focused suite.
+- Fresh-gate recovery-marker clearing plus handler regressions: 102 tests.
+- Python bytecode compilation and `git diff --check` passed.
+
+No push, remote merge, deployment, resident restart, credential change, or
+destructive operation occurred. The pinned resident checkout remains clean at
+`7a5f9d39c52db851a63bfc3f36619df792e1688c`; deployment of these source fixes is
+outside this recovery authority.
