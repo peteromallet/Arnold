@@ -17,6 +17,7 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     DISPATCH_DECISION_REPAIRING,
     DISPATCH_DECISION_TERMINAL,
     BlockerFingerprintV1,
+    blocker_fingerprint_from_exact_request,
     blocker_id_for_fingerprint,
     classify_repair_dispatch,
     durable_repair_active,
@@ -102,6 +103,58 @@ def test_blocker_id_changes_when_v1_fingerprint_changes() -> None:
 def test_malformed_or_partial_blocker_fingerprints_fail_conservatively(payload: object) -> None:
     assert normalize_blocker_fingerprint_v1(payload) is None
     assert blocker_id_for_fingerprint(payload) is None
+
+
+def test_exact_request_adapts_taskless_phase_failure_without_weakening_general_projection(
+    tmp_path: Path,
+) -> None:
+    queue_root = _queue_root(tmp_path)
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        session="custody-session",
+        source="lifecycle_failure",
+        problem_signature={
+            "failure_kind": "deterministic_phase_failure",
+            "current_state": "blocked",
+            "phase_or_step": "finalize",
+            "milestone_or_plan": "m9-rebuildable-projections",
+            "gate_recommendation": "repair the deterministic phase contract",
+            "blocked_task_id": "",
+        },
+        target={"plan_name": "m9-rebuildable-projections"},
+        root_cause_hint="finalize contract failed",
+        created_at="2026-07-22T04:48:40Z",
+    )
+    request = queued["request"]
+    expected = {
+        "schema_version": 1,
+        "current_state": "blocked",
+        "retry_strategy": "repair_phase_contract",
+        "failure_kind": "deterministic_phase_failure",
+        "phase_or_step": "finalize",
+        "milestone_or_plan": "m9-rebuildable-projections",
+        "blocked_task_id": "phase:finalize",
+        "target_fingerprint": f"repair-request:{request['request_id']}",
+    }
+
+    assert blocker_fingerprint_from_exact_request(request) == expected
+    general = project_repair_custody(
+        plan_state={"name": "m9-rebuildable-projections", "current_state": "planned"},
+        current_target={"target_session": "custody-session"},
+        queue_root=queue_root,
+    )
+    exact = project_repair_custody(
+        plan_state={"name": "m9-rebuildable-projections", "current_state": "planned"},
+        current_target={"target_session": "custody-session"},
+        queue_root=queue_root,
+        request_id=request["request_id"],
+    )
+
+    assert general["blocker_id"] == ""
+    assert general["requests"][0]["blocker_id"] == ""
+    assert exact["blocker_fingerprint"] == expected
+    assert exact["blocker_id"] == blocker_id_for_fingerprint(expected)
+    assert exact["requests"][0]["blocker_id"] == exact["blocker_id"]
 
 
 def _plan_state() -> dict[str, object]:
