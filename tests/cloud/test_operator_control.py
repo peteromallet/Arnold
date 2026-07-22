@@ -25,11 +25,13 @@ def test_resume_injects_managed_repair_route_into_tmux_session(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        operator_control,
-        "resume_chain",
-        lambda *args, **kwargs: {"changed": True, "paused": False},
-    )
+    resume_calls: list[dict[str, object]] = []
+
+    def fake_resume_chain(*args, **kwargs):
+        resume_calls.append(dict(kwargs))
+        return {"changed": True, "paused": False}
+
+    monkeypatch.setattr(operator_control, "resume_chain", fake_resume_chain)
     calls: list[list[str]] = []
 
     def fake_run(argv, **kwargs):
@@ -52,6 +54,7 @@ def test_resume_injects_managed_repair_route_into_tmux_session(
     assert f"ARNOLD_REPAIR_MARKER_DIR={marker_dir}" in launch
     assert "ARNOLD_REPAIR_SESSION=demo" in launch
     assert "ARNOLD_REPAIR_RUN_KIND=chain" in launch
+    assert resume_calls == [{"actor": "test", "verify_execution_binding": True}]
     assert not any(item.startswith("MEGAPLAN_CHAIN_NO_PUSH=") for item in launch)
     assert launch[-1] == "python -m demo"
     updated = json.loads(marker_path.read_text(encoding="utf-8"))
@@ -77,11 +80,13 @@ def test_resume_no_push_preserves_dirty_milestone_checkout(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        operator_control,
-        "resume_chain",
-        lambda *args, **kwargs: {"changed": True, "paused": False},
-    )
+    resume_calls: list[dict[str, object]] = []
+
+    def fake_resume_chain(*args, **kwargs):
+        resume_calls.append(dict(kwargs))
+        return {"changed": True, "paused": False}
+
+    monkeypatch.setattr(operator_control, "resume_chain", fake_resume_chain)
     calls: list[list[str]] = []
 
     def fake_run(argv, **kwargs):
@@ -122,11 +127,13 @@ def test_resume_authority_only_does_not_start_runner(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        operator_control,
-        "resume_chain",
-        lambda *args, **kwargs: {"changed": True, "paused": False},
-    )
+    resume_calls: list[dict[str, object]] = []
+
+    def fake_resume_chain(*args, **kwargs):
+        resume_calls.append(dict(kwargs))
+        return {"changed": True, "paused": False}
+
+    monkeypatch.setattr(operator_control, "resume_chain", fake_resume_chain)
     calls: list[list[str]] = []
     monkeypatch.setattr(
         operator_control.subprocess,
@@ -144,6 +151,9 @@ def test_resume_authority_only_does_not_start_runner(
     )
 
     assert calls == []
+    assert resume_calls == [
+        {"actor": "test", "verify_execution_binding": False}
+    ]
     assert result["runner_started"] is False
     assert result["authority_only"] is True
     updated = json.loads(marker_path.read_text(encoding="utf-8"))
