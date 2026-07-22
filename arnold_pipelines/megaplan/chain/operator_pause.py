@@ -85,6 +85,7 @@ def pause_chain(
                     "paused_at": authority["paused_at"],
                     "reason": authority["reason"],
                     "previous_current_state": previous_plan_state,
+                    "previous_chain_last_state": authority["previous_chain_last_state"],
                 }
             return True
 
@@ -100,7 +101,55 @@ def resume_chain(spec_path: Path, project_root: Path, *, actor: str = "operator"
     state = chain_spec.load_chain_state(spec_path)
     authority = pause_record(state)
     if authority is None:
-        raise CliError("chain_not_paused", "chain has no active operator pause")
+        # A runner that was already exiting when pause_chain() committed can
+        # persist its older in-memory ChainState after the pause receipt.  The
+        # plan-side authority is written through the plan-state CAS and remains
+        # the exact durable record needed to resume.  Reconcile only that
+        # narrow, self-authenticating split-brain shape; every other missing
+        # chain authority still fails closed.
+        plan_dir = (
+            find_plan_dir(project_root, state.current_plan_name)
+            if state.current_plan_name
+            else None
+        )
+        plan_state: dict[str, Any] = {}
+        if plan_dir is not None and (plan_dir / "state.json").exists():
+            try:
+                loaded = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                loaded = {}
+            if isinstance(loaded, dict):
+                plan_state = loaded
+        plan_meta = plan_state.get("meta")
+        plan_pause = plan_meta.get(AUTHORITY_KEY) if isinstance(plan_meta, dict) else None
+        previous_plan_state = (
+            plan_pause.get("previous_current_state")
+            if isinstance(plan_pause, dict)
+            else None
+        )
+        if not (
+            state.last_state == STATE_PAUSED
+            and plan_state.get("current_state") == STATE_PAUSED
+            and isinstance(plan_pause, dict)
+            and plan_pause.get("schema_version") == AUTHORITY_SCHEMA
+            and isinstance(previous_plan_state, str)
+            and previous_plan_state
+            and previous_plan_state != STATE_PAUSED
+        ):
+            raise CliError("chain_not_paused", "chain has no active operator pause")
+        previous_chain_last_state = plan_pause.get("previous_chain_last_state")
+        if not isinstance(previous_chain_last_state, str) or not previous_chain_last_state:
+            previous_chain_last_state = previous_plan_state
+        authority = {
+            "schema_version": AUTHORITY_SCHEMA,
+            "active": True,
+            "paused_at": plan_pause.get("paused_at"),
+            "actor": "reconciled-plan-authority",
+            "reason": plan_pause.get("reason"),
+            "previous_chain_last_state": previous_chain_last_state,
+            "previous_plan_state": previous_plan_state,
+            "plan": state.current_plan_name,
+        }
 
     plan_name = authority.get("plan") or state.current_plan_name
     plan_dir = find_plan_dir(project_root, plan_name) if isinstance(plan_name, str) else None
