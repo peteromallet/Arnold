@@ -79,7 +79,11 @@ from arnold_pipelines.megaplan.orchestration.gate_checks import (
     run_gate_checks,
 )
 from arnold_pipelines.megaplan.orchestration.gate_signals import build_gate_signals
-from arnold_pipelines.megaplan.blocker_recovery import command_blocker_details, evaluate_blocker_recovery
+from arnold_pipelines.megaplan.blocker_recovery import (
+    command_blocker_details,
+    evaluate_blocker_recovery,
+    recoverable_contract_failure_without_phase_result,
+)
 from arnold_pipelines.megaplan.control_interface import declared_override_policy_target
 from arnold_pipelines.megaplan.orchestration.phase_result import read_phase_result
 
@@ -1124,7 +1128,11 @@ class PlanningControlBinding:
                         "suggested_recovery_commands": [resume_command],
                     },
                 )
-            if phase_result is None:
+            contract_failure_without_result = (
+                phase_result is None
+                and recoverable_contract_failure_without_phase_result(state, resume_cursor)
+            )
+            if phase_result is None and not contract_failure_without_result:
                 raise CliError(
                     "missing_phase_result",
                     "recover-blocked requires phase_result.json with current blocker details",
@@ -1134,8 +1142,8 @@ class PlanningControlBinding:
                 finalize_data,
                 state,
                 plan_dir=plan_dir,
-                blocked_tasks=phase_result.blocked_tasks,
-                deviations=phase_result.deviations,
+                blocked_tasks=phase_result.blocked_tasks if phase_result is not None else (),
+                deviations=phase_result.deviations if phase_result is not None else (),
             )
             blocker_details = command_blocker_details(evaluation)
             if not evaluation.can_continue:
@@ -1149,7 +1157,9 @@ class PlanningControlBinding:
                     "recover-blocked requires every current blocker to be explicitly resolved as non-terminal",
                     extra={
                         "resume_cursor": dict(resume_cursor),
-                        "phase_result_exit_kind": phase_result.exit_kind,
+                        "phase_result_exit_kind": (
+                            phase_result.exit_kind if phase_result is not None else None
+                        ),
                         "blocker_ids": [
                             blocker["blocker_id"] for blocker in unresolved_blockers
                         ],
