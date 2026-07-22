@@ -23,6 +23,7 @@ CURRENTLY_RUNNING_COMMAND = "whats-cooking"
 CURRENTLY_RUNNING_DESCRIPTION = "Show running Megaplan epics, chains, and resident subagents."
 _RUNNING_SESSION_STATUSES = frozenset({"running", "repairing"})
 _ATTENTION_SESSION_STATUS = "attention"
+_NON_EXECUTION_SERVICE_SESSIONS = frozenset({"megaplan-resident-discord"})
 _TERMINAL_AGENT_STATUSES = frozenset(
     {"completed", "failed", "interrupted", "cancelled", "superseded", "unknown"}
 )
@@ -116,6 +117,14 @@ def discover_running_sessions(status_node: Mapping[str, Any] | None) -> list[Map
     discovered: list[Mapping[str, Any]] = []
     for row in sessions:
         if not isinstance(row, Mapping):
+            continue
+        session = str(row.get("session") or "").strip().casefold()
+        # The Discord resident is infrastructure, not a plan/chain runner. A
+        # stale or colliding cloud marker can otherwise join its live tmux
+        # process to an unrelated current plan and manufacture a 0%-running
+        # epic. Managed resident work is rendered from the independently
+        # observed managed-agent inventory below.
+        if session in _NON_EXECUTION_SERVICE_SESSIONS:
             continue
         status = str(row.get("status") or "").casefold()
         if status in _RUNNING_SESSION_STATUSES or row.get("repairing") is True:

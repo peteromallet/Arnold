@@ -52,6 +52,59 @@ def test_discovers_running_and_repairing_sessions_and_only_live_managed_agents()
     assert [row["run_id"] for row in discover_live_managed_agents(managed)] == ["live"]
 
 
+def test_discord_resident_service_marker_cannot_manufacture_running_epic() -> None:
+    status_node = {
+        "generated_at": "2026-07-22T19:14:44Z",
+        "sessions": [
+            {
+                "session": "megaplan-resident-discord",
+                "run_kind": "plan",
+                "status": "running",
+                "process": True,
+                "tmux": True,
+                "current_plan": "m9-rebuildable-projections-20260722-0431",
+                "progress": {
+                    "percent": 0,
+                    "current_plan": "m9-rebuildable-projections-20260722-0431",
+                },
+                "overview": {
+                    "execution_state": "inactive",
+                    "completed_count": 0,
+                },
+            },
+            {
+                "session": "custody-control-plane-20260714",
+                "run_kind": "chain",
+                "status": "paused",
+                "progress": {
+                    "percent": 70,
+                    "display_state": "paused",
+                    "current_plan": "m9-rebuildable-projections-20260722-0431",
+                },
+            },
+        ],
+    }
+    report = CurrentlyRunningReport(
+        status_node=status_node,
+        managed_agents={
+            "running": [
+                {
+                    "run_id": "subagent-m9-owner",
+                    "description": "Restore truthful Custody M9 progress",
+                    "status": "running",
+                    "live": True,
+                }
+            ]
+        },
+    )
+
+    assert discover_running_sessions(status_node) == []
+    rendered = render_currently_running(report)
+    assert "_No active epics or chains._" in rendered
+    assert "megaplan-resident-discord" not in rendered
+    assert "Restore truthful Custody M9 progress" in rendered
+
+
 def test_render_preserves_canonical_epic_percent_and_prefers_display_state() -> None:
     report = CurrentlyRunningReport(
         status_node={
