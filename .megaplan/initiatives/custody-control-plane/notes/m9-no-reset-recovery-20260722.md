@@ -92,6 +92,15 @@ The recovery does not synthesize a phase result or custody receipt; it returns
 to the phase predecessor so the supported replan/critique lifecycle can produce
 new evidence.
 
+A genuine critique rerun then rejected deterministic verifiability flags 13 and
+14 twice because `_build_verifiability_flags` emitted empty `evidence` fields.
+The parallel criterion-quality and verification producers already emitted
+specific source evidence; the later deterministic helper appended separate
+human-only capability flags without the source criterion fields required by
+critique custody. The helper now records the exact criterion index, criterion
+text, priority, and sorted `requires` values. Custody validation remains strict;
+no empty field is admitted and no evidence is inferred from unrelated prose.
+
 ## Recovery result
 
 Pending execution and post-recovery re-read.

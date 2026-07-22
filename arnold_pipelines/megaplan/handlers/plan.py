@@ -328,6 +328,20 @@ def _build_verifiability_flags(
     from arnold_pipelines.megaplan.orchestration.verifiability import audit_criteria, validate_requires
 
     flags: list[dict[str, Any]] = []
+
+    def criterion_evidence(index: int) -> str:
+        if index < 0 or index >= len(success_criteria):
+            return f"success_criteria[{index}] is unavailable"
+        criterion = success_criteria[index]
+        requires = criterion.get("requires", [])
+        if not isinstance(requires, list):
+            requires = []
+        return (
+            f"success_criteria[{index}]: criterion={criterion.get('criterion', '?')!r}; "
+            f"priority={criterion.get('priority', '')!r}; "
+            f"requires={sorted(str(item) for item in requires)!r}"
+        )
+
     issues = validate_requires(success_criteria)
     for issue_str in issues:
         is_unknown_cap = "unknown capability" in issue_str
@@ -336,6 +350,7 @@ def _build_verifiability_flags(
             "concern": issue_str,
             "category": "verifiability",
             "severity_hint": "likely-significant" if is_unknown_cap else "likely-minor",
+            "evidence": issue_str,
             "status": "open",
         })
 
@@ -347,6 +362,7 @@ def _build_verifiability_flags(
                 "concern": f"Criterion {audit.criterion_idx}: {audit.rationale} Missing: {', '.join(audit.missing_caps)}",
                 "category": "verifiability",
                 "severity_hint": "likely-significant",
+                "evidence": criterion_evidence(audit.criterion_idx),
                 "status": "open",
             })
         elif audit.verdict == "human_only":
@@ -355,6 +371,7 @@ def _build_verifiability_flags(
                 "concern": f"Criterion {audit.criterion_idx}: requires human verification ({', '.join(audit.missing_caps)}).",
                 "category": "verifiability",
                 "severity_hint": "likely-minor",
+                "evidence": criterion_evidence(audit.criterion_idx),
                 "status": "open",
             })
 
