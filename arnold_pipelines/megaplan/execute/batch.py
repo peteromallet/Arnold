@@ -2630,7 +2630,6 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
         verification_dir.mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
-    config = {"project_dir": str(project_dir)}
     for job in validation_jobs:
         if not isinstance(job, dict):
             continue
@@ -2646,6 +2645,33 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
             continue
         timeout = job.get("max_seconds") or job.get("timeout_seconds") or 600
         job_id = str(job.get("id") or "vj")
+        command = job.get("command")
+        invalid_fields: list[str] = []
+        if not isinstance(command, str) or not command.strip():
+            invalid_fields.append("command")
+        elif "\x00" in command or "\n" in command or "\r" in command:
+            invalid_fields.append("command_shape")
+        if job.get("mutates", False) is not False:
+            invalid_fields.append("mutates")
+        if job.get("writes_files") is not False:
+            invalid_fields.append("writes_files")
+        if invalid_fields:
+            raise CliError(
+                "invalid_validation_job",
+                f"validation job {job_id} failed harness-owned admission: "
+                f"{', '.join(invalid_fields)}",
+                valid_next=["finalize", "revise"],
+                extra={
+                    "job_id": job_id,
+                    "invalid_fields": invalid_fields,
+                    "validation_job_kind": kind,
+                },
+            )
+        config = {
+            "project_dir": str(project_dir),
+            "plan_dir": str(plan_dir),
+            "test_command": command.strip(),
+        }
         try:
             result = _suite_runner.run_suite(
                 Path(project_dir),
@@ -2656,7 +2682,8 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
             )
         except Exception as exc:
             log.warning("validation job %s failed: %s", job_id, exc)
-            err_payload = {"job_id": job_id, "kind": kind, "error": str(exc)}
+            error_detail = f"{type(exc).__name__}: {exc}"
+            err_payload = {"job_id": job_id, "kind": kind, "error": error_detail}
             err_canonical = _json.dumps(err_payload, sort_keys=True, separators=(",", ":"))
             err_hash = "sha256:" + _hashlib.sha256(err_canonical.encode("utf-8")).hexdigest()
             evidence_results.append({
@@ -2665,14 +2692,14 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                 "status": "runner_error",
                 "exit_code": None,
                 "evidence_hash": err_hash,
-                "error": str(exc),
+                "error": error_detail,
             })
             try:
                 _wl.emit_unavailable_reason(
                     Path(plan_dir),
                     referenced_identity=str(job.get("task_id") or job_id),
                     reason="validation_runner_error",
-                    detail=str(exc),
+                    detail=error_detail,
                 )
             except Exception:
                 pass
@@ -2696,9 +2723,7 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
         run_id = getattr(result, "run_id", job_id)
         artifact_path = verification_dir / f"validation_{job_id}_{run_id}.json"
         try:
-            artifact_path.write_text(
-                _json.dumps({"evidence": evidence, "job": job}, indent=2, sort_keys=True)
-            )
+            atomic_write_json(artifact_path, evidence)
         except Exception:
             pass
         try:

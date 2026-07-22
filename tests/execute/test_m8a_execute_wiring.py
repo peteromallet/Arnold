@@ -515,7 +515,7 @@ def test_batch_validation_jobs_accepts_validation_jobs_from_finalize() -> None:
         with patch(
             "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite",
             return_value=fake_result,
-        ):
+        ) as mock_run:
             with patch(
                 "arnold_pipelines.megaplan.observability.work_ledger.emit_validation",
                 return_value={"event_id": "ev-1", "event_class": "validation"},
@@ -539,6 +539,7 @@ def test_batch_validation_jobs_accepts_validation_jobs_from_finalize() -> None:
         assert evidence[0]["exit_code"] == 0
         assert "evidence_hash" in evidence[0]
         assert evidence[0]["evidence_hash"].startswith("sha256:")
+        assert mock_run.call_args.args[1]["test_command"] == "echo ok"
     finally:
         try:
             for d in (plan_dir, project_dir):
@@ -1030,6 +1031,61 @@ def test_validation_job_runner_error_emits_unavailable_reason() -> None:
         assert evidence[0]["status"] == "runner_error"
         assert evidence[0]["exit_code"] is None
         assert "RuntimeError" in evidence[0]["error"]
+    finally:
+        try:
+            for d in (plan_dir, project_dir):
+                for f in d.rglob("*"):
+                    if f.is_file():
+                        f.unlink()
+                for f in sorted(d.rglob("*"), reverse=True):
+                    if f.is_dir():
+                        f.rmdir()
+                d.rmdir()
+        except OSError:
+            pass
+
+
+def test_validation_job_mutation_is_rejected_before_suite_boundary() -> None:
+    """Mutating declarations fail closed before the deterministic runner."""
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import _run_batch_validation_jobs
+    from arnold_pipelines.megaplan.types import CliError
+
+    plan_dir = Path(tempfile.mkdtemp(prefix="test_batch_val_"))
+    project_dir = Path(tempfile.mkdtemp(prefix="test_batch_proj_"))
+    try:
+        finalize_data = {
+            "validation_jobs": [
+                {
+                    "id": "VJ1",
+                    "kind": "narrow_recheck",
+                    "command": "pytest tests/test_t1.py -q",
+                    "task_id": "T1",
+                    "mutates": True,
+                    "writes_files": False,
+                }
+            ]
+        }
+        with patch(
+            "arnold_pipelines.megaplan.orchestration.suite_runner.run_suite"
+        ) as mock_run:
+            with pytest.raises(CliError) as caught:
+                _run_batch_validation_jobs(
+                    plan_dir=plan_dir,
+                    project_dir=project_dir,
+                    finalize_data=finalize_data,
+                    batch_task_ids=["T1"],
+                    state=_make_state(project_dir),
+                )
+
+        mock_run.assert_not_called()
+        assert caught.value.code == "invalid_validation_job"
+        assert caught.value.extra == {
+            "job_id": "VJ1",
+            "invalid_fields": ["mutates"],
+            "validation_job_kind": "narrow_recheck",
+        }
     finally:
         try:
             for d in (plan_dir, project_dir):
