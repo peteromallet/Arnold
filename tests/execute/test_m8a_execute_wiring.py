@@ -863,22 +863,26 @@ def test_evidence_is_content_addressed_in_batch_context() -> None:
                 with patch(
                     "arnold_pipelines.megaplan.observability.work_ledger.emit_unavailable_reason",
                 ):
-                    evidence_fail = _run_batch_validation_jobs(
-                        plan_dir=plan_dir,
-                        project_dir=project_dir,
-                        finalize_data=finalize_data,
-                        batch_task_ids=["T1"],
-                        is_final_batch=False,
-                        state=state,
-                    )
+                    with pytest.raises(CliError) as caught:
+                        _run_batch_validation_jobs(
+                            plan_dir=plan_dir,
+                            project_dir=project_dir,
+                            finalize_data=finalize_data,
+                            batch_task_ids=["T1"],
+                            is_final_batch=False,
+                            state=state,
+                        )
 
         assert len(evidence_pass) == 1
-        assert len(evidence_fail) == 1
-
-        # Content hashes must differ for pass vs fail
-        assert evidence_pass[0]["evidence_hash"] != evidence_fail[0]["evidence_hash"]
+        # The failing result is persisted as evidence before dispatch is
+        # blocked; it is never converted into a productive execution result.
+        assert caught.value.code == "validation_job_failed"
+        fail_evidence = json.loads(
+            next((plan_dir / "verification").glob("validation_VJ1_run-fail.json")).read_text()
+        )
+        assert evidence_pass[0]["evidence_hash"] != fail_evidence["evidence_hash"]
         assert evidence_pass[0]["status"] == "passed"
-        assert evidence_fail[0]["status"] == "failed"
+        assert fail_evidence["status"] == "failed"
     finally:
         try:
             for d in (plan_dir, project_dir):
@@ -1200,3 +1204,18 @@ def test_batch_validation_no_model_dispatch_path() -> None:
     assert "invoke_model" not in source
     # suite_runner.run_suite is the only subprocess path
     assert "run_suite" in source or "_run_suite" in source
+
+
+def test_failure_signature_distinguishes_validation_commands() -> None:
+    """Equivalent messages from distinct deterministic commands do not collide."""
+    from types import SimpleNamespace
+
+    from arnold_pipelines.megaplan.orchestration.recovery_policy import (
+        normalize_failure_signature,
+    )
+
+    first = SimpleNamespace(message="pytest failed", command="pytest tests/a.py")
+    second = SimpleNamespace(message="pytest failed", command="pytest tests/b.py")
+    assert normalize_failure_signature("review_quality_block", first) != (
+        normalize_failure_signature("review_quality_block", second)
+    )

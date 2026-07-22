@@ -2031,6 +2031,11 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
         _ensure_verification_task(payload, state)
     _attach_calibration_route_reports(plan_dir, payload, state)
     _write_capability_claims_from_finalize(plan_dir, payload, state)
+    # Baseline selection and the final verification-task normalization above
+    # may change the selectors that harness-owned jobs must execute.  Compile
+    # again at the persistence boundary so validation_jobs is derived from the
+    # exact final task/test contract rather than the pre-baseline draft.
+    payload["validation_jobs"] = compile_validation_jobs(payload)
     _reconcile_validation_after_mutation(payload)
     # Finalization and baseline helpers may mutate the graph after the first
     # feasibility pass. Recompile at the final persistence boundary and bind
