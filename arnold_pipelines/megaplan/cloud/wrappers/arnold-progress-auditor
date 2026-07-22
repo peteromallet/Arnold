@@ -5635,7 +5635,7 @@ Evaluate these questions in order:
   profile-preservation clause. Missing profile preservation is a repair-system
   contract failure; profile observation never authorizes profile mutation.
 - Classify any terminal repair success without canonical plan/chain cursor
-  advancement as `completed-repair-without-cursor-advance` and route it through
+  advancement as 'completed-repair-without-cursor-advance' and route it through
   the L2/L3 false-success backstop.
 - Treat meta-repair artifacts as negative evidence when they contain only
   launch/trust/no-output failures such as "Not inside a trusted directory",
