@@ -3593,11 +3593,20 @@ if plan_dir is not None and plan_dir.exists():
     except Exception:
         pass
 plan_has_live_activity = plan_has_active_step or plan_signal_liveness == "progressing" or plan_has_in_flight_llm
+plan_state_nonterminal = bool(plan_current_state) and plan_current_state not in {
+    "done",
+    "aborted",
+    "cancelled",
+    "failed",
+}
 plan_projected_nonterminal = (
     bool(current_plan_name)
-    and not plan_has_active_step
-    and last_state in {"blocked", "awaiting_human"}
-    and plan_current_state == last_state
+    and not plan_has_live_activity
+    and plan_state_nonterminal
+    and (
+        (last_state in {"blocked", "awaiting_human"} and plan_current_state == last_state)
+        or (last_state in NONTERMINAL_STATES and plan_current_state != last_state)
+    )
 )
 events_path = plan_dir / "events.ndjson" if plan_dir is not None else None
 events_exists = events_path is not None and events_path.exists()
