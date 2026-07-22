@@ -5631,6 +5631,12 @@ Evaluate these questions in order:
   delegated subagents, wrote a meta record, committed/pushed when allowed, and
   retriggered ordinary repair. If any of those did not happen, classify
   META_REPAIR_FAILURE and fix the meta-repairer/watchdog dispatch path first.
+- Verify the ordinary-repair and meta-repair briefs retain an explicit
+  profile-preservation clause. Missing profile preservation is a repair-system
+  contract failure; profile observation never authorizes profile mutation.
+- Classify any terminal repair success without canonical plan/chain cursor
+  advancement as `completed-repair-without-cursor-advance` and route it through
+  the L2/L3 false-success backstop.
 - Treat meta-repair artifacts as negative evidence when they contain only
   launch/trust/no-output failures such as "Not inside a trusted directory",
   "--skip-git-repo-check was not specified", "Codex meta-repair orchestrator

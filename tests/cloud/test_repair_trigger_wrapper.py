@@ -142,6 +142,7 @@ def _run_trigger(
     lock_dir: Path | None = None,
     env_overrides: dict[str, str] | None = None,
     meta_repair_bin: Path | None = None,
+    request_id: str = "",
 ) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
@@ -172,6 +173,8 @@ def _run_trigger(
     ]
     if lock_dir is not None:
         cmd.extend(["--lock-dir", str(lock_dir)])
+    if request_id:
+        cmd.extend(["--request-id", request_id])
     return subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)
 
 
@@ -319,6 +322,54 @@ def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) ->
     assert payload["repair_session"] == "demo"
     assert payload["repair_run_kind"] == "chain"
     assert not (marker_dir.parent / "repair-queue").exists()
+
+
+def test_exact_trigger_claims_taskless_lifecycle_phase_failure(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    spec = _write_marker(marker_dir, workspace)
+    _write_chain_state_for_spec(workspace, spec)
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=_queue_root(workspace),
+        marker_dir=marker_dir,
+        session="demo",
+        source="lifecycle_failure",
+        problem_signature={
+            "failure_kind": "deterministic_phase_failure",
+            "current_state": "blocked",
+            "phase_or_step": "finalize",
+            "milestone_or_plan": "m3",
+            "gate_recommendation": "repair the deterministic phase contract",
+            "blocked_task_id": "",
+        },
+        target={"plan_name": "m3"},
+        root_cause_hint="finalize contract failed",
+        workspace=workspace,
+        run_kind="chain",
+        created_at="2026-07-22T04:48:40Z",
+    )
+    request_id = queued["request"]["request_id"]
+
+    result = _run_trigger(
+        marker_dir,
+        _repair_stub(tmp_path),
+        enabled=True,
+        request_id=request_id,
+    )
+
+    assert result.returncode == 0, result.stderr
+    events = _events(result)
+    assert any(event["event"] == "repair_trigger_dispatch" for event in events), events
+    dispatch = next(event for event in events if event["event"] == "repair_trigger_dispatch")
+    assert dispatch["request_id"] == request_id
+    blocker_id = dispatch["attempt"]["blocker_id"]
+    assert blocker_id.startswith("blocker:v1:")
+    claim_path = repair_requests.active_repair_claim_lock_dir(
+        _queue_root(workspace), blocker_id
+    ) / "owner.json"
+    claim = _read_json_eventually(claim_path)
+    assert claim["request_id"] == request_id
+    assert claim["blocker_id"] == blocker_id
 
 
 def test_trigger_suppresses_dispatch_claim_when_worker_is_unavailable(

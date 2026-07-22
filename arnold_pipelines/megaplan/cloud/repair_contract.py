@@ -778,6 +778,49 @@ def build_repair_occurrence_key_from_repair_evidence(
     return occurrence_key
 
 
+def blocker_fingerprint_from_exact_request(
+    request: Mapping[str, Any] | None,
+) -> BlockerFingerprintV1 | None:
+    """Bind a taskless phase failure to one immutable repair request.
+
+    Lifecycle failures in planning phases have no task id by construction.
+    They still need a canonical occurrence identity before the ordinary repair
+    trigger may claim them. Only the exact-request path may use this adapter:
+    the immutable request id provides the target fence and ``phase:<name>`` is
+    an explicit phase-level subject, not a fabricated task claim.
+    """
+
+    record = _as_mapping(request)
+    request_id = _as_text(record.get("request_id"))
+    if re.fullmatch(r"[0-9a-f]{64}", request_id) is None:
+        return None
+    signature = _as_mapping(record.get("problem_signature"))
+    failure_kind = _as_text(signature.get("failure_kind"))
+    phase = _as_text(signature.get("phase_or_step"))
+    if failure_kind not in {"phase_failed", "deterministic_phase_failure"} or not phase:
+        return None
+    retry_strategy = (
+        "repair_phase_contract"
+        if failure_kind == "deterministic_phase_failure"
+        else "rerun_phase"
+    )
+    return normalize_blocker_fingerprint_v1(
+        {
+            "schema_version": BLOCKER_FINGERPRINT_VERSION,
+            "current_state": _as_text(signature.get("current_state")),
+            "retry_strategy": retry_strategy,
+            "failure_kind": failure_kind,
+            "phase_or_step": phase,
+            "milestone_or_plan": _as_text(signature.get("milestone_or_plan")),
+            "blocked_task_id": _first_non_empty(
+                _as_text(signature.get("blocked_task_id")),
+                f"phase:{phase}",
+            ),
+            "target_fingerprint": f"repair-request:{request_id}",
+        }
+    )
+
+
 class RepairRequestDecisionRecord(TypedDict):
     decision_id: str
     request_id: str
@@ -979,6 +1022,7 @@ def project_repair_custody(
     queue_dir: str | Path | None = None,
     repair_data_dir: str | Path | None = None,
     sidecar_dir: str | Path | None = None,
+    request_id: str = "",
 ) -> RepairCustodyProjection:
     """Project plan, queue, and repair-data artifacts into one custody view."""
 
@@ -1010,6 +1054,13 @@ def project_repair_custody(
         if validated_queue_root is not None
         else []
     )
+    exact_request_id = _as_text(request_id)
+    if exact_request_id:
+        queue_requests = [
+            record
+            for record in queue_requests
+            if _as_text(record.get("request_id")) == exact_request_id
+        ]
     queue_decisions = (
         repair_requests.iter_repair_decisions(validated_queue_root)
         if validated_queue_root is not None
@@ -1073,6 +1124,8 @@ def project_repair_custody(
             current_target=request_target,
             problem_signature=problem_signature,
         )
+        if request_fingerprint is None and exact_request_id:
+            request_fingerprint = blocker_fingerprint_from_exact_request(record)
         request_blocker_id = blocker_id_for_fingerprint(request_fingerprint) or ""
         if blocker_id and request_blocker_id and request_blocker_id != blocker_id:
             continue
@@ -1212,7 +1265,10 @@ def project_repair_custody(
             bucket = CUSTODY_BUCKET_BROKEN_SUPERFIXER
 
     failure_payload = _as_mapping(plan_payload.get("latest_failure"))
-    failure_kind = _as_text(failure_payload.get("kind"))
+    failure_kind = _first_non_empty(
+        _as_text(failure_payload.get("kind")),
+        _as_text(_as_mapping(fingerprint).get("failure_kind")),
+    )
     max_attempts = 1 if failure_kind in {
         "quality_gate_blocked",
         "deterministic_quality_blocked",
@@ -1229,8 +1285,14 @@ def project_repair_custody(
         "blocker_id": blocker_id or "",
         "blocker_fingerprint": fingerprint,
         "custody_bucket": bucket,
-        "current_state": _as_text(plan_payload.get("current_state")),
-        "retry_strategy": _as_text(_as_mapping(plan_payload.get("resume_cursor")).get("retry_strategy")),
+        "current_state": _first_non_empty(
+            _as_text(plan_payload.get("current_state")),
+            _as_text(_as_mapping(fingerprint).get("current_state")),
+        ),
+        "retry_strategy": _first_non_empty(
+            _as_text(_as_mapping(plan_payload.get("resume_cursor")).get("retry_strategy")),
+            _as_text(_as_mapping(fingerprint).get("retry_strategy")),
+        ),
         "failure_kind": failure_kind,
         "request_status_counts": request_status_counts,
         "claim_retry_counts": claim_retry_counts,
@@ -1398,7 +1460,12 @@ def classify_repair_dispatch(
     normalized_retry_strategy = _first_non_empty(
         _as_text(retry_strategy),
         _as_text(_as_mapping(plan_payload.get("resume_cursor")).get("retry_strategy")),
-        _as_text(_as_mapping(custody.get("plan_state")).get("resume_cursor")),
+        _as_text(custody.get("retry_strategy")),
+        _as_text(
+            _as_mapping(
+                _as_mapping(custody.get("plan_state")).get("resume_cursor")
+            ).get("retry_strategy")
+        ),
     )
     current_state = _first_non_empty(
         _as_text(plan_payload.get("current_state")),
@@ -4506,6 +4573,12 @@ def _is_known_repairable_shape(
 ) -> bool:
     if _has_terminality_contradiction(current_target):
         return True
+    if (
+        current_state in {"blocked", "critiqued", "gated", "planned"}
+        and failure_kind in {"phase_failed", "deterministic_phase_failure"}
+        and retry_strategy in {"rerun_phase", "repair_phase_contract"}
+    ):
+        return _has_current_target_evidence(current_target)
     # The executor detected that the persisted cursor and control projection
     # disagree.  This is a mechanical state-machine contradiction: it must be
     # handed to L1 with current-target evidence, never converted into a human
@@ -5544,6 +5617,7 @@ __all__ = [
     "atomic_write_json",
     "atomic_write_repair_index",
     "blocker_fingerprint_from_evidence",
+    "blocker_fingerprint_from_exact_request",
     "blocker_id_for_fingerprint",
     "build_verification_record",
     "classify_repair_dispatch",
