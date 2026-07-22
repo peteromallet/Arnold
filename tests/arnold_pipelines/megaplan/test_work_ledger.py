@@ -489,8 +489,21 @@ class TestVocabularyEnforcement:
             _REQUIRED_BY_CLASS,
         )
 
-        # Verify exactly four event classes
-        expected = {"validation", "repair_verify", "productive", "unavailable_reason"}
+        # M8A T17 expanded the vocabulary from 4 to 12 event classes.
+        expected = {
+            "validation",
+            "repair_verify",
+            "productive",
+            "unavailable_reason",
+            "review_proof",
+            "queue",
+            "retry_wait",
+            "compaction",
+            "replay",
+            "tool",
+            "git",
+            "transition",
+        }
         assert set(WORK_LEDGER_EVENT_CLASSES) == expected
 
         # Verify required keys per class
