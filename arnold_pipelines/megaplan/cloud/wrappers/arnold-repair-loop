@@ -5637,11 +5637,16 @@ write_dev_prompt() {
   local dispatch_model="$3"
   local report_path="$4"
   local recurrence_mode="${5:-0}"
-  local failure_summary chain_health_block recurrence_block canonical_block mode_tasks
+  local failure_summary chain_health_block recurrence_block canonical_block mode_tasks delivery_policy
   failure_summary="$(render_failure_summary "$DATA_FILE")"
   chain_health_block="$(render_chain_health_block)"
   recurrence_block="$(render_recurrence_block)"
   canonical_block="$(render_canonical_block)"
+  if [[ "${ARNOLD_REPAIR_PUSH_ENABLED:-1}" =~ ^(0|false|no|off)$ ]]; then
+    delivery_policy="8. If code changes pass validation, work in a new clean isolated worktree from the verified target, commit the reviewed change there, and integrate it locally through the repository's non-destructive workflow. Do not push. Preserve every dirty or concurrent checkout."
+  else
+    delivery_policy="8. If code changes pass validation, commit and push them in the repo you changed (\$ARNOLD_SRC for engine/superfixer fixes, \$WORKSPACE for target-repo fixes)."
+  fi
   if [[ "$recurrence_mode" == "1" ]]; then
     mode_tasks="$(cat <<EOF
 10. This is a recurring problem. Do NOT pick the likely fix. Do NOT repeat the prior approaches listed above.
@@ -5713,7 +5718,7 @@ Task:
 5. Apply the narrowest safe root-cause fix at the correct ownership boundary: use $ARNOLD_SRC on branch $SYNC_BRANCH for Arnold engine/superfixer bugs, and use $WORKSPACE for target application code when the blocker is a task implementation failure in that repo. Prefer a general engine fix over a workflow-specific patch only when the evidence points to Arnold itself.
 6. If you spot a structural pattern with other instantiations you cannot fix in this turn, append it to the findings doc at $FINDINGS_DOC so it can be reviewed. Capture what you fixed, the deeper pattern, the other instantiations you could not fix, and a recommendation for what a human should review.
 7. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
-8. If code changes pass validation, commit and push them in the repo you changed ($ARNOLD_SRC for engine/superfixer fixes, $WORKSPACE for target-repo fixes).
+$delivery_policy
 9. Do not relaunch the run yourself. The wrapper will do the mechanical launch next using the marker's run-kind-aware command. A completed repair without a canonical cursor advance is 'completed-repair-without-cursor-advance', not success.
 $mode_tasks
 

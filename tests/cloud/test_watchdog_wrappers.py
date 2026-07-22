@@ -463,6 +463,7 @@ def test_repair_loop_prompt_files_redact_secret_bearers_before_dispatch(tmp_path
             "SYNC_BRANCH=editible-install",
             "DATA_FILE=/tmp/repair-data.json",
             "FINDINGS_DOC=/tmp/findings.md",
+            "ARNOLD_REPAIR_PUSH_ENABLED=0",
             "render_failure_summary() { printf '%s\\n' 'Authorization: Bearer bearer-secret-token-value'; }",
             "render_chain_health_block() { printf '%s\\n' 'curl --header Authorization: Bearer bearer-secret-token-value'; }",
             "render_recurrence_block() { printf '%s\\n' 'export API_TOKEN=supersecret'; }",
@@ -484,6 +485,8 @@ def test_repair_loop_prompt_files_redact_secret_bearers_before_dispatch(tmp_path
     kimi_text = kimi_prompt.read_text(encoding="utf-8")
     assert "'set-profile', 'set-vendor', or 'set-model'" in dev_text
     assert "'completed-repair-without-cursor-advance'" in dev_text
+    assert "Do not push" in dev_text
+    assert "new clean isolated worktree" in dev_text
     assert "bearer-secret-token-value" not in dev_text
     assert "supersecret" not in dev_text
     assert "supersecret" not in kimi_text
