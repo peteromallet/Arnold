@@ -4,7 +4,7 @@
   "occurrence_id": "occ_pinned_e894_epics_babysit_3h_87711dcce641fd8edb80cc20",
   "occurrence_run_id": "subagent-20260722-074042-d28317a5",
   "started_at": "2026-07-22T07:40:42.721031Z",
-  "assessed_at": "2026-07-22T08:33:55.636720Z",
+  "assessed_at": "2026-07-22T08:36:37.168316Z",
   "overall_classification": "partial",
   "schedule": {
     "state": "active",
@@ -54,7 +54,7 @@
       "head": "7a5f9d39c52db851a63bfc3f36619df792e1688c",
       "exact_process_identity": "tmux=megaplan-resident-discord pane_pid=1807597 dead=0 command=python",
       "fresh_context_success": true,
-      "fresh_status_generated_at": "2026-07-22T08:33:55.636720Z",
+      "fresh_status_generated_at": "2026-07-22T08:36:37.168316Z",
       "runtime_model": "gpt-5.6-terra",
       "trusted_container": true,
       "restart_performed": false
@@ -189,6 +189,23 @@
         "current_worker_linkage": "active_step phase=revise run_id=33920ac2-1c19-431f-80ed-be52873c2bd2 worker_pid=3229591",
         "status_projection": "generated 2026-07-22T08:33:55.636720Z; running/critiqued on M9, 7/10 completed, 72%, tmux=true, active_phase=revise, no stale M8 awaiting_pr_merge projection",
         "predicate": "A: accepted post-checkpoint critique and gate phase receipts, current gate/success phase result, and chain and plan no longer blocked",
+        "final_race_close": {
+          "observed_at": "2026-07-22T08:36:37.168316Z",
+          "chain_last_state": "planned",
+          "plan_state": "planned",
+          "latest_failure": null,
+          "accepted_phase": "revise/success",
+          "accepted_phase_result_sha256": "eeb8cef349eae0e5d3fd7d70b9edf0256bec04d589f90374c81cadfe23469d1a",
+          "accepted_phase_result_timestamp": "2026-07-22T08:34:38.271760582Z",
+          "revise_receipt_path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m9-rebuildable-projections-20260722-0431/step_receipt_revise_v2.json",
+          "revise_receipt_sha256": "9e48beadb4073ad001d98838d587d2d15c2e508263fa07f11c41d5db371132ac",
+          "revised_plan_path": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m9-rebuildable-projections-20260722-0431/plan_v2.md",
+          "revised_plan_sha256": "8cd0d77831e02f662df7ed110bd20de411593e30ae31ad773310f6c92f5d7814",
+          "exact_worker_identity": "pid=3229591 ppid=169 start=2026-07-22T08:23:30Z command=/workspace/.megaplan/engine-runtimes/92aee99/venv/bin/python -P -m arnold_pipelines.megaplan chain start --spec /workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/chain.yaml --project-dir /workspace/custody-control-plane-20260714/Arnold --no-git-refresh --no-push",
+          "worker_linkage": "active_step phase=critique_evaluator run_id=b387418b-fe5c-4bd8-82ce-3b8fceb96090 worker_pid=3229591",
+          "status_projection": "generated 2026-07-22T08:36:37.168316Z; running/planned on M9, 7/10 completed, tmux=true, active_phase=critique_evaluator",
+          "predicate": "A remains satisfied and is strengthened by a later accepted revise/success receipt and revised plan artifact; current chain and plan are not blocked"
+        },
         "whole_chain_complete": false
       },
       "agent_assessment": {
