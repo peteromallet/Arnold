@@ -12,6 +12,7 @@ from arnold_pipelines.megaplan.flags import (
     update_flags_after_gate,
     update_flags_after_revise,
 )
+from arnold_pipelines.megaplan.handlers.plan import _build_verifiability_flags
 from arnold_pipelines.megaplan.orchestration import critique_custody
 from arnold_pipelines.megaplan.orchestration.critique_custody import (
     CritiqueCustodyError,
@@ -43,6 +44,32 @@ def _state(project_dir: Path, *, iteration: int = 1, robustness: str = "full") -
         "meta": {},
         "last_gate": {},
     }
+
+
+def test_deterministic_verifiability_flags_carry_source_criterion_evidence() -> None:
+    criteria = [
+        {
+            "criterion": "Architecture remains clear to a human reviewer.",
+            "priority": "should",
+            "requires": ["subjective_judgment"],
+        }
+    ]
+
+    flags = _build_verifiability_flags(criteria, {"codex": {"file_read"}})
+
+    assert len(flags) == 1
+    assert flags[0]["evidence"] == (
+        "success_criteria[0]: criterion='Architecture remains clear to a human "
+        "reviewer.'; priority='should'; requires=['subjective_judgment']"
+    )
+    payload = {
+        "checks": [],
+        "flags": flags,
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    prepare_critique_payload(payload, expected_check_ids=[])
+    assert payload["flags"][0]["id"].startswith("CF-")
 
 
 def _oversized_payload(*, two_findings: bool = False) -> dict[str, Any]:
