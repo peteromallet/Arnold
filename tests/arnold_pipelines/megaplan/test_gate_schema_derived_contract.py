@@ -106,6 +106,23 @@ def test_gate_rejects_unknown_top_level_fields_instead_of_stripping_them() -> No
         capture_step_output(_invocation(), payload)
 
 
+def test_fresh_gate_summary_clears_stale_artifact_recovery_marker() -> None:
+    artifact = build_gate_artifact(_signals(), _payload(), override_forced=False)
+    state: dict[str, object] = {
+        "config": {"auto_approve": False},
+        "meta": {
+            "gate_artifact_recovery": {
+                "reason": "adopted passing gate.json after worker failure"
+            },
+            "preserved": "value",
+        },
+    }
+
+    _sync_legacy_last_gate_for_workflow(state, artifact)  # type: ignore[arg-type]
+
+    assert state["meta"] == {"preserved": "value"}
+
+
 def test_new_required_gate_field_survives_capture_and_every_persistence_projection(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

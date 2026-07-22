@@ -403,6 +403,10 @@ def _sync_legacy_last_gate_for_workflow(state: PlanState, gate_summary: dict[str
         "preflight_results": gate_summary["preflight_results"],
         "orchestrator_guidance": gate_summary["orchestrator_guidance"],
     }
+    # This summary came from a genuine gate evaluation.  Any marker recording
+    # recovery of an older completed gate is now stale and must not continue to
+    # project the plan as blocked after a successful gate/revise transition.
+    state.setdefault("meta", {}).pop("gate_artifact_recovery", None)
 
 
 def _critique_cap_key(robustness: str) -> str:
