@@ -6,6 +6,7 @@ import hashlib
 import re
 import shlex
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -33,6 +34,36 @@ QUALITY = "quality"
 UNRESOLVED = "unresolved"
 MALFORMED = "malformed"
 _BEFORE_EXECUTE_GATE_PREFIX = "Read user_actions.md."
+
+
+def recoverable_contract_failure_without_phase_result(
+    state: Mapping[str, Any],
+    resume_cursor: Mapping[str, Any],
+) -> bool:
+    """Recognize an auto-recorded phase-contract failure without blocker output.
+
+    The automation driver can fail before a phase handler writes
+    ``phase_result.json``.  It persists the failure and its exact repair cursor
+    in ``state.json`` instead.  That durable state is sufficient to return to
+    the phase predecessor after the runtime contract is repaired, but only for
+    this narrow, phase-matched failure shape.  Task, quality, provider, and
+    authority failures still require their normal evidence paths.
+    """
+
+    latest_failure = state.get("latest_failure")
+    failure_phase = (
+        latest_failure.get("phase") if isinstance(latest_failure, Mapping) else None
+    )
+    cursor_phase = resume_cursor.get("phase")
+    return bool(
+        state.get("current_state") == "blocked"
+        and isinstance(latest_failure, Mapping)
+        and latest_failure.get("kind") == "deterministic_phase_failure"
+        and isinstance(cursor_phase, str)
+        and cursor_phase
+        and failure_phase == cursor_phase
+        and resume_cursor.get("retry_strategy") == "repair_phase_contract"
+    )
 
 
 @dataclass(frozen=True)

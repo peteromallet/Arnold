@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from arnold.control.interface import ControlTransition
 from arnold.workflow import authoring
 from arnold.workflow.compiler import compile_pipeline
@@ -520,6 +522,72 @@ def test_recover_blocked_emits_authority_receipt_and_stale_state_fails(
     assert "SH-override_recover_blocked_authority-authority-evidence-hash-mismatch-0" in _finding_ids(
         plan_dir
     )
+
+
+def test_recover_blocked_accepts_phase_matched_contract_failure_without_result(
+    tmp_path: Path,
+) -> None:
+    plan_dir = _plan_dir(tmp_path)
+    state = _base_state(tmp_path, current_state="blocked")
+    state["resume_cursor"] = {
+        "phase": "finalize",
+        "retry_strategy": "repair_phase_contract",
+    }
+    state["latest_failure"] = {
+        "kind": "deterministic_phase_failure",
+        "phase": "finalize",
+        "state": "blocked",
+        "message": "finalize failed before it could emit phase_result.json",
+    }
+    _write_json(plan_dir / "state.json", state)
+    _write_json(plan_dir / "finalize.json", {"tasks": []})
+
+    result = apply_transition(
+        planning_run_state_view(state),
+        ControlTransition(
+            op="override",
+            target_id="recover-blocked",
+            payload={"reason": "repaired finalize phase contract"},
+        ),
+        "megaplan",
+        plan_dir=plan_dir,
+    )
+
+    assert result.accepted is True
+    assert result.artifacts["blockers"] == []
+    persisted_state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert persisted_state["current_state"] == "gated"
+    assert "latest_failure" not in persisted_state
+
+
+def test_recover_blocked_rejects_mismatched_contract_failure_without_result(
+    tmp_path: Path,
+) -> None:
+    plan_dir = _plan_dir(tmp_path)
+    state = _base_state(tmp_path, current_state="blocked")
+    state["resume_cursor"] = {
+        "phase": "finalize",
+        "retry_strategy": "repair_phase_contract",
+    }
+    state["latest_failure"] = {
+        "kind": "deterministic_phase_failure",
+        "phase": "execute",
+        "state": "blocked",
+        "message": "different phase failed",
+    }
+    _write_json(plan_dir / "state.json", state)
+
+    with pytest.raises(Exception, match="requires phase_result.json"):
+        apply_transition(
+            planning_run_state_view(state),
+            ControlTransition(
+                op="override",
+                target_id="recover-blocked",
+                payload={"reason": "must remain fail closed"},
+            ),
+            "megaplan",
+            plan_dir=plan_dir,
+        )
 
 
 def test_resume_clarify_emits_authority_receipt(tmp_path: Path) -> None:

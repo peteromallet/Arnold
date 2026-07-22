@@ -75,6 +75,23 @@ status, compatibility deadlines, and negative-authority tests. It defers
 absolute joined-total and blanket zero-reader claims. No missing evidence is
 fabricated and positive action authority remains disabled/fail-closed.
 
+The first repaired finalize retry then exposed a second target-runtime defect.
+The current M8A backstop correctly rejected the old plan because its pinned
+runtime critiques had no `critique_custody_v*.json` production receipts. The
+automation driver recorded the repeated deterministic finalize failure in
+`state.json` with `kind: deterministic_phase_failure`, matching `phase:
+finalize`, and `retry_strategy: repair_phase_contract`, but it did not emit a
+`phase_result.json`. Introspection advertised `recover-blocked` while both the
+legacy and shared-control handlers rejected that transition solely because the
+phase-result file was absent.
+
+Recovery now accepts the durable state-only shape only when all of those exact
+contract-failure fields match. Task, quality, external-provider, authority, and
+mismatched-phase failures still require their ordinary blocker/phase evidence.
+The recovery does not synthesize a phase result or custody receipt; it returns
+to the phase predecessor so the supported replan/critique lifecycle can produce
+new evidence.
+
 ## Recovery result
 
 Pending execution and post-recovery re-read.
