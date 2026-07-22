@@ -54,6 +54,24 @@ def test_gate_prompt_pairs_template_path_with_exact_read_file_call(tmp_path: Pat
     assert "If you cannot supply that exact non-empty path, do not call `read_file`." in prompt
 
 
+def test_gate_prompt_distinguishes_north_star_and_critique_severity_enums(
+    tmp_path: Path,
+) -> None:
+    state = _minimal_state(tmp_path)
+    plan_dir = tmp_path / "plan"
+
+    prompt = _gate_prompt(state, plan_dir, root=tmp_path)
+
+    assert (
+        "The `severity` field on every North Star action accepts exactly "
+        '`"blocking"` or `"advisory"`' in prompt
+    )
+    assert (
+        'Critique flag severities such as `"significant"` and '
+        '`"likely-significant"` are invalid here' in prompt
+    )
+
+
 def test_critique_evaluator_prompt_pairs_template_path_with_exact_read_file_call(
     tmp_path: Path,
 ) -> None:

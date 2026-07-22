@@ -204,6 +204,7 @@ def _gate_prompt(
         - `north_star_actions[]`: list of structured actions, each with `id`, `concern`, `category`, `action_type`, `severity`, `evidence`, and optional `plan_refs`.
         - Categories: {json_dump(list(NORTH_STAR_ACTION_CATEGORIES)).strip()} (all) — the dangerous set {json_dump(list(NORTH_STAR_DANGEROUS_CATEGORIES)).strip()} is always `severity: "blocking"` by schema rule.
         - Action types: {json_dump(list(NORTH_STAR_ACTION_TYPES)).strip()}.
+        - The `severity` field on every North Star action accepts exactly `"blocking"` or `"advisory"`. Critique flag severities such as `"significant"` and `"likely-significant"` are invalid here; do not copy them into `north_star_actions[]`.
         - Return `[]` when there are no North Star concerns for this pass.
 
         Flags come in three gate states:
