@@ -256,3 +256,261 @@ def test_feasibility_failure_routes_finalize_back_to_revise(tmp_path: Path) -> N
     assert response["next_step"] == "revise"
     assert response["details"]["code"] == "finalized_task_feasibility_failed"
     assert (plan_dir / "finalize_revise_feedback.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# M8A — DAG seriality gate: 30-task / 29-edge Transaction Spine rejection
+# ---------------------------------------------------------------------------
+
+
+def test_transaction_spine_30_task_29_edge_seriality_gate_rejected() -> None:
+    """The 30-task fully-serial Transaction Spine shape must be rejected.
+
+    Seriality 1.0 with >=8 tasks triggers ``serial_graph_unjustified``,
+    and the estimated dispatch budget will also exceed the phase timeout.
+    """
+    from tests.fixtures.m8a import transaction_spine_serial
+
+    payload = transaction_spine_serial()
+    report = compile_task_feasibility(payload)
+
+    assert report["task_count"] == 30
+    assert report["edge_count"] == 29
+    assert report["max_width"] == 1
+    assert report["critical_path_task_count"] == 30
+    assert report["seriality"] == 1.0
+    assert report["admitted"] is False
+    codes = _codes(report)
+    assert "serial_graph_unjustified" in codes
+    assert "critical_path_infeasible" in codes
+    assert "dispatch_budget_infeasible" in codes
+
+
+def test_seriality_at_8_tasks_single_file_each_is_rejected() -> None:
+    """8 fully-linear tasks (seriality=1.0) hits the floor threshold."""
+    tasks = [
+        _task(f"T{i}", depends_on=([f"T{i - 1}"] if i > 1 else []), minutes=3)
+        for i in range(1, 9)
+    ]
+    report = compile_task_feasibility(_payload(tasks))
+    assert report["task_count"] == 8
+    assert report["seriality"] == 1.0
+    assert "serial_graph_unjustified" in _codes(report)
+
+
+def test_seriality_below_threshold_with_diamond_is_admitted() -> None:
+    """A diamond-shaped DAG with 9 tasks and seriality < 1.0 is admitted."""
+    tasks = [
+        _task("T1", minutes=3),
+        _task("T2", depends_on=["T1"], minutes=3),
+        _task("T3", depends_on=["T1"], minutes=3),
+        _task("T4", depends_on=["T2", "T3"], minutes=3),
+        _task("T5", depends_on=["T4"], minutes=3),
+        _task("T6", depends_on=["T4"], minutes=3),
+        _task("T7", depends_on=["T5", "T6"], minutes=3),
+        _task("T8", depends_on=["T7"], minutes=3),
+        _task("T9", depends_on=["T7"], minutes=3),
+    ]
+    report = compile_task_feasibility(_payload(tasks))
+    assert report["task_count"] == 9
+    assert report["seriality"] < 1.0
+    assert report["admitted"] is True
+
+
+# ---------------------------------------------------------------------------
+# M8A — Content-hash identical recompilation
+# ---------------------------------------------------------------------------
+
+
+def test_content_hash_is_deterministic_across_recompilations() -> None:
+    """The task_contract_hash must be byte-stable across repeated compilations."""
+    payload = _payload([_task(f"T{i}", minutes=5) for i in range(1, 6)])
+    first = compile_task_feasibility(payload)
+    second = compile_task_feasibility(payload)
+    third = compile_task_feasibility(payload)
+
+    assert first["task_contract_hash"] == second["task_contract_hash"]
+    assert second["task_contract_hash"] == third["task_contract_hash"]
+    assert first["admitted"] is True
+    assert second["admitted"] is True
+
+
+def test_content_hash_changes_when_task_list_differs() -> None:
+    """Adding or removing a task produces a different contract hash."""
+    base = _payload([_task("T1"), _task("T2")])
+    mutated = _payload([_task("T1"), _task("T2"), _task("T3")])
+
+    base_hash = compile_task_feasibility(base)["task_contract_hash"]
+    mutated_hash = compile_task_feasibility(mutated)["task_contract_hash"]
+    assert base_hash != mutated_hash
+
+
+def test_content_hash_changes_when_validation_jobs_differ() -> None:
+    """Changes to validation_jobs must be reflected in the contract hash."""
+    payload_a = _payload([_task("T1")])
+    payload_a["validation_jobs"] = [
+        {"id": "v1", "kind": "post_execute_suite", "command": "pytest", "reason": "final"}
+    ]
+    payload_b = _payload([_task("T1")])
+    payload_b["validation_jobs"] = []
+
+    hash_a = compile_task_feasibility(payload_a)["task_contract_hash"]
+    hash_b = compile_task_feasibility(payload_b)["task_contract_hash"]
+    assert hash_a != hash_b
+
+
+def test_compile_task_feasibility_report_is_deterministic() -> None:
+    """The full feasibility report must be deterministic byte-for-byte."""
+    import json
+
+    payload = _payload([_task(f"T{i}", minutes=5) for i in range(1, 4)])
+    report_a = json.dumps(compile_task_feasibility(payload), sort_keys=True)
+    report_b = json.dumps(compile_task_feasibility(payload), sort_keys=True)
+    assert report_a == report_b
+
+
+# ---------------------------------------------------------------------------
+# M8A — Complexity 7/8/9 split-or-fail
+# ---------------------------------------------------------------------------
+
+
+def test_complexity_7_with_valid_checkpoint_is_admitted() -> None:
+    """A complexity-7 task with a valid checkpoint contract passes feasibility."""
+    task = _task("T7", complexity=7)
+    report = compile_task_feasibility(_payload([task]))
+    assert report["admitted"] is True
+
+
+def test_complexity_8_with_valid_checkpoint_is_admitted() -> None:
+    """A complexity-8 task with a valid checkpoint contract passes feasibility."""
+    task = _task("T8", complexity=8)
+    report = compile_task_feasibility(_payload([task]))
+    assert report["admitted"] is True
+
+
+def test_complexity_9_with_valid_checkpoint_is_admitted() -> None:
+    """A complexity-9 task with a valid checkpoint contract passes feasibility."""
+    task = _task("T9", complexity=9)
+    report = compile_task_feasibility(_payload([task]))
+    assert report["admitted"] is True
+
+
+def test_complexity_7_without_checkpoint_is_rejected() -> None:
+    """A complexity-7 task missing the checkpoint contract is rejected."""
+    task = _task("T7b", complexity=7)
+    task["checkpoint"] = {"required": False, "max_interval_seconds": 300, "records": []}
+    report = compile_task_feasibility(_payload([task]))
+    assert report["admitted"] is False
+    assert "task_checkpoint_required" in _codes(report)
+
+
+def test_complexity_7_with_missing_checkpoint_records_is_rejected() -> None:
+    """A complexity-7 task whose checkpoint is missing required records fails."""
+    task = _task("T7c", complexity=7)
+    task["checkpoint"] = {
+        "required": True,
+        "max_interval_seconds": 300,
+        "records": ["completed_subobjectives", "output_hashes"],  # incomplete
+    }
+    report = compile_task_feasibility(_payload([task]))
+    assert report["admitted"] is False
+    assert "task_checkpoint_required" in _codes(report)
+
+
+def test_complexity_7_with_invalid_interval_is_rejected() -> None:
+    """A complexity-7 task with a checkpoint interval > 300s is rejected."""
+    task = _task("T7d", complexity=7)
+    task["checkpoint"]["max_interval_seconds"] = 301
+    report = compile_task_feasibility(_payload([task]))
+    assert report["admitted"] is False
+    assert "task_checkpoint_required" in _codes(report)
+
+
+def test_m8a_complexity_7_8_9_fixture_split_or_fail_cases() -> None:
+    """The M8A complexity-7-8-9 fixture admits valid tasks and rejects the invalid one."""
+    from tests.fixtures.m8a import complexity_7_8_9_cases
+
+    payload = complexity_7_8_9_cases()
+    report = compile_task_feasibility(payload)
+
+    # T7 (complexity=7), T8 (complexity=8), T9 (complexity=9) — all have valid checkpoints
+    # T7b (complexity=7 — no checkpoint) should be rejected
+    diag_by_task: dict[str, list[str]] = {}
+    for diag in report["diagnostics"]:
+        tid = diag.get("task_id", "")
+        diag_by_task.setdefault(tid, []).append(diag["code"])
+
+    # The fixture contains 4 tasks total (T7, T8, T9, T7b)
+    assert report["task_count"] == 4
+    assert report["admitted"] is False  # T7b fails
+
+    # T7, T8, T9 should have no diagnostics against them
+    for admitted_id in ("T7", "T8", "T9"):
+        assert admitted_id not in diag_by_task or all(
+            c == "task_objective_oversized" for c in diag_by_task.get(admitted_id, [])
+        ), f"{admitted_id} should not have checkpoint failures"
+
+    # T7b should fail with task_checkpoint_required
+    assert "task_checkpoint_required" in diag_by_task.get("T7b", [])
+
+
+# ---------------------------------------------------------------------------
+# M8A — Post-finalize graph mutation prevents worker dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_post_finalize_write_set_mutation_prevents_dispatch() -> None:
+    """A mutation to a task's write_set after finalize changes the contract hash."""
+    payload = _payload([_task("T1"), _task("T2", depends_on=["T1"])])
+    payload["graph_report"] = compile_task_feasibility(payload)
+
+    # First call succeeds — graph hasn't been mutated
+    assert assert_admitted_task_feasibility(payload) is not None
+
+    # Mutate a task's write_set
+    mutated = deepcopy(payload)
+    mutated["tasks"][1]["write_set"]["paths"] = ["src/divergent.py"]
+    with pytest.raises(ValueError, match="hash differs"):
+        assert_admitted_task_feasibility(mutated)
+
+
+def test_post_finalize_added_task_prevents_dispatch() -> None:
+    """Adding a task after finalize changes the contract hash."""
+    payload = _payload([_task("T1")])
+    payload["graph_report"] = compile_task_feasibility(payload)
+
+    assert assert_admitted_task_feasibility(payload) is not None
+
+    mutated = deepcopy(payload)
+    mutated["tasks"].append(_task("T2"))
+    with pytest.raises(ValueError, match="hash differs"):
+        assert_admitted_task_feasibility(mutated)
+
+
+def test_post_finalize_dependency_chain_mutation_prevents_dispatch() -> None:
+    """Altering a dependency edge after finalize changes the contract hash."""
+    payload = _payload([
+        _task("T1"),
+        _task("T2", depends_on=["T1"]),
+        _task("T3", depends_on=["T2"]),
+    ])
+    payload["graph_report"] = compile_task_feasibility(payload)
+    assert assert_admitted_task_feasibility(payload) is not None
+
+    # Remove a dependency (leaves orphaned dependency_reason — fails feasibility)
+    mutated = deepcopy(payload)
+    mutated["tasks"][2]["depends_on"] = ["T1"]  # was ["T2"]
+    with pytest.raises(ValueError, match="no longer passes feasibility"):
+        assert_admitted_task_feasibility(mutated)
+
+
+def test_post_finalize_complexity_change_prevents_dispatch() -> None:
+    """Changing a task's complexity after finalize changes the contract hash."""
+    payload = _payload([_task("T1", complexity=4)])
+    payload["graph_report"] = compile_task_feasibility(payload)
+    assert assert_admitted_task_feasibility(payload) is not None
+
+    mutated = deepcopy(payload)
+    mutated["tasks"][0]["complexity"] = 7
+    with pytest.raises(ValueError, match="no longer passes feasibility"):
+        assert_admitted_task_feasibility(mutated)

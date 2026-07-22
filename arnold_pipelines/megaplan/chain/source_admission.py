@@ -15,6 +15,9 @@ from arnold_pipelines.megaplan.types import CliError
 CHAIN_SOURCE_SCHEMA = "arnold.megaplan.chain_source_admission.v1"
 CHAIN_SOURCE_ERROR = "canonical_milestone_source_changed"
 
+WORKER_LAUNCH_PREFLIGHT_SCHEMA = "arnold.megaplan.worker_launch_preflight.v1"
+WORKER_LAUNCH_PREFLIGHT_ERROR = "worker_launch_preflight_mismatch"
+
 
 def _milestone_index_and_idea(spec: Any, label: str) -> tuple[int, str]:
     for index, milestone in enumerate(spec.milestones):
@@ -219,3 +222,145 @@ def admit_milestone_source(
 
     save_chain_state(spec_path, state)
     return event
+
+
+def _worker_launch_proof_payload(
+    *,
+    source_ref: str,
+    installed_package_path: str,
+    runtime_revision: str,
+    selected_model: str | None,
+    configured_spec: str,
+) -> dict[str, Any]:
+    """Build the canonical payload for content-addressed worker launch proof."""
+    return {
+        "schema": WORKER_LAUNCH_PREFLIGHT_SCHEMA,
+        "source_ref": source_ref,
+        "installed_package_path": installed_package_path,
+        "runtime_revision": runtime_revision,
+        "selected_model": selected_model or "",
+        "configured_spec": configured_spec,
+    }
+
+
+def _worker_launch_proof_sha256(payload: dict[str, Any]) -> str:
+    """Content-address the worker launch proof payload."""
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def worker_launch_preflight(
+    *,
+    source_ref: str,
+    installed_package_path: str,
+    runtime_revision: str,
+    selected_model: str | None,
+    configured_spec: str,
+    expected_source_ref: str = "",
+    expected_installed_package_path: str = "",
+    expected_runtime_revision: str = "",
+    expected_model: str | None = None,
+    expected_spec: str = "",
+) -> dict[str, Any]:
+    """Produce a per-worker-launch equality proof before agent dispatch.
+
+    Records the actual runtime values at worker launch and, when expected values
+    are provided, verifies equality.  A mismatch raises :class:`CliError` so a
+    bad launch is blocked before any agent dispatch loop begins.
+
+    The proof is content-addressed (sha256 of canonical JSON) so it can be
+    stored as evidence and compared across runs.
+    """
+    actual = _worker_launch_proof_payload(
+        source_ref=source_ref,
+        installed_package_path=installed_package_path,
+        runtime_revision=runtime_revision,
+        selected_model=selected_model,
+        configured_spec=configured_spec,
+    )
+    proof_sha256 = _worker_launch_proof_sha256(actual)
+
+    has_expected = any(
+        (
+            expected_source_ref,
+            expected_installed_package_path,
+            expected_runtime_revision,
+            expected_model,
+            expected_spec,
+        )
+    )
+
+    mismatches: list[dict[str, str]] = []
+    if expected_source_ref and expected_source_ref != source_ref:
+        mismatches.append(
+            {
+                "field": "source_ref",
+                "expected": expected_source_ref,
+                "actual": source_ref,
+            }
+        )
+    if expected_installed_package_path and expected_installed_package_path != installed_package_path:
+        mismatches.append(
+            {
+                "field": "installed_package_path",
+                "expected": expected_installed_package_path,
+                "actual": installed_package_path,
+            }
+        )
+    if expected_runtime_revision and expected_runtime_revision != runtime_revision:
+        mismatches.append(
+            {
+                "field": "runtime_revision",
+                "expected": expected_runtime_revision,
+                "actual": runtime_revision,
+            }
+        )
+    if expected_model is not None and expected_model != (selected_model or ""):
+        mismatches.append(
+            {
+                "field": "selected_model",
+                "expected": expected_model,
+                "actual": selected_model or "",
+            }
+        )
+    if expected_spec and expected_spec != configured_spec:
+        mismatches.append(
+            {
+                "field": "configured_spec",
+                "expected": expected_spec,
+                "actual": configured_spec,
+            }
+        )
+
+    checked_at = now_utc()
+    proof: dict[str, Any] = {
+        "schema": WORKER_LAUNCH_PREFLIGHT_SCHEMA,
+        "proof_sha256": proof_sha256,
+        "checked_at": checked_at,
+        "actual": actual,
+        "status": "ready" if not mismatches else "mismatch",
+    }
+
+    if has_expected:
+        proof["expected"] = _worker_launch_proof_payload(
+            source_ref=expected_source_ref,
+            installed_package_path=expected_installed_package_path,
+            runtime_revision=expected_runtime_revision,
+            selected_model=expected_model,
+            configured_spec=expected_spec,
+        )
+
+    if mismatches:
+        proof["mismatches"] = mismatches
+        raise CliError(
+            WORKER_LAUNCH_PREFLIGHT_ERROR,
+            "Worker launch preflight mismatch: "
+            + "; ".join(
+                f"{m['field']}: expected={m['expected'][:40]} actual={m['actual'][:40]}"
+                for m in mismatches
+            ),
+            extra={"worker_launch_preflight": proof},
+        )
+
+    return proof

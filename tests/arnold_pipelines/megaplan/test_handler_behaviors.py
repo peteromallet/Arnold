@@ -2893,3 +2893,238 @@ class TestFinalizeBoundaryTemplateUse:
         )
         for rec in evidence:
             assert rec["phase_identity"] == "finalize"
+
+
+# ── M8A T4: Deterministic recompilation and schema rejection coverage ────
+
+
+class TestValidationJobCompilationDeterminism:
+    """Tests that harness-owned validation jobs are deterministic and that
+    the task contract hash reconciles them."""
+
+    @staticmethod
+    def _minimal_payload(
+        *,
+        test_selection_mode: str = "full",
+        narrow_selectors: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Build a minimal v2 finalize payload for validation-job tests."""
+        payload: dict[str, Any] = {
+            "task_contract_version": 2,
+            "validation_jobs": [],
+            "tasks": [
+                {
+                    "id": "T1",
+                    "objective": "Add a helper function.",
+                    "description": "Write a small utility.",
+                    "kind": "code",
+                    "status": "pending",
+                    "complexity": 2,
+                    "complexity_justification": "Small, single-file change.",
+                    "estimated_minutes": 5,
+                    "depends_on": [],
+                    "dependency_reasons": {},
+                    "routing_group": "",
+                    "write_set": {"paths": ["src/util.py"], "complete": True},
+                    "narrow_tests": {
+                        "selectors": narrow_selectors or [],
+                        "max_seconds": 60,
+                        "max_runs": 1,
+                    },
+                    "checkpoint": {
+                        "required": False,
+                        "max_interval_seconds": 300,
+                        "records": [],
+                    },
+                }
+            ],
+            "user_actions": [],
+            "sense_checks": [],
+            "watch_items": [],
+            "meta_commentary": "",
+        }
+        if test_selection_mode != "none":
+            payload["test_selection"] = {
+                "mode": test_selection_mode,
+                "reason": "Full suite for determinism test.",
+                "selectors_used": [],
+            }
+        return payload
+
+    def test_compile_validation_jobs_is_deterministic(self) -> None:
+        """Compiling twice with the same payload returns identical jobs."""
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            compile_validation_jobs,
+        )
+
+        payload = self._minimal_payload(
+            test_selection_mode="full",
+            narrow_selectors=["tests/test_util.py"],
+        )
+        first = compile_validation_jobs(payload)
+        second = compile_validation_jobs(payload)
+
+        assert first == second, "Repeated compilation must be deterministic"
+        assert len(first) >= 1, "Should have at least the post-execute suite"
+
+    def test_compile_validation_jobs_no_narrow_selectors_still_emits_suite(
+        self,
+    ) -> None:
+        """A task without narrow selectors still triggers the post-execute suite."""
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            compile_validation_jobs,
+        )
+
+        payload = self._minimal_payload(test_selection_mode="full")
+        jobs = compile_validation_jobs(payload)
+
+        assert len(jobs) == 1
+        assert jobs[0]["kind"] == "post_execute_suite"
+        assert jobs[0]["writes_files"] is False
+
+    def test_compile_validation_jobs_none_mode_produces_no_suite(self) -> None:
+        """test_selection mode none produces no validation jobs at all."""
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            compile_validation_jobs,
+        )
+
+        payload = self._minimal_payload(test_selection_mode="none")
+        jobs = compile_validation_jobs(payload)
+        assert jobs == []
+
+    def test_narrow_recheck_job_references_source_task(self) -> None:
+        """Narrow recheck jobs carry the source task_id."""
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            compile_validation_jobs,
+        )
+
+        payload = self._minimal_payload(
+            test_selection_mode="scoped",
+            narrow_selectors=["tests/test_util.py"],
+        )
+        jobs = compile_validation_jobs(payload)
+        narrow_jobs = [j for j in jobs if j["kind"] == "narrow_recheck"]
+        assert len(narrow_jobs) == 1
+        assert narrow_jobs[0]["task_id"] == "T1"
+
+    def test_task_contract_hash_changes_with_validation_jobs(self) -> None:
+        """The task contract hash must incorporate validation_jobs."""
+        from arnold_pipelines.megaplan.orchestration.task_feasibility import (
+            task_contract_hash,
+        )
+
+        base = self._minimal_payload(
+            test_selection_mode="full",
+            narrow_selectors=["tests/test_util.py"],
+        )
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            compile_validation_jobs,
+        )
+
+        base["validation_jobs"] = compile_validation_jobs(base)
+
+        # Hash with a different test_selection mode that produces fewer jobs
+        alt = self._minimal_payload(
+            test_selection_mode="none",
+            narrow_selectors=["tests/test_util.py"],
+        )
+        alt["validation_jobs"] = compile_validation_jobs(alt)
+
+        assert task_contract_hash(base) != task_contract_hash(
+            alt
+        ), "Hash must differ when validation_jobs change"
+
+    def test_task_contract_hash_stable_on_recompile(self) -> None:
+        """Recompiling validation jobs and re-hashing produces identical hashes."""
+        from arnold_pipelines.megaplan.orchestration.task_feasibility import (
+            task_contract_hash,
+        )
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            compile_validation_jobs,
+        )
+
+        payload = self._minimal_payload(
+            test_selection_mode="full",
+            narrow_selectors=["tests/test_util.py"],
+        )
+        payload["validation_jobs"] = compile_validation_jobs(payload)
+        hash1 = task_contract_hash(payload)
+
+        # Recompile and re-hash
+        payload["validation_jobs"] = compile_validation_jobs(payload)
+        hash2 = task_contract_hash(payload)
+
+        assert hash1 == hash2, (
+            "Repeated compilation and hashing must produce identical hashes"
+        )
+
+
+class TestValidationJobSchemaRejection:
+    """Tests that model-emitted validation_jobs are properly rejected."""
+
+    def test_validate_model_rejects_nonempty_validation_jobs(self) -> None:
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            validate_model_validation_jobs,
+        )
+
+        issues = validate_model_validation_jobs(
+            [{"id": "VJ1", "kind": "post_execute_suite", "command": "pytest"}]
+        )
+        assert len(issues) >= 1
+        assert any("empty array" in issue.lower() for issue in issues)
+
+    def test_validate_model_rejects_non_list(self) -> None:
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            validate_model_validation_jobs,
+        )
+
+        issues = validate_model_validation_jobs(None)
+        assert len(issues) >= 1
+
+    def test_validate_model_accepts_empty_list(self) -> None:
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            validate_model_validation_jobs,
+        )
+
+        issues = validate_model_validation_jobs([])
+        assert issues == []
+
+    def test_validate_model_rejects_writes_files_true(self) -> None:
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            validate_model_validation_jobs,
+        )
+
+        issues = validate_model_validation_jobs(
+            [
+                {
+                    "id": "VJ1",
+                    "kind": "narrow_recheck",
+                    "command": "pytest",
+                    "writes_files": True,
+                    "reason": "should be rejected",
+                }
+            ]
+        )
+        assert any(
+            "writes_files" in issue.lower() for issue in issues
+        ), f"Expected writes_files rejection in: {issues}"
+
+    def test_validate_model_rejects_unknown_kind(self) -> None:
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            validate_model_validation_jobs,
+        )
+
+        issues = validate_model_validation_jobs(
+            [
+                {
+                    "id": "VJ1",
+                    "kind": "unknown_kind",
+                    "command": "pytest",
+                    "writes_files": False,
+                    "reason": "should be rejected",
+                }
+            ]
+        )
+        assert any(
+            "unknown kind" in issue.lower() for issue in issues
+        ), f"Expected unknown kind rejection in: {issues}"

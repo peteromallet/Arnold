@@ -71,7 +71,69 @@ FINALIZE_MODEL_OUTPUT_SCHEMA: dict[str, Any] = {
                 },
             },
         },
-        "validation_jobs": {"type": "array"},
+        "validation_jobs": {
+            "type": "array",
+            "description": (
+                "Harness-owned validation jobs compiled from test_selection and "
+                "narrow_tests. The model MUST emit an empty array; the handler "
+                "derives deterministic no-file validation jobs."
+            ),
+            "items": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "kind",
+                    "command",
+                    "reason",
+                ],
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Stable validation-job identifier (VJ-prefixed).",
+                    },
+                    "kind": {
+                        "type": "string",
+                        "enum": [
+                            "post_execute_suite",
+                            "narrow_recheck",
+                        ],
+                        "description": (
+                            "post_execute_suite: authoritative harness-owned suite run. "
+                            "narrow_recheck: bounded recheck of a single task's narrow test selectors."
+                        ),
+                    },
+                    "command": {
+                        "type": "string",
+                        "description": "Deterministic pytest command with timeout prefix.",
+                    },
+                    "selectors": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Test selectors scoped to one task's write-set blast radius.",
+                    },
+                    "max_seconds": {
+                        "type": "integer",
+                        "description": "Maximum wall-clock seconds for this validation run.",
+                    },
+                    "max_runs": {
+                        "type": "integer",
+                        "description": "Maximum execution attempts before circuit-open.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Why this validation job exists (e.g. task T1 narrow recheck).",
+                    },
+                    "task_id": {
+                        "type": "string",
+                        "description": "Source task id for narrow_recheck jobs.",
+                    },
+                    "writes_files": {
+                        "type": "boolean",
+                        "description": "Always false for harness-owned validation jobs.",
+                    },
+                },
+            },
+        },
         "critique_resolution_coverage": {
             "type": "array",
             "items": {

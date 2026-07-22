@@ -4724,6 +4724,53 @@ def run_step_with_worker(
             model=model,
             effort=effort,
         )
+    # ── Worker launch preflight: produce a content-addressed equality proof ──
+    # before any agent dispatch loop.  Records the actual runtime values and, when
+    # a chain execution binding is available, verifies them against the bound
+    # identity.  A mismatch raises CliError and blocks the worker.
+    _source_ref = ""
+    try:
+        _git_result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        _source_ref = _git_result.stdout.strip() if _git_result.returncode == 0 else ""
+    except Exception:
+        pass
+    from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance as _rp
+
+    _runtime = _rp()
+    _configured_spec = format_selected_spec(agent, model, effort) or agent
+    # Attempt to locate a chain spec for expected-value comparison.
+    _expected: dict[str, Any] = {}
+    try:
+        _chain_spec_glob = sorted(
+            (root / ".megaplan" / "plans" / ".chains").glob("*.json")
+        )
+        if _chain_spec_glob:
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                expected_worker_launch_values,
+            )
+
+            _expected = expected_worker_launch_values(
+                spec_path=_chain_spec_glob[0], root=root
+            )
+    except Exception:
+        pass
+    from arnold_pipelines.megaplan.chain.source_admission import (
+        worker_launch_preflight as _wlp,
+    )
+
+    _wlp(
+        source_ref=_source_ref,
+        installed_package_path=str(_runtime.get("import_root") or ""),
+        runtime_revision=str(_runtime.get("source_revision") or ""),
+        selected_model=resolved_model,
+        configured_spec=_configured_spec,
+        **_expected,
+    )
     while True:
         attempted_agents.add(agent)
         try:

@@ -1,0 +1,254 @@
+{
+  "schema": "m8a.f01-f17-executor-wiring.v1",
+  "generated_at": "2026-07-22T00:22:59Z",
+  "generator": "arnold_pipelines.megaplan.orchestration.m8a_report._build_executor_wiring",
+  "rebuildable": true,
+  "north_star_guard": "This wiring map is evidence only. It maps findings to canonical owners and exercise fixtures but does not dispatch, enforce, or substitute authority. Enforcement starts only on newly finalized canary v2 plans (SD2).",
+  "F01_F17_overview": {
+    "planner_compiler_owned": [
+      "F07",
+      "F08",
+      "F09",
+      "F12"
+    ],
+    "executor_launcher_owned": [
+      "F10",
+      "F11",
+      "F13"
+    ],
+    "run_authority_owned": [
+      "F01",
+      "F05"
+    ],
+    "wbc_owned": [
+      "F02",
+      "F03",
+      "F04",
+      "F17"
+    ],
+    "observability_projection_owned": [
+      "F06",
+      "F14",
+      "F16"
+    ],
+    "transition_writer_repair_custody_owned": [
+      "F15"
+    ],
+    "total_findings": 17
+  },
+  "findings": {
+    "F01": {
+      "finding_id": "F01",
+      "canonical_owner": "Run Authority",
+      "m8a_component": "run_authority",
+      "exercise_fixtures": [],
+      "fixture_results": {},
+      "status": "evidence-only",
+      "notes": "F01 is owned by Run Authority. Enforcement starts only on newly finalized canary v2 plans (SD2)."
+    },
+    "F02": {
+      "finding_id": "F02",
+      "canonical_owner": "WBC",
+      "m8a_component": "wbc",
+      "exercise_fixtures": [],
+      "fixture_results": {},
+      "status": "evidence-only",
+      "notes": "F02 is owned by WBC. Enforcement starts only on newly finalized canary v2 plans (SD2)."
+    },
+    "F03": {
+      "finding_id": "F03",
+      "canonical_owner": "WBC",
+      "m8a_component": "wbc",
+      "exercise_fixtures": [],
+      "fixture_results": {},
+      "status": "evidence-only",
+      "notes": "F03 is owned by WBC. Enforcement starts only on newly finalized canary v2 plans (SD2)."
+    },
+    "F04": {
+      "finding_id": "F04",
+      "canonical_owner": "WBC",
+      "m8a_component": "wbc",
+      "exercise_fixtures": [],
+      "fixture_results": {},
+      "status": "evidence-only",
+      "notes": "F04 is owned by WBC. Enforcement starts only on newly finalized canary v2 plans (SD2)."
+    },
+    "F05": {
+      "finding_id": "F05",
+      "canonical_owner": "Run Authority",
+      "m8a_component": "run_authority",
+      "exercise_fixtures": [],
+      "fixture_results": {},
+      "status": "evidence-only",
+      "notes": "F05 is owned by Run Authority. Enforcement starts only on newly finalized canary v2 plans (SD2)."
+    },
+    "F06": {
+      "finding_id": "F06",
+      "canonical_owner": "Observability / Projection",
+      "m8a_component": "observability_projection",
+      "exercise_fixtures": [],
+      "fixture_results": {},
+      "status": "evidence-only",
+      "notes": "F06 is owned by Observability / Projection. Enforcement starts only on newly finalized canary v2 plans (SD2)."
+    },
+    "F07": {
+      "finding_id": "F07",
+      "canonical_owner": "Planner / Compiler",
+      "m8a_component": "planner_compiler",
+      "exercise_fixtures": [
+        "transaction-spine-serial"
+      ],
+      "fixture_results": {
+        "transaction-spine-serial": {
+          "admitted": false,
+          "diagnostic_codes": [
+            "serial_graph_unjustified",
+            "critical_path_infeasible",
+            "dispatch_budget_infeasible"
+          ],
+          "circuit_diagnostic_codes": [
+            "retry_chain_exceeds_circuit_threshold",
+            "rework_wave_exceeds_ceiling"
+          ]
+        }
+      },
+      "status": "evidence-only",
+      "notes": "F07 is owned by Planner / Compiler. Enforcement starts only on newly finalized canary v2 plans (SD2)."
+    },
+    "F08": {
+      "finding_id": "F08",
+      "canonical_owner": "Planner / Compiler",
+      "m8a_component": "planner_compiler",
+      "exercise_fixtures": [
+        "complexity-7-8-9"
+      ],
+      "fixture_results": {
+        "complexity-7-8-9": {
+          "admitted": false,
+          "diagnostic_codes": [
+            "task_checkpoint_required"
+          ],
+          "circuit_diagnostic_codes": []
+        }
+      },
+      "status": "evidence-only",
+      "notes": "F08 is owned by Planner / Compiler. Enforcement starts only on newly finalized canary v2 plans (SD2)."
+    },
+    "F09": {
+      "finding_id": "F09",
+      "canonical_owner": "Planner / Compiler",
+      "m8a_component": "planner_compiler",
+      "exercise_fixtures": [
+        "strategy-validation"
+      ],
+      "fixture_results": {
+        "strategy-validation": {
+          "admitted": false,
+          "diagnostic_codes": [
+            "model_validation_job_forbidden",
+            "model_validation_job_forbidden",
+            "model_validation_job_forbidden",
+            "model_validation_job_forbidden"
+          ],
+          "circuit_diagnostic_codes": []
+        }
+      },
+      "status": "evidence-only",
+      "notes": "F09 is owned by Planner / Compiler. Enforcement starts only on newly finalized canary v2 plans (SD2)."
+    },
+    "F10": {
+      "finding_id": "F10",
+      "canonical_owner": "Executor Launcher",
+      "m8a_component": "executor_launcher",
+      "exercise_fixtures": [],
+      "fixture_results": {},
+      "status": "evidence-only",
+      "notes": "F10 is owned by Executor Launcher. Enforcement starts only on newly finalized canary v2 plans (SD2)."
+    },
+    "F11": {
+      "finding_id": "F11",
+      "canonical_owner": "Executor Launcher",
+      "m8a_component": "executor_launcher",
+      "exercise_fixtures": [],
+      "fixture_results": {},
+      "status": "evidence-only",
+      "notes": "F11 is owned by Executor Launcher. Enforcement starts only on newly finalized canary v2 plans (SD2)."
+    },
+    "F12": {
+      "finding_id": "F12",
+      "canonical_owner": "Planner / Compiler",
+      "m8a_component": "planner_compiler",
+      "exercise_fixtures": [
+        "six-task-rework"
+      ],
+      "fixture_results": {
+        "six-task-rework": {
+          "admitted": true,
+          "diagnostic_codes": [],
+          "circuit_diagnostic_codes": [
+            "retry_chain_exceeds_circuit_threshold",
+            "rework_wave_exceeds_ceiling"
+          ]
+        }
+      },
+      "status": "evidence-only",
+      "notes": "F12 is owned by Planner / Compiler. Enforcement starts only on newly finalized canary v2 plans (SD2)."
+    },
+    "F13": {
+      "finding_id": "F13",
+      "canonical_owner": "Executor Launcher",
+      "m8a_component": "executor_launcher",
+      "exercise_fixtures": [
+        "repeated-budget-failures"
+      ],
+      "fixture_results": {
+        "repeated-budget-failures": {
+          "admitted": true,
+          "diagnostic_codes": [],
+          "circuit_diagnostic_codes": [
+            "retry_chain_exceeds_circuit_threshold",
+            "rework_wave_exceeds_ceiling"
+          ]
+        }
+      },
+      "status": "evidence-only",
+      "notes": "F13 is owned by Executor Launcher. Enforcement starts only on newly finalized canary v2 plans (SD2)."
+    },
+    "F14": {
+      "finding_id": "F14",
+      "canonical_owner": "Observability / Projection",
+      "m8a_component": "observability_projection",
+      "exercise_fixtures": [],
+      "fixture_results": {},
+      "status": "evidence-only",
+      "notes": "F14 is owned by Observability / Projection. Enforcement starts only on newly finalized canary v2 plans (SD2)."
+    },
+    "F15": {
+      "finding_id": "F15",
+      "canonical_owner": "Transition Writer / Repair Custody",
+      "m8a_component": "transition_writer_repair_custody",
+      "exercise_fixtures": [],
+      "fixture_results": {},
+      "status": "evidence-only",
+      "notes": "F15 is owned by Transition Writer / Repair Custody. Enforcement starts only on newly finalized canary v2 plans (SD2)."
+    },
+    "F16": {
+      "finding_id": "F16",
+      "canonical_owner": "Observability / Projection",
+      "m8a_component": "observability_projection",
+      "exercise_fixtures": [],
+      "fixture_results": {},
+      "status": "evidence-only",
+      "notes": "F16 is owned by Observability / Projection. Enforcement starts only on newly finalized canary v2 plans (SD2)."
+    },
+    "F17": {
+      "finding_id": "F17",
+      "canonical_owner": "WBC",
+      "m8a_component": "wbc",
+      "exercise_fixtures": [],
+      "fixture_results": {},
+      "status": "evidence-only",
+      "notes": "F17 is owned by WBC. Enforcement starts only on newly finalized canary v2 plans (SD2)."
+    }
+  }
+}

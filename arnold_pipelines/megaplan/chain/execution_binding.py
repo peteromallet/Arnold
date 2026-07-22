@@ -820,3 +820,43 @@ def rebind_execution_identity(
             "chain rebind refused: rebound identity did not verify as an exact match",
         )
     return {"event": event, "execution_binding": rebound_report}
+
+
+def expected_worker_launch_values(
+    spec_path: Path | None = None,
+    *,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Extract expected worker launch parameters from the active execution identity.
+
+    Returns a dict with *expected_source_ref*, *expected_installed_package_path*,
+    and *expected_runtime_revision* when a bound chain execution identity exists.
+    Returns empty strings for all fields when no binding is available (e.g. plan-
+    level dispatch without a chain spec).
+
+    Model and configured-spec are runtime dispatch choices not stored in the
+    binding, so their expected values are always returned empty.
+    """
+    empty: dict[str, Any] = {
+        "expected_source_ref": "",
+        "expected_installed_package_path": "",
+        "expected_runtime_revision": "",
+        "expected_model": None,
+        "expected_spec": "",
+    }
+    if spec_path is None or root is None:
+        return empty
+    try:
+        identity = active_execution_identity(spec_path)
+    except Exception:
+        return empty
+    runtime = identity.get("runtime")
+    if not isinstance(runtime, dict):
+        return empty
+    return {
+        "expected_source_ref": str(identity.get("intended_initiative_revision") or ""),
+        "expected_installed_package_path": str(runtime.get("import_root") or ""),
+        "expected_runtime_revision": str(runtime.get("source_revision") or ""),
+        "expected_model": None,
+        "expected_spec": "",
+    }
