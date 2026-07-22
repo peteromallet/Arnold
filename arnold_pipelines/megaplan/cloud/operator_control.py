@@ -62,7 +62,12 @@ def resume_session(
     no_push: bool = False,
     start_runner: bool = True,
 ) -> dict[str, Any]:
-    result = resume_chain(spec, workspace, actor=actor)
+    result = resume_chain(
+        spec,
+        workspace,
+        actor=actor,
+        verify_execution_binding=start_runner,
+    )
     marker = _load_marker(marker_path)
     if not start_runner:
         marker.pop("operator_pause", None)
