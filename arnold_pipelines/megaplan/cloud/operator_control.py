@@ -60,9 +60,21 @@ def resume_session(
     marker_path: Path,
     actor: str,
     no_push: bool = False,
+    start_runner: bool = True,
 ) -> dict[str, Any]:
     result = resume_chain(spec, workspace, actor=actor)
     marker = _load_marker(marker_path)
+    if not start_runner:
+        marker.pop("operator_pause", None)
+        marker["should_run"] = False
+        _write_marker(marker_path, marker)
+        return {
+            **result,
+            "session": session,
+            "runner_started": False,
+            "no_push": no_push,
+            "authority_only": True,
+        }
     relaunch = str(marker.get("relaunch_command") or marker.get("launch_command") or "").strip()
     if not relaunch:
         raise RuntimeError("session marker has no canonical relaunch command")
@@ -135,6 +147,11 @@ def main(argv: list[str] | None = None) -> int:
             "milestone checkout is not reset for PR branch preparation"
         ),
     )
+    parser.add_argument(
+        "--no-start",
+        action="store_true",
+        help="clear durable pause authority without starting the chain runner",
+    )
     args = parser.parse_args(argv)
     common = {
         "spec": Path(args.spec),
@@ -146,7 +163,11 @@ def main(argv: list[str] | None = None) -> int:
     payload = (
         pause_session(**common, reason=args.reason)
         if args.action == "pause"
-        else resume_session(**common, no_push=args.no_push)
+        else resume_session(
+            **common,
+            no_push=args.no_push,
+            start_runner=not args.no_start,
+        )
     )
     print(json.dumps({"success": True, **payload}, indent=2, sort_keys=True))
     return 0
