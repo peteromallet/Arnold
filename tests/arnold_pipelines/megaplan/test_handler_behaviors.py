@@ -1103,6 +1103,46 @@ class TestTiebreakerScenarioOutcomes:
 
 
 class TestOverrideReplanBehavior:
+    def test_override_replan_allows_blocked_iterate_gate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        plan_file = plan_dir / "plan_v7.md"
+        plan_file.write_text("# plan\n", encoding="utf-8")
+        state = {
+            "name": "demo",
+            "current_state": "blocked",
+            "iteration": 7,
+            "config": {},
+            "plan_versions": [{"version": 7, "file": "plan_v7.md"}],
+            "meta": {},
+            "last_gate": {"recommendation": "ITERATE", "passed": False},
+        }
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.save_state_merge_meta",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.latest_plan_path",
+            lambda *args, **kwargs: plan_file,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override._warn_best_effort_emit_failure",
+            lambda *args, **kwargs: None,
+        )
+
+        response = _override_replan(
+            tmp_path,
+            plan_dir,
+            state,
+            argparse.Namespace(reason="apply narrow gate fixes", note=None),
+        )
+
+        assert response["state"] == "planned"
+        assert state["current_state"] == "planned"
+        assert state["meta"]["overrides"][-1]["from_state"] == "blocked"
+
     def test_override_replan_clears_stale_loop_state_and_records_plan_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
