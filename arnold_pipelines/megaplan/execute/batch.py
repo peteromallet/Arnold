@@ -2192,16 +2192,52 @@ def _run_and_merge_batch(
             "skip_replay": False,
         }
     # M8A T18 — track dispatch start time for queue-duration measurement.
+    # M8A T10 - run deterministic harness validation jobs outside model dispatch.
+    try:
+        _is_final_batch_flag = False
+        _bn = locals().get("batch_number")
+        _bt = locals().get("batches_total")
+        if isinstance(_bn, int) and isinstance(_bt, int) and _bn >= _bt:
+            _is_final_batch_flag = True
+        _run_batch_validation_jobs(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            finalize_data=finalize_data,
+            batch_task_ids=batch_task_ids,
+            is_final_batch=_is_final_batch_flag,
+        )
+    except Exception as exc:
+        log.warning("batch validation jobs failed: %s: %s", type(exc).__name__, exc)
     _dispatch_start = time.monotonic()
-    worker, agent, mode, refreshed = worker_module.run_step_with_worker(
-        "execute",
-        state,
-        plan_dir,
-        args,
-        root=root,
-        resolved=am_for_worker,
-        prompt_override=rendered_prompt_override,
-    )
+    # M8A T16 - under opt-in canary enforcement, when repair adoption
+    # adopted every task in this batch, skip the worker replay/dispatch path.
+    _adopted_ids: set[str] = set()
+    if _repair_adoption_summary.get("skip_replay"):
+        for _e in _repair_adoption_summary.get("evaluated", []) or []:
+            if isinstance(_e, dict) and _e.get("outcome") == "ADOPT":
+                _tid = _e.get("task_id")
+                if isinstance(_tid, str):
+                    _adopted_ids.add(_tid)
+    if _adopted_ids and batch_task_ids and set(batch_task_ids) == _adopted_ids:
+        log.info(
+            "M8A repair adoption: skipping worker dispatch for %d adopted task(s): %s",
+            len(_adopted_ids),
+            sorted(_adopted_ids),
+        )
+        import types as _types
+        worker = _types.SimpleNamespace(
+            model_actual=(resolved_model or model), skipped_replay=True
+        )
+    else:
+        worker, agent, mode, refreshed = worker_module.run_step_with_worker(
+            "execute",
+            state,
+            plan_dir,
+            args,
+            root=root,
+            resolved=am_for_worker,
+            prompt_override=rendered_prompt_override,
+        )
     maybe_run_channel_shadow(
         root=root,
         plan_dir=plan_dir,
@@ -2496,6 +2532,191 @@ def _append_trace_output(plan_dir: Path, trace_output: str | None) -> bool:
     return True
 
 
+
+_MAX_SERIAL_REWORK = 5
+_BATCH_CIRCUIT: dict = {}
+
+
+class _ReworkWaveError:
+    """Lightweight error proxy for circuit advancement of review-rework waves (M8A T14)."""
+
+    def __init__(self, message, *, code="review_quality_block", kind="quality_gate_blocked"):
+        self.message = message
+        self.code = code
+        self.kind = kind
+        self.error_kind = ""
+        self.error_layer = ""
+        self.extra: dict = {}
+
+
+def _split_high_complexity(batches, finalize_data, *, max_tasks_per_batch):
+    """Isolate complexity >=7 tasks into their own batches before worker dispatch (M8A T8)."""
+    try:
+        from arnold_pipelines.megaplan._core.io import split_high_complexity_batches
+        return split_high_complexity_batches(
+            batches, finalize_data, max_tasks_per_batch=max_tasks_per_batch
+        )
+    except Exception:
+        return batches
+
+
+def _guard_execute_batch_admission(finalize_data, state, *, plan_dir=None):
+    """Reassert finalized task-graph admission at execute batch entry (M8A T7).
+
+    Converts admission failures to a ``CliError`` with
+    ``valid_next=['finalize','revise']`` so workers are never dispatched
+    against a mutated or inadmissible post-finalize graph.
+    """
+    from arnold_pipelines.megaplan.orchestration.task_feasibility import (
+        assert_admitted_task_feasibility,
+    )
+    config = state.get("config") if isinstance(state, dict) else None
+    try:
+        assert_admitted_task_feasibility(finalize_data)
+    except ValueError as exc:
+        raise CliError(
+            "finalized_task_graph_changed",
+            str(exc),
+            valid_next=["finalize", "revise"],
+        ) from exc
+
+
+def _advance_batch_circuit(error, *, task_id="", attempt_id=""):
+    """Advance a normalized circuit for a batch retry/rework decision (M8A T14).
+
+    Applies ``classify_failure_class`` + ``normalize_failure_signature`` +
+    ``circuit_transition`` and returns ``(new_state, decision, failure_class)``.
+    """
+    from arnold_pipelines.megaplan.orchestration.recovery_policy import (
+        CircuitState,
+        classify_failure_class,
+        normalize_failure_signature,
+        circuit_transition,
+    )
+    fclass = classify_failure_class(error)
+    signature = normalize_failure_signature(
+        fclass, error, task_id=task_id, attempt_id=attempt_id
+    )
+    key = f"{fclass}:{task_id}:{attempt_id}"
+    current = _BATCH_CIRCUIT.get(key, CircuitState(failure_class=fclass))
+    new_state, decision = circuit_transition(current, signature)
+    _BATCH_CIRCUIT[key] = new_state
+    return new_state, decision, fclass
+
+
+def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_task_ids, is_final_batch=False, state=None):
+    """Run deterministic harness validation jobs outside model dispatch (M8A T10).
+
+    Returns a list of content-addressed evidence dicts (one per applicable
+    job). Each ``evidence_hash`` is ``sha256:``-prefixed; a copy is persisted
+    under ``<plan_dir>/verification/`` and a real ``validation`` work-class
+    event is emitted via ``work_ledger``. A runner failure emits an
+    ``unavailable_reason`` event instead of aborting dispatch.
+    """
+    import hashlib as _hashlib
+    import json as _json
+    from arnold_pipelines.megaplan.orchestration import suite_runner as _suite_runner
+    from arnold_pipelines.megaplan.observability import work_ledger as _wl
+
+    evidence_results: list[dict] = []
+    if not isinstance(finalize_data, dict):
+        return evidence_results
+    validation_jobs = finalize_data.get("validation_jobs")
+    if not isinstance(validation_jobs, list) or not validation_jobs:
+        return evidence_results
+    batch_id_set = set(batch_task_ids or [])
+    verification_dir = Path(plan_dir) / "verification"
+    try:
+        verification_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    config = {"project_dir": str(project_dir)}
+    for job in validation_jobs:
+        if not isinstance(job, dict):
+            continue
+        kind = job.get("kind")
+        if kind == "post_execute_suite" and is_final_batch:
+            applicable = True
+        elif kind == "narrow_recheck":
+            tid = job.get("task_id")
+            applicable = isinstance(tid, str) and tid in batch_id_set
+        else:
+            applicable = False
+        if not applicable:
+            continue
+        timeout = job.get("max_seconds") or job.get("timeout_seconds") or 600
+        job_id = str(job.get("id") or "vj")
+        try:
+            result = _suite_runner.run_suite(
+                Path(project_dir),
+                config,
+                phase="m8a_validation",
+                deadline_seconds=float(timeout),
+                idle_seconds=None,
+            )
+        except Exception as exc:
+            log.warning("validation job %s failed: %s", job_id, exc)
+            err_payload = {"job_id": job_id, "kind": kind, "error": str(exc)}
+            err_canonical = _json.dumps(err_payload, sort_keys=True, separators=(",", ":"))
+            err_hash = "sha256:" + _hashlib.sha256(err_canonical.encode("utf-8")).hexdigest()
+            evidence_results.append({
+                "job_id": job_id,
+                "kind": kind,
+                "status": "runner_error",
+                "exit_code": None,
+                "evidence_hash": err_hash,
+                "error": str(exc),
+            })
+            try:
+                _wl.emit_unavailable_reason(
+                    Path(plan_dir),
+                    referenced_identity=str(job.get("task_id") or job_id),
+                    reason="validation_runner_error",
+                    detail=str(exc),
+                )
+            except Exception:
+                pass
+            continue
+        evidence = {
+            "job_id": job_id,
+            "kind": kind,
+            "command": result.command,
+            "exit_code": result.exit_code,
+            "duration": result.duration,
+            "raw_log_path": (str(result.raw_log_path) if result.raw_log_path is not None else None),
+            "code_hash": result.code_hash,
+            "passes": list(result.passes or []),
+            "failures": list(result.failures or []),
+            "status": result.status,
+            "timeout_reason": result.timeout_reason,
+        }
+        canonical = _json.dumps(evidence, sort_keys=True, separators=(",", ":"))
+        evidence_hash = "sha256:" + _hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        evidence["evidence_hash"] = evidence_hash
+        run_id = getattr(result, "run_id", job_id)
+        artifact_path = verification_dir / f"validation_{job_id}_{run_id}.json"
+        try:
+            artifact_path.write_text(
+                _json.dumps({"evidence": evidence, "job": job}, indent=2, sort_keys=True)
+            )
+        except Exception:
+            pass
+        try:
+            _wl.emit_validation(
+                Path(plan_dir),
+                task_id=str(job.get("task_id") or ""),
+                job_id=job_id,
+                command=result.command,
+                exit_code=result.exit_code,
+                duration_ms=int((result.duration or 0) * 1000),
+                evidence_hash=evidence_hash,
+            )
+        except Exception as exc:
+            log.warning("emit_validation failed for %s: %s", job_id, exc)
+        evidence_results.append(evidence)
+    return evidence_results
+
+
 def handle_execute_one_batch(
     *,
     root: Path,
@@ -2518,13 +2739,18 @@ def handle_execute_one_batch(
         log.info(
             "backfilled missing before_execute user-action gate for stale finalize payload"
         )
+    _guard_execute_batch_admission(plan_dir=plan_dir, finalize_data=finalize_data, state=state)
     global_config = load_config()
     quality_config = global_config.get("quality_checks", {})
     project_dir = Path(state["config"]["project_dir"])
     max_tasks_per_batch = _resolve_max_tasks_per_batch(state, args)
-    global_batches = split_oversized_batches(
-        compute_global_batches(finalize_data),
-        max_tasks_per_batch,
+    global_batches = _split_high_complexity(
+        split_oversized_batches(
+            compute_global_batches(finalize_data),
+            max_tasks_per_batch,
+        ),
+        finalize_data,
+        max_tasks_per_batch=max_tasks_per_batch,
     )
     batches_total = len(global_batches)
 
@@ -3881,6 +4107,7 @@ def handle_execute_auto_loop(
         log.info(
             "backfilled missing before_execute user-action gate for stale finalize payload"
         )
+    _guard_execute_batch_admission(plan_dir=plan_dir, finalize_data=finalize_data, state=state)
     global_config = load_config()
     quality_config = global_config.get("quality_checks", {})
     project_dir = Path(state["config"]["project_dir"])
@@ -4349,7 +4576,11 @@ def handle_execute_auto_loop(
         pending_tasks, completed_ids=completed_task_ids
     )
     max_tasks_per_batch = _resolve_max_tasks_per_batch(state, args)
-    split_batches = split_oversized_batches(pending_batches, max_tasks_per_batch)
+    split_batches = _split_high_complexity(
+        split_oversized_batches(pending_batches, max_tasks_per_batch),
+        finalize_data,
+        max_tasks_per_batch=max_tasks_per_batch,
+    )
     if len(split_batches) != len(pending_batches):
         for batch_index, batch in enumerate(pending_batches, start=1):
             if len(batch) <= max_tasks_per_batch:
@@ -4375,15 +4606,68 @@ def handle_execute_auto_loop(
         completed_task_ids=completed_task_ids,
         max_tasks_per_batch=max_tasks_per_batch,
     )
-    global_batches = split_oversized_batches(
-        compute_global_batches(finalize_data),
-        max_tasks_per_batch,
+    global_batches = _split_high_complexity(
+        split_oversized_batches(
+            compute_global_batches(finalize_data),
+            max_tasks_per_batch,
+        ),
+        finalize_data,
+        max_tasks_per_batch=max_tasks_per_batch,
     )
     global_batch_lookup = {
         tuple(batch): index + 1 for index, batch in enumerate(global_batches)
     }
     task_to_batch_number = _task_to_global_batch_number_map(global_batches)
     no_pending_execution = not pending_tasks and not rework_mode
+    # M8A T14 - rework-wave ceiling + normalized circuit for serial review
+    # rework. A wave larger than the ceiling, or an opened review-quality
+    # circuit, halts with a typed STATE_TRANSITION event + CliError.
+    if rework_mode and isinstance(review_rework_task_ids, list) and review_rework_task_ids:
+        _wave_size = len(review_rework_task_ids)
+        _we = _ReworkWaveError(
+            f"review rework wave of {_wave_size} task(s)",
+            code="review_quality_block",
+            kind="quality_gate_blocked",
+        )
+        _circ_state, _circ_decision, _circ_fclass = _advance_batch_circuit(
+            _we, task_id="rework_wave", attempt_id="serial"
+        )
+        _wave_exceeds = (
+            _wave_size > _MAX_SERIAL_REWORK
+            or bool(getattr(_circ_state, "circuit_open", False))
+        )
+        if _wave_exceeds:
+            _summary = (
+                f"Rework wave exceeds ceiling: {_wave_size} rework task(s) "
+                f"exceeds the {_MAX_SERIAL_REWORK}-task serial rework ceiling "
+                f"(circuit_open={bool(getattr(_circ_state, 'circuit_open', False))}, "
+                f"failure_class={_circ_fclass})."
+            )
+            log.warning("M8A rework-wave ceiling: %s", _summary)
+            try:
+                from arnold_pipelines.megaplan.eventlog import (
+                    STATE_TRANSITION,
+                    append_event,
+                )
+                append_event(
+                    plan_dir,
+                    STATE_TRANSITION,
+                    {
+                        "rework_wave_size": _wave_size,
+                        "ceiling": _MAX_SERIAL_REWORK,
+                        "rework_task_ids": list(review_rework_task_ids),
+                        "failure_class": _circ_fclass,
+                        "circuit_open": bool(getattr(_circ_state, "circuit_open", False)),
+                        "reason": "rework_wave_exceeds_ceiling",
+                    },
+                )
+            except Exception:
+                pass
+            raise CliError(
+                "rework_wave_exceeds_ceiling",
+                f"Rework wave of {_wave_size} task(s) exceeds the "
+                f"{_MAX_SERIAL_REWORK}-task serial rework ceiling.",
+            )
     batches_to_run = (
         [review_rework_task_ids]
         if rework_mode

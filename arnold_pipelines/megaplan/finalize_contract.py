@@ -82,8 +82,14 @@ FINALIZE_MODEL_OUTPUT_SCHEMA: dict[str, Any] = {
                 "type": "object",
                 "required": [
                     "id",
-                    "kind",
+                    "scope",
                     "command",
+                    "environment",
+                    "expected_exit_codes",
+                    "timeout_seconds",
+                    "content_hash_algorithm",
+                    "evidence_label",
+                    "mutates",
                     "reason",
                 ],
                 "properties": {
@@ -105,6 +111,36 @@ FINALIZE_MODEL_OUTPUT_SCHEMA: dict[str, Any] = {
                     "command": {
                         "type": "string",
                         "description": "Deterministic pytest command with timeout prefix.",
+                    },
+                    "scope": {
+                        "type": "string",
+                        "description": "Deterministic scope label (post_execute_suite or narrow_recheck:<task_id>).",
+                    },
+                    "environment": {
+                        "type": "object",
+                        "description": "Pinned subprocess environment overrides (empty for harness-owned jobs).",
+                    },
+                    "expected_exit_codes": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Exit codes that mean the validation ran and passed (harness-owned jobs expect [0]).",
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "description": "Maximum wall-clock seconds for this validation run.",
+                    },
+                    "content_hash_algorithm": {
+                        "type": "string",
+                        "enum": ["sha256"],
+                        "description": "Content-addressing algorithm for validation evidence.",
+                    },
+                    "evidence_label": {
+                        "type": "string",
+                        "description": "Stable label for the content-addressed evidence artifact.",
+                    },
+                    "mutates": {
+                        "type": "boolean",
+                        "description": "Always false for harness-owned validation jobs.",
                     },
                     "selectors": {
                         "type": "array",
