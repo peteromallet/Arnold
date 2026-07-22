@@ -179,6 +179,14 @@ _ABSOLUTE_PATH_RE: Final = re.compile(r"(?:/[a-zA-Z0-9_.-]+)+/[a-zA-Z0-9_.-]+")
 _DURATION_RE: Final = re.compile(r"\b\d+\.\d{2,}s\b")
 _BARE_NUMBER_RE: Final = re.compile(r"\b\d+\b")
 
+# Content-hash tokens (sha256:<hex>, git/blob/tree shas). These are preserved
+# in failure signatures so distinct artifact hashes do not collapse together
+# after _normalize_message strips bare hex fragments (M8A T13).
+_CONTENT_HASH_RE: Final = re.compile(
+    r"\b(?:sha(?:256|1)?|gitsha|blob|tree|commit|artifact|evidence)[:\s]?[0-9a-fA-F]{7,64}\b",
+    re.IGNORECASE,
+)
+
 def _normalize_message(text: str) -> str:
     """Normalize an error message by stripping transient tokens.
 
@@ -272,6 +280,13 @@ def normalize_failure_signature(
         payload["provider"] = provider
     if status_code_str:
         payload["status_code"] = status_code_str
+
+    # Preserve content hashes (sha256:<hex>, git/blob shas, evidence digests)
+    # so review-quality signatures do NOT collapse distinct artifact hashes
+    # into the same signature after _normalize_message strips hex fragments.
+    content_hashes = sorted(set(_CONTENT_HASH_RE.findall(raw_message)))
+    if content_hashes:
+        payload["content_hashes"] = content_hashes
 
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -422,13 +437,21 @@ def classify_failure_class(error: Any) -> FailureClass:
         ],
     ):
         return "invalid_ref"
-    # worker_launch_preflight_mismatch with ref field
+    # worker_launch_preflight_mismatch with ref field. Real preflight errors
+    # nest mismatches under extra["worker_launch_preflight"]["mismatches"];
+    # fall back to a top-level "mismatches" key for older/flat shapes.
     if error_code == "worker_launch_preflight_mismatch":
-        mismatches = getattr(error, "extra", {}) or {}
-        if isinstance(mismatches, dict):
-            mismatch_list = mismatches.get("mismatches", [])
-        else:
-            mismatch_list = []
+        _extra = getattr(error, "extra", {}) or {}
+        mismatch_list = []
+        if isinstance(_extra, dict):
+            _wlp = _extra.get("worker_launch_preflight")
+            _nested = _wlp.get("mismatches", []) if isinstance(_wlp, dict) else None
+            if isinstance(_nested, list):
+                mismatch_list = _nested
+            else:
+                _top = _extra.get("mismatches", [])
+                if isinstance(_top, list):
+                    mismatch_list = _top
         if isinstance(mismatch_list, list):
             for m in mismatch_list:
                 if isinstance(m, dict) and m.get("field") in {
