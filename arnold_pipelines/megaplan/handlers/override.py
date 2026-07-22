@@ -1129,7 +1129,13 @@ def _override_force_proceed(
 def _override_replan(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
-    allowed = {STATE_GATED, STATE_FINALIZED, STATE_CRITIQUED, STATE_FAILED}
+    allowed = {
+        STATE_GATED,
+        STATE_FINALIZED,
+        STATE_CRITIQUED,
+        STATE_FAILED,
+        STATE_BLOCKED,
+    }
     previous_state = state["current_state"]
     if previous_state not in allowed:
         raise CliError(

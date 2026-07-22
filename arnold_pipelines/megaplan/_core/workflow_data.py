@@ -71,6 +71,7 @@ WORKFLOW: dict[str, list[Transition]] = {
     ],
     STATE_BLOCKED: [
         Transition("override force-proceed", STATE_FINALIZED, "always"),
+        Transition("override replan", STATE_PLANNED, "always"),
     ],
     STATE_FINALIZED: [
         Transition("execute", STATE_EXECUTED),

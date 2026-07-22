@@ -1103,6 +1103,84 @@ class TestTiebreakerScenarioOutcomes:
 
 
 class TestOverrideReplanBehavior:
+    def test_override_replan_recovers_blocked_gate_without_bypassing_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A correctness block can re-enter planning instead of force-proceeding."""
+        from arnold_pipelines.megaplan._core import infer_next_steps
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        plan_file = plan_dir / "plan_v8.md"
+        plan_file.write_text("# blocked plan\n", encoding="utf-8")
+        state = {
+            "name": "demo",
+            "current_state": "blocked",
+            "iteration": 8,
+            "config": {},
+            "plan_versions": [
+                {
+                    "version": 8,
+                    "file": "plan_v8.md",
+                    "hash": "sha256:blocked-plan",
+                    "timestamp": "2026-01-02T03:04:05Z",
+                }
+            ],
+            "meta": {},
+            "last_gate": {"recommendation": "ESCALATE"},
+        }
+
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.save_state_merge_meta",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.now_utc",
+            lambda: "2026-01-02T03:04:05Z",
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.latest_plan_path",
+            lambda *args, **kwargs: plan_file,
+        )
+
+        assert "override replan" in infer_next_steps(state)
+        response = _override_replan(
+            tmp_path,
+            plan_dir,
+            state,
+            argparse.Namespace(reason="repair correctness flags", note=None),
+        )
+
+        assert response["state"] == "planned"
+        assert state["current_state"] == "planned"
+        assert state["meta"]["overrides"][-1]["from_state"] == "blocked"
+
+    def test_blocked_gate_without_resume_cursor_projects_replan_recovery(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.observability.introspect import (
+            _compute_block_details,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        (plan_dir / "gate_signals_v8.json").write_text(
+            json.dumps({"unresolved_flags": [{"id": "CF-1"}]}) + "\n",
+            encoding="utf-8",
+        )
+        state = {
+            "name": "demo",
+            "current_state": "blocked",
+            "iteration": 8,
+            "config": {},
+            "meta": {},
+            "last_gate": {"recommendation": "ESCALATE"},
+        }
+
+        details = _compute_block_details(plan_dir, state)
+
+        assert details["recoverable_via"] == ["override replan"]
+
     def test_override_replan_clears_stale_loop_state_and_records_plan_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

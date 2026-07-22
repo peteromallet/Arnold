@@ -853,6 +853,13 @@ class PlanningControlBinding:
 
         phase, source = _recovery_phase(state)
         if phase is None:
+            if current_state == STATE_BLOCKED:
+                return (
+                    _workflow_step_target(
+                        "override replan",
+                        direction="recovery",
+                    ),
+                )
             return (
                 _diagnostic(
                     "missing_recovery_phase",
