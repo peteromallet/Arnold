@@ -85,6 +85,70 @@ def test_enqueue_requires_explicit_queue_root_even_with_marker_provenance(tmp_pa
         raise AssertionError("enqueue inferred queue custody from marker provenance")
 
 
+def test_lifecycle_request_is_claimable_before_acceptance(tmp_path: Path) -> None:
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=_queue_root(tmp_path),
+        session="custody-control-plane",
+        source="lifecycle_failure",
+        workspace=tmp_path,
+        target={"plan_name": "m9", "plan_dir": str(tmp_path / "m9")},
+        problem_signature=_signature(blocked_task_id=""),
+        root_cause_hint="finalize failed",
+    )
+
+    request = queued["request"]
+    assert queued["status"] == "queued"
+    assert request["problem_signature"]["blocked_task_id"] == "phase:execute"
+    assert request["blocker_id"].startswith("blocker:v1:")
+    assert request["provenance"] == {
+        "producer": "lifecycle_failure",
+        "session": "custody-control-plane",
+        "run_kind": "",
+    }
+    assert repair_requests.has_claimable_repair_request_contract(request)
+
+
+def test_identity_free_existing_request_gets_claimable_successor(tmp_path: Path) -> None:
+    queue_root = _queue_root(tmp_path)
+    signature = _signature()
+    predecessor_id = repair_requests.request_id_for(
+        session="custody-control-plane",
+        problem_signature=signature,
+        root_cause_hint="revise failed",
+    )
+    legacy_path = repair_requests.requests_dir(queue_root) / f"{predecessor_id}.json"
+    legacy_path.parent.mkdir(parents=True)
+    legacy_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "kind": "repair_request",
+                "request_id": predecessor_id,
+                "source": "lifecycle_failure",
+                "session": "custody-control-plane",
+                "problem_signature": repair_requests.normalize_problem_signature(signature),
+                "problem_signature_key": repair_requests.problem_signature_key(signature),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        session="custody-control-plane",
+        source="lifecycle_failure",
+        workspace=tmp_path,
+        target={"plan_name": "m9", "plan_dir": str(tmp_path / "m9")},
+        problem_signature=signature,
+        root_cause_hint="revise failed",
+    )
+
+    assert queued["status"] == "queued"
+    assert queued["request"]["request_id"] != predecessor_id
+    assert queued["request"]["predecessor_request_id"] == predecessor_id
+    assert repair_requests.has_claimable_repair_request_contract(queued["request"])
+
+
 def test_concurrent_active_repair_request_claim_has_one_winner_and_typed_losers(
     tmp_path: Path,
 ) -> None:
@@ -501,15 +565,16 @@ def test_request_id_for_differs_with_different_sessions() -> None:
 
 def test_write_decision_creates_immutable_decision_record(tmp_path: Path) -> None:
     queue_dir = _queue_root(tmp_path)
-    decision = repair_requests.write_decision(
-        queue_dir,
-        request_id="req-abc123",
-        decision="accepted",
-        reason="queued",
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo",
+        source="test",
+        problem_signature=_signature(),
         created_at="2026-07-01T03:00:00Z",
     )
+    decision = queued["decision"]
     assert decision["decision"] == "accepted"
-    assert decision["request_id"] == "req-abc123"
+    assert decision["request_id"] == queued["request"]["request_id"]
     assert decision["reason"] == "queued"
     assert "decision_id" in decision
     assert "_path" in decision

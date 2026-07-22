@@ -170,6 +170,146 @@ def request_id_for(
     )
 
 
+def _default_retry_strategy(
+    problem_signature: Mapping[str, Any],
+    target: Mapping[str, Any],
+) -> str:
+    explicit = str(
+        problem_signature.get("retry_strategy")
+        or target.get("retry_strategy")
+        or ""
+    ).strip()
+    if explicit:
+        return explicit
+    failure_kind = str(problem_signature.get("failure_kind") or "").strip()
+    return {
+        "deterministic_phase_failure": "repair_phase_contract",
+        "human_gate": "human_decision",
+        "awaiting_pr_merge": "reconcile_pr_merge",
+        "blocked_recovery_not_resolved": "manual_review",
+    }.get(failure_kind, "repair_request")
+
+
+def _canonicalize_blocked_task_id(problem_signature: dict[str, Any]) -> None:
+    if str(problem_signature.get("blocked_task_id") or "").strip():
+        return
+    phase = str(problem_signature.get("phase_or_step") or "").strip()
+    if phase:
+        problem_signature["blocked_task_id"] = f"phase:{phase}"
+        return
+    milestone = str(problem_signature.get("milestone_or_plan") or "").strip()
+    if milestone:
+        problem_signature["blocked_task_id"] = f"plan:{milestone}"
+
+
+def _has_evidence_payload(value: Any) -> bool:
+    redacted = redact_payload(value)
+    if isinstance(redacted, Mapping):
+        return any(_has_evidence_payload(item) for item in redacted.values())
+    if isinstance(redacted, (list, tuple, set)):
+        return any(_has_evidence_payload(item) for item in redacted)
+    return bool(str(redacted or "").strip())
+
+
+def _canonical_request_blocker_identity(
+    *,
+    session: str,
+    workspace: str | Path | None,
+    target: Mapping[str, Any],
+    problem_signature: Mapping[str, Any],
+    signature_key: str,
+) -> tuple[dict[str, Any], str]:
+    session_identity = str(session or "").strip()
+    current_state = str(problem_signature.get("current_state") or "").strip()
+    failure_kind = str(problem_signature.get("failure_kind") or "").strip()
+    phase_or_step = str(problem_signature.get("phase_or_step") or "").strip()
+    milestone_or_plan = str(
+        problem_signature.get("milestone_or_plan")
+        or target.get("plan_name")
+        or target.get("plan")
+        or target.get("pipeline_name")
+        or session_identity
+    ).strip()
+    blocked_task_id = str(problem_signature.get("blocked_task_id") or "").strip()
+    missing = [
+        field
+        for field, value in (
+            ("session", session_identity),
+            ("current_state", current_state),
+            ("failure_kind", failure_kind),
+            ("phase_or_step", phase_or_step),
+            ("milestone_or_plan", milestone_or_plan),
+            ("blocked_task_id", blocked_task_id),
+        )
+        if not value
+    ]
+    if missing:
+        raise ValueError(
+            "repair request cannot allocate canonical blocker identity; missing "
+            + ", ".join(missing)
+        )
+    target_identity = {
+        "session": session_identity,
+        "workspace": str(
+            workspace
+            or target.get("workspace_path")
+            or target.get("workspace")
+            or ""
+        ),
+        "plan": milestone_or_plan,
+        "plan_dir": str(target.get("plan_dir") or ""),
+        "pipeline": str(target.get("pipeline_name") or ""),
+        "problem_signature_key": signature_key,
+    }
+    fingerprint = repair_contract.normalize_blocker_fingerprint_v1(
+        {
+            "schema_version": repair_contract.BLOCKER_FINGERPRINT_VERSION,
+            "current_state": current_state,
+            "retry_strategy": _default_retry_strategy(problem_signature, target),
+            "failure_kind": failure_kind,
+            "phase_or_step": phase_or_step,
+            "milestone_or_plan": milestone_or_plan,
+            "blocked_task_id": blocked_task_id,
+            "target_fingerprint": "repair-target:v1:" + _sha256_json(target_identity),
+        }
+    )
+    blocker_id = repair_contract.blocker_id_for_fingerprint(fingerprint)
+    if fingerprint is None or blocker_id is None:
+        raise ValueError("repair request canonical blocker identity is invalid")
+    return dict(fingerprint), blocker_id
+
+
+def has_claimable_repair_request_contract(request: Mapping[str, Any]) -> bool:
+    fingerprint = repair_contract.normalize_blocker_fingerprint_v1(
+        request.get("blocker_fingerprint")
+    )
+    blocker_id = repair_contract.blocker_id_for_fingerprint(fingerprint)
+    if not blocker_id or request.get("blocker_id") != blocker_id:
+        return False
+    source = str(request.get("source") or "").strip()
+    session = str(request.get("session") or "").strip()
+    provenance = request.get("provenance")
+    if (
+        not source
+        or not session
+        or not isinstance(provenance, Mapping)
+        or str(provenance.get("producer") or "").strip() != source
+        or str(provenance.get("session") or "").strip() != session
+    ):
+        return False
+    problem_signature = request.get("problem_signature")
+    evidence_refs = request.get("evidence_refs")
+    if not isinstance(problem_signature, Mapping) or not isinstance(evidence_refs, list):
+        return False
+    expected_digest = _sha256_json(problem_signature)
+    return any(
+        isinstance(item, Mapping)
+        and item.get("kind") == "problem_signature_digest"
+        and item.get("sha256") == expected_digest
+        for item in evidence_refs
+    )
+
+
 def enqueue_repair_request(
     *,
     queue_root: str | Path,
@@ -188,28 +328,79 @@ def enqueue_repair_request(
     """Write a request marker once, recording any rejection/coalescing separately."""
 
     queue_root = validate_queue_root(queue_root)
-    normalized_signature = normalize_problem_signature(problem_signature)
+    source_identity = str(source or "").strip()
+    if not source_identity:
+        raise ValueError("repair request provenance source is required")
+    extended_signature = dict(problem_signature)
+    _canonicalize_blocked_task_id(extended_signature)
+    normalized_signature = normalize_problem_signature(extended_signature)
+    signature_key = problem_signature_key(normalized_signature)
+    stable_target = _stable_mapping(target or {})
+    blocker_fingerprint, blocker_id = _canonical_request_blocker_identity(
+        session=session,
+        workspace=workspace,
+        target=stable_target,
+        problem_signature=extended_signature,
+        signature_key=signature_key,
+    )
     hint_hash = redacted_hint_hash(root_cause_hint)
+    evidence_refs = [
+        {
+            "kind": "problem_signature_digest",
+            "sha256": _sha256_json(normalized_signature),
+        }
+    ]
+    if _has_evidence_payload(root_cause_hint):
+        evidence_refs.append(
+            {"kind": "redacted_root_cause_hint_digest", "sha256": hint_hash}
+        )
     request_id = request_id_for(
         session=session,
         problem_signature=normalized_signature,
         root_cause_hint=root_cause_hint,
     )
     request_path = requests_dir(queue_root) / f"{request_id}.json"
+    predecessor_request_id = ""
+    if request_path.exists():
+        try:
+            existing_request = json.loads(request_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            existing_request = {}
+        if not isinstance(existing_request, Mapping) or not has_claimable_repair_request_contract(
+            existing_request
+        ):
+            predecessor_request_id = request_id
+            request_id = _sha256_json(
+                {
+                    "schema_version": "claimable-repair-request-successor-v1",
+                    "predecessor_request_id": predecessor_request_id,
+                    "blocker_id": blocker_id,
+                }
+            )
+            request_path = requests_dir(queue_root) / f"{request_id}.json"
     record = {
         "schema_version": CURRENT_SCHEMA_VERSION,
         "kind": "repair_request",
         "request_id": request_id,
         "created_at": created_at or utc_now(),
-        "source": str(source or "").strip(),
+        "source": source_identity,
         "session": str(session or "").strip(),
         "workspace": str(workspace or ""),
         "run_kind": str(run_kind or "").strip(),
         "marker_dir": str(Path(marker_dir)) if marker_dir is not None else "",
         "queue_dir": str(queue_root),
-        "target": _stable_mapping(target or {}),
+        "target": stable_target,
         "problem_signature": normalized_signature,
-        "problem_signature_key": problem_signature_key(normalized_signature),
+        "problem_signature_key": signature_key,
+        "blocker_fingerprint": blocker_fingerprint,
+        "blocker_id": blocker_id,
+        "predecessor_request_id": predecessor_request_id,
+        "provenance": {
+            "producer": source_identity,
+            "session": str(session or "").strip(),
+            "run_kind": str(run_kind or "").strip(),
+        },
+        "evidence_refs": evidence_refs,
         "root_cause_hint_hash": hint_hash,
         "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
     }
@@ -235,7 +426,12 @@ def enqueue_repair_request(
         )
         return {"status": "superseded", "request": record, "path": str(request_path), "decision": decision}
 
-    existing = find_pending_by_signature(queue_root, normalized_signature)
+    existing = find_pending_by_signature(
+        queue_root,
+        normalized_signature,
+        session=str(session or "").strip(),
+        blocker_id=blocker_id,
+    )
     if existing is not None and existing["request_id"] != request_id:
         decision = write_decision(
             queue_root,
@@ -417,11 +613,20 @@ def iter_repair_attempts(
 def find_pending_by_signature(
     queue_dir: str | Path,
     problem_signature: Mapping[str, Any],
+    *,
+    session: str = "",
+    blocker_id: str = "",
 ) -> dict[str, Any] | None:
     key = problem_signature_key(problem_signature)
     decided = _decided_request_ids(queue_dir)
     for record in iter_repair_requests(queue_dir):
         if record.get("request_id") in decided:
+            continue
+        if not has_claimable_repair_request_contract(record):
+            continue
+        if session and str(record.get("session") or "").strip() != session:
+            continue
+        if blocker_id and str(record.get("blocker_id") or "").strip() != blocker_id:
             continue
         if record.get("problem_signature_key") == key:
             return record
@@ -438,6 +643,19 @@ def write_decision(
     created_at: str | None = None,
 ) -> dict[str, Any]:
     """Write an immutable decision record separate from request markers."""
+
+    if decision == "accepted":
+        request_path = requests_dir(queue_dir) / f"{str(request_id or '').strip()}.json"
+        try:
+            request = json.loads(request_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                "accepted repair request requires canonical identity, provenance, and evidence"
+            ) from exc
+        if not isinstance(request, Mapping) or not has_claimable_repair_request_contract(request):
+            raise ValueError(
+                "accepted repair request requires canonical identity, provenance, and evidence"
+            )
 
     when = created_at or utc_now()
     record = {
@@ -748,6 +966,8 @@ def record_malformed_file(queue_dir: str | Path, path: str | Path, reason: str) 
 
 
 def _decided_request_ids(queue_dir: str | Path) -> set[str]:
+    """Return requests whose immutable blocker identity is permanently closed."""
+
     decided: set[str] = set()
     for path in sorted(decisions_dir(queue_dir).glob("*.json"), key=lambda item: item.name):
         try:
@@ -757,7 +977,7 @@ def _decided_request_ids(queue_dir: str | Path) -> set[str]:
         if not isinstance(payload, dict):
             continue
         decision = payload.get("decision")
-        if decision in {"stale", "superseded", "dispatched"}:
+        if decision in {"stale", "superseded"}:
             request_id = payload.get("request_id")
             if isinstance(request_id, str) and request_id:
                 decided.add(request_id)
@@ -966,6 +1186,7 @@ __all__ = [
     "enqueue_human_gate_repair_request",
     "enqueue_repair_request",
     "find_pending_by_signature",
+    "has_claimable_repair_request_contract",
     "iter_repair_decisions",
     "iter_repair_attempts",
     "iter_repair_requests",
