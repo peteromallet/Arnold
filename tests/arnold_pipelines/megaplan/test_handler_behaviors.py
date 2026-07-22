@@ -1203,6 +1203,69 @@ class TestOverrideReplanBehavior:
         assert "resume_cursor" not in state
         assert "active_step" not in state
 
+    def test_override_replan_archives_stale_finalize_epoch_artifacts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        plan_file = plan_dir / "plan_v2.md"
+        plan_file.write_text("# repaired plan\n", encoding="utf-8")
+        (plan_dir / "task_feasibility.json").write_text(
+            '{"admitted": false, "task_count": 35}\n', encoding="utf-8"
+        )
+        (plan_dir / "finalize_output.json").write_text(
+            '{"tasks": [{"id": "OLD"}]}\n', encoding="utf-8"
+        )
+        state = {
+            "name": "demo",
+            "current_state": "critiqued",
+            "iteration": 2,
+            "config": {},
+            "plan_versions": [
+                {
+                    "version": 2,
+                    "file": "plan_v2.md",
+                    "hash": "sha256:plan",
+                    "timestamp": "2026-01-02T03:04:05Z",
+                }
+            ],
+            "meta": {},
+            "last_gate": {"recommendation": "ITERATE"},
+        }
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.save_state_merge_meta",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.now_utc",
+            lambda: "2026-01-02T03:04:05Z",
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.latest_plan_path",
+            lambda *args, **kwargs: plan_file,
+        )
+
+        response = _override_replan(
+            tmp_path,
+            plan_dir,
+            state,
+            argparse.Namespace(reason="new planning epoch", note=None),
+        )
+
+        invalidation = response["artifact_invalidation"]
+        assert invalidation["schema_version"] == "megaplan-replan-artifact-invalidation-v1"
+        assert {item["artifact"] for item in invalidation["artifacts"]} == {
+            "task_feasibility.json",
+            "finalize_output.json",
+        }
+        assert not (plan_dir / "task_feasibility.json").exists()
+        assert not (plan_dir / "finalize_output.json").exists()
+        manifest = json.loads((plan_dir / invalidation["manifest"]).read_text())
+        for item in manifest["artifacts"]:
+            archived = plan_dir.parent / item["archive_path"]
+            assert archived.is_file()
+            assert item["sha256"].startswith("sha256:")
+
 
 class TestOverrideFallbackChains:
     def test_set_profile_preserves_encoded_phase_model_chain(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
