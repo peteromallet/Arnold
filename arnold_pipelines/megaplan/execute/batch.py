@@ -8,7 +8,7 @@ import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Mapping
 
 from arnold.workflow.boundary_evidence import AuthorityRecord, BoundaryOutcome, BoundaryReceipt
 import arnold_pipelines.megaplan.workers as worker_module
@@ -331,6 +331,9 @@ def _collect_pending_repair_receipts(
 
 def _reread_current_boundary_conditions(
     receipt: Mapping[str, Any],
+    *,
+    plan_dir: Path | None = None,
+    task_contract: str = "",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Reread current Run Authority, Custody, and WBC boundary conditions.
 
@@ -409,6 +412,108 @@ def _reread_current_boundary_conditions(
     except Exception as exc:  # pragma: no cover - defensive: reread must not crash dispatch
         diagnostics["reread_errors"].append(f"{type(exc).__name__}: {exc}")
 
+    if plan_dir is None:
+        return current, diagnostics
+
+    # The remaining adoption fields must come from current execution
+    # artifacts, never from the candidate receipt.  A missing current value
+    # deliberately leaves the adoption context incomplete so the caller
+    # quarantines the receipt instead of manufacturing a self-match.
+    try:
+        state_payload = read_json(Path(plan_dir) / "state.json")
+    except (OSError, ValueError, TypeError):
+        state_payload = {}
+    config = state_payload.get("config") if isinstance(state_payload, dict) else {}
+    project_dir_value = config.get("project_dir") if isinstance(config, dict) else None
+    project_dir = (
+        Path(project_dir_value)
+        if isinstance(project_dir_value, str) and project_dir_value
+        else None
+    )
+    if task_contract:
+        current["task_contract"] = task_contract
+
+    newest_task_evidence: tuple[int, Path, dict[str, Any]] | None = None
+    batches_dir = Path(plan_dir) / "execute_batches"
+    if batches_dir.is_dir() and task_contract:
+        for artifact_path in batches_dir.glob("batch_*/tasks_*.json"):
+            try:
+                artifact = read_json(artifact_path)
+            except (OSError, ValueError, TypeError):
+                artifact = {}
+            if not isinstance(artifact, dict):
+                continue
+            for envelope in artifact.get("result_envelopes") or []:
+                if not isinstance(envelope, dict):
+                    continue
+                claim = envelope.get("claim")
+                if not isinstance(claim, dict) or claim.get("subject_id") != task_contract:
+                    continue
+                candidate = (artifact_path.stat().st_mtime_ns, artifact_path, envelope)
+                if newest_task_evidence is None or candidate[0] > newest_task_evidence[0]:
+                    newest_task_evidence = candidate
+
+    if newest_task_evidence is not None:
+        _, evidence_path, envelope = newest_task_evidence
+        dispatch = envelope.get("dispatch")
+        grant = dispatch.get("grant") if isinstance(dispatch, dict) else {}
+        claim = envelope.get("claim")
+        plan_revision = grant.get("run_revision") if isinstance(grant, dict) else None
+        result_hash = claim.get("payload_hash") if isinstance(claim, dict) else None
+        if isinstance(plan_revision, str) and plan_revision:
+            current["plan_revision"] = plan_revision
+        if isinstance(result_hash, str) and result_hash:
+            current["test_result_hash"] = result_hash
+        diagnostics["sources"]["current_task_result"] = {
+            "outcome": "observed",
+            "detail": "latest durable result envelope for current task contract",
+            "observed_value": {
+                "path": str(evidence_path),
+                "plan_revision": plan_revision,
+                "task_contract": task_contract,
+                "result_hash": result_hash,
+            },
+        }
+    else:
+        diagnostics["reread_errors"].append(
+            f"current task result not found for {task_contract or '<missing>'}"
+        )
+
+    if project_dir is not None:
+        try:
+            proc = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(project_dir),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+            head = proc.stdout.strip() if proc.returncode == 0 else ""
+            if head:
+                current["tree_commit"] = head
+                diagnostics["sources"]["git_head"] = {
+                    "outcome": "observed",
+                    "detail": "current project HEAD",
+                    "observed_value": {"tree_commit": head},
+                }
+            else:
+                diagnostics["reread_errors"].append("current git HEAD unavailable")
+        except Exception as exc:  # pragma: no cover - defensive fail closed
+            diagnostics["reread_errors"].append(
+                f"current git HEAD read failed: {type(exc).__name__}: {exc}"
+            )
+
+    failure = state_payload.get("latest_failure") if isinstance(state_payload, dict) else None
+    if isinstance(failure, dict) and failure:
+        current["blocker_hash"] = "sha256:" + hashlib.sha256(
+            json.dumps(failure, sort_keys=True, separators=(",", ":"), default=str).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+    else:
+        current["blocker_hash"] = ""
+
     return current, diagnostics
 
 
@@ -480,7 +585,11 @@ def _run_repair_adoption_check(
                 break
 
         start = _time.monotonic()
-        current, reread_diag = _reread_current_boundary_conditions(receipt)
+        current, reread_diag = _reread_current_boundary_conditions(
+            receipt,
+            plan_dir=Path(plan_dir),
+            task_contract=task_contract_raw,
+        )
 
         try:
             context = AdoptionContext(
@@ -489,13 +598,11 @@ def _run_repair_adoption_check(
                 custody_lease_id=str(current.get("custody_lease_id") or ""),
                 custody_epoch=int(current.get("custody_epoch") or 0),
                 wbc_attempt_reference=str(current.get("wbc_attempt_reference") or ""),
-                plan_revision=str(receipt.get("plan_revision") or ""),
-                task_contract=task_contract_raw,
-                tree_commit=str(receipt.get("tree_commit") or ""),
-                test_result_hash=str(
-                    receipt.get("payload_hash") or receipt.get("test_result_hash") or ""
-                ),
-                blocker_hash=str(receipt.get("blocker_hash") or ""),
+                plan_revision=str(current.get("plan_revision") or ""),
+                task_contract=str(current.get("task_contract") or ""),
+                tree_commit=str(current.get("tree_commit") or ""),
+                test_result_hash=str(current.get("test_result_hash") or ""),
+                blocker_hash=str(current.get("blocker_hash") or ""),
             )
         except (ValueError, TypeError) as exc:
             duration_ms = int((_time.monotonic() - start) * 1000)

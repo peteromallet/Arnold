@@ -1045,6 +1045,91 @@ def test_validation_job_runner_error_emits_unavailable_reason() -> None:
             pass
 
 
+def test_repair_adoption_rereads_current_execution_artifacts() -> None:
+    """Adoption context comes from current artifacts, never receipt values."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from arnold_pipelines.megaplan.execute.batch import (
+        _reread_current_boundary_conditions,
+    )
+
+    plan_dir = Path(tempfile.mkdtemp(prefix="test_repair_adoption_plan_"))
+    project_dir = Path(tempfile.mkdtemp(prefix="test_repair_adoption_project_"))
+    try:
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "config": {"project_dir": str(project_dir)},
+                    "latest_failure": None,
+                }
+            ),
+            encoding="utf-8",
+        )
+        batch_dir = plan_dir / "execute_batches" / "batch_1"
+        batch_dir.mkdir(parents=True)
+        evidence_path = batch_dir / "tasks_current.json"
+        evidence_path.write_text(
+            json.dumps(
+                {
+                    "result_envelopes": [
+                        {
+                            "dispatch": {
+                                "grant": {"run_revision": "sha256:current-plan"}
+                            },
+                            "claim": {
+                                "subject_id": "T16",
+                                "payload_hash": "sha256:current-result",
+                            },
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        stale_receipt = {
+            "target": {},
+            "plan_revision": "sha256:receipt-plan",
+            "task_contract": "receipt-task",
+            "tree_commit": "receipt-tree",
+            "payload_hash": "sha256:receipt-result",
+        }
+        boundary_result = SimpleNamespace(checks=[])
+        git_result = SimpleNamespace(returncode=0, stdout="current-tree\n")
+        with patch(
+            "arnold_pipelines.megaplan.custody.action_validator.validate_action_boundary_simple",
+            return_value=boundary_result,
+        ):
+            with patch(
+                "arnold_pipelines.megaplan.execute.batch.subprocess.run",
+                return_value=git_result,
+            ):
+                current, diagnostics = _reread_current_boundary_conditions(
+                    stale_receipt,
+                    plan_dir=plan_dir,
+                    task_contract="T16",
+                )
+
+        assert current["plan_revision"] == "sha256:current-plan"
+        assert current["task_contract"] == "T16"
+        assert current["tree_commit"] == "current-tree"
+        assert current["test_result_hash"] == "sha256:current-result"
+        assert current["blocker_hash"] == ""
+        assert diagnostics["sources"]["current_task_result"]["outcome"] == "observed"
+        assert all("receipt" not in str(value) for value in current.values())
+    finally:
+        try:
+            for root in (plan_dir, project_dir):
+                for path in sorted(root.rglob("*"), reverse=True):
+                    if path.is_file():
+                        path.unlink()
+                    elif path.is_dir():
+                        path.rmdir()
+                root.rmdir()
+        except OSError:
+            pass
+
+
 def test_validation_job_mutation_is_rejected_before_suite_boundary() -> None:
     """Mutating declarations fail closed before the deterministic runner."""
     from unittest.mock import patch
