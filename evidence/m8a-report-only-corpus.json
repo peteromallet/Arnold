@@ -1,6 +1,6 @@
 {
   "schema": "m8a.report-only-corpus.v1",
-  "generated_at": "2026-07-22T02:36:18Z",
+  "generated_at": "2026-07-22T03:06:02Z",
   "generator": "arnold_pipelines.megaplan.orchestration.m8a_report.build_m8a_report",
   "rebuildable": true,
   "north_star_guard": "This report corpus is evidence only. No task, test, or executor may treat the historical M6/incident documents referenced herein as executable task graphs. The synthetic v2 fixtures exercised below are the honest way to exercise Transaction Spine and Strategy Roadmap shapes.",
