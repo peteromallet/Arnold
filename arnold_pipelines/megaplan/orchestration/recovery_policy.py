@@ -245,6 +245,8 @@ def normalize_failure_signature(
     # Normalize the message.
     raw_message = str(getattr(error, "message", "") or "")
     message = _normalize_message(raw_message)
+    raw_command = str(getattr(error, "command", "") or "")
+    command = _normalize_message(raw_command)
 
     # Extract stable error attributes.
     error_kind = str(getattr(error, "error_kind", "") or "").strip().lower()
@@ -270,6 +272,8 @@ def normalize_failure_signature(
     # Only include non-empty message (the normalized version).
     if message:
         payload["message"] = message
+    if command:
+        payload["command"] = command
     if error_kind:
         payload["error_kind"] = error_kind
     if error_layer:

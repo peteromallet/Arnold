@@ -2300,21 +2300,21 @@ def _run_and_merge_batch(
         }
     # M8A T18 — track dispatch start time for queue-duration measurement.
     # M8A T10 - run deterministic harness validation jobs outside model dispatch.
-    try:
-        _is_final_batch_flag = False
-        _bn = locals().get("batch_number")
-        _bt = locals().get("batches_total")
-        if isinstance(_bn, int) and isinstance(_bt, int) and _bn >= _bt:
-            _is_final_batch_flag = True
-        _run_batch_validation_jobs(
-            plan_dir=plan_dir,
-            project_dir=project_dir,
-            finalize_data=finalize_data,
-            batch_task_ids=batch_task_ids,
-            is_final_batch=_is_final_batch_flag,
-        )
-    except Exception as exc:
-        log.warning("batch validation jobs failed: %s: %s", type(exc).__name__, exc)
+    _is_final_batch_flag = False
+    _bn = locals().get("batch_number")
+    _bt = locals().get("batches_total")
+    if isinstance(_bn, int) and isinstance(_bt, int) and _bn >= _bt:
+        _is_final_batch_flag = True
+    # Harness validation is an execution admission gate.  Let its typed
+    # failures propagate so productive dispatch cannot continue after a
+    # malformed job or an unexpected deterministic-suite result.
+    _run_batch_validation_jobs(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        finalize_data=finalize_data,
+        batch_task_ids=batch_task_ids,
+        is_final_batch=_is_final_batch_flag,
+    )
     _dispatch_start = time.monotonic()
     # M8A T16 - under opt-in canary enforcement, when repair adoption
     # adopted every task in this batch, skip the worker replay/dispatch path.
@@ -2846,6 +2846,35 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
         except Exception as exc:
             log.warning("emit_validation failed for %s: %s", job_id, exc)
         evidence_results.append(evidence)
+        expected_exit_codes = job.get("expected_exit_codes", [0])
+        if not isinstance(expected_exit_codes, list) or not all(
+            isinstance(code, int) for code in expected_exit_codes
+        ):
+            raise CliError(
+                "invalid_validation_job",
+                f"validation job {job_id} has invalid expected_exit_codes",
+                valid_next=["finalize", "revise"],
+                extra={
+                    "job_id": job_id,
+                    "invalid_fields": ["expected_exit_codes"],
+                    "validation_job_kind": kind,
+                },
+            )
+        if result.exit_code not in expected_exit_codes:
+            raise CliError(
+                "validation_job_failed",
+                f"validation job {job_id} exited {result.exit_code}; "
+                f"expected one of {expected_exit_codes}",
+                valid_next=["execute", "revise", "finalize"],
+                extra={
+                    "job_id": job_id,
+                    "validation_job_kind": kind,
+                    "exit_code": result.exit_code,
+                    "expected_exit_codes": expected_exit_codes,
+                    "evidence_hash": evidence_hash,
+                    "artifact_path": str(artifact_path),
+                },
+            )
     return evidence_results
 
 
