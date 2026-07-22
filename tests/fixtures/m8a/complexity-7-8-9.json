@@ -1,0 +1,145 @@
+{
+  "task_contract_version": 2,
+  "tasks": [
+    {
+      "id": "T7",
+      "objective": "Implement custody repair adapter with full WBC boundary proof.",
+      "description": "Implement bounded behavior T7 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 7,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 12,
+      "depends_on": [],
+      "dependency_reasons": {},
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t7.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t7.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": true,
+        "max_interval_seconds": 300,
+        "records": [
+          "completed_subobjectives",
+          "remaining_subobjectives",
+          "output_hashes",
+          "test_state"
+        ]
+      }
+    },
+    {
+      "id": "T8",
+      "objective": "Implement executor circuit normalization with cross-plan retry policy.",
+      "description": "Implement bounded behavior T8 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 8,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 14,
+      "depends_on": [],
+      "dependency_reasons": {},
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t8.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t8.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": true,
+        "max_interval_seconds": 300,
+        "records": [
+          "completed_subobjectives",
+          "remaining_subobjectives",
+          "output_hashes",
+          "test_state"
+        ]
+      }
+    },
+    {
+      "id": "T9",
+      "objective": "Implement verify-only repair adoption with Run Authority/Custody/WBC reread.",
+      "description": "Implement bounded behavior T9 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 9,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 15,
+      "depends_on": [],
+      "dependency_reasons": {},
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t9.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t9.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": true,
+        "max_interval_seconds": 300,
+        "records": [
+          "completed_subobjectives",
+          "remaining_subobjectives",
+          "output_hashes",
+          "test_state"
+        ]
+      }
+    },
+    {
+      "id": "T7b",
+      "objective": "Implement bounded T7b without checkpoint contract.",
+      "description": "Implement bounded behavior T7b and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 7,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 10,
+      "depends_on": [],
+      "dependency_reasons": {},
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t7b.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t7b.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    }
+  ],
+  "validation_jobs": []
+}

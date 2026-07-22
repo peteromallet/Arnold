@@ -51,6 +51,12 @@ from arnold_pipelines.megaplan.observability.events import (
     emit as emit_event,
     read_events,
 )
+from arnold_pipelines.megaplan.observability.work_ledger import (
+    emit_queue,
+    emit_retry_wait,
+    emit_transition,
+    build_work_class_summary,
+)
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     ExitKind,
     PhaseResult,
@@ -60,7 +66,15 @@ from arnold_pipelines.megaplan.orchestration.authority_readers import (
     AuthorityDecision,
     effective_execute_completed_task_ids,
 )
-from arnold_pipelines.megaplan.orchestration.recovery_policy import RecoveryPolicy
+from arnold_pipelines.megaplan.orchestration.recovery_policy import (
+    CIRCUIT_OPEN_THRESHOLD,
+    CircuitState,
+    FailureClass,
+    RecoveryPolicy,
+    circuit_transition,
+    classify_failure_class,
+    normalize_failure_signature,
+)
 from arnold_pipelines.megaplan.store import PlanRepository
 from arnold_pipelines.megaplan.types import (
     CliError,
@@ -156,6 +170,11 @@ DEFAULT_MAX_BLOCKED_RETRIES = 1
 # internally (default 3); the auto-driver applies its own cap so that an
 # unexpected-config or mis-routed rework loop cannot spin indefinitely.
 DEFAULT_MAX_REVIEW_REWORK_CYCLES = 3
+# M8A T14 — rework-wave ceiling: if review requests rework on more than
+# MAX_SERIAL_REWORK tasks, the executor refuses to dispatch and emits a typed
+# blocker/escalation instead. This prevents unbounded rework waves from
+# starving the plan's budget and preserves quality-block evidence.
+MAX_SERIAL_REWORK = 5
 # How many consecutive `override add-note` failures the auto-driver will
 # tolerate at a given critique fork before escalating to `override
 # force-proceed`. The gate emits `override add-note` first in `valid_next`
@@ -3806,6 +3825,34 @@ def drive(
     deterministic_phase_failure_signature: str | None = None
     deterministic_phase_failure_count = 0
 
+    # ── M8A T14 — per-task circuit-breaker states ──────────────────────
+    # Each task/attempt gets a CircuitState keyed by failure_class.
+    # When two equivalent failures occur for the same class, the circuit
+    # opens and the driver emits a typed blocker/escalation instead of
+    # retrying indefinitely.
+    _task_circuit_states: dict[str, CircuitState] = {}
+
+    def _advance_circuit(
+        error: Any,
+        *,
+        task_id: str = "",
+        attempt_id: str = "",
+    ) -> tuple[CircuitState, Any | None]:
+        """Classify ``error``, normalize its signature, and advance the circuit.
+
+        Returns ``(next_state, halt_decision_or_None)``.  The caller owns
+        the state update; this helper is pure.
+        """
+        fc = classify_failure_class(error)
+        sig = normalize_failure_signature(fc, error, task_id=task_id, attempt_id=attempt_id)
+        state_key = f"{fc}:{task_id}" if task_id else fc
+        current = _task_circuit_states.get(state_key)
+        if current is None:
+            current = CircuitState(failure_class=fc)
+        next_state, decision = circuit_transition(current, sig)
+        _task_circuit_states[state_key] = next_state
+        return next_state, decision
+
     # ── Auto-ESCALATE-up state ─────────────────────────────────────────
     # Consecutive execute failures (timeout / internal_error / quality-block)
     # since the last forward progress. Per-execute and reset on progress or a
@@ -4367,6 +4414,18 @@ def drive(
                         ),
                         context={"state": state},
                     )
+            # M8A T18 — write aggregate work-class summary on terminal exit
+            if plan_dir is not None:
+                try:
+                    import json as _json
+                    summary = build_work_class_summary(plan_dir)
+                    summary_path = Path(plan_dir) / "evidence" / "work_class_summary.json"
+                    summary_path.parent.mkdir(parents=True, exist_ok=True)
+                    summary_path.write_text(
+                        _json.dumps(summary, indent=2, sort_keys=True, default=str)
+                    )
+                except Exception:
+                    pass
             return _outcome(
                 terminal_status,
                 final_state=state,
@@ -4466,6 +4525,18 @@ def drive(
             reason = active_step.get("recommended_action_reason") or "active step is still healthy"
             log(f"active step '{active_name}' still running — waiting: {reason}")
             if poll_sleep > 0:
+                # M8A T18 — emit queue event for the wait
+                try:
+                    if plan_dir is not None:
+                        emit_queue(
+                            plan_dir,
+                            task_id="auto_loop",
+                            duration_ms=int(poll_sleep * 1000),
+                            queue_reason="active_step_wait",
+                            active_phase=active_name,
+                        )
+                except Exception:
+                    pass
                 time.sleep(poll_sleep)
             iteration -= 1  # healthy wait — don't consume iteration budget
             continue
@@ -4640,6 +4711,30 @@ def drive(
                     ),
                     last_phase=last_phase,
                 )
+            # M8A T14 — rework-wave ceiling: if review rework tasks exceed
+            # MAX_SERIAL_REWORK, emit a typed blocker/escalation instead of
+            # dispatching unbounded rework waves. This preserves quality-
+            # block evidence and prevents budget exhaustion.
+            if (
+                rework_cycles_observed == 1
+                and review_rework_streaks
+                and len(review_rework_streaks) > MAX_SERIAL_REWORK
+            ):
+                log(
+                    f"rework wave exceeds ceiling ({len(review_rework_streaks)} tasks > "
+                    f"{MAX_SERIAL_REWORK}) — escalating to typed blocker"
+                )
+                return _outcome(
+                    "worker_blocked",
+                    final_state=state,
+                    iterations=iteration,
+                    reason=(
+                        f"review rework wave ({len(review_rework_streaks)} tasks) "
+                        f"exceeds {MAX_SERIAL_REWORK}-task ceiling; "
+                        "remaining tasks should be replanned as a separate milestone"
+                    ),
+                    last_phase=last_phase,
+                )
 
         # Stall detection: same state for stall_threshold+ iterations with no
         # measurable progress. "Stalled" means "no progress", not merely
@@ -4783,6 +4878,17 @@ def drive(
                         event_kind="state_transition",
                         context={"from_state": last_state, "to_state": state},
                     )
+                # M8A T18 — emit transition work-ledger event
+                try:
+                    emit_transition(
+                        plan_dir,
+                        task_id="auto_loop",
+                        from_state=last_state,
+                        to_state=state,
+                        duration_ms=0,
+                    )
+                except Exception:
+                    pass
             last_state = state
         if progress_sig_now is not None:
             last_progress_sig = progress_sig_now
@@ -4971,29 +5077,61 @@ def drive(
                     context_retries_used=context_retry_count,
                     phase=next_step,
                 )
-                if _ctx_decision.action == "halt":
+                # M8A T14 — advance per-task circuit on context exhaustion.
+                # When the circuit opens (2 equivalent failures), emit a
+                # typed blocker with `failed: <detail>` evidence instead of
+                # a bare retry-exhausted halt.
+                _ctx_circuit_state, _ctx_circuit_decision = _advance_circuit(result)
+                _ctx_circuit_open = (
+                    _ctx_circuit_decision is not None
+                    and getattr(_ctx_circuit_decision, "action", None) == "halt"
+                )
+                if _ctx_decision.action == "halt" or _ctx_circuit_open:
+                    halt_reason = (
+                        f"context exhaustion circuit open "
+                        f"({_ctx_circuit_state.failure_class})"
+                        if _ctx_circuit_open
+                        else f"context exhaustion retry cap reached ({max_context_retries})"
+                    )
                     log(
-                        f"context exhaustion retry cap reached ({max_context_retries}) — bailing",
+                        f"{halt_reason} — bailing",
                         context_retries_used=context_retry_count,
                         max_context_retries=max_context_retries,
+                        circuit_open=_ctx_circuit_open,
+                        failure_class=_ctx_circuit_state.failure_class if _ctx_circuit_open else None,
+                        circuit_count=_ctx_circuit_state.count,
                     )
                     _record_failure(
                         plan_dir=plan_dir,
-                        kind="context_retry_exhausted",
-                        message=f"context exhaustion retry cap reached ({context_retry_count}/{max_context_retries})",
+                        kind=(
+                            "context_circuit_open"
+                            if _ctx_circuit_open
+                            else "context_retry_exhausted"
+                        ),
+                        message=f"{halt_reason} ({context_retry_count}/{max_context_retries})",
                         current_state=None,
                         phase=next_step,
                         resume_cursor={"phase": next_step, "retry_strategy": "fresh_session"},
                         last_artifact=_latest_artifact_name(plan_dir),
                         suggested_action="Resume execute with a fresh worker context.",
-                        metadata={"context_retries_used": context_retry_count, "max_context_retries": max_context_retries},
+                        metadata={
+                            "context_retries_used": context_retry_count,
+                            "max_context_retries": max_context_retries,
+                            "circuit_open": _ctx_circuit_open,
+                            "failure_class": (
+                                _ctx_circuit_state.failure_class
+                                if _ctx_circuit_open
+                                else None
+                            ),
+                            "circuit_count": _ctx_circuit_state.count,
+                        },
                     )
                     return _outcome(
                         "context_retry_exhausted",
                         final_state=state,
                         iterations=iteration,
                         reason=(
-                            f"context exhaustion retry cap reached "
+                            f"{halt_reason} "
                             f"({context_retry_count}/{max_context_retries})"
                         ),
                         last_phase=last_phase,
@@ -5005,6 +5143,18 @@ def drive(
                     max_context_retries=max_context_retries,
                     next_context_retry=context_retry_count + 1,
                 )
+                # M8A T18 — emit retry_wait before context exhaustion retry
+                try:
+                    if plan_dir is not None:
+                        emit_retry_wait(
+                            plan_dir,
+                            task_id="auto_loop",
+                            duration_ms=0,
+                            attempt_number=context_retry_count + 1,
+                            wait_reason="context_exhaustion_retry",
+                        )
+                except Exception:
+                    pass
                 context_retry_count += _ctx_decision.budget_delta
                 if "--fresh" not in cmd:
                     cmd = [*cmd, "--fresh"]
@@ -5033,6 +5183,25 @@ def drive(
                 break
             # Retain the legacy retryability gate verbatim (identity guard).
             if not _is_retryable_external_error(next_step, external_error):
+                break
+            # M8A T14 — advance per-phase circuit on external errors.
+            # When the circuit opens (2 equivalent transient failures for
+            # the same failure class), emit a typed escalation instead of
+            # retrying. This prevents provider-failover exhaustion loops
+            # from burning retry budget indefinitely.
+            _ext_circuit_state, _ext_circuit_decision = _advance_circuit(external_error or result)
+            if (
+                _ext_circuit_decision is not None
+                and getattr(_ext_circuit_decision, "action", None) == "halt"
+            ):
+                log(
+                    f"phase '{next_step}' external error circuit open "
+                    f"({_ext_circuit_state.failure_class}) — bailing "
+                    f"after {_ext_circuit_state.count} equivalent failures",
+                    phase=next_step,
+                    failure_class=_ext_circuit_state.failure_class,
+                    circuit_count=_ext_circuit_state.count,
+                )
                 break
             provider = getattr(external_error, "provider", "unknown")
             error_kind = getattr(external_error, "error_kind", "unknown")
@@ -5638,18 +5807,41 @@ def drive(
                     getattr(dv, "message", str(dv))
                     for dv in getattr(result, "deviations", ())
                 ]
-                if blocked_retry_count >= max_blocked_retries:
+                # M8A T14 — advance circuit on quality-block deviations.
+                # When the circuit opens (2 equivalent quality blocks),
+                # emit a typed escalation with `failed: <detail>` evidence
+                # instead of consuming the ambient retry cap.
+                _blk_circuit_state, _blk_circuit_decision = _advance_circuit(result)
+                _blk_circuit_open = (
+                    _blk_circuit_decision is not None
+                    and getattr(_blk_circuit_decision, "action", None) == "halt"
+                )
+                if blocked_retry_count >= max_blocked_retries or _blk_circuit_open:
+                    halt_reason = (
+                        f"quality-block circuit open "
+                        f"({_blk_circuit_state.failure_class}) "
+                        f"after {_blk_circuit_state.count} equivalent failures"
+                        if _blk_circuit_open
+                        else f"execute blocked by quality gates and retry cap reached "
+                        f"({max_blocked_retries})"
+                    )
                     log(
-                        f"execute blocked by quality gates and retry cap reached "
-                        f"({max_blocked_retries}) — bailing",
+                        f"{halt_reason} — bailing",
                         blocked_retries_used=blocked_retry_count,
                         max_blocked_retries=max_blocked_retries,
                         blocking_reasons=deviations_list,
+                        circuit_open=_blk_circuit_open,
+                        failure_class=_blk_circuit_state.failure_class if _blk_circuit_open else None,
+                        circuit_count=_blk_circuit_state.count,
                     )
                     _record_failure(
                         plan_dir=plan_dir,
-                        kind="execution_blocked",
-                        message="execute blocked_by_prereq with no blocked tasks — treating as quality block",
+                        kind=(
+                            "quality_block_circuit_open"
+                            if _blk_circuit_open
+                            else "execution_blocked"
+                        ),
+                        message=f"{halt_reason}",
                         current_state=STATE_BLOCKED,
                         phase=next_step,
                         resume_cursor={
@@ -5663,6 +5855,13 @@ def drive(
                             "blocked_retries_used": blocked_retry_count,
                             "max_blocked_retries": max_blocked_retries,
                             "blocking_reasons": deviations_list,
+                            "circuit_open": _blk_circuit_open,
+                            "failure_class": (
+                                _blk_circuit_state.failure_class
+                                if _blk_circuit_open
+                                else None
+                            ),
+                            "circuit_count": _blk_circuit_state.count,
                         },
                     )
                     return _outcome(
@@ -5670,7 +5869,7 @@ def drive(
                         final_state=state,
                         iterations=iteration,
                         reason=(
-                            "execute blocked by quality gates "
+                            f"{halt_reason} "
                             f"after {blocked_retry_count + 1} attempt(s); "
                             f"retry cap {max_blocked_retries} reached"
                         ),
@@ -5692,18 +5891,41 @@ def drive(
                     getattr(dv, "message", str(dv))
                     for dv in getattr(result, "deviations", ())
                 ]
-                if blocked_retry_count >= max_blocked_retries:
+                # M8A T14 — advance circuit on quality-gate blocks.
+                # When the circuit opens (2 equivalent quality blocks),
+                # emit a typed escalation with `failed: <detail>` evidence
+                # instead of consuming the ambient retry cap.
+                _blkq_circuit_state, _blkq_circuit_decision = _advance_circuit(result)
+                _blkq_circuit_open = (
+                    _blkq_circuit_decision is not None
+                    and getattr(_blkq_circuit_decision, "action", None) == "halt"
+                )
+                if blocked_retry_count >= max_blocked_retries or _blkq_circuit_open:
+                    halt_reason = (
+                        f"quality-gate circuit open "
+                        f"({_blkq_circuit_state.failure_class}) "
+                        f"after {_blkq_circuit_state.count} equivalent failures"
+                        if _blkq_circuit_open
+                        else f"execute blocked by quality gates and retry cap reached "
+                        f"({max_blocked_retries})"
+                    )
                     log(
-                        f"execute blocked by quality gates and retry cap reached "
-                        f"({max_blocked_retries}) — bailing",
+                        f"{halt_reason} — bailing",
                         blocked_retries_used=blocked_retry_count,
                         max_blocked_retries=max_blocked_retries,
                         blocking_reasons=deviations_list,
+                        circuit_open=_blkq_circuit_open,
+                        failure_class=_blkq_circuit_state.failure_class if _blkq_circuit_open else None,
+                        circuit_count=_blkq_circuit_state.count,
                     )
                     _record_failure(
                         plan_dir=plan_dir,
-                        kind="execution_blocked",
-                        message="execute blocked by quality gates",
+                        kind=(
+                            "quality_gate_circuit_open"
+                            if _blkq_circuit_open
+                            else "execution_blocked"
+                        ),
+                        message=f"{halt_reason}",
                         current_state=STATE_BLOCKED,
                         phase=next_step,
                         resume_cursor={
@@ -5717,6 +5939,13 @@ def drive(
                             "blocked_retries_used": blocked_retry_count,
                             "max_blocked_retries": max_blocked_retries,
                             "blocking_reasons": deviations_list,
+                            "circuit_open": _blkq_circuit_open,
+                            "failure_class": (
+                                _blkq_circuit_state.failure_class
+                                if _blkq_circuit_open
+                                else None
+                            ),
+                            "circuit_count": _blkq_circuit_state.count,
                         },
                     )
                     return _outcome(
@@ -5724,7 +5953,7 @@ def drive(
                         final_state=state,
                         iterations=iteration,
                         reason=(
-                            "execute blocked by quality gates "
+                            f"{halt_reason} "
                             f"after {blocked_retry_count + 1} attempt(s); "
                             f"retry cap {max_blocked_retries} reached"
                         ),
@@ -5880,6 +6109,18 @@ def drive(
             execute_fail_streak = 0
 
         if poll_sleep > 0:
+            # M8A T18 — emit retry_wait for the loop poll interval
+            try:
+                if plan_dir is not None and iteration > 1:
+                    emit_retry_wait(
+                        plan_dir,
+                        task_id="auto_loop",
+                        duration_ms=int(poll_sleep * 1000),
+                        attempt_number=iteration,
+                        wait_reason="loop_poll_interval",
+                    )
+            except Exception:
+                pass
             time.sleep(poll_sleep)
 
         # Emit phase_end after phase completes
@@ -5911,6 +6152,18 @@ def drive(
         suggested_action="Review automation progress before resuming.",
         metadata={"max_iterations": max_iterations},
     )
+    # M8A T18 — write aggregate work-class summary on iteration cap exit
+    if plan_dir is not None:
+        try:
+            import json as _json
+            summary = build_work_class_summary(plan_dir)
+            summary_path = Path(plan_dir) / "evidence" / "work_class_summary.json"
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(
+                _json.dumps(summary, indent=2, sort_keys=True, default=str)
+            )
+        except Exception:
+            pass
     return _outcome(
         "cap",
         final_state=last_state or "unknown",

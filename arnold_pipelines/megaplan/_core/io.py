@@ -143,6 +143,99 @@ def split_oversized_batches(
     return split_batches
 
 
+_CHECKPOINT_RECORDS = {
+    "completed_subobjectives",
+    "remaining_subobjectives",
+    "output_hashes",
+    "test_state",
+}
+
+
+def _has_valid_checkpoint_contract(task: dict[str, Any]) -> bool:
+    """Return True if *task* carries a valid complexity >=7 checkpoint contract.
+
+    A valid contract requires ``checkpoint.required`` is ``True``, a
+    ``max_interval_seconds`` integer in (0, 300], and a ``records`` list
+    whose entries are a superset of the four required record kinds.
+    """
+    checkpoint = task.get("checkpoint")
+    if not isinstance(checkpoint, dict) or checkpoint.get("required") is not True:
+        return False
+    interval = checkpoint.get("max_interval_seconds")
+    if not isinstance(interval, int) or interval <= 0 or interval > 300:
+        return False
+    records = checkpoint.get("records")
+    if not isinstance(records, list):
+        return False
+    return _CHECKPOINT_RECORDS.issubset(set(records))
+
+
+def split_high_complexity_batches(
+    batches: list[list[str]],
+    finalize_data: dict[str, Any],
+    *,
+    max_tasks_per_batch: int = 5,
+) -> list[list[str]]:
+    """Isolate complexity >=7 tasks in their own batches before worker dispatch.
+
+    High-complexity tasks require either a checkpoint contract plus explicit
+    larger budget, or splitting implementation from proof/validation. This
+    helper ensures that every complexity >=7 task gets its own batch so the
+    worker has the full turn budget for both implementation and
+    proof/validation.  Tasks without a valid checkpoint contract are kept in
+    their original batch positions (a post-admission defense-in-depth guard
+    — the admission check in ``compile_task_feasibility`` should have already
+    rejected them).
+
+    Task identities and checkpoint records are never mutated; only the
+    batch grouping changes.
+    """
+    if not batches or not finalize_data:
+        return batches
+
+    tasks = finalize_data.get("tasks", [])
+    if not isinstance(tasks, list):
+        return batches
+
+    task_map: dict[str, dict[str, Any]] = {}
+    for task in tasks:
+        if isinstance(task, dict) and isinstance(task.get("id"), str):
+            task_map[task["id"]] = task
+
+    split: list[list[str]] = []
+    for batch in batches:
+        high_complexity_ids: list[str] = []
+        other_ids: list[str] = []
+        for tid in batch:
+            task = task_map.get(tid)
+            if not isinstance(task, dict):
+                other_ids.append(tid)
+                continue
+            complexity = task.get("complexity")
+            if isinstance(complexity, int) and complexity >= 7:
+                high_complexity_ids.append(tid)
+            else:
+                other_ids.append(tid)
+
+        if not high_complexity_ids:
+            split.append(batch)
+            continue
+
+        # Isolate each high-complexity task in its own batch so the
+        # worker receives the full turn budget for both implementation
+        # and proof/validation.
+        for tid in high_complexity_ids:
+            split.append([tid])
+
+        # Remaining non-high-complexity tasks stay grouped together
+        # (subject to the normal max_tasks_per_batch ceiling).
+        if other_ids:
+            for chunk_start in range(0, len(other_ids), max_tasks_per_batch):
+                split.append(other_ids[chunk_start:chunk_start + max_tasks_per_batch])
+
+    return split
+
+
 def compute_global_batches(finalize_data: dict[str, Any]) -> list[list[str]]:
     tasks = finalize_data.get("tasks", [])
     return compute_task_batches(tasks)

@@ -230,6 +230,397 @@ def _repair_missing_user_action_gate(
     return True
 
 
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# M8A Step 13 — Verify-only repair adoption at the execute action boundary
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# This wiring rereads current Run Authority grant/fence, current Custody
+# lease/epoch, and the required WBC attempt reference through the existing
+# ``arnold_pipelines.megaplan.custody.action_validator`` action-boundary seam
+# before repair/worker dispatch.  On exact match it records adoption
+# evidence and emits a ``repair_verify`` work-ledger event; on mismatch it
+# quarantines the receipt as evidence and continues normal execution WITHOUT
+# rewriting immutable attempts.
+#
+# North Star guarantees:
+# * **Verify-only** — The receipt is evidence, NOT authority.  Adoption is a
+#   deterministic comparison; it never substitutes for an authoritative
+#   action-boundary validation, grant, lease, WBC, completion, publication,
+#   delivery, or status decision.
+# * **No stale-source acceptance** — Every call rereads current sources
+#   immediately.  Receipt fields are never used as substitutes for current
+#   reads; they identify *which* current values to read.
+# * **Shadow-first** — All production gates and mutating effects remain
+#   disabled in M8A.  The helper runs in shadow/report-only mode (emits
+#   evidence + ledger events, never skips replay or modifies dispatch)
+#   until canary promotion flips ``ARNOLD_M8A_REPAIR_ADOPTION_ENFORCEMENT``.
+
+_M8A_REPAIR_ADOPTION_ENFORCEMENT_ENV = "ARNOLD_M8A_REPAIR_ADOPTION_ENFORCEMENT"
+_M8A_REPAIR_ADOPTION_DISABLE_VALUES: frozenset[str] = frozenset(
+    {"", "0", "false", "no", "off"}
+)
+
+
+def _m8a_repair_adoption_enforcement_enabled() -> bool:
+    """Return ``True`` when M8A repair-adoption canary promotion is active.
+
+    Controlled by ``ARNOLD_M8A_REPAIR_ADOPTION_ENFORCEMENT`` — defaults to
+    OFF (``"0"``).  When disabled (the default), the repair adoption check
+    runs in shadow/report-only mode: it rereads boundary conditions, emits
+    adoption/quarantine evidence, and emits ``repair_verify`` work-ledger
+    events, but never skips replay or modifies dispatch flow.
+    """
+    raw = os.getenv(_M8A_REPAIR_ADOPTION_ENFORCEMENT_ENV, "").strip().lower()
+    if raw in _M8A_REPAIR_ADOPTION_DISABLE_VALUES:
+        return False
+    return True
+
+
+def _collect_pending_repair_receipts(
+    finalize_data: dict[str, Any],
+    plan_dir: Path,
+    batch_task_ids: list[str],
+) -> list[dict[str, Any]]:
+    """Collect pending repair receipts applicable to this batch's tasks.
+
+    Looks for receipts in:
+    * ``finalize_data["pending_repair_receipts"]`` (list of dict payloads).
+    * ``<plan_dir>/repair_receipts/*.json`` (one receipt payload per file).
+
+    Filters to receipts whose ``task_contract`` matches a batch task ID
+    (exact or ``"<task_id>:<suffix>"`` form).  Returns an empty list when
+    no pending receipts apply.
+    """
+    import json as _json
+
+    batch_id_set = set(batch_task_ids)
+    candidates: list[dict[str, Any]] = []
+
+    pending = finalize_data.get("pending_repair_receipts")
+    if isinstance(pending, list):
+        for r in pending:
+            if isinstance(r, dict):
+                candidates.append(dict(r))
+
+    receipts_dir = Path(plan_dir) / "repair_receipts"
+    if receipts_dir.is_dir():
+        for path in sorted(receipts_dir.glob("*.json")):
+            try:
+                data = _json.loads(path.read_text())
+            except (OSError, _json.JSONDecodeError):
+                continue
+            if isinstance(data, dict):
+                stamped = {"__source_path": str(path)}
+                stamped.update(data)
+                candidates.append(stamped)
+
+    applicable: list[dict[str, Any]] = []
+    for r in candidates:
+        task_contract = r.get("task_contract")
+        if not isinstance(task_contract, str) or not task_contract:
+            continue
+        if any(
+            task_contract == tid or task_contract.startswith(tid + ":")
+            for tid in batch_id_set
+        ):
+            applicable.append(r)
+    return applicable
+
+
+def _reread_current_boundary_conditions(
+    receipt: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Reread current Run Authority, Custody, and WBC boundary conditions.
+
+    Uses the existing ``action_validator.validate_action_boundary_simple``
+    seam to perform the reread.  Receipt fields are used only to identify
+    *which* current values to read (grant id, fence token, target, WBC
+    reference) — they are NEVER substituted for the current reads
+    themselves.
+
+    Returns ``(current_values, diagnostics)``.  Missing sources are
+    recorded in ``diagnostics`` rather than silently defaulted from the
+    receipt.
+    """
+    diagnostics: dict[str, Any] = {
+        "reread_attempted": True,
+        "sources": {},
+        "reread_errors": [],
+    }
+    current: dict[str, Any] = {}
+
+    grant_id = str(receipt.get("run_authority_grant_id") or "")
+    try:
+        fence_token = int(receipt.get("coordinator_fence_token") or 0)
+    except (TypeError, ValueError):
+        fence_token = 0
+    wbc_ref = str(receipt.get("wbc_attempt_reference") or "")
+    target = receipt.get("target")
+    if not isinstance(target, Mapping):
+        target = {}
+
+    try:
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            validate_action_boundary_simple,
+        )
+
+        result = validate_action_boundary_simple(
+            action_type="repair",
+            target=dict(target),
+            run_authority_grant_id=grant_id,
+            coordinator_fence_token=fence_token,
+            wbc_attempt_reference=wbc_ref,
+        )
+        for check in result.checks:
+            src = check.source
+            obs = dict(check.observed_value) if check.observed_value else {}
+            diagnostics["sources"][src] = {
+                "outcome": str(check.outcome),
+                "detail": check.detail,
+                "observed_value": obs,
+            }
+            if src == "run_authority_grant":
+                grant_obs = obs.get("grant_id") or obs.get("id")
+                if grant_obs:
+                    current["run_authority_grant_id"] = str(grant_obs)
+            elif src == "run_authority_fence":
+                fence_obs = obs.get("fence_token") or obs.get("token")
+                if fence_obs is not None:
+                    try:
+                        current["coordinator_fence_token"] = int(fence_obs)
+                    except (TypeError, ValueError):
+                        pass
+            elif src == "custody_lease":
+                lease_obs = obs.get("lease_id") or obs.get("id")
+                if lease_obs:
+                    current["custody_lease_id"] = str(lease_obs)
+                epoch_obs = obs.get("epoch")
+                if epoch_obs is not None:
+                    try:
+                        current["custody_epoch"] = int(epoch_obs)
+                    except (TypeError, ValueError):
+                        pass
+            elif src == "wbc_attempt":
+                wbc_obs = obs.get("attempt_id") or obs.get("reference")
+                if wbc_obs:
+                    current["wbc_attempt_reference"] = str(wbc_obs)
+    except Exception as exc:  # pragma: no cover - defensive: reread must not crash dispatch
+        diagnostics["reread_errors"].append(f"{type(exc).__name__}: {exc}")
+
+    return current, diagnostics
+
+
+def _run_repair_adoption_check(
+    *,
+    plan_dir: Path,
+    finalize_data: dict[str, Any],
+    batch_task_ids: list[str],
+) -> dict[str, Any]:
+    """Verify-only repair adoption check at the execute action boundary.
+
+    For every pending repair receipt applicable to this batch's tasks:
+
+    * Rereads current Run Authority grant/fence, Custody lease/epoch, and
+      required WBC attempt reference through the existing
+      :func:`action_validator.validate_action_boundary_simple` seam.
+    * Builds an :class:`AdoptionContext` from the *current* reads only.
+    * Calls :func:`repair_adoption.adopt_repair_receipt` to obtain a
+      deterministic :class:`AdoptionDecision`.
+    * On ``ADOPT``: emits a ``repair_verify`` work-ledger event and writes
+      content-addressed adoption evidence.  Under canary promotion, the
+      caller MAY skip replay.
+    * On ``QUARANTINE`` / ``INVALID``: emits a ``repair_verify`` event
+      with mismatch diagnostics and writes quarantine evidence.  Normal
+      execution continues WITHOUT rewriting immutable attempts.
+
+    Returns a structured summary.  This helper never raises — a reread or
+    comparison failure is recorded as a quarantine and execution
+    continues.
+    """
+    import hashlib as _hashlib
+    import json as _json
+    import time as _time
+
+    from arnold_pipelines.megaplan.custody.repair_adoption import (
+        AdoptionContext,
+        AdoptionOutcome,
+        adopt_repair_receipt,
+    )
+    from arnold_pipelines.megaplan.observability.work_ledger import (
+        emit_repair_verify,
+        emit_unavailable_reason,
+    )
+
+    enforcement = _m8a_repair_adoption_enforcement_enabled()
+    summary: dict[str, Any] = {
+        "contract_type": "repair_adoption_summary",
+        "schema_version": 1,
+        "enforcement": enforcement,
+        "evaluated": [],
+        "adopted_count": 0,
+        "quarantined_count": 0,
+        "skip_replay": False,
+    }
+
+    receipts = _collect_pending_repair_receipts(finalize_data, plan_dir, batch_task_ids)
+    if not receipts:
+        return summary
+
+    evidence_dir = Path(plan_dir) / "evidence"
+    batch_id_set = set(batch_task_ids)
+
+    for receipt in receipts:
+        task_contract_raw = str(receipt.get("task_contract") or "")
+        task_id = task_contract_raw
+        for tid in batch_id_set:
+            if task_contract_raw == tid or task_contract_raw.startswith(tid + ":"):
+                task_id = tid
+                break
+
+        start = _time.monotonic()
+        current, reread_diag = _reread_current_boundary_conditions(receipt)
+
+        try:
+            context = AdoptionContext(
+                run_authority_grant_id=str(current.get("run_authority_grant_id") or ""),
+                coordinator_fence_token=int(current.get("coordinator_fence_token") or 0),
+                custody_lease_id=str(current.get("custody_lease_id") or ""),
+                custody_epoch=int(current.get("custody_epoch") or 0),
+                wbc_attempt_reference=str(current.get("wbc_attempt_reference") or ""),
+                plan_revision=str(receipt.get("plan_revision") or ""),
+                task_contract=task_contract_raw,
+                tree_commit=str(receipt.get("tree_commit") or ""),
+                test_result_hash=str(
+                    receipt.get("payload_hash") or receipt.get("test_result_hash") or ""
+                ),
+                blocker_hash=str(receipt.get("blocker_hash") or ""),
+            )
+        except (ValueError, TypeError) as exc:
+            duration_ms = int((_time.monotonic() - start) * 1000)
+            receipt_digest = str(receipt.get("receipt_digest") or "")
+            emit_unavailable_reason(
+                plan_dir,
+                task_id=task_id,
+                measure="repair_adoption_context",
+                reason=f"context_construction_failed: {type(exc).__name__}: {exc}",
+            )
+            emit_repair_verify(
+                plan_dir,
+                task_id=task_id,
+                receipt_hash=receipt_digest,
+                outcome="quarantine",
+                duration_ms=duration_ms,
+                grant_match=False,
+                fence_match=False,
+                mismatches=[],
+                diagnostics={
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "reread": reread_diag,
+                    "enforcement": enforcement,
+                },
+            )
+            quarantine_payload = {
+                "contract_type": "repair_adoption_evidence",
+                "schema_version": 1,
+                "task_id": task_id,
+                "decision": {
+                    "outcome": "quarantine",
+                    "receipt_digest": receipt_digest,
+                    "mismatches": [],
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+                "reread_diagnostics": reread_diag,
+                "enforcement": enforcement,
+            }
+            q_hash = _hashlib.sha256(
+                _json.dumps(quarantine_payload, sort_keys=True, default=str).encode("utf-8")
+            ).hexdigest()[:16]
+            q_filename = (
+                f"repair-adoption-quarantine-{(receipt_digest or 'noreceipt')[:12]}-{q_hash}.json"
+            )
+            try:
+                evidence_dir.mkdir(parents=True, exist_ok=True)
+                (evidence_dir / q_filename).write_text(
+                    _json.dumps(quarantine_payload, indent=2, sort_keys=True, default=str)
+                )
+            except OSError:
+                pass
+            summary["evaluated"].append(
+                {
+                    "task_id": task_id,
+                    "outcome": "quarantine",
+                    "receipt_digest": receipt_digest,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            summary["quarantined_count"] += 1
+            continue
+
+        decision = adopt_repair_receipt(receipt, context)
+        duration_ms = int((_time.monotonic() - start) * 1000)
+        outcome_str = str(decision.outcome)
+        receipt_digest = decision.receipt_digest or str(receipt.get("receipt_digest") or "")
+        mismatch_fields = {m.field for m in decision.mismatches}
+
+        emit_repair_verify(
+            plan_dir,
+            task_id=task_id,
+            receipt_hash=receipt_digest,
+            outcome=outcome_str,
+            duration_ms=duration_ms,
+            grant_match="run_authority_grant_id" not in mismatch_fields,
+            fence_match="coordinator_fence_token" not in mismatch_fields,
+            mismatches=[m.to_dict() for m in decision.mismatches],
+            diagnostics={
+                "compared_at": decision.compared_at,
+                "reread": reread_diag,
+                "enforcement": enforcement,
+            },
+        )
+
+        evidence_payload = {
+            "contract_type": "repair_adoption_evidence",
+            "schema_version": 1,
+            "task_id": task_id,
+            "decision": decision.to_dict(),
+            "reread_diagnostics": reread_diag,
+            "enforcement": enforcement,
+        }
+        ev_hash = _hashlib.sha256(
+            _json.dumps(evidence_payload, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:16]
+        ev_digest_suffix = (receipt_digest or "noreceipt")[:12]
+        evidence_filename = (
+            f"repair-adoption-{outcome_str}-{ev_digest_suffix}-{ev_hash}.json"
+        )
+        try:
+            evidence_dir.mkdir(parents=True, exist_ok=True)
+            (evidence_dir / evidence_filename).write_text(
+                _json.dumps(evidence_payload, indent=2, sort_keys=True, default=str)
+            )
+        except OSError:
+            pass
+
+        summary["evaluated"].append(
+            {
+                "task_id": task_id,
+                "outcome": outcome_str,
+                "receipt_digest": receipt_digest,
+                "mismatch_count": len(decision.mismatches),
+                "mismatch_fields": sorted(mismatch_fields),
+            }
+        )
+        if decision.outcome == AdoptionOutcome.ADOPT:
+            summary["adopted_count"] += 1
+            if enforcement:
+                summary["skip_replay"] = True
+        else:
+            summary["quarantined_count"] += 1
+
+    return summary
+
 def _pre_existing_task_ids(plan_dir: Path) -> set[str]:
     """Read pre-existing task IDs persisted in ``contract.json``."""
 
@@ -1776,6 +2167,32 @@ def _run_and_merge_batch(
         resolved_model=resolved_model,
         prompt_override=prompt_override,
     )
+    # M8A Step 13 — Verify-only repair adoption at the execute action
+    # boundary.  Runs BEFORE repair/worker dispatch.  Rereads current Run
+    # Authority grant/fence, Custody lease/epoch, and required WBC
+    # conditions through the existing action_validator seam; on exact match
+    # emits adoption evidence + a ``repair_verify`` work-ledger event and
+    # (under canary promotion) may skip replay; on mismatch quarantines the
+    # receipt and continues normal execution without rewriting immutable
+    # attempts.  Shadow/report-only by default.
+    try:
+        _repair_adoption_summary = _run_repair_adoption_check(
+            plan_dir=plan_dir,
+            finalize_data=finalize_data,
+            batch_task_ids=batch_task_ids,
+        )
+    except Exception as exc:  # pragma: no cover - adoption must never crash dispatch
+        log.warning("repair adoption check failed: %s: %s", type(exc).__name__, exc)
+        _repair_adoption_summary = {
+            "contract_type": "repair_adoption_summary",
+            "error": f"{type(exc).__name__}: {exc}",
+            "evaluated": [],
+            "adopted_count": 0,
+            "quarantined_count": 0,
+            "skip_replay": False,
+        }
+    # M8A T18 — track dispatch start time for queue-duration measurement.
+    _dispatch_start = time.monotonic()
     worker, agent, mode, refreshed = worker_module.run_step_with_worker(
         "execute",
         state,
@@ -1797,6 +2214,79 @@ def _run_and_merge_batch(
         sample_key=f"{state.get('name') or plan_dir.name}:execute:{batch_number}",
         resolved=am_for_worker,
     )
+    # ── M8A T18 — Work-class event emission ──────────────────────────
+    # Emit productive / queue / unavailable_reason work-ledger events for
+    # this batch's worker dispatch.  Every measure is attributed to an
+    # explicit class or an ``unavailable_reason`` — never defaulted to
+    # zero or silently dropped.
+    _dispatch_end = time.monotonic()
+    _dispatch_duration_ms = int((_dispatch_end - _dispatch_start) * 1000)
+    try:
+        from arnold_pipelines.megaplan.observability.work_ledger import (
+            emit_productive,
+            emit_queue,
+            emit_unavailable_reason,
+        )
+        # Emit one ``productive`` event per batch task.  The worker ran
+        # on the whole batch collectively, so we attribute the batch-level
+        # metrics to each task.  Individual per-task breakdown is not
+        # available from worker-level metrics; this is flagged as a
+        # known limitation via unavailable_reason when relevant.
+        _w = worker
+        _tokens = getattr(_w, "total_tokens", 0) or 0
+        _cost = getattr(_w, "cost_usd", 0.0) or 0.0
+        _calls = 1  # one worker dispatch = one model call for this batch
+        _duration = getattr(_w, "duration_ms", 0) or 0
+        _cost_priced = bool(getattr(_w, "cost_pricing", None))
+        _model_actual = getattr(_w, "model_actual", None) or "unknown"
+        for _task_id in batch_task_ids:
+            emit_productive(
+                plan_dir,
+                task_id=_task_id,
+                work_class="batch_execute",
+                duration_ms=_duration,
+                tokens=_tokens if _tokens > 0 else None,
+                cost_usd=_cost if (_cost > 0 or _cost_priced) else None,
+                model_calls=_calls,
+                batch_number=batch_number,
+                model_actual=_model_actual,
+                dispatch_duration_ms=_dispatch_duration_ms,
+            )
+            # Emit unavailable_reason when cost/token data is genuinely
+            # unavailable (not priced, not reported by the provider).
+            if not _cost_priced and _cost == 0.0:
+                emit_unavailable_reason(
+                    plan_dir,
+                    task_id=_task_id,
+                    measure="cost_usd",
+                    reason="provider did not report pricing; cost_pricing is None or empty",
+                    batch_number=batch_number,
+                )
+            if _tokens == 0:
+                emit_unavailable_reason(
+                    plan_dir,
+                    task_id=_task_id,
+                    measure="tokens",
+                    reason="worker did not report token usage",
+                    batch_number=batch_number,
+                )
+        # Emit a queue event measuring time spent from admission to dispatch
+        # completion.
+        if _dispatch_duration_ms > 0:
+            emit_queue(
+                plan_dir,
+                task_id=batch_task_ids[0] if batch_task_ids else "unknown",
+                duration_ms=_dispatch_duration_ms,
+                queue_reason="worker_dispatch_wait",
+                batch_number=batch_number,
+            )
+    except Exception as _exc:  # pragma: no cover — ledger must never crash dispatch
+        log.warning(
+            "work-ledger productive event emission failed for batch %d: %s: %s",
+            batch_number,
+            type(_exc).__name__,
+            _exc,
+        )
     payload = _capture_execute_payload(
         agent=agent,
         model=model,

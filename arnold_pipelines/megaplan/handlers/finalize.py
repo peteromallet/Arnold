@@ -1974,6 +1974,15 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
         _ensure_user_actions_post_gate_task(payload, state)
     _apply_programmatic_coverage(payload, plan_dir, state)
     _normalize_task_complexity(payload)
+    # ── M8A T4: Compile harness-owned validation jobs after handler task
+    # mutations and before the first feasibility pass so the task contract
+    # hash reconciles the generated jobs from the start.  The model emits
+    # validation_jobs: []; the handler owns derivation.
+    from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+        compile_validation_jobs,
+    )
+    payload["validation_jobs"] = compile_validation_jobs(payload)
+    # ───────────────────────────────────────────────────────────────────
     if state["config"].get("mode", "code") == "code":
         feasibility = compile_task_feasibility(payload, state.get("config", {}))
         atomic_write_json(plan_dir / "task_feasibility.json", feasibility)

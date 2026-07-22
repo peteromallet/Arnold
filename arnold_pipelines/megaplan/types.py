@@ -220,6 +220,7 @@ class PlanState(TypedDict):
     clarification: NotRequired[ClarificationRecord]
     latest_failure: NotRequired[dict[str, Any] | None]
     resume_cursor: NotRequired[dict[str, Any] | None]
+    work_ledger: NotRequired[list[dict[str, Any]]]
 
 
 class _FlagRecordRequired(TypedDict):

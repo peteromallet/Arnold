@@ -1998,3 +1998,164 @@ def latest_plan_meta_path(plan_dir: Path, state: PlanState) -> Path:
     record = latest_plan_record(state)
     meta_name = record["file"].replace(".md", ".meta.json")
     return plan_dir / meta_name
+
+
+# ---------------------------------------------------------------------------
+# Work-ledger helpers (M8A — non-authoritative, append-only evidence)
+# ---------------------------------------------------------------------------
+# The work ledger records *what happened* for telemetry reconciliation.
+# Events are evidence only — they never drive control flow, admission, or
+# repair decisions, and they explicitly avoid grant, lease, WBC, completion,
+# publication, delivery, and status semantics.
+#
+# The authoritative record lives in ``work_ledger.ndjson`` (managed by
+# ``arnold_pipelines.megaplan.observability.work_ledger``).  The in-memory
+# ``state["work_ledger"]`` list is a lightweight summary index kept for
+# convenience; it is NEVER used as authority and is rebuilt from the ndjson
+# file when missing.
+
+
+def _ensure_work_ledger_key(state: PlanState) -> None:
+    """Ensure the ``work_ledger`` summary list exists on *state*."""
+    if "work_ledger" not in state:
+        state["work_ledger"] = []
+
+
+def append_to_work_ledger(
+    plan_dir: Path,
+    state: PlanState,
+    *,
+    event_class: str,
+    referenced_identity: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Append one non-authoritative event to the work ledger.
+
+    Writes to ``work_ledger.ndjson`` (the durable record) and appends a
+    lightweight summary entry to the in-memory ``state["work_ledger"]``
+    list.  The summary is a convenience index; only the ndjson file is
+    authoritative for audit/replay.
+
+    Args:
+        plan_dir: Plan directory.
+        state: In-memory plan state (mutated with a summary entry).
+        event_class: One of ``validation``, ``repair_verify``, ``productive``,
+                     ``unavailable_reason``.
+        referenced_identity: What this event is about (``task_id``, …).
+        payload: Event-specific structured data.
+
+    Returns:
+        The full event dict returned by the work_ledger module.
+    """
+    from arnold_pipelines.megaplan.observability.work_ledger import (
+        append_work_ledger_event,
+    )
+
+    event = append_work_ledger_event(
+        plan_dir,
+        event_class=event_class,
+        referenced_identity=referenced_identity,
+        payload=payload,
+    )
+
+    # Lightweight in-memory summary — never authority.
+    _ensure_work_ledger_key(state)
+    state["work_ledger"].append(
+        {
+            "event_id": event["event_id"],
+            "event_class": event_class,
+            "referenced_identity": referenced_identity,
+            "content_hash": event["content_hash"],
+            "timestamp": event["timestamp"],
+        }
+    )
+
+    return event
+
+
+def load_work_ledger_summary(plan_dir: Path) -> list[dict[str, Any]]:
+    """Return a lightweight summary of every work-ledger event.
+
+    Reads from ``work_ledger.ndjson`` (the authoritative record).
+    Returns an empty list when the file does not exist.
+    """
+    from arnold_pipelines.megaplan.observability.work_ledger import read_work_ledger
+
+    events = read_work_ledger(plan_dir)
+    return [
+        {
+            "event_id": e["event_id"],
+            "event_class": e["event_class"],
+            "referenced_identity": e["referenced_identity"],
+            "content_hash": e["content_hash"],
+            "timestamp": e["timestamp"],
+        }
+        for e in events
+    ]
+
+
+# ── Work-ledger reconciliation (M8A — rebuildable aggregate summaries) ──────
+# These functions extend the work-ledger integration layer with aggregate
+# reconciliation primitives.  They read from ``work_ledger.ndjson`` (the
+# authoritative durable record) and produce deterministic summaries suitable
+# for telemetry dashboards, cost attribution, and efficiency reporting.
+# Every measure that cannot be computed is ``null``, never zero.
+
+
+def reconcile_work_ledger_aggregate(
+    plan_dir: Path,
+) -> dict[str, Any]:
+    """Produce a rebuildable aggregate summary from the plan's work ledger.
+
+    Delegates to :func:`arnold_pipelines.megaplan.observability.work_ledger.build_work_class_summary`.
+    The summary is deterministic for a given ledger and explicitly
+    non-authoritative.
+
+    Returns a dict with ``by_class``, ``by_task``, ``totals``,
+    ``unavailable_measures``, and the ``_non_authoritative`` / ``_rebuildable``
+    markers.
+    """
+    from arnold_pipelines.megaplan.observability.work_ledger import (
+        build_work_class_summary,
+    )
+
+    return build_work_class_summary(plan_dir)
+
+
+def work_ledger_aggregation_valid(summary: dict[str, Any]) -> bool:
+    """Return ``True`` when *summary* passes structural validation.
+
+    Checks that the summary contains the expected top-level keys and
+    that every per-class aggregate carries the required fields.  This is
+    a shape check, not an authority claim — the summary remains evidence.
+    """
+    if not isinstance(summary, dict):
+        return False
+    required_keys = {"by_class", "by_task", "totals", "unavailable_measures"}
+    if not required_keys.issubset(summary.keys()):
+        return False
+    if summary.get("_non_authoritative") is not True:
+        return False
+    if summary.get("_rebuildable") is not True:
+        return False
+
+    # Per-class aggregates must carry the expected keys
+    by_class = summary.get("by_class")
+    if not isinstance(by_class, dict):
+        return False
+    for cls_name, agg in by_class.items():
+        if not isinstance(agg, dict):
+            return False
+        agg_required = {"count", "total_duration_ms", "task_ids", "category"}
+        if not agg_required.issubset(agg.keys()):
+            return False
+
+    # totals must have the expected keys
+    totals = summary.get("totals")
+    if not isinstance(totals, dict):
+        return False
+    totals_required = {"productive_duration_ms", "overhead_duration_ms", "unavailable_measure_count"}
+    if not totals_required.issubset(totals.keys()):
+        return False
+
+    return True

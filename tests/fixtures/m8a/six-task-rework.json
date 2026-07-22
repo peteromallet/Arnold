@@ -1,0 +1,232 @@
+{
+  "task_contract_version": 2,
+  "tasks": [
+    {
+      "id": "R1",
+      "objective": "Revise custody repair adapter to fix WBC boundary mismatch.",
+      "description": "Implement bounded behavior R1 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 4,
+      "depends_on": [],
+      "dependency_reasons": {},
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/r1.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_r1.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "R2",
+      "objective": "Revise executor circuit counter signature logic.",
+      "description": "Implement bounded behavior R2 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 4,
+      "depends_on": [
+        "R1"
+      ],
+      "dependency_reasons": {
+        "R1": {
+          "kind": "consumes_output",
+          "reason": "R2 imports the contract created by R1.",
+          "required_output": "src/r1.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/r2.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_r2.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "R3",
+      "objective": "Revise retry policy for provider failover exhaustion.",
+      "description": "Implement bounded behavior R3 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "R2"
+      ],
+      "dependency_reasons": {
+        "R2": {
+          "kind": "consumes_output",
+          "reason": "R3 imports the contract created by R2.",
+          "required_output": "src/r2.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/r3.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_r3.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "R4",
+      "objective": "Revise source admission preflight to check import-root.",
+      "description": "Implement bounded behavior R4 and its narrow proof.",
+      "kind": "code",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 4,
+      "depends_on": [
+        "R3"
+      ],
+      "dependency_reasons": {
+        "R3": {
+          "kind": "consumes_output",
+          "reason": "R4 imports the contract created by R3.",
+          "required_output": "src/r3.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/r4.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_r4.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "R5",
+      "objective": "Revise repair adoption test to cover quarantine path.",
+      "description": "Implement bounded behavior R5 and its narrow proof.",
+      "kind": "test",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 3,
+      "depends_on": [
+        "R4"
+      ],
+      "dependency_reasons": {
+        "R4": {
+          "kind": "consumes_output",
+          "reason": "R5 imports the contract created by R4.",
+          "required_output": "src/r4.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/r5.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_r5.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "R6",
+      "objective": "Revise work-class telemetry test for unavailable_reason.",
+      "description": "Implement bounded behavior R6 and its narrow proof.",
+      "kind": "test",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 2,
+      "depends_on": [
+        "R5"
+      ],
+      "dependency_reasons": {
+        "R5": {
+          "kind": "consumes_output",
+          "reason": "R6 imports the contract created by R5.",
+          "required_output": "src/r5.py:Contract"
+        }
+      },
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/r6.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_r6.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    }
+  ],
+  "validation_jobs": []
+}

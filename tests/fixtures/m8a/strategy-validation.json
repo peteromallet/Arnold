@@ -1,0 +1,161 @@
+{
+  "task_contract_version": 2,
+  "tasks": [
+    {
+      "id": "T1",
+      "objective": "Run the full suite and repair failures.",
+      "description": "Implement bounded behavior T1 and its narrow proof.",
+      "kind": "test",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 5,
+      "depends_on": [],
+      "dependency_reasons": {},
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t1.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t1.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T2",
+      "objective": "Run integration tests to verify end-to-end behavior.",
+      "description": "Implement bounded behavior T2 and its narrow proof.",
+      "kind": "test",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 5,
+      "depends_on": [],
+      "dependency_reasons": {},
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t2.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t2.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T3",
+      "objective": "Run integration suite across all modules.",
+      "description": "Implement bounded behavior T3 and its narrow proof.",
+      "kind": "test",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 5,
+      "depends_on": [],
+      "dependency_reasons": {},
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t3.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t3.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T4",
+      "objective": "Validate test coverage with full suite.",
+      "description": "Implement bounded behavior T4 and its narrow proof.",
+      "kind": "test",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 5,
+      "depends_on": [],
+      "dependency_reasons": {},
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t4.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t4.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    },
+    {
+      "id": "T5",
+      "objective": "Run narrow deterministic unit test.",
+      "description": "Implement bounded behavior T5 and its narrow proof.",
+      "kind": "test",
+      "status": "pending",
+      "complexity": 4,
+      "complexity_justification": "One contained module contract.",
+      "estimated_minutes": 5,
+      "depends_on": [],
+      "dependency_reasons": {},
+      "routing_group": "",
+      "write_set": {
+        "paths": [
+          "src/t5.py"
+        ],
+        "complete": true
+      },
+      "narrow_tests": {
+        "selectors": [
+          "tests/test_t5.py"
+        ],
+        "max_seconds": 120,
+        "max_runs": 2
+      },
+      "checkpoint": {
+        "required": false,
+        "max_interval_seconds": 300,
+        "records": []
+      }
+    }
+  ],
+  "validation_jobs": []
+}

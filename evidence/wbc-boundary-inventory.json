@@ -3,28 +3,28 @@
     "schema": "m6.wbc-boundary-inventory.v1",
     "description": "Deterministic inventory joining boundary contracts, contract-to-producer matrix, and support manifest, extended with static discovery over handler, runtime, kernel, supervisor, execution, and orchestration source trees. Support labels are recorded but non-authoritative \u2014 only landed producer paths constitute adoption evidence. Projections are explicitly tagged as non-authority.",
     "generated_by": "M6 Steps 4-7 (T4+T5+T6+T7) \u2014 generate_wbc_boundary_inventory.py",
-    "timestamp_utc": "2026-07-19T22:34:47.996704+00:00",
+    "timestamp_utc": "2026-07-21T23:36:19.460877+00:00",
     "input_sources": {
       "boundary_contracts": "arnold_pipelines/megaplan/workflows/boundary_contracts.py",
       "contract_matrix": "arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json",
       "support_manifest": "arnold_pipelines/megaplan/workflows/support_manifest.json",
       "static_discovery_roots": 8
     },
-    "row_count": 621,
-    "unmatched_count": 111,
+    "row_count": 634,
+    "unmatched_count": 113,
     "source_counts": {
       "boundary_contract": 50,
       "manifest_entry": 76,
-      "runtime_module": 149,
-      "handler_function": 346
+      "runtime_module": 155,
+      "handler_function": 353
     },
-    "content_hash": "4241a2580af34f70956b4757be17f1670f44efbc4d4ca5515e026289fce0cb2e",
+    "content_hash": "2f011ffa246b4cf342549144040facd5b91f3f69dcc36ee2ba0a09008c83ad60",
     "wrapper_shell_count": 3,
-    "default_deny_count": 161,
-    "unmatched_total_count": 112,
+    "default_deny_count": 163,
+    "unmatched_total_count": 114,
     "unmatched_category_counts": {
       "unmatched_declared": 15,
-      "unmatched_static": 96,
+      "unmatched_static": 98,
       "unmatched_runtime": 1,
       "unmatched_wrapper": 0,
       "unmatched_consumer": 0,
@@ -3893,23 +3893,33 @@
       ],
       "is_authority": false,
       "non_authority_surfaces": [],
-      "class_count": 7,
-      "function_count": 37,
+      "class_count": 12,
+      "function_count": 60,
       "classes": [
         "AppendResult",
         "AttemptLedgerError",
         "AttemptLedgerStore",
         "AttemptReservation",
+        "GapEntry",
+        "GateStatus",
         "MonotonicSequenceError",
         "PostTerminalAppendError",
-        "SqliteAttemptLedgerStore"
+        "SourceCursor",
+        "SqliteAttemptLedgerStore",
+        "StartGateResult",
+        "TerminalGateResult"
       ],
       "functions": [
         "__init__",
         "_append_tx",
+        "_begin_immediate_retry",
+        "_deserialize_durable_ref",
         "_deserialize_ledger_event",
+        "_deserialize_persistence_failure_diagnostic",
+        "_deserialize_reconciliation_diagnostic",
         "_init_schema",
         "_require_event_type",
+        "_try_record_append_failure_diagnostic",
         "append_cancelled",
         "append_cancelled",
         "append_completed",
@@ -3936,12 +3946,30 @@
         "initialize_attempt",
         "last_sequence",
         "last_sequence",
+        "query_gaps",
+        "query_gaps",
+        "query_persistence_diagnostics",
+        "query_persistence_diagnostics",
+        "query_reconciliation_state",
+        "query_reconciliation_state",
+        "query_source_cursor",
+        "query_source_cursor",
         "read_events",
         "read_events",
         "read_ledger",
         "read_ledger",
+        "record_persistence_failure_diagnostic",
+        "record_persistence_failure_diagnostic",
+        "record_reconciliation_diagnostic",
+        "record_reconciliation_diagnostic",
         "reserve_attempt",
-        "reserve_attempt"
+        "reserve_attempt",
+        "start_verified",
+        "start_verified",
+        "terminal_or_indeterminate_verified",
+        "terminal_or_indeterminate_verified",
+        "update_source_cursor",
+        "update_source_cursor"
       ],
       "docstring_summary": "Durable SQLite-backed store for ``ExecutionAttemptLedger`` event streams.\n\nThis module provides the M6A transactional store boundary for WBC ledger\nevents. It does NOT modify the ``ExecutionAttemptLed\u2026"
     },
@@ -4644,6 +4672,237 @@
         "to_yaml"
       ],
       "docstring_summary": "Stable inspect views over a compiled workflow manifest.\n\nStability:\n    public: ``inspect_manifest`` stable data fields\n    diagnostic-only: ``to_dot`` and ``to_yaml`` formatting helpers\n\nThese helper\u2026"
+    },
+    {
+      "row_kind": "runtime_module",
+      "module_path": "arnold/workflow/ledger_migrations.py",
+      "category": "boundary_runtime",
+      "owner": "wbc",
+      "surface_types": [
+        "ledger"
+      ],
+      "is_authority": false,
+      "non_authority_surfaces": [],
+      "class_count": 15,
+      "function_count": 37,
+      "classes": [
+        "ChecksumMismatch",
+        "ClassificationEvidence",
+        "ClassificationSafetyError",
+        "LedgerMigrator",
+        "LegacyClassification",
+        "LegacyRecordClassification",
+        "Migration",
+        "MigrationChecksumMismatchError",
+        "MigrationError",
+        "MigrationOrderError",
+        "MigrationRecord",
+        "MigrationRegistryError",
+        "MigrationResult",
+        "MigrationState",
+        "SqliteLedgerMigrator"
+      ],
+      "functions": [
+        "__init__",
+        "__init__",
+        "__init__",
+        "__init__",
+        "__post_init__",
+        "_apply_one",
+        "_begin_immediate_retry",
+        "_compute_mismatches",
+        "_compute_orphans",
+        "_ensure_migration_tables",
+        "_read_applied",
+        "_validate_classification_safety",
+        "_validate_registry",
+        "classify",
+        "classify_legacy_record",
+        "classify_legacy_record",
+        "compute_migration_checksum",
+        "default_m6a_migrations",
+        "get_state",
+        "get_state",
+        "is_complete",
+        "is_rolled_back",
+        "last_applied_version",
+        "migrate",
+        "migrate",
+        "no_evidence",
+        "only_circumstantial",
+        "query_legacy_classifications",
+        "query_legacy_classifications",
+        "query_rolled_back_classifications",
+        "query_rolled_back_classifications",
+        "record_legacy_classification",
+        "record_legacy_classification",
+        "rollback_classification",
+        "rollback_classification",
+        "verify_checksums",
+        "verify_checksums"
+      ],
+      "docstring_summary": "Versioned, checksum-validated, crash-resumable schema migrations for the\nM6A WBC transactional ledger substrate.\n\nThis module provides the M6A migration boundary. It governs how the SQLite\nschema that\u2026"
+    },
+    {
+      "row_kind": "runtime_module",
+      "module_path": "arnold/workflow/ledger_outbox.py",
+      "category": "boundary_runtime",
+      "owner": "wbc",
+      "surface_types": [
+        "ledger"
+      ],
+      "is_authority": false,
+      "non_authority_surfaces": [],
+      "class_count": 6,
+      "function_count": 25,
+      "classes": [
+        "AppendWithOutboxResult",
+        "LedgerOutbox",
+        "OutboxRecord",
+        "OutboxStatus",
+        "RetryLimitExceededError",
+        "SqliteLedgerOutbox"
+      ],
+      "functions": [
+        "__init__",
+        "__init__",
+        "_begin_immediate_retry",
+        "_get_record_by_id",
+        "_init_outbox_schema",
+        "_row_to_outbox_record",
+        "append_event_with_outbox",
+        "append_event_with_outbox",
+        "get_failed",
+        "get_failed",
+        "get_outbox_summary",
+        "get_outbox_summary",
+        "get_pending",
+        "get_pending",
+        "get_records_for_attempt",
+        "get_records_for_attempt",
+        "get_stale_pending",
+        "get_stale_pending",
+        "mark_dispatched",
+        "mark_dispatched",
+        "mark_failed",
+        "mark_failed",
+        "retry_failed",
+        "retry_failed",
+        "to_dict"
+      ],
+      "docstring_summary": "Transactional outbox for WBC ledger events.\n\nThis module provides the M6A outbox boundary: a durable, append-only record\nof delivery-intent side effects created atomically with their parent ledger\neve\u2026"
+    },
+    {
+      "row_kind": "runtime_module",
+      "module_path": "arnold/workflow/ledger_payload_store.py",
+      "category": "boundary_runtime",
+      "owner": "wbc",
+      "surface_types": [
+        "ledger"
+      ],
+      "is_authority": false,
+      "non_authority_surfaces": [],
+      "class_count": 18,
+      "function_count": 45,
+      "classes": [
+        "AccessContext",
+        "DeletionEvidence",
+        "EncryptionProvider",
+        "LedgerPayloadStore",
+        "PayloadDigestOnlyError",
+        "PayloadExpiredError",
+        "PayloadInlineThresholdError",
+        "PayloadLegalHoldError",
+        "PayloadNotFoundError",
+        "PayloadProtectedEncryptionError",
+        "PayloadRedactionError",
+        "PayloadSecretKeyError",
+        "PayloadStoreError",
+        "PayloadTenantAccessError",
+        "PayloadTombstoneError",
+        "SqliteLedgerPayloadStore",
+        "StaticKeyEncryptionProvider",
+        "StoredPayload"
+      ],
+      "functions": [
+        "__init__",
+        "__init__",
+        "_access_scope_for",
+        "_enforce_access",
+        "_enforce_digest_only",
+        "_enforce_expiry",
+        "_enforce_inline_threshold",
+        "_enforce_not_tombstoned",
+        "_enforce_protected_encryption",
+        "_enforce_secret_keys",
+        "_expires_at_ns",
+        "_fetch",
+        "_has_digest_only_intent",
+        "_init_schema",
+        "_persist",
+        "_record_enforcement_checks",
+        "_redact_payload",
+        "_retention_class_for",
+        "_row_to_stored",
+        "_scan_secret_keys",
+        "_sha256_digest",
+        "_xor",
+        "conn",
+        "decrypt",
+        "decrypt",
+        "delete_payload",
+        "delete_payload",
+        "encrypt",
+        "encrypt",
+        "from_dict",
+        "get_deletion_evidence",
+        "get_stored_payload",
+        "get_stored_payload",
+        "is_available",
+        "is_available",
+        "is_under_legal_hold",
+        "is_under_legal_hold",
+        "retrieve_payload",
+        "retrieve_payload",
+        "set_legal_hold",
+        "set_legal_hold",
+        "store_payload",
+        "store_payload",
+        "to_dict",
+        "to_dict"
+      ],
+      "docstring_summary": "Durable payload store with WBC payload/reference enforcement.\n\nThis module provides the M6A payload storage boundary: a durable store for\nworkflow boundary payload *bytes* (not just metadata) that enf\u2026"
+    },
+    {
+      "row_kind": "runtime_module",
+      "module_path": "arnold/workflow/ledger_trace.py",
+      "category": "boundary_runtime",
+      "owner": "wbc",
+      "surface_types": [
+        "ledger"
+      ],
+      "is_authority": false,
+      "non_authority_surfaces": [],
+      "class_count": 2,
+      "function_count": 11,
+      "classes": [
+        "LedgerTrace",
+        "TraceOperation"
+      ],
+      "functions": [
+        "__post_init__",
+        "_canonical_json",
+        "_canonical_payload",
+        "compute_trace_digest",
+        "make_append_trace",
+        "make_query_trace",
+        "make_reconcile_trace",
+        "make_trace_with_digest",
+        "to_dict",
+        "trace_from_json",
+        "trace_to_json"
+      ],
+      "docstring_summary": "Machine-readable ledger traces with stable content-addressed digests.\n\nThis module provides non-authoritative trace emission for the WBC\ntransactional ledger. Every trace binds contract version, store\u2026"
     },
     {
       "row_kind": "runtime_module",
@@ -6999,6 +7258,35 @@
     },
     {
       "row_kind": "runtime_module",
+      "module_path": "arnold_pipelines/megaplan/orchestration/m8a_report.py",
+      "category": "orchestration",
+      "owner": "run_authority",
+      "surface_types": [
+        "unknown"
+      ],
+      "is_authority": false,
+      "non_authority_surfaces": [],
+      "class_count": 2,
+      "function_count": 9,
+      "classes": [
+        "CircuitDiagnostic",
+        "SourceAdmissionDryCheck"
+      ],
+      "functions": [
+        "_all_circuit_checks",
+        "_build_executor_wiring",
+        "_component_for_owner",
+        "_dry_source_admission",
+        "_load_fixture",
+        "_retry_circuit_check",
+        "_rework_wave_circuit_check",
+        "build_m8a_report",
+        "rebuild_m8a_evidence"
+      ],
+      "docstring_summary": "M8A pure report builder \u2014 reads the M8A corpus, runs task feasibility,\nbatch splitting, source-admission dry checks, and circuit primitives over\nv2 fixtures, and writes rebuildable evidence artifacts \u2026"
+    },
+    {
+      "row_kind": "runtime_module",
       "module_path": "arnold_pipelines/megaplan/orchestration/oracle.py",
       "category": "orchestration",
       "owner": "run_authority",
@@ -7361,21 +7649,27 @@
       ],
       "is_authority": false,
       "non_authority_surfaces": [],
-      "class_count": 2,
-      "function_count": 6,
+      "class_count": 3,
+      "function_count": 11,
       "classes": [
+        "CircuitState",
         "RecoveryDecision",
         "RecoveryPolicy"
       ],
       "functions": [
         "_is_retryable_external_error",
         "_looks_external",
+        "_matches_any",
         "_mentions_context_exhaustion",
+        "_normalize_message",
         "_read_exit_kind",
+        "circuit_transition",
         "classify",
-        "classify_arnold"
+        "classify_arnold",
+        "classify_failure_class",
+        "normalize_failure_signature"
       ],
-      "docstring_summary": "RecoveryPolicy.classify \u2014 M4 T16 (Step 11a).\n\nPure classifier extracted from ``megaplan.auto`` so any orchestration\nconsumer can ask \"what should I do with this error?\" without importing\nthe planning \u2026"
+      "docstring_summary": "RecoveryPolicy.classify \u2014 M4 T16 (Step 11a) + M8A T13 normalized failure signatures.\n\nPure classifier extracted from ``megaplan.auto`` so any orchestration\nconsumer can ask \"what should I do with this\u2026"
     },
     {
       "row_kind": "runtime_module",
@@ -7700,6 +7994,30 @@
         "write_review_done"
       ],
       "docstring_summary": "Review-to-done transition policy for M3 evidence enforcement."
+    },
+    {
+      "row_kind": "runtime_module",
+      "module_path": "arnold_pipelines/megaplan/orchestration/validation_jobs.py",
+      "category": "orchestration",
+      "owner": "run_authority",
+      "surface_types": [
+        "unknown"
+      ],
+      "is_authority": false,
+      "non_authority_surfaces": [],
+      "class_count": 0,
+      "function_count": 7,
+      "classes": [],
+      "functions": [
+        "_build_pytest_command",
+        "_compile_narrow_recheck",
+        "_compile_post_execute_suite",
+        "_is_ambiguous_selector",
+        "_next_validation_job_id",
+        "compile_validation_jobs",
+        "validate_model_validation_jobs"
+      ],
+      "docstring_summary": "Deterministic harness-owned validation-job compiler.\n\nReads the finalize payload (tasks with narrow_tests, test_selection) and\ncompiles a stable, ordered list of no-file validation jobs.  The compiler\u2026"
     },
     {
       "row_kind": "runtime_module",
@@ -9342,6 +9660,20 @@
     },
     {
       "row_kind": "handler_function",
+      "function_name": "build_m8a_report",
+      "module_path": "arnold_pipelines/megaplan/orchestration/m8a_report.py",
+      "owner": "run_authority",
+      "category": "orchestrate"
+    },
+    {
+      "row_kind": "handler_function",
+      "function_name": "rebuild_m8a_evidence",
+      "module_path": "arnold_pipelines/megaplan/orchestration/m8a_report.py",
+      "owner": "run_authority",
+      "category": "orchestrate"
+    },
+    {
+      "row_kind": "handler_function",
       "function_name": "run",
       "module_path": "arnold_pipelines/megaplan/orchestration/oracle.py",
       "owner": "run_authority",
@@ -9846,6 +10178,13 @@
     },
     {
       "row_kind": "handler_function",
+      "function_name": "circuit_transition",
+      "module_path": "arnold_pipelines/megaplan/orchestration/recovery_policy.py",
+      "owner": "run_authority",
+      "category": "orchestrate"
+    },
+    {
+      "row_kind": "handler_function",
       "function_name": "classify",
       "module_path": "arnold_pipelines/megaplan/orchestration/recovery_policy.py",
       "owner": "run_authority",
@@ -9854,6 +10193,20 @@
     {
       "row_kind": "handler_function",
       "function_name": "classify_arnold",
+      "module_path": "arnold_pipelines/megaplan/orchestration/recovery_policy.py",
+      "owner": "run_authority",
+      "category": "orchestrate"
+    },
+    {
+      "row_kind": "handler_function",
+      "function_name": "classify_failure_class",
+      "module_path": "arnold_pipelines/megaplan/orchestration/recovery_policy.py",
+      "owner": "run_authority",
+      "category": "orchestrate"
+    },
+    {
+      "row_kind": "handler_function",
+      "function_name": "normalize_failure_signature",
       "module_path": "arnold_pipelines/megaplan/orchestration/recovery_policy.py",
       "owner": "run_authority",
       "category": "orchestrate"
@@ -10123,6 +10476,20 @@
       "module_path": "arnold_pipelines/megaplan/orchestration/transition_policy.py",
       "owner": "run_authority",
       "category": "review"
+    },
+    {
+      "row_kind": "handler_function",
+      "function_name": "compile_validation_jobs",
+      "module_path": "arnold_pipelines/megaplan/orchestration/validation_jobs.py",
+      "owner": "run_authority",
+      "category": "orchestrate"
+    },
+    {
+      "row_kind": "handler_function",
+      "function_name": "validate_model_validation_jobs",
+      "module_path": "arnold_pipelines/megaplan/orchestration/validation_jobs.py",
+      "owner": "run_authority",
+      "category": "orchestrate"
     },
     {
       "row_kind": "handler_function",
@@ -11778,6 +12145,18 @@
     },
     {
       "row_kind": "default_deny",
+      "target_path": "arnold_pipelines/megaplan/orchestration/m8a_report.py",
+      "target_type": "runtime_module",
+      "surface_types_found": [
+        "unknown"
+      ],
+      "access": "denied",
+      "reason": "Module could not be classified into a known surface type. Static discovery found classes=['CircuitDiagnostic', 'SourceAdmissionDryCheck'], functions=['_all_circuit_checks', '_build_executor_wiring', '_component_for_owner', '_dry_source_admission', '_load_fixture', '_retry_circuit_check', '_rework_wave_circuit_check', 'build_m8a_report', 'rebuild_m8a_evidence']",
+      "owner": "run_authority",
+      "mitigation": "Add classification keywords to _classify_module_surfaces or add the module to a known discovery root category."
+    },
+    {
+      "row_kind": "default_deny",
       "target_path": "arnold_pipelines/megaplan/orchestration/oracle.py",
       "target_type": "runtime_module",
       "surface_types_found": [
@@ -11977,6 +12356,18 @@
       ],
       "access": "denied",
       "reason": "Module could not be classified into a known surface type. Static discovery found classes=[], functions=['_build_tiebreaker_payload', '_build_tiebreaker_reprompt', '_latest_json_artifact', '_latest_synthesis_artifact', '_normalize_tiebreaker_action', '_route_signal_for_tiebreaker_action', '_tiebreaker_phase_id', '_tiebreaker_run_phase_outputs', 'handle_tiebreaker_decide', 'handle_tiebreaker_run']",
+      "owner": "run_authority",
+      "mitigation": "Add classification keywords to _classify_module_surfaces or add the module to a known discovery root category."
+    },
+    {
+      "row_kind": "default_deny",
+      "target_path": "arnold_pipelines/megaplan/orchestration/validation_jobs.py",
+      "target_type": "runtime_module",
+      "surface_types_found": [
+        "unknown"
+      ],
+      "access": "denied",
+      "reason": "Module could not be classified into a known surface type. Static discovery found classes=[], functions=['_build_pytest_command', '_compile_narrow_recheck', '_compile_post_execute_suite', '_is_ambiguous_selector', '_next_validation_job_id', 'compile_validation_jobs', 'validate_model_validation_jobs']",
       "owner": "run_authority",
       "mitigation": "Add classification keywords to _classify_module_surfaces or add the module to a known discovery root category."
     },
@@ -12493,9 +12884,9 @@
     },
     "default_deny_summary": {
       "description": "Count and breakdown of default-deny rows. Default-deny rows represent surfaces that cannot be classified or are known dynamic/generated/provider surfaces that must be explicitly denied until proven safe.",
-      "total_count": 161,
+      "total_count": 163,
       "by_target_type": {
-        "runtime_module": 96,
+        "runtime_module": 98,
         "handler_function": 59,
         "dynamic_surface": 6
       }
@@ -13065,6 +13456,12 @@
       },
       {
         "row_kind": "runtime_module",
+        "module_path": "arnold_pipelines/megaplan/orchestration/m8a_report.py",
+        "reason_unmatched": "unclassifiable_surface",
+        "detail": "Module 'arnold_pipelines/megaplan/orchestration/m8a_report.py' could not be classified into a known surface type. Surface types found: ['unknown']"
+      },
+      {
+        "row_kind": "runtime_module",
         "module_path": "arnold_pipelines/megaplan/orchestration/oracle.py",
         "reason_unmatched": "unclassifiable_surface",
         "detail": "Module 'arnold_pipelines/megaplan/orchestration/oracle.py' could not be classified into a known surface type. Surface types found: ['unknown']"
@@ -13164,6 +13561,12 @@
         "module_path": "arnold_pipelines/megaplan/orchestration/tiebreaker_runtime.py",
         "reason_unmatched": "unclassifiable_surface",
         "detail": "Module 'arnold_pipelines/megaplan/orchestration/tiebreaker_runtime.py' could not be classified into a known surface type. Surface types found: ['unknown']"
+      },
+      {
+        "row_kind": "runtime_module",
+        "module_path": "arnold_pipelines/megaplan/orchestration/validation_jobs.py",
+        "reason_unmatched": "unclassifiable_surface",
+        "detail": "Module 'arnold_pipelines/megaplan/orchestration/validation_jobs.py' could not be classified into a known surface type. Surface types found: ['unknown']"
       },
       {
         "row_kind": "runtime_module",
