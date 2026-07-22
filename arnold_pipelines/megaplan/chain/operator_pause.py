@@ -93,12 +93,21 @@ def pause_chain(
     return {"changed": True, "paused": True, "authority": authority}
 
 
-def resume_chain(spec_path: Path, project_root: Path, *, actor: str = "operator") -> dict[str, Any]:
+def resume_chain(
+    spec_path: Path,
+    project_root: Path,
+    *,
+    actor: str = "operator",
+    verify_execution_binding: bool = True,
+) -> dict[str, Any]:
     """Explicitly clear pause authority and restore the exact prior plan state."""
 
     spec_path = spec_path.resolve(strict=False)
     project_root = project_root.resolve(strict=False)
-    state = chain_spec.load_chain_state(spec_path)
+    state = chain_spec.load_chain_state(
+        spec_path,
+        verify_execution_binding=verify_execution_binding,
+    )
     authority = pause_record(state)
     if authority is None:
         # A runner that was already exiting when pause_chain() committed can
