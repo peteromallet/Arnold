@@ -665,6 +665,8 @@ def test_repair_loop_prompt_files_redact_secret_bearers_before_dispatch(tmp_path
     assert result.returncode == 0, result.stderr
     dev_text = dev_prompt.read_text(encoding="utf-8")
     kimi_text = kimi_prompt.read_text(encoding="utf-8")
+    assert "'set-profile', 'set-vendor', or 'set-model'" in dev_text
+    assert "'completed-repair-without-cursor-advance'" in dev_text
     assert "bearer-secret-token-value" not in dev_text
     assert "supersecret" not in dev_text
     assert "supersecret" not in kimi_text
