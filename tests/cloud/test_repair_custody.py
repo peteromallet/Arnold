@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -155,6 +156,35 @@ def test_exact_request_adapts_taskless_phase_failure_without_weakening_general_p
     assert exact["blocker_fingerprint"] == expected
     assert exact["blocker_id"] == blocker_id_for_fingerprint(expected)
     assert exact["requests"][0]["blocker_id"] == exact["blocker_id"]
+
+    unknown = SimpleNamespace(canonical_state=CanonicalState.UNKNOWN)
+    decision = repair_contract.classify_repair_dispatch(
+        canonical_run_state=unknown,
+        plan_state={
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "repair_phase_contract"},
+            "latest_failure": {"kind": "deterministic_phase_failure"},
+        },
+        custody_projection=exact,
+    )
+    assert decision.decision == "dispatch_l1_repair"
+    assert decision.request_id == request["request_id"]
+
+    unfenced = dict(exact)
+    unfenced["blocker_fingerprint"] = {
+        **expected,
+        "target_fingerprint": "sha256:not-an-exact-request",
+    }
+    rejected = repair_contract.classify_repair_dispatch(
+        canonical_run_state=unknown,
+        plan_state={
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "repair_phase_contract"},
+            "latest_failure": {"kind": "deterministic_phase_failure"},
+        },
+        custody_projection=unfenced,
+    )
+    assert rejected.decision == "broken_superfixer"
 
 
 def _plan_state() -> dict[str, object]:
