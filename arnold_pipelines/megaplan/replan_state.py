@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 from typing import Any
 
 REPLAN_META_KEYS_TO_CLEAR: tuple[str, ...] = (
@@ -12,6 +12,27 @@ REPLAN_STATE_KEYS_TO_CLEAR: tuple[str, ...] = (
     "latest_failure",
     "resume_cursor",
 )
+
+
+def blocked_iterate_gate_replan_allowed(state: Mapping[str, Any]) -> bool:
+    """Return whether a blocked ITERATE gate may re-enter planning.
+
+    The critique-loop cap can latch the plan in ``blocked`` after an ITERATE
+    verdict without writing a resume cursor.  Replanning is the narrow recovery
+    seam for that exact state; every other blocked state remains fail closed.
+    """
+
+    if state.get("current_state") != "blocked":
+        return False
+    last_gate = state.get("last_gate")
+    if not isinstance(last_gate, Mapping):
+        return False
+    recommendation = last_gate.get("recommendation")
+    return (
+        isinstance(recommendation, str)
+        and recommendation.upper() == "ITERATE"
+        and last_gate.get("passed") is False
+    )
 
 
 def reset_replan_loop_state(
