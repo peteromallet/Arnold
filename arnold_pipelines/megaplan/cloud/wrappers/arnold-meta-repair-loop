@@ -423,7 +423,11 @@ ordinary repair can succeed.
 - After applying any fix, retrigger the ordinary repair loop for
   session `$SESSION` using the command stored in REPAIR_LOOP_BIN.
 - Verify that the retriggered ordinary repair reaches a terminal
-  SUCCESS outcome.
+  SUCCESS outcome and advances the canonical plan/chain cursor.
+- Treat a missing ordinary-repair profile-preservation clause as a contract
+  failure. Preserve the configured target profile; do not select or switch it.
+- Classify terminal success without canonical cursor advancement as
+  `completed-repair-without-cursor-advance` and repair that false-success path.
 - Do NOT claim success without a verified ordinary repair retrigger —
   partial_liveness and "repairing" are not terminal success.
 
@@ -501,7 +505,11 @@ ordinary repair can succeed.
 - After applying any fix, retrigger the ordinary repair loop for
   session `$SESSION` using the command stored in REPAIR_LOOP_BIN.
 - Verify that the retriggered ordinary repair reaches a terminal
-  SUCCESS outcome.
+  SUCCESS outcome and advances the canonical plan/chain cursor.
+- Treat a missing ordinary-repair profile-preservation clause as a contract
+  failure. Preserve the configured target profile; do not select or switch it.
+- Classify terminal success without canonical cursor advancement as
+  `completed-repair-without-cursor-advance` and repair that false-success path.
 - Do NOT claim success without a verified ordinary repair retrigger —
   partial_liveness and "repairing" are not terminal success.
 

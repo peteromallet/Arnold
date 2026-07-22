@@ -178,6 +178,7 @@ def _scan_under_lock(
     authorized: bool,
     request_id: str = "",
 ) -> int:
+    requested_request_id = request_id
     terminal_request_ids = _terminal_request_ids(queue_dir)
     selected_by_signature: dict[str, dict[str, Any]] = {}
     dispatch_candidate: dict[str, Any] | None = None
@@ -240,6 +241,7 @@ def _scan_under_lock(
             queue_dir=queue_dir,
             marker_dir=marker_dir,
             repair_data_dir=repair_data_dir,
+            exact_request_id=requested_request_id,
         )
         if disposition["decision"] in {"stale", "superseded"}:
             if authorized:
@@ -752,6 +754,7 @@ def _classify_request(
     queue_dir: Path,
     marker_dir: Path,
     repair_data_dir: Path | None,
+    exact_request_id: str = "",
 ) -> dict[str, str]:
     session = str(record.get("session") or "")
     target_session = str(target.get("target_session") or "")
@@ -862,6 +865,11 @@ def _classify_request(
         canonical_run_state=canonical_run_state,
         queue_root=queue_dir,
         repair_data_dir=repair_data_dir,
+        request_id=(
+            str(record.get("request_id") or "")
+            if exact_request_id and str(record.get("request_id") or "") == exact_request_id
+            else ""
+        ),
     )
     human_blocker = None
     needs_human = target.get("needs_human") if isinstance(target.get("needs_human"), Mapping) else {}
