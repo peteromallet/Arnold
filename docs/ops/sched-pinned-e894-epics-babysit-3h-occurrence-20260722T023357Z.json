@@ -3,7 +3,7 @@
   "schedule_id": "sched_pinned_e894_epics_babysit_3h",
   "occurrence_run_id": "subagent-20260722-023357-ac05553c",
   "started_at": "2026-07-22T02:33:57Z",
-  "assessed_at": "2026-07-22T04:32:46Z",
+  "assessed_at": "2026-07-22T04:38:02Z",
   "overall_classification": "partial",
   "schedule": {
     "state": "active",
@@ -123,7 +123,7 @@
         "new_plan_phase_result_sha256": "8f71bc97a40fe03954d4f2c9ffe7ebdad34ef498b7b829ff1fc006fa37994187",
         "exact_process_identity": "pid=3089362 ppid=169 start=2026-07-22T03:52:19Z command=/workspace/.megaplan/engine-runtimes/f7f0967/venv/bin/python -P -m arnold_pipelines.megaplan chain start --spec /workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/chain.yaml --project-dir /workspace/custody-control-plane-20260714/Arnold --no-git-refresh --no-push",
         "predicate": "A: accepted M8A milestone after checkpoint; chain advanced 6->7 and is not blocked",
-        "status_projection": "running/reviewing during recovery; prior terminal-plan/no-runner needs-attention projection cleared",
+        "status_projection": "running/prepped on m9-rebuildable-projections-20260722-0431 at 7/10; canonical snapshot generated 2026-07-22T04:37:59.026910Z; prior 6/10 chain-custody mismatch cleared",
         "pr_291": {
           "state": "OPEN",
           "draft": true,
