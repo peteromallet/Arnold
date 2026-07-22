@@ -1715,8 +1715,11 @@ def clean_parsed_payload(payload: dict, schema: dict, step: str) -> None:
                 check.pop("prior_findings", None)
 
     # Fill in missing required fields with safe defaults before validation.
-    # Models often omit empty arrays/strings that megaplan requires.
-    _fill_schema_defaults(payload, schema)
+    # Gate fields encode review/custody decisions, so an omitted field there
+    # must fail structural validation instead of being synthesized locally.
+    # Other worker envelopes retain their legacy empty-value normalization.
+    if step != "gate":
+        _fill_schema_defaults(payload, schema)
 
     # Normalize field aliases in nested arrays (e.g. critique flags use
     # "summary" instead of "concern", "detail" instead of "evidence").
