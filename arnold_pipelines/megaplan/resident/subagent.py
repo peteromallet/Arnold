@@ -2840,6 +2840,7 @@ def follow_up_managed_subagent(
     query_relationship: Mapping[str, Any] | None = None,
     aggregation_role: str = "synthesis_delivery_owner",
     synthesis_group: str | None = None,
+    require_live: bool = False,
 ) -> SubagentFollowupResult:
     """Durably append ``message`` to the unique persistent session lineage.
 
@@ -2849,11 +2850,12 @@ def follow_up_managed_subagent(
     continuation waits for that parent to become terminal before resuming the
     same session.  The caller's validated resident provenance is the
     continuation's provenance; target provenance is used only to authorize the
-    same immutable conversation ownership.
+    same immutable conversation ownership.  ``require_live`` narrows this to
+    the interrupting active-parent path and rejects non-continuation owner-inbox
+    routes before attaching material.
     """
 
-    message = message.strip()
-    if not message:
+    if not isinstance(message, str) or not message.strip():
         raise SubagentFollowupError("follow-up message must not be empty")
     if len(message) > MAX_FOLLOWUP_MESSAGE_CHARS:
         raise SubagentFollowupError(
@@ -3002,6 +3004,11 @@ def follow_up_managed_subagent(
             target_provenance=target_provenance,
         )
         if synthesis_owner is not None:
+            if require_live:
+                raise SubagentFollowupError(
+                    "live-only follow-up cannot replace an interrupting continuation "
+                    "with a synthesis-owner inbox attachment"
+                )
             owner_path, owner = synthesis_owner
             record = _attach_synthesis_owner_material(
                 target_run_id=run_id,
@@ -3041,6 +3048,10 @@ def follow_up_managed_subagent(
         if parent_status in _ACTIVE_STATUSES and not parent_live:
             raise SubagentFollowupError(
                 "target lineage tip claims an active state without a matching supervisor"
+            )
+        if require_live and not parent_live:
+            raise SubagentFollowupError(
+                f"target lineage tip is not live (status: {parent_status})"
             )
         if parent_status not in _ACTIVE_STATUSES and parent_status not in {
             "completed",

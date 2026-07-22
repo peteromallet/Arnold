@@ -226,6 +226,19 @@ def normalize_delegation_provenance(
     )
     if discord_interaction_id is not None:
         normalized["discord_interaction_id"] = discord_interaction_id
+    discord_operator_user_id = _snowflake(
+        value.get("discord_operator_user_id"),
+        field="discord_operator_user_id",
+        required=False,
+    )
+    if discord_operator_user_id is not None:
+        normalized["discord_operator_user_id"] = discord_operator_user_id
+    discord_application_command = _safe_id(
+        value.get("discord_application_command"),
+        field="discord_application_command",
+    )
+    if discord_application_command is not None:
+        normalized["discord_application_command"] = discord_application_command
     for field in ("delegation_id", "resident_turn_id", "root_run_id", "source_kind"):
         item = _safe_id(value.get(field), field=field)
         if item is not None:

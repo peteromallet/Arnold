@@ -1145,17 +1145,31 @@ def test_currently_running_command_is_registered_with_discord_tree() -> None:
         async def handle_dropped_threads_interaction(self, _interaction, *, lookback=None):
             return None
 
+        async def handle_follow_up_interaction(self, _interaction, *, agent, message):
+            return None
+
     tree = FakeTree()
 
     registered = register_discord_application_commands(tree, Service())
 
-    assert registered == ("whats-cooking", "restart-resident", "dropped-threads")
-    assert set(tree.commands) == {"whats-cooking", "restart-resident", "dropped-threads"}
+    assert registered == (
+        "whats-cooking",
+        "restart-resident",
+        "dropped-threads",
+        "follow-up",
+    )
+    assert set(tree.commands) == {
+        "whats-cooking",
+        "restart-resident",
+        "dropped-threads",
+        "follow-up",
+    }
     assert tree.commands["whats-cooking"][0].startswith("Show running Megaplan")
     assert [command.name for command in DISCORD_APPLICATION_COMMANDS] == [
         "whats-cooking",
         "restart-resident",
         "dropped-threads",
+        "follow-up",
     ]
 
 

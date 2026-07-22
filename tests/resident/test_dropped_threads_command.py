@@ -71,6 +71,9 @@ def test_dropped_threads_registers_a_single_optional_lookback_command() -> None:
         async def handle_dropped_threads_interaction(self, _interaction, *, lookback=None):
             pass
 
+        async def handle_follow_up_interaction(self, _interaction, *, agent, message):
+            pass
+
     client = discord.Client(intents=discord.Intents.none())
     tree = discord.app_commands.CommandTree(client)
     registered = register_discord_application_commands(tree, Service())

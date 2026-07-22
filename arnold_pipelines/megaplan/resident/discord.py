@@ -32,6 +32,14 @@ from .dropped_threads import (
     dropped_threads_prompt,
     parse_dropped_threads_lookback,
 )
+from .discord_follow_up import (
+    DiscordFollowUpError,
+    FOLLOW_UP_COMMAND,
+    FOLLOW_UP_DESCRIPTION,
+    command_control_provenance,
+    render_follow_up_receipt,
+    resolve_live_managed_agent,
+)
 from .fix_the_fixer import parse_fix_the_fixer_command, resident_command_catalog
 from .discord_reactions import DiscordReactionEffectLedger, ReactionEffectSweepResult
 from .runtime import InboundEvent, OutboundMessage, OutboundSink, ResidentRuntime
@@ -47,7 +55,12 @@ from .restart_resident import (
     restart_discord_resident,
 )
 from .scheduler import ScheduledJobWorker
-from .subagent import reconcile_managed_subagent_queues, sweep_managed_agent_deliveries
+from .subagent import (
+    SubagentFollowupError,
+    follow_up_managed_subagent,
+    reconcile_managed_subagent_queues,
+    sweep_managed_agent_deliveries,
+)
 from .transcription import AudioTranscriptionError, OpenAICompatibleAudioTranscriber
 from .timezone import InvalidTimezone, TimezoneService
 
@@ -106,6 +119,7 @@ class DiscordApplicationCommand:
     description: str
     handler_name: str
     has_lookback_option: bool = False
+    has_follow_up_options: bool = False
 
 
 DISCORD_APPLICATION_COMMANDS = (
@@ -125,6 +139,12 @@ DISCORD_APPLICATION_COMMANDS = (
         handler_name="handle_dropped_threads_interaction",
         has_lookback_option=True,
     ),
+    DiscordApplicationCommand(
+        name=FOLLOW_UP_COMMAND,
+        description=FOLLOW_UP_DESCRIPTION,
+        handler_name="handle_follow_up_interaction",
+        has_follow_up_options=True,
+    ),
 )
 
 
@@ -136,6 +156,15 @@ def register_discord_application_commands(tree: Any, service: Any) -> tuple[str,
         if command.has_lookback_option:
             async def callback(interaction: Any, lookback: str | None = None) -> None:
                 await handler(interaction, lookback=lookback)
+
+            callback.__name__ = callback_name
+            return callback
+
+        if command.has_follow_up_options:
+            async def callback(
+                interaction: Any, agent: str, message: str
+            ) -> None:
+                await handler(interaction, agent=agent, message=message)
 
             callback.__name__ = callback_name
             return callback
@@ -1581,6 +1610,111 @@ class ResidentDiscordService:
         # Best effort: the acknowledgement is already visible, and the resident
         # may be replaced before this edit reaches Discord.
         await interaction.edit_original_response(content=message)
+
+    async def handle_follow_up_interaction(
+        self, interaction: Any, *, agent: str, message: str
+    ) -> None:
+        """Attach an exact instruction to one live managed provider thread."""
+
+        user_id = _optional_snowflake(
+            getattr(getattr(interaction, "user", None), "id", None)
+        )
+        guild_id = _optional_snowflake(getattr(interaction, "guild_id", None))
+        channel = getattr(interaction, "channel", None)
+        parent = getattr(channel, "parent", None)
+        parent_id = _optional_snowflake(getattr(parent, "id", None))
+        interaction_channel_id = _optional_snowflake(
+            getattr(interaction, "channel_id", None)
+        )
+        channel_id = parent_id or interaction_channel_id
+        thread_id = interaction_channel_id if parent_id is not None else None
+        subject = AuthorizationSubject(
+            user_id=user_id or "",
+            guild_id=guild_id,
+            channel_id=channel_id,
+        )
+        authorizer = getattr(self.runtime, "authorizer", None)
+        decision = (
+            authorizer.authorize_inbound(subject)
+            if authorizer is not None and user_id
+            else None
+        )
+        if (
+            not user_id
+            or not channel_id
+            or (decision is not None and not decision.allowed)
+        ):
+            await interaction.response.send_message(
+                "This command is not authorized in this Discord context.",
+                ephemeral=True,
+            )
+            return
+        if not str(agent or "").strip():
+            await interaction.response.send_message(
+                "Follow-up rejected: agent is required. No instruction was attached.",
+                ephemeral=True,
+            )
+            return
+        if not isinstance(message, str) or not message.strip():
+            await interaction.response.send_message(
+                "Follow-up rejected: message must not be empty. No instruction was attached.",
+                ephemeral=True,
+            )
+            return
+        interaction_id = _optional_snowflake(getattr(interaction, "id", None))
+        if not interaction_id:
+            await interaction.response.send_message(
+                "Follow-up rejected: Discord supplied no stable interaction ID. "
+                "No instruction was attached.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        try:
+            project_root = Path(
+                getattr(self.runtime, "project_root", Path.cwd())
+            ).resolve()
+            target = await asyncio.to_thread(
+                resolve_live_managed_agent,
+                agent,
+                project_root=project_root,
+            )
+            delivery_target = DiscordDeliveryTarget(
+                guild_id=guild_id,
+                channel_id=channel_id,
+                thread_id=thread_id,
+                dm_user_id=user_id if guild_id is None else None,
+            )
+            caller_provenance = command_control_provenance(
+                target,
+                interaction_id=interaction_id,
+                operator_user_id=user_id,
+                conversation_key=delivery_target.conversation_key,
+            )
+            result = await asyncio.to_thread(
+                follow_up_managed_subagent,
+                run_id=target.run_id,
+                message=message,
+                project_dir=project_root,
+                workspace_root="/workspace",
+                idempotency_key=f"discord-interaction:{interaction_id}",
+                caller_provenance=caller_provenance,
+                require_live=True,
+            )
+            rendered = render_follow_up_receipt(result)
+        except (DiscordFollowUpError, SubagentFollowupError, ValueError, OSError) as exc:
+            rendered = (
+                "Follow-up rejected: "
+                f"{redact_text(str(exc))}. No instruction was attached."
+            )
+        except Exception:
+            LOGGER.exception("Resident Discord follow-up command failed")
+            rendered = (
+                "Follow-up failed before a confirmed receipt was returned. "
+                "No acceptance or completion is being claimed; inspect durable managed-run status."
+            )
+        await interaction.followup.send(rendered, ephemeral=True)
 
     async def handle_dropped_threads_interaction(
         self, interaction: Any, *, lookback: str | None = None
