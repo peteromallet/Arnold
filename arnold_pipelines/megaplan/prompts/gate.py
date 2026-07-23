@@ -34,6 +34,120 @@ from arnold_pipelines.megaplan.schemas import SCHEMAS, strict_schema
 from arnold_pipelines.megaplan.types import FlagRegistry, PlanState
 
 
+_GATE_FLAG_TEXT_LIMIT = 1_200
+_GATE_RAW_SOURCE_LIMIT = 96_000
+_GATE_RAW_FILE_LIMIT = 20_000
+
+
+def _bounded_gate_text(value: Any, *, limit: int) -> str:
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    head = limit // 2
+    tail = limit - head
+    return (
+        text[:head]
+        + f"\n...[bounded gate context omitted {len(text) - limit} chars]...\n"
+        + text[-tail:]
+    )
+
+
+def _gate_flag_for_prompt(flag: Mapping[str, Any]) -> dict[str, Any]:
+    """Project one flag without allowing cumulative prose to grow unbounded."""
+
+    projected = {
+        key: flag.get(key)
+        for key in ("id", "category", "severity", "status", "weight")
+        if key in flag
+    }
+    for key in ("concern", "evidence", "revise_summary", "rationale"):
+        if key in flag:
+            projected[key] = _bounded_gate_text(
+                flag.get(key),
+                limit=_GATE_FLAG_TEXT_LIMIT,
+            )
+    return projected
+
+
+def _gate_plan_metadata_for_prompt(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep current-plan semantics, not large execution/debug inventories."""
+
+    return {
+        key: metadata.get(key)
+        for key in (
+            "version",
+            "timestamp",
+            "hash",
+            "changes_summary",
+            "questions",
+            "success_criteria",
+            "assumptions",
+            "delta_from_previous_percent",
+            "north_star_actions_addressed",
+            "structure_warnings",
+        )
+        if key in metadata
+    }
+
+
+def _current_critique_for_gate(
+    plan_dir: Path,
+    state: PlanState,
+) -> dict[str, Any]:
+    """Load only the current critique epoch and its admitted producer evidence."""
+
+    iteration = int(state.get("iteration", 0) or 0)
+    critique_path = Path(current_iteration_artifact(plan_dir, "critique", iteration))
+    critique = read_json(critique_path) if critique_path.is_file() else {}
+    projected = {
+        "artifact": critique_path.name,
+        "checks": critique.get("checks", []),
+        "flags": critique.get("flags", []),
+        "verified_flag_ids": critique.get("verified_flag_ids", []),
+        "disputed_flag_ids": critique.get("disputed_flag_ids", []),
+        "unverifiable_checks": critique.get("unverifiable_checks", []),
+    }
+
+    custody_path = plan_dir / f"critique_custody_v{iteration}.json"
+    custody = read_json(custody_path) if custody_path.is_file() else {}
+    remaining = _GATE_RAW_SOURCE_LIMIT
+    raw_findings: list[dict[str, str]] = []
+    for source in custody.get("raw_sources", []):
+        if remaining <= 0 or not isinstance(source, Mapping):
+            break
+        artifact = str(source.get("artifact") or "")
+        relative = Path(artifact)
+        if (
+            not artifact
+            or relative.name != artifact
+            or not (
+                artifact == f"critique_raw_v{iteration}.txt"
+                or (
+                    artifact.startswith("critique_check_")
+                    and artifact.endswith(f"_producer_v{iteration}.json")
+                )
+            )
+        ):
+            continue
+        path = plan_dir / artifact
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        limit = min(_GATE_RAW_FILE_LIMIT, remaining)
+        content = _bounded_gate_text(raw, limit=limit)
+        remaining -= len(content)
+        raw_findings.append(
+            {
+                "artifact": artifact,
+                "sha256": str(source.get("sha256") or ""),
+                "content": content,
+            }
+        )
+    projected["external_raw_findings"] = raw_findings
+    return projected
+
+
 def _north_star_action_contract_instruction() -> str:
     """Render the gate's action contract from the strict worker schema.
 
@@ -81,11 +195,18 @@ def _iteration_pressure_block(state: PlanState, plan_dir: Path) -> str:
 
 def _gate_signals_for_prompt(gate_signals: Mapping[str, Any]) -> dict[str, Any]:
     projected = dict(gate_signals)
+    # These cumulative flag collections are rendered once below from the
+    # canonical registry. Keeping their older copies here multiplied the gate
+    # prompt on every critique round.
+    projected.pop("unresolved_flags", None)
     signals = gate_signals.get("signals")
     if isinstance(signals, Mapping):
         projected_signals = dict(signals)
         projected_signals.pop("debt_overlaps", None)
         projected_signals.pop("escalated_debt_subsystems", None)
+        projected_signals.pop("unresolved_flags", None)
+        projected_signals.pop("addressed_flags", None)
+        projected_signals.pop("resolved_flags", None)
         # Structural unverifiability is gate evidence. It used to be removed
         # here, which let a critique failure appear clear to the gate model.
         # Operational provider/sandbox cases are already classified separately
@@ -136,14 +257,17 @@ def _gate_prompt(
     )
     project_dir = Path(state["config"]["project_dir"])
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
-    latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
+    latest_meta = _gate_plan_metadata_for_prompt(
+        read_json(latest_plan_meta_path(plan_dir, state))
+    )
     gate_signals = read_json(
         current_iteration_artifact(plan_dir, "gate_signals", state["iteration"])
     )
     flag_registry = load_flag_registry(plan_dir)
     unresolved = unresolved_significant_flags(flag_registry)
     open_flags = [
-        {
+        _gate_flag_for_prompt(
+            {
             "id": flag["id"],
             "concern": flag["concern"],
             "evidence": flag.get("evidence", ""),
@@ -152,9 +276,16 @@ def _gate_prompt(
             "severity": flag.get("severity", "unknown"),
             "status": flag["status"],
             "weight": flag.get("weight"),
-        }
+            }
+        )
         for flag in unresolved
     ]
+    addressed_flags = [
+        _gate_flag_for_prompt(flag)
+        for flag in gate_signals.get("signals", {}).get("addressed_flags", [])
+        if isinstance(flag, Mapping)
+    ]
+    current_critique = _current_critique_for_gate(plan_dir, state)
     robustness = configured_robustness(state)
     # Critique check summary — flagged counts only (unflagged findings are in the
     # artifact JSON for audit but not injected into the gate prompt).
@@ -209,6 +340,9 @@ def _gate_prompt(
         Plan metadata:
         {json_dump(latest_meta).strip()}
 
+        Current critique epoch (canonical current critique plus admitted external raw findings):
+        {json_dump(current_critique).strip()}
+
         Gate signals:
         {json_dump(_gate_signals_for_prompt(gate_signals)).strip()}
 
@@ -218,7 +352,7 @@ def _gate_prompt(
         {json_dump(open_flags).strip()}
 
         Addressed but unverified flags:
-        {json_dump(gate_signals.get("signals", {}).get("addressed_flags", [])).strip()}
+        {json_dump(addressed_flags).strip()}
 
         {_iteration_pressure_block(state, plan_dir)}
         {carried_north_star}

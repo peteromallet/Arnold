@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +88,121 @@ def test_gate_prompt_treats_finalize_feasibility_as_post_gate_evidence(
     assert "not yet regenerated them" in prompt
     assert "Finalizer and execute remain fail-closed" not in prompt
     assert "Finalize and execute remain fail-closed" in prompt
+
+
+def test_gate_prompt_bounds_repeated_history_but_keeps_current_raw_findings(
+    tmp_path: Path,
+) -> None:
+    state = _minimal_state(tmp_path)
+    plan_dir = tmp_path / "plan"
+    old_history = "OLD_REPEATED_ATTEMPT_SHOULD_NOT_REACH_GATE_" * 20_000
+    state["iteration"] = 6
+    state["plan_versions"] = [{"version": 6, "file": "plan_v6.md"}]
+    state["history"] = [
+        {"step": "critique", "result": "success", "raw_attempt": old_history}
+        for _ in range(12)
+    ]
+    (plan_dir / "plan_v6.md").write_text(
+        "# Current plan v6\n\nCURRENT_PLAN_V6_SEMANTICS\n",
+        encoding="utf-8",
+    )
+    _write_json(
+        plan_dir / "plan_v6.meta.json",
+        {
+            "version": 6,
+            "changes_summary": "CURRENT_PLAN_DELTA",
+            "success_criteria": ["CURRENT_SUCCESS_CRITERION"],
+            "test_blast_radius": old_history,
+            "flags_addressed": [old_history],
+        },
+    )
+    _write_json(
+        plan_dir / "critique_v6.json",
+        {
+            "checks": [
+                {
+                    "id": "correctness",
+                    "question": "Is it correct?",
+                    "status": "complete",
+                    "unverifiable_reason": "",
+                    "findings": [
+                        {
+                            "detail": "CURRENT_CANONICAL_FINDING",
+                            "flagged": True,
+                        }
+                    ],
+                }
+            ],
+            "flags": [],
+            "verified_flag_ids": [],
+            "disputed_flag_ids": [],
+            "unverifiable_checks": [],
+        },
+    )
+    producer = "EXTERNAL_RAW_FINDING_FROM_CURRENT_CRITIQUE"
+    (plan_dir / "critique_check_correctness_producer_v6.json").write_text(
+        json.dumps(
+            {
+                "checks": [
+                    {
+                        "id": "correctness",
+                        "findings": [{"detail": producer, "flagged": True}],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_json(
+        plan_dir / "critique_custody_v6.json",
+        {
+            "raw_sources": [
+                {
+                    "artifact": "critique_check_correctness_producer_v6.json",
+                    "sha256": "sha256:" + "a" * 64,
+                }
+            ]
+        },
+    )
+    _write_json(
+        plan_dir / "gate_signals_v6.json",
+        {
+            "signals": {
+                "weighted_score": 4.0,
+                "weighted_history": [1.0, 2.0, 4.0],
+                "unresolved_flags": [{"concern": old_history}],
+                "addressed_flags": [
+                    {
+                        "id": "current-addressed",
+                        "concern": "CURRENT_ADDRESSED_FLAG",
+                        "evidence": "CURRENT_ADDRESSED_EVIDENCE",
+                        "severity": "significant",
+                        "status": "addressed",
+                    }
+                ],
+                "resolved_flags": [{"concern": old_history}],
+                "debt_overlaps": [{"detail": old_history}],
+            },
+            "unresolved_flags": [{"concern": old_history}],
+            "warnings": [],
+        },
+    )
+    (plan_dir / "critique_check_correctness_raw_v1.txt").write_text(
+        old_history,
+        encoding="utf-8",
+    )
+
+    prompt = _gate_prompt(state, plan_dir, root=tmp_path)
+    conservative_tokens = math.ceil(len(prompt.encode("utf-8")) / 3 * 1.25)
+
+    assert "CURRENT_PLAN_V6_SEMANTICS" in prompt
+    assert "CURRENT_SUCCESS_CRITERION" in prompt
+    assert "CURRENT_CANONICAL_FINDING" in prompt
+    assert producer in prompt
+    assert "CURRENT_ADDRESSED_FLAG" in prompt
+    assert "CURRENT_ADDRESSED_EVIDENCE" in prompt
+    assert "OLD_REPEATED_ATTEMPT_SHOULD_NOT_REACH_GATE" not in prompt
+    assert conservative_tokens < 120_000
 
 
 def test_critique_evaluator_prompt_pairs_template_path_with_exact_read_file_call(
