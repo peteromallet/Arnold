@@ -18,6 +18,7 @@ from arnold_pipelines.megaplan.chain.execution_binding import (
     execution_binding_report,
     expected_worker_launch_values,
     find_bound_chain_spec,
+    require_bound_chain_spec,
     rebind_execution_identity,
     rebind_runtime_identity,
     verify_external_runtime_identity,
@@ -865,38 +866,43 @@ def test_worker_expectations_resolve_canonical_spec_and_persisted_runtime(
     assert values["expected_installed_package_path"] == expected_runtime["import_root"]
     assert values["expected_runtime_revision"] == expected_runtime["source_revision"]
     assert values["expected_source_ref"] == expected_runtime["source_revision"]
+    assert values["expected_root"] == expected_runtime["import_root"]
+    assert values["expected_chain_spec"] == str(spec_path.resolve())
 
 
-def test_worker_binding_resolution_rejects_owned_plan_without_binding(
+def test_worker_binding_requirement_rejects_missing_canonical_owner(
     tmp_path: Path,
 ) -> None:
-    spec_path = _pinned_chain(tmp_path)
-    state = ChainState(current_plan_name="owned-plan")
-    save_chain_state(spec_path, state)
-
-    with pytest.raises(CliError, match="no canonical execution binding"):
-        find_bound_chain_spec(tmp_path, plan_name="owned-plan")
+    with pytest.raises(CliError, match="is missing"):
+        require_bound_chain_spec(tmp_path, plan_name="unowned-plan")
 
 
-def test_worker_binding_resolution_rejects_ambiguous_plan_owners(
+def test_worker_binding_requirement_rejects_ambiguous_canonical_owner(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    first = _pinned_chain(tmp_path)
-    first_state = _bound_state(first)
-    first_state.current_plan_name = "owned-plan"
-    save_chain_state(first, first_state)
+    candidates = [
+        tmp_path / ".megaplan" / "initiatives" / name / "chain.yaml"
+        for name in ("one", "two")
+    ]
+    for candidate in candidates:
+        candidate.parent.mkdir(parents=True)
+        candidate.write_text("milestones: []\n", encoding="utf-8")
 
-    second = tmp_path / ".megaplan" / "initiatives" / "second" / "chain.yaml"
-    second.parent.mkdir(parents=True)
-    second.write_text(first.read_text(encoding="utf-8"), encoding="utf-8")
-    second_state = ChainState(
-        current_plan_name="owned-plan",
-        metadata={"execution_binding": first_state.metadata["execution_binding"]},
+    class _State:
+        current_plan_name = "shared-plan"
+        metadata = {"execution_binding": {"schema": "bound"}}
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.spec.load_chain_state",
+        lambda *_args, **_kwargs: _State(),
     )
-    save_chain_state(second, second_state)
 
-    with pytest.raises(CliError, match="ambiguous canonical execution bindings"):
-        find_bound_chain_spec(tmp_path, plan_name="owned-plan")
+    with pytest.raises(CliError, match="is ambiguous") as error:
+        require_bound_chain_spec(tmp_path, plan_name="shared-plan")
+    assert error.value.extra["canonical_runtime_binding"]["candidates"] == [
+        str(path.resolve()) for path in candidates
+    ]
 
 
 def test_worker_expectations_reject_incomplete_bound_runtime(tmp_path: Path) -> None:

@@ -8738,6 +8738,11 @@ PY
 
 scan_once() {
   local scan_lock_fd scan_rc
+  if ! arnold_runtime_attestation_check watchdog; then
+    arnold_supervisor_failure_artifact watchdog "runtime_attestation_stale"
+    log "scan refused: runtime launch attestation is stale"
+    return 78
+  fi
   mkdir -p "$(dirname "$SCAN_LOCK_FILE")"
   if command -v flock >/dev/null 2>&1; then
     exec {scan_lock_fd}>"$SCAN_LOCK_FILE"

@@ -135,6 +135,11 @@ class ResidentRuntime:
         *,
         authorization_decision: AuthorizationDecision | None = None,
     ) -> None:
+        from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+            require_configured_runtime_launch,
+        )
+
+        require_configured_runtime_launch("resident")
         decision = authorization_decision or self.authorizer.authorize_inbound(event.subject)
         if not decision.allowed:
             if decision.audit is not None:

@@ -1391,13 +1391,12 @@ def rebind_runtime_identity(
     }
 
 
-def find_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path | None:
-    """Resolve the one canonical chain spec whose persisted cursor owns a plan."""
+def bound_chain_spec_candidates(root: Path, *, plan_name: str = "") -> list[Path]:
+    """Return every bound canonical chain spec whose cursor owns a plan."""
 
     from arnold_pipelines.megaplan.chain.spec import load_chain_state
 
     matches: list[Path] = []
-    owners_without_binding: list[Path] = []
     for candidate in sorted(
         (root / ".megaplan" / "initiatives").glob("*/chain.yaml")
     ):
@@ -1410,21 +1409,35 @@ def find_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path | None:
         binding = (state.metadata or {}).get("execution_binding")
         if isinstance(binding, Mapping):
             matches.append(candidate)
-        elif not plan_name or str(state.current_plan_name or "") == plan_name:
-            owners_without_binding.append(candidate)
-    if owners_without_binding:
+    return matches
+
+
+def find_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path | None:
+    """Resolve the one canonical chain spec whose persisted cursor owns a plan."""
+
+    matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+    return matches[0] if len(matches) == 1 else None
+
+
+def require_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path:
+    """Fail closed unless exactly one canonical execution binding owns the plan."""
+
+    matches = bound_chain_spec_candidates(root, plan_name=plan_name)
+    if len(matches) != 1:
+        status = "missing" if not matches else "ambiguous"
         raise CliError(
-            RUNTIME_DRIFT_ERROR,
-            "chain-owned plan has no canonical execution binding: "
-            + ", ".join(str(path) for path in owners_without_binding),
+            "worker_launch_preflight_mismatch",
+            f"Canonical worker runtime binding is {status} for plan "
+            f"{plan_name or '<unspecified>'}: {len(matches)} candidates.",
+            extra={
+                "canonical_runtime_binding": {
+                    "status": status,
+                    "plan_name": plan_name,
+                    "candidates": [str(path.resolve(strict=False)) for path in matches],
+                }
+            },
         )
-    if len(matches) > 1:
-        raise CliError(
-            RUNTIME_DRIFT_ERROR,
-            "chain-owned plan has ambiguous canonical execution bindings: "
-            + ", ".join(str(path) for path in matches),
-        )
-    return matches[0] if matches else None
+    return matches[0]
 
 
 def expected_worker_launch_values(
@@ -1446,8 +1459,11 @@ def expected_worker_launch_values(
         "expected_source_ref": "",
         "expected_installed_package_path": "",
         "expected_runtime_revision": "",
+        "expected_root": "",
+        "expected_runtime_vector_sha256": "",
         "expected_model": None,
         "expected_spec": "",
+        "expected_chain_spec": "",
     }
     if spec_path is None or root is None:
         return empty
@@ -1470,8 +1486,11 @@ def expected_worker_launch_values(
         "expected_source_ref": str(runtime.get("source_revision") or ""),
         "expected_installed_package_path": str(runtime.get("import_root") or ""),
         "expected_runtime_revision": str(runtime.get("source_revision") or ""),
+        "expected_root": str(runtime.get("import_root") or ""),
+        "expected_runtime_vector_sha256": "",
         "expected_model": None,
         "expected_spec": "",
+        "expected_chain_spec": str(spec_path.resolve(strict=False)),
     }
     missing = [
         field
