@@ -296,6 +296,96 @@ def test_reducer_reassigns_duplicate_worker_local_ids_deterministically() -> Non
     ]
 
 
+def test_reducer_preserves_ambiguous_canonical_reference_for_registry_validation() -> None:
+    prior_id = "CF-E2E56F8ACC6B03976EA9"
+    payload = {
+        "checks": [
+            {
+                "id": "correctness",
+                "question": "Is it correct?",
+                "findings": [
+                    {"detail": "Current correctness evidence.", "flagged": True}
+                ],
+            },
+            {
+                "id": "scope",
+                "question": "Is it bounded?",
+                "findings": [{"detail": "Current scope evidence.", "flagged": True}],
+            },
+        ],
+        "flags": [
+            {
+                "id": prior_id,
+                "concern": "Current correctness concern.",
+                "category": "correctness",
+                "severity_hint": "likely-significant",
+                "evidence": "Current correctness evidence.",
+                "source_check_id": "correctness",
+            },
+            {
+                "id": prior_id,
+                "concern": "Current scope concern.",
+                "category": "completeness",
+                "severity_hint": "likely-significant",
+                "evidence": "Current scope evidence.",
+                "source_check_id": "scope",
+            },
+        ],
+        "verified_flag_ids": [prior_id],
+        "disputed_flag_ids": [],
+    }
+
+    prepare_critique_payload(payload, expected_check_ids=["correctness", "scope"])
+
+    assert payload["verified_flag_ids"] == [prior_id]
+    assert {flag["producer_flag_id"] for flag in payload["flags"]} == {prior_id}
+    assert prior_id not in {flag["id"] for flag in payload["flags"]}
+
+
+def test_reducer_rejects_ambiguous_opaque_reference() -> None:
+    payload = {
+        "checks": [
+            {
+                "id": "correctness",
+                "question": "Is it correct?",
+                "findings": [
+                    {"detail": "Current correctness evidence.", "flagged": True}
+                ],
+            },
+            {
+                "id": "scope",
+                "question": "Is it bounded?",
+                "findings": [{"detail": "Current scope evidence.", "flagged": True}],
+            },
+        ],
+        "flags": [
+            {
+                "id": "FLAG-001",
+                "concern": "Current correctness concern.",
+                "category": "correctness",
+                "severity_hint": "likely-significant",
+                "evidence": "Current correctness evidence.",
+                "source_check_id": "correctness",
+            },
+            {
+                "id": "FLAG-001",
+                "concern": "Current scope concern.",
+                "category": "completeness",
+                "severity_hint": "likely-significant",
+                "evidence": "Current scope evidence.",
+                "source_check_id": "scope",
+            },
+        ],
+        "verified_flag_ids": ["FLAG-001"],
+        "disputed_flag_ids": [],
+    }
+
+    with pytest.raises(
+        CritiqueCustodyError, match="critique_finding_reference_ambiguous"
+    ):
+        prepare_critique_payload(payload, expected_check_ids=["correctness", "scope"])
+
+
 def test_reducer_reassigns_unique_local_id_reused_for_different_findings() -> None:
     def payload(detail: str) -> dict[str, Any]:
         return {
