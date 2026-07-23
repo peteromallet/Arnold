@@ -7685,6 +7685,16 @@ def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
             f"expected={str(expected.get('bundle_sha256') or 'missing')[:12]} "
             f"active={str(active.get('bundle_sha256') or 'missing')[:12]}\n"
         )
+        runtime_binding = binding.get("runtime_binding")
+        if isinstance(runtime_binding, dict) and runtime_binding.get("required"):
+            runtime_expected = runtime_binding.get("expected") or {}
+            runtime_active = runtime_binding.get("active") or {}
+            writer(
+                "Runtime binding: "
+                f"{runtime_binding.get('status')} "
+                f"expected={str(runtime_expected.get('content_sha256') or 'missing')[:12]} "
+                f"active={str(runtime_active.get('content_sha256') or 'missing')[:12]}\n"
+            )
     # Sync section (branch/PR sync state)
     sync = summary.get("sync") or {}
     if any(v is not None for v in sync.values()) or sync.get("dirty_flag"):
@@ -7833,6 +7843,24 @@ def build_chain_parser(subparsers: Any) -> None:
     rebind_parser.add_argument("--expected-next-milestone", required=True)
     rebind_parser.add_argument("--reason", required=True)
     rebind_parser.add_argument("--actor", default="operator")
+
+    runtime_rebind_parser = chain_sub.add_parser(
+        "runtime-rebind",
+        help="Guardedly cut over or roll back the bound runtime without changing the chain spec binding",
+    )
+    runtime_rebind_parser.add_argument("--spec", required=True)
+    runtime_rebind_parser.add_argument("--project-dir", required=False)
+    runtime_rebind_parser.add_argument("--from-runtime-sha256", required=True)
+    runtime_rebind_parser.add_argument("--to-runtime-sha256", required=True)
+    runtime_rebind_parser.add_argument("--expected-current-milestone", required=True)
+    runtime_rebind_parser.add_argument(
+        "--expected-current-plan",
+        required=True,
+        help="Exact current plan name, or @none when the cursor has no plan yet.",
+    )
+    runtime_rebind_parser.add_argument("--direction", choices=("cutover", "rollback"), default="cutover")
+    runtime_rebind_parser.add_argument("--reason", required=True)
+    runtime_rebind_parser.add_argument("--actor", default="operator")
 
     pause_parser = chain_sub.add_parser(
         "pause", help="Durably pause a chain and disable automatic recovery"
@@ -8113,6 +8141,52 @@ def run_chain_cli(
                     "success": True,
                     "spec": str(spec_path),
                     "action": "rebind",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "runtime-rebind":
+        try:
+            chain_state = chain_spec.load_chain_state(
+                spec_path,
+                verify_execution_binding=False,
+            )
+            before = chain_state.to_dict()
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                rebind_runtime_identity,
+            )
+
+            result = rebind_runtime_identity(
+                spec_path,
+                chain_state,
+                expected_previous_runtime_sha256=args.from_runtime_sha256,
+                expected_active_runtime_sha256=args.to_runtime_sha256,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                direction=args.direction,
+                reason=args.reason,
+                actor=args.actor,
+            )
+            after = chain_state.to_dict()
+            for field in before:
+                if field != "metadata" and before[field] != after[field]:
+                    raise CliError(
+                        "chain_runtime_binding_drift",
+                        f"chain runtime rebind refused: operational field {field!r} changed",
+                    )
+            chain_spec.save_chain_state(spec_path, chain_state)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "runtime-rebind",
                     **result,
                 },
                 indent=2,

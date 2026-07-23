@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import subprocess
 import time
@@ -25,7 +24,10 @@ from arnold_pipelines.megaplan.types import CliError
 
 BINDING_SCHEMA = "arnold.megaplan.chain_execution_binding.v1"
 REBIND_SCHEMA = "arnold.megaplan.chain_execution_rebind.v1"
+RUNTIME_BINDING_SCHEMA = "arnold.megaplan.chain_runtime_binding.v1"
+RUNTIME_REBIND_SCHEMA = "arnold.megaplan.chain_runtime_rebind.v1"
 DRIFT_ERROR = "chain_execution_binding_drift"
+RUNTIME_DRIFT_ERROR = "chain_runtime_binding_drift"
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 _FULL_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -309,7 +311,11 @@ def active_execution_identity(spec_path: Path) -> dict[str, Any]:
         "source_revision": str(runtime.get("source_revision") or ""),
         "editable_root": editable_root_text,
         "editable_revision": _git_revision(editable_root),
+        "direct_url": runtime.get("direct_url") or {},
+        "pth": runtime.get("pth") or [],
+        "imports": runtime.get("imports") or {},
     }
+    runtime_identity["content_sha256"] = _runtime_identity_sha256(runtime_identity)
     revision_verification = _revision_verification(
         policy=policy,
         raw=raw,
@@ -323,6 +329,10 @@ def active_execution_identity(spec_path: Path) -> dict[str, Any]:
     if not runtime_identity["source_revision"]:
         errors.append("runtime_revision_missing")
     if policy["require_editable_runtime_match"]:
+        errors.extend(
+            f"runtime_provenance:{error}"
+            for error in runtime.get("errors") or []
+        )
         if not editable_root_text:
             errors.append("editable_runtime_missing")
         elif Path(runtime_identity["import_root"]).resolve(strict=False) != editable_root.resolve(
@@ -341,6 +351,37 @@ def active_execution_identity(spec_path: Path) -> dict[str, Any]:
         "ready": not errors,
         "errors": errors,
     }
+
+
+def _runtime_identity_core(identity: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: identity.get(key)
+        for key in (
+            "import_root",
+            "source_revision",
+            "editable_root",
+            "editable_revision",
+            "direct_url",
+            "pth",
+            "imports",
+        )
+    }
+
+
+def _runtime_identity_sha256(identity: Mapping[str, Any]) -> str:
+    return _sha256_bytes(
+        json.dumps(
+            _runtime_identity_core(identity),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+
+
+def _normalized_runtime_identity(identity: Mapping[str, Any]) -> dict[str, Any]:
+    value = _runtime_identity_core(identity)
+    value["content_sha256"] = _runtime_identity_sha256(value)
+    return value
 
 
 def _state_has_progress(state: Any) -> bool:
@@ -537,7 +578,7 @@ def execution_binding_report(spec_path: Path, state: Any) -> dict[str, Any]:
             status = "reconcile_required"
         else:
             status = "drift" if drift_fields or not active_ready else "match"
-    return {
+    result = {
         "schema": BINDING_SCHEMA,
         "required": policy["required"],
         "status": status,
@@ -546,6 +587,69 @@ def execution_binding_report(spec_path: Path, state: Any) -> dict[str, Any]:
         "changed_asset_kinds": changed_asset_kinds if expected is not None else [],
         "expected": dict(expected) if expected is not None else None,
         "active": active,
+    }
+    result["runtime_binding"] = runtime_binding_report(
+        spec_path,
+        state,
+        active_identity=active,
+    )
+    return result
+
+
+def runtime_binding_report(
+    spec_path: Path,
+    state: Any,
+    *,
+    active_identity: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Compare the mutable runtime tip without changing the spec/asset binding."""
+
+    policy = binding_policy(spec_path)
+    required = bool(policy["required"] and policy["require_editable_runtime_match"])
+    binding = getattr(state, "metadata", {}).get("execution_binding")
+    binding = binding if isinstance(binding, Mapping) else {}
+    runtime_binding = binding.get("runtime_binding")
+    runtime_binding = runtime_binding if isinstance(runtime_binding, Mapping) else {}
+    expected = runtime_binding.get("current_identity")
+    legacy = False
+    if not isinstance(expected, Mapping):
+        launched = binding.get("launched_identity")
+        launched = launched if isinstance(launched, Mapping) else {}
+        expected = launched.get("runtime")
+        legacy = isinstance(expected, Mapping)
+    active_execution = (
+        active_identity
+        if isinstance(active_identity, Mapping)
+        else active_execution_identity(spec_path)
+    )
+    active_runtime = active_execution.get("runtime")
+    active_runtime = active_runtime if isinstance(active_runtime, Mapping) else {}
+    active = _normalized_runtime_identity(active_runtime) if active_runtime else None
+    normalized_expected = (
+        _normalized_runtime_identity(expected)
+        if isinstance(expected, Mapping)
+        else None
+    )
+    if not required:
+        status = "not_required"
+    elif normalized_expected is None:
+        status = "missing"
+    elif active is None:
+        status = "drift"
+    elif normalized_expected["content_sha256"] != active["content_sha256"]:
+        status = "drift"
+    elif not bool(active_execution.get("ready")):
+        status = "invalid"
+    else:
+        status = "match"
+    return {
+        "schema": RUNTIME_BINDING_SCHEMA,
+        "required": required,
+        "status": status,
+        "legacy_expected": legacy,
+        "expected": normalized_expected,
+        "active": active,
+        "active_errors": list(active_execution.get("errors") or []),
     }
 
 
@@ -569,6 +673,17 @@ def assert_execution_binding(
             f"{report['status']}; drift_fields={report['drift_fields']}; "
             f"active_errors={active.get('errors')}. Explicit operator-authorized "
             "content-addressed rebind is required.",
+        )
+    runtime_report = report["runtime_binding"]
+    if runtime_report["required"] and runtime_report["status"] != "match":
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            f"{operation} refused: runtime binding is "
+            f"{runtime_report['status']}; expected="
+            f"{str((runtime_report.get('expected') or {}).get('content_sha256') or '')[:12]}; "
+            f"active={str((runtime_report.get('active') or {}).get('content_sha256') or '')[:12]}; "
+            f"active_errors={runtime_report.get('active_errors')}. Explicit "
+            "operator-authorized content-addressed runtime rebind is required.",
         )
     return report
 
@@ -597,6 +712,12 @@ def bind_execution_identity(spec_path: Path, state: Any) -> dict[str, Any]:
         "schema": BINDING_SCHEMA,
         "bound_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "launched_identity": active,
+        "runtime_binding": {
+            "schema": RUNTIME_BINDING_SCHEMA,
+            "bound_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "current_identity": _normalized_runtime_identity(active["runtime"]),
+            "rebind_events": [],
+        },
     }
     state.metadata = metadata
     return execution_binding_report(spec_path, state)
@@ -822,12 +943,138 @@ def rebind_execution_identity(
     return {"event": event, "execution_binding": rebound_report}
 
 
+def rebind_runtime_identity(
+    spec_path: Path,
+    state: Any,
+    *,
+    expected_previous_runtime_sha256: str,
+    expected_active_runtime_sha256: str,
+    expected_current_milestone: str,
+    expected_current_plan: str,
+    reason: str,
+    actor: str = "operator",
+    direction: str = "cutover",
+) -> dict[str, Any]:
+    """Adopt or roll back an exact runtime without rewriting the spec binding."""
+
+    if direction not in {"cutover", "rollback"}:
+        raise CliError(RUNTIME_DRIFT_ERROR, "runtime rebind direction must be cutover or rollback")
+    if not _FULL_SHA256.fullmatch(expected_previous_runtime_sha256):
+        raise CliError(RUNTIME_DRIFT_ERROR, "previous runtime SHA-256 is invalid")
+    if not _FULL_SHA256.fullmatch(expected_active_runtime_sha256):
+        raise CliError(RUNTIME_DRIFT_ERROR, "active runtime SHA-256 is invalid")
+    if not all(
+        str(value or "").strip()
+        for value in (expected_current_milestone, expected_current_plan, reason, actor)
+    ):
+        raise CliError(RUNTIME_DRIFT_ERROR, "every runtime rebind guard is required")
+
+    spec_report = execution_binding_report(spec_path, state)
+    if spec_report.get("status") not in {"match", "reconcile_required"}:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused while the immutable spec binding is not accepted",
+        )
+    report = spec_report["runtime_binding"]
+    if not report.get("required"):
+        raise CliError(RUNTIME_DRIFT_ERROR, "runtime rebind is not required by this chain")
+    if report.get("status") != "drift":
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            f"runtime rebind refused: status is {report.get('status')!r}, not drift",
+        )
+    previous = report.get("expected") or {}
+    active = report.get("active") or {}
+    if previous.get("content_sha256") != expected_previous_runtime_sha256:
+        raise CliError(RUNTIME_DRIFT_ERROR, "previous runtime SHA-256 does not match")
+    if active.get("content_sha256") != expected_active_runtime_sha256:
+        raise CliError(RUNTIME_DRIFT_ERROR, "active runtime SHA-256 does not match")
+    if report.get("active_errors"):
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "active runtime is not launch-ready: "
+            + ", ".join(str(item) for item in report["active_errors"]),
+        )
+
+    labels = _identity_labels(spec_report.get("expected") or {})
+    current_index = int(getattr(state, "current_milestone_index", -1))
+    if current_index < 0 or current_index >= len(labels):
+        raise CliError(RUNTIME_DRIFT_ERROR, "current milestone index is outside the bound sequence")
+    if labels[current_index] != expected_current_milestone:
+        raise CliError(RUNTIME_DRIFT_ERROR, "current milestone does not match the guard")
+    guarded_plan = "" if expected_current_plan == "@none" else expected_current_plan
+    if str(getattr(state, "current_plan_name", "") or "") != guarded_plan:
+        raise CliError(RUNTIME_DRIFT_ERROR, "current plan does not match the guard")
+
+    rebound_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    event_core = {
+        "schema": RUNTIME_REBIND_SCHEMA,
+        "rebound_at": rebound_at,
+        "actor": actor,
+        "reason": reason,
+        "direction": direction,
+        "from_runtime_sha256": expected_previous_runtime_sha256,
+        "to_runtime_sha256": expected_active_runtime_sha256,
+        "current_milestone_index": current_index,
+        "current_milestone": expected_current_milestone,
+        "current_plan": guarded_plan,
+    }
+    event = {
+        **event_core,
+        "content_sha256": _sha256_bytes(
+            json.dumps(event_core, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ),
+    }
+    metadata = dict(getattr(state, "metadata", {}) or {})
+    binding = dict(metadata.get("execution_binding") or {})
+    runtime_binding = dict(binding.get("runtime_binding") or {})
+    events = runtime_binding.get("rebind_events")
+    events = list(events) if isinstance(events, list) else []
+    events.append(event)
+    runtime_binding.update(
+        {
+            "schema": RUNTIME_BINDING_SCHEMA,
+            "current_identity": dict(active),
+            "last_rebound_at": rebound_at,
+            "rebind_events": events,
+        }
+    )
+    binding["runtime_binding"] = runtime_binding
+    metadata["execution_binding"] = binding
+    state.metadata = metadata
+    rebound = execution_binding_report(spec_path, state)
+    if rebound["runtime_binding"]["status"] != "match":
+        raise CliError(RUNTIME_DRIFT_ERROR, "rebound runtime did not verify as an exact match")
+    return {"event": event, "runtime_binding": rebound["runtime_binding"]}
+
+
+def find_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path | None:
+    """Resolve the one canonical chain spec whose persisted cursor owns a plan."""
+
+    from arnold_pipelines.megaplan.chain.spec import load_chain_state
+
+    matches: list[Path] = []
+    for candidate in sorted(
+        (root / ".megaplan" / "initiatives").glob("*/chain.yaml")
+    ):
+        try:
+            state = load_chain_state(candidate, verify_execution_binding=False)
+        except (CliError, OSError, ValueError):
+            continue
+        if plan_name and str(state.current_plan_name or "") != plan_name:
+            continue
+        binding = (state.metadata or {}).get("execution_binding")
+        if isinstance(binding, Mapping):
+            matches.append(candidate)
+    return matches[0] if len(matches) == 1 else None
+
+
 def expected_worker_launch_values(
     spec_path: Path | None = None,
     *,
     root: Path | None = None,
 ) -> dict[str, Any]:
-    """Extract expected worker launch parameters from the active execution identity.
+    """Extract expected worker launch parameters from the persisted binding.
 
     Returns a dict with *expected_source_ref*, *expected_installed_package_path*,
     and *expected_runtime_revision* when a bound chain execution identity exists.
@@ -847,14 +1094,19 @@ def expected_worker_launch_values(
     if spec_path is None or root is None:
         return empty
     try:
-        identity = active_execution_identity(spec_path)
-    except Exception:
+        from arnold_pipelines.megaplan.chain.spec import load_chain_state
+
+        state = load_chain_state(spec_path, verify_execution_binding=False)
+        binding = (state.metadata or {}).get("execution_binding") or {}
+        identity = binding.get("launched_identity") or {}
+        runtime_binding = binding.get("runtime_binding") or {}
+        runtime = runtime_binding.get("current_identity") or identity.get("runtime")
+    except (CliError, OSError, ValueError):
         return empty
-    runtime = identity.get("runtime")
-    if not isinstance(runtime, dict):
+    if not isinstance(identity, Mapping) or not isinstance(runtime, Mapping):
         return empty
     return {
-        "expected_source_ref": str(identity.get("intended_initiative_revision") or ""),
+        "expected_source_ref": str(runtime.get("source_revision") or ""),
         "expected_installed_package_path": str(runtime.get("import_root") or ""),
         "expected_runtime_revision": str(runtime.get("source_revision") or ""),
         "expected_model": None,

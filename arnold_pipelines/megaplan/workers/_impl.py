@@ -4728,37 +4728,24 @@ def run_step_with_worker(
     # before any agent dispatch loop.  Records the actual runtime values and, when
     # a chain execution binding is available, verifies them against the bound
     # identity.  A mismatch raises CliError and blocks the worker.
-    _source_ref = ""
-    try:
-        _git_result = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "HEAD"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        _source_ref = _git_result.stdout.strip() if _git_result.returncode == 0 else ""
-    except Exception:
-        pass
     from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance as _rp
 
     _runtime = _rp()
+    _source_ref = str(_runtime.get("source_revision") or "")
     _configured_spec = format_selected_spec(agent, model, effort) or agent
     # Attempt to locate a chain spec for expected-value comparison.
     _expected: dict[str, Any] = {}
-    try:
-        _chain_spec_glob = sorted(
-            (root / ".megaplan" / "plans" / ".chains").glob("*.json")
-        )
-        if _chain_spec_glob:
-            from arnold_pipelines.megaplan.chain.execution_binding import (
-                expected_worker_launch_values,
-            )
+    from arnold_pipelines.megaplan.chain.execution_binding import (
+        expected_worker_launch_values,
+        find_bound_chain_spec,
+    )
 
-            _expected = expected_worker_launch_values(
-                spec_path=_chain_spec_glob[0], root=root
-            )
-    except Exception:
-        pass
+    _bound_chain_spec = find_bound_chain_spec(root, plan_name=plan_dir.name)
+    if _bound_chain_spec is not None:
+        _expected = expected_worker_launch_values(
+            spec_path=_bound_chain_spec,
+            root=root,
+        )
     from arnold_pipelines.megaplan.chain.source_admission import (
         worker_launch_preflight as _wlp,
     )
