@@ -2010,6 +2010,10 @@ def _external_guard_applicability(
         elif item.get("kind") == "plan_state":
             current = observed.get("current")
             current = current if isinstance(current, Mapping) else {}
+            active_worker = observed.get("active_worker")
+            active_worker = (
+                active_worker if isinstance(active_worker, Mapping) else {}
+            )
             chain_state = str(
                 observed.get("chain_last_state")
                 or observed.get("last_state")
@@ -2028,6 +2032,7 @@ def _external_guard_applicability(
                 or metadata.get("failure_step")
                 or observed.get("current_phase")
                 or observed.get("target_stage")
+                or active_worker.get("phase")
                 or ""
             ).strip().lower()
     pr_states = {"awaiting_pr_merge", "pr_pending", "ci_pending", "ci_failed"}

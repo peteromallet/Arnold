@@ -1199,10 +1199,27 @@ def test_external_guard_applicability_follows_current_workflow_phase() -> None:
             }
         ]
     )
+    dead_review_worker = repair_investigation._external_guard_applicability(
+        [
+            {
+                "kind": "plan_state",
+                "observed": {
+                    "chain_last_state": "finalized",
+                    "active_worker": {
+                        "phase": "review",
+                        "worker_pid_live": False,
+                    },
+                    "latest_failure": {},
+                },
+            }
+        ]
+    )
     unknown_stage = repair_investigation._external_guard_applicability([])
 
     assert blocked_gate["applies"] is False
     assert awaiting_pr["applies"] is True
+    assert dead_review_worker["applies"] is False
+    assert dead_review_worker["failure_phase"] == "review"
     assert unknown_stage["applies"] is True
 
 
