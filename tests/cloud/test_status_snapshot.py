@@ -956,6 +956,68 @@ def test_newer_incomplete_done_chain_state_beats_watchdog_complete_verdict(fx):
     assert "chain custody mismatch" in entry["operator_next"]
 
 
+def test_newer_done_milestone_with_live_successor_is_running(fx):
+    workspace = fx.root / "epic-run"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: m1.md\n"
+        "  - label: m2\n"
+        "    idea: m2.md\n",
+        encoding="utf-8",
+    )
+    fx.add_session("epic-run", workspace=str(workspace), remote_spec=str(spec_path))
+    fx.add_chain_health(
+        "epic-run",
+        chain_complete=False,
+        completed_count=0,
+        milestone_count=2,
+        current_plan_name="old-plan",
+        last_state="failed",
+        updated_at=NOW - timedelta(hours=6),
+    )
+    fx.add_watchdog_report(
+        items=[
+            {
+                "session": "epic-run",
+                "status": "complete",
+                "action": "observe",
+                "message": "stale chain complete",
+            }
+        ]
+    )
+    fx.add_plan_state("epic-run", "m2-plan", current_state="initialized")
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    chain_state_path = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+    chain_state_path.parent.mkdir(parents=True, exist_ok=True)
+    chain_state_path.write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 1,
+                "current_plan_name": "m2-plan",
+                "last_state": "done",
+                "completed": [{"label": "m1", "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snap = fx.build(
+        watchdog_report_path=fx.root / "watchdog-report.json",
+        liveness_probe=lambda _marker: {"tmux": True, "process": True},
+    )
+    entry = _by_session(snap, "epic-run")
+
+    assert entry["status"] == "running"
+    assert entry["chain_complete"] is False
+    assert entry["completed_count"] == 1
+    assert entry["current_plan"] == "m2-plan"
+    assert "custody mismatch" not in entry["operator_next"]
+
+
 def test_newer_four_of_four_chain_state_unlocks_complete_status(fx):
     workspace = fx.root / "epic-run"
     spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"

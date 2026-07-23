@@ -53,6 +53,77 @@ def test_discovers_running_and_repairing_sessions_and_only_live_managed_agents()
     assert [row["run_id"] for row in discover_live_managed_agents(managed)] == ["live"]
 
 
+def test_discord_resident_service_marker_cannot_manufacture_running_epic() -> None:
+    status_node = {
+        "generated_at": "2026-07-22T19:14:44Z",
+        "sessions": [
+            {
+                "session": "megaplan-resident-discord",
+                "status": "running",
+                "process": True,
+                "tmux": True,
+                "latest_activity": "2026-07-22T19:14:43Z",
+                "current_plan": "m9-rebuildable-projections-20260722-0431",
+                "progress": {
+                    "percent": 0,
+                    "current_plan": "m9-rebuildable-projections-20260722-0431",
+                },
+            }
+        ],
+    }
+    report = CurrentlyRunningReport(
+        status_node=status_node,
+        managed_agents={
+            "running": [
+                {
+                    "run_id": "subagent-m9-owner",
+                    "description": "Restore truthful Custody M9 progress",
+                    "status": "running",
+                    "live": True,
+                }
+            ]
+        },
+    )
+
+    assert discover_running_sessions(status_node) == []
+    rendered = render_currently_running(report)
+    assert "## ⛓️ Epics & chains · 0 active" in rendered
+    assert "megaplan-resident-discord" not in rendered
+    assert "Restore truthful Custody M9 progress" in rendered
+
+
+def test_running_runner_with_blocked_display_state_is_needs_attention() -> None:
+    blocked = {
+        "session": "blocked-with-live-runner",
+        "status": "running",
+        "process": True,
+        "latest_activity": "2026-07-14T12:00:00Z",
+        "progress": {
+            "display_state": "blocked",
+            "plan_state": "executing",
+            "percent": 61,
+        },
+    }
+    status_node = {
+        "generated_at": "2026-07-14T13:00:00Z",
+        "sessions": [blocked],
+    }
+
+    assert discover_running_sessions(status_node) == []
+    assert discover_attention_sessions(status_node) == [blocked]
+
+    rendered = render_currently_running(
+        CurrentlyRunningReport(status_node=status_node, managed_agents={"running": []})
+    )
+
+    assert "## ⛓️ Epics & chains · 0 active" in rendered
+    assert "### 🟢 Running" not in rendered.split("## 🤖 Managed agents", 1)[0]
+    assert "### ⚠️ Needs attention · 1" in rendered
+    assert "`blocked-with-live-runner`" in rendered
+    assert "`blocked` · 61% overall · runner process alive" in rendered
+    assert "`executing`" not in rendered
+
+
 def test_managed_agents_render_running_and_completed_sections_with_hour_boundary() -> None:
     snapshot = datetime(2026, 7, 14, 13, tzinfo=UTC)
     report = CurrentlyRunningReport(
@@ -637,16 +708,20 @@ def test_active_execute_phase_is_executing_when_display_state_is_absent() -> Non
     assert "`executing` · overall progress unavailable" in rendered
 
 
-def test_plan_state_is_used_only_when_display_state_and_execute_are_absent() -> None:
+def test_blocked_plan_state_is_used_during_execute_and_grouped_as_attention() -> None:
     rendered = render_currently_running(
         CurrentlyRunningReport(
             status_node={
+                "generated_at": "2026-07-14T13:00:00Z",
                 "sessions": [
                     {
                         "session": "blocked-plan",
                         "status": "running",
                         "latest_activity": "2026-07-14T12:00:00Z",
-                        "progress": {"plan_state": "blocked"},
+                        "progress": {
+                            "active_phase": {"phase": "execute"},
+                            "plan_state": "blocked",
+                        },
                     }
                 ]
             },
@@ -655,7 +730,9 @@ def test_plan_state_is_used_only_when_display_state_and_execute_are_absent() -> 
     )
 
     assert "`blocked-plan`" in rendered
-    assert "`blocked` · overall progress unavailable · chain running" in rendered
+    assert "## ⛓️ Epics & chains · 0 active" in rendered
+    assert "### ⚠️ Needs attention · 1" in rendered
+    assert "`blocked` · overall progress unavailable · runner running" in rendered
 
 
 def test_render_uses_epics_parent_and_nonempty_h3_status_subsections() -> None:
@@ -1002,28 +1079,17 @@ def test_degraded_status_is_labeled_without_hiding_available_canonical_items() -
     assert "`degraded-epic`\n  `planned` · 12% overall" in rendered
 
 
-def test_collection_uses_typed_bounded_status_tool_and_managed_agent_inventory(
+def test_collection_uses_fresh_status_root_and_managed_agent_inventory(
     monkeypatch, tmp_path
 ) -> None:
-    calls: list[object] = []
+    calls: list[str] = []
 
-    class InputModel:
-        def __init__(self, **values):
-            self.__dict__.update(values)
+    def collect_fresh_root():
+        calls.append("fresh")
+        return {"node_id": "root", "sessions": []}
 
-    def status_handler(payload):
-        calls.append(payload)
-        return SimpleNamespace(
-            ok=True,
-            data={"node": {"node_id": "root", "sessions": []}},
-        )
-
-    registration = SimpleNamespace(input_model=InputModel, handler=status_handler)
-    registry = SimpleNamespace(
-        get=lambda name: registration if name == "read_cloud_status_node" else None
-    )
     runtime = SimpleNamespace(
-        profile=SimpleNamespace(tools=lambda: registry),
+        profile=SimpleNamespace(collect_fresh_cloud_status_root=collect_fresh_root),
         project_root=tmp_path,
     )
     monkeypatch.setattr(
@@ -1039,9 +1105,64 @@ def test_collection_uses_typed_bounded_status_tool_and_managed_agent_inventory(
 
     assert report.status_node == {"node_id": "root", "sessions": []}
     assert report.managed_agents["project_root_seen"] == str(tmp_path)
-    assert len(calls) == 1
-    assert calls[0].node_id == "root"
-    assert calls[0].limit == 25
+    assert calls == ["fresh"]
+
+
+def test_collect_currently_running_rebuilds_fresh_status_each_time(monkeypatch) -> None:
+    collections: list[int] = []
+
+    def collect_fresh_root():
+        collections.append(len(collections) + 1)
+        return {"generated_at": f"fresh-{collections[-1]}", "sessions": []}
+
+    monkeypatch.setattr(
+        module,
+        "list_managed_resident_agents",
+        lambda **_kwargs: {"running": []},
+    )
+    runtime = SimpleNamespace(
+        profile=SimpleNamespace(collect_fresh_cloud_status_root=collect_fresh_root),
+        project_root=".",
+    )
+
+    first = asyncio.run(collect_currently_running(runtime))
+    second = asyncio.run(collect_currently_running(runtime))
+
+    assert collections == [1, 2]
+    assert first.status_node["generated_at"] == "fresh-1"
+    assert second.status_node["generated_at"] == "fresh-2"
+
+
+def test_fresh_root_does_not_read_or_write_the_cached_snapshot(monkeypatch) -> None:
+    from arnold_pipelines.megaplan.cloud import status_snapshot
+    from arnold_pipelines.megaplan.resident.profile import MegaplanResidentProfile
+
+    builds: list[int] = []
+
+    def build_snapshot():
+        builds.append(len(builds) + 1)
+        return {"generated_at": f"fresh-{builds[-1]}", "sessions": []}
+
+    monkeypatch.setattr(status_snapshot, "has_local_markers", lambda: True)
+    monkeypatch.setattr(status_snapshot, "build_cloud_status_snapshot", build_snapshot)
+    monkeypatch.setattr(
+        status_snapshot,
+        "load_cloud_status_snapshot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("cache read")),
+    )
+    monkeypatch.setattr(
+        status_snapshot,
+        "write_cloud_status_snapshot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("cache write")),
+    )
+
+    profile = MegaplanResidentProfile()
+    first = profile.collect_fresh_cloud_status_root()
+    second = profile.collect_fresh_cloud_status_root()
+
+    assert builds == [1, 2]
+    assert first["generated_at"] == "fresh-1"
+    assert second["generated_at"] == "fresh-2"
 
 
 def test_collection_replaces_opaque_agent_label_from_exact_inbound_source(
@@ -1137,17 +1258,31 @@ def test_currently_running_command_is_registered_with_discord_tree() -> None:
         async def handle_dropped_threads_interaction(self, _interaction, *, lookback=None):
             return None
 
+        async def handle_follow_up_interaction(self, _interaction, *, agent, message):
+            return None
+
     tree = FakeTree()
 
     registered = register_discord_application_commands(tree, Service())
 
-    assert registered == ("whats-cooking", "restart-resident", "dropped-threads")
-    assert set(tree.commands) == {"whats-cooking", "restart-resident", "dropped-threads"}
+    assert registered == (
+        "whats-cooking",
+        "restart-resident",
+        "dropped-threads",
+        "follow-up",
+    )
+    assert set(tree.commands) == {
+        "whats-cooking",
+        "restart-resident",
+        "dropped-threads",
+        "follow-up",
+    }
     assert tree.commands["whats-cooking"][0].startswith("Show running Megaplan")
     assert [command.name for command in DISCORD_APPLICATION_COMMANDS] == [
         "whats-cooking",
         "restart-resident",
         "dropped-threads",
+        "follow-up",
     ]
 
 
@@ -1319,15 +1454,16 @@ def test_long_lists_include_every_live_agent_and_chunk_safely() -> None:
     assert all(0 < len(chunk) <= DISCORD_MESSAGE_LIMIT for chunk in chunks)
 
 
-def test_snapshot_time_is_displayed_in_utc_with_date_time_and_offset() -> None:
+def test_snapshot_time_is_displayed_in_requested_timezone_with_date_time_and_offset() -> None:
     rendered = render_currently_running(
         CurrentlyRunningReport(
             status_node={"generated_at": "2026-07-14T16:30:45Z", "sessions": []},
             managed_agents={"running": []},
-        )
+        ),
+        timezone_name="Europe/Berlin",
     )
 
-    assert "Snapshot generated 2026-07-14 16:30:45 UTC (UTC+00:00)" in rendered
+    assert "Snapshot generated 2026-07-14 18:30:45 CEST (UTC+02:00)" in rendered
 
 
 def test_repairing_chain_remains_distinct_from_its_progress_display_state() -> None:
