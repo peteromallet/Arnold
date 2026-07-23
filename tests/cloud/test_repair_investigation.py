@@ -842,6 +842,138 @@ def test_failing_external_guard_rejects_state_recovery_handoff() -> None:
         )
 
 
+def test_nonoperative_external_guard_does_not_displace_gate_recovery() -> None:
+    receipt = _receipt(target_kind="l2_repair_system")
+    receipt["recommended_action"] = "recover_state"
+    receipt["handoff"] = {
+        "action": "recover_state",
+        "allowed_mutations": ["supported recovery CLI"],
+        "forbidden_mutations": ["direct state edit"],
+    }
+    receipt["safe_repair_target"] = {
+        "kind": "repair_custody",
+        "scope": "repair custody",
+        "rationale": "reconcile stale repeated-failure accounting",
+    }
+    observation = {
+        "context_digest": "digest-1",
+        "external_guard_applicability": {
+            "applies": False,
+            "reason": "the active blocker is a gate accounting failure",
+        },
+        "observations": [
+            {
+                "kind": "external_state",
+                "observed": {"external_guard": {"status": "pending"}},
+            }
+        ],
+    }
+
+    validated = validate_investigator_receipt(
+        receipt,
+        expected_context_digest="digest-1",
+        observation_bundle=observation,
+    )
+
+    assert validated["recommended_action"] == "recover_state"
+
+
+def test_l1_bundle_propagates_nonoperative_guard_into_recovery_validation(
+    tmp_path: Path,
+) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+    context_path = tmp_path / "context.json"
+    _write(context_path, context)
+    observation = build_repair_observation_bundle(context_path)
+    observation["observations"].append(
+        {
+            "kind": "external_state",
+            "observed": {"external_guard": {"status": "pending"}},
+        }
+    )
+    receipt = _receipt(context["context_digest"], target_kind="l1_repair_target")
+    receipt["recommended_action"] = "recover_state"
+    receipt["handoff"] = {
+        "action": "recover_state",
+        "allowed_mutations": [
+            f"supported_cli:python -P -m arnold_pipelines.megaplan chain start "
+            f"--spec {spec} --project-dir {workspace}"
+        ],
+        "forbidden_mutations": [
+            "direct_chain_state_edit",
+            "hand_advance_chain",
+            "guard_weakening",
+        ],
+    }
+    receipt["safe_repair_target"] = {
+        "kind": "plan_state_via_cli",
+        "scope": str(workspace),
+        "rationale": "resume through the supported chain command",
+    }
+
+    validated = validate_investigator_receipt(
+        receipt,
+        expected_context_digest=context["context_digest"],
+        observation_bundle=observation,
+        investigation_context=context,
+    )
+
+    assert validated["recommended_action"] == "recover_state"
+
+
+def test_external_guard_applicability_follows_current_workflow_phase() -> None:
+    blocked_gate = repair_investigation._external_guard_applicability(
+        [
+            {"kind": "chain_state", "observed": {"last_state": "blocked"}},
+            {
+                "kind": "plan_state",
+                "observed": {
+                    "current_phase": "gate",
+                    "latest_failure": {"kind": "repeated_failure_signature"},
+                },
+            },
+        ]
+    )
+    awaiting_pr = repair_investigation._external_guard_applicability(
+        [
+            {
+                "kind": "chain_state",
+                "observed": {"last_state": "awaiting_pr_merge"},
+            }
+        ]
+    )
+    dead_review_worker = repair_investigation._external_guard_applicability(
+        [
+            {
+                "kind": "plan_state",
+                "observed": {
+                    "chain_last_state": "finalized",
+                    "active_worker": {
+                        "phase": "review",
+                        "worker_pid_live": False,
+                    },
+                    "latest_failure": {},
+                },
+            }
+        ]
+    )
+    unknown_stage = repair_investigation._external_guard_applicability([])
+
+    assert blocked_gate["applies"] is False
+    assert awaiting_pr["applies"] is True
+    assert dead_review_worker["applies"] is False
+    assert dead_review_worker["failure_phase"] == "review"
+    assert unknown_stage["applies"] is True
+
+
 def test_missing_quality_commit_custody_rejects_state_recovery_handoff() -> None:
     receipt = _receipt(target_kind="l2_repair_system")
     receipt["recommended_action"] = "recover_state"
