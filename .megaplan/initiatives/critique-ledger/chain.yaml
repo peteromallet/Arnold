@@ -104,6 +104,7 @@ on_escalate:
   abort: stop_chain
 merge_policy: auto
 driver:
+  execution_binding: required
   robustness: full
   phase_timeout: 10800
   auto_approve: true
