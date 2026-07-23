@@ -35,6 +35,7 @@ def _identity_core(identity: Mapping[str, Any]) -> dict[str, Any]:
             "direct_url",
             "pth",
             "imports",
+            "shannon_dependencies",
         )
     }
 
@@ -68,6 +69,7 @@ def marker_runtime_identity(marker: Mapping[str, Any]) -> dict[str, Any] | None:
             "direct_url": {},
             "pth": [],
             "imports": {},
+            "shannon_dependencies": {},
         }
     )
 

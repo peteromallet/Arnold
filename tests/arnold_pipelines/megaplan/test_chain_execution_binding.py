@@ -103,6 +103,19 @@ def offline_rollback_runtime(
             capture_output=True,
             text=True,
         )
+        subprocess.run(
+            [
+                str(python),
+                "-P",
+                "-m",
+                "arnold_pipelines.megaplan.cloud.shannon_runtime",
+                "prepare",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+        )
     revision_a = _git(source_a, "rev-parse", "HEAD")
     receipt = root / "runtime-a-receipt.json"
     identity = root / "runtime-a-identity.json"

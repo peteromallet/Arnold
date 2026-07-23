@@ -357,6 +357,7 @@ def active_execution_identity(spec_path: Path) -> dict[str, Any]:
         "direct_url": runtime.get("direct_url") or {},
         "pth": runtime.get("pth") or [],
         "imports": runtime.get("imports") or {},
+        "shannon_dependencies": runtime.get("shannon_dependencies") or {},
     }
     runtime_identity["content_sha256"] = _runtime_identity_sha256(runtime_identity)
     revision_verification = _revision_verification(
@@ -408,6 +409,7 @@ def _runtime_identity_core(identity: Mapping[str, Any]) -> dict[str, Any]:
             "direct_url",
             "pth",
             "imports",
+            "shannon_dependencies",
         )
     }
 
@@ -525,6 +527,27 @@ def _strict_external_runtime_shape(
         for value in imports.values()
     ):
         errors.append("runtime_import_root_mismatch")
+    shannon_dependencies = identity.get("shannon_dependencies")
+    shannon_dependencies = (
+        shannon_dependencies if isinstance(shannon_dependencies, Mapping) else {}
+    )
+    expected_vendor_root = (
+        import_root
+        / "arnold_pipelines"
+        / "megaplan"
+        / "vendor"
+        / "shannon"
+    )
+    if (
+        not bool(shannon_dependencies.get("ready"))
+        or shannon_dependencies.get("errors")
+    ):
+        errors.append("shannon_dependencies_not_ready")
+    if (
+        Path(str(shannon_dependencies.get("vendor_root") or "")).resolve(strict=False)
+        != expected_vendor_root
+    ):
+        errors.append("shannon_dependencies_root_mismatch")
     return errors
 
 

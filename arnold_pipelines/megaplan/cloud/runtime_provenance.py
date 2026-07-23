@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import unquote, urlparse
 
+from arnold_pipelines.megaplan.cloud.shannon_runtime import dependency_vector
+
 
 RUNTIME_PROVENANCE_RECEIPT_SCHEMA = "arnold.megaplan.runtime_provenance_receipt.v1"
 _RUNTIME_IDENTITY_KEYS = (
@@ -24,6 +26,7 @@ _RUNTIME_IDENTITY_KEYS = (
     "direct_url",
     "pth",
     "imports",
+    "shannon_dependencies",
 )
 
 
@@ -132,6 +135,7 @@ def runtime_provenance(
         "arnold_pipelines": str(Path(arnold_pipelines.__file__).resolve()),
         "megaplan": str(Path(arnold_pipelines.megaplan.__file__).resolve()),
     }
+    shannon_dependencies = dependency_vector()
     errors: list[str] = []
     if expected is not None and import_root != expected:
         errors.append("import_root_mismatch")
@@ -161,6 +165,11 @@ def runtime_provenance(
             errors.append("editable_pth_unreadable")
     if expected_revision and source_revision != expected_revision:
         errors.append("source_revision_mismatch")
+    if not bool(shannon_dependencies.get("ready")):
+        errors.extend(
+            f"shannon_dependencies:{item}"
+            for item in shannon_dependencies.get("errors") or []
+        )
     return {
         "ok": not errors,
         "errors": errors,
@@ -173,6 +182,7 @@ def runtime_provenance(
         "source_revision": source_revision,
         "runtime_revision": source_revision,
         "imports": imports,
+        "shannon_dependencies": shannon_dependencies,
     }
 
 

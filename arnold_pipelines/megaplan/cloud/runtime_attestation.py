@@ -18,6 +18,7 @@ from typing import Any, Iterable, Mapping
 from urllib.parse import unquote, urlparse
 
 from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
+from arnold_pipelines.megaplan.cloud.shannon_runtime import dependency_vector
 from arnold_pipelines.megaplan.types import CliError
 
 
@@ -310,6 +311,12 @@ def supervisor_runtime_vector(
     modules, module_errors = _supervisor_module_vector(runtime)
     pth, pth_errors = _pth_vector(runtime)
     errors = [*module_errors, *pth_errors]
+    shannon_dependencies = dependency_vector()
+    if not bool(shannon_dependencies.get("ready")):
+        errors.extend(
+            f"shannon_dependencies:{item}"
+            for item in shannon_dependencies.get("errors") or []
+        )
     interpreter = _interpreter_vector(direct_url=direct_url)
     if Path(sys.prefix).resolve(strict=False) != runtime:
         errors.append("supervisor_runtime_prefix_mismatch")
@@ -337,6 +344,7 @@ def supervisor_runtime_vector(
         "loaded_modules": modules,
         "interpreter": interpreter,
         "site_pth": pth,
+        "shannon_dependencies": shannon_dependencies,
         "errors": sorted(set(errors)),
         "ready": not errors,
     }
