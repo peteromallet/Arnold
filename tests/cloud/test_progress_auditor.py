@@ -3790,7 +3790,13 @@ class TestLiveSignalFiltering:
             session=session,
             workspace=workspace,
             source="legacy_watchdog",
-            problem_signature={},
+            problem_signature={
+                "current_state": "executed",
+                "failure_kind": "blocked_recovery_not_resolved",
+                "phase_or_step": "execute",
+                "milestone_or_plan": plan,
+                "blocked_task_id": "phase:execute",
+            },
             target={"plan_name": plan},
         )
         assert queued["status"] == "queued"
