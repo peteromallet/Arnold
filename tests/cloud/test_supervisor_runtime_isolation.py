@@ -418,3 +418,12 @@ def test_runtime_prepare_uses_staging_and_atomic_symlink_swap() -> None:
     assert 'mktemp -d "$ROOT/.staging.' in helper
     assert 'mv -Tf "$link_tmp" "$CURRENT"' in helper
     assert "runtime_ready \"$stage/bin/python3\"" in helper
+
+
+def test_runtime_prepare_receipt_binds_source_sha_and_import_paths() -> None:
+    helper = _text("arnold-supervisor-runtime")
+    assert 'source_revision="$(git -C "$SOURCE" rev-parse HEAD)"' in helper
+    assert '"source_revision": source_revision' in helper
+    assert '"imports": imports' in helper
+    assert "supervisor import escaped runtime" in helper
+    assert 'receipt_ready "$CURRENT/bin/python3"' in helper

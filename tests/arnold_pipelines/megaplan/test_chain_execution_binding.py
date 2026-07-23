@@ -10,9 +10,13 @@ import yaml
 from arnold_pipelines.megaplan import chain as chain_module
 from arnold_pipelines.megaplan.chain.execution_binding import (
     active_execution_identity,
+    assert_execution_binding,
     bind_execution_identity,
     execution_binding_report,
+    expected_worker_launch_values,
+    find_bound_chain_spec,
     rebind_execution_identity,
+    rebind_runtime_identity,
 )
 from arnold_pipelines.megaplan.chain.spec import (
     ChainState,
@@ -20,6 +24,7 @@ from arnold_pipelines.megaplan.chain.spec import (
     load_spec,
     save_chain_state,
 )
+from arnold_pipelines.megaplan.cloud.runtime_cutover import normalize_runtime_identity
 from arnold_pipelines.megaplan.types import CliError
 
 
@@ -426,3 +431,127 @@ def test_guarded_rebind_rejects_changed_completed_or_current_prefix(tmp_path: Pa
             expected_next_milestone="m5a",
             reason="must not rewrite history",
         )
+
+
+def test_runtime_cutover_and_rollback_are_separate_from_spec_binding(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    spec_path = _pinned_chain(tmp_path)
+    raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    raw["driver"]["require_editable_runtime_match"] = True
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "require runtime binding")
+    raw["driver"]["intended_initiative_revision"] = _git(tmp_path, "rev-parse", "HEAD")
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    initial_active = active_execution_identity(spec_path)
+    initial_active["runtime"]["editable_root"] = initial_active["runtime"]["import_root"]
+    initial_active["runtime"]["editable_revision"] = initial_active["runtime"][
+        "source_revision"
+    ]
+    initial_active["ready"] = True
+    initial_active["errors"] = []
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.active_execution_identity",
+        lambda _path: initial_active,
+    )
+    state = _bound_state(spec_path)
+    state.current_milestone_index = 0
+    state.current_plan_name = "c1-plan"
+    original_spec_identity = json.loads(
+        json.dumps(state.metadata["execution_binding"]["launched_identity"])
+    )
+    original_runtime = json.loads(
+        json.dumps(
+            state.metadata["execution_binding"]["runtime_binding"]["current_identity"]
+        )
+    )
+    assert (
+        normalize_runtime_identity(original_runtime)["content_sha256"]
+        == original_runtime["content_sha256"]
+    )
+    active = json.loads(json.dumps(initial_active))
+    successor = json.loads(json.dumps(active))
+    successor["runtime"].update(
+        {
+            "import_root": str(tmp_path / "runtime-b"),
+            "editable_root": str(tmp_path / "runtime-b"),
+            "source_revision": "b" * 40,
+            "editable_revision": "b" * 40,
+        }
+    )
+    successor["runtime"]["content_sha256"] = "ignored-and-recomputed"
+    successor["ready"] = True
+    successor["errors"] = []
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.active_execution_identity",
+        lambda _path: successor,
+    )
+    drift = execution_binding_report(spec_path, state)
+    assert drift["status"] == "match"
+    assert drift["runtime_binding"]["status"] == "drift"
+    with pytest.raises(CliError, match="runtime binding is drift"):
+        assert_execution_binding(spec_path, state, operation="chain resume")
+    before = state.to_dict()
+
+    cutover = rebind_runtime_identity(
+        spec_path,
+        state,
+        expected_previous_runtime_sha256=original_runtime["content_sha256"],
+        expected_active_runtime_sha256=drift["runtime_binding"]["active"]["content_sha256"],
+        expected_current_milestone="c1",
+        expected_current_plan="c1-plan",
+        reason="activate verified runtime b",
+    )
+
+    assert cutover["runtime_binding"]["status"] == "match"
+    assert state.metadata["execution_binding"]["launched_identity"] == original_spec_identity
+    for field in before:
+        if field != "metadata":
+            assert state.to_dict()[field] == before[field]
+
+    restored = json.loads(json.dumps(successor))
+    restored["runtime"] = original_runtime
+    restored["ready"] = True
+    restored["errors"] = []
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.active_execution_identity",
+        lambda _path: restored,
+    )
+    current_sha = cutover["runtime_binding"]["expected"]["content_sha256"]
+    rollback_report = execution_binding_report(spec_path, state)["runtime_binding"]
+    rollback = rebind_runtime_identity(
+        spec_path,
+        state,
+        expected_previous_runtime_sha256=current_sha,
+        expected_active_runtime_sha256=rollback_report["active"]["content_sha256"],
+        expected_current_milestone="c1",
+        expected_current_plan="c1-plan",
+        direction="rollback",
+        reason="verified rollback to runtime a",
+    )
+    assert rollback["event"]["direction"] == "rollback"
+    assert len(
+        state.metadata["execution_binding"]["runtime_binding"]["rebind_events"]
+    ) == 2
+
+
+def test_worker_expectations_resolve_canonical_spec_and_persisted_runtime(
+    tmp_path: Path,
+) -> None:
+    spec_path = _pinned_chain(tmp_path)
+    state = _bound_state(spec_path)
+    state.current_plan_name = "owned-plan"
+    save_chain_state(spec_path, state)
+    expected_runtime = state.metadata["execution_binding"]["runtime_binding"][
+        "current_identity"
+    ]
+
+    resolved = find_bound_chain_spec(tmp_path, plan_name="owned-plan")
+    values = expected_worker_launch_values(resolved, root=tmp_path)
+
+    assert resolved == spec_path
+    assert values["expected_installed_package_path"] == expected_runtime["import_root"]
+    assert values["expected_runtime_revision"] == expected_runtime["source_revision"]
+    assert values["expected_source_ref"] == expected_runtime["source_revision"]
