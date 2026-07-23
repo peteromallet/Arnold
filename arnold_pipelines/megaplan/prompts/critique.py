@@ -29,10 +29,154 @@ from arnold_pipelines.megaplan.schemas import SCHEMAS
 from arnold_pipelines.megaplan.types import PlanState
 
 from ._shared import TEST_BLAST_RADIUS_OUTPUT_CONTRACT
+from .gate import (
+    _bounded_gate_text,
+    _current_critique_for_gate,
+    _gate_flag_for_prompt,
+)
 
 _CRITIQUE_UNVERIFIABLE_ESCAPE_HATCH = """
 Self-monitor for non-convergence before spending more tool calls. This is NOT about duration or difficulty: hard checks that are still making new progress should continue. But if you are spinning — re-reading the same file 3+ times, searching for a file the plan says to CREATE, needing a sibling/external repo or path outside the project root, or making many tool calls without getting closer to a verdict — STOP investigating. Not finding what you need is a finding; emit exactly one non-flagged finding whose detail starts `unverifiable: ` and explains what you could not resolve and exactly why. An unverifiable check is a complete, valid result for this worker; normal code ambiguity that you can inspect should still be flagged per the usual "when in doubt, flag it" rule.
 """.strip()
+
+
+_REVISE_FEEDBACK_TEXT_LIMIT = 1_600
+_REVISE_SELECTOR_EXAMPLE_LIMIT = 40
+
+
+def _revise_plan_metadata_for_prompt(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Project current-plan semantics without repeating generated inventories."""
+
+    projected = {
+        key: metadata.get(key)
+        for key in (
+            "version",
+            "timestamp",
+            "hash",
+            "changes_summary",
+            "questions",
+            "success_criteria",
+            "assumptions",
+            "delta_from_previous_percent",
+            "north_star_actions_addressed",
+            "structure_warnings",
+            "changed_surfaces",
+        )
+        if key in metadata
+    }
+    blast_radius = metadata.get("test_blast_radius")
+    if isinstance(blast_radius, Mapping):
+        selectors = [
+            str(selector)
+            for selector in blast_radius.get("selectors", [])
+            if isinstance(selector, str) and selector
+        ]
+        unique_selectors = list(dict.fromkeys(selectors))
+        selector_examples = [
+            selector for selector in unique_selectors if len(selector) <= 512
+        ][:_REVISE_SELECTOR_EXAMPLE_LIMIT]
+        rationale = str(blast_radius.get("rationale") or "")
+        if len(rationale) > _REVISE_FEEDBACK_TEXT_LIMIT:
+            rationale = (
+                "[large generated blast-radius rationale omitted; "
+                f"{len(rationale)} chars]"
+            )
+        projected["test_blast_radius_summary"] = {
+            key: blast_radius.get(key)
+            for key in ("strategy", "full_suite_fallback", "confidence")
+            if key in blast_radius
+        }
+        projected["test_blast_radius_summary"].update(
+            {
+                "selector_count": len(selectors),
+                "unique_selector_count": len(unique_selectors),
+                "selector_examples": selector_examples,
+                "rationale": rationale,
+            }
+        )
+    return projected
+
+
+def _revise_gate_resolution_for_prompt(
+    resolution: Mapping[str, Any],
+) -> dict[str, Any]:
+    projected = {
+        key: resolution.get(key)
+        for key in ("flag_id", "id", "action")
+        if key in resolution
+    }
+    for key in ("evidence", "rationale"):
+        if key in resolution:
+            projected[key] = _bounded_gate_text(
+                resolution.get(key),
+                limit=_REVISE_FEEDBACK_TEXT_LIMIT,
+            )
+    return projected
+
+
+def _revise_gate_feedback_for_prompt(
+    gate: Mapping[str, Any],
+    *,
+    required_flag_ids: list[str],
+) -> dict[str, Any]:
+    """Keep current gate obligations while dropping cumulative signal mirrors."""
+
+    required = set(required_flag_ids)
+    projected = {
+        key: gate.get(key)
+        for key in (
+            "recommendation",
+            "passed",
+            "reprompted",
+            "override_forced",
+            "warnings",
+            "criteria_check",
+            "preflight_results",
+            "accepted_tradeoffs",
+            "north_star_actions",
+            "settled_decisions",
+            "orchestrator_guidance",
+        )
+        if key in gate
+    }
+    for key in ("rationale", "signals_assessment"):
+        if key in gate:
+            projected[key] = _bounded_gate_text(
+                gate.get(key),
+                limit=_REVISE_FEEDBACK_TEXT_LIMIT,
+            )
+
+    projected["required_flag_ids"] = required_flag_ids
+    projected["unresolved_flags"] = [
+        _gate_flag_for_prompt(flag)
+        for flag in gate.get("unresolved_flags", [])
+        if isinstance(flag, Mapping) and str(flag.get("id") or "") in required
+    ]
+    projected["flag_resolutions"] = [
+        _revise_gate_resolution_for_prompt(resolution)
+        for resolution in gate.get("flag_resolutions", [])
+        if isinstance(resolution, Mapping)
+        and str(resolution.get("flag_id") or resolution.get("id") or "") in required
+    ]
+
+    signals = gate.get("signals")
+    if isinstance(signals, Mapping):
+        projected["signals"] = {
+            key: signals.get(key)
+            for key in (
+                "iteration",
+                "weighted_score",
+                "weighted_history",
+                "plan_delta_from_previous",
+                "loop_summary",
+                "recurring_critiques",
+                "scope_creep_flags",
+                "repeated_divergence_fingerprint",
+                "critique_custody",
+            )
+            if key in signals
+        }
+    return projected
 
 
 def _with_anchor_block(prompt: str, state: PlanState, plan_dir: Path, *, audience: str) -> str:
@@ -308,19 +452,21 @@ def _build_verification_delta_block(
 def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
     project_dir = Path(state["config"]["project_dir"])
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
-    latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
+    latest_meta = _revise_plan_metadata_for_prompt(
+        read_json(latest_plan_meta_path(plan_dir, state))
+    )
     gate = read_json(plan_dir / "gate.json")
     unresolved = unresolved_significant_flags(load_flag_registry(plan_dir))
     open_flags = [
-        {
-            "id": flag["id"],
-            "severity": flag.get("severity"),
-            "status": flag["status"],
-            "concern": flag["concern"],
-            "evidence": flag.get("evidence"),
-        }
+        _gate_flag_for_prompt(flag)
         for flag in unresolved
     ]
+    required_flag_ids = [str(flag["id"]) for flag in open_flags]
+    gate_feedback = _revise_gate_feedback_for_prompt(
+        gate,
+        required_flag_ids=required_flag_ids,
+    )
+    current_critique = _current_critique_for_gate(plan_dir, state)
     settled_decisions: list[dict[str, Any]] = []
     decisions_path = plan_dir / "tiebreaker_decisions.json"
     if decisions_path.exists():
@@ -384,8 +530,11 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         Current plan metadata:
         {json_dump(latest_meta).strip()}
 
-        Gate summary:
-        {json_dump(gate).strip()}
+        Current critique epoch (canonical current critique plus admitted external raw findings):
+        {json_dump(current_critique).strip()}
+
+        Current gate feedback and carried obligations:
+        {json_dump(gate_feedback).strip()}
 
         Open significant flags:
         {json_dump(open_flags).strip()}
