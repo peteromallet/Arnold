@@ -21,6 +21,14 @@ materialization must preserve the old history, invalidate stale gate evidence,
 and produce one exact launch manifest. The M10 target checkout itself, not only
 an editable installation, must descend from the final convergence revision.
 
+## Settled Decisions
+
+- **C01-C03** — M10 may launch only after a guarded source, seed, runtime, marker, and supervisor rebind makes the target checkout and every executable consumer attest to one exact content-addressed revision; changed seed material requires a fresh plan epoch with the superseded epoch archived. _load_bearing: true_
+  Rationale: This prevents a new editable runtime from executing an old target checkout or stale materialized plan.
+
+- **C04-C20** — M10 and M11 treat schema, authority, occurrence identity, recovery, effects, projection truth, evidence, replay, and retirement as one structural conformance contract; missing or contradictory evidence is indeterminate and cannot authorize progress. _load_bearing: true_
+  Rationale: The July 22–23 failures crossed these boundaries and cannot be closed safely as isolated operational patches.
+
 ## Exact launch and seed custody
 
 `C01` **One content-addressed launch seed.** Before a worker starts, generate an
