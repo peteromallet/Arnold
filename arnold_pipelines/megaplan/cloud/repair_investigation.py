@@ -2097,6 +2097,35 @@ def build_repair_observation_bundle(context_path: str | Path) -> dict[str, Any]:
     required_receipt = context.get("required_investigator_output")
     required_receipt = dict(required_receipt) if isinstance(required_receipt, Mapping) else {}
     required_receipt["context_digest"] = digest
+    analysis_context = {
+        key: context.get(key) for key in analysis_keys if key in context
+    }
+    safe_boundaries = analysis_context.get("safe_repair_boundaries")
+    if isinstance(safe_boundaries, Mapping):
+        safe_boundaries = dict(safe_boundaries)
+        supported_cli = str(safe_boundaries.get("supported_recovery_cli") or "")
+        recover_example = (
+            (
+                required_receipt.get("action_specific_handoff_examples")
+                if isinstance(
+                    required_receipt.get("action_specific_handoff_examples"),
+                    Mapping,
+                )
+                else {}
+            ).get("recover_state")
+        )
+        recover_example = recover_example if isinstance(recover_example, Mapping) else {}
+        allowed_mutations = recover_example.get("allowed_mutations")
+        if (
+            supported_cli
+            and allowed_mutations == [f"supported_cli:{supported_cli}"]
+        ):
+            safe_boundaries["supported_recovery_cli"] = (
+                "<exact command carried once in "
+                "required_receipt_shape.action_specific_handoff_examples."
+                "recover_state.allowed_mutations>"
+            )
+        analysis_context["safe_repair_boundaries"] = safe_boundaries
     external_guard_applicability = _external_guard_applicability(observations)
     bundle = redact_payload(
         {
@@ -2106,9 +2135,7 @@ def build_repair_observation_bundle(context_path: str | Path) -> dict[str, Any]:
             "goal_id": context.get("goal_id"),
             "target_kind": context.get("target_kind"),
             "access_verified": True,
-            "analysis_context": {
-                key: context.get(key) for key in analysis_keys if key in context
-            },
+            "analysis_context": analysis_context,
             "external_guard_policy": (
                 "A failed or pending PR/CI check forbids recover_state only when the "
                 "current chain/failure phase makes that external guard operative. When a "

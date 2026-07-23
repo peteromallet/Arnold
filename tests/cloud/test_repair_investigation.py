@@ -198,6 +198,18 @@ def test_context_uses_identity_bound_profile_preserving_marker_relaunch(
         "no_git_refresh": True,
         "no_push": True,
     }
+    context_path = tmp_path / "bounded-context.json"
+    _write(context_path, context)
+    observation = build_repair_observation_bundle(context_path)
+    encoded = json.dumps(observation, sort_keys=True, separators=(",", ":"))
+    assert len(encoded.encode()) <= repair_investigation.MAX_OBSERVATION_BUNDLE_BYTES
+    recover_mutation = observation["required_receipt_shape"][
+        "action_specific_handoff_examples"
+    ]["recover_state"]["allowed_mutations"][0]
+    assert recover_mutation.count(marker_command) == 1
+    assert observation["analysis_context"]["safe_repair_boundaries"][
+        "supported_recovery_cli"
+    ].startswith("<exact command carried once")
 
 
 def test_historical_recount_recovery_uses_guarded_override_before_chain_start(
