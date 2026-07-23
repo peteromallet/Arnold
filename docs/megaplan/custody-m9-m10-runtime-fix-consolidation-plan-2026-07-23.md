@@ -1,8 +1,8 @@
 # Custody M9/M10 runtime-fix consolidation and cutover plan
 
 Date: 2026-07-23  
-Status: candidate assembled; integrated validation in progress  
-Canonical integration branch: `integrate/custody-m10-runtime-convergence-20260723`
+Status: candidate locally validated; live M10 safely operator-paused pending cutover
+Canonical candidate branch: `fix/custody-m10-schema-conformance-20260723`
 
 ## Decision
 
@@ -12,10 +12,11 @@ resident history and conflict with the M9 projection/WBC contract. Each
 still-relevant behavior is transplanted semantically, with an incident
 regression and a source-SHA-to-destination-SHA ledger.
 
-The current M10 chain is paused at a safe invocation boundary: state `blocked`,
-phase `gate`, no active step, no model/execute worker, and the old supervisor
-stopped. This boundary is safe to hold, but it is not itself permission to
-activate an unvalidated candidate.
+The current M10 chain is paused at a safe invocation boundary: plan and chain
+state `paused`, no active step, and no plan/model/execute worker. Shared
+watchdog and resident services remain alive, but durable operator-pause
+authority prevents them from advancing this chain. This boundary is safe to
+hold, but it is not itself permission to activate an unvalidated candidate.
 
 The source and runtime decisions are deliberately separate:
 
@@ -24,9 +25,41 @@ The source and runtime decisions are deliberately separate:
    and virtual environment from that exact advertised commit.
 3. Switch only after cross-layer provenance, replay, rollback, and canary gates
    pass.
-4. Resume the existing M10 gate from its durable cursor. Do not restart M10 from
-   scratch and do not initialize M11 until the resumed M10 reaches durable
-   execution/acceptance.
+4. Because the load-bearing M10/North Star/chain/decision seeds changed and the
+   interrupted M10 produced no accepted execution, preserve its old snapshot
+   and cursor as history, then rematerialize a fresh M10 plan at the same chain
+   milestone from the exact latest seed manifest. Do not reinterpret the old
+   plan as if it consumed new docs, and do not initialize M11 until revised M10
+   reaches durable execution/acceptance.
+
+The controlling conformance amendment is
+`.megaplan/initiatives/custody-control-plane/decisions/m10-m11-structural-conformance-closure-20260723.md`.
+Its C01–C20 requirements are bound launch inputs.
+
+## July 23 adversarial conformance amendment
+
+Ten independent GPT-5.6 Luna reviews covered schema, identity/ledger,
+runtime/release, repair backstops, chain/source/seed custody, effects/replay,
+status/acceptance truth, migration/rollback, epic coverage, and evidence/test
+quality. Their unanimous launch verdict for the old resume was `NO-GO`.
+
+Cutover-class findings that must be fixed before relaunch:
+
+- one content-addressed source/seed/runtime/process launch seed, validated by
+  worker, supervisor, resident, watchdog, and repair wrappers;
+- guarded project-target and seed rematerialization plus independently
+  receipted A→B/B→A runtime rollback;
+- one strict output schema at every producer/consumer seam, with no required
+  field fabrication, recommendation inference, or unknown-field stripping;
+- explicit request acceptance, authoritative RA/Custody/WBC rereads, append/CAS
+  histories, identity-bound liveness, target-bound acceptance, fail-closed
+  repair guards, and canonical-cursor-only recurrence;
+- clean candidate-bound baseline and installed-runtime evidence rather than
+  scoped tests, stale failure baselines, or source-shadowed wheel tests.
+
+M10 owns the structural effect/retry/repair/projection/migration closure and
+executable fault matrix. M11 owns cross-runtime proof and per-path legacy
+retirement. The complete allocation and negative controls are C01–C20.
 
 ## Current landscape
 
@@ -82,6 +115,20 @@ before release. A blank destination means implementation is still in flight.
 | dirty first-task payload | Canonicalize ambiguous `CF-*` references | `e9de12442d` | Ported with tests; force-proceed registry mutation excluded. |
 | new convergence work | Guard runtime provenance, binding, marker CAS, supervisor receipts, and worker preflight | `f79df6a5b6` | New structural fix required for a safe A→B/B→A cutover. |
 | convergence conflict follow-up | Preserve the profile/cursor/success contract in the active bounded repair prompt | `817ec9c328` | Prevents the contract from surviving only in a retained legacy prompt after semantic merge. |
+| strict schema convergence | Reject producer/consumer contract drift instead of reconstructing gate fields, filling Hermes-required defaults, or stripping scratch unknowns | `ed7ccc970f` | Fail-closed prompt/read-seam regressions pass. |
+| worker runtime admission | Reject absent or incomplete worker runtime bindings | `8bcf149cc9` | Worker startup cannot run without the exact bound identity. |
+| July 23 conformance amendment | Bind the C01–C20 structural-closure decision, amended M10/M11 briefs, North Star, and convergence plan as execution assets | `dd03112ab8` | The next two sprints now own effect/authority/migration closure and retirement proof explicitly. |
+| offline rollback identity | Let a clean B control interpreter independently verify the external A/B runtime identity and provenance receipt | `c66077cabe` | Cross-interpreter rollback proof passes. |
+| project source custody | Guard exact branch/HEAD/base/ref/spec/chain/plan target rebind and publication ancestry | `561226b666` | M10 can be based on the candidate itself, not merely use its editable install. |
+| stale test modernization | Align legacy wrapper expectations with current custody contracts | `b6fa22ec06` | The original 35 changed-path failures have zero residual failures. |
+| runtime release attestation | Bind module paths, interpreter, direct URL, all active `.pth` files, wrapper hashes, supervisor receipt, hot env, marker, chain, docs, and process identity | `453473336a` | Worker, supervisor, watchdog, and resident launch paths enforce the release seed. |
+| exact seed rematerialization | Archive the old plan and rebuild M10 from a hashed manifest of the latest brief/North Star/decisions/spec | `29a3a10913` | Revised M10 starts fresh at the same milestone; old history remains auditable. |
+| portable wrapper bootstrap | Remove Bash-3-incompatible heredoc command substitutions | `84e17400dc` | All changed wrappers pass `bash -n`. |
+| seed rollback | Add guarded, archive-verified seed rollback and re-cutover | `e7eee7fd10` | Stale/forged/new-evidence cases fail closed. |
+| repair-stack launch gaps | Enforce fail-closed L1/L2 gates, exact fallback identity, identity-bound liveness, durable missing-workspace discovery, nonterminal reinvestigation, and canonical-cursor recurrence | `a0df594e7f` | Luna P0 cutover findings have negative regressions. |
+| composed release rollback | Compose supervisor-specific noneditable attestation with append-only runtime/marker/target/seed A→B→A→B recovery | `3cf568268c` | Real two-venv and full event-order regressions pass. |
+| hermetic supervisor selection | Require an exact prepared-runtime receipt, prefix, source, noneditable direct URL, and import vector before selecting isolated mode | `1de6d37716` | Arbitrary ambient installs fall back to the selected checkout; real prepared supervisors remain isolated. |
+| launch-state closure | Admit only evidence-bound deterministic quality repair to L1, prevent missing-spec false chain completion, and project finalized/open-review-PR as awaiting merge | `137e911ae0` | Independently integrated closure selector: `152 passed`; narrow negative/edge cases remain fail-closed. |
 
 Explicit exclusions:
 
@@ -184,6 +231,38 @@ Replay the captured M9 artifacts read-only. Require:
   broad suite to completion. A timeout with unclassified failures is not a
   release pass.
 
+### Broad differential audit
+
+The completed Megaplan/cloud run produced `7181 passed, 132 failed, 9 skipped`.
+This is a classified red baseline, not a clean release claim:
+
+- the pytest cache retained 131 of the 132 failures; an exact clean checkout of
+  pre-candidate base `9024c8206e` reproduced 124 of those 131;
+- the 87 non-cloud failures are 84 pre-existing native/workflow/golden,
+  incident/telemetry, and small API contract failures plus three
+  order-dependent evidence-fixture contaminations;
+- a cloud-only rerun produced 44 failures and one pass: most are stale queue,
+  resolver, snapshot, and wrapper-fixture assumptions, while strict candidate
+  identity checks correctly reject incomplete auditor or ambient-runtime
+  fixtures;
+- the candidate-owned runtime, liveness, repair, recurrence, schema, target,
+  seed, and attestation slices are green. The independently integrated
+  target/seed/runtime slice is `90 passed`; the broader candidate-focused cloud
+  slices are `184 passed` plus `10 passed` wrapper negatives.
+
+The audit also found real pre-candidate launch defects. They are now closed by
+`137e911ae0`: deterministic machine-repairable quality blocks reach L1 only
+under evidence-bound classification; an unreadable spec cannot promote one
+completed milestone to chain completion; and `finalized` plus an externally
+verified open review PR projects `awaiting_pr_merge` before generic stopped.
+
+The remaining historical red baseline is explicitly M10/M11 C18/C20 work:
+establish identical clean baseline/candidate collections, resolve current DSL
+versus stale golden authority, prevent generators from dirtying tracked
+evidence, and retire or restore missing manifest runners. It is not evidence
+that this candidate introduced those failures, but it also cannot be represented
+as clean acceptance.
+
 ## Atomic cutover
 
 Preconditions:
@@ -215,9 +294,10 @@ Sequence:
 6. Restart only the intended supervisor/resident. Verify `/proc/.../environ`,
    actual imported files, Git SHA, supervisor receipt, marker, and chain
    runtime binding all agree.
-7. Resume the existing M10 gate. Its first legal action is a fresh gate
-   invocation from the durable repair cursor, not execution or an external
-   effect.
+7. Guardedly archive the old M10 source/snapshot/history, bind the exact latest
+   seed manifest, and rematerialize revised M10 at the same milestone on a
+   target branch whose base contains the candidate. Its first legal action is a
+   fresh gate invocation, not execution or an external effect.
 8. Watch through `gated/finalized` into a live execute worker with fresh
    telemetry, then through at least one durable batch receipt. Only then call
    the chain “durably executing.”
@@ -250,9 +330,8 @@ High confidence:
 
 Open until implementation completes:
 
-- Destination SHAs and final focused-suite counts for the overnight, older,
-  dirty-worktree, and runtime-cutover lines.
-- Completion of the broad release suite.
+- Final content commit, intended-revision pin, remote-ref verification, and two
+  clean editable candidate environments built from that exact SHA.
 - A fully consistent post-cutover runtime attestation and first durable M10
   execute receipt.
 
