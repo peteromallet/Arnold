@@ -20,6 +20,12 @@ from arnold_pipelines.megaplan.chain.target_rebind import (
     sha256_path,
     target_rebind,
 )
+from arnold_pipelines.megaplan.chain.execution_binding import active_execution_identity
+from arnold_pipelines.megaplan.chain.seed_rematerialize import (
+    SEED_MANIFEST_SCHEMA,
+    SEED_REMATERIALIZE_ERROR,
+    seed_rematerialize,
+)
 from arnold_pipelines.megaplan.cli import build_parser
 from arnold_pipelines.megaplan.auto import DriverOutcome
 from arnold_pipelines.megaplan.runtime.execution_environment import (
@@ -92,15 +98,30 @@ def _fixture(tmp_path: Path) -> dict[str, Any]:
                 f"- label: {MILESTONE}",
                 "  idea: .megaplan/initiatives/custody/brief.md",
                 f"  branch: {M10_BRANCH}",
+                "anchors:",
+                "  north_star: NORTHSTAR.md",
                 "driver:",
-                "  require_anchor: false",
-                "  missing_anchor_ack: target-rebind fixture has no product anchor",
+                "  require_anchor: true",
                 "",
             ]
         ),
         encoding="utf-8",
     )
     (spec_path.parent / "brief.md").write_text("M10 brief\n", encoding="utf-8")
+    (spec_path.parent / "NORTHSTAR.md").write_text("# North Star\n\nSafe custody.\n", encoding="utf-8")
+    (spec_path.parent / "decisions.md").write_text(
+        "\n".join(
+            [
+                "## Settled Decisions",
+                "",
+                "- **SD-001** — Keep all prior evidence in a content-addressed archive. "
+                "_load_bearing: true_",
+                "  rationale: Rollback and audit must remain possible.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
     chain = chain_spec.ChainState(
         current_milestone_index=0,
@@ -212,6 +233,62 @@ def _cutover(fixture: dict[str, Any], **overrides: Any) -> dict[str, Any]:
         fixture["spec"],
         fixture["root"],
         **_guards(fixture, **overrides),
+    )
+
+
+def _seed_manifest(fixture: dict[str, Any]) -> Path:
+    root = fixture["root"]
+    spec = fixture["spec"]
+    active = active_execution_identity(spec)
+    paths = [
+        ("chain_spec", spec),
+        ("milestone_brief", spec.parent / "brief.md"),
+        ("north_star", spec.parent / "NORTHSTAR.md"),
+        ("decision", spec.parent / "decisions.md"),
+    ]
+    manifest = {
+        "schema": SEED_MANIFEST_SCHEMA,
+        "session_id": root.name,
+        "milestone": MILESTONE,
+        "plan": PLAN_NAME,
+        "target": {"branch": M10_BRANCH, "head": fixture["target"]},
+        "previous_bundle_sha256": "",
+        "active_bundle_sha256": active["bundle_sha256"],
+        "assets": [
+            {
+                "kind": kind,
+                "path": path.relative_to(root).as_posix(),
+                "sha256": sha256_path(path),
+            }
+            for kind, path in paths
+        ],
+    }
+    path = fixture["root"].parent / "m10-seed-manifest.json"
+    _write_json(path, manifest)
+    return path
+
+
+def _rematerialize(fixture: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    manifest_path = overrides.get("seed_manifest_path") or _seed_manifest(fixture)
+    values: dict[str, Any] = {
+        "expected_session_id": fixture["root"].name,
+        "expected_current_milestone": MILESTONE,
+        "expected_current_plan": PLAN_NAME,
+        "expected_branch": M10_BRANCH,
+        "expected_head": fixture["target"],
+        "expected_spec_sha256": sha256_path(fixture["spec"]),
+        "expected_chain_state_sha256": sha256_path(fixture["state_path"]),
+        "expected_plan_state_sha256": sha256_path(fixture["plan_path"]),
+        "seed_manifest_path": manifest_path,
+        "expected_seed_manifest_sha256": sha256_path(manifest_path),
+        "reason": "adopt latest M10 inputs",
+        "actor": "test",
+    }
+    values.update(overrides)
+    return seed_rematerialize(
+        fixture["spec"],
+        fixture["root"],
+        **values,
     )
 
 
@@ -455,6 +532,53 @@ def test_cutover_refuses_non_fast_forward_target(tmp_path: Path) -> None:
         _cutover(fixture, to_head=unrelated)
 
 
+def test_cutover_accepts_exact_changed_target_chain_spec(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    root = fixture["root"]
+    seed_paths = [
+        fixture["spec"],
+        fixture["spec"].parent / "brief.md",
+        fixture["spec"].parent / "NORTHSTAR.md",
+        fixture["spec"].parent / "decisions.md",
+    ]
+    old_bytes = {path: path.read_bytes() for path in seed_paths}
+    old_spec_sha = sha256_path(fixture["spec"])
+    _git(root, "switch", "integrate/convergence")
+    fixture["spec"].write_text(
+        fixture["spec"].read_text(encoding="utf-8") + "# C01-C20 amendment\n",
+        encoding="utf-8",
+    )
+    _git(root, "add", "--force", *(str(path.relative_to(root)) for path in seed_paths))
+    _git(root, "commit", "-m", "amend M10 load-bearing inputs")
+    amended_target = _git(root, "rev-parse", "HEAD")
+    amended_spec_sha = sha256_path(fixture["spec"])
+    _git(root, "push", "origin", f"HEAD:{CONVERGENCE_REF}")
+    _git(root, "switch", M9_BRANCH)
+    for path, payload in old_bytes.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+    fixture["target"] = amended_target
+
+    result = _cutover(
+        fixture,
+        expected_spec_sha256=old_spec_sha,
+        expected_target_spec_sha256=amended_spec_sha,
+    )
+
+    assert result["head"] == amended_target
+    assert sha256_path(fixture["spec"]) == amended_spec_sha
+    assert result["event"]["target_spec_sha256"] == amended_spec_sha
+    rematerialized = _rematerialize(fixture)
+    assert rematerialized["next_state_after_resume"] == "initialized"
+    seed_event = _load_json(fixture["plan_path"])["meta"]["seed_source_binding"][
+        "events"
+    ][-1]
+    chain_asset = next(
+        item for item in seed_event["verified_assets"] if item["kind"] == "chain_spec"
+    )
+    assert chain_asset["sha256"] == amended_spec_sha
+
+
 def test_bound_source_guard_allows_descendants_but_rejects_wrong_branch(
     tmp_path: Path,
 ) -> None:
@@ -695,3 +819,154 @@ def test_target_rebind_cli_exposes_all_cas_guards() -> None:
     assert args.from_milestone_base == "a" * 40
     assert args.expected_plan_state_sha256 == "3" * 64
     assert PROJECT_SOURCE_REBIND_ERROR == "project_source_rebind_refused"
+
+
+def test_seed_rematerialize_archives_old_epoch_and_replans_same_milestone(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    _cutover(fixture)
+    old_plan = _load_json(fixture["plan_path"])
+    old_plan["history"].append({"step": "finalize", "result": "success"})
+    _write_json(fixture["plan_path"], old_plan)
+    (fixture["plan_dir"] / "finalize.json").write_text(
+        '{"stale": true}\n',
+        encoding="utf-8",
+    )
+
+    result = _rematerialize(fixture)
+
+    plan = _load_json(fixture["plan_path"])
+    chain = _load_json(fixture["state_path"])
+    assert plan["current_state"] == "paused"
+    assert plan["iteration"] == 0
+    assert plan["plan_versions"] == []
+    assert [entry["step"] for entry in plan["history"]] == ["init"]
+    assert plan["idea"] == "M10 brief"
+    assert plan["meta"]["operator_pause"]["previous_current_state"] == "initialized"
+    assert chain["metadata"]["operator_pause"]["previous_plan_state"] == "initialized"
+    assert chain["current_milestone_index"] == 0
+    assert chain["current_plan_name"] == PLAN_NAME
+    assert plan["meta"]["seed_source_binding"] == chain["metadata"]["seed_source_binding"]
+    assert plan["meta"]["seed_source_binding"]["current_manifest_sha256"]
+    assert plan["meta"]["canonical_source_binding"]["bound"]["file_sha256"] == sha256_path(
+        fixture["spec"].parent / "brief.md"
+    )
+    assert (fixture["plan_dir"] / "anchors" / "north_star" / "epic.md").is_file()
+    assert plan["meta"]["imported_decisions"]
+    archive = fixture["plan_dir"].parent / result["archive_path"]
+    archived_state = _load_json(archive / "state.json")
+    assert archived_state["iteration"] == 6
+    assert archived_state["history"][-1]["step"] == "finalize"
+    assert (archive / "finalize.json").is_file()
+    assert not (fixture["plan_dir"] / "finalize.json").exists()
+    assert result["next_state_after_resume"] == "initialized"
+    resume_chain(
+        fixture["spec"],
+        fixture["root"],
+        actor="test",
+        verify_execution_binding=False,
+    )
+    assert _load_json(fixture["plan_path"])["current_state"] == "initialized"
+    assert _load_json(fixture["state_path"])["last_state"] == "initialized"
+
+
+@pytest.mark.parametrize(
+    "stage",
+    ["after_archive", "after_plan_write", "after_chain_write"],
+)
+def test_seed_rematerialize_failure_compensates_exact_plan_and_chain(
+    tmp_path: Path,
+    stage: str,
+) -> None:
+    fixture = _fixture(tmp_path)
+    _cutover(fixture)
+    (fixture["plan_dir"] / "finalize.json").write_text(
+        '{"stale": true}\n',
+        encoding="utf-8",
+    )
+    original_plan = fixture["plan_path"].read_bytes()
+    original_chain = fixture["state_path"].read_bytes()
+
+    def fail(current: str) -> None:
+        if current == stage:
+            raise RuntimeError(f"injected at {stage}")
+
+    with pytest.raises(RuntimeError, match="injected"):
+        _rematerialize(fixture, failure_injector=fail)
+
+    assert fixture["plan_path"].read_bytes() == original_plan
+    assert fixture["state_path"].read_bytes() == original_chain
+    assert (fixture["plan_dir"] / "finalize.json").read_text(encoding="utf-8") == (
+        '{"stale": true}\n'
+    )
+    archive_root = fixture["plan_dir"].parent / ".seed-rematerialize-archive"
+    assert not archive_root.exists() or not any(archive_root.rglob("state.json"))
+
+
+def test_seed_rematerialize_refuses_stale_load_bearing_asset(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    _cutover(fixture)
+    manifest_path = _seed_manifest(fixture)
+    (fixture["spec"].parent / "decisions.md").write_text(
+        "changed without manifest adoption\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CliError, match="seed manifest asset changed"):
+        _rematerialize(
+            fixture,
+            seed_manifest_path=manifest_path,
+            expected_seed_manifest_sha256=sha256_path(manifest_path),
+        )
+
+
+def test_seed_rematerialize_refuses_after_execute(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    _cutover(fixture)
+    plan = _load_json(fixture["plan_path"])
+    plan["history"].append({"step": "execute", "result": "success"})
+    _write_json(fixture["plan_path"], plan)
+
+    with pytest.raises(CliError, match="forbidden after execute history"):
+        _rematerialize(fixture)
+
+
+def test_seed_rematerialize_cli_exposes_manifest_and_state_cas_guards() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "chain",
+            "seed-rematerialize",
+            "--spec",
+            "chain.yaml",
+            "--project-dir",
+            "/workspace/session",
+            "--expected-session-id",
+            "session",
+            "--expected-current-milestone",
+            MILESTONE,
+            "--expected-current-plan",
+            PLAN_NAME,
+            "--expected-branch",
+            M10_BRANCH,
+            "--expected-head",
+            "a" * 40,
+            "--expected-spec-sha256",
+            "1" * 64,
+            "--expected-chain-state-sha256",
+            "2" * 64,
+            "--expected-plan-state-sha256",
+            "3" * 64,
+            "--seed-manifest",
+            "m10-seed.json",
+            "--expected-seed-manifest-sha256",
+            "4" * 64,
+            "--reason",
+            "rematerialize",
+        ]
+    )
+
+    assert args.chain_action == "seed-rematerialize"
+    assert args.expected_seed_manifest_sha256 == "4" * 64
+    assert SEED_REMATERIALIZE_ERROR == "seed_rematerialize_refused"

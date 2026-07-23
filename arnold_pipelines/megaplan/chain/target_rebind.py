@@ -369,6 +369,7 @@ def _event(
     reason: str,
     session_id: str,
     spec_sha256: str,
+    target_spec_sha256: str,
     chain_state_sha256: str,
     plan_state_sha256: str,
     milestone_index: int,
@@ -386,6 +387,7 @@ def _event(
         "reason": reason,
         "session_id": session_id,
         "spec_sha256": spec_sha256,
+        "target_spec_sha256": target_spec_sha256,
         "chain_state_sha256": chain_state_sha256,
         "plan_state_sha256": plan_state_sha256,
         "milestone_index": milestone_index,
@@ -598,6 +600,7 @@ def target_rebind(
     to_head: str,
     to_ref: str,
     expected_spec_sha256: str,
+    expected_target_spec_sha256: str | None = None,
     expected_chain_state_sha256: str,
     expected_plan_state_sha256: str,
     reason: str,
@@ -647,6 +650,10 @@ def target_rebind(
     from_ref = _guard_ref(from_ref, label="from ref")
     to_ref = _guard_ref(to_ref, label="to ref")
     spec_sha = _guard_sha256(expected_spec_sha256, label="spec SHA-256")
+    target_spec_sha = _guard_sha256(
+        expected_target_spec_sha256 or expected_spec_sha256,
+        label="target spec SHA-256",
+    )
     chain_hash = _guard_sha256(
         expected_chain_state_sha256,
         label="chain-state SHA-256",
@@ -832,6 +839,7 @@ def target_rebind(
             reason=reason,
             session_id=expected_session_id,
             spec_sha256=spec_sha,
+            target_spec_sha256=target_spec_sha,
             chain_state_sha256=chain_hash,
             plan_state_sha256=plan_hash,
             milestone_index=milestone_index,
@@ -846,10 +854,22 @@ def target_rebind(
         try:
             created = _checkout_target(project_root, branch=to_branch, head=to_head)
             created_branch = to_branch if created else None
-            if sha256_path(spec_path) != spec_sha:
+            if sha256_path(spec_path) != target_spec_sha:
                 raise CliError(
                     PROJECT_SOURCE_REBIND_ERROR,
-                    "target checkout changes the guarded chain spec; perform a chain bundle rebind separately",
+                    "target checkout chain spec does not match the guarded target hash",
+                )
+            target_spec = chain_spec.load_spec(spec_path)
+            if (
+                milestone_index >= len(target_spec.milestones)
+                or target_spec.milestones[milestone_index].label
+                != expected_current_milestone
+                or target_spec.milestones[milestone_index].branch
+                != (to_branch if direction == "cutover" else from_branch)
+            ):
+                raise CliError(
+                    PROJECT_SOURCE_REBIND_ERROR,
+                    "target chain spec changed the guarded current milestone identity or branch",
                 )
             post_checkout_plan_raw, _ = _load_json_bytes(
                 plan_path,
@@ -881,6 +901,7 @@ def target_rebind(
                 reason=reason,
                 session_id=expected_session_id,
                 spec_sha256=spec_sha,
+                target_spec_sha256=target_spec_sha,
                 chain_state_sha256=chain_hash,
                 plan_state_sha256=plan_hash,
                 milestone_index=milestone_index,
