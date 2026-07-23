@@ -77,9 +77,8 @@ from arnold.pipeline.model_seam import (
     _repair_invocation,
 )
 
-from arnold_pipelines.megaplan.schemas import SCHEMAS
+from arnold_pipelines.megaplan.schemas import SCHEMAS, strict_schema
 from arnold_pipelines.megaplan.schema_projection import (
-    closed_object_schema,
     project_schema_owned_fields,
     schema_mapping_at_path,
     schema_owned_field_drops,
@@ -344,10 +343,12 @@ def _audit_capture_payload(
     normalized_payload: Mapping[str, Any] = payload
     if isinstance(schema, Mapping):
         if step == "gate":
-            # Match the recursively closed object contract materialized in
-            # .megaplan/schemas/gate.json. This prevents nested unknown fields
-            # from being accepted locally but rejected by the executing worker.
-            schema = closed_object_schema(schema)
+            # Use the exact recursively strict contract materialized for the
+            # worker.  Closing objects alone is insufficient: OpenAI-strict
+            # materialization also promotes every declared property to
+            # ``required``.  Every gate reader must therefore validate the
+            # same shape the producer was instructed to emit.
+            schema = strict_schema(schema)
         normalized_payload = (
             payload
             if already_normalized
@@ -412,7 +413,11 @@ def _capture_schema_for_invocation(invocation: StepInvocation) -> Mapping[str, A
     if schema_key is not None:
         schema = SCHEMAS.get(schema_key)
         if isinstance(schema, Mapping):
-            capture_schema = deepcopy(schema)
+            capture_schema = (
+                strict_schema(deepcopy(schema))
+                if step == "gate"
+                else deepcopy(schema)
+            )
             capture_schema.setdefault("additionalProperties", False)
             return capture_schema
     return None

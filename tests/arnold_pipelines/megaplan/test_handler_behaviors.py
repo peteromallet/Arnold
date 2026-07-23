@@ -22,7 +22,6 @@ from arnold_pipelines.megaplan.handlers.override import (
     _override_set_profile,
 )
 from arnold_pipelines.megaplan.handlers.structured_output import (
-    _strip_unknown_keys,
     classify_scratch,
     promote_scratch,
 )
@@ -248,16 +247,37 @@ class TestAdaptiveCritiqueRouting:
 
 
 class TestCritiqueScratchPromotion:
-    def test_strip_unknown_keys_drops_injected_commentary(self) -> None:
-        payload = {
-            "checks": [{"id": "c1"}],
-            "flags": [{"id": "f1"}],
-            "extra_thoughts": "should be stripped",
-            "unknown_key": 123,
-        }
-        known = frozenset({"checks", "flags", "verified_flag_ids", "disputed_flag_ids"})
-        stripped = _strip_unknown_keys(payload, known)
-        assert set(stripped.keys()) == {"checks", "flags"}
+    def test_promote_scratch_rejects_injected_commentary(self, tmp_path: Path) -> None:
+        scratch = tmp_path / "critique_output.json"
+        seed = json.dumps({"checks": [], "flags": []})
+        scratch.write_text(
+            json.dumps(
+                {
+                    "checks": [{"id": "c1"}],
+                    "flags": [],
+                    "model_commentary": "must not be stripped",
+                }
+            ),
+            encoding="utf-8",
+        )
+        worker = WorkerResult(
+            payload={"checks": [], "flags": []},
+            raw_output="",
+            duration_ms=0,
+            cost_usd=0.0,
+        )
+
+        with pytest.raises(ValueError, match="model_commentary"):
+            promote_scratch(
+                tmp_path,
+                "critique_output.json",
+                frozenset(
+                    {"checks", "flags", "verified_flag_ids", "disputed_flag_ids"}
+                ),
+                worker,
+                seed_json=seed,
+                file_fill_instructed=True,
+            )
 
     def test_promote_scratch_falls_back_to_worker_payload_when_unmodified(self, tmp_path: Path) -> None:
         scratch = tmp_path / "critique_output.json"

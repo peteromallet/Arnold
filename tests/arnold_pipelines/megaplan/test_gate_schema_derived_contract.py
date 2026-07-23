@@ -49,6 +49,9 @@ def _payload(**updates: object) -> dict[str, object]:
         "flag_resolutions": [],
         "accepted_tradeoffs": [],
         "north_star_actions": [],
+        "tiebreaker_flag_ids": [],
+        "tiebreaker_fuzzy_group_id": "",
+        "tiebreaker_question": "",
     }
     payload.update(updates)
     return payload
@@ -108,6 +111,46 @@ def test_gate_rejects_unknown_top_level_fields_instead_of_stripping_them() -> No
 
     with pytest.raises(ModelStructuralAuditError, match="model_commentary"):
         capture_step_output(_invocation(), payload)
+
+
+def test_gate_reader_enforces_worker_strict_action_inventory() -> None:
+    action = {
+        "id": "NSA7",
+        "question_id": "Q7",
+        "question": "What must change?",
+        "concern": "The receipt is missing.",
+        "category": "correctness",
+        "action_type": "must_fix",
+        "severity": "significant",
+        "severity_source": "model",
+        "evidence": "The canonical artifact has no receipt.",
+        "plan_refs": ["Step 7"],
+        "required_change": "Persist and bind the receipt.",
+    }
+    action.pop("question_id")
+
+    with pytest.raises(ModelStructuralAuditError, match="question_id"):
+        capture_step_output(_invocation(), _payload(north_star_actions=[action]))
+
+
+def test_scratch_promotion_rejects_unknown_gate_field(tmp_path) -> None:
+    payload = _payload(model_commentary="must remain a producer error")
+    scratch = tmp_path / "gate_output.json"
+    seed = json.dumps(_payload())
+    scratch.write_text(json.dumps(payload), encoding="utf-8")
+    worker = WorkerResult(payload=_payload(), raw_output="", duration_ms=1, cost_usd=0.0)
+
+    with pytest.raises(ValueError, match="model_commentary"):
+        promote_scratch(
+            tmp_path,
+            "gate_output.json",
+            schema_property_names(
+                SCHEMAS["gate.json"],
+                contract="gate scratch promotion",
+            ),
+            worker,
+            seed_json=seed,
+        )
 
 
 def test_gate_prompt_north_star_contract_matches_strict_worker_schema() -> None:
