@@ -152,7 +152,8 @@ def test_entrypoint_starts_discord_resident_from_shared_secret_env() -> None:
     assert "tmux has-session -t megaplan-resident-discord" in entrypoint
     assert "MEGAPLAN_RESIDENT_STORE_ROOT" in entrypoint
     assert "--store-root" in entrypoint
-    assert "python -P -m arnold_pipelines.megaplan resident discord" in entrypoint
+    assert "MEGAPLAN_RUNTIME_PYTHON" in entrypoint
+    assert 'exec \\"\\$runtime_python\\" -P -m arnold_pipelines.megaplan resident discord' in entrypoint
     assert "MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE" in entrypoint
     assert "MEGAPLAN_RESIDENT_MODE:-production" in entrypoint
 
@@ -166,5 +167,7 @@ def test_resident_self_heal_starts_the_production_bot_boundary() -> None:
     assert "MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE" in ensure_script
     assert "MEGAPLAN_RESIDENT_MODE:-production" in ensure_script
     assert "MEGAPLAN_RESIDENT_STORE_ROOT" in ensure_script
-    assert "python -P -m arnold_pipelines.megaplan resident discord" in ensure_script
+    assert "MEGAPLAN_RUNTIME_PYTHON" in ensure_script
+    assert 'exec \\"\\$runtime_python\\" -P -m arnold_pipelines.megaplan resident discord' in ensure_script
+    assert '"$runtime_python" -P -m arnold_pipelines.megaplan resident health' in ensure_script
     assert "--store-root" in ensure_script

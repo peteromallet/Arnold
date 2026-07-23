@@ -24,9 +24,11 @@ resident_healthy() {
     [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env
     set +a
     runtime_src="${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}"
+    runtime_python="${MEGAPLAN_RUNTIME_PYTHON:-python}"
     store_root="${MEGAPLAN_RESIDENT_STORE_ROOT:-/workspace/arnold/.megaplan/resident}"
+    [[ "$runtime_python" == */* ]] && [[ -x "$runtime_python" ]]
     PYTHONSAFEPATH=1 PYTHONPATH="$runtime_src:${PYTHONPATH:-}" \
-      python -P -m arnold_pipelines.megaplan resident health \
+      "$runtime_python" -P -m arnold_pipelines.megaplan resident health \
         --mode "${MEGAPLAN_RESIDENT_MODE:-production}" \
         --store-root "$store_root" >/dev/null
   ' >/dev/null 2>&1
@@ -69,7 +71,7 @@ if docker exec -i "$CONTAINER" bash >>"$LOG" 2>&1 <<'EOS'; then
     echo "resident_already_up"
     exit 0
   fi
-  tmux new-session -d -s megaplan-resident-discord -c /workspace/arnold "bash -lc 'set -a; . /workspace/.secrets/megaplan-resident-discord.env; [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env; set +a; runtime_src=\${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}; store_root=\${MEGAPLAN_RESIDENT_STORE_ROOT:-/workspace/arnold/.megaplan/resident}; export PYTHONPATH=\$runtime_src:\${PYTHONPATH:-}; export MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE=\${MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE:-production}; echo [resident-start] \$(date -Iseconds) provider=\${MEGAPLAN_RESIDENT_MODEL_PROVIDER} model=\${MEGAPLAN_RESIDENT_MODEL} store_root=\$store_root >> /workspace/megaplan-resident-discord.log; exec python -P -m arnold_pipelines.megaplan resident discord --mode \${MEGAPLAN_RESIDENT_MODE:-production} --store-root \"\$store_root\" >> /workspace/megaplan-resident-discord.log 2>&1'"
+  tmux new-session -d -s megaplan-resident-discord -c /workspace/arnold "bash -lc 'set -a; . /workspace/.secrets/megaplan-resident-discord.env; [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env; set +a; runtime_src=\${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}; runtime_python=\${MEGAPLAN_RUNTIME_PYTHON:-python}; store_root=\${MEGAPLAN_RESIDENT_STORE_ROOT:-/workspace/arnold/.megaplan/resident}; export PYTHONPATH=\$runtime_src:\${PYTHONPATH:-}; export MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE=\${MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE:-production}; echo [resident-start] \$(date -Iseconds) provider=\${MEGAPLAN_RESIDENT_MODEL_PROVIDER} model=\${MEGAPLAN_RESIDENT_MODEL} store_root=\$store_root >> /workspace/megaplan-resident-discord.log; exec \"\$runtime_python\" -P -m arnold_pipelines.megaplan resident discord --mode \${MEGAPLAN_RESIDENT_MODE:-production} --store-root \"\$store_root\" >> /workspace/megaplan-resident-discord.log 2>&1'"
   echo "resident_started"
 EOS
   sleep 5
