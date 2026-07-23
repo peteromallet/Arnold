@@ -757,7 +757,7 @@ def build_investigation_context(
         and current_authoritative_failure
         and _digest(dict(frozen_failure)) != _digest(dict(current_authoritative_failure))
     )
-    supported_recovery_cli = shlex.join(
+    chain_start_cli = shlex.join(
         [
             "python",
             "-P",
@@ -771,6 +771,134 @@ def build_investigation_context(
             str(Path(workspace)),
         ]
     )
+    plan_state_payload = _load(current.get("plan_state_path"))
+    marker_relaunch_binding: dict[str, Any] = {
+        "verified": False,
+        "reason": "no identity-bound marker relaunch command was available",
+    }
+    marker_dir = _text(
+        goal_target.get("marker_dir") or request.get("marker_dir"),
+        2000,
+    )
+    if marker_dir:
+        marker_path = Path(marker_dir) / f"{session}.json"
+        marker = _load(marker_path)
+        marker_command = _text(marker.get("relaunch_command"), 16_384)
+        runtime_attestation = (
+            marker.get("runtime_attestation")
+            if isinstance(marker.get("runtime_attestation"), Mapping)
+            else {}
+        )
+        expected_commit = _text(runtime_attestation.get("expected_commit"), 100)
+        expected_import = _text(runtime_attestation.get("expected_import"), 2000)
+        request_recovery_contract = (
+            request_target.get("recovery_contract")
+            if isinstance(request_target.get("recovery_contract"), Mapping)
+            else {}
+        )
+        state_config = (
+            plan_state_payload.get("config")
+            if isinstance(plan_state_payload.get("config"), Mapping)
+            else {}
+        )
+        requested_profile = _text(request_target.get("configured_profile"), 300)
+        state_profile = _text(state_config.get("profile"), 300)
+        profile_preservation_required = (
+            request_recovery_contract.get("preserve_configured_profile") is True
+        )
+        profile_preservation_verified = bool(
+            profile_preservation_required
+            and requested_profile
+            and requested_profile == state_profile
+            and "--profile" not in marker_command
+            and "MEGAPLAN_PROFILE=" not in marker_command
+        )
+        identity_matches = bool(
+            marker.get("session") == session
+            and str(marker.get("workspace") or "") == str(Path(workspace))
+            and str(marker.get("remote_spec") or "") == str(remote_spec)
+        )
+        command_is_constrained = bool(
+            marker_command
+            and "--no-git-refresh" in marker_command
+            and "--no-push" in marker_command
+            and expected_commit
+            and expected_commit in marker_command
+            and expected_import
+            and expected_import in marker_command
+        )
+        if identity_matches and command_is_constrained and profile_preservation_verified:
+            chain_start_cli = marker_command
+            marker_relaunch_binding = {
+                "verified": True,
+                "marker_path": str(marker_path),
+                "runtime_commit": expected_commit,
+                "runtime_import": expected_import,
+                "configured_profile": requested_profile,
+                "profile_preserved": True,
+                "no_git_refresh": True,
+                "no_push": True,
+            }
+        else:
+            marker_relaunch_binding = {
+                "verified": False,
+                "marker_path": str(marker_path),
+                "identity_matches": identity_matches,
+                "command_is_constrained": command_is_constrained,
+                "configured_profile": requested_profile,
+                "state_profile": state_profile,
+                "profile_preserved": profile_preservation_verified,
+                "reason": (
+                    "marker relaunch command was not simultaneously identity-bound, "
+                    "runtime-attested, no-git-refresh, no-push, and profile-preserving"
+                ),
+            }
+    supported_recovery_cli = chain_start_cli
+    quality_recovery_command_complete = False
+    if durable_quality_repair.get("verified") is True and plan_name:
+        quality_failure_fingerprint = _text(
+            current_authoritative_failure.get("fingerprint"),
+            300,
+        )
+        quality_repair_commit = _text(
+            durable_quality_repair.get("dev_fix_sha"),
+            100,
+        )
+        if (
+            quality_failure_fingerprint
+            and quality_repair_commit
+            and marker_relaunch_binding.get("verified") is True
+        ):
+            repair_runtime_root = Path(__file__).resolve().parents[3]
+            quality_recover_args = [
+                "env",
+                "PYTHONSAFEPATH=1",
+                f"PYTHONPATH={repair_runtime_root}",
+                "python",
+                "-P",
+                "-m",
+                "arnold_pipelines.megaplan",
+                "override",
+                "recover-blocked",
+                "--project-dir",
+                str(Path(workspace)),
+                "--plan",
+                plan_name,
+                "--repair-commit",
+                quality_repair_commit,
+                "--failure-fingerprint",
+                quality_failure_fingerprint,
+                "--reason",
+                (
+                    "automatic repair verified the blocked execute quality contract; "
+                    "rerun the same phase through the pinned chain runtime"
+                ),
+            ]
+            quality_recover_cli = shlex.join(quality_recover_args)
+            supported_recovery_cli = (
+                f"{quality_recover_cli} && {{ {chain_start_cli}; }}"
+            )
+            quality_recovery_command_complete = True
     required_investigator_output = _common_required_output("l1_repair_target")
     required_investigator_output["action_specific_handoff_examples"]["recover_state"][
         "allowed_mutations"
@@ -932,6 +1060,8 @@ def build_investigation_context(
             "allowed": ["arnold_source", "target_workspace", "plan_state_via_cli", "repair_custody"],
             "forbidden": ["guard_weakening", "direct_state_edit", "duplicate_live_worker", "uncited_mutation"],
             "supported_recovery_cli": supported_recovery_cli,
+            "quality_recovery_command_complete": quality_recovery_command_complete,
+            "marker_relaunch_binding": marker_relaunch_binding,
         },
         "required_investigator_output": required_investigator_output,
     }

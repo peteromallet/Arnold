@@ -5925,12 +5925,69 @@ print(
 PY
 }
 
+quality_recovery_supported_cli_is_complete() {
+  local normal_command="$1"
+  python3 -P - "$INVESTIGATION_CONTEXT_PATH" "$normal_command" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+normal_command = sys.argv[2]
+try:
+    if path.stat().st_size > 65_536:
+        raise ValueError("investigation context exceeds 65536-byte bound")
+    context = json.loads(path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"invalid:{exc}", file=sys.stderr)
+    raise SystemExit(1)
+quality = context.get("durable_quality_block")
+quality = quality if isinstance(quality, dict) else {}
+evidence = quality.get("repair_evidence")
+evidence = evidence if isinstance(evidence, dict) else {}
+boundaries = context.get("safe_repair_boundaries")
+boundaries = boundaries if isinstance(boundaries, dict) else {}
+marker = boundaries.get("marker_relaunch_binding")
+marker = marker if isinstance(marker, dict) else {}
+repair_commit = str(evidence.get("dev_fix_sha") or "").strip()
+failure = context.get("current")
+failure = failure if isinstance(failure, dict) else {}
+latest_failure = failure.get("latest_failure")
+latest_failure = latest_failure if isinstance(latest_failure, dict) else {}
+failure_fingerprint = str(latest_failure.get("fingerprint") or "").strip()
+supported = str(boundaries.get("supported_recovery_cli") or "")
+complete = bool(
+    quality.get("active") is True
+    and evidence.get("verified") is True
+    and boundaries.get("quality_recovery_command_complete") is True
+    and marker.get("verified") is True
+    and marker.get("profile_preserved") is True
+    and marker.get("no_git_refresh") is True
+    and marker.get("no_push") is True
+    and repair_commit
+    and failure_fingerprint
+    and supported == normal_command
+    and "override recover-blocked" in supported
+    and repair_commit in supported
+    and failure_fingerprint in supported
+    and "--no-git-refresh" in supported
+    and "--no-push" in supported
+)
+raise SystemExit(0 if complete else 1)
+PY
+}
+
 select_mechanical_relaunch_command() {
   local normal_command="$1"
   local requirement="not_required"
   local quality_command=""
   if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]; then
     requirement="$(quality_recovery_requirement)" || return 76
+  fi
+  if [[ "$requirement" == "required" ]] \
+    && quality_recovery_supported_cli_is_complete "$normal_command"; then
+    printf '%s\n' "$normal_command"
+    return 0
   fi
   if [[ -z "${POST_DEV_FIX_ITERATION:-}" ]]; then
     if [[ "$requirement" == "required" ]]; then
