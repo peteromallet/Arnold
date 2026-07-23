@@ -1,7 +1,7 @@
 # Custody M9/M10 runtime-fix consolidation and cutover plan
 
 Date: 2026-07-23  
-Status: implementation in progress  
+Status: candidate assembled; integrated validation in progress  
 Canonical integration branch: `integrate/custody-m10-runtime-convergence-20260723`
 
 ## Decision
@@ -55,30 +55,33 @@ before release. A blank destination means implementation is still in flight.
 | `6633d792c5` | Prefer the accepted reused-batch receipt by accepted-attempt chronology | inherited in base | Kept; fixes the live M9 receipt incident. |
 | `aeeffea8ba` | Exclude `CASExpectation` from authority reduction | inherited in base | Kept; focused reducer regression exists. |
 | `75aac0380c` | Complete strict gate prompt contract | `75aac0380c` | Kept; 242 focused/adjacent tests passed. |
-| `88327293ba` | Preserve immutable V1/V2 repair blocker identity and claimability | pending | Semantic port first. |
-| `86f7c67cd6` | Preserve request/profile custody and expose recurrence to L2/L3 | pending | Semantic port after `883`. |
-| `c834772e15` | Bind terminal repair evidence cursor | pending | Port after `86`. |
-| `c18f574b8d` | Bind recovery to pinned marker/runtime/profile/no-push relaunch | pending | Keep binding behavior; its intermediate quality-flow behavior is superseded by `8a3`. |
-| `fd1f18661b` | Bounded, deduplicated pinned recovery observation | pending | Port after `c18`. |
-| `8a3d820bb4` | Resolve receipted quality blockers before recover/relaunch | pending | Enforce resolve → recover-blocked → pinned restart. |
-| `8ec28d6853` | Use the active repair phase before external PR/CI guard classification | pending | Port last in the overnight stack. |
+| `88327293ba` | Preserve immutable V1/V2 repair blocker identity and claimability | `85de91eb1e` | Semantically ported first. |
+| `86f7c67cd6` | Preserve request/profile custody and expose recurrence to L2/L3 | `d580f88487` | Semantically ported after `883`. |
+| `c834772e15` | Bind terminal repair evidence cursor | `2a70cc8562` | Ported after `86`. |
+| `c18f574b8d` | Bind recovery to pinned marker/runtime/profile/no-push relaunch | `7404747f9f` | Kept binding behavior; its intermediate quality-flow behavior is superseded by `8a3`. |
+| `fd1f18661b` | Bounded, deduplicated pinned recovery observation | `2c6b133aef` | Ported after `c18`. |
+| `8a3d820bb4` | Resolve receipted quality blockers before recover/relaunch | `813e06e48f` | Enforces resolve → recover-blocked → pinned restart. |
+| `8ec28d6853` | Use the active repair phase before external PR/CI guard classification | `f4ed215300` | Ported last in the overnight stack. |
 | `3978c099ef` | Reused-batch receipt preference | none | Superseded: exact patch-ID duplicate of `6633d792c5`. |
-| `db0a5d7017` | Anchor child runtime to the pinned engine | pending | Port. |
-| `97df7a0524` | Preserve pinned engine isolation across native resume | pending | Port. |
-| `6d4f15732f` | Reject stale gate recovery after replan | pending | Port. |
-| `f7f096701a` | Advance a safe, side-effect-free tiered execute fallback | pending | Port, coordinated with the sequential-fallback contract. |
-| `be0fea686c` | Do not reset a dirty checkout during operator resume | pending | Port. |
-| `92aee9982b` | Permit replan only for a blocked ITERATE gate | pending | Port; supersedes broad `b5ab653e7b`. |
-| `b1572e4f28` | Bind taskless repair occurrences | pending | Port. |
-| `a6acc853ed` | Dispatch exact phase failures even when classification is unknown | pending | Port fail-closed. |
-| `0ab3fbdeb7` | Reconcile an operator-pause race | pending | Port. |
-| `c4f72e727a` | Resume pause authority without an uncontrolled relaunch | pending | Port. |
-| `cf64f1e470` | Keep authority-only resume fail-closed | pending | Port. |
-| `858dfb0c95` | Invalidate stale replan feasibility | pending | Port. |
-| `029795b157` | Bind receipts to the current plan epoch | pending | Port. |
-| `bc3f6a9031` | Avoid false chain-stuck watchdog projection | pending | Port. |
-| dirty L1 payload | Preserve configured profile/cursor/success contract in repair prompts | pending | Port unique policy and regression only. |
-| dirty first-task payload | Canonicalize ambiguous `CF-*` references | pending | Port with tests; exclude force-proceed registry mutation. |
+| `db0a5d7017` | Anchor child runtime to the pinned engine | `103489711a` | Ported. |
+| `97df7a0524` | Preserve pinned engine isolation across native resume | `43d2908784` | Ported. |
+| `6d4f15732f` | Reject stale gate recovery after replan | `6f0bede795` | Ported. |
+| `f7f096701a` | Advance a safe, side-effect-free tiered execute fallback | `6edec0e966` | Ported behind the M8 repair-adoption/validation guard. |
+| `be0fea686c` | Do not reset a dirty checkout during operator resume | `acbbf5cf67` | Ported. |
+| `92aee9982b` | Permit replan only for a blocked ITERATE gate | `bcbfc220e5` | Ported; supersedes broad `b5ab653e7b`. |
+| `b1572e4f28` | Bind taskless repair occurrences | `4729ba0978` | Ported against the current V2 identity contract. |
+| `a6acc853ed` | Dispatch exact phase failures even when classification is unknown | `71d82a538c` | Ported fail-closed. |
+| `85c596f6b1` | Preserve repair prompt guard literals without unconditional push language | `cfe7c90fcf` | Ported; `8652428492` remained excluded as superseded. |
+| `0ab3fbdeb7` | Reconcile an operator-pause race | `6122214ee8` | Ported. |
+| `c4f72e727a` | Resume pause authority without an uncontrolled relaunch | `075cd05c66` | Ported. |
+| `cf64f1e470` | Keep authority-only resume fail-closed | `a56ea086c1` | Ported. |
+| `858dfb0c95` | Invalidate stale replan feasibility | `ab72303d85` | Ported. |
+| `029795b157` | Bind receipts to the current plan epoch | `18f45efdee` | Ported. |
+| `bc3f6a9031` | Avoid false chain-stuck watchdog projection | `3c74a9a1f0` | Ported. |
+| dirty L1 payload | Preserve configured profile/cursor/success contract in repair prompts | `a0baf46ee8` | Unique policy and regression ported; superseded helper excluded. |
+| dirty first-task payload | Canonicalize ambiguous `CF-*` references | `e9de12442d` | Ported with tests; force-proceed registry mutation excluded. |
+| new convergence work | Guard runtime provenance, binding, marker CAS, supervisor receipts, and worker preflight | `f79df6a5b6` | New structural fix required for a safe A→B/B→A cutover. |
+| convergence conflict follow-up | Preserve the profile/cursor/success contract in the active bounded repair prompt | `817ec9c328` | Prevents the contract from surviving only in a retained legacy prompt after semantic merge. |
 
 Explicit exclusions:
 
