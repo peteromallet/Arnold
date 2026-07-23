@@ -154,6 +154,55 @@ def _merge_imported_decision_criteria(
     return merged
 
 
+def _load_bearing_decision_criteria_issues(
+    state: PlanState,
+    criteria: list[dict[str, Any]],
+) -> list[str]:
+    """Return exact imported-decision bindings that are not mechanically closed.
+
+    Initial planning still uses ``_merge_imported_decision_criteria`` as a
+    fail-safe so an imported decision cannot disappear.  A revision is
+    different: silently synthesizing a human-only criterion after the worker
+    returns makes the revision appear successful while deterministically
+    recreating the blocker it was asked to remove.  Revision callers use this
+    validator before merging so the next attempt receives an honest,
+    actionable failure instead.
+    """
+    from arnold_pipelines.megaplan.runtime.capabilities import CONTAINER_CAPABILITIES
+
+    issues: list[str] = []
+    imported_decisions = state["meta"].get("imported_decisions", [])
+    for decision in imported_decisions:
+        if not isinstance(decision, dict) or not bool(decision.get("load_bearing")):
+            continue
+        decision_id = decision.get("id")
+        if not isinstance(decision_id, str) or not decision_id:
+            continue
+        bound = [
+            criterion
+            for criterion in criteria
+            if isinstance(criterion, dict)
+            and isinstance(criterion.get("criterion"), str)
+            and decision_id in criterion["criterion"]
+        ]
+        if not bound:
+            issues.append(f"{decision_id}: no success criterion references the exact decision ID")
+            continue
+        mechanical = [
+            criterion
+            for criterion in bound
+            if criterion.get("priority") == "must"
+            and isinstance(criterion.get("requires"), list)
+            and bool(set(criterion["requires"]) & CONTAINER_CAPABILITIES)
+        ]
+        if not mechanical:
+            issues.append(
+                f"{decision_id}: referenced criterion must use priority='must' "
+                "and at least one container-verifiable requires capability"
+            )
+    return issues
+
+
 def _validate_relative_path(project_dir: Path, raw: str, flag_name: str) -> str:
     candidate = Path(raw)
     if candidate.is_absolute():

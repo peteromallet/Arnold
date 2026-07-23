@@ -71,6 +71,7 @@ from arnold_pipelines.megaplan.handlers.shared import (
     _agent_mode_parts,
     _append_to_meta,
     _finish_step,
+    _load_bearing_decision_criteria_issues,
     _raise_step_validation_error,
     _write_plan_version,
 )
@@ -1521,6 +1522,24 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
             raise error
         payload = worker.payload
         audit_step_payload("revise", payload)
+        imported_decision_issues = _load_bearing_decision_criteria_issues(
+            state,
+            payload.get("success_criteria", []),
+        )
+        if imported_decision_issues:
+            _raise_step_validation_error(
+                plan_dir=plan_dir,
+                state=state,
+                step="revise",
+                iteration=state["iteration"] + 1,
+                worker=worker,
+                code="invalid_imported_decision_criteria",
+                message=(
+                    "Revise output did not mechanically bind every load-bearing "
+                    "imported decision: "
+                    + "; ".join(imported_decision_issues)
+                ),
+            )
         payload["success_criteria"] = _merge_imported_decision_criteria(
             state,
             payload.get("success_criteria", []),

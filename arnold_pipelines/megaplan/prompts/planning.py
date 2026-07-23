@@ -265,8 +265,8 @@ def _plan_prompt(
                         for decision in imported_decisions
                     ],
                     "Planning guidance for imported decisions:",
-                    "- For each imported decision with load_bearing: true, include a success criterion with priority: 'must' referencing the SD-NNN id.",
-                    "- For each imported decision with load_bearing: false, include a success criterion with priority: 'info' referencing the SD-NNN id.",
+                    "- For each imported decision with load_bearing: true, include a machine-verifiable success criterion with priority: 'must', a non-empty container capability in `requires`, and the exact imported decision ID shown above in `criterion`.",
+                    "- For each imported decision with load_bearing: false, include a success criterion with priority: 'info' and the exact imported decision ID shown above in `criterion`.",
                 ]
             )
         else:
