@@ -23,13 +23,54 @@ from arnold_pipelines.megaplan.orchestration.gate_checks import (
 )
 from arnold_pipelines.megaplan.audits.iteration import compute_iteration_pressure, render_pressure_table
 from arnold_pipelines.megaplan.north_star_actions import (
+    NORTH_STAR_ACTION_SCHEMA,
     NORTH_STAR_ACTION_CATEGORIES,
     NORTH_STAR_DANGEROUS_CATEGORIES,
     NORTH_STAR_ACTION_TYPES,
+    NORTH_STAR_SEVERITY_SOURCES,
 )
 from arnold_pipelines.megaplan.schema_projection import schema_template_payload
-from arnold_pipelines.megaplan.schemas import SCHEMAS
+from arnold_pipelines.megaplan.schemas import SCHEMAS, strict_schema
 from arnold_pipelines.megaplan.types import FlagRegistry, PlanState
+
+
+def _north_star_action_contract_instruction() -> str:
+    """Render the gate's action contract from the strict worker schema.
+
+    The gate worker is audited against the strict transport projection, where
+    every object property must be present.  Keep the prompt's field inventory
+    derived from that same projection so it cannot advertise a smaller shape.
+    """
+
+    action_schema = strict_schema(NORTH_STAR_ACTION_SCHEMA)
+    required = action_schema.get("required")
+    if not isinstance(required, list) or not all(
+        isinstance(field, str) for field in required
+    ):
+        raise RuntimeError(
+            "gate North Star action contract has no valid strict required list"
+        )
+    example = {
+        "id": "NSA-1",
+        "question_id": "route-authority",
+        "question": "Does the plan preserve one authoritative route?",
+        "concern": "Two route entrypoints remain authoritative.",
+        "category": "route_authority",
+        "action_type": "change_plan",
+        "severity": "blocking",
+        "severity_source": "schema",
+        "evidence": "Plan Phase 2 retains both entrypoints.",
+        "plan_refs": ["Phase 2 - Step 1"],
+        "required_change": "Make the canonical route the sole authority.",
+    }
+    return (
+        "`north_star_actions[]`: list of structured actions. Every action must "
+        f"contain all fields in this exact contract: {json_dump(required).strip()}. "
+        "Do not omit fields; use `plan_refs: []` only when no concrete plan "
+        "reference exists. Example complete action: "
+        f"{json_dump(example).strip()}"
+    )
+
 
 def _iteration_pressure_block(state: PlanState, plan_dir: Path) -> str:
     entries = compute_iteration_pressure(plan_dir, state)
@@ -201,10 +242,12 @@ def _gate_prompt(
         - `signals_assessment`: one paragraph summarizing score trajectory, flag status, and preflight posture.
 
         North Star actions — identify concerns that affect plan-wide execution safety:
-        - `north_star_actions[]`: list of structured actions, each with `id`, `concern`, `category`, `action_type`, `severity`, `evidence`, and optional `plan_refs`.
+        - {_north_star_action_contract_instruction()}
         - Categories: {json_dump(list(NORTH_STAR_ACTION_CATEGORIES)).strip()} (all) — the dangerous set {json_dump(list(NORTH_STAR_DANGEROUS_CATEGORIES)).strip()} is always `severity: "blocking"` by schema rule.
         - Action types: {json_dump(list(NORTH_STAR_ACTION_TYPES)).strip()}.
         - The `severity` field on every North Star action accepts exactly `"blocking"` or `"advisory"`. Critique flag severities such as `"significant"` and `"likely-significant"` are invalid here; do not copy them into `north_star_actions[]`.
+        - Set `severity_source` to `"schema"` for dangerous categories and `"worker"` for an explicit gate judgment on other categories. The only accepted values are {json_dump(list(NORTH_STAR_SEVERITY_SOURCES)).strip()}.
+        - `question_id` is a stable slug for the North Star question, `question` states that question, and `required_change` states the concrete plan change needed to resolve the concern.
         - Return `[]` when there are no North Star concerns for this pass.
 
         Flags come in three gate states:
