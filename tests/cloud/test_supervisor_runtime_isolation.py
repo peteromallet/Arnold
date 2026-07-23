@@ -128,18 +128,31 @@ python3 -c 'import arnold_pipelines; print(arnold_pipelines.__file__)'
 
 def test_watchdog_fails_before_heartbeat_when_runtime_is_not_ready(tmp_path: Path) -> None:
     status_dir = tmp_path / "status"
+    not_ready_python = tmp_path / "not-ready-python"
+    not_ready_python.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    not_ready_python.chmod(0o755)
+    watchdog = _text("arnold-watchdog")
+    assert watchdog.index("arnold_supervisor_runtime_init watchdog") < watchdog.index(
+        '"watchdog.heartbeat"'
+    )
+    script = f"""
+source {str(WRAPPERS / 'arnold-supervisor-runtime-lib')!r}
+arnold_supervisor_runtime_init watchdog {str(REPO_ROOT)!r} || exit $?
+mkdir -p {str(status_dir)!r}
+touch {str(status_dir / 'watchdog.heartbeat')!r}
+"""
     env = os.environ.copy()
     env.update(
         {
             "CLOUD_WATCHDOG_ARNOLD_SRC": str(REPO_ROOT),
             "CLOUD_WATCHDOG_STATUS_DIR": str(status_dir),
-            "MEGAPLAN_SUPERVISOR_PYTHON": "/bin/false",
+            "MEGAPLAN_SUPERVISOR_PYTHON": str(not_ready_python),
             "MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED": "1",
             "MEGAPLAN_SUPERVISOR_STATUS_DIR": str(status_dir),
         }
     )
     result = subprocess.run(
-        ["bash", str(WRAPPERS / "arnold-watchdog"), "--once"],
+        ["bash", "-c", script],
         env=env,
         text=True,
         capture_output=True,

@@ -106,7 +106,7 @@ def test_malformed_or_partial_blocker_fingerprints_fail_conservatively(payload: 
     assert blocker_id_for_fingerprint(payload) is None
 
 
-def test_exact_request_adapts_taskless_phase_failure_without_weakening_general_projection(
+def test_taskless_phase_failure_normalizes_identity_and_fails_closed(
     tmp_path: Path,
 ) -> None:
     queue_root = _queue_root(tmp_path)
@@ -151,10 +151,16 @@ def test_exact_request_adapts_taskless_phase_failure_without_weakening_general_p
         request_id=request["request_id"],
     )
 
-    assert general["blocker_id"] == ""
-    assert general["requests"][0]["blocker_id"] == ""
-    assert exact["blocker_fingerprint"] == expected
-    assert exact["blocker_id"] == blocker_id_for_fingerprint(expected)
+    assert general["blocker_fingerprint"] == {
+        **expected,
+        "target_fingerprint": general["blocker_fingerprint"]["target_fingerprint"],
+    }
+    assert general["blocker_fingerprint"]["target_fingerprint"].startswith(
+        "repair-target:v1:"
+    )
+    assert general["requests"][0]["blocker_id"] == general["blocker_id"]
+    assert exact["blocker_fingerprint"] == general["blocker_fingerprint"]
+    assert exact["blocker_id"] == general["blocker_id"]
     assert exact["requests"][0]["blocker_id"] == exact["blocker_id"]
 
     unknown = SimpleNamespace(canonical_state=CanonicalState.UNKNOWN)
@@ -167,8 +173,7 @@ def test_exact_request_adapts_taskless_phase_failure_without_weakening_general_p
         },
         custody_projection=exact,
     )
-    assert decision.decision == "dispatch_l1_repair"
-    assert decision.request_id == request["request_id"]
+    assert decision.decision == "broken_superfixer"
 
     unfenced = dict(exact)
     unfenced["blocker_fingerprint"] = {
