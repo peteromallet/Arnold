@@ -1675,8 +1675,9 @@ emit_custody_structured_facts() {
   local repair_active="${13:-0}"
   local watchdog_status="${14:-unknown}"
 
-  local facts
-  facts="$(PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$supervisor_identity" "$tmux_live" "$process_live" "$active_step_pid_alive" "$watchdog_status" "$chain_complete" "$relaunch_command" "$needs_human" "$repair_active" <<'PY' 2>>"${LOG:-/dev/null}" || true
+  local facts facts_file
+  facts_file="$(mktemp "${TMPDIR:-/tmp}/arnold-watchdog-custody.XXXXXX")" || return 0
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$supervisor_identity" "$tmux_live" "$process_live" "$active_step_pid_alive" "$watchdog_status" "$chain_complete" "$relaunch_command" "$needs_human" "$repair_active" >"$facts_file" 2>>"${LOG:-/dev/null}" <<'PY' || true
 import json
 import shlex
 import sys
@@ -1732,7 +1733,8 @@ emit("PLAN_STATUS_CUSTODY_EVIDENCE_TIMESTAMP", classification.evidence_timestamp
 emit("PLAN_STATUS_CUSTODY_CONTRACT_ID", classification.contract_id)
 emit("PLAN_STATUS_CUSTODY_BOUNDARY_ID", classification.boundary_id)
 PY
-)"
+  facts="$(<"$facts_file")"
+  rm -f "$facts_file"
   if [[ -n "$facts" ]]; then
     eval "$facts"
   fi
@@ -1952,8 +1954,9 @@ PY
 detect_custody_disagreement() {
   local report_path="$1"
   local snapshot_path="$2"
-  local disagreement_output
-  disagreement_output="$(PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$report_path" "$snapshot_path" <<'PY' 2>>"${LOG:-/dev/null}" || true
+  local disagreement_output disagreement_file
+  disagreement_file="$(mktemp "${TMPDIR:-/tmp}/arnold-watchdog-disagreement.XXXXXX")" || return 0
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$report_path" "$snapshot_path" >"$disagreement_file" 2>>"${LOG:-/dev/null}" <<'PY' || true
 import json
 import sys
 from pathlib import Path
@@ -2030,7 +2033,8 @@ if disagreements:
     for line in disagreements:
         print(line)
 PY
-)"
+  disagreement_output="$(<"$disagreement_file")"
+  rm -f "$disagreement_file"
   if [[ -n "$disagreement_output" ]]; then
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
