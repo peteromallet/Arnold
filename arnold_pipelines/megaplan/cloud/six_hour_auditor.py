@@ -12,6 +12,17 @@ from typing import Any, Callable, Mapping
 
 from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
 from arnold_pipelines.megaplan.incident.projection import build_brief, rebuild_projections
+from arnold_pipelines.megaplan.source_cursor_contract import (
+    DimensionCursor,
+    SourceCursorDimension,
+    SourceCursorState,
+    SourceCursorVector,
+    build_all_fresh_vector,
+)
+from arnold_pipelines.megaplan.run_state.quality_family import (
+    QualityFamily,
+    normalize_quality_family,
+)
 
 # ── auditor completion evidence constants ─────────────────────────────
 
@@ -72,6 +83,9 @@ _AUDITOR_RECURSION_VOLATILE_KEYS = frozenset(
         "observed_at",
         "recorded_at",
         "summary",
+        # M9: projection metadata fields that vary across runs
+        "_non_authoritative",
+        "evidence_id",
     }
 )
 _AUDITOR_RECURSION_STALE_CODES = frozenset(
@@ -338,6 +352,9 @@ def audit_projection_input(
     if recursion_finding is not None:
         findings.append(recursion_finding)
 
+    # ── M9: deduplicate findings by evidence ID for once-only reason emission ──
+    findings = _deduplicate_findings(findings)
+
     unhealthy = [finding for finding in findings if finding["status"] != "ok"]
     primary = _primary_finding(unhealthy)
     diagnosis_summary = _diagnosis_summary(brief, unhealthy)
@@ -349,6 +366,14 @@ def audit_projection_input(
         outcome = "escalated" if unhealthy else "audit_cycle_complete"
         if not unhealthy and str(brief.get("outcome") or "") == "recovered":
             outcome = "audit_cycle_complete"
+
+    # ── M9: build source-cursor vector from normalized auditor inputs ──
+    source_cursor = _build_auditor_source_cursor(
+        brief=brief,
+        incident=incident,
+        problem=problem,
+        resolver_state=normalized_input["resolver_state"],
+    )
 
     return {
         "incident_id": brief.get("incident_id") or incident.get("incident_id"),
@@ -365,6 +390,20 @@ def audit_projection_input(
             "next_expected_event": next_expected_event,
         },
         "next_expected_event": next_expected_event,
+        # ── M9: source-cursor projection metadata (non-authoritative) ──
+        "_non_authoritative": True,
+        "source_cursor": {
+            "vector_id": source_cursor.vector_id,
+            "_non_authoritative": True,
+            "cursors": [
+                {
+                    "dimension": c.dimension,
+                    "state": c.state,
+                    "evidence_id": c.evidence_id,
+                }
+                for c in source_cursor.cursors
+            ],
+        },
     }
 
 
@@ -711,6 +750,140 @@ def _normalize_projection_input(projection_input: Any) -> dict[str, Any]:
         "ci_health": _coerce_ci_health(source.get("ci_health")),
         "engine_tree": _coerce_engine_tree(source.get("engine_tree")),
     }
+
+
+def _build_auditor_source_cursor(
+    brief: dict[str, Any],
+    incident: dict[str, Any],
+    problem: dict[str, Any],
+    resolver_state: dict[str, Any],
+    *,
+    observed_at_epoch_ms: int | None = None,
+) -> SourceCursorVector:
+    """Build a source-cursor vector from the auditor's normalized inputs.
+
+    The auditor is a reconciliation backstop (L3), not a primary scheduler.
+    It normalizes inputs through the shared projection/reason contract and
+    surfaces typed indeterminate states without claiming authority.
+    """
+    import time as _time
+
+    now_ms = observed_at_epoch_ms or int(_time.time() * 1000)
+    observed_at = datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc).isoformat()
+
+    def _dim(dim: SourceCursorDimension, state: SourceCursorState) -> DimensionCursor:
+        version = sha256(
+            json.dumps(
+                {
+                    "brief_id": brief.get("incident_id") or "",
+                    "incident_state": incident.get("state") or "",
+                    "problem_id": problem.get("problem_id") or "",
+                    "resolver_state": resolver_state.get("canonical_state") or "",
+                    "dimension": dim,
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()[:16]
+        evidence_id = f"audit:sha256:{sha256(json.dumps({'dim': dim, 'state': state, 'version': version, 'observed_at': observed_at}, sort_keys=True).encode()).hexdigest()[:16]}"
+        return DimensionCursor(
+            dimension=dim,
+            state=state,
+            version=version,
+            evidence_id=evidence_id,
+            observed_at=observed_at,
+        )
+
+    # Lifecycle: derived from brief/incident state coherence
+    lifecycle_state: SourceCursorState = "fresh"
+    if brief.get("outcome") in ("recovered", "completed", "audit_cycle_complete"):
+        lifecycle_state = "stale"  # terminal incidents are stale for auditor purposes
+    if not brief.get("incident_id"):
+        lifecycle_state = "unknown"
+
+    # WBC: unknown — auditor does not have direct WBC access
+    wbc_state: SourceCursorState = "unknown"
+
+    # Custody: derived from resolver state
+    custody_state: SourceCursorState = "unknown"
+    if resolver_state.get("canonical_state"):
+        custody_state = "fresh"
+
+    # Run authority: unknown — auditor is observer only
+    run_authority_state: SourceCursorState = "unknown"
+
+    # Work ledger: derived from brief outcome history
+    work_ledger_state: SourceCursorState = "unknown"
+    if brief.get("outcome"):
+        work_ledger_state = "fresh"
+
+    # Process correlation: derived from incident state
+    process_correlation_state: SourceCursorState = "unknown"
+    if incident.get("state") in ("running", "repairing", "blocked"):
+        process_correlation_state = "fresh"
+
+    return SourceCursorVector(
+        cursors=(
+            _dim("lifecycle", lifecycle_state),
+            _dim("wbc", wbc_state),
+            _dim("custody", custody_state),
+            _dim("run_authority", run_authority_state),
+            _dim("work_ledger", work_ledger_state),
+            _dim("process_correlation", process_correlation_state),
+        ),
+    )
+
+
+def _evidence_id_for_finding(
+    code: str,
+    layer: str,
+    message: str,
+    **details: Any,
+) -> str:
+    """Generate a content-addressed evidence ID for an auditor finding.
+
+    Evidence IDs are deterministic and deduplicate exact-reason emissions,
+    ensuring that the same finding class with the same evidence produces
+    the same ID — once-only emission per exact evidence.
+    """
+    payload = json.dumps(
+        {"code": code, "layer": layer, "message": message, **details},
+        sort_keys=True,
+        default=str,
+    )
+    return f"finding:sha256:{sha256(payload.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _deduplicate_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduplicate findings by evidence_id, preserving layer-order precedence.
+
+    When two findings share the same evidence_id, the one with the earlier
+    layer (per ``_LAYER_ORDER``) is kept.  This ensures once-only emission
+    of exact-evidence reasons while respecting auditor layer semantics.
+    """
+    seen: dict[str, dict[str, Any]] = {}
+    for finding in findings:
+        eid = finding.get("evidence_id", "")
+        if not eid:
+            seen.setdefault("__no_id__", finding)
+            continue
+        if eid in seen:
+            existing_layer = seen[eid].get("layer", "")
+            new_layer = finding.get("layer", "")
+            if _LAYER_ORDER.index(new_layer) < _LAYER_ORDER.index(existing_layer) if new_layer in _LAYER_ORDER and existing_layer in _LAYER_ORDER else False:
+                seen[eid] = finding
+        else:
+            seen[eid] = finding
+    # Preserve original order
+    result = []
+    for finding in findings:
+        eid = finding.get("evidence_id", "")
+        if eid and eid in seen and seen[eid] is finding:
+            result.append(finding)
+            del seen[eid]
+        elif not eid and "__no_id__" in seen:
+            result.append(finding)
+            seen.pop("__no_id__", None)
+    return result
 
 
 def _coerce_resolver_state(value: Any) -> dict[str, Any]:
@@ -1790,13 +1963,19 @@ def _finding(
     recommendation: str | None,
     **details: Any,
 ) -> dict[str, Any]:
-    finding = {
+    # ── M9: content-addressed evidence ID for once-only reason emission ──
+    evidence_id = _evidence_id_for_finding(
+        code=code, layer=layer, message=message, **details
+    )
+    finding: dict[str, Any] = {
         "code": code,
         "layer": layer,
         "status": status,
         "severity": severity,
         "message": message,
         "recommendation": recommendation,
+        "_non_authoritative": True,
+        "evidence_id": evidence_id,
     }
     finding.update(details)
     return finding

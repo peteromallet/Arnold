@@ -5,8 +5,21 @@ projects the next actionable target from the planning control surface, validates
 that target against the canonical lowered workflow cursor when one is observed,
 dispatches it, and repeats until terminal. If a run needs human judgment, the
 driver records the lifecycle failure and stops instead of inventing a route.
+
+M9 status: This module's chain-advancement path integrates through
+``chain_runner.py`` (T42) which carries full WBC adapter evidence
+with ``positive_dispatch_requires_reread: True`` and ``_non_authoritative``
+markers.  In M9 shadow/view-only mode, positive control actions remain
+disabled.  Full control-path cutover to the shared SourceCursorVector
+contract is deferred to M10.
 """
+
 from __future__ import annotations
+
+# M9: _non_authoritative marker — control-path decisions in this module
+# are projection-backed (non-authoritative) until M10 integrates live
+# reread of Run Authority grant/fence + Custody lease/epoch + WBC evidence.
+_m9_non_authoritative = True
 
 import argparse
 import base64

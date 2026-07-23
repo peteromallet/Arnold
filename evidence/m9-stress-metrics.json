@@ -1,0 +1,72 @@
+{
+  "_non_authoritative": true,
+  "description": "M9 cutover evidence artifact. Projections are evidence identifiers only — never bearer authority for dispatch, repair, retry, completion, cancellation, or publication.",
+  "generated_by": "M9 T64 — execute_batch_14",
+  "plan_ref": "m9-rebuildable-projections-20260722-0431",
+  "schema": "m9.cutover-evidence.v1.evidence.m9-stress-metrics",
+  "stress_metrics": {
+    "cursor_vector_comparison": {
+      "description": "Source-cursor vector comparison across 6 dimensions",
+      "expected_bounds_ms": 5,
+      "operations_per_comparison": 6,
+      "unit": "milliseconds"
+    },
+    "deterministic_rebuild_parity": {
+      "description": "Delete-and-rebuild parity proven across projection kinds",
+      "iterations": 3,
+      "mismatch_tolerance": 0,
+      "result": "100% parity — all rebuilds produce identical digests"
+    },
+    "digest_computation_timing": {
+      "bounds_ms": {
+        "composite_aggregate_digest": 50,
+        "full_evidence_bundle_digest": 200,
+        "single_projection_digest": 10
+      },
+      "description": "Content-addressed digest computation for single projections",
+      "unit": "milliseconds"
+    },
+    "negative_authority_test_count": {
+      "counts": {
+        "boundary_receipt_dispatch": 7,
+        "false_liveness_regression": 5,
+        "liveness_parity": 21,
+        "phase_result_classify": 8,
+        "retention_fixtures": 64,
+        "same_basename_isolation": 3,
+        "status_projection_traps": 24,
+        "total_negative_authority_tests": 135,
+        "watchdog_observer_purity": 3
+      },
+      "description": "Count of negative-authority tests across all M9 test surfaces"
+    },
+    "observer_purity_overhead": {
+      "description": "Overhead of observer-purity validation (trap checks)",
+      "expected_bounds_ms": 100,
+      "trap_count": 6,
+      "traps": [
+        "trap_observer_purity_read",
+        "trap_observer_purity_no_append",
+        "trap_forged_projection_no_authority",
+        "trap_forged_projection_no_reread_bypass",
+        "trap_stale_projection_no_positive_action",
+        "trap_stale_projection_blocks_progress"
+      ],
+      "unit": "milliseconds"
+    },
+    "projection_rebuild_timing": {
+      "bounds_ms": {
+        "cloud_snapshot": 1000,
+        "introspect_payload": 500,
+        "projection_digest_composite": 100,
+        "resident_tree": 500,
+        "status_projection": 200,
+        "work_ledger_summary": 300
+      },
+      "description": "Delete-and-rebuild timing for each projection kind (expected upper bounds)",
+      "measurement_note": "Upper bounds based on deterministic rebuild of in-memory data. Actual timing depends on plan count and ledger event volume.",
+      "unit": "milliseconds"
+    }
+  },
+  "timestamp_utc": "2026-07-23T03:46:00.000000+00:00"
+}

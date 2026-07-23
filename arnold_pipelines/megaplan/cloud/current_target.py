@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time as _time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -14,6 +16,10 @@ from arnold_pipelines.megaplan.cloud.feature_flags import resolver_observe_enabl
 from arnold_pipelines.megaplan.cloud.session_markers import (
     canonical_sidecar_suffix,
     is_canonical_session_marker_path,
+)
+from arnold_pipelines.megaplan.source_cursor_contract import (
+    DimensionCursor,
+    SourceCursorVector,
 )
 
 _FINGERPRINT_ALGORITHM = "sha256"
@@ -87,12 +93,22 @@ def resolve_current_target(
     """
 
     if not resolver_observe_enabled():
+        _stub_cursor = SourceCursorVector.all_unknown(
+            observed_at=datetime.now(timezone.utc).isoformat()
+        )
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "session": session,
             "target_id": f"{session}:unknown",
             "authoritative_source": "resolver_observe_disabled",
             "target_session": session,
+            "_non_authoritative": True,
+            "source_cursor": _stub_cursor.to_dict(),
+            "positive_dispatch_requires_reread": {
+                "run_authority": {"grant_id": "disabled", "fence_token": "disabled"},
+                "custody": {"lease_epoch": "disabled", "lease_digest": "disabled"},
+                "wbc_evidence": {"attempt_ref": "disabled", "boundary_evidence": "disabled"},
+            },
             "current_refs": {},
             "marker": {},
             "plan_state": {},
@@ -293,13 +309,57 @@ def resolve_current_target(
     if not rationale:
         rationale.append("marker is the only available evidence")
 
+    # ── M9: source-cursor metadata ──
+    _observed_at_epoch_ms = _time.time() * 1000
+    _source_cursor = _build_target_source_cursor(
+        session=session,
+        plan_state=plan_state,
+        chain_state=chain_state,
+        tmux_process=tmux_process,
+        marker_path=marker_path,
+        observed_at_epoch_ms=_observed_at_epoch_ms,
+    )
+
+    # ── M9: evidence IDs for rejections and drift ──
+    def _evidence_id_for_artifact(item: dict[str, Any]) -> str:
+        kind = str(item.get("kind") or "")
+        path_val = str(item.get("path") or "")
+        raw = f"{kind}\x00{path_val}".encode("utf-8")
+        return "sha256:" + hashlib.sha256(raw).hexdigest()
+
     sorted_evidence = sorted(stale_evidence, key=_artifact_sort_key)
+    for item in sorted_evidence:
+        if "evidence_id" not in item:
+            item["evidence_id"] = _evidence_id_for_artifact(item)
+
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "session": session,
         "target_id": f"{target_session}:{plan_name or chain_current_plan or run_kind}",
         "authoritative_source": authoritative_source,
         "target_session": target_session,
+        # ── M9: non-authoritative marker and source cursor ──
+        "_non_authoritative": True,
+        "source_cursor": _source_cursor.to_dict(),
+        # ── M9: positive dispatch requires rereading live source authority ──
+        # Projections may deny, block, or diagnose eligibility.  Any positive
+        # dispatch path MUST reread the current Run Authority grant/fence,
+        # Custody lease/epoch, and WBC evidence — projections alone cannot
+        # authorize dispatch, repair, retry, completion, or publication.
+        "positive_dispatch_requires_reread": {
+            "run_authority": {
+                "grant_id": "must be reread from live source",
+                "fence_token": "must be reread from live source",
+            },
+            "custody": {
+                "lease_epoch": "must be reread from live source",
+                "lease_digest": "must be reread from live source",
+            },
+            "wbc_evidence": {
+                "attempt_ref": "must be reread from live source",
+                "boundary_evidence": "must be reread from live source",
+            },
+        },
         "current_refs": {
             "workspace": str(workspace) if workspace is not None else "",
             "run_kind": run_kind,
@@ -376,6 +436,92 @@ def _evidence_state(unknown_type: str, issue_kinds: list[str]) -> dict[str, Any]
         # a green health result on its own.
         "green": False,
     }
+
+
+def _build_target_source_cursor(
+    *,
+    session: str,
+    plan_state: Mapping[str, Any],
+    chain_state: Mapping[str, Any],
+    tmux_process: Mapping[str, Any],
+    marker_path: Path,
+    observed_at_epoch_ms: float,
+) -> SourceCursorVector:
+    """Build a source-cursor vector from current-target evidence.
+
+    This cursor is non-authoritative projection metadata — it describes which
+    source records were observed and their freshness, but does NOT authorize
+    dispatch, repair, retry, completion, cancellation, publication, or delivery.
+    """
+    now_iso = datetime.fromtimestamp(
+        observed_at_epoch_ms / 1000, tz=timezone.utc
+    ).isoformat()
+
+    # Lifecycle: from plan state + chain state
+    plan_state_name = _safe_text(plan_state.get("name")) if isinstance(plan_state, Mapping) else ""
+    chain_plan_name = _safe_text(chain_state.get("current_plan_name")) if isinstance(chain_state, Mapping) else ""
+    plan_current_state = _safe_text(plan_state.get("current_state")) if isinstance(plan_state, Mapping) else ""
+    lifecycle_version = "sha256:" + hashlib.sha256(
+        f"{session}:{plan_state_name}:{chain_plan_name}:{plan_current_state}".encode("utf-8")
+    ).hexdigest()
+    lifecycle_cursor = DimensionCursor.fresh(
+        "lifecycle", lifecycle_version, now_iso,
+        detail=f"session={session} plan={plan_state_name or chain_plan_name} state={plan_current_state or 'unknown'}",
+    )
+
+    # Process-correlation: from tmux/process evidence
+    if isinstance(tmux_process, Mapping):
+        pid = tmux_process.get("pid")
+        live_status = tmux_process.get("live_status", "unknown")
+        if live_status == "alive":
+            pc_version = f"session:{session}:pid:{pid}:live_status:{live_status}"
+            pc_cursor = DimensionCursor.fresh(
+                "process_correlation", pc_version, now_iso,
+                detail=f"liveness={live_status} pid={pid}",
+            )
+        else:
+            pc_cursor = DimensionCursor.unknown(
+                "process_correlation", observed_at=now_iso,
+                detail=f"liveness={live_status} (not alive)",
+            )
+    else:
+        pc_cursor = DimensionCursor.unknown(
+            "process_correlation", observed_at=now_iso,
+            detail="no tmux/process evidence available",
+        )
+
+    # Custody: unavailable from current-target observer
+    custody_cursor = DimensionCursor.unknown(
+        "custody", observed_at=now_iso,
+        detail="custody lease/epoch unavailable from current-target observer",
+    )
+
+    # Run Authority: unavailable from current-target observer
+    ra_cursor = DimensionCursor.unknown(
+        "run_authority", observed_at=now_iso,
+        detail="run authority grant/fence unavailable from current-target observer",
+    )
+
+    # Work ledger: unavailable from current-target observer
+    wl_cursor = DimensionCursor.unknown(
+        "work_ledger", observed_at=now_iso,
+        detail="work ledger unavailable from current-target observer",
+    )
+
+    # WBC: unavailable from current-target observer
+    wbc_cursor = DimensionCursor.unknown(
+        "wbc", observed_at=now_iso,
+        detail="WBC boundary evidence unavailable from current-target observer",
+    )
+
+    return SourceCursorVector.from_cursors(
+        lifecycle_cursor,
+        wbc_cursor,
+        custody_cursor,
+        ra_cursor,
+        wl_cursor,
+        pc_cursor,
+    )
 
 
 def _classify_evidence_state(evidence: list[dict[str, Any]]) -> dict[str, Any]:

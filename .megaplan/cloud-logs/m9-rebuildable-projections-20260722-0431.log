@@ -1,0 +1,34 @@
+[megaplan] Could not locate codex rollout for session 019f88dc-339c-7cf0-b871-ad56af26a704; step cost will be recorded as $0.00
+{
+  "success": false,
+  "step": "finalize",
+  "result": "plan_contract_revise_needed",
+  "route_signal": "revise",
+  "summary": "Finalize could not resolve a scoped baseline test command. This is a plan-contract failure, not a finalize retry: revise the approved plan to include machine-readable `test_blast_radius` metadata for code-mode work, or explicitly set `test_selection=full` when the full suite is intended. Reason: test_blast_radius strategy is 'full' (not 'scoped'); scoped baseline selection is unresolved; no finalize task pytest command or mappable planned files were available Fallback: Finalize baseline selection intentionally does not infer scope from current git status; tests must come from plan metadata or finalized task declarations.",
+  "artifacts": [
+    "gate.json",
+    "gate_carry.json",
+    "finalize_revise_feedback.json"
+  ],
+  "next_step": "revise",
+  "state": "critiqued",
+  "iteration": 1,
+  "details": {
+    "code": "missing_scoped_baseline_test_contract",
+    "test_selection": {
+      "mode": "unresolved",
+      "reason": "test_blast_radius strategy is 'full' (not 'scoped'); scoped baseline selection is unresolved; no finalize task pytest command or mappable planned files were available",
+      "command_override": null,
+      "fallback_attempted": true,
+      "fallback_reason": "Finalize baseline selection intentionally does not infer scope from current git status; tests must come from plan metadata or finalized task declarations."
+    }
+  },
+  "next_step_runtime": {
+    "expected_duration_seconds": {
+      "min": 60,
+      "max": 900
+    },
+    "recommended_next_check_seconds": 120,
+    "duration_hint": "Expected duration: 1m-15m."
+  }
+}

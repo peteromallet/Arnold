@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request",
+  "request_id": "7f135b839ccb8b15add4f53615a42a61d0b648c6c44b78cc80fdc25d782f66df",
+  "created_at": "2026-07-22T09:53:11Z",
+  "source": "lifecycle_failure",
+  "session": "m9-rebuildable-projections-20260722-0431",
+  "workspace": "/workspace/custody-control-plane-20260714/Arnold",
+  "run_kind": "plan",
+  "marker_dir": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m9-rebuildable-projections-20260722-0431",
+  "queue_dir": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/repair-queue",
+  "target": {
+    "plan_dir": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m9-rebuildable-projections-20260722-0431",
+    "plan_name": "m9-rebuildable-projections-20260722-0431",
+    "workspace_path": "/workspace/custody-control-plane-20260714/Arnold"
+  },
+  "problem_signature": {
+    "failure_kind": "phase_failed",
+    "current_state": "planned",
+    "phase_or_step": "critique",
+    "milestone_or_plan": "m9-rebuildable-projections-20260722-0431",
+    "gate_recommendation": "Inspect phase output and resume from the failed phase.",
+    "blocked_task_id": "",
+    "event_signature": ""
+  },
+  "problem_signature_key": "b46063bb6b230279507c1c5c9b15f03af6ff2436955f490f86cffe016d8d3cb1",
+  "root_cause_hint_hash": "6e3ca4b0ec038ad949aa432d14273b3bd332576d2bbde5b2b13d83597616e487",
+  "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
+  "resident_delegation": {
+    "schema_version": "arnold-resident-delegation-provenance-v1",
+    "applicability": "applicable",
+    "transport": "discord",
+    "correlation_id": "discord-corr-e6e55854a3253a164326a44e",
+    "custody_id": "discord-custody-e6e55854a3253a164326a44e",
+    "resident_conversation_id": "rconv_85a1c2bfd5f1",
+    "source_record_id": "msg_cac0fa8cd7d1",
+    "conversation_key": "discord:dm:301463647895683072",
+    "discord_message_id": "1529421878635139083",
+    "reply_to_message_id": "1529421878635139083",
+    "guild_id": null,
+    "channel_id": "1451308037074714654",
+    "thread_id": null,
+    "dm_user_id": "301463647895683072",
+    "resident_turn_id": "turn_713fcb4596de",
+    "root_run_id": "subagent-20260722-093820-a9cf533f",
+    "source_kind": "discord_inbound_message",
+    "timezone_name": "Europe/Berlin"
+  }
+}

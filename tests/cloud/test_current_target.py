@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from pathlib import Path
+from typing import Any
 
 from arnold_pipelines.megaplan.chain import spec as chain_spec
 from arnold_pipelines.megaplan.cloud.current_target import (
@@ -15,6 +17,24 @@ from arnold_pipelines.megaplan.cloud.session_markers import (
     is_canonical_sidecar_path,
     canonical_sidecar_suffix,
 )
+
+
+def _strip_nondeterministic(record: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of *record* with wall-clock timestamps and evidence_id
+    stripped from stale_evidence for deterministic comparison.
+
+    M9 added evidence_id to every stale_evidence entry and observed_at
+    timestamps to source_cursor entries.  Those fields vary across runs
+    even when the underlying evidence is unchanged, so test assertions
+    that check exact record equality should use this helper.
+    """
+    r = deepcopy(record)
+    # Strip evidence_id from stale_evidence entries (added by M9 T13)
+    for entry in r.get("stale_evidence", []):
+        entry.pop("evidence_id", None)
+    # Strip source_cursor entirely — observed_at timestamps are wall-clock
+    r.pop("source_cursor", None)
+    return r
 
 
 def test_resolve_current_target_prefers_live_child_session(tmp_path: Path) -> None:
@@ -73,7 +93,7 @@ def test_resolve_current_target_prefers_live_child_session(tmp_path: Path) -> No
             "live_status": "alive",
         }
     ]
-    assert record["stale_evidence"] == [
+    assert _strip_nondeterministic(record)["stale_evidence"] == [
         {
             "kind": "missing_chain_state",
             "path": str(chain_spec._state_path_for(parent_spec)),
@@ -126,7 +146,7 @@ def test_resolve_current_target_marks_stale_parent_from_chain_state(tmp_path: Pa
     assert record["authoritative_source"] == "chain_state"
     assert record["current_refs"]["marker_plan_name"] == "m1-old-plan"
     assert record["current_refs"]["current_plan_name"] == "m3-current-plan"
-    assert record["stale_evidence"] == [
+    assert _strip_nondeterministic(record)["stale_evidence"] == [
         {
             "current_plan": "m3-current-plan",
             "kind": "stale_marker_plan_ref",
@@ -203,7 +223,7 @@ def test_resolve_current_target_marks_stale_needs_human(tmp_path: Path) -> None:
         "mtime": (workspace / ".megaplan" / "plans" / "m3-current-plan" / "events.ndjson").stat().st_mtime,
     }
     assert record["needs_human"]["plan_refs"] == ["m1-old-plan"]
-    assert record["stale_evidence"] == [
+    assert _strip_nondeterministic(record)["stale_evidence"] == [
         {
             "current_plan": "m3-current-plan",
             "kind": "stale_needs_human_plan_ref",
@@ -249,7 +269,8 @@ def test_resolve_current_target_reports_missing_state_deterministically(tmp_path
         pid_is_live=lambda pid: False if pid == 4242 else None,
     )
 
-    assert first == second
+    # M9: source_cursor.observed_at uses wall-clock time; strip nondeterministic fields
+    assert _strip_nondeterministic(first) == _strip_nondeterministic(second)
     assert first["authoritative_source"] == "marker"
     assert first["evidence_state"]["status"] == "unknown"
     assert first["evidence_state"]["unknown_type"] == "partial"
@@ -257,7 +278,7 @@ def test_resolve_current_target_reports_missing_state_deterministically(tmp_path
     assert first["evidence_state"]["mutation_eligible"] is False
     assert first["evidence_state"]["authorizes_mutation"] is False
     assert first["tmux_process"]["live_status"] == "stopped"
-    assert first["stale_evidence"] == [
+    assert _strip_nondeterministic(first)["stale_evidence"] == [
         {
             "kind": "missing_chain_state",
             "path": str(_chain_state_path(workspace, spec_path)),
@@ -335,7 +356,7 @@ def test_resolve_current_target_uses_existing_fallback_chain_state_candidate(tmp
     assert record["chain_state"]["present"] is True
     assert record["chain_state"]["path"] == str(fallback_state_path)
     assert record["current_refs"]["chain_current_plan_name"] == "m1-demo"
-    assert record["stale_evidence"] == [
+    assert _strip_nondeterministic(record)["stale_evidence"] == [
         {
             "kind": "missing_plan_state",
             "path": str(workspace / ".megaplan" / "plans" / "m1-demo" / "state.json"),
@@ -378,7 +399,7 @@ def test_resolve_current_target_prefers_terminal_plan_over_stale_chain_state(tmp
     assert record["authoritative_source"] == "plan_state"
     assert record["current_refs"]["current_plan_name"] == plan_name
     assert record["current_refs"]["plan_current_state"] == "done"
-    assert record["stale_evidence"] == [
+    assert _strip_nondeterministic(record)["stale_evidence"] == [
         {
             "kind": "stale_chain_state_after_terminal_plan",
             "path": str(_chain_state_path(workspace, spec_path)),
@@ -415,7 +436,7 @@ def test_resolve_current_target_tolerates_partial_evidence_fixture(tmp_path: Pat
     }
     assert record["ignored_artifacts"] == []
     assert record["repair_progress"] == {"present": False, "items": []}
-    assert record["stale_evidence"] == [
+    assert _strip_nondeterministic(record)["stale_evidence"] == [
         {
             "kind": "invalid_marker_json",
             "path": str(marker_dir / "partial-session.json"),
@@ -1064,7 +1085,7 @@ def test_snapshots_distinguish_unchanged_live_from_fresh_activity(tmp_path: Path
         session_is_live=lambda s: True if s == "demo" else None,
         pid_is_live=lambda p: True if p == 9999 else None,
     )
-    assert snap2 == snap2b
+    assert _strip_nondeterministic(snap2) == _strip_nondeterministic(snap2b)
 
 
 def test_repair_progress_sidecar_includes_mtime(tmp_path: Path) -> None:

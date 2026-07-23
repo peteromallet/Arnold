@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request",
+  "request_id": "c3887145b5206ae07b89081a65ac76022a9eb55bc27f38a9ecb20b07db30652b",
+  "created_at": "2026-07-22T10:06:59Z",
+  "source": "lifecycle_failure",
+  "session": "m9-rebuildable-projections-20260722-0431",
+  "workspace": "/workspace/custody-control-plane-20260714/Arnold",
+  "run_kind": "plan",
+  "marker_dir": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m9-rebuildable-projections-20260722-0431",
+  "queue_dir": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/repair-queue",
+  "target": {
+    "plan_dir": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/plans/m9-rebuildable-projections-20260722-0431",
+    "plan_name": "m9-rebuildable-projections-20260722-0431",
+    "workspace_path": "/workspace/custody-control-plane-20260714/Arnold"
+  },
+  "problem_signature": {
+    "failure_kind": "workflow_cursor_mismatch",
+    "current_state": "blocked",
+    "phase_or_step": "critique",
+    "milestone_or_plan": "m9-rebuildable-projections-20260722-0431",
+    "gate_recommendation": "Repair the plan or workflow projection so the observed workflow cursor and control targets agree.",
+    "blocked_task_id": "",
+    "event_signature": ""
+  },
+  "problem_signature_key": "0e63ad3c575325fc8943a11916c589334f1e355cb67846c0a27fad54f3ba8101",
+  "root_cause_hint_hash": "53263cbe191ff6b1577b5c05f6207dc435b91efb04f76d0c3ef20a23183811c4",
+  "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
+  "resident_delegation": {
+    "schema_version": "arnold-resident-delegation-provenance-v1",
+    "applicability": "applicable",
+    "transport": "discord",
+    "correlation_id": "discord-corr-e6e55854a3253a164326a44e",
+    "custody_id": "discord-custody-e6e55854a3253a164326a44e",
+    "resident_conversation_id": "rconv_85a1c2bfd5f1",
+    "source_record_id": "msg_cac0fa8cd7d1",
+    "conversation_key": "discord:dm:301463647895683072",
+    "discord_message_id": "1529421878635139083",
+    "reply_to_message_id": "1529421878635139083",
+    "guild_id": null,
+    "channel_id": "1451308037074714654",
+    "thread_id": null,
+    "dm_user_id": "301463647895683072",
+    "resident_turn_id": "turn_713fcb4596de",
+    "root_run_id": "subagent-20260722-093820-a9cf533f",
+    "source_kind": "discord_inbound_message",
+    "timezone_name": "Europe/Berlin"
+  }
+}

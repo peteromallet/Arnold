@@ -1,0 +1,321 @@
+{
+  "_non_authoritative": true,
+  "description": "M9 cutover evidence artifact. Projections are evidence identifiers only — never bearer authority for dispatch, repair, retry, completion, cancellation, or publication.",
+  "drift_snapshot": {
+    "_non_authoritative": true,
+    "any_blocking": false,
+    "by_class": {
+      "cursor_mismatch": 7,
+      "missing_artifact_coverage": 7,
+      "rebuild_mismatch": 7,
+      "stale_source_disagreement": 7
+    },
+    "entries": [
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for status/cursor_mismatch — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "cursor_mismatch",
+        "evidence_id": "drift:status:cursor_mismatch:8345d10f3819288ef6367d45aa73b5eb1126412aeceed14c3db2b3f67d668b37",
+        "projection_kind": "status"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for status/rebuild_mismatch — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "rebuild_mismatch",
+        "evidence_id": "drift:status:rebuild_mismatch:f80996fe6c103e41e2cac08f5095e7f60529ae74f254415b766085e5b6420717",
+        "projection_kind": "status"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for status/missing_artifact_coverage — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "missing_artifact_coverage",
+        "evidence_id": "drift:status:missing_artifact_coverage:765e0fdca1e8e7e2c2fa6e2ffb17b96161f289a32e0206a10dba36f57ed8ec35",
+        "projection_kind": "status"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for status/stale_source_disagreement — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "stale_source_disagreement",
+        "evidence_id": "drift:status:stale_source_disagreement:bc0a1241ac3ddb5c17fb045d3774f82b2fc4887ba6beb2ec039bccc8b94930a8",
+        "projection_kind": "status"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for resident/cursor_mismatch — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "cursor_mismatch",
+        "evidence_id": "drift:resident:cursor_mismatch:4df76dd6f75dc9767fed7718060df4ec47c4a1d27972962670fb3459810de5d9",
+        "projection_kind": "resident"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for resident/rebuild_mismatch — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "rebuild_mismatch",
+        "evidence_id": "drift:resident:rebuild_mismatch:da753ed1929bdd313a432136c06030da9f2c44875a66c79d75c1902de7e94b80",
+        "projection_kind": "resident"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for resident/missing_artifact_coverage — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "missing_artifact_coverage",
+        "evidence_id": "drift:resident:missing_artifact_coverage:40ec2b7e4c6d8fcdf856937c2b36fe8232c377d1bbbbce4fdb8379dd99e9019a",
+        "projection_kind": "resident"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for resident/stale_source_disagreement — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "stale_source_disagreement",
+        "evidence_id": "drift:resident:stale_source_disagreement:cf92ba85a865611dd79076bb752e4600b4bffae28317d99da6c030e721eb0838",
+        "projection_kind": "resident"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for cloud/cursor_mismatch — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "cursor_mismatch",
+        "evidence_id": "drift:cloud:cursor_mismatch:d53ee3938aa2cbd85dcbf29b9704bf700ff8efd9be5302ccbab62c1a128f9449",
+        "projection_kind": "cloud"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for cloud/rebuild_mismatch — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "rebuild_mismatch",
+        "evidence_id": "drift:cloud:rebuild_mismatch:7ef8727867c0e7f37049d00524d731e051329a7ad3310183a560482e981960e2",
+        "projection_kind": "cloud"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for cloud/missing_artifact_coverage — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "missing_artifact_coverage",
+        "evidence_id": "drift:cloud:missing_artifact_coverage:ed370353078ec5b0b09ce4e952edecd08a9e5132331063904b98023fecb528a3",
+        "projection_kind": "cloud"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for cloud/stale_source_disagreement — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "stale_source_disagreement",
+        "evidence_id": "drift:cloud:stale_source_disagreement:efc4c9658aed8e5ada64bf295e957bd8cf161ebc45330601e6c074c1ebd5ca59",
+        "projection_kind": "cloud"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for introspection/cursor_mismatch — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "cursor_mismatch",
+        "evidence_id": "drift:introspection:cursor_mismatch:b418e2918d987a858468922921c8c60609d870f4e6a08ca1d3300f96e5ccf4ab",
+        "projection_kind": "introspection"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for introspection/rebuild_mismatch — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "rebuild_mismatch",
+        "evidence_id": "drift:introspection:rebuild_mismatch:a8d544f1ee21c8418ee5ddf2b88f6b0f02a5fa6b5439e43b840bb65da2c56074",
+        "projection_kind": "introspection"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for introspection/missing_artifact_coverage — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "missing_artifact_coverage",
+        "evidence_id": "drift:introspection:missing_artifact_coverage:3ce0466f43ff01c47dfed982751bfb0e97d9bbad5b62b2a8518ce03fe26f7c40",
+        "projection_kind": "introspection"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for introspection/stale_source_disagreement — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "stale_source_disagreement",
+        "evidence_id": "drift:introspection:stale_source_disagreement:ad072db1c4730c32ef8fbd22dff8d5980e169ce261965ee727b0cae8c8ac0cdd",
+        "projection_kind": "introspection"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for repair/cursor_mismatch — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "cursor_mismatch",
+        "evidence_id": "drift:repair:cursor_mismatch:55973e01d6673ae3271ccda96c5dc21681334f86cda49fef86fd4760b47d9f58",
+        "projection_kind": "repair"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for repair/rebuild_mismatch — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "rebuild_mismatch",
+        "evidence_id": "drift:repair:rebuild_mismatch:14a373475a42d4d94d2261998bed5f7b356e0ffaaca2d5e435d9f051c10bdde5",
+        "projection_kind": "repair"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for repair/missing_artifact_coverage — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "missing_artifact_coverage",
+        "evidence_id": "drift:repair:missing_artifact_coverage:473d8d6c22a8f04fa6443ec9756ccb15b96d59057de712244ab346fededa7d12",
+        "projection_kind": "repair"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for repair/stale_source_disagreement — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "stale_source_disagreement",
+        "evidence_id": "drift:repair:stale_source_disagreement:7545516aab1117fdb536a40940bf503a3ab9c65a42303bca5d8fd735e40214bc",
+        "projection_kind": "repair"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for work_ledger/cursor_mismatch — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "cursor_mismatch",
+        "evidence_id": "drift:work_ledger:cursor_mismatch:5ecbfa48e37d3f6c4e0e2f733575930338cd9ced97e0cd06f887ab847d6a1b59",
+        "projection_kind": "work_ledger"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for work_ledger/rebuild_mismatch — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "rebuild_mismatch",
+        "evidence_id": "drift:work_ledger:rebuild_mismatch:ed2106113550c96ac034bec9a35b83ed9094c3a9fa8c44d451f01f56644278a0",
+        "projection_kind": "work_ledger"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for work_ledger/missing_artifact_coverage — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "missing_artifact_coverage",
+        "evidence_id": "drift:work_ledger:missing_artifact_coverage:5956db09efbe930375b25649b32a9956722ffc3208944c0375a5e4cfefac8244",
+        "projection_kind": "work_ledger"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for work_ledger/stale_source_disagreement — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "stale_source_disagreement",
+        "evidence_id": "drift:work_ledger:stale_source_disagreement:aaec855d9f9fd304c96fa586f9b2f5a88c253089a7962b149e55ce02fe437137",
+        "projection_kind": "work_ledger"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for observer_purity/cursor_mismatch — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "cursor_mismatch",
+        "evidence_id": "drift:observer_purity:cursor_mismatch:efd18a083ef6bfe644d7a33de843c21fa13cfc99af9cab0466b47faab5aa01f7",
+        "projection_kind": "observer_purity"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for observer_purity/rebuild_mismatch — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "rebuild_mismatch",
+        "evidence_id": "drift:observer_purity:rebuild_mismatch:baa87c6d62e586c6aeadff509d3b69b1f653a9963ce5ae8255414e8466dac39c",
+        "projection_kind": "observer_purity"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for observer_purity/missing_artifact_coverage — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "missing_artifact_coverage",
+        "evidence_id": "drift:observer_purity:missing_artifact_coverage:aefb80a473d22662e32a2575b8e46f532c7a62c10633bccc551080858e45196e",
+        "projection_kind": "observer_purity"
+      },
+      {
+        "_non_authoritative": true,
+        "detail": "Zero-drift baseline for observer_purity/stale_source_disagreement — rebuild produces identical digest",
+        "dimensions_affected": [],
+        "drift_class": "stale_source_disagreement",
+        "evidence_id": "drift:observer_purity:stale_source_disagreement:7d897ed86337264ddf1defd6e7d6a9570f9470b428400bfad97f7c59379854e7",
+        "projection_kind": "observer_purity"
+      }
+    ],
+    "total_entries": 28
+  },
+  "generated_by": "M9 T64 — execute_batch_14",
+  "plan_ref": "m9-rebuildable-projections-20260722-0431",
+  "projection_digests": {
+    "aggregate_digest": "e71b84e441a4517278f59c7440f0311e27409e62db78b309133fe2530bc6ca19",
+    "kinds": [
+      {
+        "_non_authoritative": true,
+        "evidence_ids": [
+          "ev:status:payload",
+          "ev:status:source_cursor"
+        ],
+        "kind": "status",
+        "payload_digest": "de4506e8c72f2ec1192a3971468bf997f14b70832d8b93b1f5d046ab8bfbadb6",
+        "source_cursor_digest": "9296ddf8cdb43b3d9530b68014959e60bdade07c21c570f76c570b25c75ed5a7"
+      },
+      {
+        "_non_authoritative": true,
+        "evidence_ids": [
+          "ev:resident:payload",
+          "ev:resident:source_cursor"
+        ],
+        "kind": "resident",
+        "payload_digest": "8e45cc1c129f58b3c8b0b52fc90017a42b70d65b89277707bcaf0c7948c24da6",
+        "source_cursor_digest": "9296ddf8cdb43b3d9530b68014959e60bdade07c21c570f76c570b25c75ed5a7"
+      },
+      {
+        "_non_authoritative": true,
+        "evidence_ids": [
+          "ev:cloud:payload",
+          "ev:cloud:source_cursor"
+        ],
+        "kind": "cloud",
+        "payload_digest": "25482d956ec075e848a07f9cf60513bde0ce2f342b2781a5936ebd2fb8cad0f1",
+        "source_cursor_digest": "9296ddf8cdb43b3d9530b68014959e60bdade07c21c570f76c570b25c75ed5a7"
+      },
+      {
+        "_non_authoritative": true,
+        "evidence_ids": [
+          "ev:introspection:payload",
+          "ev:introspection:source_cursor"
+        ],
+        "kind": "introspection",
+        "payload_digest": "0e4c4e2aaaa15aa5f12d0ba2551f78ee6163cf093d819ec26b5f43845b70ede6",
+        "source_cursor_digest": "9296ddf8cdb43b3d9530b68014959e60bdade07c21c570f76c570b25c75ed5a7"
+      },
+      {
+        "_non_authoritative": true,
+        "evidence_ids": [
+          "ev:repair:payload",
+          "ev:repair:source_cursor"
+        ],
+        "kind": "repair",
+        "payload_digest": "41bd63e9312fa77a40642b6055c3ead9fa7f1cb5f963c33ddce4008e325f9277",
+        "source_cursor_digest": "9296ddf8cdb43b3d9530b68014959e60bdade07c21c570f76c570b25c75ed5a7"
+      },
+      {
+        "_non_authoritative": true,
+        "evidence_ids": [
+          "ev:work_ledger:payload",
+          "ev:work_ledger:source_cursor"
+        ],
+        "kind": "work_ledger",
+        "payload_digest": "1f2a852ec03709903b696b8eb6ab8d87530ef00caaa2405283c8b8a25e1cf0d5",
+        "source_cursor_digest": "9296ddf8cdb43b3d9530b68014959e60bdade07c21c570f76c570b25c75ed5a7"
+      },
+      {
+        "_non_authoritative": true,
+        "evidence_ids": [
+          "ev:observer_purity:payload",
+          "ev:observer_purity:source_cursor"
+        ],
+        "kind": "observer_purity",
+        "payload_digest": "8f4465512a66192b6cf1a1da4298e05a4ad1bf1c61b46e7b91594fb7b0feaef7",
+        "source_cursor_digest": "9296ddf8cdb43b3d9530b68014959e60bdade07c21c570f76c570b25c75ed5a7"
+      }
+    ],
+    "total_kinds": 7
+  },
+  "schema": "m9.cutover-evidence.v1.evidence.m9-projection-digests",
+  "timestamp_utc": "2026-07-23T03:46:00.000000+00:00"
+}

@@ -23,6 +23,8 @@ from .auth import AuthorizationSubject
 from .currently_running import (
     CURRENTLY_RUNNING_COMMAND,
     CURRENTLY_RUNNING_DESCRIPTION,
+    CurrentlyRunningReport,
+    _safe_label,
     collect_currently_running,
     render_currently_running,
 )
@@ -1445,7 +1447,15 @@ class ResidentDiscordService:
         await client.start(self.token)
 
     async def handle_currently_running_interaction(self, interaction: Any) -> None:
-        """Serve ``/whats-cooking`` without invoking the resident model."""
+        """Serve ``/whats-cooking`` without invoking the resident model.
+
+        M9 (T25): Non-authoritative metadata and degraded states are preserved
+        independently per source.  Status-node and managed-agent inventory
+        degrade independently — a failure in one source does not invent
+        activity for the other.  Source-cursor metadata is surfaced as a
+        non-authoritative footer so operators can distinguish fresh, stale,
+        and unknown dimensional evidence.
+        """
 
         user_id = _optional_snowflake(
             getattr(getattr(interaction, "user", None), "id", None)
@@ -1473,15 +1483,36 @@ class ResidentDiscordService:
             return
 
         await interaction.response.defer(thinking=True, ephemeral=True)
+
+        # ── M9: independent degradation per source ──
+        report: CurrentlyRunningReport | None = None
+        collection_failed = False
         try:
             report = await collect_currently_running(self.runtime)
-            rendered = render_currently_running(report)
         except Exception:
-            LOGGER.exception("Resident whats-cooking command failed")
+            LOGGER.exception("Resident whats-cooking collect phase failed")
+            collection_failed = True
+
+        if collection_failed or report is None:
+            # ── M9: no invented activity — both sources unavailable ──
             rendered = (
                 "# Currently running\n"
-                "⚠️ Canonical status is temporarily unavailable; no running-state claims were made."
+                "⚠️ Canonical status is temporarily unavailable; "
+                "no running-state claims were made.\n"
+                "\n"
+                "## ⛓️ Epics & chains\n"
+                "⚠️ Status-node collection failed — no chain state available.\n"
+                "\n"
+                "## 🤖 Managed agents\n"
+                "⚠️ Managed-agent inventory collection failed — no agent state available.\n"
+                "\n"
+                "> ⚠️ _non-authoritative — this report is a projection, not source authority._"
             )
+        else:
+            rendered = render_currently_running(report)
+            # ── M9: attach non-authoritative source-cursor metadata footer ──
+            rendered = _attach_m9_whats_cooking_metadata(report, rendered)
+
         for chunk in split_discord_message(rendered):
             await interaction.followup.send(chunk, ephemeral=True)
 
@@ -1947,6 +1978,67 @@ class ResidentDiscordService:
 def discord_token_from_env(env_name: str) -> str | None:
     token = os.environ.get(env_name)
     return token.strip() if token and token.strip() else None
+
+
+def _attach_m9_whats_cooking_metadata(
+    report: CurrentlyRunningReport,
+    rendered: str,
+) -> str:
+    """Attach non-authoritative source-cursor metadata footer to the report.
+
+    M9 (T25): The footer surfaces source-cursor freshness per dimension
+    and independently marks the status-node and managed-agent inventory
+    degradation states.  No activity is invented — when a source is
+    unavailable, its degradation is stated explicitly rather than
+    defaulting to an optimistic label.
+    """
+    lines: list[str] = [rendered, ""]
+
+    # ── Per-source degradation status ──
+    degradation_parts: list[str] = []
+    if report.status_error:
+        degradation_parts.append(
+            f"⛓️ Epics & chains: degraded — {_safe_label(report.status_error)}"
+        )
+    if report.managed_agents_error:
+        degradation_parts.append(
+            f"🤖 Managed agents: degraded — {_safe_label(report.managed_agents_error)}"
+        )
+    if degradation_parts:
+        lines.append("### ⚠️ Source degradation")
+        for part in degradation_parts:
+            lines.append(f"- {part}")
+        lines.append("")
+
+    # ── Source-cursor metadata from status_node ──
+    status_node = report.status_node
+    if isinstance(status_node, Mapping):
+        source_cursor = status_node.get("source_cursor_aggregate")
+        if isinstance(source_cursor, Mapping):
+            lines.append("### 📊 Source-cursor evidence")
+            non_fresh = source_cursor.get("non_fresh_count", 0)
+            dims = source_cursor.get("dimensions")
+            lines.append(f"- Non-fresh dimensions: {non_fresh}")
+            if isinstance(dims, list):
+                for dim in dims:
+                    if isinstance(dim, Mapping):
+                        d_name = dim.get("dimension", "?")
+                        d_state = dim.get("state", "?")
+                        lines.append(f"  - `{d_name}`: {d_state}")
+            vector_id = source_cursor.get("vector_id", "")
+            if vector_id:
+                lines.append(f"- Vector ID: `{vector_id[:24]}...`")
+            lines.append("")
+
+    # ── Non-authoritative footer ──
+    lines.append(
+        "> ⚠️ _non-authoritative — this report is a projection, "
+        "not source authority.  Source-cursor dimensions may be "
+        "stale or unknown; no running-state claims are invented "
+        "from missing evidence._"
+    )
+
+    return "\n".join(lines)
 
 
 def _optional_snowflake(value: object) -> str | None:

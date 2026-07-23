@@ -6394,3 +6394,447 @@ def test_gather_promotes_installed_wrapper_drift_and_ignores_terminal_history(
         ),
         encoding="utf-8",
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# M9 T61: Shared deterministic exact-evidence reason fixtures
+#
+# These fixtures exercise the six_hour_auditor's finding pipeline across
+# 12 reason classes.  Each fixture fires exactly once with a content-addressed
+# evidence ID and is shared across watchdog and auditor suites.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+import hashlib as _hashlib
+from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+    _finding,
+    _evidence_id_for_finding,
+    _deduplicate_findings,
+    _project_progress_finding,
+    _watchdog_finding,
+    _repair_layer_finding,
+    _install_sync_finding,
+    _github_sync_finding,
+    _live_process_finding,
+    _stale_claim_finding,
+    _missing_evidence_finding,
+    _recurrence_finding,
+    _semantic_custody_findings,
+    _auditor_recursion_finding,
+    AuditorConfig,
+)
+
+
+class TestSharedDeterministicReasonFixtures:
+    """Shared reason fixtures — each fires once with exact evidence IDs.
+
+    These 12 reason classes are consumed by both watchdog and auditor
+    suites.  Every fixture verifies:
+    * The reason fires exactly once (no duplicate emission for identical evidence).
+    * The evidence ID is content-addressed and deterministic.
+    * The finding carries ``_non_authoritative: True``.
+    """
+
+    # ── 1. consecutive normalized blocks ──────────────────────────────
+
+    def test_reason_consecutive_normalized_blocks_once_only(self):
+        """Normalized blocks that repeat must fire once with deterministic evidence ID."""
+        finding_a = _finding(
+            "consecutive_normalized_blocks",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Consecutive normalized blocks detected without progress.",
+            recommendation="auditor_escalate_to_human",
+            block_count=3,
+            block_ids=["b1", "b2", "b3"],
+        )
+        finding_b = _finding(
+            "consecutive_normalized_blocks",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Consecutive normalized blocks detected without progress.",
+            recommendation="auditor_escalate_to_human",
+            block_count=3,
+            block_ids=["b1", "b2", "b3"],
+        )
+        # Same evidence → same ID
+        assert finding_a["evidence_id"] == finding_b["evidence_id"]
+        assert finding_a["_non_authoritative"] is True
+        assert finding_a["evidence_id"].startswith("finding:sha256:")
+        # Deduplicate: only one survives
+        deduped = _deduplicate_findings([finding_a, finding_b])
+        assert len(deduped) == 1
+        assert deduped[0]["evidence_id"] == finding_a["evidence_id"]
+
+    # ── 2. signature drift ────────────────────────────────────────────
+
+    def test_reason_signature_drift_once_only(self):
+        """Signature drift between expected and observed must fire once with evidence ID."""
+        finding = _finding(
+            "signature_drift",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Failure signature does not match expected identity.",
+            recommendation="meta_repair.repair_attempt",
+            expected_signature="fail:quality_gate:abc123",
+            observed_signature="fail:quality_gate:def456",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Deterministic: repeat with same inputs → same ID
+        finding2 = _finding(
+            "signature_drift",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Failure signature does not match expected identity.",
+            recommendation="meta_repair.repair_attempt",
+            expected_signature="fail:quality_gate:abc123",
+            observed_signature="fail:quality_gate:def456",
+        )
+        assert finding["evidence_id"] == finding2["evidence_id"]
+
+    # ── 3. unclosed custody ───────────────────────────────────────────
+
+    def test_reason_unclosed_custody_once_only(self):
+        """Unclosed custody must fire once with evidence ID."""
+        finding = _finding(
+            "unclosed_custody",
+            layer="semantic_custody",
+            status="error",
+            severity="error",
+            message="Custody lease was accepted but never closed or released.",
+            recommendation="watchdog.dispatch",
+            custody_id="lease:abc123",
+            accepted_at="2026-07-04T20:00:00Z",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Deduplicate identical findings
+        deduped = _deduplicate_findings([finding, dict(finding)])
+        assert len(deduped) == 1
+
+    # ── 4. index mismatch ─────────────────────────────────────────────
+
+    def test_reason_index_mismatch_once_only(self):
+        """Index mismatch between ordered sources must fire once with evidence ID."""
+        finding = _finding(
+            "index_mismatch",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Ordered source indices disagree on event sequence.",
+            recommendation="system.integrity_repair",
+            source_a_index=42,
+            source_b_index=41,
+            source_a="brief",
+            source_b="incident",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Different indices → different evidence IDs
+        finding2 = _finding(
+            "index_mismatch",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Ordered source indices disagree on event sequence.",
+            recommendation="system.integrity_repair",
+            source_a_index=42,
+            source_b_index=40,
+            source_a="brief",
+            source_b="incident",
+        )
+        assert finding["evidence_id"] != finding2["evidence_id"]
+
+    # ── 5. SLO breach ─────────────────────────────────────────────────
+
+    def test_reason_slo_breach_once_only(self):
+        """SLO breach must fire once with evidence ID."""
+        finding = _finding(
+            "slo_breach",
+            layer="watchdog",
+            status="error",
+            severity="error",
+            message="Watchdog report exceeds SLO freshness window.",
+            recommendation="watchdog.dispatch",
+            slo_window_hours=6,
+            observed_age_hours=8.5,
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["severity"] == "error"
+
+    # ── 6. overlap ────────────────────────────────────────────────────
+
+    def test_reason_overlap_once_only(self):
+        """Overlapping claims must fire once with evidence ID."""
+        finding = _finding(
+            "overlap_detected",
+            layer="stale_claim",
+            status="error",
+            severity="error",
+            message="Two active claims overlap on the same incident window.",
+            recommendation="auditor_escalate_to_human",
+            claim_ids=["claim-a", "claim-b"],
+            overlapping_window="2026-07-04T18:00:00Z/2026-07-04T20:00:00Z",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Deduplicate
+        deduped = _deduplicate_findings([finding, dict(finding)])
+        assert len(deduped) == 1
+
+    # ── 7. cross-session joins ────────────────────────────────────────
+
+    def test_reason_cross_session_joins_once_only(self):
+        """Cross-session join anomalies must fire once with evidence ID."""
+        finding = _finding(
+            "cross_session_join_anomaly",
+            layer="reconciler",
+            status="warn",
+            severity="warn",
+            message="Cross-session join produced inconsistent custody states.",
+            recommendation="watchdog.dispatch",
+            session_ids=["s1", "s2"],
+            joined_dimension="custody",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["severity"] == "warn"
+
+    # ── 8. projection amplification ───────────────────────────────────
+
+    def test_reason_projection_amplification_once_only(self):
+        """Projection amplification (recursive non-ok cycles) must fire once with evidence ID."""
+        finding = _finding(
+            "projection_amplification",
+            layer="auditor_recursion",
+            status="error",
+            severity="error",
+            message="Non-ok findings are amplifying across audit cycles.",
+            recommendation="auditor_escalate_to_human",
+            cycle_count=3,
+            amplified_codes=["stale_claim_detected", "missing_evidence_refs"],
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Deterministic repeat
+        finding2 = _finding(
+            "projection_amplification",
+            layer="auditor_recursion",
+            status="error",
+            severity="error",
+            message="Non-ok findings are amplifying across audit cycles.",
+            recommendation="auditor_escalate_to_human",
+            cycle_count=3,
+            amplified_codes=["stale_claim_detected", "missing_evidence_refs"],
+        )
+        assert finding["evidence_id"] == finding2["evidence_id"]
+
+    # ── 9. seriality ──────────────────────────────────────────────────
+
+    def test_reason_seriality_once_only(self):
+        """Seriality violations must fire once with evidence ID."""
+        finding = _finding(
+            "seriality_violation",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Event ordering violates expected seriality constraints.",
+            recommendation="system.integrity_repair",
+            expected_order=["evt-1", "evt-2", "evt-3"],
+            observed_order=["evt-1", "evt-3", "evt-2"],
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+
+    # ── 10. oversized rework ──────────────────────────────────────────
+
+    def test_reason_oversized_rework_once_only(self):
+        """Oversized rework must fire once with evidence ID."""
+        finding = _finding(
+            "oversized_rework",
+            layer="recurrence",
+            status="error",
+            severity="error",
+            message="Repair attempts exceed the rework budget without new evidence.",
+            recommendation="auditor_escalate_to_human",
+            attempt_count=5,
+            budget_limit=3,
+            new_evidence_since_last_attempt=False,
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["status"] == "error"
+
+    # ── 11. invalid model ─────────────────────────────────────────────
+
+    def test_reason_invalid_model_once_only(self):
+        """Invalid model detection must fire once with evidence ID."""
+        finding = _finding(
+            "invalid_model",
+            layer="resolver_semantics",
+            status="error",
+            severity="error",
+            message="Resolver canonical state is incompatible with supporting evidence model.",
+            recommendation="auditor_escalate_to_human",
+            canonical_state="RUNNING",
+            expected_states=["REPAIRING", "RETRYABLE_EXECUTION_BLOCK"],
+            invalid_reasons=["wrong_canonical_state_for_evidence"],
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["code"] == "invalid_model"
+
+    # ── 12. missing ledger coverage ───────────────────────────────────
+
+    def test_reason_missing_ledger_coverage_once_only(self):
+        """Missing ledger coverage must fire once with evidence ID."""
+        finding = _finding(
+            "missing_ledger_coverage",
+            layer="missing_evidence",
+            status="error",
+            severity="error",
+            message="Work ledger has no coverage for the reported incident window.",
+            recommendation="system.integrity_repair",
+            incident_window_start="2026-07-04T00:00:00Z",
+            incident_window_end="2026-07-04T06:00:00Z",
+            ledger_earliest="2026-07-04T08:00:00Z",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Deterministic repeat
+        finding2 = _finding(
+            "missing_ledger_coverage",
+            layer="missing_evidence",
+            status="error",
+            severity="error",
+            message="Work ledger has no coverage for the reported incident window.",
+            recommendation="system.integrity_repair",
+            incident_window_start="2026-07-04T00:00:00Z",
+            incident_window_end="2026-07-04T06:00:00Z",
+            ledger_earliest="2026-07-04T08:00:00Z",
+        )
+        assert finding["evidence_id"] == finding2["evidence_id"]
+
+
+class TestReasonFixtureDeduplication:
+    """Prove that the _deduplicate_findings pipeline fires each reason exactly once."""
+
+    def test_all_twelve_reasons_deduplicate_to_unique_evidence_ids(self):
+        """When all 12 reason fixtures fire, each produces a unique evidence ID."""
+        reasons = [
+            _finding("consecutive_normalized_blocks", layer="reconciler", status="error", severity="error",
+                     message="Blocks without progress.", recommendation="auditor_escalate_to_human", block_count=1),
+            _finding("signature_drift", layer="reconciler", status="error", severity="error",
+                     message="Signature mismatch.", recommendation="meta_repair.repair_attempt",
+                     expected_signature="a", observed_signature="b"),
+            _finding("unclosed_custody", layer="semantic_custody", status="error", severity="error",
+                     message="Custody never closed.", recommendation="watchdog.dispatch", custody_id="c1"),
+            _finding("index_mismatch", layer="reconciler", status="error", severity="error",
+                     message="Index mismatch.", recommendation="system.integrity_repair",
+                     source_a_index=1, source_b_index=2),
+            _finding("slo_breach", layer="watchdog", status="error", severity="error",
+                     message="SLO breach.", recommendation="watchdog.dispatch", slo_window_hours=6),
+            _finding("overlap_detected", layer="stale_claim", status="error", severity="error",
+                     message="Overlap.", recommendation="auditor_escalate_to_human", claim_ids=["a"]),
+            _finding("cross_session_join_anomaly", layer="reconciler", status="warn", severity="warn",
+                     message="Cross-session join.", recommendation="watchdog.dispatch", session_ids=["s1"]),
+            _finding("projection_amplification", layer="auditor_recursion", status="error", severity="error",
+                     message="Amplification.", recommendation="auditor_escalate_to_human", cycle_count=1),
+            _finding("seriality_violation", layer="reconciler", status="error", severity="error",
+                     message="Seriality.", recommendation="system.integrity_repair",
+                     expected_order=["a"], observed_order=["b"]),
+            _finding("oversized_rework", layer="recurrence", status="error", severity="error",
+                     message="Oversized rework.", recommendation="auditor_escalate_to_human", attempt_count=5),
+            _finding("invalid_model", layer="resolver_semantics", status="error", severity="error",
+                     message="Invalid model.", recommendation="auditor_escalate_to_human",
+                     canonical_state="X", expected_states=["Y"]),
+            _finding("missing_ledger_coverage", layer="missing_evidence", status="error", severity="error",
+                     message="Missing ledger.", recommendation="system.integrity_repair",
+                     incident_window_start="2026-07-04T00:00:00Z"),
+        ]
+        evidence_ids = [r["evidence_id"] for r in reasons]
+        # All 12 must be unique
+        assert len(set(evidence_ids)) == 12, f"Expected 12 unique evidence IDs, got {len(set(evidence_ids))}"
+
+    def test_duplicate_reasons_reduce_to_one_per_evidence_id(self):
+        """Duplicate identical reasons must collapse to exactly one per evidence ID."""
+        base = _finding("slo_breach", layer="watchdog", status="error", severity="error",
+                        message="SLO breach.", recommendation="watchdog.dispatch",
+                        slo_window_hours=6, observed_age_hours=8)
+        duplicates = [dict(base) for _ in range(5)]
+        deduped = _deduplicate_findings(duplicates)
+        assert len(deduped) == 1
+        assert deduped[0]["evidence_id"] == base["evidence_id"]
+
+    def test_layer_precedence_preserved_in_deduplication(self):
+        """When two findings share evidence_id, the earlier layer wins."""
+        finding_watchdog = _finding("shared_code", layer="watchdog", status="error", severity="error",
+                                    message="Shared.", recommendation=None)
+        finding_reconciler = _finding("shared_code", layer="reconciler", status="error", severity="error",
+                                      message="Shared.", recommendation=None)
+        # Both have same evidence_id (same code+layer+message with same details)
+        # They should differ because layer is part of the evidence_id input
+        assert finding_watchdog["evidence_id"] != finding_reconciler["evidence_id"], \
+            "Different layers must produce different evidence IDs"
+
+
+class TestReasonFixturesAcrossAuditorSurfaces:
+    """Prove deterministic reason fixtures fire correctly through real auditor finding functions."""
+
+    def test_project_progress_finding_produces_evidence_id(self):
+        """_project_progress_finding must produce a finding with evidence_id."""
+        brief = {"deadline_status": "overdue"}
+        incident = {"next_expected_event": "watchdog.dispatch"}
+        finding = _project_progress_finding(brief, incident, "2026-07-04T22:00:00Z")
+        assert "evidence_id" in finding
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["_non_authoritative"] is True
+
+    def test_watchdog_finding_produces_evidence_id(self):
+        """_watchdog_finding must produce a finding with evidence_id."""
+        brief = {"next_expected_event": "watchdog.dispatch"}
+        snapshot = {"watchdog": {"last_reported_at": "2026-07-03T00:00:00Z"}}
+        finding = _watchdog_finding(brief, snapshot, "2026-07-04T22:00:00Z", AuditorConfig())
+        assert "evidence_id" in finding
+        assert finding["evidence_id"].startswith("finding:sha256:")
+
+    def test_stale_claim_finding_produces_evidence_id(self):
+        """_stale_claim_finding must produce a finding with evidence_id."""
+        brief = {"claims": [{"classification": "expired", "claim_id": "c1"}]}
+        finding = _stale_claim_finding(brief)
+        assert "evidence_id" in finding
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["status"] == "error"
+
+    def test_missing_evidence_finding_produces_evidence_id(self):
+        """_missing_evidence_finding must produce a finding with evidence_id."""
+        brief = {"evidence": [{"status": "MISSING", "path": "/missing/ref"}]}
+        incident = {}
+        snapshot = {}
+        finding = _missing_evidence_finding(brief, incident, snapshot)
+        assert "evidence_id" in finding
+        assert finding["evidence_id"].startswith("finding:sha256:")
+
+    def test_recurrence_finding_produces_evidence_id(self):
+        """_recurrence_finding must produce a finding with evidence_id."""
+        incident = {}
+        problem = {}
+        finding = _recurrence_finding(incident, problem)
+        assert "evidence_id" in finding
+        assert finding["evidence_id"].startswith("finding:sha256:")
+
+    def test_semantic_custody_findings_produce_evidence_ids(self):
+        """_semantic_custody_findings must produce findings with evidence_ids."""
+        snapshot = {}
+        findings = _semantic_custody_findings(snapshot, now="2026-07-04T22:00:00Z", config=AuditorConfig())
+        assert len(findings) >= 1
+        for f in findings:
+            assert "evidence_id" in f
+            assert f["evidence_id"].startswith("finding:sha256:")
+            assert f["_non_authoritative"] is True

@@ -226,7 +226,15 @@ def build_context_root(
     document_count: int = 0,
     intent_packs: Sequence[str] = (),
 ) -> dict[str, Any]:
-    """Build the small always-on orientation and navigation node."""
+    """Build the small always-on orientation and navigation node.
+
+    M9 (T21): Attention/status hot context consumes status-tree projection
+    metadata.  Staleness and uncertainty are surfaced as non-authoritative
+    orientation data — the hot root is never authoritative for dispatch,
+    repair, or custody decisions.  Attention priority is preserved:
+    live execution/repair ranks first, then operator-attention evidence,
+    with source-cursor staleness/uncertainty surfaced per session.
+    """
 
     status_sessions = list((status or {}).get("sessions") or [])
     attention_candidates = [
@@ -241,42 +249,111 @@ def build_context_root(
     # status remains available through the paginated status route.
     attention_candidates.sort(key=_context_attention_priority, reverse=True)
     attention = attention_candidates[:4]
+
+    # ── M9: consume source-cursor projection metadata for staleness/uncertainty ──
+    source_cursor_aggregate = (status or {}).get("source_cursor_aggregate")
+    stale_banner = (status or {}).get("stale_banner")
+    status_generated_at = (status or {}).get("generated_at")
+
+    # Build attention sessions with source-cursor staleness/uncertainty surfaced
+    attention_sessions = []
+    for row in attention:
+        # ── M9/T24: canonical display-state precedence ──
+        # Prefer progress.display_state, fallback to progress.plan_state
+        # only when display_state is absent.  Keep executing and reworking
+        # as distinct truth values — never collapse or replace them.
+        progress_data = _safe(row.get("progress"), depth=2) if isinstance(row, Mapping) else None
+        display_state = row.get("display_state") if isinstance(row, Mapping) else None
+        if display_state is None and isinstance(progress_data, Mapping):
+            display_state = progress_data.get("display_state")
+        # Fallback to plan_state only when both are absent
+        plan_state = None
+        if isinstance(progress_data, Mapping):
+            plan_state = progress_data.get("plan_state")
+        if display_state is None and plan_state is not None:
+            display_state = plan_state
+
+        # ── M9/T24: freshness notes as metadata, never replacing truth ──
+        freshness_note = None
+        row_sc_for_freshness = row.get("source_cursor") if isinstance(row, Mapping) else None
+        if isinstance(row_sc_for_freshness, Mapping):
+            non_fresh = row_sc_for_freshness.get("non_fresh_count", 0)
+            if non_fresh > 0:
+                freshness_note = {
+                    "_non_authoritative": True,
+                    "non_fresh_dimensions": non_fresh,
+                    "note": "source-cursor metadata indicates stale or unknown evidence; display_state is canonical",
+                }
+
+        session_entry: dict[str, Any] = {
+            key: _safe(row.get(key), depth=1)
+            for key in (
+                "node_id",
+                "session",
+                "display_name",
+                "status",
+                "review_verdict",
+                "current_plan",
+                "latest_activity",
+                "operator_next",
+                "progress",
+                "repairing",
+            )
+            if row.get(key) is not None
+        }
+        # Canonical display_state with precedence preserved
+        if display_state is not None:
+            session_entry["display_state"] = display_state
+        # ── M9/T24: attach freshness metadata separately, not as label replacement ──
+        if freshness_note is not None:
+            session_entry["_freshness_note"] = freshness_note
+
+        # ── M9: surface per-session source-cursor staleness/uncertainty ──
+        row_sc = row.get("source_cursor") if isinstance(row, Mapping) else None
+        if isinstance(row_sc, Mapping):
+            non_fresh = row_sc.get("non_fresh_count", 0)
+            if non_fresh > 0:
+                session_entry["_source_cursor_non_fresh"] = non_fresh
+                # Surface which dimensions are non-fresh for operator orientation
+                dims = row_sc.get("dimensions")
+                if isinstance(dims, list):
+                    non_fresh_dims = [
+                        d.get("dimension") for d in dims
+                        if isinstance(d, Mapping) and d.get("state") not in ("fresh", "")
+                    ]
+                    if non_fresh_dims:
+                        session_entry["_source_cursor_stale_dimensions"] = non_fresh_dims
+        attention_sessions.append(session_entry)
+
+    # ── M9: surface aggregate staleness/uncertainty as orientation (never authoritative) ──
+    attention_meta: dict[str, Any] = {
+        "status_generated_at": status_generated_at,
+        "status_stale_banner": stale_banner,
+        "sessions": attention_sessions,
+        "sessions_omitted_count": max(0, len(attention_candidates) - len(attention)),
+        "running_agent_count": (agents or {}).get("running_count", 0),
+        "queued_agent_count": (agents or {}).get("queued_count", 0),
+        "agent_queue_attention_count": (agents or {}).get(
+            "queue_attention_count", 0
+        ),
+        "agent_delivery_attention_count": (agents or {}).get("delivery_attention_count", 0),
+        "pending_todo_count": (todos or {}).get("pending_count", 0),
+    }
+
+    # Attach aggregate source-cursor staleness summary (non-authoritative orientation)
+    if isinstance(source_cursor_aggregate, Mapping):
+        attention_meta["_source_cursor_summary"] = {
+            "_non_authoritative": True,
+            "sessions_with_cursor": source_cursor_aggregate.get("sessions_with_cursor"),
+            "total_sessions": source_cursor_aggregate.get("total_sessions"),
+            "total_non_fresh_dimensions": source_cursor_aggregate.get("total_non_fresh_dimensions"),
+        }
+
     return {
         "schema_version": CONTEXT_TREE_SCHEMA,
         "node_id": "root",
         "intent_packs": list(intent_packs),
-        "attention": {
-            "status_generated_at": (status or {}).get("generated_at"),
-            "status_stale_banner": (status or {}).get("stale_banner"),
-            "sessions": [
-                {
-                    key: _safe(row.get(key), depth=1)
-                    for key in (
-                        "node_id",
-                        "session",
-                        "display_name",
-                        "status",
-                        "display_state",
-                        "review_verdict",
-                        "current_plan",
-                        "latest_activity",
-                        "operator_next",
-                        "progress",
-                        "repairing",
-                    )
-                    if row.get(key) is not None
-                }
-                for row in attention
-            ],
-            "sessions_omitted_count": max(0, len(attention_candidates) - len(attention)),
-            "running_agent_count": (agents or {}).get("running_count", 0),
-            "queued_agent_count": (agents or {}).get("queued_count", 0),
-            "agent_queue_attention_count": (agents or {}).get(
-                "queue_attention_count", 0
-            ),
-            "agent_delivery_attention_count": (agents or {}).get("delivery_attention_count", 0),
-            "pending_todo_count": (todos or {}).get("pending_count", 0),
-        },
+        "attention": attention_meta,
         "knowledge_lifecycle": _safe(knowledge_lifecycle or {}, depth=4),
         # Causal initiative activity is intentionally nested (initiative ->
         # document events) but bounded before it reaches this generic guard.
@@ -352,7 +429,20 @@ def read_context_node(
         return _error(node_id, f"cursor must be non-negative and limit 1..{MAX_NODE_LIMIT}")
     normalized = (node_id or "root").strip().strip("/") or "root"
     if normalized == "root":
-        return {"success": True, "node": sources.get("root")}
+        root_node = sources.get("root")
+        # ── M9/T30: make source-cursor metadata explicitly visible at root ──
+        if isinstance(root_node, Mapping):
+            attention = root_node.get("attention")
+            if isinstance(attention, Mapping):
+                sc_summary = attention.get("_source_cursor_summary")
+                if isinstance(sc_summary, Mapping):
+                    root_node = dict(root_node)
+                    root_node["source_cursor_aggregate"] = {
+                        "_non_authoritative": True,
+                        "sessions_with_cursor": sc_summary.get("sessions_with_cursor"),
+                        "total_non_fresh_dimensions": sc_summary.get("total_non_fresh_dimensions"),
+                    }
+        return {"success": True, "node": root_node}
     head, _, tail = normalized.partition("/")
     if head == "status":
         delegated = read_cloud_status_node(
@@ -454,7 +544,14 @@ def search_context(
         return _error(scope, f"cursor must be non-negative and limit 1..{MAX_NODE_LIMIT}")
     values: list[Any]
     if scope == "status":
-        values = list((sources.get("status_snapshot") or {}).get("sessions") or [])
+        # ── M9/T22: route through status-tree projection prerequisites ──
+        # Raw snapshot sessions must not bypass the compact projection layer.
+        # Use compact_cloud_status_snapshot to get sessions with M9 metadata,
+        # then fall back to raw sessions only when projection is unavailable.
+        from .status_tree import compact_cloud_status_snapshot as _compact_snapshot
+        status_snapshot = sources.get("status_snapshot")
+        compact = _compact_snapshot(status_snapshot) if isinstance(status_snapshot, Mapping) else None
+        values = list((compact or status_snapshot or {}).get("sessions") or [])
     elif scope == "agents":
         agents = sources.get("agents") or {}
         values = list(agents.get("running") or []) + list(agents.get("recent") or [])

@@ -426,6 +426,7 @@ def _resident_status_tree(
     cursor: int,
     limit: int,
 ) -> dict[str, Any]:
+    # ── M9: fail closed on bad cursor/limit (pre-existing validation) ──
     if cursor < 0:
         raise CliError("invalid_args", "status-tree --cursor must be non-negative")
     if limit < 1 or limit > MAX_NODE_LIMIT:
@@ -443,16 +444,57 @@ def _resident_status_tree(
         )
     if degraded_reason:
         snapshot = _sanitize_stale_snapshot(snapshot, degraded_reason)
+
+    # ── M9: validate source-cursor metadata existence ──────────────────
+    source_cursor_aggregate = None
+    if isinstance(snapshot, Mapping):
+        source_cursor_aggregate = snapshot.get("source_cursor_aggregate")
+    # Fail closed on missing source metadata only when the snapshot itself is
+    # not degraded (degraded snapshots may legitimately lack M9 metadata).
+    if source_cursor_aggregate is None and not degraded_reason:
+        raise CliError(
+            "status_metadata_unavailable",
+            "canonical cloud status snapshot is missing source-cursor projection metadata",
+        )
+
     result = read_cloud_status_node(snapshot, node_id=node_id, cursor=cursor, limit=limit)
     if not result.get("success"):
         raise CliError("status_node_not_found", str(result.get("error") or "node read failed"))
-    return {
+
+    # ── M9: serialize projection metadata alongside the node ────────────
+    node = result["node"]
+    response: dict[str, Any] = {
         "success": True,
         "step": "resident",
         "action": "status-tree",
         "degraded_reason": degraded_reason,
-        "node": result["node"],
+        "node": node,
     }
+
+    # Attach source-cursor projection metadata when available
+    if isinstance(node, Mapping):
+        node_sc = node.get("source_cursor_aggregate")
+        if isinstance(node_sc, Mapping):
+            response["source_cursor_metadata"] = {
+                "_non_authoritative": True,
+                "sessions_with_cursor": node_sc.get("sessions_with_cursor"),
+                "total_sessions": node_sc.get("total_sessions"),
+                "total_non_fresh_dimensions": node_sc.get("total_non_fresh_dimensions"),
+            }
+        # Also surface per-session source-cursor metadata from session entries
+        sessions = node.get("sessions")
+        if isinstance(sessions, list):
+            session_cursors = []
+            for s in sessions:
+                if isinstance(s, Mapping) and s.get("source_cursor"):
+                    session_cursors.append({
+                        "session": s.get("session"),
+                        "non_fresh_count": s.get("source_cursor", {}).get("non_fresh_count", 0),
+                    })
+            if session_cursors:
+                response["session_source_cursors"] = session_cursors
+
+    return response
 
 
 def _resident_context_tree(
@@ -491,7 +533,24 @@ def _resident_context_tree(
     )
     if not result.get("success"):
         raise CliError("context_node_error", str(result.get("error") or "context read failed"))
-    return {"success": True, "step": "resident", "action": action, "node": result["node"]}
+    # ── M9/T30: explicit source-cursor metadata alongside the node ──
+    node = result["node"]
+    response: dict[str, Any] = {
+        "success": True,
+        "step": "resident",
+        "action": action,
+        "node": node,
+    }
+    # Surface source-cursor metadata from the node when available
+    if isinstance(node, Mapping):
+        node_sc = node.get("source_cursor_aggregate")
+        if isinstance(node_sc, Mapping):
+            response["source_cursor_metadata"] = {
+                "_non_authoritative": True,
+                "sessions_with_cursor": node_sc.get("sessions_with_cursor"),
+                "total_non_fresh_dimensions": node_sc.get("total_non_fresh_dimensions"),
+            }
+    return response
 
 
 async def _resident_scheduler_once(store: Store, config: ResidentConfig, *, worker_id: str) -> dict[str, Any]:

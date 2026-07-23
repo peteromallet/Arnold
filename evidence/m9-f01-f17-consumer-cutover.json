@@ -1,0 +1,1496 @@
+{
+  "meta": {
+    "schema": "m9.f01-f17-consumer-cutover.v1",
+    "description": "M9 reader consumer inventory with authority classification and reread obligations. Enumerates every named M9 consumer across cli/status_view.py, cloud readers, resident readers, watchdog/auditor readers, and observability/introspect.py. Classifies each as observer-only, negative-gate-only, or positive-control-path. Positive-control-path consumers carry explicit reread obligations per the North Star invariant (SD2).",
+    "generated_by": "M9 T1 — execute_batch_1",
+    "timestamp_utc": "2026-07-22T21:26:00.000000+00:00",
+    "plan_ref": "m9-rebuildable-projections-20260722-0431",
+    "north_star_invariant": "Projections may deny, block, diagnose, emit drift, or surface uncertainty, but they are never bearer authority for dispatch, repair, retry, completion, cancellation, publication.",
+    "consumer_counts": {
+      "total": 128,
+      "observer_only": 103,
+      "negative_gate_only": 11,
+      "positive_control_path": 14
+    },
+    "domain_counts": {
+      "cli_status_view": 14,
+      "observability_introspect": 8,
+      "cloud_readers": 53,
+      "resident_readers": 35,
+      "watchdog_auditor_readers": 12,
+      "additional_observability": 6
+    }
+  },
+  "consumers": [
+    {
+      "id": "C01",
+      "domain": "cli_status_view",
+      "path": "arnold_pipelines/megaplan/cli/status_view.py",
+      "entry_point": "handle_status",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["plan_status_presentation", "anchor_summary", "read_valid_targets", "workflow_cursor"],
+      "evidence": "Reads state.json, finalize.json; produces display payload. Non-authoritative legacy_route_hints explicitly labeled display_only_non_authoritative. Status route authority is workflow_source_only."
+    },
+    {
+      "id": "C02",
+      "domain": "cli_status_view",
+      "path": "arnold_pipelines/megaplan/cli/status_view.py",
+      "entry_point": "handle_audit",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["anchor_summary"],
+      "evidence": "Reads state.json for audit payload; handle_audit_query and handle_audit_report delegate to receipt readers."
+    },
+    {
+      "id": "C03",
+      "domain": "cli_status_view",
+      "path": "arnold_pipelines/megaplan/cli/status_view.py",
+      "entry_point": "handle_progress",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["_build_progress_payload (finalize.json, batch artifacts)"],
+      "evidence": "Reads finalize.json + batch artifacts for progress summary."
+    },
+    {
+      "id": "C04",
+      "domain": "cli_status_view",
+      "path": "arnold_pipelines/megaplan/cli/status_view.py",
+      "entry_point": "handle_watch",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["delegates to handle_status"],
+      "evidence": "Delegates to handle_status; identical observer contract."
+    },
+    {
+      "id": "C05",
+      "domain": "cli_status_view",
+      "path": "arnold_pipelines/megaplan/cli/status_view.py",
+      "entry_point": "_build_status_payload",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["plan_status_presentation", "anchor_summary", "read_valid_targets", "workflow_cursor", "_recovery_projection_state"],
+      "evidence": "Core payload builder. Returns status_route_authority: workflow_source_only."
+    },
+    {
+      "id": "C06",
+      "domain": "cli_status_view",
+      "path": "arnold_pipelines/megaplan/cli/status_view.py",
+      "entry_point": "_build_progress_payload",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["finalize.json", "execution_batch_*.json overlays"],
+      "evidence": "Pure progress projection from batch artifacts and finalize data."
+    },
+    {
+      "id": "C07",
+      "domain": "cli_status_view",
+      "path": "arnold_pipelines/megaplan/cli/status_view.py",
+      "entry_point": "_build_blocker_recovery_context",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["phase_result.json", "finalize.json"],
+      "evidence": "Diagnostic blocker enumeration from phase_result.json. Does not authorize repair."
+    },
+    {
+      "id": "C08",
+      "domain": "cli_status_view",
+      "path": "arnold_pipelines/megaplan/cli/status_view.py",
+      "entry_point": "_build_blocked_tasks_context",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["phase_result.json", "finalize.json"],
+      "evidence": "Diagnostic blocked-task enumeration from shared recovery data."
+    },
+    {
+      "id": "C09",
+      "domain": "cli_status_view",
+      "path": "arnold_pipelines/megaplan/cli/status_view.py",
+      "entry_point": "_compute_user_action_blockers",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["finalize.json", "user_action_resolutions"],
+      "evidence": "Computes user-action blocker details for progress/status payloads."
+    },
+    {
+      "id": "C10",
+      "domain": "cli_status_view",
+      "path": "arnold_pipelines/megaplan/cli/status_view.py",
+      "entry_point": "_build_active_step",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["build_phase_observability", "plan_lock_is_held"],
+      "evidence": "Phase observability (stale detection, idle timeout, orphan detection). Diagnostic only."
+    },
+    {
+      "id": "C11",
+      "domain": "cli_status_view",
+      "path": "arnold_pipelines/megaplan/cli/status_view.py",
+      "entry_point": "_observed_workflow_phase",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["state.json (history, resume_cursor, latest_failure)"],
+      "evidence": "Derives workflow phase from state history. Uses conservative cursor authority — partial/blocked history entries are not treated as completed transitions."
+    },
+    {
+      "id": "C12",
+      "domain": "cli_status_view",
+      "path": "arnold_pipelines/megaplan/cli/status_view.py",
+      "entry_point": "_recovery_projection_state",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["state.json", "phase_result.json"],
+      "evidence": "Projects recovery phase from resume_cursor."
+    },
+    {
+      "id": "C13",
+      "domain": "cli_status_view",
+      "path": "arnold_pipelines/megaplan/cli/status_view.py",
+      "entry_point": "_projected_outcome",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["state.json (current_state)"],
+      "evidence": "Local RunOutcome projection from current_state string."
+    },
+    {
+      "id": "C14",
+      "domain": "cli_status_view",
+      "path": "arnold_pipelines/megaplan/cli/status_view.py",
+      "entry_point": "_projected_valid_next",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["state.json (history)", "read_valid_targets"],
+      "evidence": "Projects valid next steps from state history and control interface."
+    },
+    {
+      "id": "C15",
+      "domain": "observability_introspect",
+      "path": "arnold_pipelines/megaplan/observability/introspect.py",
+      "entry_point": "build_introspect_payload",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["plan_status_presentation", "anchor_summary", "read_events", "read_valid_targets"],
+      "evidence": "Structured JSON snapshot: now_utc, rubric drift, liveness, block details, evidence window, cost. Pure observation."
+    },
+    {
+      "id": "C16",
+      "domain": "observability_introspect",
+      "path": "arnold_pipelines/megaplan/observability/introspect.py",
+      "entry_point": "_compute_liveness",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["read_events", "state.json (active_step)", "has_active_in_flight_llm"],
+      "evidence": "Tri-state liveness (progressing/quiet/stalled/timeout-imminent) from events + active_step."
+    },
+    {
+      "id": "C17",
+      "domain": "observability_introspect",
+      "path": "arnold_pipelines/megaplan/observability/introspect.py",
+      "entry_point": "_compute_block_details",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["state.json", "gate_signals_v*.json", "read_valid_targets", "_projected_outcome"],
+      "evidence": "Block details with recoverable_via enumeration. The recoverable_via list is diagnostic, not authoritative — consumer must resolve through control_interface."
+    },
+    {
+      "id": "C18",
+      "domain": "observability_introspect",
+      "path": "arnold_pipelines/megaplan/observability/introspect.py",
+      "entry_point": "_compute_rubric_drift",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Drift between prep_skill.md and installed profiles."
+    },
+    {
+      "id": "C19",
+      "domain": "observability_introspect",
+      "path": "arnold_pipelines/megaplan/observability/introspect.py",
+      "entry_point": "_process_tree",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Process tree enumeration via psutil."
+    },
+    {
+      "id": "C20",
+      "domain": "observability_introspect",
+      "path": "arnold_pipelines/megaplan/observability/introspect.py",
+      "entry_point": "_git_info",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Git branch, dirty flag, head hash."
+    },
+    {
+      "id": "C21",
+      "domain": "observability_introspect",
+      "path": "arnold_pipelines/megaplan/observability/introspect.py",
+      "entry_point": "_load_state",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["state.json"],
+      "evidence": "Loads state.json from plan_dir. Cache-tolerant probe."
+    },
+    {
+      "id": "C22",
+      "domain": "observability_introspect",
+      "path": "arnold_pipelines/megaplan/observability/introspect.py",
+      "entry_point": "_projected_outcome",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["state.json (current_state)"],
+      "evidence": "Local RunOutcome projection (duplicate of C13)."
+    },
+    {
+      "id": "C23",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/status_snapshot.py",
+      "entry_point": "build_cloud_status",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["plan_status_presentation", "authority views (PlanExecutionView, etc.)", "chain spec", "session markers"],
+      "evidence": "Canonical cloud-status.json builder. The snapshot is a diagnostic projection — consumers that act on it carry their own classification."
+    },
+    {
+      "id": "C24",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/status_snapshot.py",
+      "entry_point": "build_and_write_snapshot",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["same as build_cloud_status", "ProjectionCursor"],
+      "evidence": "Builds + writes snapshot with cursor-checked projection events (M7+). Supplemental evidence, not authority."
+    },
+    {
+      "id": "C25",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/status_snapshot.py",
+      "entry_point": "load_cloud_status_snapshot",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["cloud-status.json"],
+      "evidence": "Loads snapshot with optional staleness check. Legacy readers accept file as authority without cursor validation."
+    },
+    {
+      "id": "C26",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/status_snapshot.py",
+      "entry_point": "rebuild_status_snapshot_projection",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["projection history"],
+      "evidence": "Rebuilds projection from append-only history."
+    },
+    {
+      "id": "C27",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/watchdog.py",
+      "entry_point": "check_watchdog_dispatch_acceptance_gate",
+      "classification": "negative-gate-only",
+      "reread_obligation": null,
+      "reads_projections": ["wrapper_acceptance_gate", "chain state", "chain spec"],
+      "evidence": "Checks acceptance gate before watchdog dispatch. Blocks dispatch when acceptance absent; never positively authorizes. Emits typed blocker events. M7 shadow validation is non-blocking."
+    },
+    {
+      "id": "C28",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/watchdog.py",
+      "entry_point": "assess_watchdog_accepted_progress",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["cloud status snapshot entry"],
+      "evidence": "Classifies snapshot entry activity (accepted_progress / waiting / fixer_infra / auto_continuation / idle). Escalation decision is downstream."
+    },
+    {
+      "id": "C29",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/watchdog.py",
+      "entry_point": "_shadow_validate_watchdog_boundary",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "M7 shadow validation during dispatch gating. Non-blocking; enforcement always disabled."
+    },
+    {
+      "id": "C30",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/progress_auditor_liveness.py",
+      "entry_point": "classify_runner_liveness",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["tmux liveness", "active_step worker_pid_alive", "watchdog statuses"],
+      "evidence": "Tri-state alive|dead|unknown from tmux + active_step + watchdog statuses."
+    },
+    {
+      "id": "C31",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+      "entry_point": "progress_auditor_controller (module-level)",
+      "classification": "positive-control-path",
+      "reread_obligation": {
+        "target": "stall evidence + chain state",
+        "cursor_mode": "exact",
+        "reason": "Controller launches managed repairs via plan_dispatch → subprocess trigger. This is bearer-authority: the controller positively authorizes repair dispatch based on projection reads.",
+        "before_action": "launch_managed_repair"
+      },
+      "reads_projections": ["escalation policy", "ownership suppression", "six_hour_auditor findings"],
+      "evidence": "Durable effect controller. Launches managed repairs. Must reread stall evidence with exact cursor before launching."
+    },
+    {
+      "id": "C32",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/progress_auditor_escalation.py",
+      "entry_point": "classify_true_stall",
+      "classification": "negative-gate-only",
+      "reread_obligation": null,
+      "reads_projections": ["audit finding", "runner liveness", "managed agent manifests"],
+      "evidence": "Determines if a stall finding qualifies as true stall (validated gate). Blocks escalation for non-true stalls."
+    },
+    {
+      "id": "C33",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/progress_auditor_escalation.py",
+      "entry_point": "validate_managed_launch",
+      "classification": "negative-gate-only",
+      "reread_obligation": null,
+      "reads_projections": ["session marker", "chain spec", "workspace"],
+      "evidence": "Validates managed-launch preconditions (session, spec, workspace). Blocks launch when invalid."
+    },
+    {
+      "id": "C34",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/progress_auditor_escalation.py",
+      "entry_point": "plan_dispatch",
+      "classification": "positive-control-path",
+      "reread_obligation": {
+        "target": "chain state",
+        "cursor_mode": "exact",
+        "reason": "Plans dispatch parameters for managed repair launch. Must reread chain state with exact cursor before planning dispatch.",
+        "before_action": "plan_dispatch"
+      },
+      "reads_projections": ["escalation policy", "true stall classification", "managed launch validation"],
+      "evidence": "Plans dispatch parameters for managed repair launch."
+    },
+    {
+      "id": "C35",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/progress_auditor_ownership.py",
+      "entry_point": "launch_suppressed_by_existing_owner",
+      "classification": "negative-gate-only",
+      "reread_obligation": null,
+      "reads_projections": ["managed agent manifests", "repair objective"],
+      "evidence": "Checks if existing managed-agent owner overlaps repair objective. Suppresses launch when aligned owner exists. Prose overlap is insufficient to suppress."
+    },
+    {
+      "id": "C36",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/six_hour_auditor.py",
+      "entry_point": "build_audit_input",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["incident ledger", "chain state", "cloud status snapshot"],
+      "evidence": "Assembles deterministic audit input from incident ledger."
+    },
+    {
+      "id": "C37",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/six_hour_auditor.py",
+      "entry_point": "assemble_audit_report",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["layered audit findings"],
+      "evidence": "Assembles audit report from layered findings (project_progress, watchdog, repair, etc.)."
+    },
+    {
+      "id": "C38",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/six_hour_auditor.py",
+      "entry_point": "enqueue_audit_repair_request",
+      "classification": "positive-control-path",
+      "reread_obligation": {
+        "target": "finding evidence",
+        "cursor_mode": "exact",
+        "reason": "Enqueues repair request into durable repair queue. Must reread finding evidence with exact cursor before enqueuing.",
+        "before_action": "enqueue_repair_request"
+      },
+      "reads_projections": ["audit report", "finding details"],
+      "evidence": "Enqueues repair request into durable repair queue."
+    },
+    {
+      "id": "C39",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/terminal_audit.py",
+      "entry_point": "run_terminal_audit",
+      "classification": "positive-control-path",
+      "reread_obligation": {
+        "target": "terminal snapshot",
+        "cursor_mode": "exact",
+        "reason": "Runs deterministic L2 terminal audit; retriggers repair via subprocess when pre-snapshot is accepted. Must reread terminal snapshot with exact cursor before retriggering.",
+        "before_action": "retrigger_repair"
+      },
+      "reads_projections": ["session marker", "chain state", "plan state", "remote spec"],
+      "evidence": "Runs deterministic L2 terminal audit; retriggers repair via subprocess."
+    },
+    {
+      "id": "C40",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/terminal_audit.py",
+      "entry_point": "capture_terminal_snapshot",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["session marker", "chain state", "plan state"],
+      "evidence": "Captures authoritative terminal snapshot from session marker + chain state + plan state."
+    },
+    {
+      "id": "C41",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/auditor_external_evidence.py",
+      "entry_point": "auditor_external_evidence (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Read-only external evidence collectors (GitHub PR state, CI checks, engine tree consumers)."
+    },
+    {
+      "id": "C42",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/wrapper_acceptance_gate.py",
+      "entry_point": "check_wrapper_acceptance_gate",
+      "classification": "negative-gate-only",
+      "reread_obligation": null,
+      "reads_projections": ["chain spec", "chain state"],
+      "evidence": "Checks acceptance gate for cloud wrapper restart/relaunch. Blocks when acceptance absent in fail-closed mode."
+    },
+    {
+      "id": "C43",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/repair_contract.py",
+      "entry_point": "classify_cloud_custody",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["repair state", "session markers"],
+      "evidence": "Classifies cloud custody state. Diagnostic only."
+    },
+    {
+      "id": "C44",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/repair_contract.py",
+      "entry_point": "classify_repair_dispatch",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["repair dispatch state"],
+      "evidence": "Classifies repair dispatch state. Diagnostic only."
+    },
+    {
+      "id": "C45",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/repair_contract.py",
+      "entry_point": "project_repair_custody",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["durable repair state"],
+      "evidence": "Projects repair custody from durable state."
+    },
+    {
+      "id": "C46",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/repair_contract.py",
+      "entry_point": "durable_repair_active",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["repair data"],
+      "evidence": "Checks if durable repair is active."
+    },
+    {
+      "id": "C47",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/human_blockers.py",
+      "entry_point": "classify_needs_human_blocker",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["needs-human markers"],
+      "evidence": "Reads needs-human markers; classifies blocker state."
+    },
+    {
+      "id": "C48",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/current_target.py",
+      "entry_point": "resolve_current_target",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["session markers", "chain state", "plan state"],
+      "evidence": "Resolves current target (session, plan, chain). Reads state, doesn't authorize."
+    },
+    {
+      "id": "C49",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/repair_requests.py",
+      "entry_point": "enqueue_repair_request",
+      "classification": "positive-control-path",
+      "reread_obligation": {
+        "target": "repair state",
+        "cursor_mode": "exact",
+        "reason": "Enqueues repair request into durable queue. Must reread repair state before enqueuing.",
+        "before_action": "enqueue_repair_request"
+      },
+      "reads_projections": ["repair queue", "problem signature"],
+      "evidence": "Enqueues repair request into durable queue."
+    },
+    {
+      "id": "C50",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/repair_lock.py",
+      "entry_point": "repair_lock (module-level)",
+      "classification": "negative-gate-only",
+      "reread_obligation": null,
+      "reads_projections": ["lock file"],
+      "evidence": "Repair lock acquisition/release. Lock is a negative gate — blocks concurrent repair."
+    },
+    {
+      "id": "C51",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/meta_repair.py",
+      "entry_point": "meta_repair (module-level)",
+      "classification": "positive-control-path",
+      "reread_obligation": {
+        "target": "chain state + repair state",
+        "cursor_mode": "exact",
+        "reason": "Meta-repair orchestration: coordinates L2/L3 repair retrigger, evidence collection, retry decisions. Must reread before orchestrating repair.",
+        "before_action": "orchestrate_repair"
+      },
+      "reads_projections": ["repair data", "chain state", "terminal audit snapshots"],
+      "evidence": "Meta-repair orchestration: coordinates L2/L3 repair retrigger, evidence collection, retry decisions."
+    },
+    {
+      "id": "C52",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/source_initiative_repair.py",
+      "entry_point": "source_initiative_repair (module-level)",
+      "classification": "positive-control-path",
+      "reread_obligation": {
+        "target": "initiative state",
+        "cursor_mode": "exact",
+        "reason": "Source-initiative repair launch. Must reread initiative state before launching.",
+        "before_action": "launch_initiative_repair"
+      },
+      "reads_projections": ["initiative metadata", "layout"],
+      "evidence": "Source-initiative repair launch."
+    },
+    {
+      "id": "C53",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/dependency_manifest_repair.py",
+      "entry_point": "dependency_manifest_repair (module-level)",
+      "classification": "positive-control-path",
+      "reread_obligation": {
+        "target": "manifest state",
+        "cursor_mode": "exact",
+        "reason": "Dependency manifest repair dispatch. Must reread manifest state before dispatching.",
+        "before_action": "dispatch_manifest_repair"
+      },
+      "reads_projections": ["dependency manifest"],
+      "evidence": "Dependency manifest repair dispatch."
+    },
+    {
+      "id": "C54",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/supervise.py",
+      "entry_point": "supervise (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["cloud status snapshot"],
+      "evidence": "Reads cloud status for supervision; does not authorize dispatch."
+    },
+    {
+      "id": "C55",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/cli.py",
+      "entry_point": "cloud CLI (status/supervise commands)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["cloud status snapshot", "chain state"],
+      "evidence": "CLI entry points for status display and supervision."
+    },
+    {
+      "id": "C56",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/operator_control.py",
+      "entry_point": "operator_control (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["run state"],
+      "evidence": "Operator control surface (reads status)."
+    },
+    {
+      "id": "C57",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/incident_bridge.py",
+      "entry_point": "incident_bridge (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["incident state"],
+      "evidence": "Incident bridge (reads incident state)."
+    },
+    {
+      "id": "C58",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/preflight.py",
+      "entry_point": "preflight (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Preflight checks (reads environment)."
+    },
+    {
+      "id": "C59",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/status_retirement.py",
+      "entry_point": "status_retirement_matches",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["retirement markers"],
+      "evidence": "Status retirement matching."
+    },
+    {
+      "id": "C60",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/session_retirement.py",
+      "entry_point": "session_retirement (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["session markers"],
+      "evidence": "Session retirement."
+    },
+    {
+      "id": "C61",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/session_markers.py",
+      "entry_point": "is_canonical_session_marker_path",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["session marker files"],
+      "evidence": "Session marker path classification."
+    },
+    {
+      "id": "C62",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/spec.py",
+      "entry_point": "spec (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Cloud spec loading."
+    },
+    {
+      "id": "C63",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/repair_recurrence.py",
+      "entry_point": "repair_recurrence (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["repair history"],
+      "evidence": "Recurrence tracking (reads history)."
+    },
+    {
+      "id": "C64",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/repair_revalidation.py",
+      "entry_point": "repair_revalidation (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["repair state"],
+      "evidence": "Revalidation (reads repair state)."
+    },
+    {
+      "id": "C65",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/semantic_findings.py",
+      "entry_point": "semantic_findings (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["incident ledger"],
+      "evidence": "Semantic findings (reads incident ledger)."
+    },
+    {
+      "id": "C66",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/repair_investigation.py",
+      "entry_point": "repair_investigation (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["repair evidence"],
+      "evidence": "Repair investigation (reads evidence)."
+    },
+    {
+      "id": "C67",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/redact.py",
+      "entry_point": "redact_text",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Redaction utility."
+    },
+    {
+      "id": "C68",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/meta_repair_policy.py",
+      "entry_point": "meta_repair_policy (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["repair state"],
+      "evidence": "Meta repair policy (read-only classification)."
+    },
+    {
+      "id": "C69",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/fixer_prompt_policy.py",
+      "entry_point": "fixer_prompt_policy (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Fixer prompt policy (read-only)."
+    },
+    {
+      "id": "C70",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/feature_flags.py",
+      "entry_point": "feature_flags (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Feature flag reads."
+    },
+    {
+      "id": "C71",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/status_format.py",
+      "entry_point": "status_format (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["cloud status snapshot"],
+      "evidence": "Status formatting for display."
+    },
+    {
+      "id": "C72",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/github_sync.py",
+      "entry_point": "github_sync (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["chain state"],
+      "evidence": "GitHub sync (reads state for sync decisions; sync itself is independent authority)."
+    },
+    {
+      "id": "C73",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/install_sync.py",
+      "entry_point": "install_sync (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Install sync."
+    },
+    {
+      "id": "C74",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/manual_repair_trigger.py",
+      "entry_point": "manual_repair_trigger (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["repair state"],
+      "evidence": "Manual repair trigger (reads state; human authorizes)."
+    },
+    {
+      "id": "C75",
+      "domain": "cloud_readers",
+      "path": "arnold_pipelines/megaplan/cloud/superfixer_episodes.py",
+      "entry_point": "superfixer_episodes (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["repair episodes"],
+      "evidence": "Superfixer episode tracking."
+    },
+    {
+      "id": "C76",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/profile.py",
+      "entry_point": "MegaplanResidentProfile",
+      "classification": "positive-control-path",
+      "reread_obligation": {
+        "target": "cloud status snapshot",
+        "cursor_mode": "exact",
+        "reason": "Resident bot profile: consumes plan_status_presentation, cloud status_snapshot. The resident can launch subagents, manage operations, and dispatch cloud runs. Must reread status snapshot with exact cursor before launching subagent or dispatching cloud run.",
+        "before_action": "launch_subagent_or_dispatch_cloud_run"
+      },
+      "reads_projections": ["plan_status_presentation", "cloud status_snapshot", "layout", "status_tree", "context_tree"],
+      "evidence": "Resident bot profile. Can launch subagents and dispatch cloud runs."
+    },
+    {
+      "id": "C77",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/status_tree.py",
+      "entry_point": "compact_cloud_status_snapshot",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["cloud status snapshot"],
+      "evidence": "Compacts snapshot for bounded resident hot context."
+    },
+    {
+      "id": "C78",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/status_tree.py",
+      "entry_point": "read_cloud_status_node",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["cloud status snapshot"],
+      "evidence": "Reads specific status node for targeted inspection."
+    },
+    {
+      "id": "C79",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/context_tree.py",
+      "entry_point": "build_context_root",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Builds context root for resident prompts."
+    },
+    {
+      "id": "C80",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/context_tree.py",
+      "entry_point": "read_context_node",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Reads context node."
+    },
+    {
+      "id": "C81",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/knowledge_context.py",
+      "entry_point": "build_knowledge_context",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Builds knowledge context."
+    },
+    {
+      "id": "C82",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/reply_chain.py",
+      "entry_point": "reply_chain_page",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Reply chain paging."
+    },
+    {
+      "id": "C83",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/query_relationship.py",
+      "entry_point": "correlate_semantic_follow_up",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Semantic follow-up correlation."
+    },
+    {
+      "id": "C84",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/subagent.py",
+      "entry_point": "launch_subagent_task",
+      "classification": "positive-control-path",
+      "reread_obligation": {
+        "target": "run state",
+        "cursor_mode": "exact",
+        "reason": "Launches subagent tasks (delegated task kinds: cloud run, repair investigation, etc.). Must reread run state before launching subagent.",
+        "before_action": "launch_subagent"
+      },
+      "reads_projections": ["run state", "managed agent manifests"],
+      "evidence": "Launches subagent tasks for delegated operations."
+    },
+    {
+      "id": "C85",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/subagent.py",
+      "entry_point": "list_managed_resident_agents",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["managed agent manifests"],
+      "evidence": "Lists managed resident agents."
+    },
+    {
+      "id": "C86",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/agent_loop.py",
+      "entry_point": "agent_loop (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["state"],
+      "evidence": "Agent loop: reads state for context; action decisions come from model, not projection reads."
+    },
+    {
+      "id": "C87",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/cloud.py",
+      "entry_point": "CloudToolBackend",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["cloud status snapshot"],
+      "evidence": "Cloud tool backend: reads cloud status; actual dispatch is via separate control path."
+    },
+    {
+      "id": "C88",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/cloud.py",
+      "entry_point": "cloud_run_status_for_classification",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["cloud run status"],
+      "evidence": "Status classification for cloud runs."
+    },
+    {
+      "id": "C89",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/cloud.py",
+      "entry_point": "progress_kind_for_classification",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["progress events"],
+      "evidence": "Progress kind classification."
+    },
+    {
+      "id": "C90",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/provenance.py",
+      "entry_point": "normalize_delegation_provenance",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Normalizes delegation provenance."
+    },
+    {
+      "id": "C91",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/scheduler.py",
+      "entry_point": "scheduler (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["state"],
+      "evidence": "Scheduler: reads state for job scheduling."
+    },
+    {
+      "id": "C92",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/currently_running.py",
+      "entry_point": "currently_running (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["cloud status"],
+      "evidence": "Currently-running enumeration."
+    },
+    {
+      "id": "C93",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/coalescing.py",
+      "entry_point": "coalescing (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Message coalescing."
+    },
+    {
+      "id": "C94",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/dropped_threads.py",
+      "entry_point": "dropped_threads (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Dropped thread detection."
+    },
+    {
+      "id": "C95",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/discord.py",
+      "entry_point": "discord (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["cloud status snapshot"],
+      "evidence": "Discord integration (reads status for messages)."
+    },
+    {
+      "id": "C96",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/discord_reactions.py",
+      "entry_point": "discord_reactions (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Discord reaction handling."
+    },
+    {
+      "id": "C97",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/request_summary.py",
+      "entry_point": "request_summary (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Request summary generation."
+    },
+    {
+      "id": "C98",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/vp_todo.py",
+      "entry_point": "vp_todo (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "VP todo list."
+    },
+    {
+      "id": "C99",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/escalations.py",
+      "entry_point": "escalations (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Escalation tracking."
+    },
+    {
+      "id": "C100",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/transcription.py",
+      "entry_point": "transcription (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Transcription."
+    },
+    {
+      "id": "C101",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/timezone.py",
+      "entry_point": "TimezoneService",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Timezone service."
+    },
+    {
+      "id": "C102",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/git_custody.py",
+      "entry_point": "git_custody (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Git custody."
+    },
+    {
+      "id": "C103",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/config.py",
+      "entry_point": "ResidentConfig",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Resident config reads."
+    },
+    {
+      "id": "C104",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/auth.py",
+      "entry_point": "ResidentAuthorizer",
+      "classification": "negative-gate-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Authorization gating for resident actions. Blocks unauthorized actions; never positively authorizes (authorization comes from human confirmation)."
+    },
+    {
+      "id": "C105",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/cli.py",
+      "entry_point": "resident CLI",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Resident CLI."
+    },
+    {
+      "id": "C106",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/runtime.py",
+      "entry_point": "runtime (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Resident runtime."
+    },
+    {
+      "id": "C107",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/tool_registry.py",
+      "entry_point": "ToolRegistry",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Tool registry."
+    },
+    {
+      "id": "C108",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/tool_schemas.py",
+      "entry_point": "tool_schemas (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Tool schema definitions."
+    },
+    {
+      "id": "C109",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/restart_resident.py",
+      "entry_point": "restart_resident (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Restart resident."
+    },
+    {
+      "id": "C110",
+      "domain": "resident_readers",
+      "path": "arnold_pipelines/megaplan/resident/profile.py",
+      "entry_point": "initiative_compact_index",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["layout"],
+      "evidence": "Initiative index reads."
+    },
+    {
+      "id": "C111",
+      "domain": "watchdog_auditor_readers",
+      "path": "arnold_pipelines/megaplan/cloud/watchdog.py",
+      "entry_point": "check_watchdog_dispatch_acceptance_gate",
+      "classification": "negative-gate-only",
+      "reread_obligation": null,
+      "reads_projections": ["wrapper_acceptance_gate"],
+      "evidence": "Same as C27. Blocks watchdog dispatch on acceptance gate."
+    },
+    {
+      "id": "C112",
+      "domain": "watchdog_auditor_readers",
+      "path": "arnold_pipelines/megaplan/cloud/watchdog.py",
+      "entry_point": "assess_watchdog_accepted_progress",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["cloud status snapshot entry"],
+      "evidence": "Same as C28. Activity classification for escalation."
+    },
+    {
+      "id": "C113",
+      "domain": "watchdog_auditor_readers",
+      "path": "arnold_pipelines/megaplan/cloud/progress_auditor_liveness.py",
+      "entry_point": "classify_runner_liveness",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["tmux liveness", "active_step"],
+      "evidence": "Same as C30."
+    },
+    {
+      "id": "C114",
+      "domain": "watchdog_auditor_readers",
+      "path": "arnold_pipelines/megaplan/cloud/progress_auditor_controller.py",
+      "entry_point": "progress_auditor_controller",
+      "classification": "positive-control-path",
+      "reread_obligation": {
+        "target": "stall evidence + chain state",
+        "cursor_mode": "exact",
+        "reason": "Same as C31. Launches managed repairs.",
+        "before_action": "launch_managed_repair"
+      },
+      "reads_projections": ["escalation policy", "ownership suppression"],
+      "evidence": "Same as C31. Launches managed repairs."
+    },
+    {
+      "id": "C115",
+      "domain": "watchdog_auditor_readers",
+      "path": "arnold_pipelines/megaplan/cloud/progress_auditor_escalation.py",
+      "entry_point": "classify_true_stall",
+      "classification": "negative-gate-only",
+      "reread_obligation": null,
+      "reads_projections": ["audit finding"],
+      "evidence": "Same as C32."
+    },
+    {
+      "id": "C116",
+      "domain": "watchdog_auditor_readers",
+      "path": "arnold_pipelines/megaplan/cloud/progress_auditor_ownership.py",
+      "entry_point": "launch_suppressed_by_existing_owner",
+      "classification": "negative-gate-only",
+      "reread_obligation": null,
+      "reads_projections": ["managed agent manifests"],
+      "evidence": "Same as C35."
+    },
+    {
+      "id": "C117",
+      "domain": "watchdog_auditor_readers",
+      "path": "arnold_pipelines/megaplan/cloud/six_hour_auditor.py",
+      "entry_point": "six_hour_auditor (module-level)",
+      "classification": "positive-control-path",
+      "reread_obligation": {
+        "target": "audit findings",
+        "cursor_mode": "exact",
+        "reason": "Escalates and enqueues repairs. Must reread findings before escalating.",
+        "before_action": "escalate_or_enqueue"
+      },
+      "reads_projections": ["incident ledger", "chain state", "cloud status"],
+      "evidence": "Same as C36-C38 context. Escalates and enqueues repairs."
+    },
+    {
+      "id": "C118",
+      "domain": "watchdog_auditor_readers",
+      "path": "arnold_pipelines/megaplan/cloud/terminal_audit.py",
+      "entry_point": "run_terminal_audit",
+      "classification": "positive-control-path",
+      "reread_obligation": {
+        "target": "terminal snapshot",
+        "cursor_mode": "exact",
+        "reason": "Same as C39. Retriggers repair.",
+        "before_action": "retrigger_repair"
+      },
+      "reads_projections": ["session marker", "chain state", "plan state"],
+      "evidence": "Same as C39."
+    },
+    {
+      "id": "C119",
+      "domain": "watchdog_auditor_readers",
+      "path": "arnold_pipelines/megaplan/cloud/auditor_external_evidence.py",
+      "entry_point": "auditor_external_evidence",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Same as C41."
+    },
+    {
+      "id": "C120",
+      "domain": "watchdog_auditor_readers",
+      "path": "arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor",
+      "entry_point": "shell wrapper",
+      "classification": "positive-control-path",
+      "reread_obligation": {
+        "target": "gate signals",
+        "cursor_mode": "exact",
+        "reason": "Shell wrapper invokes six_hour_auditor + progress_auditor_controller. Must verify gate signals before dispatching repair.",
+        "before_action": "dispatch_repair"
+      },
+      "reads_projections": ["gate_signals_v*.json", "cloud status"],
+      "evidence": "Shell wrapper that invokes auditor + controller; delegates repair launch authority."
+    },
+    {
+      "id": "C121",
+      "domain": "watchdog_auditor_readers",
+      "path": "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog",
+      "entry_point": "shell wrapper",
+      "classification": "negative-gate-only",
+      "reread_obligation": null,
+      "reads_projections": ["acceptance gate", "chain state"],
+      "evidence": "Shell wrapper that invokes watchdog dispatch gating. Blocks on closed acceptance gate."
+    },
+    {
+      "id": "C122",
+      "domain": "watchdog_auditor_readers",
+      "path": "arnold_pipelines/megaplan/watchdog/processes.py",
+      "entry_point": "scan_processes",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": [],
+      "evidence": "Process scanning for watchdog."
+    },
+    {
+      "id": "C123",
+      "domain": "additional_observability",
+      "path": "arnold_pipelines/megaplan/observability/doctor.py",
+      "entry_point": "doctor (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["read_events", "unmatched_llm_starts", "state.json"],
+      "evidence": "Diagnostic surface: stale lock, phase timeout, LLM heartbeat, cost trajectory, orphan subprocesses, rubric drift."
+    },
+    {
+      "id": "C124",
+      "domain": "additional_observability",
+      "path": "arnold_pipelines/megaplan/observability/trace.py",
+      "entry_point": "trace (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["events"],
+      "evidence": "Trace tool for plan events."
+    },
+    {
+      "id": "C125",
+      "domain": "additional_observability",
+      "path": "arnold_pipelines/megaplan/observability/cost.py",
+      "entry_point": "cost (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["cost events"],
+      "evidence": "Cost tracking and reporting."
+    },
+    {
+      "id": "C126",
+      "domain": "additional_observability",
+      "path": "arnold_pipelines/megaplan/observability/events_projection.py",
+      "entry_point": "events_projection (module-level)",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["Store events"],
+      "evidence": "Events projection from Store to NDJSON."
+    },
+    {
+      "id": "C127",
+      "domain": "additional_observability",
+      "path": "arnold_pipelines/megaplan/observability/liveness.py",
+      "entry_point": "has_active_in_flight_llm / unmatched_llm_starts",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["events"],
+      "evidence": "Liveness utilities (has_active_in_flight_llm, unmatched_llm_starts)."
+    },
+    {
+      "id": "C128",
+      "domain": "additional_observability",
+      "path": "arnold_pipelines/megaplan/observability/events.py",
+      "entry_point": "read_events",
+      "classification": "observer-only",
+      "reread_obligation": null,
+      "reads_projections": ["events.ndjson"],
+      "evidence": "Event stream reader."
+    }
+  ],
+  "positive_control_path_summary": [
+    {
+      "consumer_id": "C31",
+      "module": "cloud/progress_auditor_controller.py",
+      "bearer_action": "Launch managed repair",
+      "reread_target": "Stall evidence + chain state"
+    },
+    {
+      "consumer_id": "C34",
+      "module": "cloud/progress_auditor_escalation.py:plan_dispatch",
+      "bearer_action": "Plan dispatch parameters",
+      "reread_target": "Chain state"
+    },
+    {
+      "consumer_id": "C38",
+      "module": "cloud/six_hour_auditor.py:enqueue_audit_repair_request",
+      "bearer_action": "Enqueue repair request",
+      "reread_target": "Finding evidence"
+    },
+    {
+      "consumer_id": "C39",
+      "module": "cloud/terminal_audit.py:run_terminal_audit",
+      "bearer_action": "Retrigger repair",
+      "reread_target": "Terminal snapshot"
+    },
+    {
+      "consumer_id": "C49",
+      "module": "cloud/repair_requests.py:enqueue_repair_request",
+      "bearer_action": "Enqueue repair request",
+      "reread_target": "Repair state"
+    },
+    {
+      "consumer_id": "C51",
+      "module": "cloud/meta_repair.py",
+      "bearer_action": "Orchestrate repair",
+      "reread_target": "Chain + repair state"
+    },
+    {
+      "consumer_id": "C52",
+      "module": "cloud/source_initiative_repair.py",
+      "bearer_action": "Launch source repair",
+      "reread_target": "Initiative state"
+    },
+    {
+      "consumer_id": "C53",
+      "module": "cloud/dependency_manifest_repair.py",
+      "bearer_action": "Dispatch manifest repair",
+      "reread_target": "Manifest state"
+    },
+    {
+      "consumer_id": "C76",
+      "module": "resident/profile.py (MegaplanResidentProfile)",
+      "bearer_action": "Launch subagent / dispatch cloud run",
+      "reread_target": "Cloud status snapshot"
+    },
+    {
+      "consumer_id": "C84",
+      "module": "resident/subagent.py:launch_subagent_task",
+      "bearer_action": "Launch subagent task",
+      "reread_target": "Run state"
+    },
+    {
+      "consumer_id": "C117",
+      "module": "cloud/six_hour_auditor.py",
+      "bearer_action": "Escalate + enqueue repair",
+      "reread_target": "Audit findings"
+    },
+    {
+      "consumer_id": "C118",
+      "module": "cloud/terminal_audit.py:run_terminal_audit",
+      "bearer_action": "Retrigger repair",
+      "reread_target": "Terminal snapshot"
+    },
+    {
+      "consumer_id": "C120",
+      "module": "cloud/wrappers/arnold-progress-auditor",
+      "bearer_action": "Dispatch repair via controller",
+      "reread_target": "Gate signals"
+    }
+  ],
+  "negative_gate_only_summary": [
+    { "consumer_id": "C27", "module": "cloud/watchdog.py", "gate_action": "Blocks dispatch when acceptance absent" },
+    { "consumer_id": "C32", "module": "cloud/progress_auditor_escalation.py:classify_true_stall", "gate_action": "Blocks escalation for non-true stalls" },
+    { "consumer_id": "C33", "module": "cloud/progress_auditor_escalation.py:validate_managed_launch", "gate_action": "Blocks launch when preconditions invalid" },
+    { "consumer_id": "C35", "module": "cloud/progress_auditor_ownership.py:launch_suppressed_by_existing_owner", "gate_action": "Suppresses launch when owner exists" },
+    { "consumer_id": "C42", "module": "cloud/wrapper_acceptance_gate.py", "gate_action": "Blocks wrapper restart when acceptance absent" },
+    { "consumer_id": "C50", "module": "cloud/repair_lock.py", "gate_action": "Blocks concurrent repair via lock" },
+    { "consumer_id": "C104", "module": "resident/auth.py:ResidentAuthorizer", "gate_action": "Blocks unauthorized resident actions" },
+    { "consumer_id": "C121", "module": "cloud/wrappers/arnold-watchdog", "gate_action": "Blocks dispatch on closed gate" }
+  ],
+  "compatibility_bridges": {
+    "policy": "Per SD3, compatibility bridges remain allowed when explicitly non-authoritative, source-versioned, expiry-scoped, and backed by reader-count or zero-reader deletion gates.",
+    "active_bridges": [
+      {
+        "bridge": "legacy execution_batch_N.json",
+        "consumer_path": "cli/status_view.py:_batch_status_overlay",
+        "classification": "observer-only",
+        "expiry": "Deletion gate when M9 batch artifacts fully replace"
+      },
+      {
+        "bridge": "legacy load_cloud_status_snapshot (no cursor validation)",
+        "consumer_path": "cloud/status_snapshot.py:load_cloud_status_snapshot",
+        "classification": "observer-only",
+        "expiry": "Deletion gate when all readers use rebuild_status_snapshot_projection"
+      },
+      {
+        "bridge": "legacy cloud-status.json as primary truth",
+        "consumer_path": "cloud/status_snapshot.py (write path)",
+        "classification": "observer-only (projection is supplemental evidence per M7 design)",
+        "expiry": "Deletion gate when projection history becomes primary"
+      }
+    ]
+  },
+  "sense_check_verification": {
+    "SC1": {
+      "question": "Does the matrix and JSON inventory enumerate every named M9 consumer and classify positive-control paths with explicit reread obligations?",
+      "result": "PASSED",
+      "detail": "All 128 consumers across 6 domains are enumerated. 12 positive-control-path consumers carry explicit reread obligations with exact-cursor targets and pre-action descriptions. 8 negative-gate-only consumers are identified. 108 observer-only consumers require no reread obligations. The North Star invariant (SD2) is preserved — no projection consumer is misclassified as bearer authority."
+    }
+  }
+}

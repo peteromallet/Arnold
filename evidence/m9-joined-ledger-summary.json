@@ -1,0 +1,126 @@
+{
+  "_non_authoritative": true,
+  "description": "M9 cutover evidence artifact. Projections are evidence identifiers only — never bearer authority for dispatch, repair, retry, completion, cancellation, or publication.",
+  "generated_by": "M9 T64 — execute_batch_14",
+  "joined_ledger_summary": {
+    "_non_authoritative": true,
+    "categories": {
+      "legitimate_implementation": {
+        "description": "Tool execution (shell, file ops, API calls)",
+        "event_classes": [
+          "tool"
+        ],
+        "identity_join_field": "task_id",
+        "value_classification": "value_work"
+      },
+      "productive": {
+        "description": "Productive model-inference work",
+        "event_classes": [
+          "productive"
+        ],
+        "identity_join_field": "task_id",
+        "value_classification": "value_work"
+      },
+      "proof": {
+        "description": "Proof generation work",
+        "event_classes": [
+          "review_proof"
+        ],
+        "identity_join_field": "task_id",
+        "note": "Dynamically split from review_proof via _resolve_category()",
+        "value_classification": "value_work"
+      },
+      "queue_compaction": {
+        "description": "Queue wait + context compaction time",
+        "event_classes": [
+          "queue",
+          "compaction"
+        ],
+        "identity_join_field": "task_id",
+        "value_classification": "non_value_work"
+      },
+      "replayed": {
+        "description": "Deterministic replay of captured fixtures",
+        "event_classes": [
+          "replay"
+        ],
+        "identity_join_field": "task_id",
+        "value_classification": "value_work"
+      },
+      "retry_rework": {
+        "description": "Retry/rework wait time (backoff/cooldown)",
+        "event_classes": [
+          "retry_wait"
+        ],
+        "identity_join_field": "task_id",
+        "value_classification": "non_value_work"
+      },
+      "review": {
+        "description": "Code review and quality assessment work",
+        "event_classes": [
+          "review_proof"
+        ],
+        "identity_join_field": "task_id",
+        "note": "Dynamically split from review_proof via _resolve_category()",
+        "value_classification": "value_work"
+      },
+      "unavailable": {
+        "description": "Telemetry measures that are unavailable",
+        "event_classes": [
+          "unavailable_reason"
+        ],
+        "identity_join_field": "measure_name",
+        "value_classification": "non_value_work"
+      },
+      "validation_only": {
+        "description": "Harness validation (deterministic checks)",
+        "event_classes": [
+          "validation"
+        ],
+        "identity_join_field": "task_id",
+        "value_classification": "value_work"
+      }
+    },
+    "event_vocabulary": [
+      "validation",
+      "repair_verify",
+      "productive",
+      "unavailable_reason",
+      "review_proof",
+      "queue",
+      "retry_wait",
+      "compaction",
+      "replay",
+      "tool",
+      "git",
+      "transition"
+    ],
+    "other_event_classes": {
+      "compaction": {
+        "category": "queue_compaction",
+        "description": "Context compaction for budget management"
+      },
+      "git": {
+        "category": "git",
+        "description": "Git operations (commits, diffs, status)"
+      },
+      "repair_verify": {
+        "category": "repair_verify",
+        "description": "Verify-only repair receipt adoption"
+      },
+      "transition": {
+        "category": "transition",
+        "description": "Lifecycle state transition"
+      }
+    },
+    "total_categories": 9,
+    "unavailable_denominators": {
+      "description": "Per-category unavailable denominators for identity joins",
+      "formula": "unavailable_count / category_event_count / total_event_count",
+      "non_authoritative": true
+    }
+  },
+  "plan_ref": "m9-rebuildable-projections-20260722-0431",
+  "schema": "m9.cutover-evidence.v1.evidence.m9-joined-ledger-summary",
+  "timestamp_utc": "2026-07-23T03:46:00.000000+00:00"
+}

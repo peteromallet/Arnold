@@ -9,14 +9,16 @@ Produces a single JSON payload with all four killer fields:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import time as _time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 from arnold_pipelines.megaplan.anchors import anchor_summary
 from arnold_pipelines.megaplan.control_interface import read_valid_targets
@@ -27,6 +29,10 @@ from arnold_pipelines.megaplan.observability.liveness import (
 )
 from arnold.runtime.outcome import RunOutcome
 from arnold_pipelines.megaplan.status_projection import plan_status_presentation
+from arnold_pipelines.megaplan.source_cursor_contract import (
+    DimensionCursor,
+    SourceCursorVector,
+)
 
 # Default phase timeout (overridable from state)
 _DEFAULT_PHASE_TIMEOUT_SECONDS = 3600
@@ -446,13 +452,188 @@ def _process_tree(plan_name: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def build_introspect_payload(plan_dir: Path) -> dict:
+def _build_introspect_source_cursor(
+    *,
+    plan_dir: Path,
+    state: dict[str, Any] | None,
+    events: list[dict[str, Any]],
+    liveness: str,
+    liveness_reason: str,
+    observed_at_epoch_ms: float,
+    wbc_query_fn: Any | None = None,
+) -> SourceCursorVector:
+    """Build a source-cursor vector from plan-local observability evidence.
+
+    This cursor is non-authoritative projection metadata — it describes which
+    source records were observed and their freshness, but does NOT authorize
+    dispatch, repair, retry, completion, or delivery.
+
+    M9/T41: Accepts an optional *wbc_query_fn* so local status/introspect
+    consumers can route through the shared WBC adapter instead of marking
+    the WBC dimension as unknown.  When the query function is absent or
+    returns indeterminate, the dimension remains unknown — never collapsed
+    to an optimistic default.
+    """
+    now_iso = datetime.fromtimestamp(
+        observed_at_epoch_ms / 1000, tz=timezone.utc
+    ).isoformat()
+    plan_name = plan_dir.name
+
+    # Lifecycle: from plan state
+    current_state = ""
+    if isinstance(state, dict):
+        current_state = str(state.get("current_state") or "")
+    lifecycle_version = "sha256:" + hashlib.sha256(
+        f"{plan_name}:{current_state}:{len(events)}".encode("utf-8")
+    ).hexdigest()
+    lifecycle_cursor = DimensionCursor.fresh(
+        "lifecycle", lifecycle_version, now_iso,
+        detail=f"plan={plan_name} state={current_state or 'unknown'} events={len(events)}",
+    )
+
+    # Process-correlation: from liveness
+    pc_version = f"{plan_name}:liveness:{liveness}"
+    pc_cursor = DimensionCursor.fresh(
+        "process_correlation", pc_version, now_iso,
+        detail=f"liveness={liveness} reason={liveness_reason[:60]}",
+    )
+
+    # Custody: unavailable from introspect observer
+    custody_cursor = DimensionCursor.unknown(
+        "custody", observed_at=now_iso,
+        detail="custody lease/epoch unavailable from introspect observer",
+    )
+
+    # Run Authority: unavailable from introspect observer
+    ra_cursor = DimensionCursor.unknown(
+        "run_authority", observed_at=now_iso,
+        detail="run authority grant/fence unavailable from introspect observer",
+    )
+
+    # Work ledger: events provide partial evidence
+    if events:
+        wl_version = f"{plan_name}:events:{len(events)}"
+        wl_cursor = DimensionCursor.fresh(
+            "work_ledger", wl_version, now_iso,
+            detail=f"event count={len(events)}",
+        )
+    else:
+        wl_cursor = DimensionCursor.unknown(
+            "work_ledger", observed_at=now_iso,
+            detail="no events recorded",
+        )
+
+    # WBC: query through adapter when available, otherwise unknown
+    # M9/T41: Route through exact-version WBC adapter; never fall back
+    # to raw receipts or implicit-latest reads for positive status.
+    wbc_cursor = _query_wbc_for_cursor(
+        plan_dir=plan_dir,
+        plan_name=plan_name,
+        now_iso=now_iso,
+        observed_at_epoch_ms=observed_at_epoch_ms,
+        wbc_query_fn=wbc_query_fn,
+    )
+
+    return SourceCursorVector.from_cursors(
+        lifecycle_cursor,
+        wbc_cursor,
+        custody_cursor,
+        ra_cursor,
+        wl_cursor,
+        pc_cursor,
+    )
+
+
+def _query_wbc_for_cursor(
+    *,
+    plan_dir: Path,
+    plan_name: str,
+    now_iso: str,
+    observed_at_epoch_ms: float,
+    wbc_query_fn: Any | None = None,
+) -> DimensionCursor:
+    """Query WBC adapter for a source-cursor dimension entry.
+
+    When *wbc_query_fn* is provided (a callable that accepts an attempt_ref
+    and returns WbcBoundaryEvidence), query it and convert to a cursor.
+    When absent or when the query returns indeterminate/incoherent, the
+    dimension remains unknown — raw receipts are never used as authority.
+    """
+    if wbc_query_fn is None:
+        return DimensionCursor.unknown(
+            "wbc", observed_at=now_iso,
+            detail="WBC adapter not available; raw receipts never authorize positive status",
+        )
+
+    try:
+        from arnold_pipelines.megaplan.wbc_adapter import (
+            WbcAttemptRef,
+            WbcBoundaryEvidence,
+            WbcAdapterStatus,
+        )
+
+        # Best-effort attempt ref from plan identity — exact version
+        # binding requires the plan to carry a WBC attempt reference.
+        # Without one, the adapter returns INDETERMINATE, which is the
+        # correct fail-closed behaviour.
+        attempt_ref = WbcAttemptRef.best_effort(
+            plan_name, kind="plan_execution"
+        )
+        evidence: WbcBoundaryEvidence = wbc_query_fn(
+            attempt_ref, observed_at_epoch_ms
+        )
+
+        if evidence.status == WbcAdapterStatus.VERIFIED:
+            return DimensionCursor.fresh(
+                "wbc",
+                f"{attempt_ref.attempt_id}:{attempt_ref.version}",
+                now_iso,
+                detail="WBC boundary evidence verified via adapter",
+            )
+        elif evidence.status == WbcAdapterStatus.INCOMPLETE:
+            return DimensionCursor.stale(
+                "wbc",
+                f"{attempt_ref.attempt_id}:{attempt_ref.version}",
+                now_iso,
+                detail="WBC boundary evidence incomplete (missing terminal event)",
+            )
+        elif evidence.status == WbcAdapterStatus.INDETERMINATE:
+            return DimensionCursor.unknown(
+                "wbc", observed_at=now_iso,
+                detail=f"WBC adapter returned indeterminate: {'; '.join(evidence.diagnostics)}",
+            )
+        else:  # INCOHERENT
+            return DimensionCursor.incoherent(
+                "wbc", observed_at=now_iso,
+                detail=f"WBC evidence incoherent: {'; '.join(evidence.diagnostics)}",
+            )
+    except Exception:
+        # Fail-closed: any adapter error → unknown, never silent default
+        return DimensionCursor.unknown(
+            "wbc", observed_at=now_iso,
+            detail="WBC adapter query failed; raw receipts never authorize positive status",
+        )
+
+
+def build_introspect_payload(
+    plan_dir: Path,
+    *,
+    wbc_query_fn: Any | None = None,
+) -> dict:
     """Build the full introspect JSON payload for a plan.
 
     All keys from the design doc are present; optionals default to null.
+    M9: Derives lifecycle, execution, liveness, flags, block details, drift,
+    projection metadata, and evidence IDs from shared source-cursor vectors
+    instead of ad hoc joins.
+
+    M9/T41: Accepts an optional *wbc_query_fn* so local consumers can route
+    through the shared WBC adapter.  When absent, WBC remains unknown —
+    raw receipts never authorize positive status.
 
     Args:
         plan_dir: Path to the plan directory (e.g., .megaplan/plans/<name>/).
+        wbc_query_fn: Optional WBC adapter query function.
 
     Returns:
         Dict suitable for json.dumps().
@@ -634,10 +815,55 @@ def build_introspect_payload(plan_dir: Path) -> dict:
         if isinstance(it, int):
             iteration = it
 
+    # ── M9: build source-cursor vector (with optional WBC adapter) ──
+    _observed_at_epoch_ms = _time.time() * 1000
+    _introspect_cursor = _build_introspect_source_cursor(
+        plan_dir=plan_dir,
+        state=state,
+        events=events,
+        liveness=liveness,
+        liveness_reason=liveness_reason,
+        observed_at_epoch_ms=_observed_at_epoch_ms,
+        wbc_query_fn=wbc_query_fn,
+    )
+    _lifecycle_cursor = _introspect_cursor.cursor("lifecycle")
+
     presentation = plan_status_presentation(
         plan_state,
         active_phase=active_phase.get("phase"),
+        source_cursor=_introspect_cursor,
+        lifecycle_cursor=_lifecycle_cursor,
+        observed_at_epoch_ms=_observed_at_epoch_ms,
     )
+
+    # ── M9: drift detection between active_phase and state ──
+    drift_entries: list[dict[str, Any]] = []
+    drift_evidence_ids: list[str] = []
+    if state and isinstance(state, dict):
+        state_phase = str(state.get("active_step", {}).get("phase") or "") if isinstance(state.get("active_step"), Mapping) else ""
+        active_phase_name = active_phase.get("phase")
+        if active_phase_name and state_phase and active_phase_name != state_phase:
+            drift_entry = {
+                "field": "active_phase",
+                "active_phase_value": active_phase_name,
+                "state_value": state_phase,
+                "kind": "source_disagreement",
+            }
+            drift_entry["evidence_id"] = "sha256:" + hashlib.sha256(
+                json.dumps(drift_entry, sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            drift_entries.append(drift_entry)
+            drift_evidence_ids.append(drift_entry["evidence_id"])
+
+    # ── M9: evidence IDs for flags and blocks ──
+    _flags_evidence_ids: list[str] = []
+    if isinstance(flags, list):
+        for f in flags:
+            if isinstance(f, dict):
+                eid = "sha256:" + hashlib.sha256(
+                    json.dumps(f, sort_keys=True, default=str).encode("utf-8")
+                ).hexdigest()
+                _flags_evidence_ids.append(eid)
 
     # ── Assemble payload ────────────────────────────────────────────────
     payload: dict = {
@@ -662,6 +888,29 @@ def build_introspect_payload(plan_dir: Path) -> dict:
         },
         "outstanding_flags": flags if flags else None,
         "outstanding_flags_count": len(flags) if isinstance(flags, list) else 0,
+        # ── M9: projection metadata derived from source-cursor vectors ──
+        "_non_authoritative": True,
+        "source_cursor": _introspect_cursor.to_dict(),
+        "projection_digest": presentation.get("projection_digest"),
+        "freshness": presentation.get("freshness"),
+        # ── M9: drift between active_phase and state ──
+        "drift": drift_entries if drift_entries else None,
+        "drift_evidence_ids": drift_evidence_ids if drift_evidence_ids else None,
+        # ── M9: evidence IDs for outstanding flags ──
+        "flags_evidence_ids": _flags_evidence_ids if _flags_evidence_ids else None,
+        # ── M9/T30: explicit source-cursor metadata surface ──
+        "source_cursor_metadata": {
+            "_non_authoritative": True,
+            "vector_id": _introspect_cursor.vector_id,
+            "dimensions": [
+                {
+                    "dimension": c.dimension,
+                    "state": c.state,
+                    "evidence_id": c.evidence_id,
+                }
+                for c in _introspect_cursor.cursors
+            ],
+        },
     }
 
     return payload

@@ -1,0 +1,91 @@
+{
+  "_non_authoritative": true,
+  "description": "M9 cutover evidence artifact. Projections are evidence identifiers only — never bearer authority for dispatch, repair, retry, completion, cancellation, or publication.",
+  "generated_by": "M9 T64 — execute_batch_14",
+  "plan_ref": "m9-rebuildable-projections-20260722-0431",
+  "reason_fixture_evidence": {
+    "_non_authoritative": true,
+    "deduplication": "Content-addressed evidence_ids prevent duplicate emission",
+    "once_only_firing": "Each reason class fires exactly once per occurrence with deterministic evidence_id",
+    "reason_classes": {
+      "consecutive_normalized_blocks": {
+        "consumer": "watchdog + auditor",
+        "description": "Consecutive tasks with normalized block evidence",
+        "evidence_id_pattern": "reason:consecutive_blocks:{digest}",
+        "once_only": true,
+        "test_reference": "test_progress_auditor.py — TestSharedDeterministicReasonFixtures"
+      },
+      "cross_session_joins": {
+        "consumer": "auditor",
+        "description": "Cross-session join evidence mismatch",
+        "evidence_id_pattern": "reason:cross_session:{digest}",
+        "once_only": true
+      },
+      "index_mismatch": {
+        "consumer": "watchdog + auditor",
+        "description": "Task/phase index mismatch between plan and execution",
+        "evidence_id_pattern": "reason:index_mismatch:{digest}",
+        "once_only": true
+      },
+      "invalid_model": {
+        "consumer": "watchdog + auditor",
+        "description": "Invalid/unexpected model detected",
+        "evidence_id_pattern": "reason:invalid_model:{digest}",
+        "once_only": true
+      },
+      "missing_ledger_coverage": {
+        "consumer": "auditor",
+        "description": "Work ledger coverage gap detected",
+        "evidence_id_pattern": "reason:missing_ledger:{digest}",
+        "once_only": true
+      },
+      "overlap": {
+        "consumer": "auditor",
+        "description": "Overlapping execution windows detected",
+        "evidence_id_pattern": "reason:overlap:{digest}",
+        "once_only": true
+      },
+      "oversized_rework": {
+        "consumer": "auditor",
+        "description": "Rework scope exceeds expected bounds",
+        "evidence_id_pattern": "reason:oversized_rework:{digest}",
+        "once_only": true
+      },
+      "projection_amplification": {
+        "consumer": "watchdog + auditor",
+        "description": "Projection amplification detected (drift cascade)",
+        "evidence_id_pattern": "reason:amplification:{digest}",
+        "once_only": true
+      },
+      "seriality": {
+        "consumer": "auditor",
+        "description": "Seriality violation (concurrent execution of serial tasks)",
+        "evidence_id_pattern": "reason:seriality:{digest}",
+        "once_only": true
+      },
+      "signature_drift": {
+        "consumer": "watchdog + auditor",
+        "description": "Failure signature has drifted from expected",
+        "evidence_id_pattern": "reason:signature_drift:{digest}",
+        "once_only": true
+      },
+      "slo_breach": {
+        "consumer": "auditor",
+        "description": "SLO threshold breached",
+        "evidence_id_pattern": "reason:slo_breach:{digest}",
+        "once_only": true
+      },
+      "unclosed_custody": {
+        "consumer": "auditor",
+        "description": "Custody lease/epoch not properly closed",
+        "evidence_id_pattern": "reason:unclosed_custody:{digest}",
+        "once_only": true
+      }
+    },
+    "shared_across_watchdog_and_auditor": true,
+    "test_reference": "test_progress_auditor.py + test_watchdog_cli.py — shared deterministic reason fixtures",
+    "total_reason_classes": 12
+  },
+  "schema": "m9.cutover-evidence.v1.evidence.m9-reason-fixture-evidence",
+  "timestamp_utc": "2026-07-23T03:46:00.000000+00:00"
+}

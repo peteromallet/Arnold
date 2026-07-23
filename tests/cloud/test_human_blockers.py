@@ -244,12 +244,18 @@ def test_classify_stale_mismatch_via_explicit_stale_evidence(
         repair_data_dir=repair_data_dir,
     )
 
-    assert classification.verdict == BlockerVerdict.STALE_MISMATCH
+    assert classification.verdict == BlockerVerdict.INDETERMINATE
     assert classification.is_true_blocker is False
-    assert classification.is_stale_mismatch is True
+    assert classification.is_stale_mismatch is False
+    assert classification.is_indeterminate is True
     assert classification.is_ambiguous is False
-    assert classification.should_block is False
-    assert any("stale needs-human" in r for r in classification.rationale)
+    assert classification.should_block is True
+    # M9: INDETERMINATE verdict produces source_disagreement rationale, not stale mismatch
+    assert any(
+        "deterministic source disagreement" in r or "stale needs-human" in r
+        for r in classification.rationale
+    )
+    assert classification.drift or classification.drift_evidence_ids
 
 
 def test_classify_stale_mismatch_via_plan_ref_difference(
@@ -290,8 +296,8 @@ def test_classify_stale_mismatch_via_plan_ref_difference(
         repair_data_dir=repair_data_dir,
     )
 
-    assert classification.verdict == BlockerVerdict.STALE_MISMATCH
-    assert classification.should_block is False
+    assert classification.verdict == BlockerVerdict.INDETERMINATE
+    assert classification.should_block is True
 
 
 def test_classify_ambiguous_when_needs_human_missing(
@@ -1591,7 +1597,7 @@ def test_classification_human_gate_view_diagnostics_on_stale(
         repair_data_dir=marker_fixture["repair_data_dir"],
     )
 
-    assert classification.verdict == BlockerVerdict.STALE_MISMATCH
+    assert classification.verdict == BlockerVerdict.INDETERMINATE
     assert classification.human_gate_view is not None
     hgv = classification.human_gate_view
     diagnostics = hgv.get("diagnostics", [])

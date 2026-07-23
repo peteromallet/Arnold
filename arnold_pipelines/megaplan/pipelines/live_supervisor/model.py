@@ -86,6 +86,14 @@ class SignalBundle:
     last_event_age_seconds: float | None = None
     degraded: bool = False
     failure_reason: str | None = None
+    # ── M9: heartbeat-based liveness from exact worker identities ──
+    heartbeat_liveness: str = "unknown"
+    heartbeat_liveness_reason: str = ""
+    worker_states: tuple[dict[str, Any], ...] = ()
+    live_worker_count: int = 0
+    stale_worker_count: int = 0
+    dead_worker_count: int = 0
+    _non_authoritative: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -97,11 +105,19 @@ class SignalBundle:
             "last_event_age_seconds": self.last_event_age_seconds,
             "degraded": self.degraded,
             "failure_reason": self.failure_reason,
+            "heartbeat_liveness": self.heartbeat_liveness,
+            "heartbeat_liveness_reason": self.heartbeat_liveness_reason,
+            "worker_states": list(self.worker_states),
+            "live_worker_count": self.live_worker_count,
+            "stale_worker_count": self.stale_worker_count,
+            "dead_worker_count": self.dead_worker_count,
+            "_non_authoritative": self._non_authoritative,
         }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "SignalBundle":
         findings = data.get("doctor_findings") or []
+        raw_worker_states = data.get("worker_states") or []
         return cls(
             liveness=data["liveness"],
             liveness_reason=data["liveness_reason"],
@@ -111,6 +127,13 @@ class SignalBundle:
             last_event_age_seconds=data.get("last_event_age_seconds"),
             degraded=bool(data.get("degraded", False)),
             failure_reason=data.get("failure_reason"),
+            heartbeat_liveness=str(data.get("heartbeat_liveness", "unknown")),
+            heartbeat_liveness_reason=str(data.get("heartbeat_liveness_reason", "")),
+            worker_states=tuple(dict(ws) if isinstance(ws, dict) else {} for ws in raw_worker_states),
+            live_worker_count=int(data.get("live_worker_count", 0)),
+            stale_worker_count=int(data.get("stale_worker_count", 0)),
+            dead_worker_count=int(data.get("dead_worker_count", 0)),
+            _non_authoritative=bool(data.get("_non_authoritative", True)),
         )
 
 

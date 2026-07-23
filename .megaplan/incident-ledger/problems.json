@@ -1,6 +1,24 @@
 {
   "integrity": [
     {
+      "actual": "sha256:e9c19358c349721dc867a33b0d1afd9948ca84f5b1973bbe2e1893692182243d",
+      "code": "index_divergence",
+      "expected": "sha256:042eb7ccecfc0e65a6f33abccd47e48ee765e29b8f1baed4787843f028a54a61",
+      "message": "incidents projection source metadata diverged for digest: 'sha256:e9c19358c349721dc867a33b0d1afd9948ca84f5b1973bbe2e1893692182243d' != 'sha256:042eb7ccecfc0e65a6f33abccd47e48ee765e29b8f1baed4787843f028a54a61'",
+      "projection": "incidents",
+      "recommendation": "system.integrity_repair",
+      "severity": "error"
+    },
+    {
+      "actual": "sha256:e9c19358c349721dc867a33b0d1afd9948ca84f5b1973bbe2e1893692182243d",
+      "code": "index_divergence",
+      "expected": "sha256:042eb7ccecfc0e65a6f33abccd47e48ee765e29b8f1baed4787843f028a54a61",
+      "message": "problems projection source metadata diverged for digest: 'sha256:e9c19358c349721dc867a33b0d1afd9948ca84f5b1973bbe2e1893692182243d' != 'sha256:042eb7ccecfc0e65a6f33abccd47e48ee765e29b8f1baed4787843f028a54a61'",
+      "projection": "problems",
+      "recommendation": "system.integrity_repair",
+      "severity": "error"
+    },
+    {
       "code": "loop_break_repeated_attempt_no_new_evidence",
       "incident_id": "inc-custody-control-plane-20260714",
       "message": "Repeated repair_attempt events did not add a new hypothesis or state change",
@@ -30,15 +48,15 @@
       "first_seen_seq": 587,
       "first_seen_ts": "2026-07-17T13:03:51.824973+00:00",
       "fix_commits": [],
-      "last_seen_seq": 610,
-      "last_seen_ts": "2026-07-17T14:12:19.884405+00:00",
+      "last_seen_seq": 642,
+      "last_seen_ts": "2026-07-22T14:55:12.935095+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome recovery not verified kind chain workspace transient path",
-      "occurrence_count": 9,
-      "owner_actor": "immediate_repair",
+      "occurrence_count": 11,
+      "owner_actor": "six_hour_auditor",
       "problem_id": "problem-035056e1a4ef",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -103,6 +121,25 @@
       "title": "repair-data outcome=repair_exhausted kind=chain workspace=/workspace/workflow-boundary-contracts-corrective-20260710/Arnold"
     },
     {
+      "first_seen_seq": 639,
+      "first_seen_ts": "2026-07-22T14:27:29.290010+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 639,
+      "last_seen_ts": "2026-07-22T14:27:29.290010+00:00",
+      "linked_incident_ids": [
+        "inc-custody-control-plane-20260714"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "chain stuck in nonterminal state blocked for ticks with no completed growth treat as chain layer sickness artifact transient path",
+      "occurrence_count": 1,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-502bd7717e4a",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "chain stuck in nonterminal state blocked for 10 ticks with no completed[] growth; treat as chain-layer sickness; artifact=/workspace/.megaplan/cloud-sessions/repair-data/custody-control-plane-20260714.chain-health.json"
+    },
+    {
       "first_seen_seq": 487,
       "first_seen_ts": "2026-07-13T22:44:54.539079+00:00",
       "fix_commits": [],
@@ -126,14 +163,14 @@
       "first_seen_seq": 532,
       "first_seen_ts": "2026-07-15T02:07:53.638543+00:00",
       "fix_commits": [],
-      "last_seen_seq": 614,
-      "last_seen_ts": "2026-07-19T20:33:43.314982+00:00",
+      "last_seen_seq": 640,
+      "last_seen_ts": "2026-07-22T14:27:32.145850+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair request claim failed",
-      "occurrence_count": 12,
+      "occurrence_count": 19,
       "owner_actor": "watchdog",
       "problem_id": "problem-5b2d4b8c99c1",
       "recurred_after_fix": false,
@@ -399,14 +436,14 @@
       "first_seen_seq": 531,
       "first_seen_ts": "2026-07-15T02:07:51.598220+00:00",
       "fix_commits": [],
-      "last_seen_seq": 620,
-      "last_seen_ts": "2026-07-19T16:28:28.009203+00:00",
+      "last_seen_seq": 629,
+      "last_seen_ts": "2026-07-22T02:09:52.562929+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714"
       ],
       "next_review_ts": null,
       "normalized_signature": "chain state advertises last state done but only milestones are complete treating as incomplete stuck instead of terminal artifact transient path",
-      "occurrence_count": 11,
+      "occurrence_count": 16,
       "owner_actor": "watchdog",
       "problem_id": "problem-a923a5d15e23",
       "recurred_after_fix": false,
@@ -457,14 +494,15 @@
       "first_seen_seq": 478,
       "first_seen_ts": "2026-07-13T17:40:27.256275+00:00",
       "fix_commits": [],
-      "last_seen_seq": 478,
-      "last_seen_ts": "2026-07-13T17:40:27.256275+00:00",
+      "last_seen_seq": 638,
+      "last_seen_ts": "2026-07-22T13:25:54.529737+00:00",
       "linked_incident_ids": [
+        "inc-custody-control-plane-20260714",
         "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "stopped and needs repair attention",
-      "occurrence_count": 1,
+      "occurrence_count": 7,
       "owner_actor": "watchdog",
       "problem_id": "problem-bd43205325d0",
       "recurred_after_fix": false,
@@ -571,6 +609,25 @@
       "title": "repair loop background-dispatched"
     },
     {
+      "first_seen_seq": 636,
+      "first_seen_ts": "2026-07-22T12:24:20.612050+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 636,
+      "last_seen_ts": "2026-07-22T12:24:20.612050+00:00",
+      "linked_incident_ids": [
+        "inc-custody-control-plane-20260714"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "stale active step plan m rebuildable projections state gated phase finalize pid not live",
+      "occurrence_count": 1,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-fbf4fe499c42",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "stale_active_step: plan=m9-rebuildable-projections-20260722-0431; state=gated; phase=finalize; worker_pid=3347752 not live"
+    },
+    {
       "first_seen_seq": 592,
       "first_seen_ts": "2026-07-17T13:22:11.208730+00:00",
       "fix_commits": [],
@@ -593,10 +650,10 @@
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:e9c19358c349721dc867a33b0d1afd9948ca84f5b1973bbe2e1893692182243d",
-    "event_count": 620,
-    "journal_line_count": 620,
-    "last_seq": 620,
+    "digest": "sha256:042eb7ccecfc0e65a6f33abccd47e48ee765e29b8f1baed4787843f028a54a61",
+    "event_count": 642,
+    "journal_line_count": 642,
+    "last_seq": 642,
     "malformed_line_count": 0
   }
 }

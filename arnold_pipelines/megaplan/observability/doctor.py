@@ -13,11 +13,17 @@ Repo-level checks (``--repo``):
 - Editable-install + dirty working tree
 - Multiple megaplan checkouts
 - Skill files out of sync
+
+M9 (T27): Shares liveness and drift classifications with introspect/watchdog.
+Avoids masking unknowns as healthy — ``UNKNOWN`` severity prevents optimistic
+classification.  Remediation evidence IDs are attached where available via
+content-addressed hashes over (label, severity, remediation).
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib as _hashlib
 import json
 import os
 import subprocess
@@ -29,19 +35,103 @@ from arnold_pipelines.megaplan.observability.events import EventKind, read_event
 from arnold_pipelines.megaplan.observability.liveness import unmatched_llm_starts
 
 # ---------------------------------------------------------------------------
+# M9: check result with evidence ID and shared stale/unknown semantics
+# ---------------------------------------------------------------------------
+
+
+class DoctorCheckResult:
+    """Structured doctor check result with evidence ID and M9 semantics.
+
+    Severity levels (aligned with introspect/watchdog):
+    - OK: check passed, healthy
+    - WARN: check found an issue but not blocking
+    - ERROR: check found a blocking issue
+    - UNKNOWN: check could not determine state — MUST NOT be reported as healthy
+    - STALE: evidence exists but is stale — diagnostic only, not authoritative
+    """
+
+    __slots__ = ("severity", "label", "message", "remediation", "evidence_id")
+
+    def __init__(
+        self,
+        severity: str,
+        label: str,
+        message: str,
+        remediation: str = "",
+        evidence_id: str = "",
+    ) -> None:
+        self.severity = severity
+        self.label = label
+        self.message = message
+        self.remediation = remediation
+        self.evidence_id = evidence_id or self._compute_evidence_id()
+
+    def _compute_evidence_id(self) -> str:
+        raw = f"doctor\x00{self.severity}\x00{self.label}\x00{self.remediation}"
+        return "sha256:" + _hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def as_tuple(self) -> tuple[str, str, str]:
+        """Return (severity, label, message) for backward compatibility."""
+        return self.severity, self.label, self.message
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "severity": self.severity,
+            "label": self.label,
+            "message": self.message,
+            "remediation": self.remediation,
+            "evidence_id": self.evidence_id,
+        }
+
+
+# Severity constants aligned with introspect/watchdog
+DOCTOR_SEVERITY_OK = "OK"
+DOCTOR_SEVERITY_WARN = "WARN"
+DOCTOR_SEVERITY_ERROR = "ERROR"
+DOCTOR_SEVERITY_UNKNOWN = "UNKNOWN"
+DOCTOR_SEVERITY_STALE = "STALE"
+
+_VALID_SEVERITIES: frozenset[str] = frozenset(
+    (DOCTOR_SEVERITY_OK, DOCTOR_SEVERITY_WARN, DOCTOR_SEVERITY_ERROR,
+     DOCTOR_SEVERITY_UNKNOWN, DOCTOR_SEVERITY_STALE)
+)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
 def _check_status(
     label: str, ok: bool, *, remediation: str = "", severity: str = "OK"
-) -> tuple[str, str, str]:
-    """Return (severity, label, message)."""
-    icon = {"OK": "OK", "WARN": "WARN", "ERROR": "ERROR"}.get(severity, "??")
+) -> DoctorCheckResult:
+    """Return a DoctorCheckResult with evidence ID.
+
+    When ``ok`` is ``False`` and the caller has not provided severity, defaults
+    to ``WARN`` rather than ``OK`` to avoid masking issues as healthy.
+    """
+    if severity == "OK" and not ok:
+        severity = DOCTOR_SEVERITY_WARN
+    if severity not in _VALID_SEVERITIES:
+        severity = DOCTOR_SEVERITY_UNKNOWN
+
+    icon = {
+        DOCTOR_SEVERITY_OK: "OK",
+        DOCTOR_SEVERITY_WARN: "WARN",
+        DOCTOR_SEVERITY_ERROR: "ERROR",
+        DOCTOR_SEVERITY_UNKNOWN: "??",
+        DOCTOR_SEVERITY_STALE: "STALE",
+    }.get(severity, "??")
+
     msg = f"[{icon}] {label}"
-    if remediation and severity in ("WARN", "ERROR"):
+    if remediation and severity in (DOCTOR_SEVERITY_WARN, DOCTOR_SEVERITY_ERROR):
         msg += f"  → {remediation}"
-    return severity, label, msg
+    return DoctorCheckResult(
+        severity=severity,
+        label=label,
+        message=msg,
+        remediation=remediation,
+    )
 
 
 def _plan_name_from_dir(plan_dir: Path) -> str:
@@ -222,7 +312,7 @@ def _find_megaplan_checkouts() -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
-def _check_stale_lock(plan_dir: Path, *, composition: object | None = None) -> tuple[str, str, str]:
+def _check_stale_lock(plan_dir: Path, *, composition: object | None = None) -> DoctorCheckResult:
     """T26 — `composition` (CompositionObservability) is the flag-ON path for
     non-plan composers; today it is accepted but unused (plan_dir remains
     authoritative for flag-OFF). Strangler discipline keeps the legacy
@@ -260,7 +350,7 @@ def _check_stale_lock(plan_dir: Path, *, composition: object | None = None) -> t
         )
 
 
-def _check_phase_timeout(plan_dir: Path, *, composition: object | None = None) -> tuple[str, str, str]:
+def _check_phase_timeout(plan_dir: Path, *, composition: object | None = None) -> DoctorCheckResult:
     # cache-tolerant: doctor probe.
     state_file = plan_dir / "state.json"
     if not state_file.exists():
@@ -302,7 +392,7 @@ def _check_phase_timeout(plan_dir: Path, *, composition: object | None = None) -
     return _check_status(f"Phase running {elapsed:.0f}s (within timeout)", True)
 
 
-def _check_llm_liveness(plan_dir: Path, *, composition: object | None = None) -> tuple[str, str, str]:
+def _check_llm_liveness(plan_dir: Path, *, composition: object | None = None) -> DoctorCheckResult:
     """Check for unmatched llm_call_start (no end) with no heartbeat >60s."""
     import time
 
@@ -362,7 +452,7 @@ def _check_llm_liveness(plan_dir: Path, *, composition: object | None = None) ->
     return _check_status("LLM liveness", True)
 
 
-def _check_cost_trajectory(plan_dir: Path, *, composition: object | None = None) -> tuple[str, str, str]:
+def _check_cost_trajectory(plan_dir: Path, *, composition: object | None = None) -> DoctorCheckResult:
     """Compare cumulative cost_recorded sum against nominal tier cap."""
     events = list(read_events(plan_dir))
     total_cost = 0.0
@@ -382,7 +472,7 @@ def _check_cost_trajectory(plan_dir: Path, *, composition: object | None = None)
     return _check_status(f"Cost ${total_cost:.2f} (within 2× cap)", True)
 
 
-def _check_orphan_subprocesses(plan_dir: Path, *, composition: object | None = None) -> tuple[str, str, str]:
+def _check_orphan_subprocesses(plan_dir: Path, *, composition: object | None = None) -> DoctorCheckResult:
     """Check for megaplan subprocesses with dead parents."""
     try:
         import psutil
@@ -415,7 +505,7 @@ def _check_orphan_subprocesses(plan_dir: Path, *, composition: object | None = N
     return _check_status("No orphan subprocesses", True)
 
 
-def _check_outstanding_flags(plan_dir: Path, *, composition: object | None = None) -> tuple[str, str, str]:
+def _check_outstanding_flags(plan_dir: Path, *, composition: object | None = None) -> DoctorCheckResult:
     """Check for outstanding flags and enumerate recoverable_via."""
     from arnold_pipelines.megaplan._core.workflow import workflow_next
 
@@ -458,9 +548,9 @@ def _check_outstanding_flags(plan_dir: Path, *, composition: object | None = Non
 # ---------------------------------------------------------------------------
 
 
-def _check_rubric_drift() -> list[tuple[str, str, str]]:
+def _check_rubric_drift() -> list[DoctorCheckResult]:
     """Check rubric/binary drift: diff prep_skill.md profiles vs installed profiles."""
-    results: list[tuple[str, str, str]] = []
+    results: list[DoctorCheckResult] = []
 
     referenced = _parse_decision_skill_profiles()
     if not referenced:
@@ -495,7 +585,7 @@ def _check_rubric_drift() -> list[tuple[str, str, str]]:
     return results
 
 
-def _check_editable_install() -> tuple[str, str, str]:
+def _check_editable_install() -> DoctorCheckResult:
     """Check for editable install + dirty working tree."""
     is_editable = _is_editable_install()
     if not is_editable:
@@ -540,7 +630,7 @@ def _check_editable_install() -> tuple[str, str, str]:
     return _check_status("Editable install (source location unknown)", True, severity="WARN")
 
 
-def _check_multiple_checkouts() -> tuple[str, str, str]:
+def _check_multiple_checkouts() -> DoctorCheckResult:
     checkouts = _find_megaplan_checkouts()
     if len(checkouts) > 1:
         paths = [str(c) for c in checkouts]
@@ -553,9 +643,9 @@ def _check_multiple_checkouts() -> tuple[str, str, str]:
     return _check_status("Single megaplan checkout", True)
 
 
-def _check_skill_sync() -> list[tuple[str, str, str]]:
+def _check_skill_sync() -> list[DoctorCheckResult]:
     """Check that installed skill files match the canonical copies."""
-    results: list[tuple[str, str, str]] = []
+    results: list[DoctorCheckResult] = []
 
     skill_pairs = [
         ("megaplan-prep", "prep_skill.md"),
@@ -622,8 +712,12 @@ def _check_skill_sync() -> list[tuple[str, str, str]]:
 
 
 def _doctor_plan(plan_dir: Path) -> int:
-    """Run plan-level checks. Returns exit code."""
-    checks = [
+    """Run plan-level checks. Returns exit code.
+
+    M9 (T27): Uses DoctorCheckResult with evidence IDs.  UNKNOWN severity
+    is surfaced but does not trigger ERROR exit (unknown ≠ failed).
+    """
+    checks: list[DoctorCheckResult] = [
         _check_stale_lock(plan_dir),
         _check_phase_timeout(plan_dir),
         _check_llm_liveness(plan_dir),
@@ -633,17 +727,23 @@ def _doctor_plan(plan_dir: Path) -> int:
     ]
 
     has_error = False
-    for severity, label, msg in checks:
-        print(msg, flush=True)
-        if severity == "ERROR":
+    for check in checks:
+        print(check.message, flush=True)
+        if check.severity == DOCTOR_SEVERITY_ERROR:
             has_error = True
+        # ── M9: surface UNKNOWN checks but they never count as healthy ──
+        elif check.severity == DOCTOR_SEVERITY_UNKNOWN:
+            print(f"  [evidence_id: {check.evidence_id}]", flush=True)
 
     return 1 if has_error else 0
 
 
 def _doctor_repo(project_dir: Path) -> int:
-    """Run repo-level checks. Returns exit code."""
-    checks: list[tuple[str, str, str]] = []
+    """Run repo-level checks. Returns exit code.
+
+    M9 (T27): Uses DoctorCheckResult with evidence IDs.
+    """
+    checks: list[DoctorCheckResult] = []
 
     checks.extend(_check_rubric_drift())
     checks.append(_check_editable_install())
@@ -651,10 +751,12 @@ def _doctor_repo(project_dir: Path) -> int:
     checks.extend(_check_skill_sync())
 
     has_error = False
-    for severity, label, msg in checks:
-        print(msg, flush=True)
-        if severity == "ERROR":
+    for check in checks:
+        print(check.message, flush=True)
+        if check.severity == DOCTOR_SEVERITY_ERROR:
             has_error = True
+        elif check.severity == DOCTOR_SEVERITY_UNKNOWN:
+            print(f"  [evidence_id: {check.evidence_id}]", flush=True)
 
     return 1 if has_error else 0
 

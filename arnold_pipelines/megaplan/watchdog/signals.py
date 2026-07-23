@@ -1,17 +1,35 @@
-"""Signal-bundle computation for each discovered plan."""
+"""Signal-bundle computation for each discovered plan.
+
+Liveness computation distinguishes live workers from dead, hung, and recycled
+processes.  Worker identity normalization (:mod:`worker_identity`) ensures
+that recycled PIDs, unrelated processes, and stale heartbeats produce typed
+stale or unknown liveness — never false-positive progress.
+
+Heartbeat liveness is computed from exact worker identities and source
+timestamps.  Missing or stale heartbeat facts return ``unknown`` or ``stale``
+— never optimistic progress.  The heartbeat-based liveness is carried in
+the signal bundle alongside event-based liveness.
+"""
 
 from __future__ import annotations
 
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, Tuple
 
 from arnold_pipelines.megaplan.pipelines.live_supervisor.model import (
     CheckFinding,
     SignalBundle,
 )
 from arnold_pipelines.megaplan.observability.liveness import has_active_in_flight_llm
+from arnold_pipelines.megaplan.watchdog.worker_identity import (
+    LivenessState,
+    ProcessCorrelationSnapshot,
+    WorkerCorrelation,
+    WorkerIdentity,
+    WorkerLiveness,
+)
 
 
 def _read_json(path: Path) -> Any | None:
@@ -76,7 +94,7 @@ def _compute_in_flight_llm(
 
 
 def _compute_liveness_and_reason(events: list[dict], state: dict | None, now_ts: float) -> tuple[str, str]:
-    """Best-effort liveness computation matching the introspect semantics."""
+    """Best-effort event-based liveness computation matching the introspect semantics."""
     # Phase age / timeout-imminent
     phase_timeout = 3600.0
     phase_age: float | None = None
@@ -106,6 +124,113 @@ def _compute_liveness_and_reason(events: list[dict], state: dict | None, now_ts:
     if last_event_age < 300:
         return "quiet", f"last event {last_event_age:.0f}s ago"
     return "stalled", f"last event {last_event_age:.0f}s ago"
+
+
+def compute_heartbeat_liveness(
+    worker_correlations: Tuple[WorkerCorrelation, ...] = (),
+    *,
+    process_correlation_snapshot: ProcessCorrelationSnapshot | None = None,
+    now_epoch_ms: Optional[float] = None,
+    heartbeat_freshness_window_ms: int = 30_000,
+) -> dict[str, Any]:
+    """Compute heartbeat-based liveness from exact worker identities.
+
+    Evaluates liveness for every correlated worker using exact identity tuples
+    (host, pid, boot_id) and source heartbeat timestamps.  Missing or stale
+    heartbeat facts produce typed ``unknown`` or ``stale`` — never optimistic
+    progress.
+
+    Args:
+        worker_correlations: Correlated workers with identity and liveness.
+        process_correlation_snapshot: Aggregate snapshot (alternative input).
+        now_epoch_ms: Current time for age calculations.
+        heartbeat_freshness_window_ms: Max heartbeat age for recent (default 30s).
+
+    Returns:
+        Dict with:
+        - ``heartbeat_liveness``: Aggregated state (``live``, ``stale``, ``unknown``, ``hung``, ``dead``).
+        - ``heartbeat_liveness_reason``: Diagnostic detail.
+        - ``worker_states``: Per-worker liveness detail list.
+        - ``live_worker_count``, ``stale_worker_count``, ``dead_worker_count``.
+        - ``_non_authoritative``: Always True.
+    """
+    now = now_epoch_ms or (time.time() * 1000)
+
+    # Resolve worker correlations from snapshot if provided
+    if process_correlation_snapshot is not None and not worker_correlations:
+        worker_correlations = process_correlation_snapshot.correlations
+
+    if not worker_correlations:
+        return {
+            "heartbeat_liveness": "unknown",
+            "heartbeat_liveness_reason": "no worker correlations available; heartbeat liveness is unknown",
+            "worker_states": [],
+            "live_worker_count": 0,
+            "stale_worker_count": 0,
+            "dead_worker_count": 0,
+            "_non_authoritative": True,
+        }
+
+    worker_states: list[dict[str, Any]] = []
+    live_count = 0
+    stale_count = 0
+    dead_count = 0
+
+    for wc in worker_correlations:
+        identity = wc.identity
+        liveness = wc.liveness
+
+        worker_state = {
+            "correlation_key": identity.correlation_key,
+            "state": liveness.state.value,
+            "cursor_state": liveness.cursor_state,
+            "is_pid_live": liveness.is_pid_live,
+            "has_recent_heartbeat": liveness.has_recent_heartbeat,
+            "heartbeat_age_ms": liveness.heartbeat_age_ms,
+            "identity_digest": f"sha256:{identity.identity_digest}",
+            "plan_dirs": list(wc.plan_dirs),
+            "detail": liveness.detail,
+        }
+        worker_states.append(worker_state)
+
+        if liveness.state == LivenessState.LIVE:
+            live_count += 1
+        elif liveness.state in (LivenessState.STALE, LivenessState.HUNG, LivenessState.RECYCLED):
+            stale_count += 1
+        elif liveness.state == LivenessState.DEAD:
+            dead_count += 1
+
+    # Aggregate heartbeat liveness state
+    if live_count > 0:
+        aggregate_state = "live"
+        if stale_count > 0 or dead_count > 0:
+            reason = (
+                f"{live_count} live worker(s), "
+                f"{stale_count} stale/hung/recycled, {dead_count} dead"
+            )
+        else:
+            reason = f"{live_count} live worker(s) with recent heartbeats"
+    elif stale_count > 0:
+        aggregate_state = "stale"
+        reason = (
+            f"no live workers; {stale_count} stale/hung/recycled, {dead_count} dead"
+        )
+    elif dead_count > 0:
+        aggregate_state = "dead"
+        reason = f"no live workers; {dead_count} dead (pid not live)"
+    else:
+        aggregate_state = "unknown"
+        reason = "no workers with determinable liveness"
+
+    return {
+        "heartbeat_liveness": aggregate_state,
+        "heartbeat_liveness_reason": reason,
+        "worker_states": worker_states,
+        "live_worker_count": live_count,
+        "stale_worker_count": stale_count,
+        "dead_worker_count": dead_count,
+        "_non_authoritative": True,
+    }
 
 
 def _compute_block_details(plan_dir: Path, state: dict | None) -> dict[str, Any]:
@@ -167,11 +292,55 @@ def _doctor_findings(plan_dir: Path, state: dict | None) -> tuple[CheckFinding, 
     return tuple(findings)
 
 
-def compute_signal_bundle(plan_dir: Path, state: dict | None = None) -> SignalBundle:
+def evaluate_worker_liveness(
+    pid: int,
+    *,
+    is_pid_live: bool | None = None,
+    heartbeat_epoch_ms: float | None = None,
+    worker_type: str = "",
+    cmdline: str = "",
+    cwd: str = "",
+    now_epoch_ms: float | None = None,
+) -> WorkerLiveness:
+    """Evaluate liveness for a worker process.
+
+    Returns a typed :class:`WorkerLiveness` that distinguishes live, dead,
+    hung, and recycled workers.  A live PID without heartbeat evidence is
+    ``HUNG``, not ``LIVE`` — consumers must provide heartbeat evidence for
+    positive liveness.
+    """
+    identity = WorkerIdentity.from_process_record(
+        pid=pid,
+        worker_type=worker_type,
+        cmdline=cmdline,
+        cwd=cwd,
+    )
+    if heartbeat_epoch_ms is not None:
+        identity = identity.with_heartbeat(1, epoch_ms=heartbeat_epoch_ms)
+    return WorkerLiveness.evaluate(
+        identity,
+        is_pid_live=is_pid_live,
+        now_epoch_ms=now_epoch_ms,
+    )
+
+
+def compute_signal_bundle(
+    plan_dir: Path,
+    state: dict | None = None,
+    *,
+    # ── M9: heartbeat-liveness inputs ──
+    worker_correlations: Tuple[WorkerCorrelation, ...] = (),
+    process_correlation_snapshot: ProcessCorrelationSnapshot | None = None,
+) -> SignalBundle:
     """Build a SignalBundle for a plan directory.
 
     Uses direct filesystem reads so it works even when the megaplan CLI is
     broken or shadowed. Degrades gracefully on any error.
+
+    When worker correlations are provided, heartbeat-based liveness is
+    computed from exact worker identities and source timestamps.  Missing
+    or stale heartbeat facts produce typed ``unknown`` or ``stale`` —
+    never optimistic progress.
     """
     plan_dir = Path(plan_dir)
     if state is None:
@@ -186,6 +355,13 @@ def compute_signal_bundle(plan_dir: Path, state: dict | None = None) -> SignalBu
         block_details = _compute_block_details(plan_dir, state)
         doctor_findings = _doctor_findings(plan_dir, state)
 
+        # ── M9: heartbeat-based liveness from exact identities ──
+        heartbeat_data = compute_heartbeat_liveness(
+            worker_correlations=worker_correlations,
+            process_correlation_snapshot=process_correlation_snapshot,
+            now_epoch_ms=now_ts * 1000,
+        )
+
         return SignalBundle(
             liveness=liveness,
             liveness_reason=liveness_reason,
@@ -193,6 +369,12 @@ def compute_signal_bundle(plan_dir: Path, state: dict | None = None) -> SignalBu
             doctor_findings=doctor_findings,
             has_in_flight_llm=has_in_flight_llm,
             last_event_age_seconds=last_event_age_seconds,
+            heartbeat_liveness=heartbeat_data.get("heartbeat_liveness", "unknown"),
+            heartbeat_liveness_reason=heartbeat_data.get("heartbeat_liveness_reason", ""),
+            worker_states=heartbeat_data.get("worker_states", []),
+            live_worker_count=heartbeat_data.get("live_worker_count", 0),
+            stale_worker_count=heartbeat_data.get("stale_worker_count", 0),
+            dead_worker_count=heartbeat_data.get("dead_worker_count", 0),
         )
     except Exception as exc:
         return SignalBundle(
@@ -207,4 +389,6 @@ def compute_signal_bundle(plan_dir: Path, state: dict | None = None) -> SignalBu
 
 __all__ = [
     "compute_signal_bundle",
+    "compute_heartbeat_liveness",
+    "evaluate_worker_liveness",
 ]

@@ -68,10 +68,19 @@ def _ordered_sessions(snapshot: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 
 
 def _in_flight_progress_text(progress: Any) -> str:
-    """Render progress with the canonical derived label when it is available."""
+    """Render progress with the canonical derived label when it is available.
+
+    Preserves ``progress.display_state`` precedence over ``progress.plan_state``.
+    ``plan_state`` is only used as a fallback when ``display_state`` is absent.
+    Unknown, stale, or incoherent dimensions are surfaced as explicit metadata
+    rather than collapsed into optimistic labels.
+    """
     if not isinstance(progress, Mapping):
         return ""
-    label = progress.get("display_state") or progress.get("plan_state")
+    label = progress.get("display_state")
+    # Only fall back to plan_state when display_state is absent
+    if label is None:
+        label = progress.get("plan_state")
     plan_percent = progress.get("plan_percent")
     if plan_percent is not None:
         text = f"plan bookkeeping {plan_percent}%"
@@ -201,6 +210,9 @@ def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
 
         # --- S4: warnings ---
         _append_s4_warnings(out, entry, generated_at)
+
+        # --- M9: source-cursor dimension states ---
+        _append_source_cursor_dimensions(out, entry)
 
         _append_shadow_views(out, entry)
     return "\n".join(out)
@@ -376,6 +388,53 @@ def _parse_iso(value: Any) -> datetime | None:
         return dt
     except (ValueError, TypeError):
         return None
+
+
+# ── M9: source-cursor dimension rendering ────────────────────────────────────
+
+
+def _append_source_cursor_dimensions(
+    out: list[str], entry: Mapping[str, Any]
+) -> None:
+    """Render stale, unknown, and incoherent source-cursor dimensions explicitly.
+
+    Each non-fresh dimension is surfaced with its state and evidence ID so
+    operators can see which source records are uncertain.  Fresh dimensions
+    are omitted to keep the output focused on what needs attention.
+
+    Unknown must not collapse to running or complete — it is rendered as a
+    visible projection metadata line.
+    """
+    source_cursor = entry.get("source_cursor")
+    if not isinstance(source_cursor, Mapping):
+        return
+
+    cursors = source_cursor.get("cursors")
+    if not isinstance(cursors, (list, tuple)):
+        return
+
+    non_fresh: list[dict[str, Any]] = []
+    for c in cursors:
+        if not isinstance(c, Mapping):
+            continue
+        state = c.get("state", "")
+        if state not in ("fresh", ""):
+            non_fresh.append(c)
+
+    if not non_fresh:
+        return
+
+    parts: list[str] = []
+    for c in non_fresh:
+        dim = c.get("dimension", "?")
+        state = c.get("state", "?")
+        evidence_id = c.get("evidence_id", "?")
+        evidence_short = evidence_id[-12:] if isinstance(evidence_id, str) and len(evidence_id) > 12 else evidence_id
+        detail = c.get("detail", "")
+        detail_str = f" ({detail})" if detail else ""
+        parts.append(f"{dim}={state}[{evidence_short}]{detail_str}")
+
+    out.append("      source_cursor [projection metadata]: " + ", ".join(parts))
 
 
 # ── shadow views ────────────────────────────────────────────────────────────

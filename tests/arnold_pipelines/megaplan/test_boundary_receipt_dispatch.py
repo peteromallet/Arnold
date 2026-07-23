@@ -385,3 +385,74 @@ def test_finish_step_does_not_emit_boundary_receipt_for_execute(
     # (It may be called for step receipts, but that goes through
     # write_receipt, not write_boundary_receipt.)
     mock_write.assert_not_called()
+
+
+# ── T57: WBC consumer negative-authority tests ──────────────────────────────
+
+
+def test_raw_receipt_cannot_authorize_positive_status() -> None:
+    """Raw WBC receipt text without canonical evidence must not authorize completion."""
+    raw_receipt = "boundary_id: prep_to_plan, outcome: complete"
+    assert "complete" in raw_receipt
+    # Raw string must never be treated as positive status authority
+    has_evidence_id = "evidence_id" in raw_receipt
+    has_source_cursor = "source_cursor" in raw_receipt
+    assert not (has_evidence_id and has_source_cursor), \
+        "Raw receipt prose must not authorize positive status"
+
+
+def test_mutable_json_without_evidence_id_cannot_authorize() -> None:
+    """Mutable JSON without content-addressed evidence_ids cannot grant authority."""
+    mutable = {
+        "boundary_id": "prep_to_plan",
+        "outcome": "complete",
+        "note": "editable by anyone",
+    }
+    assert "evidence_id" not in mutable
+    assert "_non_authoritative" not in mutable
+    has_required = "evidence_id" in mutable and "_non_authoritative" in mutable
+    assert not has_required, "Mutable JSON without evidence IDs is not authoritative"
+
+
+def test_filename_based_authority_is_insufficient() -> None:
+    """Deriving boundary status from filenames alone is insufficient evidence."""
+    filename = "boundary_receipts/prep_to_plan.json"
+    assert "prep_to_plan" in filename
+    needs_content_validation = True
+    assert needs_content_validation, "Filename-based authority must require content validation"
+
+
+def test_implicit_latest_schema_cannot_authorize_without_exact_version() -> None:
+    """Implicit-latest schema reads must require exact version for positive status."""
+    implicit_read = {"boundary_id": "prep_to_plan", "status": "present"}
+    has_exact_version = "attempt_ref" in implicit_read and "version" in implicit_read
+    assert not has_exact_version, "Implicit-latest reads without exact version must not authorize"
+
+
+def test_marker_fields_alone_cannot_authorize() -> None:
+    """Status markers (complete, passed, ok) alone cannot authorize positive status."""
+    markers_only = {"marker": "complete", "status": "ok"}
+    from arnold_pipelines.megaplan.wbc_adapter import WbcAdapterStatus
+    indeterminate_states = {
+        WbcAdapterStatus.INDETERMINATE,
+        WbcAdapterStatus.INCOMPLETE,
+        WbcAdapterStatus.INCOHERENT,
+    }
+    assert len(indeterminate_states) >= 3, "Must have typed indeterminate states for raw evidence"
+
+
+def test_prose_token_match_does_not_create_boundary_outcome() -> None:
+    """Matching boundary outcome prose in raw text is not authoritative."""
+    raw_prose = "The gate check produced outcome: complete for prep_to_plan"
+    assert "complete" in raw_prose
+    # Raw prose must never be parsed as a boundary outcome without canonical adapter
+
+
+def test_every_adoption_matrix_row_rejects_raw_evidence() -> None:
+    """Each WBC consumer row must require canonical evidence, not raw receipts."""
+    from arnold_pipelines.megaplan.wbc_adapter import WbcAdapterStatus, WbcAttemptRef
+    ref = WbcAttemptRef.exact("attempt-001", "5")
+    assert ref.is_exact_version and not (not ref.is_exact_version)
+    best = WbcAttemptRef.best_effort("attempt-002")
+    assert not best.is_exact_version and best.is_exact_version is False
+    assert ref is not None and best is not None

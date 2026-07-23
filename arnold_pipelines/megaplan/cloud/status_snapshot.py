@@ -92,7 +92,14 @@ from arnold_pipelines.megaplan.cloud.session_markers import (
 from arnold_pipelines.megaplan.cloud.status_retirement import status_retirement_matches
 from arnold_pipelines.megaplan.chain.spec import load_spec as load_chain_spec
 from arnold_pipelines.run_authority import canonical_json, reduce_run_authority
+import hashlib as _hashlib
+import time as _time
+
 from arnold_pipelines.megaplan.status_projection import plan_status_presentation
+from arnold_pipelines.megaplan.source_cursor_contract import (
+    DimensionCursor,
+    SourceCursorVector,
+)
 from arnold_pipelines.megaplan.chain.advancement import (
     AdvancementPolicy,
     assess_advancement,
@@ -578,11 +585,16 @@ def load_cloud_status_snapshot(
 def plan_activity_summary(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
     """Derive the resident ``plan_activity_summary`` from a snapshot.
 
-    Returns three buckets — ``active_working`` (running),
+    Returns buckets — ``active_working`` (running),
     ``should_be_working_but_needs_attention`` (repairing + attention + blocked
-    that should be running), and ``recently_completed`` — plus a ``degraded``
-    flag when no snapshot was supplied. This is the shape the resident hot
-    context injects; it is derived from the canonical snapshot first.
+    that should be running), ``recently_completed``, and
+    ``indeterminate_completions`` — plus a ``degraded`` flag when no snapshot
+    was supplied.
+
+    M9/T44: ``indeterminate_completions`` surfaces sessions whose status
+    claims completion but whose source-cursor evidence (WBC/custody/run
+    authority) is stale, unknown, or incoherent — adapter-backed projections
+    expose typed indeterminate results instead of collapsing to complete.
     """
     if not snapshot or not isinstance(snapshot, Mapping):
         return {
@@ -591,6 +603,7 @@ def plan_activity_summary(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
             "active_working": [],
             "should_be_working_but_needs_attention": [],
             "recently_completed": [],
+            "indeterminate_completions": [],
         }
     # A sanitized stale snapshot (P1) carries a stale_banner and intentionally
     # empty buckets; surface it as degraded with the banner so consumers never
@@ -603,11 +616,13 @@ def plan_activity_summary(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
             "active_working": [],
             "should_be_working_but_needs_attention": [],
             "recently_completed": [],
+            "indeterminate_completions": [],
         }
     sessions = snapshot.get("sessions") or []
     active: list[dict[str, Any]] = []
     needs_attention: list[dict[str, Any]] = []
     completed: list[dict[str, Any]] = []
+    indeterminate: list[dict[str, Any]] = []
     for entry in sessions:
         if not isinstance(entry, Mapping):
             continue
@@ -624,7 +639,12 @@ def plan_activity_summary(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         if status == "running":
             active.append(compact)
         elif status == "complete":
-            completed.append(compact)
+            # M9/T44: Check source-cursor for indeterminate evidence
+            if _session_completion_is_indeterminate(entry):
+                compact["completion_evidence"] = "indeterminate"
+                indeterminate.append(compact)
+            else:
+                completed.append(compact)
         elif status in {"repairing", "attention", "blocked"}:
             needs_attention.append(compact)
     return {
@@ -632,7 +652,34 @@ def plan_activity_summary(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         "active_working": active,
         "should_be_working_but_needs_attention": needs_attention,
         "recently_completed": completed,
+        "indeterminate_completions": indeterminate,
     }
+
+
+def _session_completion_is_indeterminate(
+    session: Mapping[str, Any],
+) -> bool:
+    """Check whether a session's completion evidence is indeterminate.
+
+    M9/T44: When source-cursor metadata is present and WBC, custody, or
+    run_authority dimensions are non-fresh, the completion claim cannot
+    be verified — return True (indeterminate) instead of silently
+    collapsing to complete.
+    """
+    source_cursor = session.get("source_cursor")
+    if not isinstance(source_cursor, Mapping):
+        return False
+    cursors = source_cursor.get("cursors")
+    if not isinstance(cursors, (list, tuple)):
+        return False
+    for c in cursors:
+        if not isinstance(c, Mapping):
+            continue
+        dim = c.get("dimension", "")
+        state = c.get("state", "")
+        if dim in {"wbc", "custody", "run_authority"} and state != "fresh":
+            return True
+    return False
 
 
 def append_progress_history(
@@ -1180,6 +1227,86 @@ def _chain_health_explicitly_incomplete(chain_health: Mapping[str, Any] | None) 
 # --- per-session classification -------------------------------------------
 
 
+def _build_session_source_cursor(
+    *,
+    session: str,
+    plan_current_state: str,
+    plan_state_doc: Any,
+    chain_health: Any,
+    watchdog_item: Mapping[str, Any],
+    liveness: Mapping[str, Any],
+    observed_at_epoch_ms: float,
+) -> SourceCursorVector:
+    """Build a source-cursor vector from available cloud session context.
+
+    Dimensions that cannot be determined from cloud-local observation are
+    explicitly ``unknown`` — never defaulted to fresh or stale.
+    """
+    now_iso = datetime.fromtimestamp(
+        observed_at_epoch_ms / 1000, tz=timezone.utc
+    ).isoformat()
+
+    # Lifecycle: version from current_state + chain health
+    ch_ver = ""
+    if isinstance(chain_health, Mapping):
+        ch_ver = f":ch:{chain_health.get('completed_count', '')}:{chain_health.get('chain_complete', '')}"
+    lifecycle_version = "sha256:" + _hashlib.sha256(
+        f"{session}:{plan_current_state}{ch_ver}".encode("utf-8")
+    ).hexdigest()
+    lifecycle_cursor = DimensionCursor.fresh(
+        "lifecycle", lifecycle_version, now_iso,
+        detail=f"session={session} state={plan_current_state or 'unknown'}",
+    )
+
+    # Process-correlation: from watchdog/liveness
+    has_tmux = bool(liveness.get("tmux")) if isinstance(liveness, Mapping) else False
+    has_process = bool(liveness.get("process")) if isinstance(liveness, Mapping) else False
+    if has_tmux or has_process:
+        pc_version = f"session:{session}:tmux:{has_tmux}:process:{has_process}"
+        pc_cursor = DimensionCursor.fresh(
+            "process_correlation", pc_version, now_iso,
+            detail=f"liveness tmux={has_tmux} process={has_process}",
+        )
+    else:
+        pc_cursor = DimensionCursor.unknown(
+            "process_correlation", observed_at=now_iso,
+            detail="no liveness signal from cloud session",
+        )
+
+    # Custody: from cloud-custody classification (built later, default unknown here)
+    custody_cursor = DimensionCursor.unknown(
+        "custody", observed_at=now_iso,
+        detail="custody classification computed per-session",
+    )
+
+    # Run Authority: unavailable from cloud-local observer
+    ra_cursor = DimensionCursor.unknown(
+        "run_authority", observed_at=now_iso,
+        detail="run authority unavailable from cloud-local observer",
+    )
+
+    # Work ledger: unavailable from cloud-local observer
+    wl_cursor = DimensionCursor.unknown(
+        "work_ledger", observed_at=now_iso,
+        detail="work ledger unavailable from cloud-local observer",
+    )
+
+    # WBC: unavailable from cloud-local observer
+    wbc_cursor = DimensionCursor.unknown(
+        "wbc", observed_at=now_iso,
+        detail="WBC boundary evidence unavailable from cloud-local observer",
+    )
+
+    return SourceCursorVector.from_cursors(
+        lifecycle_cursor,
+        wbc_cursor,
+        custody_cursor,
+        ra_cursor,
+        wl_cursor,
+        pc_cursor,
+    )
+
+
 def _build_session_entry(
     marker: Mapping[str, Any],
     *,
@@ -1453,11 +1580,27 @@ def _build_session_entry(
         and isinstance(plan_state_doc.get("active_step"), Mapping)
         else None
     )
+    # ── M9: build source-cursor metadata for this session row ──
+    _observed_at_epoch_ms = _time.time() * 1000
+    _session_source_cursor = _build_session_source_cursor(
+        session=session,
+        plan_current_state=plan_current_state,
+        plan_state_doc=plan_state_doc,
+        chain_health=chain_health,
+        watchdog_item=watchdog_item,
+        liveness=liveness,
+        observed_at_epoch_ms=_observed_at_epoch_ms,
+    )
+    _lifecycle_cursor = _session_source_cursor.cursor("lifecycle")
+
     presentation = plan_status_presentation(
         plan_state_label,
         active_step=active_step,
         review_verdict=review_verdict,
         completed=chain_complete or status == "complete",
+        source_cursor=_session_source_cursor,
+        lifecycle_cursor=_lifecycle_cursor,
+        observed_at_epoch_ms=_observed_at_epoch_ms,
     )
 
     custody_classification = _classify_session_custody(
@@ -1538,6 +1681,9 @@ def _build_session_entry(
         "repair_state": repair_state,
         "custody_state": custody_state,
         "repairable_issue": repairable_issue,
+        # ── M9: source-cursor metadata on the session row ──
+        "source_cursor": _session_source_cursor.to_dict() if _session_source_cursor else None,
+        "_non_authoritative": True,
         "evidence": {
             "marker": str(marker_path),
             "chain_health": str(marker_dir / f"{session}.chain-health.progress.json"),
@@ -1548,6 +1694,9 @@ def _build_session_entry(
             "superseded_by": superseding_sibling,
         },
     }
+    # ── M9: mark plan-percent bookkeeping as explicitly non-authoritative ──
+    if isinstance(entry.get("progress"), dict):
+        entry["progress"]["_non_authoritative"] = True
     entry.update(
         _compose_shadow_views(
             session=session,

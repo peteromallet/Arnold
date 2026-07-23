@@ -1,4 +1,10 @@
-"""Process-to-plan correlation for the live watchdog."""
+"""Process-to-plan correlation for the live watchdog.
+
+Correlation produces typed :class:`Correlation` records that link process
+identities to plan directories.  Uncorrelated workers produce ``UNRELATED``
+liveness — they are evidence of activity, not of specific plan progress.
+Recycled PIDs are detected via boot_id mismatch.
+"""
 
 from __future__ import annotations
 
@@ -8,12 +14,52 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from arnold_pipelines.megaplan.watchdog.worker_identity import (
+    LivenessState,
+    WorkerIdentity,
+    WorkerCorrelation,
+    WorkerLiveness,
+)
+
 
 @dataclass(frozen=True)
 class Correlation:
     plan_dir: Path
     process_pid: int
     method: str
+
+    def to_worker_correlation(
+        self,
+        *,
+        is_pid_live: bool | None = None,
+        worker_type: str = "",
+        cmdline: str = "",
+        cwd: str = "",
+    ) -> WorkerCorrelation:
+        """Convert this correlation to a typed WorkerCorrelation with liveness.
+
+        Args:
+            is_pid_live: Whether the PID is currently alive.
+            worker_type: Worker category from process scanner.
+            cmdline: Full command line.
+            cwd: Working directory.
+
+        Returns:
+            A WorkerCorrelation with evaluated liveness.
+        """
+        identity = WorkerIdentity.from_process_record(
+            pid=self.process_pid,
+            worker_type=worker_type,
+            cmdline=cmdline,
+            cwd=cwd,
+        )
+        liveness = WorkerLiveness.evaluate(identity, is_pid_live=is_pid_live)
+        return WorkerCorrelation(
+            identity=identity,
+            liveness=liveness,
+            plan_dirs=(str(self.plan_dir),),
+            correlation_method=self.method,
+        )
 
 
 def _read_chain_current_plan(chain_spec_path: str | None) -> str | None:
