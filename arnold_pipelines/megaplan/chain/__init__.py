@@ -7861,6 +7861,21 @@ def build_chain_parser(subparsers: Any) -> None:
     runtime_rebind_parser.add_argument("--direction", choices=("cutover", "rollback"), default="cutover")
     runtime_rebind_parser.add_argument("--reason", required=True)
     runtime_rebind_parser.add_argument("--actor", default="operator")
+    runtime_rebind_parser.add_argument(
+        "--runtime-identity",
+        help=(
+            "Content-addressed offline runtime identity JSON. Requires "
+            "--runtime-provenance-receipt and is freshly reverified by the "
+            "receipt's independent interpreter."
+        ),
+    )
+    runtime_rebind_parser.add_argument(
+        "--runtime-provenance-receipt",
+        help=(
+            "Digest-bound runtime_provenance receipt emitted by the offline "
+            "runtime's interpreter. Requires --runtime-identity."
+        ),
+    )
 
     pause_parser = chain_sub.add_parser(
         "pause", help="Durably pause a chain and disable automatic recovery"
@@ -8158,8 +8173,27 @@ def run_chain_cli(
             before = chain_state.to_dict()
             from arnold_pipelines.megaplan.chain.execution_binding import (
                 rebind_runtime_identity,
+                verify_external_runtime_identity,
             )
 
+            identity_arg = str(getattr(args, "runtime_identity", "") or "").strip()
+            receipt_arg = str(
+                getattr(args, "runtime_provenance_receipt", "") or ""
+            ).strip()
+            if bool(identity_arg) != bool(receipt_arg):
+                raise CliError(
+                    "chain_runtime_binding_drift",
+                    "chain runtime rebind refused: --runtime-identity and "
+                    "--runtime-provenance-receipt must be supplied together",
+                )
+            external_identity = (
+                verify_external_runtime_identity(
+                    Path(identity_arg).expanduser().resolve(strict=False),
+                    Path(receipt_arg).expanduser().resolve(strict=False),
+                )
+                if identity_arg
+                else None
+            )
             result = rebind_runtime_identity(
                 spec_path,
                 chain_state,
@@ -8170,6 +8204,7 @@ def run_chain_cli(
                 direction=args.direction,
                 reason=args.reason,
                 actor=args.actor,
+                verified_external_runtime_identity=external_identity,
             )
             after = chain_state.to_dict()
             for field in before:

@@ -3,12 +3,46 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.metadata
 import json
+import os
 import subprocess
+import sys
+import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import unquote, urlparse
+
+
+RUNTIME_PROVENANCE_RECEIPT_SCHEMA = "arnold.megaplan.runtime_provenance_receipt.v1"
+_RUNTIME_IDENTITY_KEYS = (
+    "import_root",
+    "source_revision",
+    "editable_root",
+    "editable_revision",
+    "direct_url",
+    "pth",
+    "imports",
+)
+
+
+def _sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _canonical_sha256(value: Mapping[str, Any]) -> str:
+    return _sha256_bytes(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
 
 
 def _git_revision(root: Path) -> str:
@@ -119,7 +153,9 @@ def runtime_provenance(
         ]
         if not pth or not pth_entries:
             errors.append("editable_pth_missing")
-        elif any(Path(entry).resolve(strict=False) != expected for entry in pth_entries):
+        elif any(
+            Path(entry).resolve(strict=False) != expected for entry in pth_entries
+        ):
             errors.append("editable_pth_mismatch")
         if any(not bool(record.get("readable")) for record in pth):
             errors.append("editable_pth_unreadable")
@@ -140,16 +176,72 @@ def runtime_provenance(
     }
 
 
+def normalized_runtime_identity(provenance: Mapping[str, Any]) -> dict[str, Any]:
+    """Project strict provenance into the content-addressed runtime identity."""
+
+    identity = {key: provenance.get(key) for key in _RUNTIME_IDENTITY_KEYS}
+    identity["editable_revision"] = str(
+        provenance.get("editable_revision") or provenance.get("source_revision") or ""
+    )
+    identity["content_sha256"] = _canonical_sha256(identity)
+    return identity
+
+
+def runtime_provenance_receipt(provenance: Mapping[str, Any]) -> dict[str, Any]:
+    """Bind one runtime observation to the interpreter that made it."""
+
+    executable = Path(sys.executable).resolve(strict=True)
+    core = {
+        "schema": RUNTIME_PROVENANCE_RECEIPT_SCHEMA,
+        "interpreter": {
+            "executable": str(executable),
+            "sha256": _sha256_file(executable),
+            "prefix": str(Path(sys.prefix).resolve(strict=True)),
+            "base_prefix": str(Path(sys.base_prefix).resolve(strict=True)),
+        },
+        "provenance": dict(provenance),
+        "runtime_identity": normalized_runtime_identity(provenance),
+    }
+    return {**core, "content_sha256": _canonical_sha256(core)}
+
+
+def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    path = path.resolve(strict=False)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--expected-root", type=Path)
     parser.add_argument("--expected-revision", default="")
+    parser.add_argument("--emit-receipt", action="store_true")
+    parser.add_argument("--receipt-out", type=Path)
+    parser.add_argument("--identity-out", type=Path)
     args = parser.parse_args(argv)
     payload = runtime_provenance(
         expected_root=args.expected_root,
         expected_revision=args.expected_revision,
     )
-    print(json.dumps(payload, sort_keys=True))
+    receipt = runtime_provenance_receipt(payload)
+    if args.receipt_out is not None:
+        _atomic_write_json(args.receipt_out, receipt)
+    if args.identity_out is not None:
+        _atomic_write_json(args.identity_out, receipt["runtime_identity"])
+    print(json.dumps(receipt if args.emit_receipt else payload, sort_keys=True))
     return 0 if payload["ok"] else 2
 
 

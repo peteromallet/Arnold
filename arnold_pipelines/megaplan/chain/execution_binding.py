@@ -10,15 +10,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import unquote, urlparse
 
 import yaml
 
-from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
+from arnold_pipelines.megaplan.cloud.runtime_provenance import (
+    RUNTIME_PROVENANCE_RECEIPT_SCHEMA,
+    runtime_provenance,
+)
 from arnold_pipelines.megaplan.types import CliError
 
 
@@ -262,7 +268,9 @@ def _revision_verification(
 
     checks: list[dict[str, Any]] = []
     if not errors:
-        spec_blob = _revision_blob(project_root, revision, f"{initiative_path}/chain.yaml")
+        spec_blob = _revision_blob(
+            project_root, revision, f"{initiative_path}/chain.yaml"
+        )
         active_hash = _revision_comparable_spec_sha(spec_path.read_bytes())
         expected_hash = (
             _revision_comparable_spec_sha(spec_blob) if spec_blob is not None else ""
@@ -365,16 +373,17 @@ def active_execution_identity(spec_path: Path) -> dict[str, Any]:
         errors.append("runtime_revision_missing")
     if policy["require_editable_runtime_match"]:
         errors.extend(
-            f"runtime_provenance:{error}"
-            for error in runtime.get("errors") or []
+            f"runtime_provenance:{error}" for error in runtime.get("errors") or []
         )
         if not editable_root_text:
             errors.append("editable_runtime_missing")
-        elif Path(runtime_identity["import_root"]).resolve(strict=False) != editable_root.resolve(
+        elif Path(runtime_identity["import_root"]).resolve(
             strict=False
-        ):
+        ) != editable_root.resolve(strict=False):
             errors.append("editable_runtime_import_root_mismatch")
-        elif runtime_identity["editable_revision"] != runtime_identity["source_revision"]:
+        elif (
+            runtime_identity["editable_revision"] != runtime_identity["source_revision"]
+        ):
             errors.append("editable_runtime_revision_mismatch")
     return {
         "schema": BINDING_SCHEMA,
@@ -419,6 +428,223 @@ def _normalized_runtime_identity(identity: Mapping[str, Any]) -> dict[str, Any]:
     return value
 
 
+def _json_object(path: Path, *, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            f"runtime rebind refused: {label} is unreadable or invalid JSON",
+        ) from exc
+    if not isinstance(value, dict):
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            f"runtime rebind refused: {label} must be a JSON object",
+        )
+    return value
+
+
+def _receipt_core(receipt: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: receipt.get(key)
+        for key in ("schema", "interpreter", "provenance", "runtime_identity")
+    }
+
+
+def _strict_external_runtime_shape(
+    identity: Mapping[str, Any],
+    provenance: Mapping[str, Any],
+) -> list[str]:
+    errors: list[str] = []
+    import_root_text = str(identity.get("import_root") or "")
+    editable_root_text = str(identity.get("editable_root") or "")
+    source_revision = str(identity.get("source_revision") or "")
+    editable_revision = str(identity.get("editable_revision") or "")
+    if not import_root_text:
+        errors.append("import_root_missing")
+        return errors
+    import_root = Path(import_root_text).resolve(strict=False)
+    editable_root = Path(editable_root_text).resolve(strict=False)
+    if import_root != editable_root:
+        errors.append("editable_root_mismatch")
+    if not _FULL_SHA.fullmatch(source_revision):
+        errors.append("source_revision_invalid")
+    if editable_revision != source_revision:
+        errors.append("editable_revision_mismatch")
+    if str(provenance.get("expected_root") or "") != str(import_root):
+        errors.append("receipt_expected_root_mismatch")
+    if str(provenance.get("expected_revision") or "") != source_revision:
+        errors.append("receipt_expected_revision_mismatch")
+    if str(provenance.get("source_revision") or "") != source_revision:
+        errors.append("receipt_source_revision_mismatch")
+    if not bool(provenance.get("ok")) or provenance.get("errors"):
+        errors.append("receipt_provenance_not_ready")
+
+    direct_url = identity.get("direct_url")
+    direct_url = direct_url if isinstance(direct_url, Mapping) else {}
+    dir_info = direct_url.get("dir_info")
+    dir_info = dir_info if isinstance(dir_info, Mapping) else {}
+    parsed = urlparse(str(direct_url.get("url") or ""))
+    direct_root = (
+        Path(unquote(parsed.path)).resolve(strict=False)
+        if parsed.scheme == "file"
+        else None
+    )
+    if not bool(dir_info.get("editable")) or direct_root != import_root:
+        errors.append("editable_direct_url_mismatch")
+
+    pth = identity.get("pth")
+    pth = pth if isinstance(pth, list) else []
+    pth_entries: list[Path] = []
+    if not pth:
+        errors.append("editable_pth_missing")
+    for record in pth:
+        if not isinstance(record, Mapping) or not bool(record.get("readable")):
+            errors.append("editable_pth_unreadable")
+            continue
+        entries = record.get("entries")
+        if not isinstance(entries, list):
+            errors.append("editable_pth_invalid")
+            continue
+        pth_entries.extend(
+            Path(str(entry)).resolve(strict=False)
+            for entry in entries
+            if isinstance(entry, str) and entry
+        )
+    if not pth_entries:
+        errors.append("editable_pth_entries_missing")
+    elif any(entry != import_root for entry in pth_entries):
+        errors.append("editable_pth_mismatch")
+
+    imports = identity.get("imports")
+    imports = imports if isinstance(imports, Mapping) else {}
+    if set(imports) != {"arnold", "arnold_pipelines", "megaplan"}:
+        errors.append("runtime_import_set_mismatch")
+    elif any(
+        not Path(str(value)).resolve(strict=False).is_relative_to(import_root)
+        for value in imports.values()
+    ):
+        errors.append("runtime_import_root_mismatch")
+    return errors
+
+
+def verify_external_runtime_identity(
+    identity_path: Path,
+    receipt_path: Path,
+) -> dict[str, Any]:
+    """Verify an offline runtime using a fresh observation by its interpreter."""
+
+    identity = _json_object(identity_path, label="runtime identity")
+    receipt = _json_object(receipt_path, label="runtime provenance receipt")
+    if receipt.get("schema") != RUNTIME_PROVENANCE_RECEIPT_SCHEMA:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: runtime provenance receipt schema is invalid",
+        )
+    receipt_digest = str(receipt.get("content_sha256") or "")
+    if (
+        not _FULL_SHA256.fullmatch(receipt_digest)
+        or _sha256_bytes(
+            json.dumps(
+                _receipt_core(receipt),
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        != receipt_digest
+    ):
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: runtime provenance receipt digest is invalid",
+        )
+
+    normalized = _normalized_runtime_identity(identity)
+    supplied_identity_digest = str(identity.get("content_sha256") or "")
+    if (
+        supplied_identity_digest != normalized["content_sha256"]
+        or receipt.get("runtime_identity") != normalized
+    ):
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: runtime identity disagrees with its receipt",
+        )
+
+    interpreter = receipt.get("interpreter")
+    interpreter = interpreter if isinstance(interpreter, Mapping) else {}
+    executable_text = str(interpreter.get("executable") or "")
+    executable = Path(executable_text).resolve(strict=False)
+    control_executable = Path(sys.executable).resolve(strict=False)
+    if (
+        not executable.is_absolute()
+        or not executable.is_file()
+        or not os.access(executable, os.X_OK)
+    ):
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: receipt interpreter is unavailable",
+        )
+    if executable == control_executable:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: offline runtime interpreter is not independent "
+            "from the control runtime",
+        )
+    if _sha256_file(executable) != str(interpreter.get("sha256") or ""):
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: receipt interpreter changed",
+        )
+
+    provenance = receipt.get("provenance")
+    provenance = provenance if isinstance(provenance, Mapping) else {}
+    shape_errors = _strict_external_runtime_shape(normalized, provenance)
+    if shape_errors:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: external runtime receipt is not launch-ready: "
+            + ", ".join(sorted(set(shape_errors))),
+        )
+
+    provenance_program = Path(
+        sys.modules[runtime_provenance.__module__].__file__ or ""
+    ).resolve(strict=True)
+    rerun = subprocess.run(
+        [
+            str(executable),
+            "-P",
+            str(provenance_program),
+            "--expected-root",
+            str(normalized["import_root"]),
+            "--expected-revision",
+            str(normalized["source_revision"]),
+            "--emit-receipt",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+    )
+    try:
+        observed = json.loads(rerun.stdout)
+    except json.JSONDecodeError as exc:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: external interpreter did not emit a valid "
+            "runtime provenance receipt",
+        ) from exc
+    if (
+        rerun.returncode != 0
+        or not isinstance(observed, dict)
+        or observed.get("content_sha256") != receipt_digest
+        or observed != receipt
+    ):
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: runtime provenance receipt is stale or forged",
+        )
+    return normalized
+
+
 def _state_has_progress(state: Any) -> bool:
     return bool(
         getattr(state, "current_milestone_index", -1) >= 0
@@ -456,7 +682,12 @@ def _future_source_reconciliation_is_safe(
     active: Mapping[str, Any],
     drift_fields: list[str],
 ) -> tuple[bool, list[str]]:
-    allowed_fields = {"bundle_sha256", "chain_spec_sha256", "assets", "intended_initiative_revision"}
+    allowed_fields = {
+        "bundle_sha256",
+        "chain_spec_sha256",
+        "assets",
+        "intended_initiative_revision",
+    }
     if not set(drift_fields).issubset(allowed_fields):
         return False, []
     if expected.get("milestone_sequence") != active.get("milestone_sequence"):
@@ -521,7 +752,10 @@ def _reconciled_requirements_cover_revision_errors(
     }
     covered: set[str] = set()
     for requirement in requirements.values():
-        if not isinstance(requirement, Mapping) or requirement.get("status") != "reconciled":
+        if (
+            not isinstance(requirement, Mapping)
+            or requirement.get("status") != "reconciled"
+        ):
             continue
         index = requirement.get("milestone_index")
         expected = requirement.get("expected")
@@ -553,7 +787,9 @@ def _bound_import_root_covers_editable_metadata_mismatch(
         return False
     expected_runtime = expected.get("runtime")
     active_runtime = active.get("runtime")
-    if not isinstance(expected_runtime, Mapping) or not isinstance(active_runtime, Mapping):
+    if not isinstance(expected_runtime, Mapping) or not isinstance(
+        active_runtime, Mapping
+    ):
         return False
     expected_import = str(expected_runtime.get("import_root") or "").strip()
     expected_editable = str(expected_runtime.get("editable_root") or "").strip()
@@ -618,7 +854,9 @@ def execution_binding_report(spec_path: Path, state: Any) -> dict[str, Any]:
         "required": policy["required"],
         "status": status,
         "drift_fields": drift_fields,
-        "bound_import_root_match": bound_import_root_match if expected is not None else False,
+        "bound_import_root_match": bound_import_root_match
+        if expected is not None
+        else False,
         "changed_asset_kinds": changed_asset_kinds if expected is not None else [],
         "expected": dict(expected) if expected is not None else None,
         "active": active,
@@ -698,7 +936,11 @@ def assert_execution_binding(
     report = execution_binding_report(spec_path, state)
     if not report["required"]:
         return report
-    if report["status"] == "missing" and allow_unbound_new and not _state_has_progress(state):
+    if (
+        report["status"] == "missing"
+        and allow_unbound_new
+        and not _state_has_progress(state)
+    ):
         return report
     if report["status"] not in {"match", "reconcile_required"}:
         active = report["active"]
@@ -834,16 +1076,24 @@ def rebind_execution_identity(
         "actor": actor,
     }
     if any(not str(value or "").strip() for value in arguments.values()):
-        raise CliError(DRIFT_ERROR, "chain rebind refused: every rebind guard is required")
+        raise CliError(
+            DRIFT_ERROR, "chain rebind refused: every rebind guard is required"
+        )
     guarded_current_plan = "" if no_current_plan_guard else expected_current_plan
     if not _FULL_SHA256.fullmatch(expected_previous_bundle_sha256):
-        raise CliError(DRIFT_ERROR, "chain rebind refused: previous bundle SHA-256 is invalid")
+        raise CliError(
+            DRIFT_ERROR, "chain rebind refused: previous bundle SHA-256 is invalid"
+        )
     if not _FULL_SHA256.fullmatch(expected_active_bundle_sha256):
-        raise CliError(DRIFT_ERROR, "chain rebind refused: active bundle SHA-256 is invalid")
+        raise CliError(
+            DRIFT_ERROR, "chain rebind refused: active bundle SHA-256 is invalid"
+        )
 
     report = execution_binding_report(spec_path, state)
     if not report.get("required"):
-        raise CliError(DRIFT_ERROR, "chain rebind refused: execution binding is not required")
+        raise CliError(
+            DRIFT_ERROR, "chain rebind refused: execution binding is not required"
+        )
     if report.get("status") not in {"drift", "reconcile_required"}:
         raise CliError(
             DRIFT_ERROR,
@@ -852,7 +1102,9 @@ def rebind_execution_identity(
     previous = report.get("expected")
     active = report.get("active")
     if not isinstance(previous, Mapping) or not isinstance(active, Mapping):
-        raise CliError(DRIFT_ERROR, "chain rebind refused: expected or active identity is missing")
+        raise CliError(
+            DRIFT_ERROR, "chain rebind refused: expected or active identity is missing"
+        )
     if previous.get("bundle_sha256") != expected_previous_bundle_sha256:
         raise CliError(
             DRIFT_ERROR,
@@ -904,7 +1156,9 @@ def rebind_execution_identity(
         previous_labels[:current_index] != completed_labels
         or active_labels[:current_index] != completed_labels
     ):
-        raise CliError(DRIFT_ERROR, "chain rebind refused: completed milestone prefix changed")
+        raise CliError(
+            DRIFT_ERROR, "chain rebind refused: completed milestone prefix changed"
+        )
     if previous_labels[current_index] != expected_current_milestone:
         raise CliError(
             DRIFT_ERROR,
@@ -916,10 +1170,14 @@ def rebind_execution_identity(
             "chain rebind refused: active source changed the current milestone",
         )
     if str(getattr(state, "current_plan_name", "") or "") != guarded_current_plan:
-        raise CliError(DRIFT_ERROR, "chain rebind refused: current plan does not match the guard")
+        raise CliError(
+            DRIFT_ERROR, "chain rebind refused: current plan does not match the guard"
+        )
     next_index = current_index + 1
     if next_index >= len(active_labels):
-        raise CliError(DRIFT_ERROR, "chain rebind refused: active source has no guarded successor")
+        raise CliError(
+            DRIFT_ERROR, "chain rebind refused: active source has no guarded successor"
+        )
     if active_labels[next_index] != expected_next_milestone:
         raise CliError(
             DRIFT_ERROR,
@@ -951,7 +1209,9 @@ def rebind_execution_identity(
     event = {
         **event_core,
         "content_sha256": _sha256_bytes(
-            json.dumps(event_core, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            json.dumps(event_core, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
         ),
     }
     metadata = dict(getattr(state, "metadata", {}) or {})
@@ -989,11 +1249,14 @@ def rebind_runtime_identity(
     reason: str,
     actor: str = "operator",
     direction: str = "cutover",
+    verified_external_runtime_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Adopt or roll back an exact runtime without rewriting the spec binding."""
 
     if direction not in {"cutover", "rollback"}:
-        raise CliError(RUNTIME_DRIFT_ERROR, "runtime rebind direction must be cutover or rollback")
+        raise CliError(
+            RUNTIME_DRIFT_ERROR, "runtime rebind direction must be cutover or rollback"
+        )
     if not _FULL_SHA256.fullmatch(expected_previous_runtime_sha256):
         raise CliError(RUNTIME_DRIFT_ERROR, "previous runtime SHA-256 is invalid")
     if not _FULL_SHA256.fullmatch(expected_active_runtime_sha256):
@@ -1010,9 +1273,27 @@ def rebind_runtime_identity(
             RUNTIME_DRIFT_ERROR,
             "runtime rebind refused while the immutable spec binding is not accepted",
         )
-    report = spec_report["runtime_binding"]
+    external_identity = (
+        _normalized_runtime_identity(verified_external_runtime_identity)
+        if isinstance(verified_external_runtime_identity, Mapping)
+        else None
+    )
+    if external_identity is None:
+        report = spec_report["runtime_binding"]
+    else:
+        external_active = dict(spec_report.get("active") or {})
+        external_active["runtime"] = external_identity
+        external_active["ready"] = True
+        external_active["errors"] = []
+        report = runtime_binding_report(
+            spec_path,
+            state,
+            active_identity=external_active,
+        )
     if not report.get("required"):
-        raise CliError(RUNTIME_DRIFT_ERROR, "runtime rebind is not required by this chain")
+        raise CliError(
+            RUNTIME_DRIFT_ERROR, "runtime rebind is not required by this chain"
+        )
     if report.get("status") != "drift":
         raise CliError(
             RUNTIME_DRIFT_ERROR,
@@ -1034,9 +1315,13 @@ def rebind_runtime_identity(
     labels = _identity_labels(spec_report.get("expected") or {})
     current_index = int(getattr(state, "current_milestone_index", -1))
     if current_index < 0 or current_index >= len(labels):
-        raise CliError(RUNTIME_DRIFT_ERROR, "current milestone index is outside the bound sequence")
+        raise CliError(
+            RUNTIME_DRIFT_ERROR, "current milestone index is outside the bound sequence"
+        )
     if labels[current_index] != expected_current_milestone:
-        raise CliError(RUNTIME_DRIFT_ERROR, "current milestone does not match the guard")
+        raise CliError(
+            RUNTIME_DRIFT_ERROR, "current milestone does not match the guard"
+        )
     guarded_plan = "" if expected_current_plan == "@none" else expected_current_plan
     if str(getattr(state, "current_plan_name", "") or "") != guarded_plan:
         raise CliError(RUNTIME_DRIFT_ERROR, "current plan does not match the guard")
@@ -1057,7 +1342,9 @@ def rebind_runtime_identity(
     event = {
         **event_core,
         "content_sha256": _sha256_bytes(
-            json.dumps(event_core, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            json.dumps(event_core, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
         ),
     }
     metadata = dict(getattr(state, "metadata", {}) or {})
@@ -1077,10 +1364,31 @@ def rebind_runtime_identity(
     binding["runtime_binding"] = runtime_binding
     metadata["execution_binding"] = binding
     state.metadata = metadata
-    rebound = execution_binding_report(spec_path, state)
-    if rebound["runtime_binding"]["status"] != "match":
-        raise CliError(RUNTIME_DRIFT_ERROR, "rebound runtime did not verify as an exact match")
-    return {"event": event, "runtime_binding": rebound["runtime_binding"]}
+    if external_identity is None:
+        rebound_runtime = execution_binding_report(spec_path, state)["runtime_binding"]
+    else:
+        rebound_active = dict(spec_report.get("active") or {})
+        rebound_active["runtime"] = external_identity
+        rebound_active["ready"] = True
+        rebound_active["errors"] = []
+        rebound_runtime = runtime_binding_report(
+            spec_path,
+            state,
+            active_identity=rebound_active,
+        )
+    if rebound_runtime["status"] != "match":
+        raise CliError(
+            RUNTIME_DRIFT_ERROR, "rebound runtime did not verify as an exact match"
+        )
+    return {
+        "event": event,
+        "runtime_binding": rebound_runtime,
+        "verification_mode": (
+            "external_interpreter_receipt"
+            if external_identity is not None
+            else "active_control_runtime"
+        ),
+    }
 
 
 def find_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path | None:
