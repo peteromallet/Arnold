@@ -1,15 +1,17 @@
-# kimi-k2p6 (Fireworks): plan/prep/revise/gate/finalize/loop_plan - glm-5.1: critique/execute/review/loop_execute/tiebreakers
+# kimi-k2p6 (Fireworks): plan/prep/revise/gate/finalize/loop_plan.
+# GLM 5.2 (Zhipu): evaluator/critique/execute/review/loop_execute/tiebreakers.
 [profiles.all-open]
 plan     = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 prep     = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
-critique = "hermes:glm-5.1"
+critique = "hermes:zhipu:glm-5.2"
+critique_evaluator = "hermes:zhipu:glm-5.2"
 revise   = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 gate     = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 finalize = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
-execute  = "hermes:glm-5.1"
-feedback              = "hermes:glm-5.1"
+execute  = "hermes:zhipu:glm-5.2"
+feedback              = "hermes:zhipu:glm-5.2"
 loop_plan    = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
-loop_execute = "hermes:glm-5.1"
-review   = "hermes:glm-5.1"
-tiebreaker_researcher = "hermes:glm-5.1"
-tiebreaker_challenger = "hermes:glm-5.1"
+loop_execute = "hermes:zhipu:glm-5.2"
+review   = "hermes:zhipu:glm-5.2"
+tiebreaker_researcher = "hermes:zhipu:glm-5.2"
+tiebreaker_challenger = "hermes:zhipu:glm-5.2"
