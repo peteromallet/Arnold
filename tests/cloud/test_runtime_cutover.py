@@ -15,6 +15,35 @@ from arnold_pipelines.megaplan.cloud.runtime_cutover import (
 from arnold_pipelines.megaplan.types import CliError
 
 
+def test_empty_shannon_dependency_extension_preserves_legacy_identity_hash() -> None:
+    legacy = {
+        "import_root": "/workspace/runtime-a",
+        "source_revision": "a" * 40,
+        "editable_root": "/workspace/runtime-a",
+        "editable_revision": "a" * 40,
+        "direct_url": {},
+        "pth": [],
+        "imports": {},
+    }
+
+    without_extension = normalize_runtime_identity(legacy)
+    empty_extension = normalize_runtime_identity(
+        {**legacy, "shannon_dependencies": {}}
+    )
+    bound_extension = normalize_runtime_identity(
+        {
+            **legacy,
+            "shannon_dependencies": {
+                "ready": True,
+                "dependency_tree_sha256": "b" * 64,
+            },
+        }
+    )
+
+    assert empty_extension == without_extension
+    assert bound_extension["content_sha256"] != without_extension["content_sha256"]
+
+
 def _write_marker(path: Path) -> dict:
     marker = {
         "session": "custody",

@@ -26,7 +26,6 @@ _RUNTIME_IDENTITY_KEYS = (
     "direct_url",
     "pth",
     "imports",
-    "shannon_dependencies",
 )
 
 
@@ -190,6 +189,9 @@ def normalized_runtime_identity(provenance: Mapping[str, Any]) -> dict[str, Any]
     """Project strict provenance into the content-addressed runtime identity."""
 
     identity = {key: provenance.get(key) for key in _RUNTIME_IDENTITY_KEYS}
+    shannon_dependencies = provenance.get("shannon_dependencies")
+    if isinstance(shannon_dependencies, Mapping) and shannon_dependencies:
+        identity["shannon_dependencies"] = dict(shannon_dependencies)
     identity["editable_revision"] = str(
         provenance.get("editable_revision") or provenance.get("source_revision") or ""
     )

@@ -399,7 +399,7 @@ def active_execution_identity(spec_path: Path) -> dict[str, Any]:
 
 
 def _runtime_identity_core(identity: Mapping[str, Any]) -> dict[str, Any]:
-    return {
+    core = {
         key: identity.get(key)
         for key in (
             "import_root",
@@ -409,9 +409,12 @@ def _runtime_identity_core(identity: Mapping[str, Any]) -> dict[str, Any]:
             "direct_url",
             "pth",
             "imports",
-            "shannon_dependencies",
         )
     }
+    shannon_dependencies = identity.get("shannon_dependencies")
+    if isinstance(shannon_dependencies, Mapping) and shannon_dependencies:
+        core["shannon_dependencies"] = dict(shannon_dependencies)
+    return core
 
 
 def _runtime_identity_sha256(identity: Mapping[str, Any]) -> str:

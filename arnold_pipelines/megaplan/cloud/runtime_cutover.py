@@ -25,7 +25,7 @@ def _sha256(value: bytes) -> str:
 
 
 def _identity_core(identity: Mapping[str, Any]) -> dict[str, Any]:
-    return {
+    core = {
         key: identity.get(key)
         for key in (
             "import_root",
@@ -35,9 +35,12 @@ def _identity_core(identity: Mapping[str, Any]) -> dict[str, Any]:
             "direct_url",
             "pth",
             "imports",
-            "shannon_dependencies",
         )
     }
+    shannon_dependencies = identity.get("shannon_dependencies")
+    if isinstance(shannon_dependencies, Mapping) and shannon_dependencies:
+        core["shannon_dependencies"] = dict(shannon_dependencies)
+    return core
 
 
 def normalize_runtime_identity(identity: Mapping[str, Any]) -> dict[str, Any]:
