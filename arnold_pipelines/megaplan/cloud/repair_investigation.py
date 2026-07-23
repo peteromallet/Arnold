@@ -163,6 +163,30 @@ def _attempt_summary(value: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _compact_attempt_summary(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep receipt identity while dropping duplicated narrative under the size cap."""
+
+    summary = _attempt_summary(value)
+    return {
+        key: summary.get(key)
+        for key in (
+            "attempt_id",
+            "dispatched_at",
+            "finished_at",
+            "blocker_id",
+            "failure_classification",
+            "classification",
+            "pushed_commit",
+            "outcome",
+        )
+    } | {
+        "problem_signature": summary.get("problem_signature") or {},
+        "what_tried_count": len(summary.get("what_tried") or []),
+        "validation_count": len(summary.get("validation") or []),
+        "compacted": True,
+    }
+
+
 def _phase_result_summary(plan_state_path: object) -> dict[str, Any]:
     if not plan_state_path:
         return {}
@@ -181,6 +205,40 @@ def _phase_result_summary(plan_state_path: object) -> dict[str, Any]:
         "deviations": [item if isinstance(item, Mapping) else {"message": _text(item, 4000)} for item in deviations[-20:]],
         "external_error": value.get("external_error"),
     }
+
+
+def _terminal_quality_blocker_ids(plan_state_path: object) -> list[str]:
+    state_path = Path(str(plan_state_path or ""))
+    if not state_path.is_file():
+        return []
+    plan_dir = state_path.parent
+    state = _load(state_path)
+    finalize_data = _load(plan_dir / "finalize.json")
+    try:
+        from arnold_pipelines.megaplan.blocker_recovery import (
+            evaluate_blocker_recovery,
+        )
+        from arnold_pipelines.megaplan.orchestration.phase_result import (
+            read_phase_result,
+        )
+
+        phase_result = read_phase_result(plan_dir)
+        evaluation = evaluate_blocker_recovery(
+            finalize_data,
+            state,
+            plan_dir=plan_dir,
+            blocked_tasks=phase_result.blocked_tasks if phase_result is not None else (),
+            deviations=phase_result.deviations if phase_result is not None else (),
+        )
+    except Exception:
+        return []
+    return sorted(
+        {
+            blocker.blocker_id
+            for blocker in evaluation.blockers
+            if blocker.blocker_kind == "quality" and blocker.is_terminal
+        }
+    )
 
 
 def _review_quality_blocker_summary(plan_state_path: object) -> dict[str, Any]:
@@ -855,6 +913,7 @@ def build_investigation_context(
             }
     supported_recovery_cli = chain_start_cli
     quality_recovery_command_complete = False
+    quality_recovery_blocker_ids: list[str] = []
     if durable_quality_repair.get("verified") is True and plan_name:
         quality_failure_fingerprint = _text(
             current_authoritative_failure.get("fingerprint"),
@@ -870,12 +929,53 @@ def build_investigation_context(
             and marker_relaunch_binding.get("verified") is True
         ):
             repair_runtime_root = Path(__file__).resolve().parents[3]
-            quality_recover_args = [
+            attested_python = [
                 "env",
                 "PYTHONSAFEPATH=1",
                 f"PYTHONPATH={repair_runtime_root}",
                 "python",
                 "-P",
+            ]
+            quality_recovery_blocker_ids = _terminal_quality_blocker_ids(
+                current.get("plan_state_path")
+            )
+            resolution_commands: list[str] = []
+            review_artifact = (
+                review_quality_blocker
+                if isinstance(review_quality_blocker, Mapping)
+                else {}
+            )
+            review_sha = _text(review_artifact.get("sha256"), 100)
+            for blocker_id in quality_recovery_blocker_ids:
+                resolution_args = [
+                    "env",
+                    "MEGAPLAN_ACTOR_ID=arnold-repair-loop",
+                    *attested_python[1:],
+                    "-m",
+                    "arnold_pipelines.megaplan",
+                    "quality-gate",
+                    "resolve",
+                    "--plan",
+                    plan_name,
+                    "--blocker-id",
+                    blocker_id,
+                    "--resolution",
+                    "fixed",
+                    "--phase",
+                    _text(current_authoritative_failure.get("phase"), 100)
+                    or "execute",
+                    "--evidence",
+                    f"validated repair request:{request.get('request_id')}",
+                    "--evidence",
+                    f"local repair commit:{quality_repair_commit}",
+                ]
+                if review_sha:
+                    resolution_args.extend(
+                        ["--evidence", f"approved repair review:{review_sha}"]
+                    )
+                resolution_commands.append(shlex.join(resolution_args))
+            quality_recover_args = [
+                *attested_python,
                 "-m",
                 "arnold_pipelines.megaplan",
                 "override",
@@ -895,10 +995,15 @@ def build_investigation_context(
                 ),
             ]
             quality_recover_cli = shlex.join(quality_recover_args)
-            supported_recovery_cli = (
-                f"{quality_recover_cli} && {{ {chain_start_cli}; }}"
-            )
-            quality_recovery_command_complete = True
+            if quality_recovery_blocker_ids:
+                supported_recovery_cli = " && ".join(
+                    [
+                        *resolution_commands,
+                        quality_recover_cli,
+                        f"{{ {chain_start_cli}; }}",
+                    ]
+                )
+                quality_recovery_command_complete = True
     required_investigator_output = _common_required_output("l1_repair_target")
     required_investigator_output["action_specific_handoff_examples"]["recover_state"][
         "allowed_mutations"
@@ -1061,19 +1166,28 @@ def build_investigation_context(
             "forbidden": ["guard_weakening", "direct_state_edit", "duplicate_live_worker", "uncited_mutation"],
             "supported_recovery_cli": supported_recovery_cli,
             "quality_recovery_command_complete": quality_recovery_command_complete,
+            "quality_recovery_blocker_ids": quality_recovery_blocker_ids,
             "marker_relaunch_binding": marker_relaunch_binding,
         },
         "required_investigator_output": required_investigator_output,
     }
     digest_payload = dict(context)
     context["context_digest"] = _digest(digest_payload)
-    encoded = json.dumps(context, sort_keys=True, separators=(",", ":"), default=str).encode()
+    # Bound the durable representation consumed by `observe`, not just the
+    # smaller in-memory compact form.
+    encoded = (json.dumps(context, indent=2, sort_keys=True, default=str) + "\n").encode()
     if len(encoded) > MAX_CONTEXT_BYTES:
-        # Preserve the newest and most relevant history while failing closed on
-        # unbounded context growth.
-        context["prior_repairs"] = context["prior_repairs"][-3:]
+        # The immutable repair-data source and the current durable-quality
+        # evidence already retain the full narratives. Keep only receipt
+        # identity and counts here so an exact supported recovery command does
+        # not crowd out current custody evidence.
+        context["prior_repairs"] = [
+            _compact_attempt_summary(item)
+            for item in attempts[-3:]
+            if isinstance(item, Mapping)
+        ]
         context["context_digest"] = _digest({k: v for k, v in context.items() if k != "context_digest"})
-        encoded = json.dumps(context, sort_keys=True, separators=(",", ":"), default=str).encode()
+        encoded = (json.dumps(context, indent=2, sort_keys=True, default=str) + "\n").encode()
     if len(encoded) > MAX_CONTEXT_BYTES:
         raise ValueError("bounded repair investigation context exceeds 64 KiB")
     return context
