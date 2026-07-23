@@ -281,7 +281,10 @@ def test_build_gate_signals_routes_unverifiable_checks_to_execute_contract(
     projected = _gate_signals_for_prompt(gate_signals)
     prompt_signals = projected["signals"]
     assert prompt_signals["unverifiable_checks"] == required_checks
-    assert prompt_signals["execution_acceptance_contract"]["required_checks"] == required_checks
+    assert prompt_signals["execution_acceptance_contract"]["required_check_ids"] == [
+        "route-metadata"
+    ]
+    assert "required_checks" not in prompt_signals["execution_acceptance_contract"]
 
 
 def test_gate_prompt_hides_only_operational_unverifiable_checks() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 from typing import Any, Mapping
@@ -35,8 +36,9 @@ from arnold_pipelines.megaplan.types import FlagRegistry, PlanState
 
 
 _GATE_FLAG_TEXT_LIMIT = 1_200
-_GATE_RAW_SOURCE_LIMIT = 96_000
-_GATE_RAW_FILE_LIMIT = 20_000
+_GATE_FINDING_TEXT_LIMIT = 1_600
+_GATE_RAW_SOURCE_LIMIT = 48_000
+_GATE_RAW_FILE_LIMIT = 8_000
 
 
 def _bounded_gate_text(value: Any, *, limit: int) -> str:
@@ -90,6 +92,74 @@ def _gate_plan_metadata_for_prompt(metadata: Mapping[str, Any]) -> dict[str, Any
     }
 
 
+def _gate_critique_check_for_prompt(check: Mapping[str, Any]) -> dict[str, Any]:
+    findings = []
+    for finding in check.get("findings", []):
+        if not isinstance(finding, Mapping):
+            continue
+        findings.append(
+            {
+                "detail": _bounded_gate_text(
+                    finding.get("detail"),
+                    limit=_GATE_FINDING_TEXT_LIMIT,
+                ),
+                "flagged": bool(finding.get("flagged")),
+            }
+        )
+    return {
+        "id": check.get("id"),
+        "question": _bounded_gate_text(check.get("question"), limit=800),
+        "status": check.get("status"),
+        "unverifiable_reason": _bounded_gate_text(
+            check.get("unverifiable_reason"),
+            limit=_GATE_FINDING_TEXT_LIMIT,
+        ),
+        "findings": findings,
+    }
+
+
+def _gate_unverifiable_for_prompt(check: Mapping[str, Any]) -> dict[str, Any]:
+    projected = {
+        key: check.get(key)
+        for key in ("id", "attention", "complexity")
+        if key in check
+    }
+    for key in ("question", "reason", "unverifiable_reason"):
+        if key in check:
+            projected[key] = _bounded_gate_text(
+                check.get(key),
+                limit=_GATE_FINDING_TEXT_LIMIT,
+            )
+    return projected
+
+
+def _raw_producer_findings(raw: str) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(payload, Mapping):
+        return []
+    rows: list[dict[str, Any]] = []
+    for check in payload.get("checks", []):
+        if not isinstance(check, Mapping):
+            continue
+        for finding in check.get("findings", []):
+            if not isinstance(finding, Mapping):
+                continue
+            rows.append(
+                {
+                    "check_id": check.get("id"),
+                    "detail": _bounded_gate_text(
+                        finding.get("detail"),
+                        limit=_GATE_FINDING_TEXT_LIMIT,
+                    ),
+                    "flagged": bool(finding.get("flagged")),
+                }
+            )
+    return rows
+
+
 def _current_critique_for_gate(
     plan_dir: Path,
     state: PlanState,
@@ -101,11 +171,19 @@ def _current_critique_for_gate(
     critique = read_json(critique_path) if critique_path.is_file() else {}
     projected = {
         "artifact": critique_path.name,
-        "checks": critique.get("checks", []),
+        "checks": [
+            _gate_critique_check_for_prompt(check)
+            for check in critique.get("checks", [])
+            if isinstance(check, Mapping)
+        ],
         "flags": critique.get("flags", []),
         "verified_flag_ids": critique.get("verified_flag_ids", []),
         "disputed_flag_ids": critique.get("disputed_flag_ids", []),
-        "unverifiable_checks": critique.get("unverifiable_checks", []),
+        "unverifiable_checks": [
+            _gate_unverifiable_for_prompt(check)
+            for check in critique.get("unverifiable_checks", [])
+            if isinstance(check, Mapping)
+        ],
     }
 
     custody_path = plan_dir / f"critique_custody_v{iteration}.json"
@@ -134,16 +212,21 @@ def _current_critique_for_gate(
             raw = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        limit = min(_GATE_RAW_FILE_LIMIT, remaining)
-        content = _bounded_gate_text(raw, limit=limit)
-        remaining -= len(content)
-        raw_findings.append(
-            {
-                "artifact": artifact,
-                "sha256": str(source.get("sha256") or ""),
-                "content": content,
-            }
-        )
+        row: dict[str, Any] = {
+            "artifact": artifact,
+            "sha256": str(source.get("sha256") or ""),
+        }
+        producer_findings = _raw_producer_findings(raw)
+        if producer_findings:
+            row["findings"] = producer_findings
+            rendered_size = len(json_dump(producer_findings))
+        else:
+            limit = min(_GATE_RAW_FILE_LIMIT, remaining)
+            content = _bounded_gate_text(raw, limit=limit)
+            row["content"] = content
+            rendered_size = len(content)
+        remaining -= rendered_size
+        raw_findings.append(row)
     projected["external_raw_findings"] = raw_findings
     return projected
 
@@ -223,9 +306,17 @@ def _gate_signals_for_prompt(gate_signals: Mapping[str, Any]) -> dict[str, Any]:
                 contract = projected_signals.get("execution_acceptance_contract")
                 if isinstance(contract, Mapping):
                     projected_signals["execution_acceptance_contract"] = {
-                        **contract,
-                        "required_checks": structural,
+                        key: value
+                        for key, value in contract.items()
+                        if key != "required_checks"
                     }
+                    projected_signals["execution_acceptance_contract"][
+                        "required_check_ids"
+                    ] = [
+                        str(check.get("id") or "")
+                        for check in structural
+                        if isinstance(check, Mapping)
+                    ]
             else:
                 projected_signals.pop("unverifiable_checks", None)
                 projected_signals.pop("execution_acceptance_contract", None)
