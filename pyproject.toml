@@ -97,6 +97,11 @@ artifacts = [
     "arnold_pipelines/megaplan/skills/**/*.py",
     "arnold_pipelines/megaplan/strategy/CONTRACT.md",
     "arnold_pipelines/megaplan/strategy/TEMPLATE.md",
+    "arnold_pipelines/megaplan/vendor/shannon/VENDOR.md",
+    "arnold_pipelines/megaplan/vendor/shannon/bun.lock",
+    "arnold_pipelines/megaplan/vendor/shannon/index.ts",
+    "arnold_pipelines/megaplan/vendor/shannon/package.json",
+    "arnold_pipelines/megaplan/vendor/shannon/tsconfig.json",
     "agentbox/systemd/*.service",
 ]
 exclude = [
@@ -105,6 +110,9 @@ exclude = [
     "arnold/pipelines/**",
     "arnold_pipelines/megaplan/cloud/_reference/**",
     "arnold_pipelines/megaplan/agent/pyproject.toml",
+    "arnold_pipelines/megaplan/vendor/shannon/.gitignore",
+    "arnold_pipelines/megaplan/vendor/shannon/*.test.ts",
+    "arnold_pipelines/megaplan/vendor/shannon/node_modules/**",
     "docs/archive/**",
     "tests/archive/**",
     ".megaplan/**",
