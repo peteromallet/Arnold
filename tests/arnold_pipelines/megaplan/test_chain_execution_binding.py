@@ -133,6 +133,56 @@ def test_binding_records_spec_sequence_anchor_briefs_revision_and_runtime(tmp_pa
     assert identity["revision_verification"]["ok"] is True
 
 
+def test_binding_includes_declared_non_milestone_seed_assets(tmp_path: Path) -> None:
+    spec_path = _pinned_chain(tmp_path)
+    decision = spec_path.parent / "decisions" / "closure.md"
+    decision.parent.mkdir()
+    decision.write_text("# Structural closure\n\n- Must bind.\n", encoding="utf-8")
+    external = tmp_path / "docs" / "incident-plan.md"
+    external.parent.mkdir()
+    external.write_text("# Incident plan\n", encoding="utf-8")
+    raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    raw["driver"]["execution_binding_assets"] = [
+        ".megaplan/initiatives/demo/decisions/closure.md",
+        "docs/incident-plan.md",
+    ]
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "bind structural seed assets")
+    raw["driver"]["intended_initiative_revision"] = _git(
+        tmp_path, "rev-parse", "HEAD"
+    )
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    identity = active_execution_identity(spec_path)
+    bound = [
+        item for item in identity["assets"] if item["kind"].startswith("bound_asset:")
+    ]
+
+    assert identity["ready"] is True
+    assert [item["declared_path"] for item in bound] == [
+        ".megaplan/initiatives/demo/decisions/closure.md",
+        "docs/incident-plan.md",
+    ]
+    assert all(item["sha256"] and item["semantic_sha256"] for item in bound)
+    checks = identity["revision_verification"]["checks"]
+    assert all(
+        check["matches"]
+        for check in checks
+        if str(check["kind"]).startswith("bound_asset:")
+    )
+
+
+def test_binding_rejects_declared_asset_outside_project_root(tmp_path: Path) -> None:
+    spec_path = _pinned_chain(tmp_path)
+    raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    raw["driver"]["execution_binding_assets"] = ["../../../../outside.md"]
+    spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(CliError, match="escapes project root"):
+        active_execution_identity(spec_path)
+
+
 def test_c1_bound_to_old_successors_cannot_adopt_corrective_sequence(tmp_path: Path) -> None:
     spec_path = _pinned_chain(tmp_path, ("c1", "s2", "s3", "s4"))
     state = _bound_state(spec_path)

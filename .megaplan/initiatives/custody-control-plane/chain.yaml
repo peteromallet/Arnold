@@ -25,6 +25,12 @@ launch_preconditions:
 - name: Workflow Boundary Contracts merge evidence is committed input
   kind: git_tracked
   path: .megaplan/initiatives/workflow-boundary-contracts/handoff/consolidation-20260714/wbc-merge-evidence.md
+- name: M10/M11 structural conformance closure is committed seed input
+  kind: git_tracked
+  path: .megaplan/initiatives/custody-control-plane/decisions/m10-m11-structural-conformance-closure-20260723.md
+- name: July 23 convergence plan is committed seed input
+  kind: git_tracked
+  path: docs/megaplan/custody-m9-m10-runtime-fix-consolidation-plan-2026-07-23.md
 milestones:
 - label: m5-run-authority-receipt-reconciliation-and-retirement
   idea: .megaplan/initiatives/custody-control-plane/briefs/m5-run-authority-receipt-reconciliation-and-retirement.md
@@ -241,7 +247,14 @@ milestones:
   depth: high
   prep_clarify: false
   prep_direction: Apply the F01/F02/F04/F15/F16 recovery/effect acceptance and
-    R1/R3 assignment in the F01-F17 amendment decision. First run the complete
+    R1/R3 assignment in the F01-F17 amendment decision and every C01-C19
+    requirement in the July 23 structural conformance closure. First verify one
+    content-addressed launch manifest binding the exact final target branch/root/HEAD,
+    latest chain/North Star/M10/M11/decision/convergence-plan hashes, materialized
+    plan snapshot, interpreter/runtime/import/direct-URL/all-.pth/wrapper/supervisor/
+    resident/watchdog/marker/chain identities; missing or ambiguous identity blocks.
+    The target branch itself must descend from the convergence revision. A changed
+    seed requires fresh materialization and gate, preserving prior history. Then run the complete
     action-off fake fault/replay matrix; no real canary effect is authorized. Exercise failure injection and ambiguity edges across WBC reserve/start/
     terminal/outbox/migration plus retry, fallback, repair, publication, delivery,
     source/install/retrigger, and provider effects. Reuse WBC effect evidence and
@@ -264,7 +277,8 @@ milestones:
   depth: high
   prep_clarify: false
   prep_direction: 'Apply the final F01-F17/R1-R3 acceptance allocation in the
-    amendment decision. First revalidate every predecessor hash, manifest,
+    amendment decision and C01-C20 in the July 23 structural conformance closure.
+    First revalidate every predecessor hash, manifest,
     inventory row, dependency, and compatibility expiry from one clean pinned
     vector before canary or deletion eligibility. Close every residual migration-matrix and WBC boundary-inventory
     row using exact prerequisite and milestone evidence. Deliver the comprehensive
@@ -297,6 +311,10 @@ driver:
   execution_binding: required
   intended_initiative_revision: 28d54763c6b7e3181fbd3441cf9a0ec1c5ee4981
   initiative_path: .megaplan/initiatives/custody-control-plane
+  execution_binding_assets:
+  - .megaplan/initiatives/custody-control-plane/decisions/f01-f17-upcoming-milestone-amendment-20260717.md
+  - .megaplan/initiatives/custody-control-plane/decisions/m10-m11-structural-conformance-closure-20260723.md
+  - docs/megaplan/custody-m9-m10-runtime-fix-consolidation-plan-2026-07-23.md
   require_editable_runtime_match: true
   phase_timeout: 10800
   auto_approve: true

@@ -83,6 +83,21 @@ legitimate implementation distinguishable from avoidable orchestration.
   legacy authority bypasses, and retirement/deletion evidence. Local tests,
   schema-only suites, nominal support manifests, manual assertions, or status
   labels cannot complete this epic.
+- Source, seed, plan, runtime, and process identity are one launch invariant.
+  The target checkout must descend from the exact final source revision; the
+  chain, North Star, milestone briefs, decisions, incident amendment, and
+  materialized plan snapshot are content-addressed inputs; interpreter, venv,
+  imports, `direct_url`, every active `.pth`, wrappers, supervisor, resident,
+  marker, and chain runtime binding must agree. Missing or ambiguous identity
+  blocks before dispatch.
+- Model-output contracts are producer/consumer contracts, not suggestions.
+  Prompt, materialized schema, scratch, parser, handler, receipt, and replay use
+  one strict schema hash. Required fields are never fabricated and unknown
+  fields are never stripped into validity.
+- Acceptance and liveness are target-bound reducer results. Receipt shape,
+  activity, heartbeat, process presence, Git/PR/CI movement, stale review, or
+  plan bookkeeping cannot project accepted progress, canonical advancement, or
+  completion.
 
 ## Explicit Non-Goals
 
@@ -233,3 +248,7 @@ The earlier one-milestone post-WBC proposal remains lineage. M5-M11 plus M8A sup
 as executable scope because the migration must independently prove controlled
 writers, exact-version adoption, rebuildable projections, recovery/effect
 safety, cross-system conformance, and evidence-gated legacy retirement.
+
+The controlling closure amendment for the remaining milestones is
+`decisions/m10-m11-structural-conformance-closure-20260723.md`. Its C01–C20
+requirements are load-bearing seed material, not advisory incident notes.

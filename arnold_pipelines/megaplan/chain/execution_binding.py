@@ -86,6 +86,14 @@ def binding_policy(spec_path: Path) -> dict[str, Any]:
             "invalid_spec",
             "driver.execution_binding must be `optional` or `required`",
         )
+    binding_assets = driver.get("execution_binding_assets", [])
+    if not isinstance(binding_assets, list) or any(
+        not isinstance(item, str) or not item.strip() for item in binding_assets
+    ):
+        raise CliError(
+            "invalid_spec",
+            "driver.execution_binding_assets must be a list of non-empty paths",
+        )
     return {
         "required": mode == "required",
         "mode": mode,
@@ -93,6 +101,7 @@ def binding_policy(spec_path: Path) -> dict[str, Any]:
             driver.get("intended_initiative_revision") or ""
         ).strip(),
         "initiative_path": str(driver.get("initiative_path") or "").strip(),
+        "execution_binding_assets": [item.strip() for item in binding_assets],
         "require_editable_runtime_match": bool(
             driver.get("require_editable_runtime_match", False)
         ),
@@ -117,6 +126,13 @@ def _asset_entry(
     project_root: Path,
 ) -> dict[str, Any]:
     path = _resolve_asset(path_value, spec_path=spec_path, project_root=project_root)
+    try:
+        path.relative_to(project_root.resolve(strict=False))
+    except ValueError as exc:
+        raise CliError(
+            "invalid_spec",
+            f"execution binding asset escapes project root: {path_value}",
+        ) from exc
     entry = {
         "kind": kind,
         "declared_path": path_value,
@@ -124,7 +140,11 @@ def _asset_entry(
         "sha256": _sha256_file(path) if path.is_file() else "",
         "exists": path.is_file(),
     }
-    if path.is_file() and (kind == "north_star" or kind.startswith("milestone_brief:")):
+    if path.is_file() and (
+        kind == "north_star"
+        or kind.startswith("milestone_brief:")
+        or kind.startswith("bound_asset:")
+    ):
         from arnold_pipelines.megaplan.planning.source_binding import (
             canonical_source_identity,
         )
@@ -153,8 +173,7 @@ def _bundle_assets(
                 )
             )
     milestones = raw.get("milestones")
-    if not isinstance(milestones, list):
-        return assets
+    milestones = milestones if isinstance(milestones, list) else []
     for index, milestone in enumerate(milestones):
         if not isinstance(milestone, Mapping):
             continue
@@ -176,6 +195,20 @@ def _bundle_assets(
                     _asset_entry(
                         f"milestone_north_star:{index}",
                         milestone_north_star.strip(),
+                        spec_path=spec_path,
+                        project_root=project_root,
+                    )
+                )
+    driver = raw.get("driver")
+    driver = driver if isinstance(driver, Mapping) else {}
+    bound_assets = driver.get("execution_binding_assets", [])
+    if isinstance(bound_assets, list):
+        for index, path_value in enumerate(bound_assets):
+            if isinstance(path_value, str) and path_value.strip():
+                assets.append(
+                    _asset_entry(
+                        f"bound_asset:{index}",
+                        path_value.strip(),
                         spec_path=spec_path,
                         project_root=project_root,
                     )
@@ -248,7 +281,9 @@ def _revision_verification(
 
         for asset in assets:
             declared = str(asset.get("declared_path") or "")
-            if declared.startswith(".megaplan/"):
+            if declared.startswith(".megaplan/") or str(asset.get("kind")).startswith(
+                "bound_asset:"
+            ):
                 revision_path = declared
             elif str(asset.get("kind")) == "north_star":
                 revision_path = f"{initiative_path}/{declared}"
