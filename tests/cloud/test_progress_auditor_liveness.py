@@ -26,7 +26,7 @@ def test_canonical_launch_evidence_missing_proves_runner_dead() -> None:
 
 def test_live_process_evidence_overrides_stale_absence_signal() -> None:
     result = classify_runner_liveness(
-        {"pid_live": True, "live_status": "alive"},
+        {"pid": 4242, "pid_live": True, "live_status": "alive"},
         {},
         ["canonical_launch_evidence_missing"],
     )
@@ -82,7 +82,7 @@ class TestLivenessReasonFixtures:
     def test_classify_runner_liveness_alive_produces_deterministic_evidence(self):
         """Live process evidence must produce a deterministic evidence-bound reason."""
         result = classify_runner_liveness(
-            {"pid_live": True, "live_status": "alive"},
+            {"pid": 4242, "pid_live": True, "live_status": "alive"},
             {},
             [],
         )
@@ -91,12 +91,25 @@ class TestLivenessReasonFixtures:
         assert eid.startswith("liveness:sha256:")
         # Same inputs → same evidence ID
         result2 = classify_runner_liveness(
-            {"pid_live": True, "live_status": "alive"},
+            {"pid": 4242, "pid_live": True, "live_status": "alive"},
             {},
             [],
         )
         eid2 = _liveness_evidence_id(result2["state"], result2["source"], result2["known"])
         assert eid == eid2
+
+
+def test_live_flags_without_session_or_process_identity_are_not_canonical_liveness() -> None:
+    result = classify_runner_liveness(
+        {"pid_live": True, "session_live": True, "live_status": "alive"},
+        {"worker_pid_alive": True},
+        [],
+    )
+
+    assert result["state"] == "unknown"
+    assert result["live"] is False
+    assert result["session_identity_present"] is False
+    assert result["process_identity_present"] is False
 
     def test_classify_runner_liveness_dead_produces_deterministic_evidence(self):
         """Dead runner evidence must produce a deterministic evidence-bound reason."""

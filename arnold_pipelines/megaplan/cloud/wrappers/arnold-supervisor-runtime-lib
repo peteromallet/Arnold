@@ -138,3 +138,29 @@ arnold_supervisor_runtime_init() {
   fi
   return 0
 }
+
+arnold_supervisor_select_exact_fallback() {
+  local component="${1:-unknown}"
+  local source_path="${2:-}"
+  local fallback_path="${3:-}"
+  local expected_source_root="${4:-}"
+  local runtime_root source_root source_sha fallback_sha
+
+  runtime_root="$(readlink -f "${MEGAPLAN_SUPERVISOR_SOURCE_ROOT:-}" 2>/dev/null || true)"
+  source_root="$(readlink -f "$expected_source_root" 2>/dev/null || true)"
+  if [[ -z "$runtime_root" || -z "$source_root" || "$runtime_root" != "$source_root" ]]; then
+    arnold_supervisor_failure_artifact "$component" "fallback_runtime_source_identity_mismatch"
+    return 78
+  fi
+  if [[ ! -f "$source_path" || ! -x "$fallback_path" ]]; then
+    arnold_supervisor_failure_artifact "$component" "fallback_source_or_runtime_missing"
+    return 78
+  fi
+  source_sha="$(sha256sum "$source_path" 2>/dev/null | awk '{print $1}')"
+  fallback_sha="$(sha256sum "$fallback_path" 2>/dev/null | awk '{print $1}')"
+  if [[ ! "$source_sha" =~ ^[0-9a-f]{64}$ || "$source_sha" != "$fallback_sha" ]]; then
+    arnold_supervisor_failure_artifact "$component" "fallback_wrapper_digest_mismatch"
+    return 78
+  fi
+  printf '%s\n' "$fallback_path"
+}

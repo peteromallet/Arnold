@@ -2872,6 +2872,7 @@ TRUE_HUMAN_BLOCKER = "true_human_blocker"
 PARTIAL_LIVENESS = "partial_liveness"
 REPAIRING = "repairing"
 RETRY_PENDING = "recurring_retry_pending"
+REPAIR_APPLIED_REINVESTIGATE = "repair_applied_reinvestigate"
 RECOVERY_VERIFIED = "verified_recovered"
 RECOVERY_PROVISIONAL = "provisional"
 RECOVERY_UNKNOWN = "unknown"
@@ -2894,6 +2895,7 @@ NON_SUCCESS_OUTCOMES: frozenset[str] = frozenset(
         PARTIAL_LIVENESS,
         REPAIRING,
         RETRY_PENDING,
+        REPAIR_APPLIED_REINVESTIGATE,
         REPAIR_TIMEOUT,
         REPAIR_EXHAUSTED,
         NEEDS_HUMAN,
@@ -2904,7 +2906,13 @@ NON_SUCCESS_OUTCOMES: frozenset[str] = frozenset(
 
 ALL_OUTCOMES: frozenset[str] = SUCCESS_OUTCOMES | NON_SUCCESS_OUTCOMES
 NON_TERMINAL_OUTCOMES: frozenset[str] = frozenset(
-    {REPAIRING, RETRY_PENDING, PARTIAL_LIVENESS, LIVE_WITH_FRESH_ACTIVITY}
+    {
+        REPAIRING,
+        RETRY_PENDING,
+        REPAIR_APPLIED_REINVESTIGATE,
+        PARTIAL_LIVENESS,
+        LIVE_WITH_FRESH_ACTIVITY,
+    }
 )
 
 
@@ -5730,6 +5738,7 @@ __all__ = [
     "REPAIR_EXHAUSTED",
     "REPAIR_TIMEOUT",
     "REPAIRING",
+    "REPAIR_APPLIED_REINVESTIGATE",
     "RETRY_PENDING",
     "RECOVERY_PROVISIONAL",
     "RECOVERY_UNKNOWN",

@@ -107,7 +107,13 @@ SYNC_BRANCH="${MEGAPLAN_META_SYNC_BRANCH:-editible-install}"
 REPAIR_LOOP_BIN="${MEGAPLAN_META_REPAIR_LOOP_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop}"
 REPAIR_LOOP_FALLBACK="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
 if [[ ! -f "$REPAIR_LOOP_BIN" && -f "$REPAIR_LOOP_FALLBACK" ]]; then
-  REPAIR_LOOP_BIN="$REPAIR_LOOP_FALLBACK"
+  REPAIR_LOOP_BIN="$(
+    arnold_supervisor_select_exact_fallback \
+      meta-repair-ordinary-repair \
+      "$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop" \
+      "$REPAIR_LOOP_FALLBACK" \
+      "$ARNOLD_SRC"
+  )" || REPAIR_LOOP_BIN=""
 fi
 REPAIR_DATA_PATH="$REPAIR_DATA_DIR/${SESSION}.repair-data.json"
 RUN_DIR="${MEGAPLAN_META_RUN_DIR:-/workspace/.megaplan/meta-runs}"
@@ -310,7 +316,8 @@ print(f"OK:{result.recommendation}")
 PY
 }
 
-RECURSION_OUTPUT="$(recursion_check 2>&1)" || true
+RECURSION_RC=0
+RECURSION_OUTPUT="$(recursion_check 2>&1)" || RECURSION_RC=$?
 if [[ "$RECURSION_OUTPUT" == RECURSION:* ]]; then
   log "recursion guard: $RECURSION_OUTPUT"
   log "escalating to NEEDS_HUMAN instead of recursing"
@@ -339,6 +346,35 @@ atomic_write_json(needs_path, needs_human)
 print(f"escalation persisted: {needs_path}")
 PY
   exit 1
+fi
+if [[ "$RECURSION_RC" != "0" || "$RECURSION_OUTPUT" != OK:* ]]; then
+  if [[ "$RECURSION_RC" != "0" ]]; then
+    RECURSION_REASON="recursion_checker_nonzero_exit_$RECURSION_RC"
+  elif [[ -z "$RECURSION_OUTPUT" ]]; then
+    RECURSION_REASON="recursion_checker_empty_output"
+  else
+    RECURSION_REASON="recursion_checker_malformed_output"
+  fi
+  python3 -P - "$REPAIR_DATA_DIR/meta/${SAFE_SESSION}.recursion-check-indeterminate.json" "$SESSION" "$RECURSION_REASON" <<'PY'
+import json, os, pathlib, sys, tempfile
+from datetime import datetime, timezone
+path = pathlib.Path(sys.argv[1])
+payload = {
+    "schema_version": "arnold-meta-repair-recursion-check-v1",
+    "status": "indeterminate",
+    "session": sys.argv[2],
+    "reason": sys.argv[3],
+    "recorded_at": datetime.now(timezone.utc).isoformat(),
+}
+path.parent.mkdir(parents=True, exist_ok=True)
+fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+with os.fdopen(fd, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, sort_keys=True)
+    handle.write("\n")
+os.replace(tmp, path)
+PY
+  log "recursion check indeterminate; refusing meta-repair dispatch reason=$RECURSION_REASON"
+  exit 78
 fi
 log "recursion guard: $RECURSION_OUTPUT"
 
@@ -1320,7 +1356,7 @@ PY
 # system, but the ordinary repair loop will be blocked anyway until
 # acceptance evidence is present.
 _meta_repair_acceptance_gate() {
-  local marker_path remote_spec workspace gate_json gate_open reason
+  local marker_path remote_spec workspace gate_json gate_open reason gate_rc parse_rc blocker_event parsed_gate
   marker_path="$MARKER_DIR/$SESSION.json"
   if [[ ! -f "$marker_path" ]]; then
     return 0
@@ -1343,6 +1379,7 @@ print(f'{spec}\t{workspace}')
   if [[ -z "$remote_spec" || ! -f "$remote_spec" ]]; then
     return 0
   fi
+  gate_rc=0
   gate_json="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$remote_spec" "$workspace" "meta_repair" <<'PY'
 import json, sys
 from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import check_wrapper_acceptance_gate
@@ -1350,17 +1387,37 @@ spec_path, workspace, caller = sys.argv[1:4]
 result = check_wrapper_acceptance_gate(spec_path, workspace=workspace, caller_kind=caller)
 print(json.dumps(result, sort_keys=True))
 PY
-)" || true
-  if [[ -z "$gate_json" ]]; then
+)"; gate_rc=$?
+  parse_rc=0
+  if [[ "$gate_rc" != "0" || -z "$gate_json" ]]; then
+    if [[ "$gate_rc" == "0" ]]; then
+      reason="acceptance_checker_empty_output"
+    else
+      reason="acceptance_checker_nonzero_exit_$gate_rc"
+    fi
+    gate_open="false"
+    blocker_event="$(python3 -c "import json,sys; print(json.dumps({'schema_version':'arnold-wrapper-acceptance-indeterminate-v1','status':'indeterminate','reason':sys.argv[1],'caller_kind':'meta_repair','session':sys.argv[2]}))" "$reason" "$SESSION")"
+  else
+    parsed_gate="$(python3 -c "
+import json, sys
+value=json.loads(sys.stdin.read())
+if not isinstance(value, dict) or not isinstance(value.get('gate_open'), bool):
+    raise SystemExit(65)
+print(str(value['gate_open']).lower(), str(value.get('reason') or 'unknown'), json.dumps(value.get('blocker_event') or {}), sep='\\t')
+" <<<"$gate_json")" || parse_rc=$?
+    if [[ "$parse_rc" == "0" ]]; then
+      IFS=$'\t' read -r gate_open reason blocker_event <<< "$parsed_gate"
+    fi
+    if [[ "$parse_rc" != "0" ]]; then
+      reason="acceptance_checker_malformed_output"
+      gate_open="false"
+      blocker_event="$(python3 -c "import json,sys; print(json.dumps({'schema_version':'arnold-wrapper-acceptance-indeterminate-v1','status':'indeterminate','reason':sys.argv[1],'caller_kind':'meta_repair','session':sys.argv[2]}))" "$reason" "$SESSION")"
+    fi
+  fi
+  if [[ "$gate_open" == "true" ]]; then
     return 0
   fi
-  gate_open="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('gate_open',True))" <<<"$gate_json" 2>/dev/null || echo True)"
-  if [[ "$gate_open" == "True" || "$gate_open" == "true" ]]; then
-    return 0
-  fi
-  reason="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('reason','unknown'))" <<<"$gate_json" 2>/dev/null || echo "acceptance gate closed")"
   log "[meta-repair] acceptance gate closed session=$SESSION: $reason"
-  blocker_event="$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d.get('blocker_event',{})))" <<<"$gate_json" 2>/dev/null || true)"
   if [[ -n "$blocker_event" && "$blocker_event" != "{}" ]]; then
     local blocker_file="$REPAIR_DATA_DIR/meta/${SESSION}.blocker-acceptance-gate.json"
     python3 -c "

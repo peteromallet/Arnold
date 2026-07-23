@@ -146,13 +146,21 @@ PRIMARY_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arn
 PRIMARY_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-repair-loop"
 PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-$PRIMARY_REPAIR_SOURCE_BIN}"
 if [[ ! -x "$PRIMARY_REPAIR_BIN" && -x "$PRIMARY_REPAIR_FALLBACK_BIN" ]]; then
-  PRIMARY_REPAIR_BIN="$PRIMARY_REPAIR_FALLBACK_BIN"
+  if selected_fallback="$(arnold_supervisor_select_exact_fallback watchdog-primary-repair "$PRIMARY_REPAIR_SOURCE_BIN" "$PRIMARY_REPAIR_FALLBACK_BIN" "$SRC_DIR")"; then
+    PRIMARY_REPAIR_BIN="$selected_fallback"
+  else
+    PRIMARY_REPAIR_BIN=""
+  fi
 fi
 META_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
 META_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-meta-repair-loop"
 META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-$META_REPAIR_SOURCE_BIN}"
 if [[ ! -x "$META_REPAIR_BIN" && -x "$META_REPAIR_FALLBACK_BIN" ]]; then
-  META_REPAIR_BIN="$META_REPAIR_FALLBACK_BIN"
+  if selected_fallback="$(arnold_supervisor_select_exact_fallback watchdog-meta-repair "$META_REPAIR_SOURCE_BIN" "$META_REPAIR_FALLBACK_BIN" "$SRC_DIR")"; then
+    META_REPAIR_BIN="$selected_fallback"
+  else
+    META_REPAIR_BIN=""
+  fi
 fi
 REPAIR_TRIGGER_BIN="${CLOUD_WATCHDOG_REPAIR_TRIGGER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"
 DISCOVER_BIN="${CLOUD_WATCHDOG_DISCOVER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
@@ -4775,6 +4783,7 @@ PY
   # acceptance must carry a validated acceptance receipt before the
   # watchdog is allowed to dispatch a repair loop.
   if [[ -n "$remote_spec" && -f "$remote_spec" ]]; then
+    gate_rc=0
     gate_json="$(PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 -P - "$remote_spec" "$workspace" "watchdog" <<'PY'
 import json, sys
 from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import check_wrapper_acceptance_gate
@@ -4782,12 +4791,34 @@ spec_path, workspace, caller = sys.argv[1:4]
 result = check_wrapper_acceptance_gate(spec_path, workspace=workspace, caller_kind=caller)
 print(json.dumps(result, sort_keys=True))
 PY
-)" || true
-    if [[ -n "$gate_json" ]]; then
-      gate_open="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('gate_open',True))" <<<"$gate_json" 2>/dev/null || echo True)"
-      if [[ "$gate_open" != "True" && "$gate_open" != "true" ]]; then
-        reason="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('reason','unknown'))" <<<"$gate_json" 2>/dev/null || echo "acceptance gate closed")"
-        blocker_event="$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d.get('blocker_event',{})))" <<<"$gate_json" 2>/dev/null || true)"
+)"; gate_rc=$?
+    parse_rc=0
+    if [[ "$gate_rc" != "0" || -z "$gate_json" ]]; then
+      if [[ "$gate_rc" == "0" ]]; then
+        reason="acceptance_checker_empty_output"
+      else
+        reason="acceptance_checker_nonzero_exit_$gate_rc"
+      fi
+      gate_open="false"
+      blocker_event="$(python3 -c "import json,sys; print(json.dumps({'schema_version':'arnold-wrapper-acceptance-indeterminate-v1','status':'indeterminate','reason':sys.argv[1],'caller_kind':'watchdog','session':sys.argv[2]}))" "$reason" "$session")"
+    else
+      parsed_gate="$(python3 -c "
+import json, sys
+value=json.loads(sys.stdin.read())
+if not isinstance(value, dict) or not isinstance(value.get('gate_open'), bool):
+    raise SystemExit(65)
+print(str(value['gate_open']).lower(), str(value.get('reason') or 'unknown'), json.dumps(value.get('blocker_event') or {}), sep='\\t')
+" <<<"$gate_json")" || parse_rc=$?
+      if [[ "$parse_rc" == "0" ]]; then
+        IFS=$'\t' read -r gate_open reason blocker_event <<< "$parsed_gate"
+      fi
+      if [[ "$parse_rc" != "0" ]]; then
+        reason="acceptance_checker_malformed_output"
+        gate_open="false"
+        blocker_event="$(python3 -c "import json,sys; print(json.dumps({'schema_version':'arnold-wrapper-acceptance-indeterminate-v1','status':'indeterminate','reason':sys.argv[1],'caller_kind':'watchdog','session':sys.argv[2]}))" "$reason" "$session")"
+      fi
+    fi
+    if [[ "$gate_open" != "true" ]]; then
         log "[watchdog] acceptance gate closed for session=$session: $reason"
         if [[ -n "$blocker_event" && "$blocker_event" != "{}" ]]; then
           blocker_file="$REPAIR_DATA_DIR/${session}.blocker-acceptance-gate.json"
@@ -4802,7 +4833,6 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
         REPAIR_DISPATCH_RESULT="blocked"
         emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "acceptance gate closed: $reason" "blocked" "immediate_repair"
         return 1
-      fi
     fi
   fi
 
@@ -5551,6 +5581,38 @@ dispatch_meta_repair() {
       report_item "$report_items" "$session" "meta_repair" "recursive" "meta-repair recursion guard blocked dispatch" "$workspace" "$remote_spec"
     fi
     return 0
+  fi
+  if [[ "$recursion_result" != OK:* ]]; then
+    if [[ -z "$recursion_result" ]]; then
+      recursion_reason="recursion_checker_empty_output"
+    else
+      recursion_reason="recursion_checker_malformed_output"
+    fi
+    recursion_artifact="$REPAIR_DATA_DIR/meta/$(safe_name "$session").recursion-check-indeterminate.json"
+    python3 -P - "$recursion_artifact" "$session" "$recursion_reason" <<'PY' >/dev/null 2>&1 || true
+import json, os, pathlib, sys, tempfile
+from datetime import datetime, timezone
+path = pathlib.Path(sys.argv[1])
+payload = dict(
+    schema_version="arnold-meta-repair-recursion-check-v1",
+    status="indeterminate",
+    session=sys.argv[2],
+    reason=sys.argv[3],
+    recorded_at=datetime.now(timezone.utc).isoformat(),
+)
+path.parent.mkdir(parents=True, exist_ok=True)
+fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+with os.fdopen(fd, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, sort_keys=True)
+    handle.write("\n")
+os.replace(tmp, path)
+PY
+    log "meta-repair recursion check indeterminate; refusing dispatch session=$session reason=$recursion_reason"
+    REPAIR_DISPATCH_RESULT="unavailable"
+    if [[ -n "$report_items" ]]; then
+      report_item "$report_items" "$session" "meta_repair" "indeterminate" "$recursion_reason" "$workspace" "$remote_spec"
+    fi
+    return 1
   fi
   log "meta-repair recursion guard: $recursion_result"
 

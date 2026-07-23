@@ -1414,7 +1414,8 @@ true; } >> %q 2>&1 && if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /wor
 }
 
 _repair_loop_acceptance_gate() {
-  local session="$1" workspace="$2" remote_spec="$3" gate_json gate_open reason blocker_event
+  local session="$1" workspace="$2" remote_spec="$3" gate_json gate_open reason blocker_event gate_rc parse_rc parsed_gate
+  gate_rc=0
   gate_json="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$remote_spec" "$workspace" "repair_loop" <<'PY'
 import json, sys
 from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import check_wrapper_acceptance_gate
@@ -1422,16 +1423,36 @@ spec_path, workspace, caller = sys.argv[1:4]
 result = check_wrapper_acceptance_gate(spec_path, workspace=workspace, caller_kind=caller)
 print(json.dumps(result, sort_keys=True))
 PY
-)" || true
-  if [[ -z "$gate_json" ]]; then
+)"; gate_rc=$?
+  if [[ "$gate_rc" != "0" || -z "$gate_json" ]]; then
+    if [[ "$gate_rc" == "0" ]]; then
+      reason="acceptance_checker_empty_output"
+    else
+      reason="acceptance_checker_nonzero_exit_$gate_rc"
+    fi
+    blocker_event="$(python3 -c "import json,sys; print(json.dumps({'schema_version':'arnold-wrapper-acceptance-indeterminate-v1','status':'indeterminate','reason':sys.argv[1],'caller_kind':'repair_loop','session':sys.argv[2]}))" "$reason" "$session")"
+    gate_open="false"
+  else
+    parse_rc=0
+    parsed_gate="$(python3 -c "
+import json, sys
+value=json.loads(sys.stdin.read())
+if not isinstance(value, dict) or not isinstance(value.get('gate_open'), bool):
+    raise SystemExit(65)
+print(str(value['gate_open']).lower(), str(value.get('reason') or 'unknown'), json.dumps(value.get('blocker_event') or {}), sep='\\t')
+" <<<"$gate_json")" || parse_rc=$?
+    if [[ "$parse_rc" == "0" ]]; then
+      IFS=$'\t' read -r gate_open reason blocker_event <<< "$parsed_gate"
+    fi
+    if [[ "$parse_rc" != "0" ]]; then
+      reason="acceptance_checker_malformed_output"
+      blocker_event="$(python3 -c "import json,sys; print(json.dumps({'schema_version':'arnold-wrapper-acceptance-indeterminate-v1','status':'indeterminate','reason':sys.argv[1],'caller_kind':'repair_loop','session':sys.argv[2]}))" "$reason" "$session")"
+      gate_open="false"
+    fi
+  fi
+  if [[ "$gate_open" == "true" ]]; then
     return 0
   fi
-  gate_open="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('gate_open',True))" <<<"$gate_json" 2>/dev/null || echo True)"
-  if [[ "$gate_open" == "True" || "$gate_open" == "true" ]]; then
-    return 0
-  fi
-  reason="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('reason','unknown'))" <<<"$gate_json" 2>/dev/null || echo "acceptance gate closed")"
-  blocker_event="$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d.get('blocker_event',{})))" <<<"$gate_json" 2>/dev/null || true)"
   log "[repair-loop] acceptance gate closed session=$session: $reason"
   if [[ -n "$blocker_event" && "$blocker_event" != "{}" ]]; then
     local blocker_file="$REPAIR_DATA_DIR/${session}.blocker-acceptance-gate.json"
@@ -4873,6 +4894,21 @@ payload["outcome"] = outcome
 now = dt.datetime.now(dt.timezone.utc).isoformat()
 if is_terminal_outcome(outcome):
     payload["completed_at"] = now
+else:
+    # A successor investigation retains custody.  Never leave a stale terminal
+    # timestamp behind when an existing repair record re-enters a nonterminal
+    # state.
+    payload.pop("completed_at", None)
+if outcome == "repair_applied_reinvestigate":
+    request = payload.get("reinvestigation")
+    request = request if isinstance(request, dict) else {}
+    if request.get("status") != "required":
+        payload["reinvestigation"] = {
+            "schema_version": "arnold-repair-reinvestigation-v1",
+            "status": "required",
+            "generation": int(request.get("generation") or 0) + 1,
+            "requested_at": now,
+        }
 if is_success_outcome(outcome):
     payload["last_success_at"] = now
     payload["last_success_outcome"] = outcome
@@ -7076,6 +7112,18 @@ payload["investigation"] = {
     "investigator_run_id": run_id,
     "bounded": True,
 }
+reinvestigation = payload.get("reinvestigation")
+if isinstance(reinvestigation, dict) and reinvestigation.get("status") == "required":
+    reinvestigation = dict(reinvestigation)
+    reinvestigation.update(
+        {
+            "status": "completed",
+            "completed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "investigator_run_id": run_id,
+            "context_digest": digest,
+        }
+    )
+    payload["reinvestigation"] = reinvestigation
 save_repair_data(pathlib.Path(data_path), payload)
 PY
 }
@@ -7415,6 +7463,7 @@ EOF
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
     "$DATA_FILE" "$INVESTIGATION_CONTEXT_PATH" "$INVESTIGATION_OBSERVATION_PATH" \
     "$INVESTIGATOR_RECEIPT_PATH" "$context_digest" "$investigator_run_id" <<'PY' || return 1
+import datetime as dt
 import json
 import pathlib
 import sys
