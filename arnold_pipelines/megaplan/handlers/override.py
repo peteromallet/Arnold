@@ -8,6 +8,7 @@ from typing import Any, Callable
 from arnold_pipelines.megaplan.feature_flags import control_interface_routing_on
 from arnold_pipelines.megaplan.profiles import (
     DEFAULT_AGENT_ROUTING,
+    KNOWN_AGENTS,
     ROBUSTNESS_ACCEPTED,
     effective_premium_vendor,
     normalize_robustness,
@@ -1704,11 +1705,27 @@ def _override_set_model(root: Path, plan_dir: Path, state: PlanState, args: argp
         if effort is not None:
             target_effort = effort
     elif explicit_spec is not None:
-        raise CliError(
-            "invalid_args",
-            f"set-model only supports claude/codex specs; got '{explicit_spec.agent}'. "
-            "Use --phase-model on the phase command for hermes/shannon routing.",
-        )
+        if explicit_spec.agent not in KNOWN_AGENTS:
+            raise CliError(
+                "invalid_args",
+                f"Unknown agent '{explicit_spec.agent}' in --model {model_arg!r}. "
+                f"Valid agents: {', '.join(KNOWN_AGENTS)}.",
+            )
+        if explicit_spec.model is None:
+            raise CliError(
+                "invalid_args",
+                f"'{model_arg}' does not name a model. "
+                f"Use --model {explicit_spec.agent}:MODEL.",
+            )
+        if effort is not None:
+            raise CliError(
+                "invalid_args",
+                "--effort is only supported for claude/codex model overrides; "
+                f"the complete non-premium model belongs in --model {explicit_spec.agent}:MODEL.",
+            )
+        target_agent = explicit_spec.agent
+        target_model = explicit_spec.model
+        target_effort = None
     else:
         # Bare model strings normally keep the phase's current premium vendor.
         # If the current phase is non-premium, allow an unambiguous vendor-prefixed
@@ -1731,7 +1748,10 @@ def _override_set_model(root: Path, plan_dir: Path, state: PlanState, args: argp
         target_effort = effort
 
     # Reject reserved effort tokens as --model values
-    if target_model in _PREMIUM_EFFORT_TOKENS:
+    if (
+        target_agent in _PREMIUM_VENDORS
+        and target_model in _PREMIUM_EFFORT_TOKENS
+    ):
         raise CliError(
             "invalid_args",
             f"'{target_model}' is a reserved effort token and cannot be used as a model name. "

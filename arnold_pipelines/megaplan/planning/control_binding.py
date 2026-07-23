@@ -54,6 +54,7 @@ from arnold.runtime.outcome import RunOutcome
 from arnold_pipelines.megaplan.profiles import effective_premium_vendor
 from arnold_pipelines.megaplan.profiles.policy import (
     DEFAULT_AGENT_ROUTING,
+    KNOWN_AGENTS,
     ROBUSTNESS_ACCEPTED,
     _profile_has_premium_slots,
     _prep_flat_spec_from_profile,
@@ -1464,11 +1465,27 @@ class PlanningControlBinding:
                 if effort is not None:
                     target_effort = effort
             elif explicit_spec is not None:
-                raise CliError(
-                    "invalid_args",
-                    f"set-model only supports claude/codex specs; got '{explicit_spec.agent}'. "
-                    "Use --phase-model on the phase command for hermes/shannon routing.",
-                )
+                if explicit_spec.agent not in KNOWN_AGENTS:
+                    raise CliError(
+                        "invalid_args",
+                        f"Unknown agent '{explicit_spec.agent}' in --model {model_arg!r}. "
+                        f"Valid agents: {', '.join(KNOWN_AGENTS)}.",
+                    )
+                if explicit_spec.model is None:
+                    raise CliError(
+                        "invalid_args",
+                        f"'{model_arg}' does not name a model. "
+                        f"Use --model {explicit_spec.agent}:MODEL.",
+                    )
+                if effort is not None:
+                    raise CliError(
+                        "invalid_args",
+                        "--effort is only supported for claude/codex model overrides; "
+                        f"the complete non-premium model belongs in --model {explicit_spec.agent}:MODEL.",
+                    )
+                target_agent = explicit_spec.agent
+                target_model = explicit_spec.model
+                target_effort = None
             else:
                 inferred_agent = None
                 if str(model_arg).startswith("claude-"):
@@ -1486,7 +1503,10 @@ class PlanningControlBinding:
                 target_agent = inferred_agent or agent
                 target_model = model_arg
                 target_effort = effort
-            if target_model in _PREMIUM_EFFORT_TOKENS:
+            if (
+                target_agent in _PREMIUM_VENDORS
+                and target_model in _PREMIUM_EFFORT_TOKENS
+            ):
                 raise CliError(
                     "invalid_args",
                     f"'{target_model}' is a reserved effort token and cannot be used as a model name. "
