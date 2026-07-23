@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -196,17 +197,25 @@ def _archive_plan(
     archive_dir: Path,
     *,
     plan_raw: bytes,
-) -> tuple[list[tuple[Path, Path]], list[dict[str, Any]]]:
+    chain_raw: bytes,
+) -> tuple[list[tuple[Path, Path]], list[dict[str, Any]], str]:
     if archive_dir.exists():
         raise _refuse(f"seed archive already exists: {archive_dir}")
     archive_dir.mkdir(parents=True)
     _atomic_write(archive_dir / "state.json", plan_raw)
+    _atomic_write(archive_dir / "chain-state.json", chain_raw)
     records = [
         {
             "path": "state.json",
             "sha256": hashlib.sha256(plan_raw).hexdigest(),
             "size_bytes": len(plan_raw),
         }
+        ,
+        {
+            "path": "chain-state.json",
+            "sha256": hashlib.sha256(chain_raw).hexdigest(),
+            "size_bytes": len(chain_raw),
+        },
     ]
     moves: list[tuple[Path, Path]] = []
     for source in sorted(plan_dir.rglob("*")):
@@ -224,16 +233,19 @@ def _archive_plan(
                 "size_bytes": destination.stat().st_size,
             }
         )
-    _atomic_write(
-        archive_dir / "snapshot-manifest.json",
-        _json_bytes(
-            {
-                "schema": "arnold.megaplan.seed_snapshot.v1",
-                "files": records,
-            }
-        ),
-    )
-    return moves, records
+    manifest_core = {
+        "schema": "arnold.megaplan.seed_snapshot.v1",
+        "files": records,
+    }
+    manifest = {
+        **manifest_core,
+        "content_sha256": hashlib.sha256(
+            json.dumps(manifest_core, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
+    manifest_bytes = _json_bytes(manifest)
+    _atomic_write(archive_dir / "snapshot-manifest.json", manifest_bytes)
+    return moves, records, hashlib.sha256(manifest_bytes).hexdigest()
 
 
 def _restore_plan_archive(
@@ -266,6 +278,7 @@ def _seed_event(
     old_plan_sha256: str,
     old_chain_sha256: str,
     archive_path: str,
+    archive_manifest_sha256: str,
 ) -> dict[str, Any]:
     core = {
         "schema": SEED_REMATERIALIZE_SCHEMA,
@@ -278,6 +291,8 @@ def _seed_event(
         "superseded_plan_state_sha256": old_plan_sha256,
         "superseded_chain_state_sha256": old_chain_sha256,
         "archive_path": archive_path,
+        "archive_manifest_sha256": archive_manifest_sha256,
+        "direction": "cutover",
     }
     return {
         **core,
@@ -348,6 +363,258 @@ def _rebind_execution_bundle(
         binding["runtime_binding"] = runtime_binding
 
 
+def _verified_archive(
+    archive_dir: Path,
+    *,
+    expected_manifest_sha256: str,
+) -> tuple[bytes, dict[str, Any], bytes, dict[str, Any], list[dict[str, Any]]]:
+    manifest_path = archive_dir / "snapshot-manifest.json"
+    manifest_raw, manifest = _load_json_bytes(manifest_path, label="seed snapshot manifest")
+    if hashlib.sha256(manifest_raw).hexdigest() != expected_manifest_sha256:
+        raise _refuse("seed snapshot manifest does not match the rollback guard")
+    content_sha = str(manifest.get("content_sha256") or "")
+    core = {key: value for key, value in manifest.items() if key != "content_sha256"}
+    observed_content = hashlib.sha256(
+        json.dumps(core, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if content_sha != observed_content:
+        raise _refuse("seed snapshot manifest content digest is forged")
+    files = manifest.get("files")
+    if not isinstance(files, list):
+        raise _refuse("seed snapshot manifest files are malformed")
+    for entry in files:
+        if not isinstance(entry, Mapping):
+            raise _refuse("seed snapshot manifest file entry is malformed")
+        path = _project_asset(archive_dir, entry.get("path"), label="archived file")
+        if not path.is_file() or sha256_path(path) != str(entry.get("sha256") or ""):
+            raise _refuse(f"archived seed snapshot file is missing or forged: {entry.get('path')}")
+    old_plan_raw, old_plan = _load_json_bytes(archive_dir / "state.json", label="archived plan")
+    old_chain_raw, old_chain = _load_json_bytes(
+        archive_dir / "chain-state.json",
+        label="archived chain state",
+    )
+    return old_plan_raw, old_plan, old_chain_raw, old_chain, [dict(item) for item in files]
+
+
+def _fresh_epoch_is_untouched(plan: Mapping[str, Any], cutover_sha: str) -> bool:
+    history = plan.get("history")
+    versions = plan.get("plan_versions")
+    return bool(
+        plan.get("current_state") == "paused"
+        and plan.get("iteration") == 0
+        and isinstance(versions, list)
+        and not versions
+        and isinstance(history, list)
+        and len(history) == 1
+        and isinstance(history[0], Mapping)
+        and history[0].get("step") == "init"
+        and history[0].get("seed_rematerialize_sha256") == cutover_sha
+        and plan.get("active_step") is None
+        and not plan.get("latest_failure")
+    )
+
+
+def _rollback_event(
+    *,
+    actor: str,
+    reason: str,
+    cutover_event: Mapping[str, Any],
+    archive_manifest_sha256: str,
+    current_plan_sha256: str,
+    current_chain_sha256: str,
+) -> dict[str, Any]:
+    core = {
+        "schema": SEED_REMATERIALIZE_SCHEMA,
+        "direction": "rollback",
+        "rematerialized_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "actor": actor,
+        "reason": reason,
+        "seed_manifest_sha256": cutover_event["seed_manifest_sha256"],
+        "cutover_event_sha256": cutover_event["content_sha256"],
+        "archive_path": cutover_event["archive_path"],
+        "archive_manifest_sha256": archive_manifest_sha256,
+        "rolled_back_plan_state_sha256": current_plan_sha256,
+        "rolled_back_chain_state_sha256": current_chain_sha256,
+    }
+    return {
+        **core,
+        "content_sha256": hashlib.sha256(
+            json.dumps(core, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
+
+
+def _rollback_seed_epoch(
+    *,
+    spec_path: Path,
+    project_root: Path,
+    plan_dir: Path,
+    plan_path: Path,
+    state_path: Path,
+    chain_raw: bytes,
+    chain: dict[str, Any],
+    plan_raw: bytes,
+    plan: dict[str, Any],
+    expected_manifest_sha256: str,
+    manifest_path: Path,
+    expected_cutover_event_sha256: str | None,
+    expected_archive_manifest_sha256: str | None,
+    reason: str,
+    actor: str,
+    failure_injector: Callable[[str], None] | None,
+) -> dict[str, Any]:
+    cutover_guard = _guard_sha256(
+        str(expected_cutover_event_sha256 or ""),
+        label="cutover event SHA-256",
+    )
+    archive_guard = _guard_sha256(
+        str(expected_archive_manifest_sha256 or ""),
+        label="archive manifest SHA-256",
+    )
+    if sha256_path(manifest_path) != expected_manifest_sha256:
+        raise _refuse("seed manifest SHA-256 changed before rollback")
+    plan_meta = plan.get("meta")
+    plan_binding = (
+        plan_meta.get("seed_source_binding") if isinstance(plan_meta, Mapping) else None
+    )
+    chain_meta = chain.get("metadata")
+    chain_binding = (
+        chain_meta.get("seed_source_binding") if isinstance(chain_meta, Mapping) else None
+    )
+    if plan_binding != chain_binding or not isinstance(plan_binding, Mapping):
+        raise _refuse("chain and plan seed bindings diverged")
+    events = plan_binding.get("events")
+    cutover = events[-1] if isinstance(events, list) and events else None
+    if (
+        not isinstance(cutover, Mapping)
+        or cutover.get("direction") != "cutover"
+        or cutover.get("content_sha256") != cutover_guard
+        or cutover.get("seed_manifest_sha256") != expected_manifest_sha256
+        or cutover.get("archive_manifest_sha256") != archive_guard
+    ):
+        raise _refuse("rollback guards do not exactly name the active seed cutover")
+    if not _fresh_epoch_is_untouched(plan, cutover_guard):
+        raise _refuse("seed rollback is unavailable after new planning or execution evidence")
+    archive_value = str(cutover.get("archive_path") or "")
+    archive_dir = (plan_dir.parent / archive_value).resolve(strict=False)
+    archive_root = (plan_dir.parent / ".seed-rematerialize-archive").resolve(strict=False)
+    try:
+        archive_dir.relative_to(archive_root)
+    except ValueError as exc:
+        raise _refuse("seed rollback archive path escapes the custody archive") from exc
+    old_plan_raw, old_plan, old_chain_raw, old_chain, snapshot_files = _verified_archive(
+        archive_dir,
+        expected_manifest_sha256=archive_guard,
+    )
+    if hashlib.sha256(old_plan_raw).hexdigest() != cutover.get(
+        "superseded_plan_state_sha256"
+    ):
+        raise _refuse("archived predecessor plan does not match the cutover receipt")
+    if hashlib.sha256(old_chain_raw).hexdigest() != cutover.get(
+        "superseded_chain_state_sha256"
+    ):
+        raise _refuse("archived predecessor chain does not match the cutover receipt")
+
+    rollback = _rollback_event(
+        actor=actor,
+        reason=reason,
+        cutover_event=cutover,
+        archive_manifest_sha256=archive_guard,
+        current_plan_sha256=hashlib.sha256(plan_raw).hexdigest(),
+        current_chain_sha256=hashlib.sha256(chain_raw).hexdigest(),
+    )
+    old_plan_meta = old_plan.setdefault("meta", {})
+    old_chain_meta = old_chain.setdefault("metadata", {})
+    if not isinstance(old_plan_meta, dict) or not isinstance(old_chain_meta, dict):
+        raise _refuse("archived predecessor metadata is malformed")
+    # Target rollback occurs first. Preserve its append-only project receipt
+    # and observational checkout fields while restoring every planning field.
+    for key in ("project_source_binding", "execution_environment", "chain_policy"):
+        current_value = plan_meta.get(key) if isinstance(plan_meta, Mapping) else None
+        if current_value is not None:
+            old_plan_meta[key] = current_value
+    for key in ("project_source_binding", "execution_environment"):
+        current_value = chain_meta.get(key) if isinstance(chain_meta, Mapping) else None
+        if current_value is not None:
+            old_chain_meta[key] = current_value
+    restored_plan_binding = _append_seed_binding(old_plan_meta, cutover)
+    restored_chain_binding = _append_seed_binding(old_chain_meta, cutover)
+    restored_plan_binding["events"].append(rollback)
+    restored_chain_binding["events"].append(rollback)
+    restored_plan_binding["current_event_sha256"] = rollback["content_sha256"]
+    restored_chain_binding["current_event_sha256"] = rollback["content_sha256"]
+    restored_plan_binding["current_manifest_sha256"] = ""
+    restored_chain_binding["current_manifest_sha256"] = ""
+    old_plan["current_state"] = "paused"
+    old_chain["last_state"] = "paused"
+    plan_pause = old_plan_meta.get(AUTHORITY_KEY)
+    chain_pause = old_chain_meta.get(AUTHORITY_KEY)
+    if isinstance(plan_pause, dict):
+        plan_pause["seed_rollback_sha256"] = rollback["content_sha256"]
+    if isinstance(chain_pause, dict):
+        chain_pause["seed_rollback_sha256"] = rollback["content_sha256"]
+
+    backup_dir = Path(tempfile.mkdtemp(prefix=".seed-rollback-", dir=str(plan_dir.parent)))
+    moved_active: list[tuple[Path, Path]] = []
+    try:
+        for source in sorted(plan_dir.rglob("*")):
+            if not source.is_file() or source.name == "state.json" or source.name.endswith(".lock"):
+                continue
+            relative = source.relative_to(plan_dir)
+            destination = backup_dir / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(source, destination)
+            moved_active.append((source, destination))
+        for entry in snapshot_files:
+            relative = str(entry["path"])
+            if relative in {"state.json", "chain-state.json"}:
+                continue
+            source = archive_dir / relative
+            destination = plan_dir / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+        if failure_injector is not None:
+            failure_injector("after_archive_restore")
+        _atomic_write(plan_path, _json_bytes(old_plan))
+        if failure_injector is not None:
+            failure_injector("after_rollback_plan_write")
+        _atomic_write(state_path, _json_bytes(old_chain))
+        if failure_injector is not None:
+            failure_injector("after_rollback_chain_write")
+    except BaseException:
+        _atomic_write(plan_path, plan_raw)
+        _atomic_write(state_path, chain_raw)
+        for path in sorted(plan_dir.rglob("*"), reverse=True):
+            if path.is_file() and path.name != "state.json" and not path.name.endswith(".lock"):
+                path.unlink()
+            elif path.is_dir():
+                try:
+                    path.rmdir()
+                except OSError:
+                    pass
+        for original, backup in reversed(moved_active):
+            if backup.exists():
+                original.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(backup, original)
+        shutil.rmtree(backup_dir, ignore_errors=True)
+        raise
+    shutil.rmtree(backup_dir, ignore_errors=True)
+    return {
+        "direction": "rollback",
+        "event": rollback,
+        "seed_source_binding": restored_plan_binding,
+        "archive_path": archive_value,
+        "restored_files": snapshot_files,
+        "plan_state_sha256": sha256_path(plan_path),
+        "chain_state_sha256": sha256_path(state_path),
+        "next_state_after_resume": (
+            plan_pause.get("previous_current_state")
+            if isinstance(plan_pause, Mapping)
+            else "critiqued"
+        ),
+    }
+
+
 def seed_rematerialize(
     spec_path: Path,
     project_root: Path,
@@ -362,12 +629,17 @@ def seed_rematerialize(
     expected_plan_state_sha256: str,
     seed_manifest_path: Path,
     expected_seed_manifest_sha256: str,
+    direction: str = "cutover",
+    expected_cutover_event_sha256: str | None = None,
+    expected_archive_manifest_sha256: str | None = None,
     reason: str,
     actor: str = "operator",
     failure_injector: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """Archive a paused pre-execute plan and rematerialize it from exact seeds."""
+    """Cut over to exact seeds or restore their archived predecessor epoch."""
 
+    if direction not in {"cutover", "rollback"}:
+        raise _refuse("seed rematerialize direction must be cutover or rollback")
     if not all(
         str(value or "").strip()
         for value in (
@@ -448,6 +720,26 @@ def seed_rematerialize(
             ):
                 raise _refuse("project-source binding does not cover the guarded checkout")
 
+        if direction == "rollback":
+            return _rollback_seed_epoch(
+                spec_path=spec_path,
+                project_root=project_root,
+                plan_dir=plan_dir,
+                plan_path=plan_path,
+                state_path=state_path,
+                chain_raw=chain_raw,
+                chain=chain,
+                plan_raw=plan_raw,
+                plan=plan,
+                expected_manifest_sha256=manifest_sha,
+                manifest_path=seed_manifest_path,
+                expected_cutover_event_sha256=expected_cutover_event_sha256,
+                expected_archive_manifest_sha256=expected_archive_manifest_sha256,
+                reason=reason,
+                actor=actor,
+                failure_injector=failure_injector,
+            )
+
         manifest, verified_assets = _load_manifest(
             seed_manifest_path,
             expected_sha256=manifest_sha,
@@ -477,10 +769,11 @@ def seed_rematerialize(
         archive_rel = archive_dir.relative_to(plan_dir.parent).as_posix()
         moves: list[tuple[Path, Path]] = []
         try:
-            moves, snapshot_files = _archive_plan(
+            moves, snapshot_files, archive_manifest_sha = _archive_plan(
                 plan_dir,
                 archive_dir,
                 plan_raw=plan_raw,
+                chain_raw=chain_raw,
             )
             if failure_injector is not None:
                 failure_injector("after_archive")
@@ -493,6 +786,7 @@ def seed_rematerialize(
                 old_plan_sha256=plan_sha,
                 old_chain_sha256=chain_sha,
                 archive_path=archive_rel,
+                archive_manifest_sha256=archive_manifest_sha,
             )
             old_meta = plan.get("meta")
             old_meta = old_meta if isinstance(old_meta, Mapping) else {}
@@ -516,7 +810,12 @@ def seed_rematerialize(
                 AUTHORITY_KEY: plan_pause,
                 "chain_policy": dict(old_meta.get("chain_policy") or {}),
             }
-            for key in ("execution_environment", "project_source_binding", "worktree"):
+            for key in (
+                "execution_environment",
+                "project_source_binding",
+                "seed_source_binding",
+                "worktree",
+            ):
                 value = old_meta.get(key)
                 if value is not None:
                     fresh_meta[key] = value

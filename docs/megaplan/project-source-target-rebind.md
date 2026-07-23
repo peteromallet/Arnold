@@ -152,6 +152,40 @@ and every moved plan artifact. The content-addressed archive remains available
 after success for audit and manual recovery; no accepted execute history or
 execution artifact may be present.
 
+### Roll back a successful seed rematerialization
+
+Rollback is available only while the fresh epoch is still paused with its
+single synthetic init receipt: no plan output, iteration, execute evidence, or
+other new planning history may exist. Roll back the project target first using
+`chain target-rebind --direction rollback`, then restore the predecessor seed:
+
+```bash
+python -m arnold_pipelines.megaplan chain seed-rematerialize \
+  --direction rollback \
+  --spec path/to/chain.yaml \
+  --project-dir /workspace/<session> \
+  --expected-session-id <session> \
+  --expected-current-milestone <milestone-label> \
+  --expected-current-plan <plan-name> \
+  --expected-branch <restored-source-branch> \
+  --expected-head <40-char-restored-source-sha> \
+  --expected-spec-sha256 <restored-spec-sha256> \
+  --expected-chain-state-sha256 <current-chain-state-sha256> \
+  --expected-plan-state-sha256 <current-plan-state-sha256> \
+  --seed-manifest path/to/m10-seed-manifest.json \
+  --expected-seed-manifest-sha256 <manifest-sha256> \
+  --expected-cutover-event-sha256 <cutover-event-content-sha256> \
+  --expected-archive-manifest-sha256 <archive-manifest-sha256> \
+  --reason "restore predecessor M10 seed"
+```
+
+The rollback verifies the cutover receipt, snapshot-manifest digest, and every
+archived file. It restores the predecessor planning state and artifacts,
+preserves the target rollback's append-only project-source receipt, restores
+the predecessor execution bundle binding, and appends a seed rollback receipt.
+Cutover may then be repeated with fresh CAS hashes. Failure at any rollback
+write restores the rematerialized epoch exactly.
+
 ## Roll back before execute
 
 Rollback uses fresh state hashes and reverses the branch, HEAD, baseline, and
