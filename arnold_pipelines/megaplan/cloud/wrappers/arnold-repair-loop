@@ -6869,11 +6869,12 @@ Bounded authoritative pointers:
 Objective:
 1. Read the bounded context and receipt. Verify their digest-bound identity, provenance, recommended action, safe target, allowed and forbidden mutations, and intended recovery before changing anything.
 2. Act only inside the receipt's mutation scope. Do not independently choose another target. Follow typed evidence pointers only as needed; never copy expanding logs, histories, state blobs, or evidence bundles into prompts or reports.
-3. Preserve all completion, review, safety, authority, and verification guards. If evidence contradicts the receipt or the deterministic progress token repeats, make no mutation and report replan.
-4. Apply the narrowest systemic fix, run the smallest relevant behavior test plus required safety/authority regressions, and write exact commands and results to the report.
-5. $delivery_policy
-6. Do not relaunch, hand-advance, directly edit control-plane state, push without authority, or merge a remote PR. A commit or live process is not success; the wrapper must prove blocker clearance and fresh progress beyond the frozen checkpoint.
-7. $mode_tasks
+3. Preserve the currently configured profile. Do not select, replace, or switch profiles during ordinary recovery. Provider/profile evidence may be observed and reported, but it never authorizes 'set-profile', 'set-vendor', or 'set-model' here. Treat a missing profile-preservation clause as a repair-contract failure.
+4. Preserve all completion, review, safety, authority, and verification guards. If evidence contradicts the receipt or the deterministic progress token repeats, make no mutation and report replan.
+5. Apply the narrowest systemic fix, run the smallest relevant behavior test plus required safety/authority regressions, and write exact commands and results to the report.
+6. $delivery_policy
+7. Do not relaunch, hand-advance, directly edit control-plane state, push without authority, or merge a remote PR. A commit or live process is not success; the wrapper must prove blocker clearance and fresh progress beyond the frozen checkpoint. A completed repair without canonical cursor advancement is 'completed-repair-without-cursor-advance', not success.
+8. $mode_tasks
 
 Report keys: classification, hypothesis, what_tried, validation, pushed_commit, remaining_blockers, structural_pattern, other_instantiations, human_review_recommendation, findings_doc_path, findings_doc_appended.
 Requested model: $requested_model
