@@ -2613,6 +2613,7 @@ def _repair_custody_summary(session, plan_state, current_target):
         "blocker_id": projection.get("blocker_id") or "",
         "active_request_ids": projection.get("active_request_ids") or [],
         "accepted_unclaimed_request_ids": projection.get("accepted_unclaimed_request_ids") or [],
+        "invalid_contract_requests": projection.get("invalid_contract_requests") or [],
         "coalesced_without_live_owner": projection.get("coalesced_without_live_owner") or [],
         "request_status_counts": projection.get("request_status_counts") or {},
         "claim_count": projection.get("claim_count") or 0,
@@ -4240,6 +4241,31 @@ def _stale_unclaimed_repair_custody_reason(ev):
         )
     return ""
 
+def _invalid_repair_request_contract_reason(ev):
+    custody = ev.get("repair_custody_summary") if isinstance(ev, dict) else {}
+    custody = custody if isinstance(custody, dict) else {}
+    chain_current = (ev.get("chain_state_summary") or {}).get("current") if isinstance(ev.get("chain_state_summary"), dict) else {}
+    if not _chain_state_looks_nonterminal(chain_current):
+        return ""
+    records = custody.get("invalid_contract_requests") or []
+    matching = [
+        item
+        for item in records
+        if isinstance(item, dict)
+        and item.get("failure_kind") == "completed_repair_without_cursor_advance"
+        and "missing_preserve_configured_profile" in (item.get("violations") or [])
+    ]
+    if not matching:
+        return ""
+    item = matching[0]
+    return (
+        "repair_request_contract_invalid: completed-repair recovery request is "
+        "missing preserve_configured_profile "
+        f"request_id={item.get('request_id') or 'unknown'} "
+        f"blocker_id={item.get('blocker_id') or 'unknown'} "
+        f"configured_profile={item.get('configured_profile') or 'missing'}"
+    )
+
 def _nested_repair_queue_custody_drift_reason(ev):
     custody = ev.get("repair_custody_summary") if isinstance(ev, dict) else {}
     custody = custody if isinstance(custody, dict) else {}
@@ -5417,26 +5443,31 @@ for entry in plans:
             f"meta-repair trigger {meta_summary.get('trigger')} has only failed launch/no-output evidence "
             f"(bad_records={meta_summary.get('failed_meta_record_count')} bad_run_logs={meta_summary.get('failed_meta_run_count')})"
         )
-    for deterministic_reason in ((
-        _meta_record_no_verdict_reason(ev),
-        _meta_repair_launch_failure_reason(ev),
-        _watchdog_chain_health_disagreement_reason(ev),
-        _repair_data_ghost_running_reason(ev),
-        _stranded_between_milestones_reason(ev),
-        _investigation_handoff_reason(ev),
-        _repair_owner_terminal_failure_reason(ev),
-        _canonical_launch_disagreement_reason(ev),
-        _repair_complete_incomplete_chain_reason(ev),
-        _green_with_recent_repair_churn_reason(ev),
-        _stale_unclaimed_repair_custody_reason(ev),
-        _nested_repair_queue_custody_drift_reason(ev),
-        _queue_coalesced_without_live_owner_reason(ev),
-        _deterministic_failure_exhaustion_reason(ev),
-        _historical_failure_recount_reason(ev),
-        _liveness_without_acceptance_progress_reason(ev),
-        _repair_dispatch_during_preserve_live_reason(ev),
-        _stale_l1_l2_cycle_reason(ev),
-    ) if session_evidence_scope else ()):
+    for deterministic_reason in (
+        (
+            _meta_record_no_verdict_reason(ev),
+            _meta_repair_launch_failure_reason(ev),
+            _watchdog_chain_health_disagreement_reason(ev),
+            _repair_data_ghost_running_reason(ev),
+            _stranded_between_milestones_reason(ev),
+            _investigation_handoff_reason(ev),
+            _repair_owner_terminal_failure_reason(ev),
+            _canonical_launch_disagreement_reason(ev),
+            _repair_complete_incomplete_chain_reason(ev),
+            _green_with_recent_repair_churn_reason(ev),
+            _stale_unclaimed_repair_custody_reason(ev),
+            _invalid_repair_request_contract_reason(ev),
+            _nested_repair_queue_custody_drift_reason(ev),
+            _queue_coalesced_without_live_owner_reason(ev),
+            _deterministic_failure_exhaustion_reason(ev),
+            _historical_failure_recount_reason(ev),
+            _liveness_without_acceptance_progress_reason(ev),
+            _repair_dispatch_during_preserve_live_reason(ev),
+            _stale_l1_l2_cycle_reason(ev),
+        )
+        if session_evidence_scope
+        else ()
+    ) + (
         _marker_present_stopped_without_chain_state_reason(ev),
         _dependency_independent_launch_gap_reason(ev),
         stranded_replan_reason(

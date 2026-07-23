@@ -542,6 +542,14 @@ class CoalescedWithoutLiveOwnerRecord(TypedDict):
     self_coalesced: bool
 
 
+class InvalidRepairRequestContractRecord(TypedDict):
+    request_id: str
+    blocker_id: str
+    configured_profile: str
+    failure_kind: str
+    violations: list[str]
+
+
 class RepairCustodyProjection(TypedDict):
     blocker_id: str
     blocker_fingerprint: BlockerFingerprintV1 | BlockerFingerprintV2 | None
@@ -555,6 +563,7 @@ class RepairCustodyProjection(TypedDict):
     active_request_ids: list[str]
     active_claim_request_ids: list[str]
     accepted_unclaimed_request_ids: list[str]
+    invalid_contract_requests: list[InvalidRepairRequestContractRecord]
     coalesced_without_live_owner: list[CoalescedWithoutLiveOwnerRecord]
     request_count: int
     claim_count: int
@@ -971,6 +980,33 @@ def project_repair_custody(
         if request_id not in attempted_request_ids
         and request_id not in active_claim_request_ids
     )
+    invalid_contract_requests: list[InvalidRepairRequestContractRecord] = []
+    for request in requests:
+        if not request["active"] or request["claimable"]:
+            continue
+        raw_request = next(
+            (
+                item
+                for item in queue_requests
+                if _as_text(item.get("request_id")) == request["request_id"]
+            ),
+            {},
+        )
+        violations = repair_requests.repair_request_contract_violations(raw_request)
+        target = _as_mapping(raw_request.get("target"))
+        invalid_contract_requests.append(
+            {
+                "request_id": request["request_id"],
+                "blocker_id": _as_text(raw_request.get("blocker_id")),
+                "configured_profile": _as_text(target.get("configured_profile")),
+                "failure_kind": _as_text(
+                    _as_mapping(raw_request.get("problem_signature")).get(
+                        "failure_kind"
+                    )
+                ),
+                "violations": violations,
+            }
+        )
     active_request_id_set = set(active_request_ids)
     active_claim_request_id_set = set(active_claim_request_ids)
     coalesced_without_live_owner: list[CoalescedWithoutLiveOwnerRecord] = []
@@ -1066,6 +1102,7 @@ def project_repair_custody(
         "active_request_ids": active_request_ids,
         "active_claim_request_ids": active_claim_request_ids,
         "accepted_unclaimed_request_ids": accepted_unclaimed_request_ids,
+        "invalid_contract_requests": invalid_contract_requests,
         "coalesced_without_live_owner": coalesced_without_live_owner,
         "request_count": len(requests),
         "claim_count": len(active_claim_request_ids),

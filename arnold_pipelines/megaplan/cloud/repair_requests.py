@@ -292,9 +292,10 @@ def _canonical_request_blocker_identity(
     return dict(fingerprint), blocker_id
 
 
-def has_claimable_repair_request_contract(request: Mapping[str, Any]) -> bool:
-    """Return whether an immutable request is safe to claim at an effect boundary."""
+def repair_request_contract_violations(request: Mapping[str, Any]) -> list[str]:
+    """Return typed reasons an immutable request is unsafe to claim."""
 
+    violations: list[str] = []
     raw_fingerprint = request.get("blocker_fingerprint")
     fingerprint = (
         repair_contract.normalize_blocker_fingerprint_v1(raw_fingerprint)
@@ -303,7 +304,7 @@ def has_claimable_repair_request_contract(request: Mapping[str, Any]) -> bool:
     if not repair_contract.blocker_id_matches_fingerprint(
         str(request.get("blocker_id") or ""), fingerprint
     ):
-        return False
+        violations.append("invalid_blocker_identity")
     source = str(request.get("source") or "").strip()
     session = str(request.get("session") or "").strip()
     provenance = request.get("provenance")
@@ -314,35 +315,53 @@ def has_claimable_repair_request_contract(request: Mapping[str, Any]) -> bool:
         or str(provenance.get("producer") or "").strip() != source
         or str(provenance.get("session") or "").strip() != session
     ):
-        return False
+        violations.append("invalid_provenance")
     problem_signature = request.get("problem_signature")
     evidence_refs = request.get("evidence_refs")
     if not isinstance(problem_signature, Mapping) or not isinstance(evidence_refs, list):
-        return False
-    expected_digest = _sha256_json(problem_signature)
-    if not any(
-        isinstance(item, Mapping)
-        and item.get("kind") == "problem_signature_digest"
-        and item.get("sha256") == expected_digest
-        for item in evidence_refs
-    ):
-        return False
+        violations.append("invalid_problem_signature_evidence")
+        problem_signature = {}
+        evidence_refs = []
+    else:
+        expected_digest = _sha256_json(problem_signature)
+        if not any(
+            isinstance(item, Mapping)
+            and item.get("kind") == "problem_signature_digest"
+            and item.get("sha256") == expected_digest
+            for item in evidence_refs
+        ):
+            violations.append("invalid_problem_signature_evidence")
 
-    if problem_signature.get("failure_kind") == "completed_repair_without_cursor_advance":
+    if (
+        isinstance(problem_signature, Mapping)
+        and problem_signature.get("failure_kind")
+        == "completed_repair_without_cursor_advance"
+    ):
         target = request.get("target")
         if not isinstance(target, Mapping):
-            return False
-        recovery = target.get("recovery_contract")
-        if (
-            not str(target.get("configured_profile") or "").strip()
-            or not isinstance(recovery, Mapping)
-            or recovery.get("preserve_configured_profile") is not True
-            or recovery.get("required_cursor_advance") is not True
-            or recovery.get("forbid_standalone_completion") is not True
-            or not str(recovery.get("success_requires") or "").strip()
-        ):
-            return False
-    return True
+            violations.append("missing_recovery_contract")
+        else:
+            recovery = target.get("recovery_contract")
+            if not str(target.get("configured_profile") or "").strip():
+                violations.append("missing_configured_profile")
+            if not isinstance(recovery, Mapping):
+                violations.append("missing_recovery_contract")
+            else:
+                if recovery.get("preserve_configured_profile") is not True:
+                    violations.append("missing_preserve_configured_profile")
+                if recovery.get("required_cursor_advance") is not True:
+                    violations.append("missing_required_cursor_advance")
+                if recovery.get("forbid_standalone_completion") is not True:
+                    violations.append("missing_forbid_standalone_completion")
+                if not str(recovery.get("success_requires") or "").strip():
+                    violations.append("missing_success_requires")
+    return violations
+
+
+def has_claimable_repair_request_contract(request: Mapping[str, Any]) -> bool:
+    """Return whether an immutable request is safe to claim at an effect boundary."""
+
+    return not repair_request_contract_violations(request)
 
 
 def enqueue_repair_request(
@@ -1313,6 +1332,7 @@ __all__ = [
     "repair_queue_dir",
     "record_unclaimed_request_failure",
     "release_active_repair_request_claim",
+    "repair_request_contract_violations",
     "request_id_for",
     "validate_queue_root",
     "write_decision",

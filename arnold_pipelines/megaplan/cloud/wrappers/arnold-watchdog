@@ -5057,6 +5057,46 @@ if current_target_observation_raw:
         resolver_record = loaded_observation
 
 repair_outcome = str(payload.get("outcome") or "")
+repair_goal_ref = payload.get("repair_goal")
+repair_goal_ref = repair_goal_ref if isinstance(repair_goal_ref, dict) else {}
+repair_goal_path = pathlib.Path(str(repair_goal_ref.get("goal_path") or ""))
+repair_goal = {}
+if str(repair_goal_path) not in {"", "."} and repair_goal_path.is_file():
+    try:
+        loaded_goal = json.loads(repair_goal_path.read_text(encoding="utf-8"))
+    except Exception:
+        loaded_goal = {}
+    if isinstance(loaded_goal, dict):
+        repair_goal = loaded_goal
+recovery_acceptance = repair_goal.get("recovery_acceptance")
+recovery_acceptance = (
+    recovery_acceptance if isinstance(recovery_acceptance, dict) else {}
+)
+recovery_escalation = recovery_acceptance.get("escalation")
+recovery_escalation = (
+    recovery_escalation if isinstance(recovery_escalation, dict) else {}
+)
+repair_request_id = str(payload.get("request_id") or "").strip()
+repair_blocker_id = str(payload.get("blocker_id") or "").strip()
+goal_request_ids = repair_goal.get("request_ids")
+goal_request_ids = goal_request_ids if isinstance(goal_request_ids, list) else []
+goal_target = repair_goal.get("target")
+goal_target = goal_target if isinstance(goal_target, dict) else {}
+recovery_identity_matches = bool(
+    repair_request_id
+    and repair_blocker_id
+    and repair_request_id in {
+        str(item).strip() for item in goal_request_ids if str(item).strip()
+    }
+    and str(goal_target.get("blocker_id") or "").strip() == repair_blocker_id
+)
+post_fixer_recovery_gate_failed = bool(
+    repair_goal.get("status") == "active"
+    and recovery_identity_matches
+    and recovery_acceptance.get("accepted") is False
+    and recovery_escalation.get("required") is True
+    and recovery_escalation.get("reason") == "post_fixer_recovery_gate_failed"
+)
 needs_human_present = needs_human_path.exists()
 terminal_repair_failures = {
     "discord_escalated",
@@ -5282,6 +5322,7 @@ classification, _ = evaluate_meta_repair_triggers(
     semantic_fingerprints=semantic_fingerprints,
     has_state_inspection_error=has_state_inspection_error,
     has_model_tool_launch_error=has_model_tool_launch_error,
+    post_fixer_recovery_gate_failed=post_fixer_recovery_gate_failed,
     discord_delivery_failed=discord_delivery_failed,
     discord_escalation_is_true_blocker=discord_escalation_is_true_blocker,
     repair_budget_exhausted=repair_outcome in {"repair_timeout", "repair_exhausted"},

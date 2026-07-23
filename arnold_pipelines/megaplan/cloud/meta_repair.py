@@ -753,6 +753,7 @@ def classify_repair_system_failure(
     has_state_inspection_error: bool = False,
     has_model_tool_launch_error: bool = False,
     has_l1_custody_failure: bool = False,
+    post_fixer_recovery_gate_failed: bool = False,
     partial_liveness_ticks: int = 0,
     discord_delivery_failed: bool = False,
     discord_escalation_is_true_blocker: bool = False,
@@ -842,6 +843,19 @@ def classify_repair_system_failure(
         return MetaRepairClassification(
             session=session,
             trigger=None,
+            rationale=tuple(rationale),
+            evidence=deepcopy(dict(evidence)) if evidence else {},
+            attempted_at=now.isoformat(),
+        )
+
+    if post_fixer_recovery_gate_failed:
+        rationale.append(
+            "ordinary repair terminalized without satisfying the post-fixer "
+            "recovery gate; completed repair is not canonical cursor advancement"
+        )
+        return MetaRepairClassification(
+            session=session,
+            trigger=MetaRepairTrigger.POST_FIXER_RECOVERY_GATE_FAILED,
             rationale=tuple(rationale),
             evidence=deepcopy(dict(evidence)) if evidence else {},
             attempted_at=now.isoformat(),
@@ -2438,6 +2452,7 @@ def evaluate_meta_repair_triggers(
     has_state_inspection_error: bool = False,
     has_model_tool_launch_error: bool = False,
     has_l1_custody_failure: bool = False,
+    post_fixer_recovery_gate_failed: bool = False,
     partial_liveness_ticks: int = 0,
     discord_delivery_failed: bool = False,
     discord_escalation_is_true_blocker: bool = False,
@@ -2483,6 +2498,7 @@ def evaluate_meta_repair_triggers(
         has_state_inspection_error=has_state_inspection_error,
         has_model_tool_launch_error=has_model_tool_launch_error,
         has_l1_custody_failure=has_l1_custody_failure,
+        post_fixer_recovery_gate_failed=post_fixer_recovery_gate_failed,
         partial_liveness_ticks=partial_liveness_ticks,
         discord_delivery_failed=discord_delivery_failed,
         discord_escalation_is_true_blocker=discord_escalation_is_true_blocker,

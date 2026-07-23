@@ -10587,6 +10587,91 @@ def test_compute_meta_repair_trigger_skips_stale_launch_failure_after_success(
     assert result.stdout.strip() == "NO_TRIGGER"
 
 
+def test_compute_meta_repair_trigger_routes_completed_repair_with_failed_recovery_gate(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    goal_path = repair_data_dir / "goals" / "custody-session.json"
+    goal_path.parent.mkdir(parents=True)
+    goal_path.write_text(
+        json.dumps(
+            {
+                "status": "active",
+                "request_ids": ["request-m9"],
+                "target": {"blocker_id": "blocker:m9"},
+                "configured_profile": "partnered-5",
+                "recovery_acceptance": {
+                    "accepted": False,
+                    "escalation": {
+                        "required": True,
+                        "reason": "post_fixer_recovery_gate_failed",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    repair_path = repair_data_dir / "custody-session.repair-data.json"
+    repair_path.write_text(
+        json.dumps(
+            {
+                "session": "custody-session",
+                "outcome": "complete",
+                "request_id": "request-m9",
+                "blocker_id": "blocker:m9",
+                "configured_profile": "partnered-5",
+                "repair_goal": {"goal_path": str(goal_path)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    observation = json.dumps(
+        {
+            "authoritative_source": "chain_state",
+            "current_refs": {
+                "current_plan_name": "m9-rebuildable-projections",
+                "plan_current_state": "planned",
+                "chain_last_state": "blocked",
+            },
+            "plan_state": {"present": True},
+            "chain_state": {"present": True},
+            "active_step_heartbeat": {"active": False},
+        }
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until(
+                "compute_meta_repair_trigger", "dispatch_meta_repair"
+            ),
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                "compute_meta_repair_trigger custody-session "
+                f"{shlex.quote(observation)} stopped"
+            ),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "TRIGGER:post_fixer_recovery_gate_failed"
+    persisted = json.loads(repair_path.read_text(encoding="utf-8"))
+    assert persisted["request_id"] == "request-m9"
+    assert persisted["blocker_id"] == "blocker:m9"
+    assert persisted["configured_profile"] == "partnered-5"
+
+    mismatched_goal = json.loads(goal_path.read_text(encoding="utf-8"))
+    mismatched_goal["target"]["blocker_id"] = "blocker:other"
+    goal_path.write_text(json.dumps(mismatched_goal), encoding="utf-8")
+    mismatch_result = _run_watchdog_shell(script)
+    assert mismatch_result.returncode == 0, mismatch_result.stderr
+    assert mismatch_result.stdout.strip() == "NO_TRIGGER"
+
+
 def test_compute_meta_repair_trigger_detects_semantic_fingerprint_recurrence(
     tmp_path: Path,
 ) -> None:
