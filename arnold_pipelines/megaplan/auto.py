@@ -2820,24 +2820,46 @@ def _execution_batch_completed_task_ids(
 def _latest_recorded_execute_head(plan_dir: Path | None) -> str | None:
     if plan_dir is None:
         return None
-    for batch_path in reversed(list_batch_artifacts(plan_dir)):
+    candidates: list[tuple[int, int, str, str]] = []
+    for batch_path in list_batch_artifacts(plan_dir):
         try:
             payload = json.loads(batch_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
             continue
         if not isinstance(payload, dict):
             continue
+        fence_token = -1
+        dispatch_identity = payload.get("dispatch_identity")
+        if isinstance(dispatch_identity, dict):
+            fence = dispatch_identity.get("fence")
+            raw_token = fence.get("token") if isinstance(fence, dict) else None
+            if isinstance(raw_token, int) and not isinstance(raw_token, bool):
+                fence_token = raw_token
+        try:
+            mtime_ns = batch_path.stat().st_mtime_ns
+        except OSError:
+            mtime_ns = -1
         task_updates = payload.get("task_updates")
         if not isinstance(task_updates, list):
             continue
+        latest_head: str | None = None
         for record in reversed(task_updates):
             if not isinstance(record, dict):
                 continue
             for key in ("head_sha", "head"):
                 value = record.get(key)
                 if isinstance(value, str) and value.strip():
-                    return value.strip()
-    return None
+                    latest_head = value.strip()
+                    break
+            if latest_head is not None:
+                break
+        if latest_head is not None:
+            candidates.append(
+                (fence_token, mtime_ns, batch_path.as_posix(), latest_head)
+            )
+    if not candidates:
+        return None
+    return max(candidates)[3]
 
 
 def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str]]:
