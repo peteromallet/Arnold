@@ -229,8 +229,11 @@ def _worker_launch_proof_payload(
     source_ref: str,
     installed_package_path: str,
     runtime_revision: str,
+    runtime_root: str,
+    runtime_vector_sha256: str,
     selected_model: str | None,
     configured_spec: str,
+    canonical_chain_spec: str,
 ) -> dict[str, Any]:
     """Build the canonical payload for content-addressed worker launch proof."""
     return {
@@ -238,8 +241,11 @@ def _worker_launch_proof_payload(
         "source_ref": source_ref,
         "installed_package_path": installed_package_path,
         "runtime_revision": runtime_revision,
+        "runtime_root": runtime_root,
+        "runtime_vector_sha256": runtime_vector_sha256,
         "selected_model": selected_model or "",
         "configured_spec": configured_spec,
+        "canonical_chain_spec": canonical_chain_spec,
     }
 
 
@@ -257,11 +263,18 @@ def worker_launch_preflight(
     runtime_revision: str,
     selected_model: str | None,
     configured_spec: str,
+    runtime_root: str = "",
+    runtime_vector_sha256: str = "",
+    canonical_chain_spec: str = "",
     expected_source_ref: str = "",
     expected_installed_package_path: str = "",
     expected_runtime_revision: str = "",
+    expected_root: str = "",
+    expected_runtime_vector_sha256: str = "",
     expected_model: str | None = None,
     expected_spec: str = "",
+    expected_chain_spec: str = "",
+    require_full_vector: bool = False,
 ) -> dict[str, Any]:
     """Produce a per-worker-launch equality proof before agent dispatch.
 
@@ -276,8 +289,11 @@ def worker_launch_preflight(
         source_ref=source_ref,
         installed_package_path=installed_package_path,
         runtime_revision=runtime_revision,
+        runtime_root=runtime_root,
+        runtime_vector_sha256=runtime_vector_sha256,
         selected_model=selected_model,
         configured_spec=configured_spec,
+        canonical_chain_spec=canonical_chain_spec,
     )
     proof_sha256 = _worker_launch_proof_sha256(actual)
 
@@ -286,12 +302,33 @@ def worker_launch_preflight(
             expected_source_ref,
             expected_installed_package_path,
             expected_runtime_revision,
+            expected_root,
+            expected_runtime_vector_sha256,
             expected_model,
             expected_spec,
+            expected_chain_spec,
         )
     )
 
     mismatches: list[dict[str, str]] = []
+    required = {
+        "expected_source_ref": expected_source_ref,
+        "expected_installed_package_path": expected_installed_package_path,
+        "expected_runtime_revision": expected_runtime_revision,
+        "expected_root": expected_root,
+        "expected_runtime_vector_sha256": expected_runtime_vector_sha256,
+        "expected_chain_spec": expected_chain_spec,
+    }
+    if require_full_vector:
+        for field, value in required.items():
+            if not value:
+                mismatches.append(
+                    {
+                        "field": field,
+                        "expected": "<required>",
+                        "actual": "<missing>",
+                    }
+                )
     if expected_source_ref and expected_source_ref != source_ref:
         mismatches.append(
             {
@@ -300,7 +337,10 @@ def worker_launch_preflight(
                 "actual": source_ref,
             }
         )
-    if expected_installed_package_path and expected_installed_package_path != installed_package_path:
+    if (
+        expected_installed_package_path
+        and expected_installed_package_path != installed_package_path
+    ):
         mismatches.append(
             {
                 "field": "installed_package_path",
@@ -314,6 +354,25 @@ def worker_launch_preflight(
                 "field": "runtime_revision",
                 "expected": expected_runtime_revision,
                 "actual": runtime_revision,
+            }
+        )
+    if expected_root and expected_root != runtime_root:
+        mismatches.append(
+            {
+                "field": "runtime_root",
+                "expected": expected_root,
+                "actual": runtime_root,
+            }
+        )
+    if (
+        expected_runtime_vector_sha256
+        and expected_runtime_vector_sha256 != runtime_vector_sha256
+    ):
+        mismatches.append(
+            {
+                "field": "runtime_vector_sha256",
+                "expected": expected_runtime_vector_sha256,
+                "actual": runtime_vector_sha256,
             }
         )
     if expected_model is not None and expected_model != (selected_model or ""):
@@ -332,6 +391,14 @@ def worker_launch_preflight(
                 "actual": configured_spec,
             }
         )
+    if expected_chain_spec and expected_chain_spec != canonical_chain_spec:
+        mismatches.append(
+            {
+                "field": "canonical_chain_spec",
+                "expected": expected_chain_spec,
+                "actual": canonical_chain_spec,
+            }
+        )
 
     checked_at = now_utc()
     proof: dict[str, Any] = {
@@ -347,8 +414,11 @@ def worker_launch_preflight(
             source_ref=expected_source_ref,
             installed_package_path=expected_installed_package_path,
             runtime_revision=expected_runtime_revision,
+            runtime_root=expected_root,
+            runtime_vector_sha256=expected_runtime_vector_sha256,
             selected_model=expected_model,
             configured_spec=expected_spec,
+            canonical_chain_spec=expected_chain_spec,
         )
 
     if mismatches:

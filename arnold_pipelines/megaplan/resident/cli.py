@@ -585,6 +585,11 @@ def _resident_discord(root: Path, store: Store, config: ResidentConfig, *, dry_r
         }
     if token is None:
         raise CliError("missing_discord_token", f"{config.discord_bot_token_env} is required")
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+        require_configured_runtime_launch,
+    )
+
+    require_configured_runtime_launch("resident", create=True)
     authorizer = ResidentAuthorizer(config)
     # Dev/test residents may handle interactive test traffic, but durable
     # operational outboxes belong exclusively to the production bot boundary.

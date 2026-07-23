@@ -22,6 +22,20 @@ quota_count=0; other_count=0
 last_err=""; streak=0
 log() { echo "[supervise $(date -Iseconds)] $*" | tee -a "$LOG"; }
 
+if [[ -n "${MEGAPLAN_RUNTIME_LAUNCH_SEED:-}" \
+  || "${MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED:-0}" == "1" ]]; then
+  SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]}")/arnold-supervisor-runtime-lib"
+  if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" && -f "$SUPERVISE_SOURCE/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib" ]]; then
+    SUPERVISOR_RUNTIME_LIB="$SUPERVISE_SOURCE/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
+  fi
+  if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+    SUPERVISOR_RUNTIME_LIB="/usr/local/bin/arnold-supervisor-runtime-lib"
+  fi
+  # shellcheck source=/dev/null
+  source "$SUPERVISOR_RUNTIME_LIB"
+  arnold_supervisor_runtime_init supervisor "$SUPERVISE_SOURCE" || exit $?
+fi
+
 deterministic_failure_reason() {
   local run_log="$1"
   if grep -q '"error"[[:space:]]*:[[:space:]]*"chain_execution_binding_drift"' "$run_log"; then
@@ -145,6 +159,12 @@ fi
 
 log "starting cmd: ${CMD[*]}"
 while true; do
+  if declare -F arnold_runtime_attestation_check >/dev/null \
+    && ! arnold_runtime_attestation_check supervisor; then
+    arnold_supervisor_failure_artifact supervisor "runtime_attestation_stale"
+    log "supervisor refused command launch: runtime attestation is stale"
+    exit 78
+  fi
   RUN_LOG=$(mktemp)
   "${CMD[@]}" 2>&1 | tee "$RUN_LOG"
   rc=${PIPESTATUS[0]}

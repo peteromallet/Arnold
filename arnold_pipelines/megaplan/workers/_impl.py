@@ -4728,8 +4728,13 @@ def run_step_with_worker(
     # before any agent dispatch loop.  Records the actual runtime values and, when
     # a chain execution binding is available, verifies them against the bound
     # identity.  A mismatch raises CliError and blocks the worker.
+    from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+        require_configured_runtime_launch as _require_runtime_launch,
+        runtime_vector_sha256 as _runtime_vector_sha256,
+    )
     from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance as _rp
 
+    _launch_seed = _require_runtime_launch("worker", create=True)
     _runtime = _rp()
     _source_ref = str(_runtime.get("source_revision") or "")
     _configured_spec = format_selected_spec(agent, model, effort) or agent
@@ -4738,13 +4743,35 @@ def run_step_with_worker(
     from arnold_pipelines.megaplan.chain.execution_binding import (
         expected_worker_launch_values,
         find_bound_chain_spec,
+        require_bound_chain_spec,
     )
 
-    _bound_chain_spec = find_bound_chain_spec(root, plan_name=plan_dir.name)
+    _strict_runtime_binding = _launch_seed is not None
+    _bound_chain_spec = (
+        require_bound_chain_spec(root, plan_name=plan_dir.name)
+        if _strict_runtime_binding
+        else find_bound_chain_spec(root, plan_name=plan_dir.name)
+    )
     if _bound_chain_spec is not None:
         _expected = expected_worker_launch_values(
             spec_path=_bound_chain_spec,
             root=root,
+        )
+    _runtime_vector = ""
+    if _launch_seed is not None:
+        _runtime_vector = _runtime_vector_sha256(_launch_seed)
+        _seed_chain_binding = _launch_seed.get("chain_runtime_binding")
+        _seed_chain_binding = (
+            _seed_chain_binding if isinstance(_seed_chain_binding, dict) else {}
+        )
+        _expected.update(
+            {
+                "expected_root": str(_launch_seed.get("expected_root") or ""),
+                "expected_runtime_vector_sha256": _runtime_vector,
+                "expected_chain_spec": str(
+                    _seed_chain_binding.get("spec_path") or ""
+                ),
+            }
         )
     from arnold_pipelines.megaplan.chain.source_admission import (
         worker_launch_preflight as _wlp,
@@ -4754,8 +4781,16 @@ def run_step_with_worker(
         source_ref=_source_ref,
         installed_package_path=str(_runtime.get("import_root") or ""),
         runtime_revision=str(_runtime.get("source_revision") or ""),
+        runtime_root=str(_runtime.get("import_root") or ""),
+        runtime_vector_sha256=_runtime_vector,
+        canonical_chain_spec=(
+            str(_bound_chain_spec.resolve(strict=False))
+            if _bound_chain_spec is not None
+            else ""
+        ),
         selected_model=resolved_model,
         configured_spec=_configured_spec,
+        require_full_vector=_strict_runtime_binding,
         **_expected,
     )
     while True:

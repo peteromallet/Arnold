@@ -107,5 +107,34 @@ arnold_supervisor_runtime_init() {
     arnold_supervisor_python "$@"
   }
   export -f python3
+  arnold_runtime_attestation_start() {
+    local attestation_component="${1:-$component}"
+    if [[ -z "${MEGAPLAN_RUNTIME_LAUNCH_SEED:-}" \
+      && "${MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED:-0}" != "1" ]]; then
+      return 0
+    fi
+    ARNOLD_RUNTIME_PROCESS_ATTESTATION_PATH="${MEGAPLAN_RUNTIME_PROCESS_ATTESTATION:-${MEGAPLAN_SUPERVISOR_STATUS_DIR:-${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}}/${attestation_component}.runtime-process-attestation.json}"
+    MEGAPLAN_RUNTIME_PROCESS_ATTESTATION="$ARNOLD_RUNTIME_PROCESS_ATTESTATION_PATH" \
+      PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_SUPERVISOR_SOURCE_ROOT:${PYTHONPATH:-}" \
+      "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold_pipelines.megaplan.cloud.runtime_attestation \
+      startup --component "$attestation_component" --target-pid "$$"
+  }
+  arnold_runtime_attestation_check() {
+    local attestation_component="${1:-$component}"
+    if [[ -z "${MEGAPLAN_RUNTIME_LAUNCH_SEED:-}" \
+      && "${MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED:-0}" != "1" ]]; then
+      return 0
+    fi
+    MEGAPLAN_RUNTIME_PROCESS_ATTESTATION="$ARNOLD_RUNTIME_PROCESS_ATTESTATION_PATH" \
+      PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_SUPERVISOR_SOURCE_ROOT:${PYTHONPATH:-}" \
+      "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold_pipelines.megaplan.cloud.runtime_attestation \
+      verify-process --component "$attestation_component" --target-pid "$$"
+  }
+  export -f arnold_runtime_attestation_start arnold_runtime_attestation_check
+  if ! arnold_runtime_attestation_start "$component"; then
+    arnold_supervisor_failure_artifact "$component" "runtime_attestation_failed"
+    printf '%s\n' "$component: runtime launch attestation failed" >&2
+    return 78
+  fi
   return 0
 }
