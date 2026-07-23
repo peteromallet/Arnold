@@ -126,6 +126,42 @@ python3 -c 'import arnold_pipelines; print(arnold_pipelines.__file__)'
     assert result.stdout.strip().startswith(str(REPO_ROOT / "arnold_pipelines"))
 
 
+def test_unprepared_ambient_install_never_impersonates_isolated_runtime(
+    tmp_path: Path,
+) -> None:
+    """An arbitrary installed Arnold needs the matching prepare receipt."""
+
+    script = f"""
+source {str(WRAPPERS / 'arnold-supervisor-runtime-lib')!r}
+arnold_supervisor_runtime_init test-component {str(REPO_ROOT)!r}
+printf 'isolated=%s\\n' "$MEGAPLAN_SUPERVISOR_ISOLATED"
+python3 -c 'import arnold_pipelines; print(arnold_pipelines.__file__)'
+"""
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env.update(
+        {
+            "MEGAPLAN_SUPERVISOR_PYTHON": sys.executable,
+            "MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED": "1",
+            "MEGAPLAN_SUPERVISOR_RUNTIME_ROOT": str(tmp_path / "unprepared"),
+            "MEGAPLAN_SUPERVISOR_STATUS_DIR": str(tmp_path / "status"),
+            "MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED": "0",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", "-c", script],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "isolated=0" in result.stdout
+    assert str(REPO_ROOT / "arnold_pipelines") in result.stdout
+
+
 def test_watchdog_fails_before_heartbeat_when_runtime_is_not_ready(tmp_path: Path) -> None:
     status_dir = tmp_path / "status"
     not_ready_python = tmp_path / "not-ready-python"

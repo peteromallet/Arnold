@@ -40,6 +40,8 @@ arnold_supervisor_runtime_init() {
   local component="${1:-unknown}"
   local source_root="${2:-/workspace/arnold}"
   local preferred="${MEGAPLAN_SUPERVISOR_PYTHON:-/workspace/.megaplan/supervisor-python/current/bin/python3}"
+  local runtime_root="${MEGAPLAN_SUPERVISOR_RUNTIME_ROOT:-/workspace/.megaplan/supervisor-python}"
+  local runtime_receipt="${MEGAPLAN_SUPERVISOR_RUNTIME_RECEIPT:-$runtime_root/last-prepare.json}"
   local required="${MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED:-0}"
   local resolved=""
 
@@ -61,9 +63,51 @@ arnold_supervisor_runtime_init() {
   fi
 
   local isolated=0
-  if env -u PYTHONPATH PYTHONSAFEPATH=1 "$resolved" -P -c \
-    'import importlib.metadata,json; d=importlib.metadata.distribution("arnold"); u=json.loads(d.read_text("direct_url.json") or "{}"); raise SystemExit(bool((u.get("dir_info") or {}).get("editable")))' \
+  # A system/control interpreter may also contain a noneditable Arnold wheel.
+  # It is the dedicated supervisor only when the durable prepare receipt binds
+  # this exact prefix, source, and import vector.
+  if env -u PYTHONPATH PYTHONSAFEPATH=1 "$resolved" -P - \
+    "$runtime_receipt" "$source_root" <<'PY' \
     >/dev/null 2>&1; then
+import importlib.metadata
+import json
+import pathlib
+import sys
+import urllib.parse
+
+receipt_path, source = map(pathlib.Path, sys.argv[1:])
+receipt = json.loads(receipt_path.read_text())
+direct_url = json.loads(
+    importlib.metadata.distribution("arnold").read_text("direct_url.json") or "{}"
+)
+runtime = pathlib.Path(receipt.get("runtime", "")).resolve()
+if bool((direct_url.get("dir_info") or {}).get("editable")):
+    raise SystemExit(1)
+parsed_source = urllib.parse.urlparse(str(direct_url.get("url") or ""))
+if parsed_source.scheme != "file":
+    raise SystemExit(1)
+installed_source = pathlib.Path(
+    urllib.parse.unquote(parsed_source.path)
+).resolve()
+if installed_source != source.resolve():
+    raise SystemExit(1)
+if runtime != pathlib.Path(sys.prefix).resolve():
+    raise SystemExit(1)
+if pathlib.Path(receipt.get("source", "")).resolve() != source.resolve():
+    raise SystemExit(1)
+import arnold
+import arnold_pipelines
+import arnold_pipelines.megaplan
+imports = {
+    "arnold": str(pathlib.Path(arnold.__file__).resolve()),
+    "arnold_pipelines": str(pathlib.Path(arnold_pipelines.__file__).resolve()),
+    "megaplan": str(pathlib.Path(arnold_pipelines.megaplan.__file__).resolve()),
+}
+if imports != receipt.get("imports"):
+    raise SystemExit(1)
+if any(not pathlib.Path(value).is_relative_to(runtime) for value in imports.values()):
+    raise SystemExit(1)
+PY
     isolated=1
   fi
   if [[ "$isolated" == "1" ]]; then
