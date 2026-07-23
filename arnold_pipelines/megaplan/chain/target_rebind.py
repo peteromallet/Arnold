@@ -551,13 +551,18 @@ def _update_plan(
     plan.pop("latest_failure", None)
     plan["last_gate"] = {}
     plan["resume_cursor"] = {
-        "phase": "gate",
-        "retry_strategy": "fresh_after_project_source_rebind",
+        "phase": "critique",
+        "retry_strategy": "fresh_critique_after_project_source_rebind",
         "project_source_rebind_sha256": event_sha256,
     }
     plan_pause = meta.get(AUTHORITY_KEY)
     if isinstance(plan_pause, dict):
-        plan_pause["previous_current_state"] = "critiqued"
+        # A source rebind invalidates the relationship between the latest plan
+        # version and its critique-custody receipt.  Returning directly to gate
+        # can therefore loop forever when, for example, plan_v4 exists but only
+        # critique_custody_v3.json survived the cutover.  Always reacquire
+        # critique custody from the rebound source before gating.
+        plan_pause["previous_current_state"] = "planned"
         plan_pause["project_source_rebind_sha256"] = event_sha256
 
 
@@ -579,8 +584,8 @@ def _update_chain(
         execution["last_observed_phase"] = "target_rebind"
     chain_pause = metadata.get(AUTHORITY_KEY)
     if isinstance(chain_pause, dict):
-        chain_pause["previous_plan_state"] = "critiqued"
-        chain_pause["previous_chain_last_state"] = "critiqued"
+        chain_pause["previous_plan_state"] = "planned"
+        chain_pause["previous_chain_last_state"] = "planned"
         chain_pause["project_source_rebind_sha256"] = event_sha256
 
 
