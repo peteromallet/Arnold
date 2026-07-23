@@ -1339,37 +1339,6 @@ def _schema_allows_null(prop: dict) -> bool:
     return ptype == "null" or (isinstance(ptype, list) and "null" in ptype)
 
 
-def _schema_default(prop: dict) -> object:
-    """Return a schema-shaped default that passes structural audit.
-
-    OpenAI-strict materialized schemas require every property, including nested
-    object item properties that the model reasonably omits when they are empty
-    or nullable. Defaults should satisfy the transport schema while preserving
-    downstream semantics; nullable object fields default to None so finalize can
-    strip optional stance/stop fields before write-time validation.
-    """
-    enum = prop.get("enum")
-    if isinstance(enum, list) and enum:
-        return enum[0]
-
-    ptype = _preferred_schema_type(prop)
-    if ptype == "array":
-        return []
-    if ptype == "object":
-        if _schema_allows_null(prop):
-            return None
-        value: dict[str, object] = {}
-        _fill_schema_defaults(value, prop)
-        return value
-    if ptype == "boolean":
-        return False
-    if ptype in ("number", "integer"):
-        return 0
-    if ptype == "null":
-        return None
-    return ""
-
-
 def _build_output_template(step: str, schema: dict) -> str:
     """Build a JSON template from a schema for non-critique template-file phases."""
     return _schema_template(schema)
@@ -1737,13 +1706,6 @@ def clean_parsed_payload(payload: dict, schema: dict, step: str) -> None:
             if isinstance(check, dict):
                 check.pop("guidance", None)
                 check.pop("prior_findings", None)
-
-    # Fill in missing required fields with safe defaults before validation.
-    # Gate fields encode review/custody decisions, so an omitted field there
-    # must fail structural validation instead of being synthesized locally.
-    # Other worker envelopes retain their legacy empty-value normalization.
-    if step != "gate":
-        _fill_schema_defaults(payload, schema)
 
     # Normalize field aliases in nested arrays (e.g. critique flags use
     # "summary" instead of "concern", "detail" instead of "evidence").
@@ -2450,8 +2412,6 @@ def run_hermes_step(
                 reconstructed: dict | None = None
                 if step == "execute":
                     reconstructed = _reconstruct_execute_payload(messages, project_dir, plan_dir, mode=plan_mode)
-                elif step == "gate":
-                    reconstructed = _reconstruct_gate_payload(plan_dir, current_payload)
                 if reconstructed is not None:
                     try:
                         capture_outcome = capture_step_output(
@@ -2945,84 +2905,6 @@ def _reconstruct_execute_payload(
     }
 
 
-def _reconstruct_gate_payload(plan_dir: Path, current_payload: dict) -> dict | None:
-    """Reconstruct a valid gate payload when the model leaves the scratch file empty.
-
-    The Hermes/DeepSeek gate worker occasionally reads the scratch template but
-    never writes the filled JSON back. When that happens the promoted payload has
-    empty required fields and fails structural audit. This helper infers a safe,
-    conservative recommendation from the gate signals already computed by the
-    handler, builds a schema-valid payload, and returns it so the handler's own
-    normalization can refine it further.
-    """
-    import json as _json
-
-    signals_files = sorted(plan_dir.glob("gate_signals_v*.json"), reverse=True)
-    signals: dict = {}
-    for path in signals_files:
-        try:
-            data = _json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and "signals" in data:
-                signals = data
-                break
-        except Exception:
-            continue
-
-    signals_inner = signals.get("signals", {}) if isinstance(signals, dict) else {}
-    preflight = signals.get("preflight_results", {}) if isinstance(signals, dict) else {}
-    preflight_passed = isinstance(preflight, dict) and all(preflight.values())
-    unresolved = signals.get("unresolved_flags", []) if isinstance(signals, dict) else []
-    has_significant = bool(
-        isinstance(unresolved, list)
-        and any(
-            isinstance(f, dict)
-            and f.get("severity") in ("significant", "likely-significant")
-            for f in unresolved
-        )
-    )
-
-    if has_significant:
-        recommendation = "ITERATE"
-        reason = "significant unresolved flags remain"
-    elif not preflight_passed:
-        recommendation = "ESCALATE"
-        reason = "preflight checks are still failing"
-    else:
-        recommendation = "PROCEED"
-        reason = "no significant unresolved flags and preflight passed"
-
-    reconstructed = dict(current_payload) if isinstance(current_payload, dict) else {}
-    reconstructed["recommendation"] = recommendation
-    if not str(reconstructed.get("rationale", "")).strip():
-        reconstructed["rationale"] = (
-            f"Auto-inferred {recommendation} because the gate worker returned an "
-            f"invalid/empty recommendation and {reason}."
-        )
-    if not str(reconstructed.get("signals_assessment", "")).strip():
-        reconstructed["signals_assessment"] = (
-            "No significant flags were raised by critique; proceeding to execution."
-            if recommendation == "PROCEED"
-            else "Critique signals require further attention before proceeding."
-        )
-    reconstructed.setdefault("warnings", [])
-    reconstructed.setdefault("settled_decisions", [])
-    reconstructed.setdefault("flag_resolutions", [])
-    reconstructed.setdefault("accepted_tradeoffs", [])
-    reconstructed.setdefault("north_star_actions", [])
-    # Strip placeholder/empty tradeoff objects.
-    reconstructed["accepted_tradeoffs"] = [
-        item
-        for item in reconstructed["accepted_tradeoffs"]
-        if isinstance(item, dict)
-        and any(
-            str(value).strip()
-            for key, value in item.items()
-            if key in {"flag_id", "concern", "subsystem", "rationale"}
-        )
-    ]
-    return reconstructed
-
-
 def _recover_plan_payload_from_raw_markdown(
     payload: dict,
     raw_markdown: str,
@@ -3043,39 +2925,6 @@ def _recover_plan_payload_from_raw_markdown(
     recovered = dict(payload) if isinstance(payload, dict) else {}
     recovered["plan"] = markdown
     return recovered
-
-
-def _fill_schema_defaults(payload: dict, schema: dict) -> None:
-    """Fill missing required fields with safe defaults based on schema types.
-
-    Models often omit empty arrays, empty strings, or optional-sounding fields
-    that the schema marks as required. Rather than rejecting the response,
-    fill them with type-appropriate defaults. This recurses into existing
-    nested objects and array items because strict response schemas commonly
-    promote item properties to required fields too.
-    """
-    required = schema.get("required", [])
-    properties = schema.get("properties", {})
-    for field in required:
-        if field in payload:
-            continue
-        prop = properties.get(field, {})
-        payload[field] = _schema_default(prop)
-
-    for field, value in list(payload.items()):
-        prop = properties.get(field)
-        if not isinstance(prop, dict):
-            continue
-        ptype = _preferred_schema_type(prop)
-        if ptype == "object" and isinstance(value, dict):
-            _fill_schema_defaults(value, prop)
-        elif ptype == "array" and isinstance(value, list):
-            items_schema = prop.get("items", {})
-            if not isinstance(items_schema, dict):
-                continue
-            for item in value:
-                if isinstance(item, dict) and _preferred_schema_type(items_schema) == "object":
-                    _fill_schema_defaults(item, items_schema)
 
 
 def _normalize_nested_aliases(payload: dict, schema: dict) -> None:

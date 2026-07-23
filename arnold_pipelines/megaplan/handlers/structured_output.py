@@ -63,18 +63,6 @@ def _read_scratch_json(path: Path) -> Any | None:
         return None
 
 
-def _strip_unknown_keys(payload: dict[str, Any], known_keys: frozenset[str]) -> dict[str, Any]:
-    """Return *payload* with only *known_keys* preserved at the top level.
-
-    Unknown top-level keys are stripped before promotion so that promoted
-    canonical artifacts remain schema-valid.  The model may inject
-    commentary keys the template didn't include; those are dropped.
-    """
-    if not isinstance(payload, dict):
-        return payload
-    return {k: v for k, v in payload.items() if k in known_keys}
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -145,7 +133,7 @@ def promote_scratch(
 
     This is the single shared entry-point for every file-fill handler.
     It reads **only** the expected scratch file (*expected-path-only reads*),
-    classifies its status, strips unknown top-level keys, and falls back
+    classifies its status, rejects unknown top-level keys, and falls back
     to ``worker.payload`` when the scratch is missing or unmodified.
 
     A model write to a wrong path (e.g. writing to the canonical artifact
@@ -155,8 +143,8 @@ def promote_scratch(
     Args:
         plan_dir: The plan directory.
         scratch_filename: The scratch filename (e.g. ``"finalize_output.json"``).
-        known_keys: The set of expected top-level keys.  Unknown keys
-            are stripped before the payload is returned.
+        known_keys: The set of expected top-level keys.  Unknown keys are a
+            structural producer failure and are never silently stripped.
         worker: The ``WorkerResult`` from the worker invocation.  Its
             ``.payload`` is the inline JSON fallback.
         seed_json: The seed template content.  Used for unmodified detection.
@@ -171,8 +159,8 @@ def promote_scratch(
             (default), no phase-mode check is performed (backward compatible).
 
     Returns:
-        ``(status, payload)`` where *payload* is the promoted (and
-        possibly stripped) content ready for handler consumption.
+        ``(status, payload)`` where *payload* is the unmodified promoted
+        content ready for handler validation.
 
     Raises:
         ValueError: When *phase_identity* is a ``batch_assembly`` phase,
@@ -224,18 +212,15 @@ def promote_scratch(
             )
             return status, worker.payload
 
-    # ── Filled (valid JSON dict) → strip unknown keys, promote ────────
+    # ── Filled (valid JSON dict) → preserve raw shape, fail on extras ─
     assert parsed is not None  # "filled" always carries parsed dict
-    stripped = _strip_unknown_keys(parsed, known_keys)
-    if len(stripped) != len(parsed):
-        dropped = [k for k in parsed if k not in known_keys]
-        LOGGER.debug(
-            "promote_scratch: stripped %d unknown top-level keys from %s: %s",
-            len(dropped),
-            scratch_filename,
-            dropped,
+    unknown = sorted(k for k in parsed if k not in known_keys)
+    if unknown:
+        raise ValueError(
+            f"Scratch file {scratch_filename!r} contains unknown top-level "
+            f"contract fields: {', '.join(unknown)}"
         )
-    return "filled", stripped
+    return "filled", parsed
 
 
 def resolve_scratch_filename_for_phase(phase_identity: str) -> str | None:
