@@ -4,6 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from arnold_pipelines.megaplan.cloud import operator_control
 
 
@@ -36,6 +38,10 @@ def test_resume_injects_managed_repair_route_into_tmux_session(
 
     def fake_run(argv, **kwargs):
         calls.append(list(argv))
+        if argv[1] == "new-session":
+            launching = json.loads(marker_path.read_text(encoding="utf-8"))
+            assert "operator_pause" not in launching
+            assert launching["should_run"] is True
         return subprocess.CompletedProcess(argv, 1 if argv[1] == "has-session" else 0)
 
     monkeypatch.setattr(operator_control.subprocess, "run", fake_run)
@@ -159,3 +165,51 @@ def test_resume_authority_only_does_not_start_runner(
     updated = json.loads(marker_path.read_text(encoding="utf-8"))
     assert "operator_pause" not in updated
     assert updated["should_run"] is False
+
+
+def test_resume_fails_closed_when_marker_changes_concurrently(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    marker_path = tmp_path / ".megaplan" / "cloud-sessions" / "demo.json"
+    marker_path.parent.mkdir(parents=True)
+    marker_path.write_text(
+        json.dumps(
+            {
+                "session": "demo",
+                "run_kind": "chain",
+                "relaunch_command": "python -m demo",
+                "operator_pause": {"active": True},
+                "should_run": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_resume_chain(*args, **kwargs):
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        marker["runtime_binding"] = {
+            "current_identity": {"source_revision": "c" * 40}
+        }
+        marker_path.write_text(json.dumps(marker), encoding="utf-8")
+        return {"changed": True, "paused": False}
+
+    monkeypatch.setattr(operator_control, "resume_chain", fake_resume_chain)
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(list(argv))
+        return subprocess.CompletedProcess(argv, 1)
+
+    monkeypatch.setattr(operator_control.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="session marker changed concurrently"):
+        operator_control.resume_session(
+            spec=tmp_path / "chain.yaml",
+            workspace=workspace,
+            session="demo",
+            marker_path=marker_path,
+            actor="test",
+        )
+
+    assert calls == [["tmux", "has-session", "-t", "demo"]]
