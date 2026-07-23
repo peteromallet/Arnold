@@ -61,7 +61,11 @@ from arnold_pipelines.megaplan.orchestration.task_satisfaction import (
     TaskSatisfactionResult,
     is_task_satisfied,
 )
-from arnold_pipelines.run_authority import ContractError, reduce_run_authority
+from arnold_pipelines.run_authority import (
+    CASExpectation,
+    ContractError,
+    reduce_run_authority,
+)
 
 # ── Route disposition vocabulary ──────────────────────────────────────────
 
@@ -658,7 +662,15 @@ def _collect_accepted_attempt_authority(
                 decision = _accepted_projection_decision(envelope, validation, source)
             except ContractError:
                 continue
-            authority_records.extend(envelope.authority_records())
+            # CAS expectations are dispatch-time preconditions, not durable
+            # run-authority ledger facts. Feeding one to reduce_run_authority
+            # makes the accepted-attempt projection fail closed even though
+            # the merge-time validation already accepted the envelope.
+            authority_records.extend(
+                record
+                for record in envelope.authority_records()
+                if not isinstance(record, CASExpectation)
+            )
             authority_records.extend((decision.idempotency, decision))
             evidence_decisions[envelope.subject_id] = AuthorityDecision(
                 task_id=envelope.subject_id,
