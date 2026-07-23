@@ -1,0 +1,39 @@
+# `partnered-5-glm` preserves the complete partnered-5 routing shape while
+# replacing every Codex/GPT slot with direct Zhipu GLM 5.2. DeepSeek and
+# Fireworks routes, fallback order, and execute/critique tier boundaries remain
+# identical to partnered-5.
+[profiles.partnered-5-glm]
+adaptive_critique = true
+plan                  = "hermes:zhipu:glm-5.2"
+prep                  = "hermes:deepseek:deepseek-v4-pro"
+critique              = "hermes:deepseek:deepseek-v4-pro"
+critique_evaluator    = "hermes:zhipu:glm-5.2"
+revise                = "hermes:zhipu:glm-5.2"
+gate                  = "hermes:deepseek:deepseek-v4-pro"
+finalize              = "hermes:zhipu:glm-5.2"
+execute               = "hermes:zhipu:glm-5.2"
+feedback              = "hermes:zhipu:glm-5.2"
+loop_plan             = "hermes:zhipu:glm-5.2"
+loop_execute          = "hermes:zhipu:glm-5.2"
+review                = "hermes:zhipu:glm-5.2"
+tiebreaker_researcher = "hermes:zhipu:glm-5.2"
+tiebreaker_challenger = "hermes:zhipu:glm-5.2"
+
+[profiles.partnered-5-glm.tier_models.execute]
+1 = "hermes:deepseek:deepseek-v4-flash"
+2 = "hermes:deepseek:deepseek-v4-flash"
+3 = "hermes:deepseek:deepseek-v4-pro"
+4 = "hermes:deepseek:deepseek-v4-pro"
+5 = "hermes:deepseek:deepseek-v4-pro"
+6 = "hermes:deepseek:deepseek-v4-pro"
+7 = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "hermes:zhipu:glm-5.2"]
+8 = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "hermes:zhipu:glm-5.2"]
+9 = "hermes:zhipu:glm-5.2"
+10 = "hermes:zhipu:glm-5.2"
+
+[profiles.partnered-5-glm.tier_models.critique]
+1 = "hermes:deepseek:deepseek-v4-flash"
+2 = "hermes:deepseek:deepseek-v4-pro"
+3 = "hermes:deepseek:deepseek-v4-pro"
+4 = ["hermes:zhipu:glm-5.2", "hermes:fireworks:accounts/fireworks/models/glm-5p2", "hermes:zhipu:glm-5.2"]
+5 = "hermes:zhipu:glm-5.2"
