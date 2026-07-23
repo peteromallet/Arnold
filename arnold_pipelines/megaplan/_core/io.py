@@ -1685,11 +1685,46 @@ def resolve_batch_artifact(
             and p.suffix == ".json"
         )
         if candidates:
-            return candidates[0]
+            return _preferred_batch_attempt(candidates)
     legacy = legacy_batch_artifact_path(plan_dir, batch_index)
     if legacy.exists():
         return legacy
     return None
+
+
+def _preferred_batch_attempt(candidates: Iterable[Path]) -> Path:
+    """Select the newest fenced attempt, with legacy artifacts as fallback.
+
+    Execute retries may reuse a numeric batch directory while changing its
+    task digest.  Lexicographic filename order is unrelated to attempt order
+    and can therefore hide a later accepted receipt behind an older,
+    pre-dispatch artifact.  Modern dispatch fence tokens are monotonic within
+    a run, so prefer them; mtime is the compatibility ordering for legacy
+    receipts that predate dispatch identity.
+    """
+
+    def _attempt_key(path: Path) -> tuple[int, int, int, str]:
+        fence_token = -1
+        has_dispatch_identity = 0
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            payload = {}
+        if isinstance(payload, Mapping):
+            dispatch_identity = payload.get("dispatch_identity")
+            if isinstance(dispatch_identity, Mapping):
+                has_dispatch_identity = 1
+                fence = dispatch_identity.get("fence")
+                raw_token = fence.get("token") if isinstance(fence, Mapping) else None
+                if isinstance(raw_token, int) and not isinstance(raw_token, bool):
+                    fence_token = raw_token
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            mtime_ns = -1
+        return (has_dispatch_identity, fence_token, mtime_ns, path.name)
+
+    return max(candidates, key=_attempt_key)
 
 
 def list_batch_artifacts(plan_dir: Path) -> list[Path]:
@@ -1709,14 +1744,15 @@ def list_batch_artifacts(plan_dir: Path) -> list[Path]:
             if m is None:
                 continue
             index = int(m.group(1))
-            for child in sorted(entry.iterdir()):
-                if (
-                    child.is_file()
-                    and child.name.startswith("tasks_")
-                    and child.suffix == ".json"
-                ):
-                    by_index.setdefault(index, child)
-                    break
+            candidates = [
+                child
+                for child in entry.iterdir()
+                if child.is_file()
+                and child.name.startswith("tasks_")
+                and child.suffix == ".json"
+            ]
+            if candidates:
+                by_index[index] = _preferred_batch_attempt(candidates)
     for path in plan_dir.glob("execution_batch_*.json"):
         if not path.is_file():
             continue
