@@ -70,6 +70,13 @@ Restart through the guarded resident lifecycle. Prove:
 7. `/follow-up` is registered and returns a durable acceptance receipt without
    claiming task completion.
 
+The resident self-healer must load
+`/workspace/.megaplan/resident-runtime.env` after the global cloud hot-env and
+must compare the live pane's executable and runtime selector environment to
+that resident-specific selection. Without both checks, an ordinary
+crash/container restart can silently return the resident to the global F1
+runtime while still passing a health command launched from the newer source.
+
 ## Other real code absent from F1
 
 These are not part of the emergency resident deployment. Land them on a
