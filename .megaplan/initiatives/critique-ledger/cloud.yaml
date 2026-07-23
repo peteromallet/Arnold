@@ -21,7 +21,7 @@ chain:
 megaplan:
   ref: bc0c600c418c8995331aa8aa6784fc62b4fddf17
   codex_auth: chatgpt
-  repo: /workspace/runtime-candidates/arnold-bc0c600c418c8995331aa8aa6784fc62b4fddf17
+  repo: https://github.com/peteromallet/Arnold.git
   src_path: /workspace/runtime-candidates/arnold-bc0c600c418c8995331aa8aa6784fc62b4fddf17
 
 resources:
