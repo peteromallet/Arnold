@@ -6196,6 +6196,60 @@ def test_verified_quality_recovery_cannot_fall_back_without_receipt_locator(
     assert "no bounded dev-fix receipt locator" in result.stderr
 
 
+def test_verified_quality_recovery_accepts_complete_marker_bound_supported_cli(
+    tmp_path: Path,
+) -> None:
+    command = (
+        "python -m arnold_pipelines.megaplan override recover-blocked "
+        "--repair-commit abcdef --failure-fingerprint fingerprint "
+        "&& python -m arnold_pipelines.megaplan chain start "
+        "--no-git-refresh --no-push"
+    )
+    context = tmp_path / "context.json"
+    context.write_text(
+        json.dumps(
+            {
+                "current": {"latest_failure": {"fingerprint": "fingerprint"}},
+                "durable_quality_block": {
+                    "active": True,
+                    "repair_evidence": {
+                        "verified": True,
+                        "dev_fix_sha": "abcdef",
+                    },
+                },
+                "safe_repair_boundaries": {
+                    "supported_recovery_cli": command,
+                    "quality_recovery_command_complete": True,
+                    "marker_relaunch_binding": {
+                        "verified": True,
+                        "profile_preserved": True,
+                        "no_git_refresh": True,
+                        "no_push": True,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("quality_recovery_requirement"),
+            _extract_repair_function("quality_recovery_supported_cli_is_complete"),
+            _extract_repair_function("select_mechanical_relaunch_command"),
+            "post_dev_fix_quality_recovery_command_if_needed() { return 76; }",
+            f"INVESTIGATION_CONTEXT_PATH={str(context)!r}",
+            "INVESTIGATOR_RECOMMENDED_ACTION=recover_state",
+            "POST_DEV_FIX_ITERATION=",
+            f"select_mechanical_relaunch_command {command!r}",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == command
+
+
 def test_verified_quality_recovery_cannot_fall_back_when_receipt_mismatches(
     tmp_path: Path,
 ) -> None:
