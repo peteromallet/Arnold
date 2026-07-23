@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import pytest
 
@@ -21,6 +21,12 @@ from arnold_pipelines.megaplan.chain.target_rebind import (
     target_rebind,
 )
 from arnold_pipelines.megaplan.chain.execution_binding import active_execution_identity
+from arnold_pipelines.megaplan.chain.execution_binding import rebind_runtime_identity
+from arnold_pipelines.megaplan.cloud.runtime_cutover import (
+    marker_runtime_identity,
+    normalize_runtime_identity,
+    update_marker_runtime,
+)
 from arnold_pipelines.megaplan.chain.seed_rematerialize import (
     SEED_MANIFEST_SCHEMA,
     SEED_REMATERIALIZE_ERROR,
@@ -246,13 +252,17 @@ def _seed_manifest(fixture: dict[str, Any]) -> Path:
         ("north_star", spec.parent / "NORTHSTAR.md"),
         ("decision", spec.parent / "decisions.md"),
     ]
+    chain = _load_json(fixture["state_path"])
+    launched = (
+        chain.get("metadata", {}).get("execution_binding", {}).get("launched_identity", {})
+    )
     manifest = {
         "schema": SEED_MANIFEST_SCHEMA,
         "session_id": root.name,
         "milestone": MILESTONE,
         "plan": PLAN_NAME,
         "target": {"branch": M10_BRANCH, "head": fixture["target"]},
-        "previous_bundle_sha256": "",
+        "previous_bundle_sha256": str(launched.get("bundle_sha256") or ""),
         "active_bundle_sha256": active["bundle_sha256"],
         "assets": [
             {
@@ -292,7 +302,10 @@ def _rematerialize(fixture: dict[str, Any], **overrides: Any) -> dict[str, Any]:
     )
 
 
-def _target_rollback(fixture: dict[str, Any]) -> dict[str, Any]:
+def _target_rollback(
+    fixture: dict[str, Any],
+    **overrides: Any,
+) -> dict[str, Any]:
     return target_rebind(
         fixture["spec"],
         fixture["root"],
@@ -306,7 +319,148 @@ def _target_rollback(fixture: dict[str, Any]) -> dict[str, Any]:
             to_branch=M9_BRANCH,
             to_head=fixture["source"],
             to_ref=M9_REF,
+            **overrides,
         ),
+    )
+
+
+def _runtime_fixture(fixture: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], Path]:
+    spec_text = fixture["spec"].read_text(encoding="utf-8")
+    fixture["spec"].write_text(
+        spec_text.replace(
+            "driver:\n",
+            "driver:\n  execution_binding: required\n"
+            "  require_editable_runtime_match: true\n"
+            "  initiative_path: .megaplan/initiatives/custody\n"
+            f"  intended_initiative_revision: {'0' * 40}\n",
+        ),
+        encoding="utf-8",
+    )
+    _git(
+        fixture["root"],
+        "add",
+        "--force",
+        ".megaplan/initiatives/custody/chain.yaml",
+        ".megaplan/initiatives/custody/brief.md",
+        ".megaplan/initiatives/custody/NORTHSTAR.md",
+        ".megaplan/initiatives/custody/decisions.md",
+    )
+    _git(fixture["root"], "commit", "-m", "bind custody initiative")
+    initiative_revision = _git(fixture["root"], "rev-parse", "HEAD")
+    fixture["spec"].write_text(
+        fixture["spec"].read_text(encoding="utf-8").replace(
+            "0" * 40,
+            initiative_revision,
+        ),
+        encoding="utf-8",
+    )
+    _git(fixture["root"], "add", "--force", ".megaplan/initiatives/custody/chain.yaml")
+    _git(fixture["root"], "commit", "-m", "pin custody initiative revision")
+    fixture["source"] = _git(fixture["root"], "rev-parse", "HEAD")
+    _git(fixture["root"], "push", "--force", "origin", M9_BRANCH)
+    _git(fixture["root"], "switch", "integrate/convergence")
+    _git(fixture["root"], "merge", "--no-edit", M9_BRANCH)
+    fixture["target"] = _git(fixture["root"], "rev-parse", "HEAD")
+    _git(fixture["root"], "push", "--force", "origin", "integrate/convergence")
+    _git(fixture["root"], "switch", M9_BRANCH)
+    plan = _load_json(fixture["plan_path"])
+    plan["meta"]["chain_policy"]["milestone_base_sha"] = fixture["source"]
+    plan["meta"]["execution_environment"]["target_head"] = fixture["source"]
+    _write_json(fixture["plan_path"], plan)
+    chain = _load_json(fixture["state_path"])
+    chain["metadata"]["execution_environment"]["target_head"] = fixture["source"]
+    _write_json(fixture["state_path"], chain)
+    active = active_execution_identity(fixture["spec"])
+    runtime_a = dict(active["runtime"])
+    runtime_b = normalize_runtime_identity(
+        {
+            **runtime_a,
+            "import_root": "/runtime/B",
+            "source_revision": "b" * 40,
+            "editable_root": "/runtime/B",
+            "editable_revision": "b" * 40,
+            "direct_url": {
+                "url": "file:///runtime/B",
+                "dir_info": {"editable": True},
+            },
+            "pth": [{"path": "/runtime/B/site/arnold.pth", "entries": ["/runtime/B"]}],
+            "imports": {
+                key: str(value).replace(
+                    str(runtime_a.get("import_root") or ""),
+                    "/runtime/B",
+                )
+                for key, value in (runtime_a.get("imports") or {}).items()
+            },
+        }
+    )
+    chain = _load_json(fixture["state_path"])
+    chain["metadata"]["execution_binding"] = {
+        "schema": "arnold.megaplan.chain_execution_binding.v1",
+        "launched_identity": active,
+        "runtime_binding": {
+            "schema": "arnold.megaplan.chain_runtime_binding.v1",
+            "current_identity": runtime_a,
+            "rebind_events": [],
+        },
+    }
+    _write_json(fixture["state_path"], chain)
+    marker = fixture["root"] / ".megaplan" / "cloud-session.json"
+    _write_json(
+        marker,
+        {
+            "runtime_binding": {
+                "schema": "arnold.megaplan.marker_runtime_binding.v1",
+                "current_identity": runtime_a,
+                "rebind_events": [],
+            }
+        },
+    )
+    return runtime_a, runtime_b, marker
+
+
+def _runtime_rebind(
+    fixture: dict[str, Any],
+    *,
+    source: Mapping[str, Any],
+    target: Mapping[str, Any],
+    direction: str,
+) -> dict[str, Any]:
+    state = chain_spec.load_chain_state(
+        fixture["spec"],
+        verify_execution_binding=False,
+    )
+    result = rebind_runtime_identity(
+        fixture["spec"],
+        state,
+        expected_previous_runtime_sha256=str(source["content_sha256"]),
+        expected_active_runtime_sha256=str(target["content_sha256"]),
+        expected_current_milestone=MILESTONE,
+        expected_current_plan=PLAN_NAME,
+        reason=f"{direction} integrated runtime",
+        actor="test",
+        direction=direction,
+        verified_external_runtime_identity=target,
+    )
+    _write_json(fixture["state_path"], state.to_dict())
+    return result
+
+
+def _marker_rebind(
+    marker: Path,
+    *,
+    source: Mapping[str, Any],
+    target: Mapping[str, Any],
+    direction: str,
+) -> dict[str, Any]:
+    return update_marker_runtime(
+        marker,
+        expected_marker_sha256=sha256_path(marker),
+        expected_previous_runtime_sha256=str(source["content_sha256"]),
+        active_runtime_identity=target,
+        relaunch_command="B-control-interpreter resumes only after final seed",
+        reason=f"{direction} integrated marker",
+        actor="test",
+        direction=direction,
     )
 
 
@@ -1025,6 +1179,123 @@ def test_seed_cutover_rollback_recutover_restores_predecessor_epoch(
     assert second_cutover["event"]["content_sha256"] != seed_cutover["event"][
         "content_sha256"
     ]
+
+
+def test_full_runtime_marker_target_seed_a_b_a_b_keeps_all_receipts(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    runtime_a, runtime_b, marker = _runtime_fixture(fixture)
+
+    # Bootstrap order is load-bearing: the external runtime and marker move
+    # before target/seeds, and the still-new B interpreter supplies the
+    # independently verified identity while the project is later back on A.
+    _runtime_rebind(
+        fixture,
+        source=runtime_a,
+        target=runtime_b,
+        direction="cutover",
+    )
+    _marker_rebind(
+        marker,
+        source=runtime_a,
+        target=runtime_b,
+        direction="cutover",
+    )
+    _cutover(fixture, verified_external_runtime_identity=runtime_b)
+    manifest_path = _seed_manifest(fixture)
+    first_seed = _rematerialize(
+        fixture,
+        seed_manifest_path=manifest_path,
+        expected_seed_manifest_sha256=sha256_path(manifest_path),
+        verified_external_runtime_identity=runtime_b,
+    )
+    chain = _load_json(fixture["state_path"])
+    assert (
+        chain["metadata"]["execution_binding"]["runtime_binding"]["current_identity"]
+        == marker_runtime_identity(_load_json(marker))
+        == runtime_b
+    )
+
+    _runtime_rebind(
+        fixture,
+        source=runtime_b,
+        target=runtime_a,
+        direction="rollback",
+    )
+    _marker_rebind(
+        marker,
+        source=runtime_b,
+        target=runtime_a,
+        direction="rollback",
+    )
+    _target_rollback(
+        fixture,
+        verified_external_runtime_identity=runtime_a,
+    )
+    _seed_rollback(fixture, first_seed, manifest_path)
+
+    assert _git(fixture["root"], "branch", "--show-current") == M9_BRANCH
+    assert _git(fixture["root"], "rev-parse", "HEAD") == fixture["source"]
+    chain = _load_json(fixture["state_path"])
+    runtime_binding = chain["metadata"]["execution_binding"]["runtime_binding"]
+    assert runtime_binding["current_identity"] == runtime_a
+    assert [event["direction"] for event in runtime_binding["rebind_events"]] == [
+        "cutover",
+        "rollback",
+    ]
+    assert marker_runtime_identity(_load_json(marker)) == runtime_a
+
+    _runtime_rebind(
+        fixture,
+        source=runtime_a,
+        target=runtime_b,
+        direction="cutover",
+    )
+    _marker_rebind(
+        marker,
+        source=runtime_a,
+        target=runtime_b,
+        direction="cutover",
+    )
+    _cutover(fixture, verified_external_runtime_identity=runtime_b)
+    second_manifest = _seed_manifest(fixture)
+    _rematerialize(
+        fixture,
+        seed_manifest_path=second_manifest,
+        expected_seed_manifest_sha256=sha256_path(second_manifest),
+        verified_external_runtime_identity=runtime_b,
+    )
+
+    assert _git(fixture["root"], "branch", "--show-current") == M10_BRANCH
+    assert _git(fixture["root"], "rev-parse", "HEAD") == fixture["target"]
+    plan = _load_json(fixture["plan_path"])
+    chain = _load_json(fixture["state_path"])
+    assert [event["direction"] for event in plan["meta"]["project_source_binding"]["rebind_events"]] == [
+        "cutover",
+        "rollback",
+        "cutover",
+    ]
+    assert [event["direction"] for event in plan["meta"]["seed_source_binding"]["events"]] == [
+        "cutover",
+        "rollback",
+        "cutover",
+    ]
+    assert [
+        event["direction"]
+        for event in chain["metadata"]["execution_binding"]["runtime_binding"][
+            "rebind_events"
+        ]
+    ] == ["cutover", "rollback", "cutover"]
+    assert [
+        event["direction"]
+        for event in _load_json(marker)["runtime_binding"]["rebind_events"]
+    ] == ["cutover", "rollback", "cutover"]
+    assert (
+        chain["metadata"]["execution_binding"]["runtime_binding"]["current_identity"]
+        == marker_runtime_identity(_load_json(marker))
+        == runtime_b
+    )
 
 
 def test_seed_rollback_refuses_stale_cutover_guard(tmp_path: Path) -> None:

@@ -7948,6 +7948,14 @@ def build_chain_parser(subparsers: Any) -> None:
     target_rebind_parser.add_argument("--expected-plan-state-sha256", required=True)
     target_rebind_parser.add_argument("--reason", required=True)
     target_rebind_parser.add_argument("--actor", default="operator")
+    target_rebind_parser.add_argument(
+        "--runtime-identity",
+        help="Verified external runtime identity used by a newer paused control interpreter",
+    )
+    target_rebind_parser.add_argument(
+        "--runtime-provenance-receipt",
+        help="Independent interpreter receipt paired with --runtime-identity",
+    )
 
     seed_rematerialize_parser = chain_sub.add_parser(
         "seed-rematerialize",
@@ -7980,6 +7988,14 @@ def build_chain_parser(subparsers: Any) -> None:
     seed_rematerialize_parser.add_argument("--expected-archive-manifest-sha256")
     seed_rematerialize_parser.add_argument("--reason", required=True)
     seed_rematerialize_parser.add_argument("--actor", default="operator")
+    seed_rematerialize_parser.add_argument(
+        "--runtime-identity",
+        help="Verified external runtime identity used by a newer paused control interpreter",
+    )
+    seed_rematerialize_parser.add_argument(
+        "--runtime-provenance-receipt",
+        help="Independent interpreter receipt paired with --runtime-identity",
+    )
 
     pause_parser = chain_sub.add_parser(
         "pause", help="Durably pause a chain and disable automatic recovery"
@@ -8338,6 +8354,28 @@ def run_chain_cli(
         project_root = Path(args.project_dir).expanduser().resolve()
         try:
             from arnold_pipelines.megaplan.chain.target_rebind import target_rebind
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                verify_external_runtime_identity,
+            )
+
+            identity_arg = str(getattr(args, "runtime_identity", "") or "").strip()
+            receipt_arg = str(
+                getattr(args, "runtime_provenance_receipt", "") or ""
+            ).strip()
+            if bool(identity_arg) != bool(receipt_arg):
+                raise CliError(
+                    "project_source_rebind_refused",
+                    "target rebind requires --runtime-identity and "
+                    "--runtime-provenance-receipt together",
+                )
+            external_identity = (
+                verify_external_runtime_identity(
+                    Path(identity_arg).expanduser().resolve(strict=False),
+                    Path(receipt_arg).expanduser().resolve(strict=False),
+                )
+                if identity_arg
+                else None
+            )
 
             result = target_rebind(
                 spec_path,
@@ -8359,6 +8397,7 @@ def run_chain_cli(
                 expected_plan_state_sha256=args.expected_plan_state_sha256,
                 reason=args.reason,
                 actor=args.actor,
+                verified_external_runtime_identity=external_identity,
             )
         except CliError as exc:
             return _emit_error(exc)
@@ -8382,6 +8421,28 @@ def run_chain_cli(
             from arnold_pipelines.megaplan.chain.seed_rematerialize import (
                 seed_rematerialize,
             )
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                verify_external_runtime_identity,
+            )
+
+            identity_arg = str(getattr(args, "runtime_identity", "") or "").strip()
+            receipt_arg = str(
+                getattr(args, "runtime_provenance_receipt", "") or ""
+            ).strip()
+            if bool(identity_arg) != bool(receipt_arg):
+                raise CliError(
+                    "seed_rematerialize_refused",
+                    "seed rematerialize requires --runtime-identity and "
+                    "--runtime-provenance-receipt together",
+                )
+            external_identity = (
+                verify_external_runtime_identity(
+                    Path(identity_arg).expanduser().resolve(strict=False),
+                    Path(receipt_arg).expanduser().resolve(strict=False),
+                )
+                if identity_arg
+                else None
+            )
 
             result = seed_rematerialize(
                 spec_path,
@@ -8401,6 +8462,7 @@ def run_chain_cli(
                 expected_archive_manifest_sha256=args.expected_archive_manifest_sha256,
                 reason=args.reason,
                 actor=args.actor,
+                verified_external_runtime_identity=external_identity,
             )
         except CliError as exc:
             return _emit_error(exc)

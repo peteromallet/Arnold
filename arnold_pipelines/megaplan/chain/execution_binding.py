@@ -803,7 +803,12 @@ def _bound_import_root_covers_editable_metadata_mismatch(
     )
 
 
-def execution_binding_report(spec_path: Path, state: Any) -> dict[str, Any]:
+def execution_binding_report(
+    spec_path: Path,
+    state: Any,
+    *,
+    active_identity: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     policy = binding_policy(spec_path)
     binding = getattr(state, "metadata", {}).get("execution_binding")
     binding = binding if isinstance(binding, Mapping) else {}
@@ -818,7 +823,11 @@ def execution_binding_report(spec_path: Path, state: Any) -> dict[str, Any]:
             "expected": None,
             "active": None,
         }
-    active = active_execution_identity(spec_path)
+    active = (
+        dict(active_identity)
+        if isinstance(active_identity, Mapping)
+        else active_execution_identity(spec_path)
+    )
     if expected is None:
         status = "missing" if policy["required"] else "not_required"
         drift_fields: list[str] = []
@@ -1267,17 +1276,27 @@ def rebind_runtime_identity(
     ):
         raise CliError(RUNTIME_DRIFT_ERROR, "every runtime rebind guard is required")
 
-    spec_report = execution_binding_report(spec_path, state)
-    if spec_report.get("status") not in {"match", "reconcile_required"}:
-        raise CliError(
-            RUNTIME_DRIFT_ERROR,
-            "runtime rebind refused while the immutable spec binding is not accepted",
-        )
     external_identity = (
         _normalized_runtime_identity(verified_external_runtime_identity)
         if isinstance(verified_external_runtime_identity, Mapping)
         else None
     )
+    spec_report = execution_binding_report(spec_path, state)
+    if external_identity is not None:
+        externally_verified_active = dict(spec_report.get("active") or {})
+        externally_verified_active["runtime"] = external_identity
+        externally_verified_active["ready"] = True
+        externally_verified_active["errors"] = []
+        spec_report = execution_binding_report(
+            spec_path,
+            state,
+            active_identity=externally_verified_active,
+        )
+    if spec_report.get("status") not in {"match", "reconcile_required"}:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused while the immutable spec binding is not accepted",
+        )
     if external_identity is None:
         report = spec_report["runtime_binding"]
     else:

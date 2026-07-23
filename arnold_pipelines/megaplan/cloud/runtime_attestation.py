@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import importlib.metadata
 import json
 import os
@@ -14,6 +15,7 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+from urllib.parse import unquote, urlparse
 
 from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
 from arnold_pipelines.megaplan.types import CliError
@@ -129,6 +131,42 @@ def _module_vector(expected_root: Path) -> tuple[list[dict[str, str]], list[str]
     return entries, errors
 
 
+def _supervisor_module_vector(
+    expected_runtime: Path,
+) -> tuple[list[dict[str, str]], list[str]]:
+    """Return the fixed supervisor import contract, independent of CLI imports."""
+
+    import arnold
+    import arnold_pipelines
+    import arnold_pipelines.megaplan
+
+    runtime_attestation_module = importlib.import_module(
+        "arnold_pipelines.megaplan.cloud.runtime_attestation"
+    )
+    modules = {
+        "arnold": arnold,
+        "arnold_pipelines": arnold_pipelines,
+        "arnold_pipelines.megaplan": arnold_pipelines.megaplan,
+        "arnold_pipelines.megaplan.cloud.runtime_attestation": runtime_attestation_module,
+    }
+    runtime = expected_runtime.resolve(strict=False)
+    entries: list[dict[str, str]] = []
+    errors: list[str] = []
+    for name, module in sorted(modules.items()):
+        path = Path(str(module.__file__)).resolve(strict=False)
+        inside = path.is_relative_to(runtime)
+        entries.append(
+            {
+                "module": name,
+                "path": str(path),
+                "root": str(runtime) if inside else "",
+            }
+        )
+        if not inside:
+            errors.append(f"mixed_module_root:{name}")
+    return entries, errors
+
+
 def _active_site_dirs() -> list[Path]:
     values: set[Path] = set()
     active_paths = {
@@ -240,6 +278,116 @@ def _interpreter_vector(
     }
 
 
+def _distribution_direct_url() -> dict[str, Any]:
+    try:
+        distribution = importlib.metadata.distribution("arnold")
+        return json.loads(distribution.read_text("direct_url.json") or "{}")
+    except (
+        importlib.metadata.PackageNotFoundError,
+        json.JSONDecodeError,
+        OSError,
+    ):
+        return {}
+
+
+def supervisor_runtime_vector(
+    *,
+    expected_source: Path,
+    expected_revision: str,
+    expected_runtime: Path,
+    expected_fingerprint: str,
+) -> dict[str, Any]:
+    """Describe the dedicated, noneditable supervisor interpreter.
+
+    This intentionally does not use :func:`runtime_provenance`: the launch,
+    worker, and resident runtimes are editable checkouts, while the supervisor
+    is an immutable wheel install in a separate venv.
+    """
+
+    source = expected_source.resolve(strict=False)
+    runtime = expected_runtime.resolve(strict=False)
+    direct_url = _distribution_direct_url()
+    modules, module_errors = _supervisor_module_vector(runtime)
+    pth, pth_errors = _pth_vector(runtime)
+    errors = [*module_errors, *pth_errors]
+    interpreter = _interpreter_vector(direct_url=direct_url)
+    if Path(sys.prefix).resolve(strict=False) != runtime:
+        errors.append("supervisor_runtime_prefix_mismatch")
+    parsed = urlparse(str(direct_url.get("url") or ""))
+    direct_source = (
+        Path(unquote(parsed.path)).resolve(strict=False)
+        if parsed.scheme == "file"
+        else None
+    )
+    if direct_source != source:
+        errors.append("supervisor_direct_url_source_mismatch")
+    if bool((direct_url.get("dir_info") or {}).get("editable")):
+        errors.append("supervisor_runtime_is_editable")
+    if not modules:
+        errors.append("supervisor_module_vector_empty")
+    core = {
+        "source": str(source),
+        "source_revision": expected_revision,
+        "source_fingerprint": expected_fingerprint,
+        "runtime": str(runtime),
+        "runtime_provenance": {
+            "install_mode": "noneditable",
+            "direct_url": direct_url,
+        },
+        "loaded_modules": modules,
+        "interpreter": interpreter,
+        "site_pth": pth,
+        "errors": sorted(set(errors)),
+        "ready": not errors,
+    }
+    return {**core, "content_sha256": _canonical_sha256(core)}
+
+
+def _probe_supervisor_runtime(receipt: Mapping[str, Any]) -> dict[str, Any]:
+    runtime = Path(str(receipt.get("runtime") or "")).resolve(strict=False)
+    interpreter = runtime / "bin" / "python3"
+    command = [
+        str(interpreter),
+        "-P",
+        "-m",
+        "arnold_pipelines.megaplan.cloud.runtime_attestation",
+        "probe-supervisor",
+        "--expected-source",
+        str(receipt.get("source") or ""),
+        "--expected-revision",
+        str(receipt.get("source_revision") or ""),
+        "--expected-runtime",
+        str(runtime),
+        "--expected-fingerprint",
+        str(receipt.get("fingerprint") or ""),
+    ]
+    environment = dict(os.environ)
+    environment.pop("PYTHONPATH", None)
+    environment["PYTHONSAFEPATH"] = "1"
+    try:
+        process = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=environment,
+        )
+        payload = json.loads(process.stdout)
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "could not inspect the dedicated supervisor runtime",
+        ) from exc
+    if process.returncode != 0 or not isinstance(payload, dict):
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "dedicated supervisor runtime is not release-ready: "
+            + (process.stderr.strip() or str(payload.get("errors") or [])),
+        )
+    return payload
+
+
 def _wrapper_vector(expected_root: Path) -> tuple[list[dict[str, Any]], list[str]]:
     wrapper_dir = expected_root / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
     wrappers = [
@@ -315,6 +463,7 @@ def build_runtime_launch_seed(
         supervisor_receipt_path,
         label="supervisor receipt",
     )
+    supervisor_vector = _probe_supervisor_runtime(supervisor_receipt)
     marker = _json_file(marker_path, label="cloud session marker")
     chain_binding = _chain_binding(chain_spec_path)
     hot_selectors = _parse_hot_env(hot_env_path)
@@ -341,6 +490,24 @@ def build_runtime_launch_seed(
         errors.append("supervisor_revision_mismatch")
     if not str(supervisor_receipt.get("fingerprint") or ""):
         errors.append("supervisor_fingerprint_missing")
+    if not supervisor_vector.get("ready"):
+        errors.extend(
+            f"supervisor:{item}" for item in supervisor_vector.get("errors") or []
+        )
+    receipt_imports = supervisor_receipt.get("imports")
+    vector_imports = {
+        str(item.get("module")): str(item.get("path"))
+        for item in supervisor_vector.get("loaded_modules") or []
+        if isinstance(item, Mapping)
+        and str(item.get("module")) in {"arnold", "arnold_pipelines", "arnold_pipelines.megaplan"}
+    }
+    expected_imports = {
+        "arnold": vector_imports.get("arnold", ""),
+        "arnold_pipelines": vector_imports.get("arnold_pipelines", ""),
+        "megaplan": vector_imports.get("arnold_pipelines.megaplan", ""),
+    }
+    if receipt_imports != expected_imports:
+        errors.append("supervisor_import_receipt_mismatch")
     for name in RUNTIME_SELECTOR_NAMES[:6]:
         value = hot_selectors.get(name)
         if value and Path(value).resolve(strict=False) != root:
@@ -359,6 +526,8 @@ def build_runtime_launch_seed(
         errors.append("chain_runtime_root_mismatch")
     if str(chain_identity.get("source_revision") or "") != expected_revision:
         errors.append("chain_runtime_revision_mismatch")
+    if dict(marker_identity) != dict(chain_identity):
+        errors.append("marker_chain_runtime_identity_mismatch")
     core = {
         "schema": RUNTIME_LAUNCH_SEED_SCHEMA,
         "expected_root": str(root),
@@ -382,6 +551,7 @@ def build_runtime_launch_seed(
             "source_revision": supervisor_receipt.get("source_revision"),
             "imports": supervisor_receipt.get("imports"),
         },
+        "supervisor_runtime": supervisor_vector,
         "hot_env": {
             "file": _file_identity(hot_env_path),
             "selectors": hot_selectors,
@@ -430,6 +600,21 @@ def runtime_vector_sha256(seed: Mapping[str, Any]) -> str:
     )
 
 
+def _component_runtime_vector_sha256(
+    seed: Mapping[str, Any],
+    *,
+    component: str,
+) -> str:
+    if component in _SUPERVISOR_COMPONENTS:
+        return _canonical_sha256(
+            {
+                "runtime": seed.get("supervisor_runtime"),
+                "wrappers": seed.get("wrappers"),
+            }
+        )
+    return runtime_vector_sha256(seed)
+
+
 def validate_runtime_launch_seed(
     seed: Mapping[str, Any],
     *,
@@ -445,25 +630,50 @@ def validate_runtime_launch_seed(
         )
     root = Path(str(seed.get("expected_root") or "")).resolve(strict=False)
     revision = str(seed.get("expected_revision") or "")
-    provenance = runtime_provenance(expected_root=root, expected_revision=revision)
-    if not provenance.get("ok"):
-        raise CliError(
-            RUNTIME_ATTESTATION_ERROR,
-            f"runtime provenance changed: {provenance.get('errors')}",
+    is_supervisor = component in _SUPERVISOR_COMPONENTS
+    supervisor = seed.get("supervisor_receipt")
+    supervisor = supervisor if isinstance(supervisor, Mapping) else {}
+    if is_supervisor:
+        current_runtime = supervisor_runtime_vector(
+            expected_source=root,
+            expected_revision=revision,
+            expected_runtime=Path(str(supervisor.get("runtime") or "")),
+            expected_fingerprint=str(supervisor.get("fingerprint") or ""),
         )
-    if provenance != seed.get("runtime_provenance"):
-        raise CliError(
-            RUNTIME_ATTESTATION_ERROR,
-            "runtime provenance or direct_url identity drifted",
-        )
-    modules, module_errors = _module_vector(root)
+        if current_runtime != seed.get("supervisor_runtime"):
+            raise CliError(
+                RUNTIME_ATTESTATION_ERROR,
+                "dedicated supervisor runtime vector drifted",
+            )
+        expected_runtime = seed.get("supervisor_runtime")
+        expected_runtime = expected_runtime if isinstance(expected_runtime, Mapping) else {}
+        expected_modules = expected_runtime.get("loaded_modules")
+        module_root = Path(str(supervisor.get("runtime") or "")).resolve(strict=False)
+    else:
+        provenance = runtime_provenance(expected_root=root, expected_revision=revision)
+        if not provenance.get("ok"):
+            raise CliError(
+                RUNTIME_ATTESTATION_ERROR,
+                f"runtime provenance changed: {provenance.get('errors')}",
+            )
+        if provenance != seed.get("runtime_provenance"):
+            raise CliError(
+                RUNTIME_ATTESTATION_ERROR,
+                "runtime provenance or direct_url identity drifted",
+            )
+        expected_modules = seed.get("loaded_modules")
+        module_root = root
+    modules, module_errors = (
+        _supervisor_module_vector(module_root)
+        if is_supervisor
+        else _module_vector(module_root)
+    )
     if module_errors:
         raise CliError(
             RUNTIME_ATTESTATION_ERROR,
             "loaded Arnold modules escaped the expected root: "
             + ", ".join(module_errors),
         )
-    expected_modules = seed.get("loaded_modules")
     if not isinstance(expected_modules, list):
         raise CliError(
             RUNTIME_ATTESTATION_ERROR,
@@ -482,8 +692,13 @@ def validate_runtime_launch_seed(
                 RUNTIME_ATTESTATION_ERROR,
                 f"loaded module identity changed: {name or '<missing>'}",
             )
-    pth, pth_errors = _pth_vector(root)
-    if pth_errors or pth != seed.get("site_pth"):
+    pth, pth_errors = _pth_vector(module_root)
+    expected_pth = (
+        (seed.get("supervisor_runtime") or {}).get("site_pth")
+        if is_supervisor
+        else seed.get("site_pth")
+    )
+    if pth_errors or pth != expected_pth:
         raise CliError(
             RUNTIME_ATTESTATION_ERROR,
             "active site .pth vector changed or is unsafe: " + ", ".join(pth_errors),
@@ -492,16 +707,7 @@ def validate_runtime_launch_seed(
     if wrapper_errors or wrappers != seed.get("wrappers"):
         raise CliError(RUNTIME_ATTESTATION_ERROR, "runtime wrapper manifest drifted")
     expected_interpreter = seed.get("interpreter")
-    current_interpreter = _interpreter_vector(
-        direct_url=(
-            provenance.get("direct_url")
-            if isinstance(provenance.get("direct_url"), Mapping)
-            else {}
-        )
-    )
-    if component in _SUPERVISOR_COMPONENTS:
-        supervisor = seed.get("supervisor_receipt")
-        supervisor = supervisor if isinstance(supervisor, Mapping) else {}
+    if is_supervisor:
         runtime = str(supervisor.get("runtime") or "")
         if not runtime or Path(sys.prefix).resolve(strict=False) != Path(
             runtime
@@ -510,10 +716,18 @@ def validate_runtime_launch_seed(
                 RUNTIME_ATTESTATION_ERROR,
                 "supervisor interpreter does not match its prepared runtime",
             )
-    elif current_interpreter != expected_interpreter:
-        raise CliError(
-            RUNTIME_ATTESTATION_ERROR, "runtime interpreter identity drifted"
+    else:
+        current_interpreter = _interpreter_vector(
+            direct_url=(
+                provenance.get("direct_url")
+                if isinstance(provenance.get("direct_url"), Mapping)
+                else {}
+            )
         )
+        if current_interpreter != expected_interpreter:
+            raise CliError(
+                RUNTIME_ATTESTATION_ERROR, "runtime interpreter identity drifted"
+            )
     paths = seed.get("input_paths")
     paths = paths if isinstance(paths, Mapping) else {}
     manifest_paths = [
@@ -544,7 +758,10 @@ def validate_runtime_launch_seed(
         "seed_sha256": seed["content_sha256"],
         "expected_root": str(root),
         "expected_revision": revision,
-        "runtime_vector_sha256": runtime_vector_sha256(seed),
+        "runtime_vector_sha256": _component_runtime_vector_sha256(
+            seed,
+            component=component,
+        ),
     }
 
 
@@ -734,6 +951,11 @@ def main(argv: list[str] | None = None) -> int:
     verify = sub.add_parser("verify-process")
     verify.add_argument("--component", required=True)
     verify.add_argument("--target-pid", type=int, required=True)
+    probe = sub.add_parser("probe-supervisor")
+    probe.add_argument("--expected-source", type=Path, required=True)
+    probe.add_argument("--expected-revision", required=True)
+    probe.add_argument("--expected-runtime", type=Path, required=True)
+    probe.add_argument("--expected-fingerprint", required=True)
     args = parser.parse_args(argv)
     if args.action == "build":
         payload = build_runtime_launch_seed(
@@ -746,6 +968,15 @@ def main(argv: list[str] | None = None) -> int:
             seed_doc_paths=args.seed_doc,
         )
         _atomic_write(args.output, payload)
+        print(json.dumps(payload, sort_keys=True))
+        return 0 if payload["ready"] else 2
+    if args.action == "probe-supervisor":
+        payload = supervisor_runtime_vector(
+            expected_source=args.expected_source,
+            expected_revision=args.expected_revision,
+            expected_runtime=args.expected_runtime,
+            expected_fingerprint=args.expected_fingerprint,
+        )
         print(json.dumps(payload, sort_keys=True))
         return 0 if payload["ready"] else 2
     require_configured_runtime_launch(
