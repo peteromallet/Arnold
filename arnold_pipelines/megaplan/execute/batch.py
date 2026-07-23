@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
@@ -2526,22 +2527,15 @@ def _run_and_merge_batch(
             "skip_replay": False,
         }
     # M8A T18 — track dispatch start time for queue-duration measurement.
-    # M8A T10 - run deterministic harness validation jobs outside model dispatch.
+    # M8A T10 — determine which deterministic validation jobs belong to this
+    # batch now, but run them only after productive dispatch.  A narrow recheck
+    # may target a file that this batch is responsible for creating, so running
+    # it as a pre-dispatch admission gate deterministically rejects valid work.
     _is_final_batch_flag = False
     _bn = locals().get("batch_number")
     _bt = locals().get("batches_total")
     if isinstance(_bn, int) and isinstance(_bt, int) and _bn >= _bt:
         _is_final_batch_flag = True
-    # Harness validation is an execution admission gate.  Let its typed
-    # failures propagate so productive dispatch cannot continue after a
-    # malformed job or an unexpected deterministic-suite result.
-    _run_batch_validation_jobs(
-        plan_dir=plan_dir,
-        project_dir=project_dir,
-        finalize_data=finalize_data,
-        batch_task_ids=batch_task_ids,
-        is_final_batch=_is_final_batch_flag,
-    )
     _dispatch_start = time.monotonic()
     # M8A T16 - under opt-in canary enforcement, when repair adoption
     # adopted every task in this batch, skip the worker replay/dispatch path.
@@ -2587,6 +2581,16 @@ def _run_and_merge_batch(
             effort=selected.effort,
             resolved_model=worker.model_actual or selected.model,
         )
+    # Validate the state produced by this batch before its result is merged or
+    # accepted.  Typed failures propagate, so failed deterministic evidence
+    # cannot be recorded as completed task work.
+    _run_batch_validation_jobs(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        finalize_data=finalize_data,
+        batch_task_ids=batch_task_ids,
+        is_final_batch=_is_final_batch_flag,
+    )
     maybe_run_channel_shadow(
         root=root,
         plan_dir=plan_dir,
@@ -3026,7 +3030,7 @@ def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_ta
                 Path(project_dir),
                 config,
                 phase="m8a_validation",
-                deadline_seconds=float(timeout),
+                deadline_seconds=time.monotonic() + float(timeout),
                 idle_seconds=None,
             )
         except Exception as exc:

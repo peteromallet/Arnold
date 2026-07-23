@@ -517,20 +517,24 @@ def test_batch_validation_jobs_accepts_validation_jobs_from_finalize() -> None:
             return_value=fake_result,
         ) as mock_run:
             with patch(
-                "arnold_pipelines.megaplan.observability.work_ledger.emit_validation",
-                return_value={"event_id": "ev-1", "event_class": "validation"},
+                "arnold_pipelines.megaplan.execute.batch.time.monotonic",
+                return_value=1_000.0,
             ):
                 with patch(
-                    "arnold_pipelines.megaplan.observability.work_ledger.emit_unavailable_reason",
+                    "arnold_pipelines.megaplan.observability.work_ledger.emit_validation",
+                    return_value={"event_id": "ev-1", "event_class": "validation"},
                 ):
-                    evidence = _run_batch_validation_jobs(
-                        plan_dir=plan_dir,
-                        project_dir=project_dir,
-                        finalize_data=finalize_data,
-                        batch_task_ids=["T1"],
-                        is_final_batch=False,
-                        state=state,
-                    )
+                    with patch(
+                        "arnold_pipelines.megaplan.observability.work_ledger.emit_unavailable_reason",
+                    ):
+                        evidence = _run_batch_validation_jobs(
+                            plan_dir=plan_dir,
+                            project_dir=project_dir,
+                            finalize_data=finalize_data,
+                            batch_task_ids=["T1"],
+                            is_final_batch=False,
+                            state=state,
+                        )
 
         assert len(evidence) == 1
         assert evidence[0]["job_id"] == "VJ1"
@@ -540,6 +544,7 @@ def test_batch_validation_jobs_accepts_validation_jobs_from_finalize() -> None:
         assert "evidence_hash" in evidence[0]
         assert evidence[0]["evidence_hash"].startswith("sha256:")
         assert mock_run.call_args.args[1]["test_command"] == "echo ok"
+        assert mock_run.call_args.kwargs["deadline_seconds"] == 1_060.0
     finally:
         try:
             for d in (plan_dir, project_dir):
@@ -1132,6 +1137,21 @@ def test_repair_adoption_rereads_current_execution_artifacts() -> None:
                 root.rmdir()
         except OSError:
             pass
+
+
+def test_batch_validation_runs_after_worker_before_result_merge() -> None:
+    """Task-created validation targets are checked after work, before acceptance."""
+    import inspect
+
+    from arnold_pipelines.megaplan.execute.batch import _run_and_merge_batch
+
+    source = inspect.getsource(_run_and_merge_batch)
+
+    worker_dispatch = source.index("_run_execute_worker_with_configured_fallback(")
+    validation = source.index("_run_batch_validation_jobs(")
+    result_merge = source.index("_merge_batch_results(")
+
+    assert worker_dispatch < validation < result_merge
 
 
 def test_validation_job_mutation_is_rejected_before_suite_boundary() -> None:
