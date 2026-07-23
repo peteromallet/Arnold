@@ -16212,7 +16212,13 @@ def test_partial_liveness_three_ticks_triggers_condition_5() -> None:
 
 
 def test_l1_l2_l3_prompts_preserve_profile_and_reject_cursorless_success() -> None:
-    wrappers = Path(__file__).resolve().parents[2] / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
+    wrappers = (
+        Path(__file__).resolve().parents[2]
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "wrappers"
+    )
     repair_loop = (wrappers / "arnold-repair-loop").read_text(encoding="utf-8")
     meta_loop = (wrappers / "arnold-meta-repair-loop").read_text(encoding="utf-8")
     auditor = (wrappers / "arnold-progress-auditor").read_text(encoding="utf-8")

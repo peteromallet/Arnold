@@ -1016,14 +1016,14 @@ ordinary repair can succeed.
 - Verify from the goal recovery contract and authoritative chain/plan evidence
   that the blocker cleared, applicable worker is fresh, and the original plan
   advanced beyond its frozen stage.
-- A terminal SUCCESS outcome means that full evidence contract, never a fixer
-  self-report, clean exit, or same-stage heartbeat by itself.
-- Verify that the retriggered ordinary repair reaches a terminal
-  SUCCESS outcome and advances the canonical plan/chain cursor.
 - Treat a missing ordinary-repair profile-preservation clause as a contract
   failure. Preserve the configured target profile; do not select or switch it.
 - Classify terminal success without canonical cursor advancement as
   'completed-repair-without-cursor-advance' and repair that false-success path.
+- A terminal SUCCESS outcome means that full evidence contract, never a fixer
+  self-report, clean exit, or same-stage heartbeat by itself.
+- Verify that the retriggered ordinary repair reaches a terminal
+  SUCCESS outcome and advances the canonical plan/chain cursor.
 - Do NOT claim success without a verified ordinary repair retrigger —
   partial_liveness and "repairing" are not terminal success.
 
@@ -1121,14 +1121,14 @@ ordinary repair can succeed.
 - Verify from the goal recovery contract and authoritative chain/plan evidence
   that the blocker cleared, applicable worker is fresh, and the original plan
   advanced beyond its frozen stage.
-- A terminal SUCCESS outcome means that full evidence contract, never a fixer
-  self-report, clean exit, or same-stage heartbeat by itself.
-- Verify that the retriggered ordinary repair reaches a terminal
-  SUCCESS outcome and advances the canonical plan/chain cursor.
 - Treat a missing ordinary-repair profile-preservation clause as a contract
   failure. Preserve the configured target profile; do not select or switch it.
 - Classify terminal success without canonical cursor advancement as
   'completed-repair-without-cursor-advance' and repair that false-success path.
+- A terminal SUCCESS outcome means that full evidence contract, never a fixer
+  self-report, clean exit, or same-stage heartbeat by itself.
+- Verify that the retriggered ordinary repair reaches a terminal
+  SUCCESS outcome and advances the canonical plan/chain cursor.
 - Do NOT claim success without a verified ordinary repair retrigger —
   partial_liveness and "repairing" are not terminal success.
 
