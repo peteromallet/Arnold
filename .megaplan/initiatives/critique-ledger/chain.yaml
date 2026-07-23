@@ -105,6 +105,8 @@ on_escalate:
 merge_policy: auto
 driver:
   execution_binding: required
+  intended_initiative_revision: b2857cc30b2562b534c101b93290d1b43127966b
+  initiative_path: .megaplan/initiatives/critique-ledger
   robustness: full
   phase_timeout: 10800
   auto_approve: true
