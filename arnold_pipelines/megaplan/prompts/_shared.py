@@ -15,6 +15,17 @@ from arnold_pipelines.megaplan.schema_projection import (
 from arnold_pipelines.megaplan.schemas import SCHEMAS
 
 
+TEST_BLAST_RADIUS_OUTPUT_CONTRACT = """
+When you include `test_blast_radius`, it MUST be schema-complete. Include every
+field in this shape:
+`{"strategy":"scoped","confidence":"high","selectors":[{"kind":"path","value":"tests/test_relevant.py","reason":"covers the changed surface"}],"changed_surfaces":["src/relevant.py"],"always_run":[],"full_suite_fallback":true,"rationale":"Why these tests cover the planned changes.","import_graph":{"degraded":false,"dependent_tests":0,"unresolved":[]}}`.
+The runtime deterministically recomputes and merges the import graph and the
+coverage floor from `changed_surfaces`; do not omit `confidence`, `always_run`,
+`changed_surfaces`, or `import_graph` merely because those values are also
+runtime-derived.
+""".strip()
+
+
 def _resolve_prompt_root(plan_dir: Path, root: Path | None) -> Path:
     if root is not None:
         return root

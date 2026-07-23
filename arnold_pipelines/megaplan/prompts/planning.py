@@ -18,7 +18,12 @@ from arnold_pipelines.megaplan._core import (
 from arnold_pipelines.megaplan.forms import get_form
 from arnold_pipelines.megaplan.types import PlanState
 
-from ._shared import _render_contracts_block, _render_prep_block, _resolve_contract_context
+from ._shared import (
+    TEST_BLAST_RADIUS_OUTPUT_CONTRACT,
+    _render_contracts_block,
+    _render_prep_block,
+    _resolve_contract_context,
+)
 
 
 def _render_open_tickets(state: PlanState, plan_dir: Path) -> str:
@@ -330,7 +335,8 @@ def _plan_prompt(
           - 4 = cross-cutting change with architecture implications
           - 5 = fundamental system change with high regression risk
         - Populate `changed_surfaces` with every concrete file path your plan will change or create. Include both source files and test files. Use repo-relative paths (e.g., `src/prompts.py`, `tests/test_prompts.py`). This list drives the deterministic test-selection blast radius; be complete. If your plan touches a file, list it.
-        - (Optional) Populate `test_blast_radius` with your own scoped test-selection proposal. This complements the deterministic floor the system computes from `changed_surfaces`. Provide `strategy` ("scoped", "full", or "none"), `selectors` (array of `{{"kind": "path", "value": "<path>", "reason": "<why>"}}` objects), and a `rationale` string. The system merges your proposal with the deterministic floor; you cannot narrow below the floor, but you can widen with additional selectors or escalate to full. If you intend a scoped finalize baseline while keeping the full suite as a hard gate, set `strategy` to "scoped", include concrete `selectors`, and set `full_suite_fallback` to true; the floor's full-suite requirement will be honored by the fallback without forcing the baseline strategy to "full".
+        - (Optional) Populate `test_blast_radius` with your own scoped test-selection proposal. This complements the deterministic floor the system computes from `changed_surfaces`; you cannot narrow below the floor, but you can widen with additional selectors or escalate to full. If you intend a scoped finalize baseline while keeping the full suite as a hard gate, set `strategy` to "scoped", include concrete `selectors`, and set `full_suite_fallback` to true; the floor's full-suite requirement will be honored by the fallback without forcing the baseline strategy to "full".
+        - {TEST_BLAST_RADIUS_OUTPUT_CONTRACT}
 
         {PLAN_TEMPLATE}
         """
