@@ -40,6 +40,7 @@ _ALLOWED_FINDING_KEYS = {
     "evidence",
     "finding_id",
 }
+_CANONICAL_FINDING_ID = re.compile(r"^CF-[0-9A-F]{20}$")
 
 
 class CritiqueCustodyError(ValueError):
@@ -120,6 +121,18 @@ def _normalize_flag_ids(payload: dict[str, Any]) -> None:
             for value in values:
                 candidates = remapped.get(value, set())
                 if len(candidates) > 1:
+                    # A prior reducer-owned finding id can legitimately be
+                    # mentioned by a current check while multiple current
+                    # producers reuse that string as their local alias. Keep
+                    # the canonical reference intact and let the downstream
+                    # flag registry prove that it exists. Opaque/local ids
+                    # remain ambiguous and fail closed here.
+                    if (
+                        isinstance(value, str)
+                        and _CANONICAL_FINDING_ID.fullmatch(value)
+                    ):
+                        normalized_values.append(value)
+                        continue
                     raise CritiqueCustodyError(
                         "critique_finding_reference_ambiguous",
                         [f"{key} local id {value!r} maps to {sorted(candidates)!r}"],
