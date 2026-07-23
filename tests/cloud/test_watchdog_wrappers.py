@@ -738,6 +738,41 @@ def test_repair_loop_requires_fresh_investigation_after_dev_mutation() -> None:
     assert "fresh investigation required before recovery" in text[reinvestigate:mechanical]
 
 
+def test_repair_applied_reinvestigate_clears_completion_and_requests_one_generation(
+    tmp_path: Path,
+) -> None:
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "outcome": "complete",
+                "completed_at": "2026-07-22T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("repair_data_set_outcome"),
+            "require_repair_lock_held() { :; }",
+            "repair_save_verdict_evidence() { :; }",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            "repair_data_set_outcome repair_applied_reinvestigate",
+            "repair_data_set_outcome repair_applied_reinvestigate",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(data_path.read_text(encoding="utf-8"))
+    assert payload["outcome"] == "repair_applied_reinvestigate"
+    assert "completed_at" not in payload
+    assert payload["reinvestigation"]["status"] == "required"
+    assert payload["reinvestigation"]["generation"] == 1
+
+
 def test_repair_loop_effective_fixer_prompts_require_canonical_process_custody_policy(
     tmp_path: Path,
 ) -> None:
@@ -6468,6 +6503,85 @@ def test_extracted_repair_relaunch_resolver_preserves_rejected_acceptance_gate(
     assert result.stdout == "failed:acceptance_gate_closed\n"
     assert "command not found" not in result.stderr
     assert "must-not-run" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("checker_body", "expected_reason"),
+    [
+        ("return 23", "acceptance_checker_nonzero_exit_23"),
+        ("return 0", "acceptance_checker_empty_output"),
+        ("echo 'not-json'; return 0", "acceptance_checker_malformed_output"),
+        ("echo '{\"reason\":\"missing typed decision\"}'; return 0", "acceptance_checker_malformed_output"),
+    ],
+)
+def test_repair_acceptance_checker_indeterminate_fails_closed_without_child(
+    tmp_path: Path,
+    checker_body: str,
+    expected_reason: str,
+) -> None:
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    script = "\n\n".join(
+        [
+            *_extract_relaunch_functions("repair"),
+            "log() { :; }",
+            "report_item() { :; }",
+            "python3() {",
+            "  if [[ \"$1\" == \"-P\" && \"$2\" == \"-\" ]]; then",
+            f"    {checker_body}",
+            "  fi",
+            "  command python3 \"$@\"",
+            "}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            f"REPAIR_DATA_DIR={str(tmp_path)!r}",
+            f"REPORT_PATH={str(tmp_path / 'report.tsv')!r}",
+            "SYNC_BRANCH=editible-install",
+            (
+                f"resolve_relaunch_command demo-session {str(tmp_path)!r} "
+                f"{str(spec_path)!r} chain '' 'echo child-launched'"
+            ),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 1
+    assert result.stdout == "failed:acceptance_gate_closed\n"
+    assert "child-launched" not in result.stdout
+    blocker_path = tmp_path / "demo-session.blocker-acceptance-gate.json"
+    assert blocker_path.exists(), result.stderr
+    blocker = json.loads(blocker_path.read_text(encoding="utf-8"))
+    assert blocker["status"] == "indeterminate"
+    assert blocker["reason"] == expected_reason
+
+
+def test_watchdog_and_meta_fallbacks_require_runtime_source_and_digest_identity() -> None:
+    runtime_lib = _wrapper("arnold-supervisor-runtime-lib")
+    watchdog = _wrapper("arnold-watchdog")
+    meta = _wrapper("arnold-meta-repair-loop")
+
+    assert "arnold_supervisor_select_exact_fallback()" in runtime_lib
+    assert "fallback_runtime_source_identity_mismatch" in runtime_lib
+    assert "fallback_wrapper_digest_mismatch" in runtime_lib
+    assert runtime_lib.count("sha256sum") >= 2
+    assert "arnold_supervisor_select_exact_fallback watchdog-primary-repair" in watchdog
+    assert "arnold_supervisor_select_exact_fallback watchdog-meta-repair" in watchdog
+    assert "arnold_supervisor_select_exact_fallback" in meta
+    assert 'REPAIR_LOOP_BIN="$REPAIR_LOOP_FALLBACK"' not in meta
+
+
+def test_meta_recursion_and_acceptance_checks_have_typed_fail_closed_paths() -> None:
+    watchdog = _wrapper("arnold-watchdog")
+    meta = _wrapper("arnold-meta-repair-loop")
+
+    assert '"$recursion_result" != OK:*' in watchdog
+    assert "recursion-check-indeterminate.json" in watchdog
+    assert '"$RECURSION_OUTPUT" != OK:*' in meta
+    assert "arnold-meta-repair-recursion-check-v1" in meta
+    assert "acceptance_checker_empty_output" in meta
+    assert "acceptance_checker_malformed_output" in meta
+    assert "acceptance_checker_nonzero_exit_" in meta
 
 
 def test_watchdog_done_plan_reports_complete_without_repair_or_relaunch(tmp_path: Path) -> None:
@@ -13088,6 +13202,61 @@ def test_auditor_worklist_unions_marker_tmux_and_workspace_activity_and_skips_ar
     assert observed[(str(plan_marker_ws), "target-plan")] == {"marker"}
     assert (str(plan_marker_ws), "stale-unrelated") not in observed
     assert all(entry["workspace"] != str(arnold_src) for entry in entries)
+
+
+def test_auditor_missing_workspace_marker_emits_durable_indeterminate_discovery(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    arnold_src = workspace_root / "arnold"
+    arnold_src.mkdir()
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    missing_workspace = workspace_root / "missing-chain"
+    marker_path = marker_dir / "missing-session.json"
+    marker_path.write_text(
+        json.dumps(
+            {
+                "session": "missing-session",
+                "workspace": str(missing_workspace),
+            }
+        ),
+        encoding="utf-8",
+    )
+    discover_bin = tmp_path / "discover.sh"
+    discover_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    discover_bin.chmod(discover_bin.stat().st_mode | stat.S_IXUSR)
+    worklist = tmp_path / "worklist.jsonl"
+
+    entries = _run_auditor_worklist_builder(
+        tmp_path,
+        marker_dir=marker_dir,
+        worklist=worklist,
+        window_hours=6,
+        discover_bin=discover_bin,
+        workspace_root=workspace_root,
+        arnold_src=arnold_src,
+    )
+
+    assert entries == []
+    discoveries = [
+        json.loads(line)
+        for line in (tmp_path / "discovery-indeterminate.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert discoveries == [
+        {
+            "schema_version": "arnold-progress-auditor-discovery-v1",
+            "status": "indeterminate",
+            "reason": "missing_workspace",
+            "session": "missing-session",
+            "workspace": str(missing_workspace),
+            "marker_path": str(marker_path),
+        }
+    ]
 
 
 def test_auditor_gather_includes_done_plan_with_recent_events_mtime(tmp_path: Path) -> None:

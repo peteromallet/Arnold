@@ -679,6 +679,17 @@ def build_advancement_snapshot(
         },
         "plan_activity": plan_activity,
         "execute_empty_batch": _empty_execute_batch_summary(context),
+        "canonical_cursor": {
+            "plan": _plan_identity(context),
+            "completed_count": _as_int(chain_state.get("completed_count")),
+            "current_milestone_index": _as_int(chain_state.get("current_milestone_index")),
+            "current_state": _as_text(
+                plan_runtime.get("current_state")
+                or plan_failure.get("current_state")
+                or chain_state.get("last_state")
+                or chain_state.get("current_state")
+            ),
+        },
     }
 
 
@@ -690,57 +701,26 @@ def has_advancement(
         return False
     prev = _as_dict(previous)
     curr = _as_dict(current)
-    prev_activity = _as_dict(prev.get("plan_activity"))
-    curr_activity = _as_dict(curr.get("plan_activity"))
-    if bool(curr_activity.get("has_in_flight_llm")):
-        return True
-    if bool(prev_activity.get("available")) and bool(curr_activity.get("available")):
-        prev_events_mtime = _as_float(prev_activity.get("events_mtime")) or 0.0
-        curr_events_mtime = _as_float(curr_activity.get("events_mtime")) or 0.0
-        prev_events_size = _as_int(prev_activity.get("events_size")) or 0
-        curr_events_size = _as_int(curr_activity.get("events_size")) or 0
-        if curr_events_mtime > prev_events_mtime or curr_events_size > prev_events_size:
-            return True
-    if _as_text(curr_activity.get("liveness")) == "progressing":
-        return True
-
-    curr_external = _as_dict(curr.get("external_checks"))
-    curr_pr = _as_dict(curr_external.get("pr"))
-    if bool(curr_pr.get("available")) and bool(curr_pr.get("merged")):
-        return True
-
-    prev_external = _as_dict(prev.get("external_checks"))
-    prev_git = _as_dict(prev_external.get("git"))
-    curr_git = _as_dict(curr_external.get("git"))
-    if bool(prev_git.get("available")) and bool(curr_git.get("available")):
-        prev_head = _as_text(prev_git.get("head"))
-        curr_head = _as_text(curr_git.get("head"))
-        prev_ahead = _as_int(prev_git.get("ahead_count"))
-        curr_ahead = _as_int(curr_git.get("ahead_count"))
-        if curr_head and prev_head and curr_head != prev_head:
-            if prev_ahead is None or curr_ahead is None or curr_ahead >= prev_ahead:
-                return True
-        if prev_ahead is not None and curr_ahead is not None and curr_ahead > prev_ahead:
-            return True
-
-    external_available = any(
-        bool(_as_dict(checks.get(name)).get("available"))
-        for checks in (prev_external, curr_external)
-        for name in ("pr", "git")
-    )
-    if external_available:
+    prev_cursor = _as_dict(prev.get("canonical_cursor")) or prev
+    curr_cursor = _as_dict(curr.get("canonical_cursor")) or curr
+    prev_plan = _as_text(prev_cursor.get("plan") or prev.get("milestone_or_plan"))
+    curr_plan = _as_text(curr_cursor.get("plan") or curr.get("milestone_or_plan"))
+    # Recurrence belongs to one canonical plan occurrence.  Activity telemetry
+    # and external delivery state (events, Git, PR, CI) are diagnostic only and
+    # cannot reset its epoch.  A plan identity change also cannot retroactively
+    # prove that the prior occurrence advanced.
+    if not prev_plan or not curr_plan or prev_plan != curr_plan:
         return False
-
-    prev_completed = _as_int(prev.get("completed_count"))
-    curr_completed = _as_int(curr.get("completed_count"))
+    prev_completed = _as_int(prev_cursor.get("completed_count"))
+    curr_completed = _as_int(curr_cursor.get("completed_count"))
     if prev_completed is not None and curr_completed is not None and curr_completed > prev_completed:
         return True
-    prev_index = _as_int(prev.get("current_milestone_index"))
-    curr_index = _as_int(curr.get("current_milestone_index"))
+    prev_index = _as_int(prev_cursor.get("current_milestone_index"))
+    curr_index = _as_int(curr_cursor.get("current_milestone_index"))
     if prev_index is not None and curr_index is not None and curr_index > prev_index:
         return True
-    if _as_text(prev.get("current_state")).lower() not in {"done", "complete", "completed"}:
-        if _as_text(curr.get("current_state")).lower() in {"done", "complete", "completed"}:
+    if _as_text(prev_cursor.get("current_state")).lower() not in {"done", "complete", "completed"}:
+        if _as_text(curr_cursor.get("current_state")).lower() in {"done", "complete", "completed"}:
             return True
     return False
 

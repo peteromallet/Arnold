@@ -570,6 +570,7 @@ def _merge(
 
 
 entries: dict[tuple[str, str], dict] = {}
+discovery_indeterminate: list[dict] = []
 
 # (a) Marker-discovered workspaces.
 for marker_path in sorted(pathlib.Path(marker_dir).glob("*.json")):
@@ -579,9 +580,28 @@ for marker_path in sorted(pathlib.Path(marker_dir).glob("*.json")):
         continue
     workspace_raw = payload.get("workspace") or payload.get("workspace_dir")
     if not workspace_raw:
+        discovery_indeterminate.append(
+            {
+                "schema_version": "arnold-progress-auditor-discovery-v1",
+                "status": "indeterminate",
+                "reason": "workspace_identity_missing",
+                "session": str(payload.get("session") or marker_path.stem),
+                "marker_path": str(marker_path),
+            }
+        )
         continue
     workspace = pathlib.Path(workspace_raw)
     if not workspace.is_dir():
+        discovery_indeterminate.append(
+            {
+                "schema_version": "arnold-progress-auditor-discovery-v1",
+                "status": "indeterminate",
+                "reason": "missing_workspace",
+                "session": str(payload.get("session") or marker_path.stem),
+                "workspace": str(workspace),
+                "marker_path": str(marker_path),
+            }
+        )
         continue
     session = payload.get("session") or marker_path.stem
     updated = payload.get("updated_at") or payload.get("created_at") or ""
@@ -658,6 +678,14 @@ for entry in entries.values():
 
 with open(out, "w", encoding="utf-8") as handle:
     for entry in sorted(entries.values(), key=lambda item: (item["workspace"], item["plan"])):
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+
+discovery_path = pathlib.Path(out).with_name("discovery-indeterminate.jsonl")
+with discovery_path.open("w", encoding="utf-8") as handle:
+    for entry in sorted(
+        discovery_indeterminate,
+        key=lambda item: (item.get("session", ""), item.get("marker_path", "")),
+    ):
         handle.write(json.dumps(entry, sort_keys=True) + "\n")
 PY
 

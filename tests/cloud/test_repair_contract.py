@@ -2444,3 +2444,12 @@ def test_recovery_view_empty_does_not_trigger_recovery_path() -> None:
     )
     assert decision.decision == repair_contract.DISPATCH_DECISION_L1
     assert any("known repairable" in r for r in decision.rationale)
+
+
+def test_repair_applied_reinvestigate_is_explicitly_nonterminal() -> None:
+    outcome = repair_contract.REPAIR_APPLIED_REINVESTIGATE
+
+    assert outcome in repair_contract.ALL_OUTCOMES
+    assert outcome in repair_contract.NON_TERMINAL_OUTCOMES
+    assert repair_contract.is_terminal_outcome(outcome) is False
+    assert repair_contract.is_success_outcome(outcome) is False

@@ -34,12 +34,20 @@ def classify_runner_liveness(
         for item in (watchdog_statuses or ())
         if str(item or "").strip()
     }
-    if (
-        tmux.get("pid_live") is True
-        or tmux.get("session_live") is True
-        or live_status == "alive"
-        or active_step.get("worker_pid_alive") is True
-    ):
+    session_identity = str(tmux.get("session") or "").strip()
+    process_identity = tmux.get("pid")
+    process_identity_valid = (
+        isinstance(process_identity, int)
+        and not isinstance(process_identity, bool)
+        and process_identity > 0
+    )
+    active_process_identity = str(active_step.get("worker_pid") or "").strip()
+    tmux_process_live = process_identity_valid and tmux.get("pid_live") is True
+    tmux_session_live = bool(session_identity) and tmux.get("session_live") is True
+    active_process_live = (
+        bool(active_process_identity) and active_step.get("worker_pid_alive") is True
+    )
+    if tmux_process_live or tmux_session_live or active_process_live:
         state = "alive"
         source = "live_process_evidence"
     elif (
@@ -58,6 +66,8 @@ def classify_runner_liveness(
         "dead": state == "dead",
         "known": state != "unknown",
         "source": source,
+        "session_identity_present": bool(session_identity),
+        "process_identity_present": bool(process_identity_valid or active_process_identity),
         "tmux_live_status": live_status or "unknown",
         "watchdog_statuses": sorted(statuses),
     }

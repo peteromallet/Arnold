@@ -459,7 +459,7 @@ def test_detected_rollup_unaffected_by_layer3_breaker() -> None:
     assert result["detected"] == (result["layer1"]["detected"] or result["layer2"]["detected"])
 
 
-def test_live_merged_pr_overrides_stale_state_file_and_resets_no_advance(
+def test_live_merged_pr_does_not_reset_same_occurrence_recurrence(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -502,9 +502,9 @@ def test_live_merged_pr_overrides_stale_state_file_and_resets_no_advance(
     )
 
     assert current["external_checks"]["pr"]["merged"] is True
-    assert updated["advancement_since_last_dispatch"] is True
-    assert updated["layer2_recurrence"] is False
-    assert updated["no_advance_count"] == 1
+    assert updated["advancement_since_last_dispatch"] is False
+    assert updated["layer2_recurrence"] is True
+    assert updated["no_advance_count"] == 3
 
 
 def test_phase_churn_without_milestone_progress_counts_as_no_advance() -> None:
@@ -566,7 +566,7 @@ def test_external_unavailable_falls_back_to_state_milestone_progress_with_log() 
     assert updated["layer2_recurrence"] is False
 
 
-def test_git_branch_advancement_resets_no_advance_without_state_counter_change() -> None:
+def test_git_branch_advancement_does_not_reset_without_canonical_cursor_delta() -> None:
     previous = {
         **repair_recurrence.build_advancement_snapshot(_failure_context(), run_kind="chain"),
         "external_checks": {
@@ -598,8 +598,8 @@ def test_git_branch_advancement_resets_no_advance_without_state_counter_change()
         window_seconds=3600,
     )
 
-    assert updated["advancement_since_last_dispatch"] is True
-    assert updated["layer2_recurrence"] is False
+    assert updated["advancement_since_last_dispatch"] is False
+    assert updated["layer2_recurrence"] is True
 
 
 def test_completed_session_state_is_progress_when_external_checks_unavailable() -> None:
@@ -618,7 +618,7 @@ def test_completed_session_state_is_progress_when_external_checks_unavailable() 
     assert updated["layer2_recurrence"] is False
 
 
-def test_plan_event_growth_resets_no_advance_without_state_counter_change(tmp_path: Path) -> None:
+def test_plan_event_growth_does_not_reset_without_canonical_cursor_delta(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
     plan_dir.mkdir(parents=True)
@@ -666,5 +666,5 @@ def test_plan_event_growth_resets_no_advance_without_state_counter_change(tmp_pa
     )
 
     assert current["plan_activity"]["liveness"] == "progressing"
-    assert updated["advancement_since_last_dispatch"] is True
-    assert updated["layer2_recurrence"] is False
+    assert updated["advancement_since_last_dispatch"] is False
+    assert updated["layer2_recurrence"] is True
