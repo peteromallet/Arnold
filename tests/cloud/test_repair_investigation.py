@@ -140,6 +140,34 @@ def test_context_is_bounded_and_carries_exact_error_and_recent_repairs(tmp_path:
     ]["recover_state"]["allowed_mutations"] == [f"supported_cli:{supported_cli}"]
 
 
+def test_context_compacts_duplicate_attempt_narratives_to_bound_durable_json(
+    tmp_path: Path,
+) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    payload = json.loads(repair_data.read_text(encoding="utf-8"))
+    for attempt in payload["attempts"]:
+        attempt["dev_hypothesis"] = "h" * 3_000
+        attempt["dev_summary"] = ["w" * 1_000] * 8
+        attempt["dev_report"] = {"validation": ["v" * 1_000] * 8}
+    _write(repair_data, payload)
+
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+
+    durable = (json.dumps(context, indent=2, sort_keys=True) + "\n").encode()
+    assert len(durable) <= MAX_CONTEXT_BYTES
+    assert [item["attempt_id"] for item in context["prior_repairs"]] == [7, 8, 9]
+    assert all(item["compacted"] is True for item in context["prior_repairs"])
+    assert all(item["what_tried_count"] == 8 for item in context["prior_repairs"])
+    assert all(item["validation_count"] == 8 for item in context["prior_repairs"])
+
+
 def test_context_uses_identity_bound_profile_preserving_marker_relaunch(
     tmp_path: Path,
 ) -> None:

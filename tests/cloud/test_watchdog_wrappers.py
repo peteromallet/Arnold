@@ -6161,6 +6161,8 @@ def test_verified_quality_recovery_accepts_complete_marker_bound_supported_cli(
     tmp_path: Path,
 ) -> None:
     command = (
+        "python -m arnold_pipelines.megaplan quality-gate resolve "
+        "--blocker-id quality:global:abc --resolution fixed && "
         "python -m arnold_pipelines.megaplan override recover-blocked "
         "--repair-commit abcdef --failure-fingerprint fingerprint "
         "&& python -m arnold_pipelines.megaplan chain start "
@@ -6181,6 +6183,7 @@ def test_verified_quality_recovery_accepts_complete_marker_bound_supported_cli(
                 "safe_repair_boundaries": {
                     "supported_recovery_cli": command,
                     "quality_recovery_command_complete": True,
+                    "quality_recovery_blocker_ids": ["quality:global:abc"],
                     "marker_relaunch_binding": {
                         "verified": True,
                         "profile_preserved": True,

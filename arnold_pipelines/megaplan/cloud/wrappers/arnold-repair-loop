@@ -5968,6 +5968,12 @@ latest_failure = failure.get("latest_failure")
 latest_failure = latest_failure if isinstance(latest_failure, dict) else {}
 failure_fingerprint = str(latest_failure.get("fingerprint") or "").strip()
 supported = str(boundaries.get("supported_recovery_cli") or "")
+blocker_ids = boundaries.get("quality_recovery_blocker_ids")
+blocker_ids = (
+    [str(item) for item in blocker_ids if str(item).strip()]
+    if isinstance(blocker_ids, list)
+    else []
+)
 complete = bool(
     quality.get("active") is True
     and evidence.get("verified") is True
@@ -5979,6 +5985,11 @@ complete = bool(
     and repair_commit
     and failure_fingerprint
     and supported == normal_command
+    and blocker_ids
+    and all(
+        "quality-gate resolve" in supported and blocker_id in supported
+        for blocker_id in blocker_ids
+    )
     and "override recover-blocked" in supported
     and repair_commit in supported
     and failure_fingerprint in supported
