@@ -183,6 +183,15 @@ def preflight_mutating_phase(
 
     del now
     env = preflight_phase(root=root, state=state, phase=phase, engine_root=engine_root)
+    from arnold_pipelines.megaplan.chain.target_rebind import (
+        assert_plan_project_source_binding,
+    )
+
+    assert_plan_project_source_binding(
+        env.target_root,
+        state,
+        operation=f"{phase} preflight",
+    )
     return env
 
 

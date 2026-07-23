@@ -191,6 +191,11 @@ Shows current milestone index, current plan name, last state, completed mileston
 
 **5. If a milestone fails or escalates**, the chain halts (with default `stop_chain`). Investigate the failing plan via `megaplan status --plan <name>` and `megaplan audit --plan <name>`. Once you've fixed the brief or escalated the rubric (via `megaplan override set-profile` etc.), re-run `megaplan chain start --spec` and the chain resumes.
 
+If an already materialized, pre-execute milestone must move to a verified
+fast-forward project source while preserving its chain cursor, use the guarded
+[`chain target-rebind`](megaplan/project-source-target-rebind.md) lifecycle.
+Do not substitute runtime rebind, chain-spec rebind, or a manual branch switch.
+
 ## Common pitfalls
 
 - **Don't decompose so finely that each milestone is <2 days of work.** A chain of 10 micro-milestones is harder to follow than 4 right-sized ones, and the harness overhead dominates the actual work.

@@ -1,0 +1,697 @@
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from arnold_pipelines.megaplan.chain import spec as chain_spec
+from arnold_pipelines.megaplan.chain.operator_pause import (
+    AUTHORITY_SCHEMA,
+    resume_chain,
+)
+from arnold_pipelines.megaplan.chain.target_rebind import (
+    PROJECT_SOURCE_REBIND_ERROR,
+    assert_chain_project_source_binding,
+    assert_plan_project_source_binding,
+    publish_bound_project_source_branch,
+    sha256_path,
+    target_rebind,
+)
+from arnold_pipelines.megaplan.cli import build_parser
+from arnold_pipelines.megaplan.auto import DriverOutcome
+from arnold_pipelines.megaplan.runtime.execution_environment import (
+    preflight_mutating_phase,
+)
+from arnold_pipelines.megaplan.types import CliError
+
+PLAN_NAME = "m10-plan"
+MILESTONE = "m10-safe-retry-recovery-and-effects"
+M9_BRANCH = "megaplan/m9"
+M10_BRANCH = "megaplan/custody/m10"
+M9_REF = f"refs/heads/{M9_BRANCH}"
+CONVERGENCE_REF = "refs/heads/integrate/convergence"
+
+
+def _git(root: Path, *args: str) -> str:
+    return subprocess.check_output(
+        ["git", *args],
+        cwd=root,
+        text=True,
+        stderr=subprocess.STDOUT,
+    ).strip()
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _fixture(tmp_path: Path) -> dict[str, Any]:
+    root = tmp_path / "custody-session"
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "--bare", str(origin)], check=True, capture_output=True)
+    root.mkdir()
+    subprocess.run(
+        ["git", "init", "--initial-branch", M9_BRANCH],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+    _git(root, "config", "user.name", "Target Rebind Test")
+    _git(root, "config", "user.email", "target-rebind@example.invalid")
+    _git(root, "remote", "add", "origin", str(origin))
+    (root / ".gitignore").write_text(".megaplan/\n", encoding="utf-8")
+    (root / "source.txt").write_text("m9\n", encoding="utf-8")
+    _git(root, "add", ".gitignore", "source.txt")
+    _git(root, "commit", "-m", "m9 source")
+    source_sha = _git(root, "rev-parse", "HEAD")
+    _git(root, "push", "-u", "origin", M9_BRANCH)
+
+    _git(root, "switch", "-c", "integrate/convergence")
+    (root / "source.txt").write_text("m9\nconvergence\n", encoding="utf-8")
+    _git(root, "add", "source.txt")
+    _git(root, "commit", "-m", "convergence source")
+    target_sha = _git(root, "rev-parse", "HEAD")
+    _git(root, "push", "-u", "origin", "integrate/convergence")
+    _git(root, "switch", M9_BRANCH)
+
+    spec_path = root / ".megaplan" / "initiatives" / "custody" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text(
+        "\n".join(
+            [
+                "base_branch: main",
+                "milestones:",
+                f"- label: {MILESTONE}",
+                "  idea: .megaplan/initiatives/custody/brief.md",
+                f"  branch: {M10_BRANCH}",
+                "driver:",
+                "  require_anchor: false",
+                "  missing_anchor_ack: target-rebind fixture has no product anchor",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (spec_path.parent / "brief.md").write_text("M10 brief\n", encoding="utf-8")
+
+    chain = chain_spec.ChainState(
+        current_milestone_index=0,
+        current_plan_name=PLAN_NAME,
+        last_state="paused",
+        target_base_ref="launch-base-must-not-change",
+        metadata={
+            "operator_pause": {
+                "schema_version": AUTHORITY_SCHEMA,
+                "active": True,
+                "paused_at": "2026-07-23T00:00:00Z",
+                "actor": "test",
+                "reason": "source cutover",
+                "previous_chain_last_state": "blocked",
+                "previous_plan_state": "blocked",
+                "plan": PLAN_NAME,
+            },
+            "execution_environment": {
+                "target_head": source_sha,
+                "target_base": "base-observation",
+                "target_base_ref": "main",
+            },
+        },
+    )
+    chain_spec.save_chain_state(spec_path, chain, _record_projection=False)
+    state_path = chain_spec._state_path_for(spec_path)
+
+    plan_dir = root / ".megaplan" / "plans" / PLAN_NAME
+    plan_dir.mkdir(parents=True)
+    plan_path = plan_dir / "state.json"
+    plan = {
+        "schema_version": 1,
+        "name": PLAN_NAME,
+        "current_state": "paused",
+        "config": {
+            "project_dir": str(root),
+            "base_branch": M9_BRANCH,
+        },
+        "active_step": None,
+        "iteration": 6,
+        "history": [
+            {"step": "init", "result": "success"},
+            {"step": "prep", "result": "success"},
+            {"step": "plan", "result": "success"},
+            {"step": "critique", "result": "success"},
+            {"step": "gate", "result": "error"},
+        ],
+        "latest_failure": {"kind": "deterministic_phase_failure", "phase": "gate"},
+        "resume_cursor": {"phase": "gate", "retry_strategy": "repair_phase_contract"},
+        "last_gate": {},
+        "meta": {
+            "operator_pause": {
+                "schema_version": AUTHORITY_SCHEMA,
+                "paused_at": "2026-07-23T00:00:00Z",
+                "reason": "source cutover",
+                "previous_current_state": "blocked",
+                "previous_chain_last_state": "blocked",
+            },
+            "chain_policy": {
+                "milestone_label": MILESTONE,
+                "milestone_base_sha": source_sha,
+            },
+            "execution_environment": {
+                "target_head": source_sha,
+                "target_base": "base-observation",
+                "target_base_ref": "main",
+            },
+            "gate_artifact_recovery": {"stale": True},
+        },
+    }
+    _write_json(plan_path, plan)
+    (plan_dir / "phase_result.json").write_text('{"stale": true}\n', encoding="utf-8")
+    return {
+        "root": root,
+        "spec": spec_path,
+        "state_path": state_path,
+        "plan_dir": plan_dir,
+        "plan_path": plan_path,
+        "source": source_sha,
+        "target": target_sha,
+    }
+
+
+def _guards(fixture: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    values: dict[str, Any] = {
+        "direction": "cutover",
+        "expected_session_id": fixture["root"].name,
+        "expected_current_milestone": MILESTONE,
+        "expected_current_plan": PLAN_NAME,
+        "from_branch": M9_BRANCH,
+        "from_head": fixture["source"],
+        "from_milestone_base": fixture["source"],
+        "from_ref": M9_REF,
+        "to_branch": M10_BRANCH,
+        "to_head": fixture["target"],
+        "to_ref": CONVERGENCE_REF,
+        "expected_spec_sha256": sha256_path(fixture["spec"]),
+        "expected_chain_state_sha256": sha256_path(fixture["state_path"]),
+        "expected_plan_state_sha256": sha256_path(fixture["plan_path"]),
+        "reason": "activate convergence source",
+        "actor": "test",
+    }
+    values.update(overrides)
+    return values
+
+
+def _cutover(fixture: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    return target_rebind(
+        fixture["spec"],
+        fixture["root"],
+        **_guards(fixture, **overrides),
+    )
+
+
+def test_cutover_switches_configured_branch_and_rebinds_both_states(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+
+    result = _cutover(fixture)
+
+    assert result["branch"] == M10_BRANCH
+    assert _git(fixture["root"], "branch", "--show-current") == M10_BRANCH
+    assert _git(fixture["root"], "rev-parse", "HEAD") == fixture["target"]
+    assert _git(fixture["root"], "rev-parse", M9_BRANCH) == fixture["source"]
+    plan = _load_json(fixture["plan_path"])
+    chain = _load_json(fixture["state_path"])
+    binding = plan["meta"]["project_source_binding"]
+    assert chain["metadata"]["project_source_binding"] == binding
+    assert binding["current"]["head"] == fixture["target"]
+    assert binding["original"]["head"] == fixture["source"]
+    assert binding["rebind_events"][0]["direction"] == "cutover"
+    assert plan["meta"]["chain_policy"]["milestone_base_sha"] == fixture["target"]
+    assert plan["meta"]["execution_environment"]["target_head"] == fixture["target"]
+    assert chain["metadata"]["execution_environment"]["target_head"] == fixture["target"]
+    assert chain["target_base_ref"] == "launch-base-must-not-change"
+    assert plan["current_state"] == "paused"
+    assert plan["meta"]["operator_pause"]["previous_current_state"] == "critiqued"
+    assert chain["metadata"]["operator_pause"]["previous_plan_state"] == "critiqued"
+    assert plan["resume_cursor"]["phase"] == "gate"
+    assert "latest_failure" not in plan
+    assert "gate_artifact_recovery" not in plan["meta"]
+    assert not (fixture["plan_dir"] / "phase_result.json").exists()
+    invalidated = binding["rebind_events"][0]["invalidated_artifacts"]
+    assert invalidated[0]["artifact"] == "phase_result.json"
+    assert (fixture["plan_dir"].parent / invalidated[0]["archive_path"]).exists()
+
+    state = chain_spec.load_chain_state(fixture["spec"], verify_execution_binding=False)
+    assert_chain_project_source_binding(
+        fixture["root"],
+        state,
+        plan_name=PLAN_NAME,
+        operation="test completion",
+    )
+
+
+@pytest.mark.parametrize(
+    "stage",
+    ["after_git_switch", "after_plan_write", "after_chain_write"],
+)
+def test_failure_injection_restores_git_and_both_state_files(
+    tmp_path: Path,
+    stage: str,
+) -> None:
+    fixture = _fixture(tmp_path)
+    original_plan = fixture["plan_path"].read_bytes()
+    original_chain = fixture["state_path"].read_bytes()
+
+    def fail(current: str) -> None:
+        if current == stage:
+            raise RuntimeError(f"injected at {stage}")
+
+    with pytest.raises(RuntimeError, match="injected"):
+        _cutover(fixture, failure_injector=fail)
+
+    assert fixture["plan_path"].read_bytes() == original_plan
+    assert fixture["state_path"].read_bytes() == original_chain
+    assert _git(fixture["root"], "branch", "--show-current") == M9_BRANCH
+    assert _git(fixture["root"], "rev-parse", "HEAD") == fixture["source"]
+    assert (
+        subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{M10_BRANCH}"],
+            cwd=fixture["root"],
+            check=False,
+        ).returncode
+        == 1
+    )
+    assert (fixture["plan_dir"] / "phase_result.json").exists()
+
+
+def test_rollback_is_exact_inverse_before_execute(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    _cutover(fixture)
+
+    result = target_rebind(
+        fixture["spec"],
+        fixture["root"],
+        **_guards(
+            fixture,
+            direction="rollback",
+            from_branch=M10_BRANCH,
+            from_head=fixture["target"],
+            from_milestone_base=fixture["target"],
+            from_ref=CONVERGENCE_REF,
+            to_branch=M9_BRANCH,
+            to_head=fixture["source"],
+            to_ref=M9_REF,
+        ),
+    )
+
+    assert result["direction"] == "rollback"
+    assert _git(fixture["root"], "branch", "--show-current") == M9_BRANCH
+    assert _git(fixture["root"], "rev-parse", "HEAD") == fixture["source"]
+    plan = _load_json(fixture["plan_path"])
+    binding = plan["meta"]["project_source_binding"]
+    assert binding["current"]["branch"] == M9_BRANCH
+    assert binding["current"]["head"] == fixture["source"]
+    assert [event["direction"] for event in binding["rebind_events"]] == [
+        "cutover",
+        "rollback",
+    ]
+    assert plan["meta"]["chain_policy"]["milestone_base_sha"] == fixture["source"]
+
+
+def test_cutover_can_repeat_after_exact_pre_execute_rollback(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    _cutover(fixture)
+    target_rebind(
+        fixture["spec"],
+        fixture["root"],
+        **_guards(
+            fixture,
+            direction="rollback",
+            from_branch=M10_BRANCH,
+            from_head=fixture["target"],
+            from_milestone_base=fixture["target"],
+            from_ref=CONVERGENCE_REF,
+            to_branch=M9_BRANCH,
+            to_head=fixture["source"],
+            to_ref=M9_REF,
+        ),
+    )
+
+    result = _cutover(fixture)
+
+    assert result["branch"] == M10_BRANCH
+    binding = _load_json(fixture["plan_path"])["meta"]["project_source_binding"]
+    assert [event["direction"] for event in binding["rebind_events"]] == [
+        "cutover",
+        "rollback",
+        "cutover",
+    ]
+
+
+def test_rollback_refuses_after_execute_history(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    _cutover(fixture)
+    plan = _load_json(fixture["plan_path"])
+    plan["history"].append({"step": "execute", "result": "success"})
+    _write_json(fixture["plan_path"], plan)
+
+    with pytest.raises(CliError, match="already has execute history"):
+        target_rebind(
+            fixture["spec"],
+            fixture["root"],
+            **_guards(
+                fixture,
+                direction="rollback",
+                from_branch=M10_BRANCH,
+                from_head=fixture["target"],
+                from_milestone_base=fixture["target"],
+                from_ref=CONVERGENCE_REF,
+                to_branch=M9_BRANCH,
+                to_head=fixture["source"],
+                to_ref=M9_REF,
+            ),
+        )
+
+
+def test_cutover_refuses_stale_state_cas(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+
+    with pytest.raises(CliError, match="chain-state SHA-256 changed"):
+        _cutover(fixture, expected_chain_state_sha256="0" * 64)
+
+
+def test_cutover_refuses_dirty_worktree(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    (fixture["root"] / "untracked.txt").write_text("dirty\n", encoding="utf-8")
+
+    with pytest.raises(CliError, match="worktree is dirty"):
+        _cutover(fixture)
+
+
+def test_cutover_refuses_missing_pause_authority(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    chain = _load_json(fixture["state_path"])
+    chain["metadata"].pop("operator_pause")
+    _write_json(fixture["state_path"], chain)
+
+    with pytest.raises(CliError, match="requires matching durable"):
+        _cutover(fixture)
+
+
+@pytest.mark.parametrize(
+    ("artifact", "active_step", "message"),
+    [
+        ("execution.json", None, "already has execution/finalize/review artifacts"),
+        (None, {"phase": "gate", "run_id": "live"}, "plan has an active step"),
+    ],
+)
+def test_cutover_refuses_active_or_executed_plan(
+    tmp_path: Path,
+    artifact: str | None,
+    active_step: dict[str, str] | None,
+    message: str,
+) -> None:
+    fixture = _fixture(tmp_path)
+    if artifact is not None:
+        (fixture["plan_dir"] / artifact).write_text("{}\n", encoding="utf-8")
+    if active_step is not None:
+        plan = _load_json(fixture["plan_path"])
+        plan["active_step"] = active_step
+        _write_json(fixture["plan_path"], plan)
+
+    with pytest.raises(CliError, match=message):
+        _cutover(fixture)
+
+
+def test_cutover_refuses_target_sha_not_advertised_by_exact_ref(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+
+    with pytest.raises(CliError, match="advertised target"):
+        _cutover(fixture, to_head=fixture["source"])
+
+
+def test_cutover_refuses_non_fast_forward_target(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    root = fixture["root"]
+    tree = _git(root, "rev-parse", f"{fixture['target']}^{{tree}}")
+    unrelated = subprocess.check_output(
+        ["git", "commit-tree", tree],
+        cwd=root,
+        input="unrelated target\n",
+        text=True,
+    ).strip()
+    _git(root, "push", "origin", f"{unrelated}:{CONVERGENCE_REF}", "--force")
+
+    with pytest.raises(CliError, match="strict fast-forward"):
+        _cutover(fixture, to_head=unrelated)
+
+
+def test_bound_source_guard_allows_descendants_but_rejects_wrong_branch(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    _cutover(fixture)
+    (fixture["root"] / "m10.txt").write_text("m10 work\n", encoding="utf-8")
+    _git(fixture["root"], "add", "m10.txt")
+    _git(fixture["root"], "commit", "-m", "m10 work")
+    plan = _load_json(fixture["plan_path"])
+    assert_plan_project_source_binding(
+        fixture["root"],
+        plan,
+        operation="execute preflight",
+    )
+
+    _git(fixture["root"], "switch", M9_BRANCH)
+    with pytest.raises(CliError, match="does not preserve the bound project source"):
+        assert_plan_project_source_binding(
+            fixture["root"],
+            plan,
+            operation="execute preflight",
+        )
+
+
+def test_bound_source_guard_rejects_same_branch_without_bound_ancestor(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    _cutover(fixture)
+    root = fixture["root"]
+    tree = _git(root, "rev-parse", f"{fixture['source']}^{{tree}}")
+    unrelated = subprocess.check_output(
+        ["git", "commit-tree", tree],
+        cwd=root,
+        input="unrelated m10 rewrite\n",
+        text=True,
+    ).strip()
+    _git(root, "reset", "--hard", unrelated)
+    plan = _load_json(fixture["plan_path"])
+
+    with pytest.raises(CliError, match="does not preserve the bound project source"):
+        assert_plan_project_source_binding(
+            root,
+            plan,
+            operation="milestone completion",
+        )
+
+
+def test_mutating_phase_preflight_enforces_bound_source(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    _cutover(fixture)
+    plan = _load_json(fixture["plan_path"])
+
+    env = preflight_mutating_phase(
+        root=fixture["root"],
+        state=plan,
+        phase="execute",
+        engine_root=fixture["root"],
+    )
+    assert env.target_head == fixture["target"]
+
+    _git(fixture["root"], "switch", M9_BRANCH)
+    with pytest.raises(CliError, match="does not preserve the bound project source"):
+        preflight_mutating_phase(
+            root=fixture["root"],
+            state=plan,
+            phase="execute",
+            engine_root=fixture["root"],
+        )
+
+
+def test_bound_publication_creates_remote_from_current_branch_not_chain_base(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    _cutover(fixture)
+    (fixture["root"] / "m10.txt").write_text("completed M10 work\n", encoding="utf-8")
+    _git(fixture["root"], "add", "m10.txt")
+    _git(fixture["root"], "commit", "-m", "complete M10")
+    final_head = _git(fixture["root"], "rev-parse", "HEAD")
+    state = chain_spec.load_chain_state(
+        fixture["spec"],
+        verify_execution_binding=False,
+    )
+
+    published = publish_bound_project_source_branch(
+        fixture["root"],
+        state,
+        plan_name=PLAN_NAME,
+        milestone_branch=M10_BRANCH,
+    )
+
+    assert published == final_head
+    assert (
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", fixture["target"], published],
+            cwd=fixture["root"],
+            check=False,
+        ).returncode
+        == 0
+    )
+    assert _git(
+        fixture["root"],
+        "ls-remote",
+        "--heads",
+        "origin",
+        f"refs/heads/{M10_BRANCH}",
+    ).split()[0] == final_head
+
+
+def test_bound_publication_refuses_remote_branch_that_drops_bound_source(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    _git(
+        fixture["root"],
+        "push",
+        "origin",
+        f"{fixture['source']}:refs/heads/{M10_BRANCH}",
+    )
+    _cutover(fixture)
+    state = chain_spec.load_chain_state(
+        fixture["spec"],
+        verify_execution_binding=False,
+    )
+
+    with pytest.raises(CliError, match="drops bound source"):
+        publish_bound_project_source_branch(
+            fixture["root"],
+            state,
+            plan_name=PLAN_NAME,
+            milestone_branch=M10_BRANCH,
+        )
+    assert _git(
+        fixture["root"],
+        "ls-remote",
+        "--heads",
+        "origin",
+        f"refs/heads/{M10_BRANCH}",
+    ).split()[0] == fixture["source"]
+
+
+def test_no_push_resume_keeps_exact_bound_branch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _fixture(tmp_path)
+    _cutover(fixture)
+    resume_chain(
+        fixture["spec"],
+        fixture["root"],
+        actor="test",
+        verify_execution_binding=False,
+    )
+    observed: dict[str, str] = {}
+
+    def fake_drive(
+        root: Path,
+        _spec_path: Path,
+        plan: str,
+        _spec: Any,
+        *,
+        on_phase_complete: Any,
+        writer: Any,
+    ) -> DriverOutcome:
+        del on_phase_complete, writer
+        observed["branch"] = _git(root, "branch", "--show-current")
+        observed["head"] = _git(root, "rev-parse", "HEAD")
+        return DriverOutcome(
+            status="blocked",
+            plan=plan,
+            final_state="blocked",
+            iterations=1,
+            reason="test stop",
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        fake_drive,
+    )
+    from arnold_pipelines.megaplan.chain import run_chain
+
+    result = run_chain(
+        fixture["spec"],
+        fixture["root"],
+        no_push=True,
+        no_git_refresh=True,
+        one=True,
+        writer=lambda _message: None,
+    )
+
+    assert observed == {"branch": M10_BRANCH, "head": fixture["target"]}
+    assert result["status"] == "stopped"
+
+
+def test_target_rebind_cli_exposes_all_cas_guards() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "chain",
+            "target-rebind",
+            "--spec",
+            "chain.yaml",
+            "--project-dir",
+            "/workspace/session",
+            "--expected-session-id",
+            "session",
+            "--expected-current-milestone",
+            MILESTONE,
+            "--expected-current-plan",
+            PLAN_NAME,
+            "--from-branch",
+            M9_BRANCH,
+            "--from-head",
+            "a" * 40,
+            "--from-milestone-base",
+            "a" * 40,
+            "--from-ref",
+            M9_REF,
+            "--to-branch",
+            M10_BRANCH,
+            "--to-head",
+            "b" * 40,
+            "--to-ref",
+            CONVERGENCE_REF,
+            "--expected-spec-sha256",
+            "1" * 64,
+            "--expected-chain-state-sha256",
+            "2" * 64,
+            "--expected-plan-state-sha256",
+            "3" * 64,
+            "--reason",
+            "cut over",
+        ]
+    )
+
+    assert args.chain_action == "target-rebind"
+    assert args.from_milestone_base == "a" * 40
+    assert args.expected_plan_state_sha256 == "3" * 64
+    assert PROJECT_SOURCE_REBIND_ERROR == "project_source_rebind_refused"

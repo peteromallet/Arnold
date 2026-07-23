@@ -6777,17 +6777,32 @@ def run_chain(
                     plan_name=plan_name,
                 )
                 if use_pr and milestone.branch:
-                    base_ref = _checkout_milestone_branch(
-                        root,
-                        milestone.branch or "",
-                        base_branch=spec.base_branch,
-                        writer=writer,
-                        from_origin=push_enabled and not no_git_refresh,
-                        expected_base_ref=state.target_base_ref,
+                    project_source_binding = state.metadata.get(
+                        "project_source_binding"
                     )
-                    if isinstance(base_ref, str) and base_ref:
-                        state.target_base_ref = base_ref
-                        chain_spec.save_chain_state(spec_path, state)
+                    if isinstance(project_source_binding, Mapping):
+                        from arnold_pipelines.megaplan.chain.target_rebind import (
+                            publish_bound_project_source_branch,
+                        )
+
+                        publish_bound_project_source_branch(
+                            root,
+                            state,
+                            plan_name=plan_name,
+                            milestone_branch=milestone.branch,
+                        )
+                    else:
+                        base_ref = _checkout_milestone_branch(
+                            root,
+                            milestone.branch or "",
+                            base_branch=spec.base_branch,
+                            writer=writer,
+                            from_origin=push_enabled and not no_git_refresh,
+                            expected_base_ref=state.target_base_ref,
+                        )
+                        if isinstance(base_ref, str) and base_ref:
+                            state.target_base_ref = base_ref
+                            chain_spec.save_chain_state(spec_path, state)
                     _capture_sync_state(
                         root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                     )
@@ -6928,6 +6943,17 @@ def run_chain(
                     error=exc,
                 )
             raise
+
+        from arnold_pipelines.megaplan.chain.target_rebind import (
+            assert_chain_project_source_binding,
+        )
+
+        assert_chain_project_source_binding(
+            root,
+            state,
+            plan_name=plan_name,
+            operation=f"resume milestone {milestone.label}",
+        )
 
         def phase_callback(phase: str, _code: int, _out: str, _err: str) -> None:
             if use_pr and milestone.branch:
@@ -7087,6 +7113,14 @@ def run_chain(
                     ),
                 )
         local_commit_sha: str | None = None
+        if decision == "advance" and outcome.status == "done":
+            current_source_state = chain_spec.load_chain_state(spec_path)
+            assert_chain_project_source_binding(
+                root,
+                current_source_state,
+                plan_name=plan_name,
+                operation=f"complete milestone {milestone.label}",
+            )
         if (
             decision == "advance"
             and outcome.status == "done"
@@ -7877,6 +7911,36 @@ def build_chain_parser(subparsers: Any) -> None:
         ),
     )
 
+    target_rebind_parser = chain_sub.add_parser(
+        "target-rebind",
+        help=(
+            "Guardedly cut over or roll back the paused pre-execute project "
+            "checkout and milestone baseline"
+        ),
+    )
+    target_rebind_parser.add_argument("--spec", required=True)
+    target_rebind_parser.add_argument("--project-dir", required=True)
+    target_rebind_parser.add_argument(
+        "--direction",
+        choices=("cutover", "rollback"),
+        default="cutover",
+    )
+    target_rebind_parser.add_argument("--expected-session-id", required=True)
+    target_rebind_parser.add_argument("--expected-current-milestone", required=True)
+    target_rebind_parser.add_argument("--expected-current-plan", required=True)
+    target_rebind_parser.add_argument("--from-branch", required=True)
+    target_rebind_parser.add_argument("--from-head", required=True)
+    target_rebind_parser.add_argument("--from-milestone-base", required=True)
+    target_rebind_parser.add_argument("--from-ref", required=True)
+    target_rebind_parser.add_argument("--to-branch", required=True)
+    target_rebind_parser.add_argument("--to-head", required=True)
+    target_rebind_parser.add_argument("--to-ref", required=True)
+    target_rebind_parser.add_argument("--expected-spec-sha256", required=True)
+    target_rebind_parser.add_argument("--expected-chain-state-sha256", required=True)
+    target_rebind_parser.add_argument("--expected-plan-state-sha256", required=True)
+    target_rebind_parser.add_argument("--reason", required=True)
+    target_rebind_parser.add_argument("--actor", default="operator")
+
     pause_parser = chain_sub.add_parser(
         "pause", help="Durably pause a chain and disable automatic recovery"
     )
@@ -8222,6 +8286,47 @@ def run_chain_cli(
                     "success": True,
                     "spec": str(spec_path),
                     "action": "runtime-rebind",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "target-rebind":
+        project_root = Path(args.project_dir).expanduser().resolve()
+        try:
+            from arnold_pipelines.megaplan.chain.target_rebind import target_rebind
+
+            result = target_rebind(
+                spec_path,
+                project_root,
+                direction=args.direction,
+                expected_session_id=args.expected_session_id,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                from_branch=args.from_branch,
+                from_head=args.from_head,
+                from_milestone_base=args.from_milestone_base,
+                from_ref=args.from_ref,
+                to_branch=args.to_branch,
+                to_head=args.to_head,
+                to_ref=args.to_ref,
+                expected_spec_sha256=args.expected_spec_sha256,
+                expected_chain_state_sha256=args.expected_chain_state_sha256,
+                expected_plan_state_sha256=args.expected_plan_state_sha256,
+                reason=args.reason,
+                actor=args.actor,
+            )
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "target-rebind",
                     **result,
                 },
                 indent=2,
