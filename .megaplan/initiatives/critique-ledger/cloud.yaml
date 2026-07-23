@@ -1,0 +1,39 @@
+provider: ssh
+
+repo:
+  url: https://github.com/peteromallet/Arnold.git
+  branch: megaplan/critique-ledger-m9-glm-20260723
+  workspace: /workspace/critique-ledger-m9-glm-20260723/Arnold
+
+agents:
+  default: codex
+
+codex:
+  model: gpt-5.6-sol
+  reasoning: high
+
+chain_session: critique-ledger-m9-glm-20260723
+mode: chain
+
+chain:
+  spec: /workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml
+
+megaplan:
+  ref: bc0c600c418c8995331aa8aa6784fc62b4fddf17
+  codex_auth: chatgpt
+  repo: /workspace/runtime-candidates/arnold-bc0c600c418c8995331aa8aa6784fc62b4fddf17
+  src_path: /workspace/runtime-candidates/arnold-bc0c600c418c8995331aa8aa6784fc62b4fddf17
+
+resources:
+  volume: agent-volume
+  port: 8080
+
+ssh:
+  host: 159.69.51.216
+  user: root
+  port: 22
+  remote_dir: /opt/megaplan-cloud/deploy
+  workspace_dir: /opt/megaplan-cloud/workspace
+  container: megaplan-cloud-agent
+
+secrets: []
