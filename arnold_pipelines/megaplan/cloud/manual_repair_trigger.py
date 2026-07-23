@@ -43,6 +43,7 @@ except ImportError:
 RECEIPT_SCHEMA = "arnold-manual-repair-trigger-v1"
 RECEIPT_DIR_NAME = "manual-triggers"
 ALLOWED_PLAN_STATES = frozenset({"blocked", "failed"})
+ALLOWED_HISTORY_FAILURE_RESULTS = frozenset({"blocked", "error", "failed"})
 
 
 class ManualRepairTriggerError(RuntimeError):
@@ -98,7 +99,27 @@ def _evidence_cursor(state: Mapping[str, Any], failure: Mapping[str, Any]) -> di
     for candidate in candidates:
         if isinstance(candidate, Mapping):
             return dict(candidate)
-    return {}
+    history = state.get("history")
+    if not isinstance(history, Sequence) or isinstance(history, (str, bytes)) or not history:
+        return {}
+    latest = history[-1]
+    if not isinstance(latest, Mapping):
+        return {}
+    failure_phase = _text(failure.get("phase"))
+    history_phase = _text(latest.get("step"))
+    history_result = _text(latest.get("result"))
+    artifact_hash = _text(latest.get("artifact_hash"))
+    if (
+        not failure_phase
+        or history_phase != failure_phase
+        or history_result not in ALLOWED_HISTORY_FAILURE_RESULTS
+        or not artifact_hash
+    ):
+        return {}
+    return {
+        "history_index": len(history) - 1,
+        "review_artifact_hash": artifact_hash,
+    }
 
 
 def _receipt_id(*, session: str, plan: str, history_index: int, artifact_hash: str) -> str:
@@ -326,13 +347,15 @@ def trigger_once(
     if not workspace.is_absolute() or not workspace.is_dir():
         raise ManualRepairTriggerError("resolver workspace is unavailable")
     metadata = _mapping(failure.get("metadata"))
+    configured_profile = _text(_mapping(state.get("config")).get("profile"))
+    phase_or_step = _text(failure.get("phase"))
     problem_signature = {
         "failure_kind": _text(failure.get("kind")) or "terminal_blocked",
         "current_state": current_state,
-        "phase_or_step": _text(failure.get("phase")),
+        "phase_or_step": phase_or_step,
         "milestone_or_plan": plan,
         "gate_recommendation": _text(failure.get("suggested_action")),
-        "blocked_task_id": _blocked_task_id(metadata),
+        "blocked_task_id": _blocked_task_id(metadata) or f"phase:{phase_or_step}",
     }
     root_cause_hint = _text(failure.get("message")) or "plan entered a blocked terminal state"
     request_id = repair_requests.request_id_for(
@@ -366,6 +389,23 @@ def trigger_once(
     _write_json_atomic(receipt_path, receipt, exclusive=True)
 
     try:
+        repair_target = {
+            "plan_dir": str(plan_path.parent),
+            "plan_name": plan,
+            "workspace_path": str(workspace),
+            "remote_spec": remote_spec,
+            "evidence_cursor": dict(cursor),
+            "recovery_contract": {
+                "preserve_configured_profile": True,
+                "required_cursor_advance": True,
+                "forbid_standalone_completion": True,
+                "success_requires": (
+                    "the canonical plan must advance beyond the frozen evidence cursor"
+                ),
+            },
+        }
+        if configured_profile:
+            repair_target["configured_profile"] = configured_profile
         queued = repair_requests.enqueue_repair_request(
             queue_root=queue_root,
             marker_dir=marker_dir,
@@ -373,13 +413,7 @@ def trigger_once(
             source="manual_terminal_failure_retrigger",
             workspace=workspace,
             run_kind=run_kind,
-            target={
-                "plan_dir": str(plan_path.parent),
-                "plan_name": plan,
-                "workspace_path": str(workspace),
-                "remote_spec": remote_spec,
-                "evidence_cursor": dict(cursor),
-            },
+            target=repair_target,
             problem_signature=problem_signature,
             root_cause_hint=root_cause_hint,
         )
