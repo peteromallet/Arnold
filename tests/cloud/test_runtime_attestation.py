@@ -424,6 +424,37 @@ def test_real_editable_launch_and_noneditable_supervisor_vectors(
             "status": "ready",
         },
     )
+    runtime_library = (
+        source
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "wrappers"
+        / "arnold-supervisor-runtime-lib"
+    )
+    wrapper_check = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                f"source {str(runtime_library)!r}; "
+                f"arnold_supervisor_runtime_init test-component {str(source)!r}; "
+                "printf 'isolated=%s\\n' \"$MEGAPLAN_SUPERVISOR_ISOLATED\""
+            ),
+        ],
+        cwd=tmp_path,
+        env={
+            **{key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+            "MEGAPLAN_SUPERVISOR_PYTHON": str(supervisor_python),
+            "MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED": "1",
+            "MEGAPLAN_SUPERVISOR_RUNTIME_RECEIPT": str(receipt_path),
+            "MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED": "0",
+        },
+        text=True,
+        capture_output=True,
+    )
+    assert wrapper_check.returncode == 0, wrapper_check.stderr
+    assert "isolated=1" in wrapper_check.stdout
     program = tmp_path / "build-and-validate.py"
     program.write_text(
         """
