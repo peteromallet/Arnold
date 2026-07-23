@@ -54,7 +54,22 @@ def _release_seed(
         "source_revision": revision,
         "content_sha256": "b" * 64,
     }
-    _write_json(marker, {"runtime_binding": {"current_identity": runtime_identity}})
+    _write_json(
+        marker,
+        {
+            "session": "m10",
+            "workspace": str(tmp_path),
+            "remote_spec": str(chain_spec),
+            "identity_digest": "identity-123",
+            "run_kind": "chain",
+            "relaunch_command": "python -m arnold_pipelines.megaplan chain tick",
+            "editable_source_branch": "fix/m10",
+            "editable_source_head": revision,
+            "operator_pause": {"active": True},
+            "should_run": False,
+            "runtime_binding": {"current_identity": runtime_identity},
+        },
+    )
     chain_spec.write_text("milestones: []\n", encoding="utf-8")
     seed_doc.write_text("# North Star\n", encoding="utf-8")
     provenance = {
@@ -197,6 +212,7 @@ def test_release_seed_binds_full_runtime_and_seed_document_manifest(
         item["path"] for item in seed["seed_document_manifest"]["entries"]
     }
     assert str(paths["seed_doc"]) in manifest_paths
+    assert str(paths["marker"]) not in manifest_paths
     assert (
         attestation.validate_runtime_launch_seed(seed, component="worker")["status"]
         == "ready"
@@ -263,6 +279,65 @@ def test_release_seed_rejects_runtime_and_seed_input_drift(
     paths[drift_target].write_text("changed\n", encoding="utf-8")
 
     with pytest.raises(CliError):
+        attestation.validate_runtime_launch_seed(seed, component="worker")
+
+
+def test_release_seed_allows_marker_lifecycle_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed, paths = _release_seed(tmp_path, monkeypatch)
+    marker = json.loads(paths["marker"].read_text(encoding="utf-8"))
+    marker.update(
+        {
+            "should_run": True,
+            "launch_outcome": {"status": "running"},
+            "updated_at": "2026-07-23T12:00:00Z",
+        }
+    )
+    marker.pop("operator_pause", None)
+    _write_json(paths["marker"], marker)
+
+    assert (
+        attestation.validate_runtime_launch_seed(seed, component="worker")["status"]
+        == "ready"
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("workspace", "/workspace/other"),
+        ("remote_spec", "/workspace/other/chain.yaml"),
+        ("relaunch_command", "python -m other"),
+        ("editable_source_head", "c" * 40),
+    ],
+)
+def test_release_seed_rejects_marker_launch_identity_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: str,
+) -> None:
+    seed, paths = _release_seed(tmp_path, monkeypatch)
+    marker = json.loads(paths["marker"].read_text(encoding="utf-8"))
+    marker[field] = value
+    _write_json(paths["marker"], marker)
+
+    with pytest.raises(CliError, match="cloud marker launch binding drifted"):
+        attestation.validate_runtime_launch_seed(seed, component="worker")
+
+
+def test_release_seed_rejects_marker_runtime_identity_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed, paths = _release_seed(tmp_path, monkeypatch)
+    marker = json.loads(paths["marker"].read_text(encoding="utf-8"))
+    marker["runtime_binding"]["current_identity"]["source_revision"] = "c" * 40
+    _write_json(paths["marker"], marker)
+
+    with pytest.raises(CliError, match="cloud marker launch binding drifted"):
         attestation.validate_runtime_launch_seed(seed, component="worker")
 
 

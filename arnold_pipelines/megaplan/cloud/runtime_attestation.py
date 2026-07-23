@@ -438,6 +438,34 @@ def _manifest(paths: Iterable[Path]) -> dict[str, Any]:
     return {**core, "content_sha256": _canonical_sha256(core)}
 
 
+def _marker_launch_binding(marker: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the immutable launch identity carried by a lifecycle marker.
+
+    Session markers are live control-plane documents: pause/resume, launch
+    outcomes, timestamps, and notification state all change during an ordinary
+    launch.  A release seed therefore binds only the fields that select which
+    runtime and durable chain may be launched.
+    """
+
+    runtime = marker.get("runtime_binding")
+    runtime = runtime if isinstance(runtime, Mapping) else {}
+    identity = runtime.get("current_identity")
+    identity = identity if isinstance(identity, Mapping) else {}
+    return {
+        "session": str(marker.get("session") or ""),
+        "workspace": str(marker.get("workspace") or ""),
+        "remote_spec": str(marker.get("remote_spec") or ""),
+        "identity_digest": str(marker.get("identity_digest") or ""),
+        "run_kind": str(marker.get("run_kind") or ""),
+        "relaunch_command": str(
+            marker.get("relaunch_command") or marker.get("launch_command") or ""
+        ),
+        "editable_source_branch": str(marker.get("editable_source_branch") or ""),
+        "editable_source_head": str(marker.get("editable_source_head") or ""),
+        "runtime_identity": dict(identity),
+    }
+
+
 def build_runtime_launch_seed(
     *,
     expected_root: Path,
@@ -470,7 +498,6 @@ def build_runtime_launch_seed(
     document_paths = {
         supervisor_receipt_path,
         hot_env_path,
-        marker_path,
         chain_spec_path,
         *seed_doc_paths,
     }
@@ -557,7 +584,8 @@ def build_runtime_launch_seed(
             "selectors": hot_selectors,
         },
         "marker": {
-            "file": _file_identity(marker_path),
+            "path": str(marker_path.resolve(strict=False)),
+            "launch_binding": _marker_launch_binding(marker),
             "runtime_identity": dict(marker_identity),
         },
         "chain_runtime_binding": chain_binding,
@@ -732,7 +760,7 @@ def validate_runtime_launch_seed(
     paths = paths if isinstance(paths, Mapping) else {}
     manifest_paths = [
         Path(str(paths.get(name) or ""))
-        for name in ("supervisor_receipt", "hot_env", "marker", "chain_spec")
+        for name in ("supervisor_receipt", "hot_env", "chain_spec")
     ]
     manifest_paths.extend(Path(str(path)) for path in paths.get("seed_docs") or [])
     if _manifest(manifest_paths) != seed.get("seed_document_manifest"):
@@ -745,10 +773,18 @@ def validate_runtime_launch_seed(
         seed.get("hot_env") or {}
     ).get("file"):
         raise CliError(RUNTIME_ATTESTATION_ERROR, "hot-env selector file drifted")
-    if _file_identity(Path(str(paths.get("marker") or ""))) != (
-        seed.get("marker") or {}
-    ).get("file"):
-        raise CliError(RUNTIME_ATTESTATION_ERROR, "cloud marker drifted")
+    marker_path = Path(str(paths.get("marker") or ""))
+    marker = _json_file(marker_path, label="cloud session marker")
+    expected_marker = seed.get("marker")
+    expected_marker = expected_marker if isinstance(expected_marker, Mapping) else {}
+    if (
+        str(marker_path.resolve(strict=False)) != str(expected_marker.get("path") or "")
+        or _marker_launch_binding(marker) != expected_marker.get("launch_binding")
+    ):
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "cloud marker launch binding drifted",
+        )
     if _chain_binding(Path(str(paths.get("chain_spec") or ""))) != seed.get(
         "chain_runtime_binding"
     ):
