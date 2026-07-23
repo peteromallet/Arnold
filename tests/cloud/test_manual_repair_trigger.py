@@ -25,6 +25,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict]:
     state = {
         "name": PLAN,
         "current_state": "blocked",
+        "config": {"profile": "partnered-5"},
         "resume_cursor": {
             "phase": "review",
             "evidence_cursor": {
@@ -120,6 +121,13 @@ def test_manual_trigger_enqueues_canonical_request_and_dispatches_once(
     )
     assert request["source"] == "manual_terminal_failure_retrigger"
     assert request["problem_signature"]["blocked_task_id"] == "T24"
+    assert request["target"]["configured_profile"] == "partnered-5"
+    assert request["target"]["recovery_contract"] == {
+        "preserve_configured_profile": True,
+        "required_cursor_advance": True,
+        "forbid_standalone_completion": True,
+        "success_requires": "the canonical plan must advance beyond the frozen evidence cursor",
+    }
     receipt = json.loads(Path(result["receipt_path"]).read_text(encoding="utf-8"))
     assert receipt["status"] == "dispatched"
     assert receipt["dispatch_event"]["managed_run_id"] == "managed-test-1"
@@ -150,6 +158,107 @@ def test_manual_trigger_rejects_changed_evidence_before_queue_mutation(
             session=SESSION,
             plan=PLAN,
             expected_history_index=14,
+            expected_artifact_hash=ARTIFACT_HASH,
+            marker_dir=marker_dir,
+            queue_root=queue_root,
+            trigger_bin=trigger_bin,
+            target_resolver=lambda *_args, **_kwargs: target,
+            command_runner=lambda *_args, **_kwargs: pytest.fail("must not dispatch"),
+        )
+
+    assert not (queue_root / repair_requests.REQUESTS_DIR_NAME).exists()
+    assert not (queue_root / manual_repair_trigger.RECEIPT_DIR_NAME).exists()
+
+
+def test_manual_trigger_derives_frozen_cursor_from_matching_terminal_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker_dir, queue_root, trigger_bin, target = _fixture(tmp_path)
+    _authorized(monkeypatch)
+    state_path = Path(target["plan_state"]["path"])
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["resume_cursor"] = {"phase": "execute", "retry_strategy": "fresh_session"}
+    state["latest_failure"] = {
+        "kind": "execution_blocked",
+        "message": "execute blocked by quality gates",
+        "phase": "execute",
+        "suggested_action": "Resume execute with a fresh session.",
+        "metadata": {},
+    }
+    state["history"] = [
+        {
+            "step": "execute",
+            "result": "blocked",
+            "artifact_hash": ARTIFACT_HASH,
+        }
+    ]
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    target["plan_state"]["fingerprint"] = hashlib.sha256(state_path.read_bytes()).hexdigest()
+
+    def runner(command, **_kwargs):
+        request_id = command[command.index("--request-id") + 1]
+        event = {
+            "event": "repair_trigger_dispatch",
+            "status": "dispatched",
+            "request_id": request_id,
+            "managed_run_id": "managed-history-cursor",
+            "managed_manifest_path": "/tmp/managed-history-cursor/manifest.json",
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(event) + "\n", "")
+
+    result = manual_repair_trigger.trigger_once(
+        session=SESSION,
+        plan=PLAN,
+        expected_history_index=0,
+        expected_artifact_hash=ARTIFACT_HASH,
+        marker_dir=marker_dir,
+        queue_root=queue_root,
+        trigger_bin=trigger_bin,
+        target_resolver=lambda *_args, **_kwargs: target,
+        command_runner=runner,
+    )
+
+    request = next(
+        item
+        for item in repair_requests.iter_repair_requests(queue_root)
+        if item["request_id"] == result["request_id"]
+    )
+    assert request["target"]["evidence_cursor"] == {
+        "history_index": 0,
+        "review_artifact_hash": ARTIFACT_HASH,
+    }
+    assert request["target"]["configured_profile"] == "partnered-5"
+
+
+def test_manual_trigger_rejects_terminal_history_from_a_different_phase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker_dir, queue_root, trigger_bin, target = _fixture(tmp_path)
+    _authorized(monkeypatch)
+    state_path = Path(target["plan_state"]["path"])
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["resume_cursor"] = {"phase": "execute", "retry_strategy": "fresh_session"}
+    state["latest_failure"] = {
+        "kind": "execution_blocked",
+        "message": "execute blocked by quality gates",
+        "phase": "execute",
+        "metadata": {},
+    }
+    state["history"] = [
+        {
+            "step": "review",
+            "result": "blocked",
+            "artifact_hash": ARTIFACT_HASH,
+        }
+    ]
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    target["plan_state"]["fingerprint"] = hashlib.sha256(state_path.read_bytes()).hexdigest()
+
+    with pytest.raises(manual_repair_trigger.ManualRepairTriggerError, match="cursor"):
+        manual_repair_trigger.trigger_once(
+            session=SESSION,
+            plan=PLAN,
+            expected_history_index=0,
             expected_artifact_hash=ARTIFACT_HASH,
             marker_dir=marker_dir,
             queue_root=queue_root,
