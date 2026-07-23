@@ -6624,13 +6624,23 @@ for path in chain_paths:
         continue
     last_state = payload.get("last_state")
     pr_number = payload.get("pr_number")
+    merge_policy = _merge_policy()
+    finalized_review_wait = False
     if last_state == "awaiting_pr_merge":
         pass
+    elif last_state == "finalized" and pr_number and merge_policy == "review":
+        try:
+            finalized_review_wait = _pr_state(int(pr_number)) == "open"
+        except Exception:
+            finalized_review_wait = False
+        if not finalized_review_wait:
+            continue
     else:
         # ``finalized`` is the pre-execute plan state, not completion evidence.
         # External merge authority is available only after the chain driver has
-        # durably entered awaiting_pr_merge; never infer it from a terminal-
-        # looking label while task and CI evidence may still be red.
+        # durably entered awaiting_pr_merge, except for a review-policy PR whose
+        # external OPEN state proves that execution already crossed that
+        # boundary. Never infer it from a terminal-looking label alone.
         continue
     if not pr_number:
         print("awaiting_pr_merge")
@@ -6640,7 +6650,7 @@ for path in chain_paths:
         if _pr_state(pr_number_int) == "merged":
             print("none")
             raise SystemExit(0)
-        if _merge_policy() == "auto":
+        if merge_policy == "auto":
             _attempt_auto_merge(pr_number_int)
             if _pr_state(pr_number_int) == "merged":
                 print("none")
@@ -7598,7 +7608,15 @@ def is_complete_state(payload: object) -> bool:
         str(item.get("msg") or item.get("message") or item)
         for item in event_items
     )
-    if current_plan and "all milestones complete" not in event_text:
+    explicit_chain_complete = payload.get("chain_complete") is True
+    explicit_completion_event = "all milestones complete" in event_text.lower()
+    if (
+        SPEC_MILESTONE_COUNT is None
+        and not explicit_chain_complete
+        and not explicit_completion_event
+    ):
+        return False
+    if current_plan and not explicit_completion_event:
         return False
     return True
 

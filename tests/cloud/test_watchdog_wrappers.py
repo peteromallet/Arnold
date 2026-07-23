@@ -2958,6 +2958,7 @@ def test_repair_loop_exits_immediately_for_completed_chain(tmp_path: Path) -> No
     env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
+    env["MEGAPLAN_RUNTIME_SRC"] = str(REPO_ROOT)
     result = subprocess.run(
         ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), str(spec_path)],
         capture_output=True,
@@ -4514,6 +4515,7 @@ def test_repair_loop_serializes_same_session_invocations_and_cleans_pidfile_on_t
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
     env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
+    env["MEGAPLAN_RUNTIME_SRC"] = str(REPO_ROOT)
 
     args = ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"]
     proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
@@ -4591,6 +4593,7 @@ def test_repair_loop_reclaims_stale_pidfile_on_start(tmp_path: Path) -> None:
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
     env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
+    env["MEGAPLAN_RUNTIME_SRC"] = str(REPO_ROOT)
 
     proc = subprocess.Popen(
         ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"],
@@ -4669,6 +4672,7 @@ def test_repair_loop_reclaims_pidfile_after_kill9_with_child_alive(tmp_path: Pat
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
     env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
+    env["MEGAPLAN_RUNTIME_SRC"] = str(REPO_ROOT)
 
     args = ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"]
     pidfile = marker_dir / "demo-session.repair-loop.pid"

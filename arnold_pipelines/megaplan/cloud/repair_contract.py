@@ -1604,6 +1604,7 @@ def classify_repair_dispatch(
                 current_state=current_state,
                 retry_strategy=normalized_retry_strategy,
                 failure_kind=failure_kind,
+                latest_failure=failure_payload,
                 lock_evidence=lock_evidence,
                 process_evidence=process_evidence,
                 custody=custody,
@@ -1627,6 +1628,7 @@ def classify_repair_dispatch(
             current_state=current_state,
             retry_strategy=normalized_retry_strategy,
             failure_kind=failure_kind,
+            latest_failure=failure_payload,
             lock_evidence=lock_evidence,
             process_evidence=process_evidence,
             custody=custody,
@@ -1641,6 +1643,7 @@ def classify_repair_dispatch(
                 current_state=current_state,
                 retry_strategy=normalized_retry_strategy,
                 failure_kind=failure_kind,
+                latest_failure=failure_payload,
                 current_target=target_payload,
                 human_blocker_classification=human_blocker_classification,
                 lock_evidence=lock_evidence,
@@ -1677,6 +1680,7 @@ def classify_repair_dispatch(
         current_state=current_state,
         retry_strategy=normalized_retry_strategy,
         failure_kind=failure_kind,
+        latest_failure=failure_payload,
         current_target=target_payload,
         human_blocker_classification=human_blocker_classification,
         lock_evidence=lock_evidence,
@@ -1721,6 +1725,7 @@ def _classify_repair_dispatch_canonical(
     current_state: str,
     retry_strategy: str,
     failure_kind: str,
+    latest_failure: Mapping[str, Any],
     lock_evidence: Any,
     process_evidence: Mapping[str, Any] | None,
     custody: Mapping[str, Any],
@@ -1871,6 +1876,7 @@ def _classify_repair_dispatch_canonical(
             current_state=current_state,
             retry_strategy=retry_strategy,
             failure_kind=failure_kind,
+            latest_failure=latest_failure,
             current_target=current_target,
             semantic_findings=semantic_findings,
         ) or _is_exact_phase_request_shape(
@@ -1956,6 +1962,7 @@ def _classify_repair_dispatch_legacy(
     current_state: str,
     retry_strategy: str,
     failure_kind: str,
+    latest_failure: Mapping[str, Any],
     current_target: Mapping[str, Any],
     human_blocker_classification: Any,
     lock_evidence: Any,
@@ -1968,6 +1975,7 @@ def _classify_repair_dispatch_legacy(
         current_state=current_state,
         retry_strategy=retry_strategy,
         failure_kind=failure_kind,
+        latest_failure=latest_failure,
         current_target=current_target,
         semantic_findings=semantic_findings,
     )
@@ -4671,6 +4679,7 @@ def _is_known_repairable_shape(
     current_state: str,
     retry_strategy: str,
     failure_kind: str,
+    latest_failure: Mapping[str, Any],
     current_target: Mapping[str, Any],
     semantic_findings: list[Any] | None = None,
 ) -> bool:
@@ -4690,6 +4699,14 @@ def _is_known_repairable_shape(
         current_state == "blocked"
         and failure_kind == "workflow_cursor_mismatch"
         and _has_current_target_evidence(current_target)
+    ):
+        return True
+    if _is_evidence_bound_deterministic_quality_block(
+        current_state=current_state,
+        retry_strategy=retry_strategy,
+        failure_kind=failure_kind,
+        latest_failure=latest_failure,
+        current_target=current_target,
     ):
         return True
     # --- primary: latest_failure-based classification --------------------
@@ -4721,6 +4738,77 @@ def _is_known_repairable_shape(
                 return _has_current_target_evidence(current_target)
 
     return False
+
+
+def _is_evidence_bound_deterministic_quality_block(
+    *,
+    current_state: str,
+    retry_strategy: str,
+    failure_kind: str,
+    latest_failure: Mapping[str, Any],
+    current_target: Mapping[str, Any],
+) -> bool:
+    """Whitelist only the executor's bounded deterministic review failure.
+
+    ``quality_gate_blocked`` is otherwise a human-review-shaped label.  It is
+    machine repairable only when the persisted failure carries the complete
+    deterministic evidence contract emitted by ``handlers.review`` and a
+    current target fingerprint.  Partial metadata must remain conservative.
+    """
+
+    if not (
+        current_state == "blocked"
+        and retry_strategy == "manual_review"
+        and failure_kind == "quality_gate_blocked"
+        and _has_current_target_evidence(current_target)
+    ):
+        return False
+    failure = _as_mapping(latest_failure)
+    metadata = _as_mapping(failure.get("metadata"))
+    if (
+        _as_text(failure.get("kind")) != failure_kind
+        or metadata.get("deterministic") is not True
+        or _as_text(metadata.get("repairability")) != "deterministic_machine"
+    ):
+        return False
+    cursor = _as_mapping(failure.get("evidence_cursor"))
+    metadata_cursor = _as_mapping(metadata.get("evidence_cursor"))
+    if not cursor or not metadata_cursor or dict(cursor) != dict(metadata_cursor):
+        return False
+    history_index = cursor.get("history_index")
+    if (
+        not isinstance(history_index, int)
+        or isinstance(history_index, bool)
+        or history_index < 0
+        or not _as_text(cursor.get("review_artifact_hash"))
+    ):
+        return False
+    blocked_task_ids = {
+        _as_text(value)
+        for value in _as_list(metadata.get("blocked_task_ids"))
+        if _as_text(value)
+    }
+    blocker_ids = {
+        _as_text(value)
+        for value in _as_list(failure.get("blocker_ids"))
+        if _as_text(value)
+    }
+    evidence = _as_list(metadata.get("deterministic_evidence"))
+    if not blocked_task_ids or not blocker_ids or not evidence:
+        return False
+    evidenced_task_ids: set[str] = set()
+    for raw_item in evidence:
+        item = _as_mapping(raw_item)
+        task_id = _as_text(item.get("task_id"))
+        if (
+            task_id not in blocked_task_ids
+            or not _as_text(item.get("command"))
+            or not _as_text(item.get("baseline_status"))
+            or not _as_text(item.get("post_status"))
+        ):
+            return False
+        evidenced_task_ids.add(task_id)
+    return evidenced_task_ids == blocked_task_ids
 
 
 def _is_exact_phase_request_shape(
