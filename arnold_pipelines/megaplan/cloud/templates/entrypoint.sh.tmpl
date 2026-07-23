@@ -199,7 +199,8 @@ fi
 # Launch cloud chain watchdog in its own tmux session. It scans cloud-session
 # markers hourly and wakes stopped chain runners without disturbing live ones.
 if ! tmux has-session -t watchdog 2>/dev/null; then
-  tmux new-session -d -s watchdog -c /workspace "bash -lc '/usr/local/bin/arnold-watchdog'"
+  tmux new-session -d -s watchdog -c /workspace \
+    "bash -lc 'set -a; [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env; set +a; exec /usr/local/bin/arnold-watchdog'"
   echo "cloud watchdog running in tmux session 'watchdog'"
 fi
 

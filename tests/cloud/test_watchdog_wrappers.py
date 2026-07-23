@@ -573,8 +573,9 @@ def test_watchdog_sync_does_not_broadly_commit_source_drift() -> None:
 def test_host_watchdog_ensure_starts_shell_wrapped_watchdog_and_verifies_liveness() -> None:
     text = _systemd_file("ensure-megaplan-watchdog")
 
-    assert "tmux new-session -d -s watchdog -c /workspace /usr/local/bin/arnold-watchdog" in text
-    assert "bash -lc 'exec /usr/local/bin/arnold-watchdog'" not in text
+    assert "tmux new-session -d -s watchdog -c /workspace" in text
+    assert ". /workspace/.cloud-hot-env" in text
+    assert "exec /usr/local/bin/arnold-watchdog" in text
     assert "tmux new-session -d -s watchdog -c /workspace exec /usr/local/bin/arnold-watchdog" not in text
     assert "watchdog_restart_failed_not_alive" in text
     assert text.count("tmux has-session -t watchdog") >= 2
