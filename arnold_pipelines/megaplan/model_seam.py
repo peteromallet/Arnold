@@ -169,6 +169,7 @@ def render_compact_review_prompt(
     prompt_size_error: dict[str, Any] | None = None,
     pre_check_flags: list[dict[str, Any]] | None = None,
     projection_capabilities: Any | None = None,
+    metadata: Mapping[str, Any] | None = None,
 ) -> RenderedStepMessage:
     """Render a compacted review prompt through the model seam."""
 
@@ -196,6 +197,7 @@ def render_compact_review_prompt(
                 "prompt_components": compacted_text,
                 "schema": dict(schema) if schema is not None else None,
                 "projection_capabilities": projection_capabilities,
+                **dict(metadata or {}),
             },
         )
     )

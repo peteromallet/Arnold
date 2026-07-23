@@ -148,9 +148,9 @@ def _normalize_stdin_text(stdin_text: str | None) -> str | None:
         path = Path(candidate).expanduser()
     except (TypeError, ValueError):
         return stdin_text
-    if not path.is_file():
-        return stdin_text
     try:
+        if not path.is_file():
+            return stdin_text
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return stdin_text

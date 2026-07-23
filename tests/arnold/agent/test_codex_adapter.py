@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -289,6 +290,14 @@ def test_run_command_reads_prompt_file_path_as_file_contents(
     assert result.returncode == 0
     assert captured["stdin"] == prompt_path.read_text(encoding="utf-8")
     assert captured["stdin"] != str(prompt_path)
+
+
+def test_stdin_normalizer_treats_too_long_path_candidate_as_literal_json() -> None:
+    from arnold_pipelines.megaplan.workers._impl import _normalize_stdin_text
+
+    prompt = json.dumps({"prompt": "x" * 29_000}, separators=(",", ":"))
+    assert "\n" not in prompt
+    assert _normalize_stdin_text(prompt) == prompt
 
 
 def test_run_codex_step_normalizes_prompt_file_path_before_dispatch(

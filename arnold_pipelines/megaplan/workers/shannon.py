@@ -111,17 +111,40 @@ _SHANNON_VENDOR_SENTINEL = "MEGAPLAN_SHANNON_VENDORED v1"
 _shannon_vendor_sentinel_ok = False
 
 
-def check_prompt_size(prompt_text: str, *, phase: str) -> None:
+def _selected_claude_model_metadata(model: str | None) -> dict[str, Any]:
+    """Resolve the selected Claude route's input budget once per phase."""
+
+    metadata: dict[str, Any] = {"provider": "anthropic"}
+    if model:
+        from arnold.agent.agent.model_metadata import get_model_context_length
+
+        metadata["max_input_tokens"] = get_model_context_length(
+            model,
+            provider="anthropic",
+        )
+    return metadata
+
+
+def check_prompt_size(
+    prompt_text: str,
+    *,
+    phase: str,
+    model: str | None = None,
+    max_input_tokens: int | None = None,
+) -> None:
     """Legacy guard surface backed by the model seam budget check."""
 
+    selected_model = model or "claude"
     render_step_message(
         StepInvocation(
             kind="model",
             metadata={
                 "tier": ModelTier.NON_ENFORCED.value,
                 "worker": "shannon",
-                "model": "claude",
-                "normalized_model": "claude",
+                "provider": "anthropic",
+                "model": selected_model,
+                "normalized_model": selected_model,
+                "max_input_tokens": max_input_tokens,
                 "validation_step": phase,
                 "prompt": prompt_text,
                 "prompt_components": prompt_text,
@@ -2450,6 +2473,7 @@ def run_shannon_step(
     )
     schema = SCHEMAS.get(schema_name) or read_json(schemas_root(root) / schema_name)
     schema_text = json.dumps(schema)
+    selected_model_metadata = _selected_claude_model_metadata(model)
     try:
         rendered_step = render_prompt_for_dispatch(
             "claude",
@@ -2463,7 +2487,10 @@ def run_shannon_step(
             tier=ModelTier.NON_ENFORCED,
             schema=schema,
             prompt_override=prompt_override,
-            metadata={"projection_capabilities": projection_capabilities},
+            metadata={
+                "projection_capabilities": projection_capabilities,
+                **selected_model_metadata,
+            },
             projection_capabilities=projection_capabilities,
             **(prompt_kwargs or {}),
         )
@@ -2484,6 +2511,7 @@ def run_shannon_step(
             prompt_size_error={"message": str(error)},
             pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
             projection_capabilities=projection_capabilities,
+            metadata=selected_model_metadata,
         )
     base_prompt = rendered_step.prompt
     if output_path is not None:
@@ -2491,9 +2519,14 @@ def run_shannon_step(
         output_path.parent.mkdir(parents=True, exist_ok=True)
     prompt = _append_json_output_contract(base_prompt, step=step, schema_text=schema_text)
     try:
-        check_prompt_size(prompt, phase=step)
-    except CliError as error:
-        if step != "review" or error.code != "prompt_oversized":
+        check_prompt_size(
+            prompt,
+            phase=step,
+            model=model,
+            max_input_tokens=selected_model_metadata.get("max_input_tokens"),
+        )
+    except ModelBudgetError as error:
+        if step != "review":
             raise
         compacted = render_compact_review_prompt(
             "claude",
@@ -2506,13 +2539,19 @@ def run_shannon_step(
             normalized_model=model,
             tier=ModelTier.NON_ENFORCED,
             schema=schema,
-            prompt_size_error=error.extra,
+            prompt_size_error={"message": str(error)},
             pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
             projection_capabilities=projection_capabilities,
+            metadata=selected_model_metadata,
         )
         base_prompt = compacted.prompt
         prompt = _append_json_output_contract(base_prompt, step=step, schema_text=schema_text)
-        check_prompt_size(prompt, phase=step)
+        check_prompt_size(
+            prompt,
+            phase=step,
+            model=model,
+            max_input_tokens=selected_model_metadata.get("max_input_tokens"),
+        )
 
     prompt_iteration = _prompt_file_iteration(step, state) if fresh and step != "execute" else None
     prompt_path = _write_prompt_file(run_dir, step, prompt, iteration=prompt_iteration)
