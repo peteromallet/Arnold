@@ -40,14 +40,20 @@ def test_chain_health_status_ignores_stale_blocked_chain_when_plan_is_nontermina
         marker,
         repair_dir,
         health="alive",
-        env_overrides={"CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2"},
+        env_overrides={
+            "CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2",
+            "PYTHONPATH": str(Path(__file__).resolve().parents[2]),
+        },
     )
     second = _run_chain_health(
         ws,
         marker,
         repair_dir,
         health="alive",
-        env_overrides={"CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2"},
+        env_overrides={
+            "CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2",
+            "PYTHONPATH": str(Path(__file__).resolve().parents[2]),
+        },
     )
 
     assert first["CHAIN_HEALTH_STATUS"] == "ok"
