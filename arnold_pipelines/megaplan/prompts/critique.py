@@ -328,6 +328,29 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         elif isinstance(decisions_data, dict):
             settled_decisions = decisions_data.get("decisions", [])
     settled_block = _settled_decisions_block(settled_decisions)
+    load_bearing_imported_decisions = [
+        decision
+        for decision in state["meta"].get("imported_decisions", [])
+        if isinstance(decision, dict)
+        and bool(decision.get("load_bearing"))
+        and isinstance(decision.get("id"), str)
+        and decision.get("id")
+    ]
+    if load_bearing_imported_decisions:
+        imported_decision_block = "\n".join(
+            [
+                "Load-bearing imported-decision success-criteria contract:",
+                *[
+                    f"- {decision['id']}: {decision.get('decision', '')}"
+                    for decision in load_bearing_imported_decisions
+                ],
+                "- Every ID above must appear literally in at least one `criterion`.",
+                "- Each bound criterion must use `priority: \"must\"` and a non-empty `requires` containing at least one container-verifiable capability (`run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, or `run_linter`).",
+                "- Do not replace these bindings with `subjective_judgment`-only criteria; missing mechanical bindings make the revision invalid.",
+            ]
+        )
+    else:
+        imported_decision_block = ""
 
     # Build the mechanical verification delta block from the completion
     # verdict (if present).  The raw log path is used internally for
@@ -366,6 +389,8 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         {json_dump(open_flags).strip()}
 
         {settled_block}
+
+        {imported_decision_block}
 
         {delta_block}
 
