@@ -698,7 +698,10 @@ def target_rebind(
                 chain_state,
                 active_identity=external_active,
             )
-            if external_report.get("status") not in {"match", "reconcile_required"}:
+            if (
+                direction != "rollback"
+                and external_report.get("status") not in {"match", "reconcile_required"}
+            ):
                 raise CliError(
                     PROJECT_SOURCE_REBIND_ERROR,
                     "external control runtime does not satisfy the immutable execution binding",
