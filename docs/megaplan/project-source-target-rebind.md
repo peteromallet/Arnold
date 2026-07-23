@@ -36,6 +36,9 @@ It does not change the chain's launch-time `target_base_ref`.
 The plan remains paused. Its pause receipt is changed to restore `critiqued`,
 with a fresh `gate` resume cursor. Explicit `chain resume` is still required.
 
+When the load-bearing milestone inputs changed, this gate-only path is not
+enough. Follow it with `chain seed-rematerialize`; do not resume the old plan.
+
 If any Git, artifact, plan-state, or chain-state step fails, the command restores
 the original branch and exact HEAD, restores both JSON blobs byte-for-byte, and
 restores invalidated gate artifacts.
@@ -75,6 +78,7 @@ python -m arnold_pipelines.megaplan chain target-rebind \
   --to-head <40-char-successor-sha> \
   --to-ref refs/heads/<advertised-successor-ref> \
   --expected-spec-sha256 <64-char-sha256> \
+  --expected-target-spec-sha256 <64-char-target-sha256-if-chain-changed> \
   --expected-chain-state-sha256 <64-char-sha256> \
   --expected-plan-state-sha256 <64-char-sha256> \
   --reason "activate verified project source" \
@@ -83,6 +87,70 @@ python -m arnold_pipelines.megaplan chain target-rebind \
 
 Record the returned post-transaction state hashes. Before resuming, verify that
 the returned branch and HEAD are still checked out.
+
+`--expected-target-spec-sha256` defaults to the source spec hash. Supplying it
+allows a content-addressed target checkout to carry an amended chain spec, but
+the current milestone index, label, and configured branch must remain
+identical.
+
+## Rematerialize changed M10 inputs
+
+If the brief, North Star, chain spec, or load-bearing decisions changed, create
+a JSON seed manifest and hash the manifest itself:
+
+```json
+{
+  "schema": "arnold.megaplan.seed_manifest.v1",
+  "session_id": "<session>",
+  "milestone": "<milestone-label>",
+  "plan": "<plan-name>",
+  "target": {
+    "branch": "<configured-milestone-branch>",
+    "head": "<40-char-target-sha>"
+  },
+  "previous_bundle_sha256": "<bound-chain-bundle-sha256-or-empty>",
+  "active_bundle_sha256": "<current-chain-bundle-sha256>",
+  "assets": [
+    {"kind": "chain_spec", "path": ".megaplan/initiatives/x/chain.yaml", "sha256": "<sha256>"},
+    {"kind": "milestone_brief", "path": ".megaplan/initiatives/x/m10.md", "sha256": "<sha256>"},
+    {"kind": "north_star", "path": ".megaplan/initiatives/x/NORTHSTAR.md", "sha256": "<sha256>"},
+    {"kind": "decision", "path": ".megaplan/initiatives/x/decisions.md", "sha256": "<sha256>"}
+  ]
+}
+```
+
+Then, while the target-rebound plan is still paused:
+
+```bash
+python -m arnold_pipelines.megaplan chain seed-rematerialize \
+  --spec path/to/chain.yaml \
+  --project-dir /workspace/<session> \
+  --expected-session-id <session> \
+  --expected-current-milestone <milestone-label> \
+  --expected-current-plan <plan-name> \
+  --expected-branch <configured-milestone-branch> \
+  --expected-head <40-char-target-sha> \
+  --expected-spec-sha256 <current-spec-sha256> \
+  --expected-chain-state-sha256 <current-chain-state-sha256> \
+  --expected-plan-state-sha256 <current-plan-state-sha256> \
+  --seed-manifest path/to/m10-seed-manifest.json \
+  --expected-seed-manifest-sha256 <manifest-sha256> \
+  --reason "rematerialize M10 from amended load-bearing inputs"
+```
+
+This second transaction is allowed only before execute and under the same
+durable pause. It verifies every manifest asset byte-for-byte, binds the active
+chain/assets bundle, archives the complete superseded plan under
+`.seed-rematerialize-archive`, and removes its gate/finalize/review evidence
+from the active plan. It then recreates the brief snapshot, North Star
+artifacts, imported decisions, and canonical-source binding in a fresh plan
+epoch at the same chain milestone. The pause restores to `initialized`, so the
+next explicit resume performs a fresh plan/critique/gate sequence.
+
+Failures after archive creation or either state write restore both state files
+and every moved plan artifact. The content-addressed archive remains available
+after success for audit and manual recovery; no accepted execute history or
+execution artifact may be present.
 
 ## Roll back before execute
 

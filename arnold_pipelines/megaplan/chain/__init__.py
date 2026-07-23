@@ -7936,10 +7936,43 @@ def build_chain_parser(subparsers: Any) -> None:
     target_rebind_parser.add_argument("--to-head", required=True)
     target_rebind_parser.add_argument("--to-ref", required=True)
     target_rebind_parser.add_argument("--expected-spec-sha256", required=True)
+    target_rebind_parser.add_argument(
+        "--expected-target-spec-sha256",
+        required=False,
+        help=(
+            "Exact chain-spec hash after target checkout; defaults to "
+            "--expected-spec-sha256 when the spec is unchanged"
+        ),
+    )
     target_rebind_parser.add_argument("--expected-chain-state-sha256", required=True)
     target_rebind_parser.add_argument("--expected-plan-state-sha256", required=True)
     target_rebind_parser.add_argument("--reason", required=True)
     target_rebind_parser.add_argument("--actor", default="operator")
+
+    seed_rematerialize_parser = chain_sub.add_parser(
+        "seed-rematerialize",
+        help=(
+            "Archive a paused pre-execute plan and rematerialize the same "
+            "milestone from an exact seed manifest"
+        ),
+    )
+    seed_rematerialize_parser.add_argument("--spec", required=True)
+    seed_rematerialize_parser.add_argument("--project-dir", required=True)
+    seed_rematerialize_parser.add_argument("--expected-session-id", required=True)
+    seed_rematerialize_parser.add_argument("--expected-current-milestone", required=True)
+    seed_rematerialize_parser.add_argument("--expected-current-plan", required=True)
+    seed_rematerialize_parser.add_argument("--expected-branch", required=True)
+    seed_rematerialize_parser.add_argument("--expected-head", required=True)
+    seed_rematerialize_parser.add_argument("--expected-spec-sha256", required=True)
+    seed_rematerialize_parser.add_argument("--expected-chain-state-sha256", required=True)
+    seed_rematerialize_parser.add_argument("--expected-plan-state-sha256", required=True)
+    seed_rematerialize_parser.add_argument("--seed-manifest", required=True)
+    seed_rematerialize_parser.add_argument(
+        "--expected-seed-manifest-sha256",
+        required=True,
+    )
+    seed_rematerialize_parser.add_argument("--reason", required=True)
+    seed_rematerialize_parser.add_argument("--actor", default="operator")
 
     pause_parser = chain_sub.add_parser(
         "pause", help="Durably pause a chain and disable automatic recovery"
@@ -8314,6 +8347,7 @@ def run_chain_cli(
                 to_head=args.to_head,
                 to_ref=args.to_ref,
                 expected_spec_sha256=args.expected_spec_sha256,
+                expected_target_spec_sha256=args.expected_target_spec_sha256,
                 expected_chain_state_sha256=args.expected_chain_state_sha256,
                 expected_plan_state_sha256=args.expected_plan_state_sha256,
                 reason=args.reason,
@@ -8327,6 +8361,45 @@ def run_chain_cli(
                     "success": True,
                     "spec": str(spec_path),
                     "action": "target-rebind",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "seed-rematerialize":
+        project_root = Path(args.project_dir).expanduser().resolve()
+        try:
+            from arnold_pipelines.megaplan.chain.seed_rematerialize import (
+                seed_rematerialize,
+            )
+
+            result = seed_rematerialize(
+                spec_path,
+                project_root,
+                expected_session_id=args.expected_session_id,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                expected_branch=args.expected_branch,
+                expected_head=args.expected_head,
+                expected_spec_sha256=args.expected_spec_sha256,
+                expected_chain_state_sha256=args.expected_chain_state_sha256,
+                expected_plan_state_sha256=args.expected_plan_state_sha256,
+                seed_manifest_path=Path(args.seed_manifest).expanduser().resolve(),
+                expected_seed_manifest_sha256=args.expected_seed_manifest_sha256,
+                reason=args.reason,
+                actor=args.actor,
+            )
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "seed-rematerialize",
                     **result,
                 },
                 indent=2,

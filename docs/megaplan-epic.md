@@ -195,6 +195,10 @@ If an already materialized, pre-execute milestone must move to a verified
 fast-forward project source while preserving its chain cursor, use the guarded
 [`chain target-rebind`](megaplan/project-source-target-rebind.md) lifecycle.
 Do not substitute runtime rebind, chain-spec rebind, or a manual branch switch.
+If the target also changes the current milestone's brief, North Star, chain
+spec, or load-bearing decisions, run `chain seed-rematerialize` before resume.
+It binds an exact seed manifest, archives the superseded plan/evidence, and
+returns the same milestone to a fresh `initialized` planning epoch.
 
 ## Common pitfalls
 
