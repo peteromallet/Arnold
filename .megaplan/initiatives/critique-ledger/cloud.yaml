@@ -19,7 +19,7 @@ chain:
   spec: /workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml
 
 megaplan:
-  ref: bc0c600c418c8995331aa8aa6784fc62b4fddf17
+  ref: megaplan/custody-control-plane/m10-safe-retry-recovery-and-effects
   codex_auth: chatgpt
   repo: https://github.com/peteromallet/Arnold.git
   src_path: /workspace/runtime-candidates/arnold-bc0c600c418c8995331aa8aa6784fc62b4fddf17
