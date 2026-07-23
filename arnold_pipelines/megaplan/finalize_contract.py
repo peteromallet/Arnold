@@ -182,8 +182,27 @@ FINALIZE_MODEL_OUTPUT_SCHEMA: dict[str, Any] = {
                 },
             },
         },
-        "sense_checks": {"type": "array"},
-        "watch_items": {"type": "array"},
+        "sense_checks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "task_id",
+                    "question",
+                    "executor_note",
+                    "verdict",
+                ],
+                "properties": {
+                    "id": {"type": "string"},
+                    "task_id": {"type": "string"},
+                    "question": {"type": "string"},
+                    "executor_note": {"type": "string"},
+                    "verdict": {"type": "string"},
+                },
+            },
+        },
+        "watch_items": {"type": "array", "items": {"type": "string"}},
         "meta_commentary": {"type": "string"},
         "user_actions": {
             "type": "array",

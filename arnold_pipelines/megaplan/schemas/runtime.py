@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from arnold_pipelines.megaplan.finalize_contract import FINALIZE_MODEL_OUTPUT_SCHEMA
 from arnold_pipelines.megaplan.north_star_actions import (
     NORTH_STAR_ACTION_ADDRESSED_SCHEMA,
     NORTH_STAR_ACTION_SCHEMA,
@@ -1230,6 +1231,10 @@ def _build_finalize_capture_schema() -> dict[str, Any]:
 
 
 SCHEMAS["finalize_capture.json"] = _build_finalize_capture_schema()
+# The finalize producer and handler share this model-owned boundary.  Keep the
+# historical persisted-artifact projection above for readers, but never audit a
+# model-native task graph against that legacy task shape.
+SCHEMAS["finalize_model_output.json"] = deepcopy(FINALIZE_MODEL_OUTPUT_SCHEMA)
 
 
 def _build_execution_doc_schema() -> dict[str, Any]:

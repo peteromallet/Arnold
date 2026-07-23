@@ -2178,7 +2178,12 @@ def run_hermes_step(
         # same shape non-streaming returns, so the rest of megaplan is
         # unchanged.
 
-        _MAX_EMPTY_RETRIES = 3
+        # Replaying the identical full finalize context cannot repair a shape
+        # error and is particularly expensive for large task graphs. Finalize
+        # gets one producer turn plus, when needed, one fresh bounded structural
+        # repair turn below.
+        _MAX_EMPTY_RETRIES = 1 if step == "finalize" else 3
+        finalize_structural_repair_attempted = False
         for _empty_attempt in range(1, _MAX_EMPTY_RETRIES + 1):
             run_kwargs = _streaming_run_kwargs(current_model or model, agent_max_tokens, plan_dir=plan_dir)
             tracker = run_kwargs.get("stream_callback")
@@ -2439,6 +2444,85 @@ def run_hermes_step(
                         error = None
                     except (CliError, ModelStructuralAuditError):
                         pass
+                if (
+                    error is not None
+                    and step == "finalize"
+                    and not finalize_structural_repair_attempted
+                ):
+                    finalize_structural_repair_attempted = True
+                    repair_prompt = _finalize_structural_repair_prompt(
+                        current_payload,
+                        error,
+                        schema,
+                    )
+                    check_prompt_size(repair_prompt, phase="finalize")
+                    _pre_dispatch_budget_check(
+                        current_agent,
+                        conversation_history=[],
+                        user_message=repair_prompt,
+                        system=None,
+                        tool_manifest=None,
+                        schema=schema,
+                        step=step,
+                        model_name=effective_resolved_model
+                        or resolved_model
+                        or current_model,
+                        tier=ModelTier.ENFORCED,
+                        worker="hermes",
+                    )
+                    repair_run_kwargs = _streaming_run_kwargs(
+                        current_model or model,
+                        agent_max_tokens,
+                        plan_dir=plan_dir,
+                    )
+                    print(
+                        "[hermes-worker] Running one fresh bounded finalize "
+                        "structural-repair turn",
+                        file=activity_stderr,
+                    )
+                    repaired_result = current_agent.run_conversation(
+                        user_message=repair_prompt,
+                        conversation_history=[],
+                        **repair_run_kwargs,
+                    )
+                    _raise_for_terminal_provider_failure(
+                        repaired_result,
+                        step=step,
+                    )
+                    repaired_payload, repaired_raw_output = parse_agent_output(
+                        current_agent,
+                        repaired_result,
+                        output_path=None,
+                        schema=schema,
+                        step=step,
+                        project_dir=project_dir,
+                        plan_dir=plan_dir,
+                        plan_mode=plan_mode,
+                        run_kwargs=repair_run_kwargs,
+                        template_seed_text=None,
+                    )
+                    clean_parsed_payload(repaired_payload, schema, step)
+                    repaired_capture = capture_step_output(
+                        StepInvocation(
+                            kind="model",
+                            metadata={
+                                "tier": seam_tier.value,
+                                "worker": "hermes",
+                                "model": effective_resolved_model
+                                or resolved_model,
+                                "normalized_model": effective_resolved_model
+                                or resolved_model,
+                                "validation_step": step,
+                                "compatibility_validation_step": step,
+                                "schema": schema,
+                            },
+                        ),
+                        repaired_payload,
+                    )
+                    current_result = repaired_result
+                    current_payload = dict(repaired_capture.legacy_payload)
+                    current_raw_output = repaired_raw_output
+                    error = None
                 if error is not None:
                     if isinstance(error, CliError):
                         raise CliError(error.code, error.message, extra={"raw_output": current_raw_output}) from error
@@ -3006,6 +3090,41 @@ def _schema_template(schema: dict) -> str:
         return "{}"
     template = _template_object(schema)
     return json.dumps(template, indent=2)
+
+
+def _finalize_structural_repair_prompt(
+    candidate: dict,
+    error: Exception,
+    schema: dict,
+) -> str:
+    """Build the single fresh finalize shape-repair turn.
+
+    The original plan, prompt, and conversation are deliberately excluded.
+    The candidate already carries the finalizer's semantic compilation; this
+    turn receives only that candidate, the audit failure, and the authoritative
+    model-output schema.
+    """
+
+    candidate_json = json.dumps(candidate, ensure_ascii=False, sort_keys=True)
+    if len(candidate_json) > 300_000:
+        raise CliError(
+            "worker_structural_audit_failed",
+            "Finalize candidate is too large for the bounded structural-repair turn.",
+        )
+    error_text = str(error)
+    if len(error_text) > 12_000:
+        error_text = error_text[:12_000] + "\n...[audit error list bounded]..."
+    return (
+        "Repair the JSON structure only. Preserve the candidate's task semantics, "
+        "IDs, dependencies, write sets, test scopes, and prose unless a schema "
+        "error requires changing a field. Do not add executor evidence fields "
+        "that are absent from the schema. Return exactly one raw JSON object and "
+        "no markdown.\n\n"
+        f"STRUCTURAL AUDIT ERRORS:\n{error_text}\n\n"
+        f"CANDIDATE JSON:\n{candidate_json}\n\n"
+        "AUTHORITATIVE FINALIZE MODEL-OUTPUT SCHEMA:\n"
+        f"{json.dumps(schema, ensure_ascii=False, sort_keys=True)}"
+    )
 
 
 def _parse_json_response(text: str) -> dict | None:

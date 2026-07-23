@@ -157,12 +157,34 @@ def test_gate_prompt_bounds_repeated_history_but_keeps_current_raw_findings(
     _write_json(
         plan_dir / "critique_custody_v6.json",
         {
+            "expected_check_ids": ["correctness", "scope"],
             "raw_sources": [
                 {
                     "artifact": "critique_check_correctness_producer_v6.json",
                     "sha256": "sha256:" + "a" * 64,
                 }
             ]
+        },
+    )
+    _write_json(
+        plan_dir / "critique_check_scope.json",
+        {
+            "checks": [
+                {
+                    "id": "scope",
+                    "findings": [
+                        {
+                            "detail": (
+                                "CURRENT_ACCEPTED_ATTEMPT_FINDING: "
+                                "arnold_pipelines/megaplan/loop/git.py is omitted "
+                                "from Step 13G custody"
+                            ),
+                            "flagged": True,
+                        }
+                    ],
+                }
+            ],
+            "flags": [],
         },
     )
     _write_json(
@@ -301,12 +323,34 @@ def test_revise_prompt_bounds_repeated_history_but_keeps_current_obligations(
     _write_json(
         plan_dir / "critique_custody_v6.json",
         {
+            "expected_check_ids": ["correctness", "scope"],
             "raw_sources": [
                 {
                     "artifact": "critique_check_correctness_producer_v6.json",
                     "sha256": "sha256:" + "a" * 64,
                 }
             ]
+        },
+    )
+    _write_json(
+        plan_dir / "critique_check_scope.json",
+        {
+            "checks": [
+                {
+                    "id": "scope",
+                    "findings": [
+                        {
+                            "detail": (
+                                "CURRENT_ACCEPTED_ATTEMPT_FINDING: "
+                                "arnold_pipelines/megaplan/loop/git.py is omitted "
+                                "from Step 13G custody"
+                            ),
+                            "flagged": True,
+                        }
+                    ],
+                }
+            ],
+            "flags": [],
         },
     )
     north_star_action = {
@@ -396,6 +440,8 @@ def test_revise_prompt_bounds_repeated_history_but_keeps_current_obligations(
     assert "CURRENT_CANONICAL_REVISE_FINDING" in prompt
     assert "CURRENT_EXTERNAL_LOOP_GIT_FINDING" in prompt
     assert "CURRENT_EXTERNAL_13G_FINDING" in prompt
+    assert "CURRENT_ACCEPTED_ATTEMPT_FINDING" in prompt
+    assert "arnold_pipelines/megaplan/loop/git.py" in prompt
     assert "CURRENT_NORTH_STAR_CONCERN" in prompt
     assert "CURRENT_ORCHESTRATOR_GUIDANCE" in prompt
     for index, flag_id in enumerate(required_ids):

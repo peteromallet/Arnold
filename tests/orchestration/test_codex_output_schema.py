@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan._core.io import _enforce_openai_strict_mode
@@ -9,7 +10,13 @@ from arnold_pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
 from arnold_pipelines.megaplan.finalize_contract import FINALIZE_MODEL_OUTPUT_SCHEMA
 from arnold_pipelines.megaplan.schemas import SCHEMAS, strict_schema
 from arnold_pipelines.megaplan.schemas.runtime import CRITIQUE_EVALUATOR_CHECK_IDS
-from arnold_pipelines.megaplan.step_contracts import STEP_CONTRACTS
+from arnold_pipelines.megaplan.step_contracts import (
+    STEP_CONTRACTS,
+    contract_to_invocation,
+)
+from arnold_pipelines.megaplan.handlers.finalize import _validate_finalize_payload
+from arnold_pipelines.megaplan.model_seam import capture_step_output
+from arnold_pipelines.megaplan.workers import WorkerResult
 
 
 def _assert_required_keys_have_properties(schema: Any) -> None:
@@ -84,8 +91,8 @@ def test_all_codex_output_schemas_have_strict_required_properties() -> None:
 
 def test_finalize_codex_schema_excludes_harness_owned_evidence() -> None:
     contract = STEP_CONTRACTS["finalize"]
-    assert contract.schema_key == "finalize_capture.json"
-    assert contract.capture_schema_key == "finalize_capture.json"
+    assert contract.schema_key == "finalize_model_output.json"
+    assert contract.capture_schema_key == "finalize_model_output.json"
 
     schema = _enforce_openai_strict_mode(
         strict_schema(deepcopy(SCHEMAS[contract.schema_key]))
@@ -108,12 +115,79 @@ def test_finalize_critique_resolution_schema_cannot_drift_at_runtime_boundary() 
     contract_schema = FINALIZE_MODEL_OUTPUT_SCHEMA["properties"][
         "critique_resolution_coverage"
     ]
-    capture_schema = SCHEMAS["finalize_capture.json"]["properties"][
+    capture_schema = SCHEMAS["finalize_model_output.json"]["properties"][
         "critique_resolution_coverage"
     ]
 
     assert capture_schema == contract_schema
     _assert_array_schemas_have_items(capture_schema)
+
+
+def test_model_native_finalize_graph_passes_capture_seam_and_handler(
+    tmp_path: Path,
+) -> None:
+    """Do not require legacy executor-evidence fields from the finalizer model."""
+
+    payload = {
+        "task_contract_version": 1,
+        "tasks": [
+            {
+                "id": "T1",
+                "objective": "Implement the bounded correction.",
+                "description": "Implement the bounded correction in source and tests.",
+                "status": "pending",
+                "kind": "code",
+                "complexity": 4,
+                "complexity_justification": "Two coupled source and regression files.",
+                "estimated_minutes": 30,
+                "depends_on": [],
+                "dependency_reasons": {},
+                "routing_group": "implementation",
+                "write_set": {
+                    "paths": ["arnold_pipelines/megaplan/example.py"],
+                    "complete": True,
+                },
+                "narrow_tests": {
+                    "selectors": ["tests/test_example.py"],
+                    "max_seconds": 120,
+                    "max_runs": 1,
+                },
+                "checkpoint": {
+                    "required": False,
+                    "max_interval_seconds": 300,
+                    "records": [],
+                },
+            }
+        ],
+        "validation_jobs": [],
+        "critique_resolution_coverage": [],
+        "sense_checks": [],
+        "watch_items": [],
+        "user_actions": [],
+        "meta_commentary": "Compiled from the gated plan.",
+    }
+
+    captured = capture_step_output(
+        contract_to_invocation(STEP_CONTRACTS["finalize"]),
+        payload,
+    ).legacy_payload
+
+    assert captured == payload
+    assert "auto_attributed_files" not in captured["tasks"][0]
+    assert "commands_run" not in captured["tasks"][0]
+    assert "evidence_files" not in captured["tasks"][0]
+
+    worker = WorkerResult(
+        payload=dict(captured),
+        raw_output="",
+        duration_ms=1,
+        cost_usd=0.0,
+    )
+    state = {
+        "iteration": 1,
+        "config": {"mode": "code"},
+    }
+    _validate_finalize_payload(tmp_path, state, worker)
 
 
 def test_critique_evaluator_schema_rejects_invented_catalog_lens_ids() -> None:

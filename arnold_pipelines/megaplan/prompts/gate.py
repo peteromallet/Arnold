@@ -39,6 +39,7 @@ _GATE_FLAG_TEXT_LIMIT = 1_200
 _GATE_FINDING_TEXT_LIMIT = 1_600
 _GATE_RAW_SOURCE_LIMIT = 48_000
 _GATE_RAW_FILE_LIMIT = 8_000
+_GATE_CURRENT_ATTEMPT_FINDINGS_LIMIT = 48_000
 
 
 def _bounded_gate_text(value: Any, *, limit: int) -> str:
@@ -228,6 +229,56 @@ def _current_critique_for_gate(
         remaining -= rendered_size
         raw_findings.append(row)
     projected["external_raw_findings"] = raw_findings
+
+    # A check can be retried more than once against the same plan version.
+    # The canonical aggregate records the last admitted attempt, while the
+    # stable per-check artifact can still contain a significant finding from
+    # an earlier accepted attempt in that same plan epoch.  Preserve flagged
+    # findings from those current-plan artifacts so a clear retry cannot erase
+    # a concrete concern (for example, a missed mutation surface).  The plan
+    # mtime is the epoch boundary; artifacts older than the current plan are
+    # stale and excluded.
+    try:
+        plan_mtime_ns = latest_plan_path(plan_dir, state).stat().st_mtime_ns
+    except OSError:
+        plan_mtime_ns = 0
+    current_attempt_remaining = _GATE_CURRENT_ATTEMPT_FINDINGS_LIMIT
+    current_attempt_findings: list[dict[str, Any]] = []
+    for raw_check_id in custody.get("expected_check_ids", []):
+        if current_attempt_remaining <= 0:
+            break
+        check_id = str(raw_check_id or "")
+        if not check_id or any(
+            character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+            for character in check_id
+        ):
+            continue
+        artifact = f"critique_check_{check_id}.json"
+        path = plan_dir / artifact
+        try:
+            if path.stat().st_mtime_ns < plan_mtime_ns:
+                continue
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        producer_findings = [
+            finding
+            for finding in _raw_producer_findings(raw)
+            if bool(finding.get("flagged"))
+        ]
+        if not producer_findings:
+            continue
+        rendered_size = len(json_dump(producer_findings))
+        if rendered_size > current_attempt_remaining:
+            continue
+        current_attempt_remaining -= rendered_size
+        current_attempt_findings.append(
+            {
+                "artifact": artifact,
+                "findings": producer_findings,
+            }
+        )
+    projected["current_plan_attempt_findings"] = current_attempt_findings
     return projected
 
 
