@@ -3622,6 +3622,113 @@ class TestLiveSignalFiltering:
         assert any("repair_complete_incomplete_chain" in reason for reason in reasons)
         assert any("plan_active_step_ghost_worker" in reason for reason in reasons)
 
+    def test_gather_flags_completed_repair_request_missing_profile_preservation_clause(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.cloud import repair_requests
+
+        session = "custody-control-plane-20260714"
+        plan = "m9-rebuildable-projections-20260722-0431"
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / plan
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True)
+        chain_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"name": plan, "current_state": "planned"}),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-custody.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 7,
+                    "current_plan_name": plan,
+                    "last_state": "blocked",
+                    "chain_complete": False,
+                    "milestones": [
+                        {"label": f"m{index}"} for index in range(1, 11)
+                    ],
+                    "completed": [
+                        {"label": f"m{index}", "status": "done"}
+                        for index in range(1, 8)
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        queue_root = tmp_path / ".megaplan" / "repair-queue"
+        queued = repair_requests.enqueue_repair_request(
+            queue_root=queue_root,
+            session=session,
+            source="resident_authorized_recovery",
+            workspace=workspace,
+            run_kind="chain",
+            target={
+                "plan_name": plan,
+                "configured_profile": "partnered-5",
+                "recovery_contract": {
+                    "preserve_configured_profile": True,
+                    "required_cursor_advance": True,
+                    "success_requires": "active execution plus chain-owned receipt",
+                    "forbid_standalone_completion": True,
+                },
+            },
+            problem_signature={
+                "failure_kind": "completed_repair_without_cursor_advance",
+                "current_state": "planned",
+                "phase_or_step": "critique",
+                "milestone_or_plan": plan,
+                "gate_recommendation": "continue legal transition",
+                "blocked_task_id": "phase:critique",
+            },
+            root_cause_hint="ordinary repair completed without cursor advancement",
+        )
+        request_path = Path(queued["path"])
+        persisted = json.loads(request_path.read_text(encoding="utf-8"))
+        request_id = persisted["request_id"]
+        blocker_id = persisted["blocker_id"]
+        persisted["target"]["recovery_contract"].pop(
+            "preserve_configured_profile"
+        )
+        request_path.write_text(
+            json.dumps(persisted, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": plan,
+                    "session": session,
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+        )
+
+        assert len(findings["findings"]) == 1
+        finding = findings["findings"][0]
+        reason = next(
+            item
+            for item in finding["reasons"]
+            if item.startswith("repair_request_contract_invalid:")
+        )
+        assert f"request_id={request_id}" in reason
+        assert f"blocker_id={blocker_id}" in reason
+        assert "configured_profile=partnered-5" in reason
+        invalid = finding["repair_custody_summary"]["invalid_contract_requests"]
+        assert invalid == [
+            {
+                "request_id": request_id,
+                "blocker_id": blocker_id,
+                "configured_profile": "partnered-5",
+                "failure_kind": "completed_repair_without_cursor_advance",
+                "violations": ["missing_preserve_configured_profile"],
+            }
+        ]
+
     def test_gather_flags_wbc_accepted_unclaimed_exhausted_cycle_for_l3(
         self, tmp_path: Path
     ) -> None:

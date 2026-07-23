@@ -563,6 +563,9 @@ def test_completed_repair_request_preserves_legacy_identity_and_profile_contract
     assert not repair_requests.has_claimable_repair_request_contract(
         missing_profile_clause
     )
+    assert repair_requests.repair_request_contract_violations(
+        missing_profile_clause
+    ) == ["missing_preserve_configured_profile"]
 
 
 def test_completed_repair_recurrence_remains_visible_to_l2_l3_backstops(
