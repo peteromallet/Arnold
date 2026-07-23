@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -657,6 +658,125 @@ def test_phase_failure_persists_replay_stable_claim_identity(tmp_path: Path) -> 
     assert claim.claimed
     assert claim.owner is not None
     assert claim.owner["blocker_id"] == request["blocker_id"]
+
+
+def test_completed_repair_request_preserves_legacy_identity_and_profile_contract(
+    tmp_path: Path,
+) -> None:
+    queue_dir = _queue_root(tmp_path)
+    target = {
+        "plan_name": "m9-rebuildable-projections-20260722-0431",
+        "configured_profile": "partnered-5",
+        "recovery_contract": {
+            "preserve_configured_profile": True,
+            "required_cursor_advance": True,
+            "success_requires": (
+                "active execution state plus chain-owned M9 batch or transition receipt"
+            ),
+            "forbid_standalone_completion": True,
+        },
+    }
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="custody-control-plane-20260714",
+        source="resident_authorized_recovery",
+        workspace=tmp_path,
+        run_kind="chain",
+        target=target,
+        problem_signature={
+            "failure_kind": "completed_repair_without_cursor_advance",
+            "current_state": "planned",
+            "phase_or_step": "critique",
+            "milestone_or_plan": "m9-rebuildable-projections-20260722-0431",
+            "gate_recommendation": "continue the legal transition",
+            "blocked_task_id": "phase:critique",
+        },
+        root_cause_hint="ordinary repair returned without canonical advancement",
+    )
+    request = queued["request"]
+    fingerprint = repair_contract.normalize_blocker_fingerprint_v1(
+        request["blocker_fingerprint"]
+    )
+    assert fingerprint is not None
+    legacy_payload = {
+        "prefix": repair_contract.BLOCKER_FINGERPRINT_V1_PREFIX,
+        "fingerprint": fingerprint,
+    }
+    legacy_digest = hashlib.sha256(
+        json.dumps(
+            legacy_payload, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    request["blocker_id"] = f"{repair_contract.BLOCKER_ID_V1_PREFIX}{legacy_digest}"
+
+    assert repair_contract.blocker_id_matches_fingerprint(
+        request["blocker_id"], request["blocker_fingerprint"]
+    )
+    assert repair_requests.has_claimable_repair_request_contract(request)
+
+    missing_profile_clause = json.loads(json.dumps(request))
+    missing_profile_clause["target"]["recovery_contract"].pop(
+        "preserve_configured_profile"
+    )
+    assert not repair_requests.has_claimable_repair_request_contract(
+        missing_profile_clause
+    )
+
+
+def test_completed_repair_recurrence_remains_visible_to_l2_l3_backstops(
+    tmp_path: Path,
+) -> None:
+    queue_dir = _queue_root(tmp_path)
+    plan_name = "m9-rebuildable-projections-20260722-0431"
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="custody-control-plane-20260714",
+        source="resident_authorized_recovery",
+        workspace=tmp_path,
+        run_kind="chain",
+        target={
+            "plan_name": plan_name,
+            "configured_profile": "partnered-5",
+            "recovery_contract": {
+                "preserve_configured_profile": True,
+                "required_cursor_advance": True,
+                "success_requires": "active execution plus chain-owned receipt",
+                "forbid_standalone_completion": True,
+            },
+        },
+        problem_signature={
+            "failure_kind": "completed_repair_without_cursor_advance",
+            "current_state": "planned",
+            "phase_or_step": "critique",
+            "milestone_or_plan": plan_name,
+            "gate_recommendation": "continue the legal transition",
+            "blocked_task_id": "phase:critique",
+        },
+        root_cause_hint="recurrence",
+    )
+    request_id = queued["request"]["request_id"]
+    for _ in range(3):
+        repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason="ordinary repair completed without cursor advancement",
+        )
+
+    projection = repair_contract.project_repair_custody(
+        plan_state={"name": plan_name, "current_state": "planned"},
+        current_target={
+            "target_session": "custody-control-plane-20260714",
+            "current_refs": {
+                "current_plan_name": plan_name,
+                "plan_current_state": "planned",
+            },
+        },
+        queue_root=queue_dir,
+    )
+
+    assert projection["accepted_unclaimed_request_ids"] == [request_id]
+    assert projection["claim_alert_request_ids"] == [request_id]
+    assert projection["retry_budget"]["claim_alerted"] is True
 
 
 def test_replay_mints_claimable_successor_for_identity_free_legacy_request(
