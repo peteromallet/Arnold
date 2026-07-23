@@ -1298,6 +1298,29 @@ def test_full_runtime_marker_target_seed_a_b_a_b_keeps_all_receipts(
     )
 
 
+def test_target_rollback_can_escape_pre_seed_binding_drift(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    runtime_a, runtime_b, _marker = _runtime_fixture(fixture)
+    _runtime_rebind(
+        fixture,
+        source=runtime_a,
+        target=runtime_b,
+        direction="cutover",
+    )
+    _cutover(fixture, verified_external_runtime_identity=runtime_b)
+
+    result = _target_rollback(
+        fixture,
+        verified_external_runtime_identity=runtime_b,
+    )
+
+    assert result["direction"] == "rollback"
+    assert _git(fixture["root"], "branch", "--show-current") == M9_BRANCH
+    assert _git(fixture["root"], "rev-parse", "HEAD") == fixture["source"]
+
+
 def test_seed_rollback_refuses_stale_cutover_guard(tmp_path: Path) -> None:
     fixture = _fixture(tmp_path)
     _cutover(fixture)
