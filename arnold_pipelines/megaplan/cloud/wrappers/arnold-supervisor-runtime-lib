@@ -60,7 +60,21 @@ arnold_supervisor_runtime_init() {
     return 78
   fi
 
-  if ! PYTHONSAFEPATH=1 PYTHONPATH="$source_root:${PYTHONPATH:-}" \
+  local isolated=0
+  if env -u PYTHONPATH PYTHONSAFEPATH=1 "$resolved" -P -c \
+    'import importlib.metadata,json; d=importlib.metadata.distribution("arnold"); u=json.loads(d.read_text("direct_url.json") or "{}"); raise SystemExit(bool((u.get("dir_info") or {}).get("editable")))' \
+    >/dev/null 2>&1; then
+    isolated=1
+  fi
+  if [[ "$isolated" == "1" ]]; then
+    if ! env -u PYTHONPATH PYTHONSAFEPATH=1 "$resolved" -P -c \
+      'import yaml; import arnold_pipelines.megaplan.cloud.cli; import arnold_pipelines.megaplan.cloud.repair_contract' \
+      >/dev/null 2>&1; then
+      arnold_supervisor_failure_artifact "$component" "readiness_import_failed"
+      printf '%s\n' "$component: supervisor interpreter readiness import failed: $resolved" >&2
+      return 78
+    fi
+  elif ! PYTHONSAFEPATH=1 PYTHONPATH="$source_root" \
     "$resolved" -P -c 'import yaml; import arnold_pipelines.megaplan.cloud.cli; import arnold_pipelines.megaplan.cloud.repair_contract' \
     >/dev/null 2>&1; then
     arnold_supervisor_failure_artifact "$component" "readiness_import_failed"
@@ -70,6 +84,7 @@ arnold_supervisor_runtime_init() {
 
   export MEGAPLAN_SUPERVISOR_PYTHON="$resolved"
   export MEGAPLAN_SUPERVISOR_SOURCE_ROOT="$source_root"
+  export MEGAPLAN_SUPERVISOR_ISOLATED="$isolated"
   arnold_supervisor_python() {
     local need_safe_path=1
     local arg
@@ -89,13 +104,19 @@ arnold_supervisor_runtime_init() {
           ;;
       esac
     done
-    if [[ "$need_safe_path" == "1" ]]; then
+    if [[ "$MEGAPLAN_SUPERVISOR_ISOLATED" == "1" && "$need_safe_path" == "1" ]]; then
+      env -u PYTHONPATH PYTHONSAFEPATH=1 \
+        "$MEGAPLAN_SUPERVISOR_PYTHON" -P "$@"
+    elif [[ "$MEGAPLAN_SUPERVISOR_ISOLATED" == "1" ]]; then
+      env -u PYTHONPATH PYTHONSAFEPATH=1 \
+        "$MEGAPLAN_SUPERVISOR_PYTHON" "$@"
+    elif [[ "$need_safe_path" == "1" ]]; then
       PYTHONSAFEPATH=1 \
-        PYTHONPATH="$MEGAPLAN_SUPERVISOR_SOURCE_ROOT:${PYTHONPATH:-}" \
+        PYTHONPATH="$MEGAPLAN_SUPERVISOR_SOURCE_ROOT" \
         "$MEGAPLAN_SUPERVISOR_PYTHON" -P "$@"
     else
       PYTHONSAFEPATH=1 \
-        PYTHONPATH="$MEGAPLAN_SUPERVISOR_SOURCE_ROOT:${PYTHONPATH:-}" \
+        PYTHONPATH="$MEGAPLAN_SUPERVISOR_SOURCE_ROOT" \
         "$MEGAPLAN_SUPERVISOR_PYTHON" "$@"
     fi
   }
@@ -115,8 +136,7 @@ arnold_supervisor_runtime_init() {
     fi
     ARNOLD_RUNTIME_PROCESS_ATTESTATION_PATH="${MEGAPLAN_RUNTIME_PROCESS_ATTESTATION:-${MEGAPLAN_SUPERVISOR_STATUS_DIR:-${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}}/${attestation_component}.runtime-process-attestation.json}"
     MEGAPLAN_RUNTIME_PROCESS_ATTESTATION="$ARNOLD_RUNTIME_PROCESS_ATTESTATION_PATH" \
-      PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_SUPERVISOR_SOURCE_ROOT:${PYTHONPATH:-}" \
-      "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold_pipelines.megaplan.cloud.runtime_attestation \
+      arnold_supervisor_python -m arnold_pipelines.megaplan.cloud.runtime_attestation \
       startup --component "$attestation_component" --target-pid "$$"
   }
   arnold_runtime_attestation_check() {
@@ -126,8 +146,7 @@ arnold_supervisor_runtime_init() {
       return 0
     fi
     MEGAPLAN_RUNTIME_PROCESS_ATTESTATION="$ARNOLD_RUNTIME_PROCESS_ATTESTATION_PATH" \
-      PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_SUPERVISOR_SOURCE_ROOT:${PYTHONPATH:-}" \
-      "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m arnold_pipelines.megaplan.cloud.runtime_attestation \
+      arnold_supervisor_python -m arnold_pipelines.megaplan.cloud.runtime_attestation \
       verify-process --component "$attestation_component" --target-pid "$$"
   }
   export -f arnold_runtime_attestation_start arnold_runtime_attestation_check

@@ -537,6 +537,18 @@ def _rollback_seed_epoch(
         current_value = chain_meta.get(key) if isinstance(chain_meta, Mapping) else None
         if current_value is not None:
             old_chain_meta[key] = current_value
+    # Runtime rollback is deliberately performed before target/seed rollback so
+    # the still-current B control interpreter can independently prove A.  Keep
+    # that append-only ledger and its A current identity while restoring the
+    # predecessor launch/spec bundle from the seed archive.
+    current_execution = (
+        chain_meta.get("execution_binding") if isinstance(chain_meta, Mapping) else None
+    )
+    restored_execution = old_chain_meta.get("execution_binding")
+    if isinstance(current_execution, Mapping) and isinstance(restored_execution, dict):
+        current_runtime = current_execution.get("runtime_binding")
+        if isinstance(current_runtime, Mapping):
+            restored_execution["runtime_binding"] = dict(current_runtime)
     restored_plan_binding = _append_seed_binding(old_plan_meta, cutover)
     restored_chain_binding = _append_seed_binding(old_chain_meta, cutover)
     restored_plan_binding["events"].append(rollback)
@@ -634,6 +646,7 @@ def seed_rematerialize(
     expected_archive_manifest_sha256: str | None = None,
     reason: str,
     actor: str = "operator",
+    verified_external_runtime_identity: Mapping[str, Any] | None = None,
     failure_injector: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Cut over to exact seeds or restore their archived predecessor epoch."""
@@ -753,6 +766,10 @@ def seed_rematerialize(
             milestone_spec=milestone,
         )
         active_identity = active_execution_identity(spec_path)
+        if isinstance(verified_external_runtime_identity, Mapping):
+            active_identity["runtime"] = dict(verified_external_runtime_identity)
+            active_identity["ready"] = True
+            active_identity["errors"] = []
         expected_active_bundle = str(manifest.get("active_bundle_sha256") or "")
         if active_identity.get("bundle_sha256") != expected_active_bundle:
             raise _refuse("seed manifest does not bind the active chain/assets bundle")

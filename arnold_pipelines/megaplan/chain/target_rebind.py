@@ -605,6 +605,7 @@ def target_rebind(
     expected_plan_state_sha256: str,
     reason: str,
     actor: str = "operator",
+    verified_external_runtime_identity: Mapping[str, Any] | None = None,
     failure_injector: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Cut over or roll back a paused, pre-execute milestone project source."""
@@ -681,14 +682,39 @@ def target_rebind(
         _assert_hash(plan_raw, plan_hash, label="plan-state SHA-256")
         spec = chain_spec.load_spec(spec_path)
         from arnold_pipelines.megaplan.chain.execution_binding import (
+            active_execution_identity,
             assert_execution_binding,
+            execution_binding_report,
         )
 
-        assert_execution_binding(
-            spec_path,
-            chain_spec.ChainState.from_dict(chain),
-            operation="chain target-rebind",
-        )
+        chain_state = chain_spec.ChainState.from_dict(chain)
+        if isinstance(verified_external_runtime_identity, Mapping):
+            external_active = active_execution_identity(spec_path)
+            external_active["runtime"] = dict(verified_external_runtime_identity)
+            external_active["ready"] = True
+            external_active["errors"] = []
+            external_report = execution_binding_report(
+                spec_path,
+                chain_state,
+                active_identity=external_active,
+            )
+            if external_report.get("status") not in {"match", "reconcile_required"}:
+                raise CliError(
+                    PROJECT_SOURCE_REBIND_ERROR,
+                    "external control runtime does not satisfy the immutable execution binding",
+                )
+            runtime_report = external_report.get("runtime_binding") or {}
+            if runtime_report.get("required") and runtime_report.get("status") != "match":
+                raise CliError(
+                    PROJECT_SOURCE_REBIND_ERROR,
+                    "external control runtime does not satisfy the rebound runtime binding",
+                )
+        else:
+            assert_execution_binding(
+                spec_path,
+                chain_state,
+                operation="chain target-rebind",
+            )
         milestone_index, milestone = _milestone(
             spec,
             chain,

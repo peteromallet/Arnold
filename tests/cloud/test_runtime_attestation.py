@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import json
+import importlib.metadata
+import os
+import shutil
+import subprocess
 import sys
 import types
+import venv
 from pathlib import Path
 
 import pytest
@@ -80,9 +85,76 @@ def _release_seed(
     }
     chain_binding["content_sha256"] = attestation._canonical_sha256(chain_binding)
     monkeypatch.setattr(attestation, "runtime_provenance", lambda **_kwargs: provenance)
-    monkeypatch.setattr(attestation, "_module_vector", lambda _root: (modules, []))
     monkeypatch.setattr(attestation, "_pth_vector", lambda _root: ([], []))
     monkeypatch.setattr(attestation, "_chain_binding", lambda _path: chain_binding)
+    supervisor_modules = [
+        {"module": "arnold", "path": str(root / "arnold" / "__init__.py"), "root": str(root)},
+        {
+            "module": "arnold_pipelines",
+            "path": str(root / "arnold_pipelines" / "__init__.py"),
+            "root": str(root),
+        },
+        {
+            "module": "arnold_pipelines.megaplan",
+            "path": str(root / "arnold_pipelines" / "megaplan" / "__init__.py"),
+            "root": str(root),
+        },
+    ]
+    supervisor_vector = {
+        "source": str(root),
+        "source_revision": revision,
+        "source_fingerprint": "supervisor-fingerprint",
+        "runtime": sys.prefix,
+        "runtime_provenance": {"install_mode": "noneditable", "direct_url": {}},
+        "loaded_modules": supervisor_modules,
+        "interpreter": {},
+        "site_pth": [],
+        "errors": [],
+        "ready": True,
+    }
+    supervisor_vector["content_sha256"] = attestation._canonical_sha256(
+        supervisor_vector
+    )
+    monkeypatch.setattr(
+        attestation,
+        "_module_vector",
+        lambda scan_root: (
+            supervisor_modules
+            if Path(scan_root).resolve(strict=False)
+            == Path(sys.prefix).resolve(strict=False)
+            else modules,
+            [],
+        ),
+    )
+    monkeypatch.setattr(
+        attestation,
+        "_supervisor_module_vector",
+        lambda _root: (supervisor_modules, []),
+    )
+    monkeypatch.setattr(
+        attestation,
+        "_probe_supervisor_runtime",
+        lambda _receipt: supervisor_vector,
+    )
+    monkeypatch.setattr(
+        attestation,
+        "supervisor_runtime_vector",
+        lambda **_kwargs: supervisor_vector,
+    )
+    _write_json(
+        receipt,
+        {
+            "fingerprint": "supervisor-fingerprint",
+            "runtime": sys.prefix,
+            "source": str(root),
+            "source_revision": revision,
+            "imports": {
+                "arnold": supervisor_modules[0]["path"],
+                "arnold_pipelines": supervisor_modules[1]["path"],
+                "megaplan": supervisor_modules[2]["path"],
+            },
+        },
+    )
     seed = attestation.build_runtime_launch_seed(
         expected_root=root,
         expected_revision=revision,
@@ -234,6 +306,220 @@ def test_real_module_scan_reports_an_import_outside_expected_root(
     _vector, errors = attestation._module_vector(Path(__file__).resolve().parents[2])
 
     assert "mixed_module_root:arnold_pipelines.foreign_runtime" in errors
+
+
+def _venv_site(python: Path) -> Path:
+    result = subprocess.check_output(
+        [
+            str(python),
+            "-c",
+            "import sysconfig; print(sysconfig.get_paths()['purelib'])",
+        ],
+        text=True,
+    )
+    return Path(result.strip())
+
+
+def _install_test_runtime(
+    runtime: Path,
+    source: Path,
+    *,
+    editable: bool,
+) -> Path:
+    venv.EnvBuilder(with_pip=False).create(runtime)
+    python = runtime / "bin" / "python3"
+    site_dir = _venv_site(python)
+    for dependency in (
+        "yaml",
+        "pydantic",
+        "pydantic_core",
+        "annotated_types",
+        "typing_extensions",
+        "typing_inspection",
+        "ulid",
+        "psutil",
+    ):
+        module_path = Path(__import__(dependency).__file__).resolve()
+        if module_path.name == "__init__.py":
+            shutil.copytree(module_path.parent, site_dir / dependency)
+        else:
+            shutil.copy2(module_path, site_dir / module_path.name)
+        for distribution_name in importlib.metadata.packages_distributions().get(
+            dependency, []
+        ):
+            distribution = importlib.metadata.distribution(distribution_name)
+            metadata_dir = Path(distribution._path)  # type: ignore[attr-defined]
+            destination = site_dir / metadata_dir.name
+            if metadata_dir.is_dir() and not destination.exists():
+                shutil.copytree(metadata_dir, destination)
+    dist = site_dir / "arnold-0.0.dist-info"
+    dist.mkdir()
+    (dist / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: arnold\nVersion: 0.0\n",
+        encoding="utf-8",
+    )
+    (dist / "direct_url.json").write_text(
+        json.dumps(
+            {
+                "url": source.resolve().as_uri(),
+                "dir_info": {"editable": True} if editable else {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    if editable:
+        pth = site_dir / "arnold-editable.pth"
+        pth.write_text(str(source.resolve()) + "\n", encoding="utf-8")
+        (dist / "RECORD").write_text("arnold-editable.pth,,\n", encoding="utf-8")
+    else:
+        for package in ("arnold", "arnold_pipelines", "agentbox"):
+            shutil.copytree(source / package, site_dir / package)
+        (dist / "RECORD").write_text("", encoding="utf-8")
+    return python
+
+
+def test_real_editable_launch_and_noneditable_supervisor_vectors(
+    tmp_path: Path,
+) -> None:
+    source = Path(__file__).resolve().parents[2]
+    revision = subprocess.check_output(
+        ["git", "-C", str(source), "rev-parse", "HEAD"],
+        text=True,
+    ).strip()
+    launch_python = _install_test_runtime(
+        tmp_path / "launch-venv",
+        source,
+        editable=True,
+    )
+    supervisor_runtime = tmp_path / "supervisor-venv"
+    supervisor_python = _install_test_runtime(
+        supervisor_runtime,
+        source,
+        editable=False,
+    )
+    receipt_path = tmp_path / "supervisor-receipt.json"
+    import_program = (
+        "import json,pathlib,arnold,arnold_pipelines,arnold_pipelines.megaplan as m;"
+        "print(json.dumps({'arnold':str(pathlib.Path(arnold.__file__).resolve()),"
+        "'arnold_pipelines':str(pathlib.Path(arnold_pipelines.__file__).resolve()),"
+        "'megaplan':str(pathlib.Path(m.__file__).resolve())}))"
+    )
+    imports = json.loads(
+        subprocess.check_output(
+            [str(supervisor_python), "-P", "-c", import_program],
+            text=True,
+            cwd=tmp_path,
+            env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+        )
+    )
+    _write_json(
+        receipt_path,
+        {
+            "schema_version": "arnold-supervisor-runtime-receipt-v1",
+            "fingerprint": "real-two-venv",
+            "runtime": str(supervisor_runtime),
+            "source": str(source),
+            "source_revision": revision,
+            "imports": imports,
+            "status": "ready",
+        },
+    )
+    program = tmp_path / "build-and-validate.py"
+    program.write_text(
+        """
+import json
+import pathlib
+import sys
+from arnold_pipelines.megaplan.chain import spec as chain_spec
+from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+    build_runtime_launch_seed,
+    validate_runtime_launch_seed,
+)
+from arnold_pipelines.megaplan.cloud.runtime_provenance import (
+    normalized_runtime_identity,
+    runtime_provenance,
+)
+
+source, revision, receipt, output, work = sys.argv[1:]
+source = pathlib.Path(source)
+work = pathlib.Path(work)
+spec = work / "chain.yaml"
+spec.write_text("milestones: []\\n")
+identity = normalized_runtime_identity(
+    runtime_provenance(expected_root=source, expected_revision=revision)
+)
+state = chain_spec.ChainState(
+    metadata={"execution_binding": {"runtime_binding": {"current_identity": identity}}}
+)
+state_path = chain_spec._state_path_for(spec)
+state_path.parent.mkdir(parents=True, exist_ok=True)
+state_path.write_text(json.dumps(state.to_dict()))
+marker = work / "marker.json"
+marker.write_text(json.dumps({"runtime_binding": {"current_identity": identity}}))
+hot = work / "hot.env"
+hot.write_text("\\n".join([
+    f"export MEGAPLAN_RUNTIME_SRC={source}",
+    f"export MEGAPLAN_LAUNCH_RUNTIME_SRC={source}",
+    f"export MEGAPLAN_SUPERVISOR_SOURCE={source}",
+    f"export CLOUD_WATCHDOG_ARNOLD_SRC={source}",
+    f"export MEGAPLAN_META_ARNOLD_SRC={source}",
+    f"export MEGAPLAN_AUDIT_ARNOLD_SRC={source}",
+]) + "\\n")
+doc = work / "NORTHSTAR.md"
+doc.write_text("# real two venv seed\\n")
+seed = build_runtime_launch_seed(
+    expected_root=source,
+    expected_revision=revision,
+    supervisor_receipt_path=pathlib.Path(receipt),
+    hot_env_path=hot,
+    marker_path=marker,
+    chain_spec_path=spec,
+    seed_doc_paths=[doc],
+)
+assert seed["ready"], seed["errors"]
+assert validate_runtime_launch_seed(seed, component="worker")["status"] == "ready"
+pathlib.Path(output).write_text(json.dumps(seed))
+""",
+        encoding="utf-8",
+    )
+    seed_path = tmp_path / "seed.json"
+    clean_env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    subprocess.run(
+        [
+            str(launch_python),
+            "-P",
+            str(program),
+            str(source),
+            revision,
+            str(receipt_path),
+            str(seed_path),
+            str(tmp_path),
+        ],
+        check=True,
+        cwd=tmp_path,
+        env=clean_env,
+    )
+    validate_program = (
+        "import json,pathlib,sys;"
+        "from arnold_pipelines.megaplan.cloud.runtime_attestation import "
+        "validate_runtime_launch_seed;"
+        "s=json.loads(pathlib.Path(sys.argv[1]).read_text());"
+        "assert validate_runtime_launch_seed(s,component='supervisor')['status']=='ready'"
+    )
+    subprocess.run(
+        [str(supervisor_python), "-P", "-c", validate_program, str(seed_path)],
+        check=True,
+        cwd=tmp_path,
+        env=clean_env,
+    )
+    seed = json.loads(seed_path.read_text(encoding="utf-8"))
+    assert seed["interpreter"]["venv"] == str(tmp_path / "launch-venv")
+    assert seed["runtime_provenance"]["direct_url"]["dir_info"]["editable"] is True
+    assert seed["supervisor_runtime"]["interpreter"]["venv"] == str(supervisor_runtime)
+    assert (
+        seed["supervisor_runtime"]["runtime_provenance"]["direct_url"]["dir_info"]
+        == {}
+    )
 
 
 def test_long_lived_entrypoints_validate_attestation_before_work() -> None:
