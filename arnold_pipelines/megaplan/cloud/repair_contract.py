@@ -1300,6 +1300,63 @@ def _custody_bucket_from_canonical_state(
     return CUSTODY_BUCKET_BROKEN_SUPERFIXER
 
 
+# M9/T43: WBC adapter-backed repair evidence classification
+
+def classify_wbc_evidence_for_repair(
+    *,
+    wbc_attempt_reference: str = "",
+    query_fn: Any = None,
+) -> dict[str, Any]:
+    """Route repair WBC evidence reads through the exact-version adapter.
+
+    M9/T43: Repair readers (L1, L2, L3) must classify blockers through
+    exact-version WBC adapters, preserving deterministic blocker-event
+    classification for structured failed criteria and emitting drift
+    on legacy view disagreement.
+    """
+    result: dict[str, Any] = {
+        "_non_authoritative": True,
+        "wbc_attempt_reference": wbc_attempt_reference,
+        "adapter_status": "indeterminate",
+        "evidence_id": "",
+        "drift": None,
+    }
+
+    if not wbc_attempt_reference or not wbc_attempt_reference.strip():
+        result["adapter_status"] = "indeterminate"
+        result["detail"] = "no WBC attempt reference provided"
+        result["evidence_id"] = "wbc:sha256:" + sha256(b"no-ref").hexdigest()[:16]
+        return result
+
+    cleaned = wbc_attempt_reference.strip()
+
+    if query_fn is not None:
+        try:
+            attempt_ref = WbcAttemptRef.best_effort(cleaned)
+            evidence = query_fn(attempt_ref)
+            if evidence is not None:
+                result["adapter_status"] = evidence.status.value
+                result["evidence_id"] = evidence.evidence_id
+                result["boundary_id"] = evidence.boundary_id
+                refs = evidence.attempt_refs or []
+                result["attempt_refs"] = [r.attempt_id for r in refs]
+            else:
+                result["adapter_status"] = "indeterminate"
+                result["detail"] = "WBC query returned None"
+                result["evidence_id"] = "wbc:sha256:" + sha256(cleaned.encode()).hexdigest()[:16]
+        except Exception as exc:
+            result["adapter_status"] = "indeterminate"
+            result["detail"] = "WBC query exception: " + str(exc)
+            result["evidence_id"] = "wbc:sha256:" + sha256(cleaned.encode()).hexdigest()[:16]
+    else:
+        result["adapter_status"] = "indeterminate"
+        result["detail"] = "no WBC query function available; raw receipt reference only"
+        result["evidence_id"] = "wbc:sha256:" + sha256(cleaned.encode()).hexdigest()[:16]
+        result["legacy_view"] = True
+
+    return result
+
+
 def classify_repair_dispatch(
     *,
     canonical_run_state: CanonicalRunState | None = None,

@@ -1,6 +1,22 @@
-"""Planning-owned binding hooks for the shared control interface."""
+"""Planning-owned binding hooks for the shared control interface.
+
+M9 status: This module is a positive-control-path consumer.  It is not
+cut over to the shared SourceCursorVector / WBC adapter seam in M9 (which
+operates in shadow/view-only mode).  Every control-path decision made here
+MUST reread live Run Authority grant/fence, Custody lease/epoch, and WBC
+evidence before any positive dispatch.  Full cutover is deferred to M10.
+
+Compatibility row: control_binding.py – non-authoritative in M9, expiry
+gated by M10 control-path migration readiness.
+"""
 
 from __future__ import annotations
+
+# M9: _non_authoritative marker at module level
+# This module's control-path decisions are not yet backed by the shared
+# SourceCursorVector contract.  Consumers must treat output as orientation
+# only until M10 integrates the reread obligations.
+_m9_non_authoritative = True
 
 from collections.abc import Mapping
 from pathlib import Path

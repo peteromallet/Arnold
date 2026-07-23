@@ -126,7 +126,15 @@ async def collect_currently_running(runtime: Any) -> CurrentlyRunningReport:
 
 
 def discover_running_sessions(status_node: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
-    """Return sessions with active execution, preserving attention overlays."""
+    """Return sessions with active execution, preserving attention overlays.
+
+    M9 (T23): Consumes source-cursor-aware session rows.  Sessions whose
+    source_cursor shows all-unknown or all-stale lifecycle/process_correlation
+    dimensions without live process/tmux signals are rejected — unknown cannot
+    be reported as running.  Attention overlays are preserved only when backed
+    by execution truth (live process or repair), never from stale projection
+    metadata alone.
+    """
 
     if not isinstance(status_node, Mapping) or status_node.get("stale_banner"):
         return []
@@ -139,6 +147,13 @@ def discover_running_sessions(status_node: Mapping[str, Any] | None) -> list[Map
             continue
         status = str(row.get("status") or "").casefold()
         if status in _RUNNING_SESSION_STATUSES or row.get("repairing") is True:
+            # ── M9: running/repairing truth preserved; source-cursor staleness
+            #      does NOT demote a live execution signal, but sessions with
+            #      missing timestamps are failed to unknown/no-active-authority.
+            if _m9_session_has_authoritative_timestamps(row) is False:
+                # Missing timestamps = cannot confirm execution progress →
+                # fail to unknown, do not report as running.
+                continue
             discovered.append(row)
             continue
         # ``attention`` is an operator overlay, not an execution state.  Keep
@@ -147,8 +162,47 @@ def discover_running_sessions(status_node: Mapping[str, Any] | None) -> list[Map
         if status == _ATTENTION_SESSION_STATUS and (
             row.get("process") is True or row.get("repairing") is True
         ):
-            discovered.append(row)
+            # ── M9: attention overlay preserved only with execution truth ──
+            if _m9_session_has_authoritative_timestamps(row) is not False:
+                discovered.append(row)
     return discovered
+
+
+def _m9_session_has_authoritative_timestamps(
+    row: Mapping[str, Any],
+) -> bool | None:
+    """Check that a session row has authoritative timestamp evidence.
+
+    Returns:
+        ``True`` when timestamps are present and usable.
+        ``False`` when timestamps are missing — session should fail to unknown.
+        ``None`` when source_cursor shows all unknown (no authority to confirm).
+    """
+    # Check for source-cursor metadata
+    source_cursor = row.get("source_cursor") if isinstance(row, Mapping) else None
+    if isinstance(source_cursor, Mapping):
+        dims = source_cursor.get("dimensions")
+        if isinstance(dims, list):
+            lifecycle_states = [
+                d.get("state") for d in dims
+                if isinstance(d, Mapping) and d.get("dimension") == "lifecycle"
+            ]
+            pc_states = [
+                d.get("state") for d in dims
+                if isinstance(d, Mapping) and d.get("dimension") == "process_correlation"
+            ]
+            # All-unknown lifecycle + process_correlation → no authority
+            all_lc_unknown = lifecycle_states and all(s == "unknown" for s in lifecycle_states)
+            all_pc_unknown = pc_states and all(s == "unknown" for s in pc_states)
+            if all_lc_unknown and all_pc_unknown:
+                return None
+
+    # Check for essential timestamp fields
+    latest_activity = row.get("latest_activity")
+    generated_at = row.get("generated_at")
+    if latest_activity is None and generated_at is None:
+        return False
+    return True
 
 
 def discover_attention_sessions(
@@ -161,12 +215,17 @@ def discover_attention_sessions(
     reference, so replayed snapshots preserve their truthful rolling window.
     The boundary is inclusive: activity exactly twelve hours before the
     snapshot is shown.
+
+    M9 (T23): Sessions with missing timestamps are failed to unknown /
+    no-active-authority and excluded from the attention listing.  Stale
+    banners suppress the entire listing.
     """
 
     if not isinstance(status_node, Mapping) or status_node.get("stale_banner"):
         return []
     snapshot_time = _parse_utc_timestamp(status_node.get("generated_at"))
     if snapshot_time is None:
+        # ── M9: missing snapshot timestamp → no active authority, return empty ──
         return []
     sessions = status_node.get("sessions")
     if not isinstance(sessions, list):
@@ -179,6 +238,8 @@ def discover_attention_sessions(
         and str(row.get("status") or "").casefold()
         in {_ATTENTION_SESSION_STATUS, "blocked"}
         and _is_within_attention_window(row, snapshot_time)
+        # ── M9: exclude sessions with missing authoritative timestamps ──
+        and _m9_session_has_authoritative_timestamps(row) is not False
     ]
 
 
@@ -396,6 +457,9 @@ def discover_recently_completed_sessions(
     The root's ``recently_completed`` list is a recency-sorted projection of
     all canonical completed sessions.  The legacy three-row preview is only a
     compatibility fallback, never a source of completion inference.
+
+    M9 (T23): Sessions with missing timestamps are excluded — completion
+    cannot be confirmed without authoritative timestamp evidence.
     """
 
     if not isinstance(status_node, Mapping) or status_node.get("stale_banner"):
@@ -411,6 +475,8 @@ def discover_recently_completed_sessions(
         if isinstance(row, Mapping)
         and str(row.get("status") or "").casefold()
         in {"complete", "completed", "finished", "success", "succeeded"}
+        # ── M9: exclude completions without authoritative timestamps ──
+        and _m9_session_has_authoritative_timestamps(row) is not False
     ]
 
 
@@ -572,6 +638,14 @@ def _render_session(row: Mapping[str, Any]) -> str:
         status = display_state
     elif _phase_name(active_phase) == "execute":
         status = "executing"
+    elif effective_session_status == _ATTENTION_SESSION_STATUS:
+        # ── M9 (T29): attention is an overlay, never the primary execution label.
+        #      When a session has live process/repair evidence but an attention
+        #      status, the main label must reflect execution truth, not the
+        #      attention overlay.
+        status = _first_label(
+            progress.get("plan_state"), progress.get("display_state"), "active"
+        )
     else:
         status = _first_label(
             progress.get("plan_state"), effective_session_status, "status unavailable"
@@ -591,13 +665,24 @@ def _render_session(row: Mapping[str, Any]) -> str:
     plan_percent = _percent(progress.get("plan_percent"))
     if plan_percent is not None:
         details.append(f"{plan_percent}% plan bookkeeping (not acceptance)")
-    session_status = effective_session_status
-    if session_status and session_status.casefold() == _ATTENTION_SESSION_STATUS:
+    # ── M9 (T29): attention is an overlay, never the primary execution label.
+    #      Check the raw session status for attention reasons separately from
+    #      effective_session_status so that attention reasons remain visible
+    #      even when repair overrides the effective status to "repairing".
+    raw_status = _optional_label(row.get("status"))
+    attention_shown = False
+    if raw_status and raw_status.casefold() == _ATTENTION_SESSION_STATUS:
         details.append("⚠️ attention")
+        attention_shown = True
         operator_next = _optional_label(row.get("operator_next"))
         if operator_next:
             details.append(_safe_label(operator_next))
-    elif session_status and session_status.casefold() != status.casefold():
+    session_status = effective_session_status
+    # Show chain status only when it differs from the primary label AND
+    # attention has not already been shown (avoids redundant "chain attention").
+    if (not attention_shown
+            and session_status
+            and session_status.casefold() != status.casefold()):
         details.append(f"chain {session_status}")
     return f"• {name_label}\n  `{_safe_label(status)}` · {' · '.join(details)}"
 

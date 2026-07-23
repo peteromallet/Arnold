@@ -1,4 +1,10 @@
-"""Snapshot construction for the live watchdog."""
+"""Snapshot construction for the live watchdog.
+
+Snapshot building uses normalized worker identity to ensure that recycled,
+unrelated, dead, and hung workers produce typed stale or unknown liveness
+only — never false-positive progress.  The process-correlation dimension
+in the source-cursor vector reflects exact worker identity.
+"""
 
 from __future__ import annotations
 
@@ -26,6 +32,11 @@ from arnold_pipelines.megaplan.watchdog.log import log_event
 from arnold_pipelines.megaplan.watchdog.orphans import find_orphan_processes
 from arnold_pipelines.megaplan.watchdog.processes import scan_processes
 from arnold_pipelines.megaplan.watchdog.signals import compute_signal_bundle
+from arnold_pipelines.megaplan.watchdog.worker_identity import (
+    LivenessState,
+    ProcessCorrelationSnapshot,
+    WorkerCorrelation,
+)
 
 
 def _triage_from_signals(
@@ -59,6 +70,62 @@ def _plan_recency_age_seconds(plan_dir: Path, signals: SignalBundle) -> float:
     except Exception:
         pass
     return min(ages) if ages else float("inf")
+
+
+def build_process_correlation_snapshot(
+    correlations: tuple[Any, ...],
+    processes: tuple[Any, ...],
+) -> ProcessCorrelationSnapshot:
+    """Build a typed process-correlation snapshot from watchdog data.
+
+    Converts raw Correlation and ProcessRecord tuples into a
+    :class:`ProcessCorrelationSnapshot` that the source-cursor vector's
+    ``process_correlation`` dimension can consume.  Recycled, dead, hung,
+    and unrelated workers produce ``stale`` or ``unknown`` cursor state.
+    """
+    worker_corrs: list[WorkerCorrelation] = []
+    seen_pids: set[int] = set()
+
+    # Build a lookup from pid to process record
+    proc_by_pid: dict[int, Any] = {}
+    for proc in processes:
+        pid = int(getattr(proc, "pid", 0) or (proc.get("pid", 0) if isinstance(proc, dict) else 0))
+        if pid:
+            proc_by_pid[pid] = proc
+
+    for corr in correlations:
+        pid = corr.process_pid
+        if pid in seen_pids:
+            continue
+        seen_pids.add(pid)
+
+        proc = proc_by_pid.get(pid)
+        if proc is not None:
+            if isinstance(proc, dict):
+                is_pid_live = proc.get("is_live", None)
+                worker_type = proc.get("category", "")
+                cmdline = proc.get("cmdline", "")
+                cwd = proc.get("cwd", "")
+            else:
+                is_pid_live = getattr(proc, "is_live", None)
+                worker_type = getattr(proc, "category", "")
+                cmdline = getattr(proc, "cmdline", "")
+                cwd = getattr(proc, "cwd", "")
+        else:
+            is_pid_live = None
+            worker_type = ""
+            cmdline = ""
+            cwd = ""
+
+        wc = corr.to_worker_correlation(
+            is_pid_live=is_pid_live,
+            worker_type=worker_type,
+            cmdline=cmdline,
+            cwd=cwd or "",
+        )
+        worker_corrs.append(wc)
+
+    return ProcessCorrelationSnapshot(correlations=tuple(worker_corrs))
 
 
 def build_incidents(
@@ -166,9 +233,26 @@ def build_snapshot(
                     reason=orphan.reason,
                 )
 
+    # ── M9: build process-correlation snapshot for heartbeat liveness ──
+    process_correlation_snapshot = build_process_correlation_snapshot(
+        correlations, processes
+    )
+    # Map plan_dir -> correlated workers for that plan
+    workers_by_plan_dir: dict[str, list[Any]] = {}
+    for wc in process_correlation_snapshot.correlations:
+        for plan_dir in wc.plan_dirs:
+            workers_by_plan_dir.setdefault(plan_dir, []).append(wc)
+
     signal_bundles: dict[str, SignalBundle] = {}
     for plan in plans:
-        signals = compute_signal_bundle(Path(plan.plan_dir), plan.state)
+        plan_path = Path(plan.plan_dir)
+        plan_workers = tuple(workers_by_plan_dir.get(str(plan_path.resolve()), ()))
+        signals = compute_signal_bundle(
+            plan_path,
+            plan.state,
+            worker_correlations=plan_workers,
+            process_correlation_snapshot=process_correlation_snapshot,
+        )
         orphan_findings: list[CheckFinding] = []
         for orphan in orphans_by_plan.get(Path(plan.plan_dir), ()):
             orphan_findings.append(
@@ -195,6 +279,12 @@ def build_snapshot(
                 doctor_findings=live_findings + tuple(orphan_findings),
                 has_in_flight_llm=signals.has_in_flight_llm,
                 last_event_age_seconds=signals.last_event_age_seconds,
+                heartbeat_liveness=signals.heartbeat_liveness,
+                heartbeat_liveness_reason=signals.heartbeat_liveness_reason,
+                worker_states=signals.worker_states,
+                live_worker_count=signals.live_worker_count,
+                stale_worker_count=signals.stale_worker_count,
+                dead_worker_count=signals.dead_worker_count,
             )
         elif orphan_findings:
             signals = SignalBundle(
@@ -204,6 +294,12 @@ def build_snapshot(
                 doctor_findings=signals.doctor_findings + tuple(orphan_findings),
                 has_in_flight_llm=signals.has_in_flight_llm,
                 last_event_age_seconds=signals.last_event_age_seconds,
+                heartbeat_liveness=signals.heartbeat_liveness,
+                heartbeat_liveness_reason=signals.heartbeat_liveness_reason,
+                worker_states=signals.worker_states,
+                live_worker_count=signals.live_worker_count,
+                stale_worker_count=signals.stale_worker_count,
+                dead_worker_count=signals.dead_worker_count,
             )
         signal_bundles[plan.plan_id] = signals
 

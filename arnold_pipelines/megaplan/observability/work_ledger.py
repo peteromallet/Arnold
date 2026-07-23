@@ -109,21 +109,28 @@ _REQUIRED_BY_CLASS: Dict[str, FrozenSet[str]] = {
 
 # ── Work‑class category mapping (for aggregation) ───────────────────────────
 
-_PRODUCTIVE_CLASSES: FrozenSet[str] = frozenset({
+# Legitimate value-producing work — never waste.
+_VALUE_WORK_CLASSES: FrozenSet[str] = frozenset({
     "productive",
     "replay",
     "tool",
     "validation",
     "repair_verify",
+    "review_proof",  # code review, quality check, proof generation are all legitimate
 })
 
-_OVERHEAD_CLASSES: FrozenSet[str] = frozenset({
-    "review_proof",
-    "queue",
+# Non-value work (retry, queue, compaction, git, transition overhead).
+_NON_VALUE_WORK_CLASSES: FrozenSet[str] = frozenset({
     "retry_wait",
+    "queue",
     "compaction",
     "git",
     "transition",
+})
+
+# Gap — telemetry that is explicitly unavailable (not waste, just missing data).
+_GAP_CLASSES: FrozenSet[str] = frozenset({
+    "unavailable_reason",
 })
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -689,8 +696,9 @@ def aggregate_by_class(
         task_ids = sorted({e["referenced_identity"] for e in group})
         total_duration = _safe_sum_duration_ms(group)
         category = (
-            "productive" if cls in _PRODUCTIVE_CLASSES
-            else "overhead" if cls in _OVERHEAD_CLASSES
+            "value_work" if cls in _VALUE_WORK_CLASSES
+            else "non_value_work" if cls in _NON_VALUE_WORK_CLASSES
+            else "gap" if cls in _GAP_CLASSES
             else "other"
         )
         result[cls] = {
@@ -762,6 +770,241 @@ def reconcile_unavailable_measures(
     return result
 
 
+# ── M9: Fine-grained projection categories ──────────────────────────────────
+
+
+# Base category mapping (static — event classes that map without inspection).
+_CATEGORY_MAP: Dict[str, str] = {
+    "productive": "productive",
+    "replay": "replayed",
+    "validation": "validation_only",
+    "repair_verify": "repair_verify",
+    "retry_wait": "retry_rework",
+    "compaction": "queue_compaction",
+    "git": "git",
+    "transition": "transition",
+    "unavailable_reason": "unavailable",
+    "tool": "legitimate_implementation",
+    "queue": "queue_compaction",
+    # review_proof is resolved dynamically based on review_kind
+}
+
+
+def _resolve_category(event: Dict[str, Any]) -> str:
+    """Resolve the M9 projection category for a single ledger event.
+
+    Most event classes map statically via ``_CATEGORY_MAP``.
+    ``review_proof`` events are split dynamically based on
+    ``review_kind`` to distinguish review from proof work.
+    """
+    cls = event["event_class"]
+
+    if cls == "review_proof":
+        review_kind = event.get("payload", {}).get("review_kind", "")
+        if review_kind == "proof_generation":
+            return "proof"
+        # code_review, quality_check, or unknown → review
+        return "review"
+
+    return _CATEGORY_MAP.get(cls, cls)
+
+
+# All M9 projection categories (deterministic sorted order for rebuild stability).
+_PROJECTION_CATEGORIES: FrozenSet[str] = frozenset({
+    "productive",
+    "replayed",
+    "retry_rework",
+    "queue_compaction",
+    "validation_only",
+    "unavailable",
+    "legitimate_implementation",
+    "review",
+    "proof",
+})
+
+# Categories that represent legitimate value-producing work.
+_VALUE_CATEGORIES: FrozenSet[str] = frozenset({
+    "productive",
+    "replayed",
+    "validation_only",
+    "repair_verify",
+    "legitimate_implementation",
+    "review",
+    "proof",
+})
+
+# Categories that represent non-value overhead.
+_NON_VALUE_CATEGORIES: FrozenSet[str] = frozenset({
+    "retry_rework",
+    "queue_compaction",
+    "git",
+    "transition",
+})
+
+
+def aggregate_by_category(
+    plan_dir: Path,
+) -> Dict[str, Dict[str, Any]]:
+    """Group ledger events by M9 projection category with exact identity joins.
+
+    Maps the 12 event classes into 9 projection categories:
+    productive, replayed, retry_rework, queue_compaction, validation_only,
+    unavailable, legitimate_implementation, review, proof.
+
+    ``review_proof`` events are split dynamically:
+    - ``code_review`` / ``quality_check`` → ``review``
+    - ``proof_generation`` → ``proof``
+
+    Each category entry carries:
+    - ``count``: total events in this category
+    - ``total_duration_ms``: summed duration (null when unavailable)
+    - ``event_ids``: exact event IDs contributing to this category
+    - ``task_ids``: deduplicated referenced identities
+    - ``source_classes``: which event classes feed this category
+    - ``classification``: ``value_work``, ``non_value_work``, or ``gap``
+    - ``_non_authoritative``: always True
+
+    This is a rebuildable function — same ledger → same output.
+    """
+    events = read_work_ledger(plan_dir)
+    by_category: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for e in events:
+        cat = _resolve_category(e)
+        by_category[cat].append(e)
+
+    result: Dict[str, Dict[str, Any]] = {}
+    for cat in sorted(_PROJECTION_CATEGORIES):
+        group = by_category.get(cat, [])
+        event_ids = sorted({e["event_id"] for e in group})
+        task_ids = sorted({e["referenced_identity"] for e in group})
+        source_classes = sorted({e["event_class"] for e in group})
+        total_duration = _safe_sum_duration_ms(group)
+        classification = (
+            "value_work" if cat in _VALUE_CATEGORIES
+            else "non_value_work" if cat in _NON_VALUE_CATEGORIES
+            else "gap"
+        )
+        result[cat] = {
+            "count": len(group),
+            "total_duration_ms": total_duration,
+            "event_ids": event_ids,
+            "task_ids": task_ids,
+            "source_classes": source_classes,
+            "classification": classification,
+            "_non_authoritative": True,
+        }
+    return result
+
+
+def build_category_identity_joins(
+    plan_dir: Path,
+) -> Dict[str, Dict[str, Any]]:
+    """Expose exact identity joins per category: which event IDs belong where.
+
+    Returns a dict mapping each category to:
+    - ``event_ids``: exact event IDs in this category
+    - ``event_id_count``: cardinality
+    - ``by_class``: event IDs grouped by source event class
+    - ``unavailable_denominator``: (unavailable_count, total_event_count)
+      indicating what fraction of category-relevant events lack telemetry
+
+    The unavailable denominator is computed per category: for each category,
+    ``unavailable_count`` is the number of ``unavailable_reason`` events that
+    reference tasks appearing in that category.  It is never defaulted to
+    zero when no unavailable events exist — it is simply zero for categories
+    with no unavailable evidence.
+    """
+    events = read_work_ledger(plan_dir)
+    by_category: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    unavailable_events: List[Dict[str, Any]] = []
+    for e in events:
+        if e["event_class"] == "unavailable_reason":
+            unavailable_events.append(e)
+        cat = _resolve_category(e)
+        by_category[cat].append(e)
+
+    # Build task_id → category mapping for unavailable denominator
+    task_categories: Dict[str, set] = defaultdict(set)
+    for cat, group in by_category.items():
+        if cat == "unavailable":
+            continue
+        for e in group:
+            task_categories[e["referenced_identity"]].add(cat)
+
+    total_events = len(events)
+    result: Dict[str, Dict[str, Any]] = {}
+    for cat in sorted(_PROJECTION_CATEGORIES):
+        group = by_category.get(cat, [])
+        event_ids = sorted({e["event_id"] for e in group})
+
+        # Group by source class
+        by_class: Dict[str, List[str]] = defaultdict(list)
+        for e in group:
+            by_class[e["event_class"]].append(e["event_id"])
+
+        # Unavailable denominator: for non-unavailable categories,
+        # count how many unavailable_reason events reference tasks in this category
+        unavailable_count = 0
+        if cat != "unavailable":
+            cat_task_ids = {e["referenced_identity"] for e in group}
+            for ue in unavailable_events:
+                if ue["referenced_identity"] in cat_task_ids:
+                    unavailable_count += 1
+
+        classification = (
+            "value_work" if cat in _VALUE_CATEGORIES
+            else "non_value_work" if cat in _NON_VALUE_CATEGORIES
+            else "gap"
+        )
+
+        result[cat] = {
+            "event_ids": event_ids,
+            "event_id_count": len(event_ids),
+            "by_class": {cls: sorted(ids) for cls, ids in sorted(by_class.items())},
+            "unavailable_denominator": {
+                "unavailable_count": unavailable_count,
+                "category_event_count": len(group),
+                "total_event_count": total_events,
+            },
+            "classification": classification,
+            "_non_authoritative": True,
+        }
+    return result
+
+
+def serialize_work_ledger_summary(
+    plan_dir: Path,
+    *,
+    indent: Optional[int] = None,
+) -> str:
+    """Serialize the full work-ledger summary to deterministic JSON.
+
+    This is a consumer-facing serializer that produces a deterministic,
+    rebuildable JSON representation of the work ledger.  The output
+    includes category breakdown, identity joins, per-task aggregation,
+    and totals with explicit classification so consumers can distinguish:
+
+    - ``productive`` — model inference work
+    - ``replayed`` — deterministic fixture replay
+    - ``retry_rework`` — retry wait and rework overhead
+    - ``queue_compaction`` — queue latency and context compaction
+    - ``validation_only`` — harness validation (not review)
+    - ``unavailable`` — telemetry gaps (not waste)
+    - ``legitimate_implementation`` — tool execution (not waste)
+    - ``review`` — code review and quality check (required, not waste)
+    - ``proof`` — proof generation work
+
+    Args:
+        plan_dir: Plan directory with ``work_ledger.ndjson``.
+        indent: JSON indentation (None = compact).
+
+    Returns:
+        Deterministic JSON string (sorted keys, stable ordering).
+    """
+    summary = build_work_class_summary(plan_dir)
+    return json.dumps(summary, sort_keys=True, indent=indent, ensure_ascii=False)
+
+
 def build_work_class_summary(
     plan_dir: Path,
 ) -> Dict[str, Any]:
@@ -770,49 +1013,56 @@ def build_work_class_summary(
     The summary includes:
     - ``by_class``: per‑event‑class aggregation (count, total_duration_ms,
       category)
+    - ``by_category``: fine-grained M9 projection categories with exact
+      identity joins (event_ids, task_ids, source_classes, classification)
+    - ``identity_joins``: exact event-id-to-category mapping with unavailable
+      denominators
     - ``by_task``: per‑task aggregation with class breakdown and unavailable
       measures
-    - ``totals``: productive duration, overhead duration, unavailable measure
-      count
+    - ``totals``: value_work duration, non_value_work duration, gap count
     - ``_non_authoritative``: always ``true``
     - ``_rebuildable``: always ``true`` (deterministic from ledger)
 
     Every measure that cannot be computed is ``null``, never zero.
     """
     by_class = aggregate_by_class(plan_dir)
+    by_category = aggregate_by_category(plan_dir)
+    identity_joins = build_category_identity_joins(plan_dir)
     by_task = aggregate_by_task(plan_dir)
     unavailable = reconcile_unavailable_measures(plan_dir)
 
-    productive_duration_ms: Optional[int] = None
-    overhead_duration_ms: Optional[int] = None
+    value_work_duration_ms: Optional[int] = None
+    non_value_work_duration_ms: Optional[int] = None
 
-    prod_total = 0
-    prod_found = False
-    overhead_total = 0
-    overhead_found = False
+    value_total = 0
+    value_found = False
+    non_value_total = 0
+    non_value_found = False
     for cls, agg in by_class.items():
         d = agg.get("total_duration_ms")
         if d is None:
             continue
-        if cls in _PRODUCTIVE_CLASSES:
-            prod_total += d
-            prod_found = True
-        elif cls in _OVERHEAD_CLASSES:
-            overhead_total += d
-            overhead_found = True
+        if cls in _VALUE_WORK_CLASSES:
+            value_total += d
+            value_found = True
+        elif cls in _NON_VALUE_WORK_CLASSES:
+            non_value_total += d
+            non_value_found = True
 
-    if prod_found:
-        productive_duration_ms = prod_total
-    if overhead_found:
-        overhead_duration_ms = overhead_total
+    if value_found:
+        value_work_duration_ms = value_total
+    if non_value_found:
+        non_value_work_duration_ms = non_value_total
 
     return {
         "by_class": by_class,
+        "by_category": by_category,
+        "identity_joins": identity_joins,
         "by_task": by_task,
         "totals": {
-            "productive_duration_ms": productive_duration_ms,
-            "overhead_duration_ms": overhead_duration_ms,
-            "unavailable_measure_count": len(unavailable),
+            "value_work_duration_ms": value_work_duration_ms,
+            "non_value_work_duration_ms": non_value_work_duration_ms,
+            "gap_count": len(unavailable),
         },
         "unavailable_measures": unavailable,
         "_non_authoritative": True,
@@ -837,7 +1087,11 @@ __all__ = [
     "emit_git",
     "emit_transition",
     "aggregate_by_class",
+    "aggregate_by_category",
+    "build_category_identity_joins",
     "aggregate_by_task",
     "reconcile_unavailable_measures",
     "build_work_class_summary",
+    "serialize_work_ledger_summary",
+    "_resolve_category",
 ]
