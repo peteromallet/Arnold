@@ -269,6 +269,39 @@ def blocker_id_for_fingerprint(payload: Mapping[str, Any] | None) -> str | None:
     return f"{BLOCKER_ID_V1_PREFIX}{digest}"
 
 
+def blocker_id_matches_fingerprint(
+    blocker_id: str,
+    payload: Mapping[str, Any] | None,
+) -> bool:
+    """Validate current V2 ids and immutable legacy V1 ids.
+
+    V1 fingerprints are intentionally upgraded by
+    :func:`blocker_id_for_fingerprint`, so recomputing only the preferred id
+    makes a previously accepted ``blocker:v1`` request unclaimable after a
+    runtime upgrade.  Claims must preserve the stored immutable identity while
+    still rejecting ids that match neither canonical encoding.
+    """
+
+    stored_id = str(blocker_id or "").strip()
+    if not stored_id:
+        return False
+    if blocker_id_for_fingerprint(payload) == stored_id:
+        return True
+    normalized_v1 = normalize_blocker_fingerprint_v1(payload)
+    if normalized_v1 is None:
+        return False
+    canonical_payload = {
+        "prefix": BLOCKER_FINGERPRINT_V1_PREFIX,
+        "fingerprint": normalized_v1,
+    }
+    digest = sha256(
+        json.dumps(canonical_payload, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+    return stored_id == f"{BLOCKER_ID_V1_PREFIX}{digest}"
+
+
 # ---------------------------------------------------------------------------
 # BlockerFingerprintV2 — extended repair identity with acceptance context
 # ---------------------------------------------------------------------------
@@ -1131,7 +1164,24 @@ def project_repair_custody(
             continue
         if not blocker_id and current_plan_identity and request_plan_identity and request_plan_identity != current_plan_identity:
             continue
-        if blocker_id is None and request_blocker_id and blocker_id != request_blocker_id:
+        raw_stored_fingerprint = _as_mapping(record.get("blocker_fingerprint"))
+        stored_fingerprint = (
+            normalize_blocker_fingerprint_v1(raw_stored_fingerprint)
+            or normalize_blocker_fingerprint_v2(raw_stored_fingerprint)
+        )
+        stored_blocker_id = _as_text(record.get("blocker_id"))
+        if (
+            not blocker_id_matches_fingerprint(stored_blocker_id, stored_fingerprint)
+            or not repair_requests.has_claimable_repair_request_contract(record)
+        ):
+            stored_fingerprint = None
+            stored_blocker_id = ""
+        # Compatibility reconstruction is freshness evidence only.  It may
+        # scope a legacy request to the current target, but it must never mint
+        # authority that was absent from the persisted request itself.
+        request_fingerprint = stored_fingerprint
+        request_blocker_id = stored_blocker_id
+        if blocker_id is None and request_blocker_id:
             blocker_id = request_blocker_id
             fingerprint = request_fingerprint
         history = decision_history.get(str(record.get("request_id") or ""), [])
@@ -5608,6 +5658,7 @@ __all__ = [
     "BLOCKER_FINGERPRINT_V2_VERSION",
     "BLOCKER_ID_V1_PREFIX",
     "BLOCKER_ID_V2_PREFIX",
+    "blocker_id_matches_fingerprint",
     "BlockerFingerprintV1",
     "BlockerFingerprintV2",
     "blocker_fingerprint_from_acceptance",
