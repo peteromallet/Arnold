@@ -2946,6 +2946,7 @@ def _chain_start_command(
     prefix = (
         f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
         f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
+        'RUNTIME_PYTHON="${MEGAPLAN_RUNTIME_PYTHON:-python}"; '
     )
     if repair_session:
         prefix += (
@@ -2956,6 +2957,31 @@ def _chain_start_command(
             f"export ARNOLD_REPAIR_SESSION={shlex.quote(repair_session)}; "
             f"export ARNOLD_REPAIR_RUN_KIND={shlex.quote(repair_run_kind)}; "
         )
+        session_runtime_dir = str(
+            PurePosixPath(repair_marker_dir).parent
+            / "runtime-sessions"
+            / repair_session
+        )
+        session_env = str(PurePosixPath(session_runtime_dir) / "runtime-session.env")
+        marker_path = str(PurePosixPath(repair_marker_dir) / f"{repair_session}.json")
+        prefix += (
+            'if [ "${MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED:-0}" = "1" ]; then '
+            'BASE_RUNTIME_SEED="${MEGAPLAN_RUNTIME_LAUNCH_SEED:-}"; '
+            'if [ -z "$BASE_RUNTIME_SEED" ]; then '
+            'echo "runtime attestation is required but no base seed is configured" >&2; '
+            "exit 24; "
+            "fi; "
+            '"$RUNTIME_PYTHON" -P -m '
+            "arnold_pipelines.megaplan.cloud.session_runtime "
+            f"--marker {shlex.quote(marker_path)} "
+            f"--spec {shlex.quote(remote_spec_path)} "
+            f"--project-dir {shlex.quote(project_dir or '')} "
+            f'--base-seed "$BASE_RUNTIME_SEED" '
+            f"--output-dir {shlex.quote(session_runtime_dir)}; "
+            f"set -a; . {shlex.quote(session_env)}; set +a; "
+            'RUNTIME_PYTHON="$MEGAPLAN_RUNTIME_PYTHON"; '
+            "fi; "
+        )
     if engine_dir:
         cwd = shlex.quote(project_dir or engine_dir)
         engine_path = shlex.quote(engine_dir)
@@ -2965,7 +2991,8 @@ def _chain_start_command(
             f'cd {cwd} && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${{PYTHONPATH:-}}" '
         )
     return (
-        f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start {flags} "
+        f'{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 "$RUNTIME_PYTHON" -P -m '
+        f"arnold_pipelines.megaplan chain start {flags} "
         f">> {log_target} 2>&1"
     )
 
@@ -3012,6 +3039,9 @@ def _megaplan_refresh_command(
     ref = spec.megaplan.ref if spec is not None else _EDITABLE_INSTALL_BRANCH
     lines = [
         "set -e",
+        f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
+        f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi",
+        'RUNTIME_PYTHON="${MEGAPLAN_RUNTIME_PYTHON:-python}"',
         "echo \"[megaplan-refresh] $(date -Iseconds) starting\"",
         f"SRC={shlex.quote(src)}",
         f"REPO={shlex.quote(repo)}",
@@ -3077,9 +3107,9 @@ def _megaplan_refresh_command(
         '    git -C "$MEGAPLAN_RUNTIME_SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true',
         "    exit 20",
         "  fi",
-        '  pip install -e "$MEGAPLAN_RUNTIME_SRC"',
+        '  "$RUNTIME_PYTHON" -m pip install -e "$MEGAPLAN_RUNTIME_SRC"',
         '  RUNTIME_REVISION="$(git -C "$MEGAPLAN_RUNTIME_SRC" rev-parse HEAD)"',
-        '  PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}" python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root "$MEGAPLAN_RUNTIME_SRC" --expected-revision "$RUNTIME_REVISION"',
+        '  PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}" "$RUNTIME_PYTHON" -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root "$MEGAPLAN_RUNTIME_SRC" --expected-revision "$RUNTIME_REVISION"',
         "else",
         '  echo "[megaplan-refresh] source clone missing at $SRC; skipping editable install"',
         "fi",
@@ -3098,6 +3128,9 @@ def _megaplan_use_current_runtime_command(spec: CloudSpec | None = None) -> str:
     ref = spec.megaplan.ref if spec is not None else _EDITABLE_INSTALL_BRANCH
     lines = [
         "set -e",
+        f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
+        f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi",
+        'RUNTIME_PYTHON="${MEGAPLAN_RUNTIME_PYTHON:-python}"',
         'echo "[megaplan-runtime] $(date -Iseconds) validating current source"',
         f"SRC={shlex.quote(src)}",
         f"REF={shlex.quote(ref)}",
@@ -3115,9 +3148,9 @@ def _megaplan_use_current_runtime_command(spec: CloudSpec | None = None) -> str:
         "  exit 19",
         "fi",
         'export MEGAPLAN_RUNTIME_SRC="$SRC"',
-        'pip install -e "$MEGAPLAN_RUNTIME_SRC"',
+        '"$RUNTIME_PYTHON" -m pip install -e "$MEGAPLAN_RUNTIME_SRC"',
         'RUNTIME_REVISION="$(git -C "$MEGAPLAN_RUNTIME_SRC" rev-parse HEAD)"',
-        'PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}" python -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root "$MEGAPLAN_RUNTIME_SRC" --expected-revision "$RUNTIME_REVISION"',
+        'PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}" "$RUNTIME_PYTHON" -P -m arnold_pipelines.megaplan.cloud.runtime_provenance --expected-root "$MEGAPLAN_RUNTIME_SRC" --expected-revision "$RUNTIME_REVISION"',
         'export MEGAPLAN_LAUNCH_RUNTIME_SRC="$MEGAPLAN_RUNTIME_SRC"',
         'echo "[megaplan-runtime] current source accepted at $RUNTIME_REVISION"',
         "true",
@@ -4200,7 +4233,9 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             f"branch={editable_install_sync.get('branch')} "
             f"head={str(editable_install_sync.get('editable_head') or '')[:12]}\n"
         )
-    driver_overrides: dict[str, Any] = {}
+    # Cloud sessions run under strict, content-addressed runtime custody.  Make
+    # the uploaded spec bind that runtime before any worker can be dispatched.
+    driver_overrides: dict[str, Any] = {"execution_binding": "required"}
     if spec.driver is not None and spec.driver.max_stall_iterations is not None:
         chain_spec.stall_threshold = spec.driver.max_stall_iterations
         driver_overrides["max_stall_iterations"] = spec.driver.max_stall_iterations

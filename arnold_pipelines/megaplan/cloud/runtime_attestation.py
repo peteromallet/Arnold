@@ -615,6 +615,22 @@ def _verify_seed_digest(seed: Mapping[str, Any]) -> None:
         )
 
 
+def verify_runtime_launch_seed_document(seed: Mapping[str, Any]) -> None:
+    """Verify a seed as an immutable release document.
+
+    This deliberately does not re-read its session-owned marker or chain spec.
+    A new cloud session may use a prior seed as the authenticated description
+    of a release, then build and fully validate its own session-scoped seed.
+    """
+
+    _verify_seed_digest(seed)
+    if not bool(seed.get("ready")) or seed.get("errors"):
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "runtime launch seed was not release-ready",
+        )
+
+
 def runtime_vector_sha256(seed: Mapping[str, Any]) -> str:
     """Hash the complete loaded-code vector carried by a verified launch seed."""
 
@@ -650,12 +666,7 @@ def validate_runtime_launch_seed(
 ) -> dict[str, Any]:
     """Revalidate a launch seed against files, imports, and current interpreter."""
 
-    _verify_seed_digest(seed)
-    if not bool(seed.get("ready")) or seed.get("errors"):
-        raise CliError(
-            RUNTIME_ATTESTATION_ERROR,
-            "runtime launch seed was not release-ready",
-        )
+    verify_runtime_launch_seed_document(seed)
     root = Path(str(seed.get("expected_root") or "")).resolve(strict=False)
     revision = str(seed.get("expected_revision") or "")
     is_supervisor = component in _SUPERVISOR_COMPONENTS

@@ -219,6 +219,20 @@ def test_release_seed_binds_full_runtime_and_seed_document_manifest(
     )
 
 
+def test_release_document_remains_authentic_after_its_session_marker_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed, paths = _release_seed(tmp_path, monkeypatch)
+    marker = json.loads(paths["marker"].read_text(encoding="utf-8"))
+    marker["relaunch_command"] = "changed after release promotion"
+    _write_json(paths["marker"], marker)
+
+    attestation.verify_runtime_launch_seed_document(seed)
+    with pytest.raises(CliError, match="cloud marker launch binding drifted"):
+        attestation.validate_runtime_launch_seed(seed, component="worker")
+
+
 def test_complete_loaded_module_vector_rejects_mixed_and_late_modules(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

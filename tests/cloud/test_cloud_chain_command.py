@@ -158,7 +158,12 @@ def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     assert 'ENGINE_DIR="${MEGAPLAN_LAUNCH_RUNTIME_SRC:-${MEGAPLAN_RUNTIME_SRC:-}}"' in command
     assert 'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR=/workspace/arnold; fi;' in command
     assert 'cd /workspace/project && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}"' in command
-    assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start" in command
+    assert 'RUNTIME_PYTHON="${MEGAPLAN_RUNTIME_PYTHON:-python}"' in command
+    assert (
+        'MEGAPLAN_TRUSTED_CONTAINER=1 "$RUNTIME_PYTHON" -P -m '
+        "arnold_pipelines.megaplan chain start"
+    ) in command
+    assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P" not in command
 
 
 def test_managed_chain_start_exports_canonical_repair_route() -> None:
@@ -175,6 +180,16 @@ def test_managed_chain_start_exports_canonical_repair_route() -> None:
     assert "ARNOLD_REPAIR_MARKER_DIR=/workspace/.megaplan/cloud-sessions" in command
     assert "ARNOLD_REPAIR_SESSION=demo-chain" in command
     assert "ARNOLD_REPAIR_RUN_KIND=chain" in command
+    assert "arnold_pipelines.megaplan.cloud.session_runtime" in command
+    assert (
+        "--marker /workspace/.megaplan/cloud-sessions/demo-chain.json"
+    ) in command
+    assert (
+        "--output-dir /workspace/.megaplan/runtime-sessions/demo-chain"
+    ) in command
+    assert (
+        ". /workspace/.megaplan/runtime-sessions/demo-chain/runtime-session.env"
+    ) in command
 
 
 def test_tmux_chain_launch_default_marker_records_run_kind() -> None:
@@ -513,7 +528,10 @@ def test_launch_epic_end_to_end_uploads_canonical_spec_and_tracks_watchdog(
     assert marker["allow_human_gates"] is False
     assert marker["should_run"] is True
     assert marker["operator_pause"] is None
-    assert "python -P -m arnold_pipelines.megaplan chain start" in marker["relaunch_command"]
+    assert (
+        '"$RUNTIME_PYTHON" -P -m arnold_pipelines.megaplan chain start'
+        in marker["relaunch_command"]
+    )
     assert f"--spec {remote_spec}" in marker["relaunch_command"]
     assert remote_spec in provider.remote_files
 
@@ -670,6 +688,33 @@ def test_normalized_chain_upload_spec_materializes_preflight_phase_map(tmp_path:
         "revise=codex",
         "execute=codex",
     ]
+
+
+def test_normalized_chain_upload_spec_requires_execution_binding(tmp_path: Path) -> None:
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text(
+        "driver:\n"
+        "  max_stall_iterations: 4\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: idea.md\n",
+        encoding="utf-8",
+    )
+
+    upload_path = _normalized_chain_upload_spec(
+        spec_path,
+        base_branch="main",
+        driver_overrides={"execution_binding": "required"},
+    )
+    try:
+        normalized = yaml.safe_load(upload_path.read_text(encoding="utf-8"))
+    finally:
+        upload_path.unlink(missing_ok=True)
+
+    assert normalized["driver"] == {
+        "max_stall_iterations": 4,
+        "execution_binding": "required",
+    }
 
 
 def test_cloud_preflight_expands_vendor_depth_like_init() -> None:

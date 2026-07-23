@@ -188,7 +188,9 @@ def test_cloud_chain_start_can_force_clean_editable_refresh() -> None:
     )
 
     assert 'git -C "$SRC" reset --hard "origin/$REF"' in command
-    assert "python -P -m arnold_pipelines.megaplan chain start" in command
+    assert (
+        '"$RUNTIME_PYTHON" -P -m arnold_pipelines.megaplan chain start'
+    ) in command
 
 
 def test_cloud_chain_sync_rejects_divergent_editible_install(
