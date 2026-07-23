@@ -156,6 +156,10 @@ def test_entrypoint_starts_discord_resident_from_shared_secret_env() -> None:
     assert 'exec \\"\\$runtime_python\\" -P -m arnold_pipelines.megaplan resident discord' in entrypoint
     assert "MEGAPLAN_RESIDENT_DISCORD_BOT_ROLE" in entrypoint
     assert "MEGAPLAN_RESIDENT_MODE:-production" in entrypoint
+    assert "/workspace/.megaplan/resident-runtime.env" in entrypoint
+    assert entrypoint.index("/workspace/.cloud-hot-env") < entrypoint.index(
+        "/workspace/.megaplan/resident-runtime.env"
+    )
 
 
 def test_resident_self_heal_starts_the_production_bot_boundary() -> None:
@@ -171,3 +175,10 @@ def test_resident_self_heal_starts_the_production_bot_boundary() -> None:
     assert 'exec \\"\\$runtime_python\\" -P -m arnold_pipelines.megaplan resident discord' in ensure_script
     assert '"$runtime_python" -P -m arnold_pipelines.megaplan resident health' in ensure_script
     assert "--store-root" in ensure_script
+    assert "/workspace/.megaplan/resident-runtime.env" in ensure_script
+    assert ensure_script.index("/workspace/.cloud-hot-env") < ensure_script.index(
+        "/workspace/.megaplan/resident-runtime.env"
+    )
+    assert 'readlink -f "/proc/$pane_pid/exe"' in ensure_script
+    assert '"MEGAPLAN_RUNTIME_SRC=$runtime_src"' in ensure_script
+    assert '"MEGAPLAN_RUNTIME_PYTHON=$runtime_python"' in ensure_script
