@@ -60,6 +60,21 @@ def test_plan_and_revise_codex_output_schemas_keep_test_blast_radius_declared() 
         _assert_required_keys_have_properties(schema)
 
 
+def test_revise_schema_requires_every_north_star_closeout_field() -> None:
+    """A schema-valid receipt must also satisfy the fail-closed consumer."""
+
+    schema = SCHEMAS["revise.json"]
+    assert "north_star_actions_addressed" in schema["required"]
+    addressed = schema["properties"]["north_star_actions_addressed"]["items"]
+    assert set(addressed["required"]) >= {
+        "action_id",
+        "resolution",
+        "reason",
+        "plan_refs",
+        "action_type",
+    }
+
+
 def test_all_codex_output_schemas_have_strict_required_properties() -> None:
     for schema in SCHEMAS.values():
         strict = _enforce_openai_strict_mode(strict_schema(deepcopy(schema)))

@@ -22,7 +22,6 @@ from arnold_pipelines.megaplan._core import (
 )
 from arnold_pipelines.megaplan.north_star_actions import (
     NORTH_STAR_ACTION_TYPES,
-    SEVERITY_BLOCKING,
     read_carried_north_star_actions,
 )
 from arnold_pipelines.megaplan.schema_projection import schema_template_payload
@@ -151,6 +150,10 @@ def _build_north_star_actions_block(actions: list[dict[str, Any]]) -> str:
         "  - `action_id`: the action `id` from the carried list above"
     )
     lines.append(
+        "  - `action_type`: the exact `action_type` from the carried action "
+        "(this is a required structural marker)"
+    )
+    lines.append(
         "  - `resolution`: `\"addressed\"` (mapped to a plan change), "
         "`\"rejected\"` (action is invalid/out-of-scope), or "
         "`\"halted\"` (cannot be mapped — see `add_human_halt` above)"
@@ -161,7 +164,8 @@ def _build_north_star_actions_block(actions: list[dict[str, Any]]) -> str:
         '(e.g. "Phase 2 — Step 3", "gate.json section preflight")'
     )
     lines.append(
-        "  - `plan_refs` (optional): concrete file paths this resolution touches"
+        "  - `plan_refs` (required): a non-empty list of concrete plan section "
+        "references and/or repo-relative file paths this resolution touches"
     )
 
     return "\n".join(lines)
