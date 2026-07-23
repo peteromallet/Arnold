@@ -147,6 +147,7 @@ def _run_trigger(
     env = dict(os.environ)
     env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
     env["ARNOLD_CLOUD_HOT_ENV"] = str(marker_dir / "missing-hot-env")
+    env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
     if enabled:
         env["ARNOLD_REPAIR_TRIGGER_ENABLED"] = "1"
     else:
@@ -363,7 +364,7 @@ def test_exact_trigger_claims_taskless_lifecycle_phase_failure(tmp_path: Path) -
     dispatch = next(event for event in events if event["event"] == "repair_trigger_dispatch")
     assert dispatch["request_id"] == request_id
     blocker_id = dispatch["attempt"]["blocker_id"]
-    assert blocker_id.startswith("blocker:v1:")
+    assert blocker_id.startswith("blocker:v2:")
     claim_path = repair_requests.active_repair_claim_lock_dir(
         _queue_root(workspace), blocker_id
     ) / "owner.json"
