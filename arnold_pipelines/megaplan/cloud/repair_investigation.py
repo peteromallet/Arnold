@@ -1729,6 +1729,80 @@ def _bound_observation_value(value: Any, *, depth: int = 0) -> Any:
     return value
 
 
+def _external_guard_applicability(
+    observations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Decide whether PR/CI state is operative for the current blocker."""
+
+    chain_state = ""
+    failure_kind = ""
+    failure_phase = ""
+    for item in observations:
+        observed = item.get("observed")
+        if not isinstance(observed, Mapping):
+            continue
+        if item.get("kind") == "chain_state":
+            current = observed.get("current")
+            current = current if isinstance(current, Mapping) else {}
+            chain_state = str(
+                observed.get("chain_last_state")
+                or observed.get("last_state")
+                or current.get("last_state")
+                or ""
+            ).strip().lower()
+        elif item.get("kind") == "plan_state":
+            current = observed.get("current")
+            current = current if isinstance(current, Mapping) else {}
+            active_worker = observed.get("active_worker")
+            active_worker = (
+                active_worker if isinstance(active_worker, Mapping) else {}
+            )
+            chain_state = str(
+                observed.get("chain_last_state")
+                or observed.get("last_state")
+                or current.get("last_state")
+                or chain_state
+            ).strip().lower()
+            latest = observed.get("latest_failure")
+            latest = latest if isinstance(latest, Mapping) else {}
+            metadata = latest.get("metadata")
+            metadata = metadata if isinstance(metadata, Mapping) else {}
+            failure_kind = str(
+                latest.get("kind") or observed.get("failure_kind") or ""
+            ).strip().lower()
+            failure_phase = str(
+                metadata.get("phase")
+                or metadata.get("failure_step")
+                or observed.get("current_phase")
+                or observed.get("target_stage")
+                or active_worker.get("phase")
+                or ""
+            ).strip().lower()
+    pr_states = {"awaiting_pr_merge", "pr_pending", "ci_pending", "ci_failed"}
+    pr_phases = {"pr", "pull_request", "merge", "ci", "publication", "publish"}
+    pr_stage_known = (
+        chain_state in pr_states
+        or failure_phase in pr_phases
+        or failure_kind.startswith(("pr_", "ci_", "publication_"))
+    )
+    non_pr_failure_known = bool(failure_kind or failure_phase) and not pr_stage_known
+    current_stage_known = pr_stage_known or non_pr_failure_known
+    applies = pr_stage_known or not non_pr_failure_known
+    return {
+        "applies": applies,
+        "chain_state": chain_state,
+        "failure_kind": failure_kind,
+        "failure_phase": failure_phase,
+        "reason": (
+            "current workflow phase is unavailable, so external guards remain fail-closed"
+            if not current_stage_known
+            else "external PR/CI state is the operative workflow gate"
+            if applies
+            else "external PR/CI state is corroborating context for the active non-PR blocker"
+        ),
+    }
+
+
 def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
     """Broker verified, bounded observations when host read-only sandboxing is absent."""
 
@@ -1787,7 +1861,12 @@ def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
     missing_quality_commits = quality_resolution_commit_custody.get(
         "missing_commits"
     ) not in (None, "", [], "[]")
-    if external_guard_status != "clear" or missing_quality_commits:
+    external_guard_applicability = _external_guard_applicability(observations)
+    external_guard_blocks = (
+        external_guard_applicability["applies"]
+        and external_guard_status != "clear"
+    )
+    if external_guard_blocks or missing_quality_commits:
         required_receipt["recommended_action"] = "replan"
         required_receipt["safe_repair_target"]["kind"] = "repair_custody"
         required_receipt["handoff"] = {
@@ -1806,10 +1885,12 @@ def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
             "access_verified": True,
             "required_receipt_shape": required_receipt,
             "external_guard_policy": (
-                "A failed or pending PR/CI check forbids recover_state and chain-state "
-                "synchronization. Return replan targeting repair_custody so ordinary L1 "
-                "receives the fresh external failure; never hand-advance the chain."
+                "A failed or pending PR/CI check forbids recover_state only when the "
+                "current chain/failure phase makes that external guard operative. When a "
+                "non-PR blocker is active, PR state is corroborating context and must not "
+                "displace the actual failure. Never hand-advance the chain."
             ),
+            "external_guard_applicability": external_guard_applicability,
             "quality_resolution_commit_custody": quality_resolution_commit_custody,
             "quality_commit_policy": (
                 "Missing durable quality-resolution commits forbid recover_state and "
@@ -1902,6 +1983,7 @@ def build_repair_observation_bundle(context_path: str | Path) -> dict[str, Any]:
                 "recover_state.allowed_mutations>"
             )
         analysis_context["safe_repair_boundaries"] = safe_boundaries
+    external_guard_applicability = _external_guard_applicability(observations)
     bundle = redact_payload(
         {
             "schema_version": REPAIR_OBSERVATION_BUNDLE_SCHEMA,
@@ -1911,6 +1993,13 @@ def build_repair_observation_bundle(context_path: str | Path) -> dict[str, Any]:
             "target_kind": context.get("target_kind"),
             "access_verified": True,
             "analysis_context": _bound_observation_value(analysis_context),
+            "external_guard_policy": (
+                "A failed or pending PR/CI check forbids recover_state only when the "
+                "current chain/failure phase makes that external guard operative. When a "
+                "non-PR blocker is active, PR state is corroborating context and must not "
+                "displace the actual failure. Never hand-advance the chain."
+            ),
+            "external_guard_applicability": external_guard_applicability,
             "required_receipt_shape": required_receipt,
             "observations": observations,
         }
@@ -2080,6 +2169,14 @@ def validate_investigator_receipt(
         if observation_bundle.get("context_digest") != expected_context_digest:
             raise ValueError("investigator observation bundle digest disagrees")
         external_guard = {}
+        external_guard_applicability = observation_bundle.get(
+            "external_guard_applicability"
+        )
+        external_guard_applicability = (
+            external_guard_applicability
+            if isinstance(external_guard_applicability, Mapping)
+            else {"applies": True}
+        )
         live_worker_observed = False
         bundle_commit_custody = observation_bundle.get(
             "quality_resolution_commit_custody"
@@ -2152,7 +2249,11 @@ def validate_investigator_receipt(
                     and missing not in (None, "", [], "[]")
                 ):
                     missing_quality_commits = True
-        if external_guard.get("status") != "clear" and action == "recover_state":
+        if (
+            external_guard_applicability.get("applies") is not False
+            and external_guard.get("status") != "clear"
+            and action == "recover_state"
+        ):
             raise ValueError(
                 "state recovery cannot bypass a failing or pending external PR/CI guard"
             )
