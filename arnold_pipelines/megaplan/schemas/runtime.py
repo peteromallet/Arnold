@@ -511,6 +511,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "plan",
             "changes_summary",
             "flags_addressed",
+            "north_star_actions_addressed",
             "assumptions",
             "success_criteria",
             "questions",
