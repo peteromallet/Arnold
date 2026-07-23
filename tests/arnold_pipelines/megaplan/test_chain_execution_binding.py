@@ -555,3 +555,49 @@ def test_worker_expectations_resolve_canonical_spec_and_persisted_runtime(
     assert values["expected_installed_package_path"] == expected_runtime["import_root"]
     assert values["expected_runtime_revision"] == expected_runtime["source_revision"]
     assert values["expected_source_ref"] == expected_runtime["source_revision"]
+
+
+def test_worker_binding_resolution_rejects_owned_plan_without_binding(
+    tmp_path: Path,
+) -> None:
+    spec_path = _pinned_chain(tmp_path)
+    state = ChainState(current_plan_name="owned-plan")
+    save_chain_state(spec_path, state)
+
+    with pytest.raises(CliError, match="no canonical execution binding"):
+        find_bound_chain_spec(tmp_path, plan_name="owned-plan")
+
+
+def test_worker_binding_resolution_rejects_ambiguous_plan_owners(
+    tmp_path: Path,
+) -> None:
+    first = _pinned_chain(tmp_path)
+    first_state = _bound_state(first)
+    first_state.current_plan_name = "owned-plan"
+    save_chain_state(first, first_state)
+
+    second = tmp_path / ".megaplan" / "initiatives" / "second" / "chain.yaml"
+    second.parent.mkdir(parents=True)
+    second.write_text(first.read_text(encoding="utf-8"), encoding="utf-8")
+    second_state = ChainState(
+        current_plan_name="owned-plan",
+        metadata={"execution_binding": first_state.metadata["execution_binding"]},
+    )
+    save_chain_state(second, second_state)
+
+    with pytest.raises(CliError, match="ambiguous canonical execution bindings"):
+        find_bound_chain_spec(tmp_path, plan_name="owned-plan")
+
+
+def test_worker_expectations_reject_incomplete_bound_runtime(tmp_path: Path) -> None:
+    spec_path = _pinned_chain(tmp_path)
+    state = _bound_state(spec_path)
+    state.current_plan_name = "owned-plan"
+    state.metadata["execution_binding"]["runtime_binding"]["current_identity"] = {
+        "source_revision": "",
+        "import_root": "",
+    }
+    save_chain_state(spec_path, state)
+
+    with pytest.raises(CliError, match="incomplete worker runtime expectations"):
+        expected_worker_launch_values(spec_path, root=tmp_path)

@@ -1054,6 +1054,7 @@ def find_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path | None:
     from arnold_pipelines.megaplan.chain.spec import load_chain_state
 
     matches: list[Path] = []
+    owners_without_binding: list[Path] = []
     for candidate in sorted(
         (root / ".megaplan" / "initiatives").glob("*/chain.yaml")
     ):
@@ -1066,7 +1067,21 @@ def find_bound_chain_spec(root: Path, *, plan_name: str = "") -> Path | None:
         binding = (state.metadata or {}).get("execution_binding")
         if isinstance(binding, Mapping):
             matches.append(candidate)
-    return matches[0] if len(matches) == 1 else None
+        elif not plan_name or str(state.current_plan_name or "") == plan_name:
+            owners_without_binding.append(candidate)
+    if owners_without_binding:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "chain-owned plan has no canonical execution binding: "
+            + ", ".join(str(path) for path in owners_without_binding),
+        )
+    if len(matches) > 1:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "chain-owned plan has ambiguous canonical execution bindings: "
+            + ", ".join(str(path) for path in matches),
+        )
+    return matches[0] if matches else None
 
 
 def expected_worker_launch_values(
@@ -1104,11 +1119,30 @@ def expected_worker_launch_values(
     except (CliError, OSError, ValueError):
         return empty
     if not isinstance(identity, Mapping) or not isinstance(runtime, Mapping):
-        return empty
-    return {
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            f"bound chain {spec_path} has no current runtime identity",
+        )
+    values = {
         "expected_source_ref": str(runtime.get("source_revision") or ""),
         "expected_installed_package_path": str(runtime.get("import_root") or ""),
         "expected_runtime_revision": str(runtime.get("source_revision") or ""),
         "expected_model": None,
         "expected_spec": "",
     }
+    missing = [
+        field
+        for field in (
+            "expected_source_ref",
+            "expected_installed_package_path",
+            "expected_runtime_revision",
+        )
+        if not values[field]
+    ]
+    if missing:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            f"bound chain {spec_path} has incomplete worker runtime expectations: "
+            + ", ".join(missing),
+        )
+    return values
