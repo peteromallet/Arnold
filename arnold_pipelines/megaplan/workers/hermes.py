@@ -2823,9 +2823,11 @@ def _reconstruct_execute_payload(
             _validated_sense_check_acknowledgments(latest_batch_output_payload)
         )
 
-    # If the batch scratch file was never filled, fall back to the latest
-    # audited checkpoint rather than replaying unrelated prior batches.
-    if not task_updates and latest_batch_output_path is None:
+    # If the scratch output is missing or contains no usable controlled-field
+    # updates, fall back to the latest audited checkpoint.  Batch-scope
+    # authority validation still rejects any update that does not belong to
+    # the active batch; reconstruction must not promote pending placeholders.
+    if not task_updates:
         checkpoint_files = sorted(list_batch_artifacts(plan_dir), reverse=True)
         for checkpoint_path in checkpoint_files:
             try:

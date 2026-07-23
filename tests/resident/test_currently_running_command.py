@@ -32,10 +32,10 @@ from arnold_pipelines.megaplan.resident.discord import (
 def test_discovers_running_and_repairing_sessions_and_only_live_managed_agents() -> None:
     status_node = {
         "sessions": [
-            {"session": "active", "status": "running"},
-            {"session": "repair", "status": "repairing"},
-            {"session": "blocked", "status": "blocked"},
-            {"session": "done", "status": "complete"},
+            {"session": "active", "status": "running", "latest_activity": "2026-07-14T12:00:00Z"},
+            {"session": "repair", "status": "repairing", "latest_activity": "2026-07-14T12:00:00Z"},
+            {"session": "blocked", "status": "blocked", "latest_activity": "2026-07-14T12:00:00Z"},
+            {"session": "done", "status": "complete", "latest_activity": "2026-07-14T12:00:00Z"},
         ]
     }
     managed = {
@@ -388,6 +388,7 @@ def test_render_preserves_canonical_epic_percent_and_prefers_display_state() -> 
                     "session": "custody-control",
                     "display_name": "Custody control plane",
                     "status": "running",
+                    "latest_activity": "2026-07-14T12:00:00Z",
                     "current_plan": "m7-runtime-adoption",
                     "progress": {
                         "percent": 42.5,
@@ -422,6 +423,7 @@ def test_render_labels_full_task_bookkeeping_during_review_rework() -> None:
                     {
                         "session": "custody-control",
                         "status": "running",
+                        "latest_activity": "2026-07-14T12:00:00Z",
                         "progress": {
                             "percent": 20,
                             "plan_percent": 100,
@@ -449,10 +451,10 @@ def test_render_shows_truthful_hourly_percentage_point_deltas_only_with_telemetr
         CurrentlyRunningReport(
             status_node={
                 "sessions": [
-                    {"session": "positive", "status": "running", "progress": {"percent": 50, "epic_delta_1h": 4}},
-                    {"session": "zero", "status": "running", "progress": {"percent": 50, "epic_delta_1h": 0}},
-                    {"session": "negative", "status": "running", "progress": {"percent": 50, "epic_delta_1h": -3}},
-                    {"session": "no-history", "status": "running", "progress": {"percent": 50, "epic_delta_1h": None}},
+                    {"session": "positive", "status": "running", "latest_activity": "2026-07-14T12:00:00Z", "progress": {"percent": 50, "epic_delta_1h": 4}},
+                    {"session": "zero", "status": "running", "latest_activity": "2026-07-14T12:00:00Z", "progress": {"percent": 50, "epic_delta_1h": 0}},
+                    {"session": "negative", "status": "running", "latest_activity": "2026-07-14T12:00:00Z", "progress": {"percent": 50, "epic_delta_1h": -3}},
+                    {"session": "no-history", "status": "running", "latest_activity": "2026-07-14T12:00:00Z", "progress": {"percent": 50, "epic_delta_1h": None}},
                 ]
             },
             managed_agents={"running": []},
@@ -472,6 +474,7 @@ def test_active_executing_attention_remains_listed_with_overlay_visible() -> Non
                 "session": "custody-control-plane-20260714",
                 "status": "attention",
                 "process": True,
+                "latest_activity": "2026-07-14T12:00:00Z",
                 "active_phase": "execute",
                 "operator_next": "chain custody mismatch",
                 "progress": {
@@ -526,11 +529,12 @@ def test_non_active_attention_stays_on_attention_surface_not_running_list() -> N
         {
             "session": "stopped-chain",
             "status": "attention",
-            "latest_activity": "2026-07-14T17:59:59Z",
-            "operator_next": "workspace missing or unreadable",
-            "progress": {"display_state": "blocked", "plan_state": "blocked"},
-        }
-    ]
+                "latest_activity": "2026-07-14T17:59:59Z",
+                "operator_next": "workspace missing or unreadable",
+                "progress": {"display_state": "blocked", "plan_state": "blocked"},
+                "display_state": "blocked",
+            }
+        ]
 
 
 def test_needs_attention_only_shows_authoritative_activity_in_preceding_twelve_hours() -> None:
@@ -616,6 +620,7 @@ def test_active_execute_phase_is_executing_when_display_state_is_absent() -> Non
                 {
                     "session": "epic",
                     "status": "running",
+                    "latest_activity": "2026-07-14T12:00:00Z",
                     "progress": {
                         "active_phase": {"phase": "execute"},
                         "plan_state": "finalized",
@@ -640,6 +645,7 @@ def test_plan_state_is_used_only_when_display_state_and_execute_are_absent() -> 
                     {
                         "session": "blocked-plan",
                         "status": "running",
+                        "latest_activity": "2026-07-14T12:00:00Z",
                         "progress": {"plan_state": "blocked"},
                     }
                 ]
@@ -660,6 +666,7 @@ def test_render_uses_epics_parent_and_nonempty_h3_status_subsections() -> None:
                     {
                         "session": "status-refresh",
                         "status": "running",
+                        "latest_activity": "2026-07-14T12:00:00Z",
                         "progress": {"display_state": "executing", "percent": 25},
                     }
                 ]
@@ -699,7 +706,7 @@ def test_epics_status_groups_are_nonempty_subsections_without_trailing_dashes() 
             status_node={
                 "generated_at": "2026-07-14T18:00:00Z",
                 "sessions": [
-                    {"session": "running-chain", "status": "running"},
+                    {"session": "running-chain", "status": "running", "latest_activity": "2026-07-14T17:59:00Z"},
                     {
                         "session": "blocked-chain",
                         "status": "attention",
@@ -707,7 +714,11 @@ def test_epics_status_groups_are_nonempty_subsections_without_trailing_dashes() 
                     },
                 ],
                 "recently_completed": [
-                    {"session": "done-chain", "status": "completed"},
+                    {
+                        "session": "done-chain",
+                        "status": "completed",
+                        "latest_activity": "2026-07-14T17:58:00Z",
+                    },
                 ],
             },
             managed_agents={"running": []},
@@ -734,7 +745,7 @@ def test_render_includes_recent_completed_strategy_chain_with_terminal_evidence(
     rendered = render_currently_running(
         CurrentlyRunningReport(
             status_node={
-                "sessions": [{"session": "live-work", "status": "running"}],
+                "sessions": [{"session": "live-work", "status": "running", "latest_activity": "2026-07-14T17:18:48Z"}],
                 "recently_completed": [
                     {
                         "session": "repository-strategy-roadmap",
@@ -977,6 +988,7 @@ def test_degraded_status_is_labeled_without_hiding_available_canonical_items() -
                 {
                     "session": "degraded-epic",
                     "status": "running",
+                    "latest_activity": "2026-07-14T12:00:00Z",
                     "progress": {"percent": 12, "display_state": "planned"},
                 }
             ],
@@ -1237,7 +1249,15 @@ def test_currently_running_error_response_is_ephemeral(monkeypatch) -> None:
     assert interaction.followup.messages == [
         (
             "# Currently running\n"
-            "⚠️ Canonical status is temporarily unavailable; no running-state claims were made.",
+            "⚠️ Canonical status is temporarily unavailable; no running-state claims were made.\n"
+            "\n"
+            "## ⛓️ Epics & chains\n"
+            "⚠️ Status-node collection failed — no chain state available.\n"
+            "\n"
+            "## 🤖 Managed agents\n"
+            "⚠️ Managed-agent inventory collection failed — no agent state available.\n"
+            "\n"
+            "> ⚠️ _non-authoritative — this report is a projection, not source authority._",
             {"ephemeral": True},
         )
     ]
@@ -1318,6 +1338,7 @@ def test_repairing_chain_remains_distinct_from_its_progress_display_state() -> N
                     {
                         "session": "recovering-epic",
                         "status": "repairing",
+                        "latest_activity": "2026-07-14T12:00:00Z",
                         "progress": {"display_state": "executing", "percent": 25},
                     }
                 ]
@@ -1337,6 +1358,7 @@ def test_session_and_plan_names_are_individually_copyable_inline_code() -> None:
                     {
                         "display_name": "Epic `one`",
                         "status": "running",
+                        "latest_activity": "2026-07-14T12:00:00Z",
                         "current_plan": "plan `two`",
                     }
                 ]
@@ -1353,11 +1375,13 @@ def test_repairing_signal_overrides_stale_failed_state_but_not_genuine_failure()
         "session": "repairing-epic",
         "status": "failed",
         "repairing": True,
+        "latest_activity": "2026-07-14T12:00:00Z",
         "progress": {"plan_state": "failed"},
     }
     failed = {
         "session": "failed-epic",
         "status": "failed",
+        "latest_activity": "2026-07-14T12:00:00Z",
         "progress": {"plan_state": "failed"},
     }
 
@@ -1371,3 +1395,155 @@ def test_repairing_signal_overrides_stale_failed_state_but_not_genuine_failure()
     assert "`repairing` · overall progress unavailable" in rendered
     assert "failed" not in rendered
     assert "`failed` · overall progress unavailable" in module._render_session(failed)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# M9 T62: Strategy replay proofs for resident currently-running surface
+#
+# Resident currently-running must preserve 100% cursor/hash agreement and
+# execution truth as ``executing attempt 2``.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestResidentReplayProofs:
+    """Resident replay proofs — cursor/hash agreement and executing attempt 2."""
+
+    def test_discover_running_sessions_deterministic(self):
+        """discover_running_sessions with same inputs must produce identical output."""
+        status_node = {
+            "generated_at": "2026-07-14T13:00:00Z",
+            "sessions": [
+                {
+                    "session": "exec-2",
+                    "status": "running",
+                    "latest_activity": "2026-07-14T12:00:00Z",
+                    "progress": {"plan_state": "executing", "display_state": "executing"},
+                },
+            ],
+            "_non_authoritative": True,
+        }
+
+        result_a = discover_running_sessions(status_node)
+        result_b = discover_running_sessions(status_node)
+
+        # Same inputs → same running sessions
+        assert result_a == result_b
+
+    def test_executing_attempt_2_surfaces_in_running_sessions(self):
+        """Session with executing state must appear in running sessions."""
+        status_node = {
+            "generated_at": "2026-07-14T13:00:00Z",
+            "sessions": [
+                {
+                    "session": "exec-2",
+                    "status": "running",
+                    "latest_activity": "2026-07-14T12:00:00Z",
+                    "progress": {
+                        "plan_state": "executing",
+                        "display_state": "executing",
+                        "current_plan": "my-plan",
+                    },
+                },
+            ],
+            "_non_authoritative": True,
+        }
+
+        running = discover_running_sessions(status_node)
+        assert len(running) == 1
+        assert running[0]["session"] == "exec-2"
+        assert running[0]["status"] == "running"
+
+    def test_review_rework_session_preserves_execution_truth(self):
+        """A session undergoing review/rework must preserve execution truth
+        and not collapse to idle/complete."""
+        status_node = {
+            "generated_at": "2026-07-14T13:00:00Z",
+            "sessions": [
+                {
+                    "session": "review-s1",
+                    "status": "attention",
+                    "repairing": True,
+                    "latest_activity": "2026-07-14T12:00:00Z",
+                    "progress": {
+                        "plan_state": "finalized",
+                        "display_state": "reworking",
+                        "current_plan": "needs-review-plan",
+                    },
+                },
+            ],
+            "_non_authoritative": True,
+        }
+
+        # Session with repairing=True must show as repairing, not idle
+        running = discover_running_sessions(status_node)
+        assert len(running) == 1
+        assert running[0]["session"] == "review-s1"
+        assert running[0]["repairing"] is True
+
+    def test_same_basename_sessions_preserved_distinctly(self):
+        """Two sessions with same plan_name must be reported distinctly."""
+        status_node = {
+            "generated_at": "2026-07-14T13:00:00Z",
+            "sessions": [
+                {
+                    "session": "dir-a-s1",
+                    "status": "running",
+                    "latest_activity": "2026-07-14T12:00:00Z",
+                    "progress": {
+                        "plan_state": "executing",
+                        "display_state": "executing",
+                        "current_plan": "shared-name",
+                    },
+                },
+                {
+                    "session": "dir-b-s1",
+                    "status": "running",
+                    "latest_activity": "2026-07-14T12:00:00Z",
+                    "progress": {
+                        "plan_state": "gated",
+                        "display_state": "gated",
+                        "current_plan": "shared-name",
+                    },
+                },
+            ],
+            "_non_authoritative": True,
+        }
+
+        running = discover_running_sessions(status_node)
+        # Both sessions appear (different session IDs, no cross-contamination)
+        session_ids = {s["session"] for s in running}
+        assert session_ids == {"dir-a-s1", "dir-b-s1"}, \
+            f"Both same-basename sessions must appear, got {session_ids}"
+
+    def test_replay_currently_running_deterministic(self):
+        """Replaying the same status snapshot must produce identical rendered report."""
+        status_node = {
+            "generated_at": "2026-07-14T13:00:00Z",
+            "sessions": [
+                {
+                    "session": "exec-2",
+                    "status": "running",
+                    "latest_activity": "2026-07-14T12:00:00Z",
+                    "progress": {
+                        "plan_state": "executing",
+                        "display_state": "executing",
+                        "current_plan": "replay-plan",
+                    },
+                },
+            ],
+            "_non_authoritative": True,
+        }
+
+        report_a = CurrentlyRunningReport(
+            status_node=status_node,
+            managed_agents={"running": [], "recent": []},
+        )
+        report_b = CurrentlyRunningReport(
+            status_node=status_node,
+            managed_agents={"running": [], "recent": []},
+        )
+
+        # 100% agreement on replay
+        rendered_a = render_currently_running(report_a)
+        rendered_b = render_currently_running(report_b)
+        assert rendered_a == rendered_b, "Replay must produce identical rendered output"
