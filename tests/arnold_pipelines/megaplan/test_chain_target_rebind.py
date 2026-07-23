@@ -292,6 +292,53 @@ def _rematerialize(fixture: dict[str, Any], **overrides: Any) -> dict[str, Any]:
     )
 
 
+def _target_rollback(fixture: dict[str, Any]) -> dict[str, Any]:
+    return target_rebind(
+        fixture["spec"],
+        fixture["root"],
+        **_guards(
+            fixture,
+            direction="rollback",
+            from_branch=M10_BRANCH,
+            from_head=fixture["target"],
+            from_milestone_base=fixture["target"],
+            from_ref=CONVERGENCE_REF,
+            to_branch=M9_BRANCH,
+            to_head=fixture["source"],
+            to_ref=M9_REF,
+        ),
+    )
+
+
+def _seed_rollback(
+    fixture: dict[str, Any],
+    cutover: dict[str, Any],
+    manifest_path: Path,
+    **overrides: Any,
+) -> dict[str, Any]:
+    values: dict[str, Any] = {
+        "expected_session_id": fixture["root"].name,
+        "expected_current_milestone": MILESTONE,
+        "expected_current_plan": PLAN_NAME,
+        "expected_branch": M9_BRANCH,
+        "expected_head": fixture["source"],
+        "expected_spec_sha256": sha256_path(fixture["spec"]),
+        "expected_chain_state_sha256": sha256_path(fixture["state_path"]),
+        "expected_plan_state_sha256": sha256_path(fixture["plan_path"]),
+        "seed_manifest_path": manifest_path,
+        "expected_seed_manifest_sha256": sha256_path(manifest_path),
+        "direction": "rollback",
+        "expected_cutover_event_sha256": cutover["event"]["content_sha256"],
+        "expected_archive_manifest_sha256": cutover["event"][
+            "archive_manifest_sha256"
+        ],
+        "reason": "restore predecessor M10 seed",
+        "actor": "test",
+    }
+    values.update(overrides)
+    return seed_rematerialize(fixture["spec"], fixture["root"], **values)
+
+
 def test_cutover_switches_configured_branch_and_rebinds_both_states(
     tmp_path: Path,
 ) -> None:
@@ -932,6 +979,151 @@ def test_seed_rematerialize_refuses_after_execute(tmp_path: Path) -> None:
         _rematerialize(fixture)
 
 
+def test_seed_cutover_rollback_recutover_restores_predecessor_epoch(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    _cutover(fixture)
+    predecessor = _load_json(fixture["plan_path"])
+    (fixture["plan_dir"] / "plan_v7.md").write_text(
+        "# Superseded plan\n",
+        encoding="utf-8",
+    )
+    manifest_path = _seed_manifest(fixture)
+    seed_cutover = _rematerialize(
+        fixture,
+        seed_manifest_path=manifest_path,
+        expected_seed_manifest_sha256=sha256_path(manifest_path),
+    )
+    _target_rollback(fixture)
+
+    rolled_back = _seed_rollback(fixture, seed_cutover, manifest_path)
+
+    restored = _load_json(fixture["plan_path"])
+    assert rolled_back["direction"] == "rollback"
+    assert restored["iteration"] == predecessor["iteration"]
+    assert restored["history"] == predecessor["history"]
+    assert (fixture["plan_dir"] / "plan_v7.md").read_text(encoding="utf-8") == (
+        "# Superseded plan\n"
+    )
+    events = restored["meta"]["seed_source_binding"]["events"]
+    assert [event["direction"] for event in events] == ["cutover", "rollback"]
+
+    _cutover(fixture)
+    second_manifest = _seed_manifest(fixture)
+    second_cutover = _rematerialize(
+        fixture,
+        seed_manifest_path=second_manifest,
+        expected_seed_manifest_sha256=sha256_path(second_manifest),
+    )
+    events = _load_json(fixture["plan_path"])["meta"]["seed_source_binding"]["events"]
+    assert [event["direction"] for event in events] == [
+        "cutover",
+        "rollback",
+        "cutover",
+    ]
+    assert second_cutover["event"]["content_sha256"] != seed_cutover["event"][
+        "content_sha256"
+    ]
+
+
+def test_seed_rollback_refuses_stale_cutover_guard(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    _cutover(fixture)
+    manifest_path = _seed_manifest(fixture)
+    seed_cutover = _rematerialize(
+        fixture,
+        seed_manifest_path=manifest_path,
+        expected_seed_manifest_sha256=sha256_path(manifest_path),
+    )
+    _target_rollback(fixture)
+
+    with pytest.raises(CliError, match="active seed cutover"):
+        _seed_rollback(
+            fixture,
+            seed_cutover,
+            manifest_path,
+            expected_cutover_event_sha256="0" * 64,
+        )
+
+
+def test_seed_rollback_refuses_forged_archive(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    _cutover(fixture)
+    manifest_path = _seed_manifest(fixture)
+    seed_cutover = _rematerialize(
+        fixture,
+        seed_manifest_path=manifest_path,
+        expected_seed_manifest_sha256=sha256_path(manifest_path),
+    )
+    _target_rollback(fixture)
+    archive = fixture["plan_dir"].parent / seed_cutover["archive_path"]
+    (archive / "state.json").write_text('{"forged": true}\n', encoding="utf-8")
+
+    with pytest.raises(CliError, match="missing or forged"):
+        _seed_rollback(fixture, seed_cutover, manifest_path)
+
+
+def test_seed_rollback_refuses_new_planning_evidence(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    _cutover(fixture)
+    manifest_path = _seed_manifest(fixture)
+    seed_cutover = _rematerialize(
+        fixture,
+        seed_manifest_path=manifest_path,
+        expected_seed_manifest_sha256=sha256_path(manifest_path),
+    )
+    _target_rollback(fixture)
+    plan = _load_json(fixture["plan_path"])
+    plan["history"].append({"step": "plan", "result": "success"})
+    _write_json(fixture["plan_path"], plan)
+
+    with pytest.raises(CliError, match="unavailable after new planning"):
+        _seed_rollback(fixture, seed_cutover, manifest_path)
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "after_archive_restore",
+        "after_rollback_plan_write",
+        "after_rollback_chain_write",
+    ],
+)
+def test_seed_rollback_failure_restores_rematerialized_epoch(
+    tmp_path: Path,
+    stage: str,
+) -> None:
+    fixture = _fixture(tmp_path)
+    _cutover(fixture)
+    manifest_path = _seed_manifest(fixture)
+    seed_cutover = _rematerialize(
+        fixture,
+        seed_manifest_path=manifest_path,
+        expected_seed_manifest_sha256=sha256_path(manifest_path),
+    )
+    _target_rollback(fixture)
+    original_plan = fixture["plan_path"].read_bytes()
+    original_chain = fixture["state_path"].read_bytes()
+    original_idea = (fixture["plan_dir"] / "idea_snapshot.md").read_bytes()
+
+    def fail(current: str) -> None:
+        if current == stage:
+            raise RuntimeError(f"injected at {stage}")
+
+    with pytest.raises(RuntimeError, match="injected"):
+        _seed_rollback(
+            fixture,
+            seed_cutover,
+            manifest_path,
+            failure_injector=fail,
+        )
+
+    assert fixture["plan_path"].read_bytes() == original_plan
+    assert fixture["state_path"].read_bytes() == original_chain
+    assert (fixture["plan_dir"] / "idea_snapshot.md").read_bytes() == original_idea
+
+
 def test_seed_rematerialize_cli_exposes_manifest_and_state_cas_guards() -> None:
     parser = build_parser()
     args = parser.parse_args(
@@ -968,5 +1160,6 @@ def test_seed_rematerialize_cli_exposes_manifest_and_state_cas_guards() -> None:
     )
 
     assert args.chain_action == "seed-rematerialize"
+    assert args.direction == "cutover"
     assert args.expected_seed_manifest_sha256 == "4" * 64
     assert SEED_REMATERIALIZE_ERROR == "seed_rematerialize_refused"

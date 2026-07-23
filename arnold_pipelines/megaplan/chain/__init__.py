@@ -7958,6 +7958,11 @@ def build_chain_parser(subparsers: Any) -> None:
     )
     seed_rematerialize_parser.add_argument("--spec", required=True)
     seed_rematerialize_parser.add_argument("--project-dir", required=True)
+    seed_rematerialize_parser.add_argument(
+        "--direction",
+        choices=("cutover", "rollback"),
+        default="cutover",
+    )
     seed_rematerialize_parser.add_argument("--expected-session-id", required=True)
     seed_rematerialize_parser.add_argument("--expected-current-milestone", required=True)
     seed_rematerialize_parser.add_argument("--expected-current-plan", required=True)
@@ -7971,6 +7976,8 @@ def build_chain_parser(subparsers: Any) -> None:
         "--expected-seed-manifest-sha256",
         required=True,
     )
+    seed_rematerialize_parser.add_argument("--expected-cutover-event-sha256")
+    seed_rematerialize_parser.add_argument("--expected-archive-manifest-sha256")
     seed_rematerialize_parser.add_argument("--reason", required=True)
     seed_rematerialize_parser.add_argument("--actor", default="operator")
 
@@ -8389,6 +8396,9 @@ def run_chain_cli(
                 expected_plan_state_sha256=args.expected_plan_state_sha256,
                 seed_manifest_path=Path(args.seed_manifest).expanduser().resolve(),
                 expected_seed_manifest_sha256=args.expected_seed_manifest_sha256,
+                direction=args.direction,
+                expected_cutover_event_sha256=args.expected_cutover_event_sha256,
+                expected_archive_manifest_sha256=args.expected_archive_manifest_sha256,
                 reason=args.reason,
                 actor=args.actor,
             )
