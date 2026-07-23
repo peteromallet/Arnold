@@ -1171,7 +1171,7 @@ def _reasoning_config_for_model(
     return {"enabled": True, "effort": token}
 
 
-def _toolsets_for_phase(phase: str) -> list[str] | None:
+def _toolsets_for_phase(phase: str) -> list[str]:
     """Return toolsets for a given megaplan phase.
 
     Execute phase gets terminal + file access.
@@ -1180,7 +1180,9 @@ def _toolsets_for_phase(phase: str) -> list[str] | None:
     Web tools are opt-in because local-code plans otherwise tend to waste turns
     trying Firecrawl or ``web_extract(file://...)`` instead of reading the repo.
     Gate and review get file only (judgment, not investigation).
-    Finalize is a pure compiler and uses structured JSON response format without tools.
+    Finalize is a pure compiler and uses structured JSON response format without
+    tools.  An explicit empty list is significant: ``AIAgent`` treats ``None``
+    as "load every registered tool", while ``[]`` means "load no tools".
     """
     web_toolsets = ["web"] if _web_tools_enabled_for_hermes() else []
     prep_readonly_phases = {
@@ -1199,7 +1201,7 @@ def _toolsets_for_phase(phase: str) -> list[str] | None:
     if phase in ("plan", "critique", "revise"):
         return ["file", *web_toolsets]
     if phase == "finalize":
-        return None
+        return []
     return ["file"]
 
 

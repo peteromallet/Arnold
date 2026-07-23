@@ -3139,6 +3139,12 @@ class AIAgent:
         """Return whether the active transport accepts OpenAI response_format."""
         if self.api_mode == "anthropic_messages":
             return False
+        # Some OpenAI-compatible providers (notably Fireworks) reject requests
+        # that combine JSON-schema response formatting with function calling.
+        # Tool-enabled callers already validate the model's final JSON locally,
+        # so prefer the portable tool path and omit the provider-side hint.
+        if self.tools:
+            return False
         # DeepSeek's direct OpenAI-compatible endpoint currently rejects
         # response_format=json_schema. Hermes prompts already include a schema
         # template and the caller parses/validates JSON, so omit the API hint.
