@@ -337,12 +337,15 @@ def test_live_slow_chain_with_fresh_heartbeat_is_a_hard_noop() -> None:
     finding["events_mtime_age_min"] = 2
     finding["chain_log"]["mtime_age_min"] = 3
     finding["current_target"]["tmux_process"] = {
+        "session": "stuck-chain",
+        "pid": 4242,
         "pid_live": True,
         "session_live": True,
         "live_status": "alive",
     }
     finding["active_step_liveness"] = {
         "present": True,
+        "worker_pid": 777,
         "worker_pid_alive": True,
         "token_heartbeat_age_min": 1,
     }

@@ -22,6 +22,7 @@ from arnold_pipelines.megaplan.cloud.status_snapshot import (
 )
 from arnold_pipelines.megaplan.cloud.status_format import format_cloud_status_detailed
 from arnold_pipelines.megaplan.handlers.review import _review_quality_block_failure
+from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 
 
 def _target(plan_state: dict[str, object], *, cursor: str = "sha256:cursor-1") -> dict[str, object]:
@@ -131,6 +132,54 @@ def test_exhausted_deterministic_quality_dispatches_one_bounded_repair_without_h
     assert custody["retry_budget"]["retryable"] is True
     assert custody["retry_budget"]["alert_required"] is False
     assert dispatch_gate_for_human_blocker(None) == "clear"
+
+
+def test_deterministic_quality_whitelist_rejects_partial_or_unbound_evidence() -> None:
+    mutations = (
+        lambda failure, _target: failure["metadata"].pop("deterministic_evidence"),
+        lambda failure, _target: failure["metadata"].update(
+            {"repairability": "unknown"}
+        ),
+        lambda failure, _target: failure["evidence_cursor"].update(
+            {"review_artifact_hash": ""}
+        ),
+        lambda _failure, target: target.update(
+            {
+                "authoritative_source": "marker",
+                "current_refs": {"current_plan_name": ""},
+                "plan_state": {"present": False, "fingerprint": ""},
+            }
+        ),
+    )
+
+    for mutate in mutations:
+        state = _quality_state()
+        target = _target(state)
+        failure = state["latest_failure"]
+        assert isinstance(failure, dict)
+        mutate(failure, target)
+        decision = classify_repair_dispatch(
+            plan_state=state,
+            current_target=target,
+            custody_projection={
+                "blocker_id": "blocker:v2:quality",
+                "active_request_ids": ["request-quality"],
+                "failure_kind": "quality_gate_blocked",
+            },
+        )
+        canonical_decision = classify_repair_dispatch(
+            canonical_run_state=resolve_run_state(target),
+            plan_state=state,
+            current_target=target,
+            custody_projection={
+                "blocker_id": "blocker:v2:quality",
+                "active_request_ids": ["request-quality"],
+                "failure_kind": "quality_gate_blocked",
+            },
+        )
+
+        assert decision.decision == DISPATCH_DECISION_HUMAN_REQUIRED
+        assert canonical_decision.decision == DISPATCH_DECISION_BROKEN_SUPERFIXER
 
 
 def test_typed_human_gate_remains_human_only_and_unknown_does_not_invent_one(

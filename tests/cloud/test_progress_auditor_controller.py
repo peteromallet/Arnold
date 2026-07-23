@@ -22,6 +22,8 @@ def test_report_only_and_ordinary_findings_never_create_repair_custody(tmp_path:
     ordinary["session_header"]["session"] = "ordinary-finding"
     ordinary["current_target"]["session"] = "ordinary-finding"
     ordinary["current_target"]["tmux_process"] = {
+        "session": "ordinary-finding",
+        "pid": 4242,
         "pid_live": True,
         "session_live": True,
         "live_status": "alive",

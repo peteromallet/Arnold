@@ -43,13 +43,12 @@ def test_watchdog_dispatch_exports_claim_owner_pid() -> None:
 
 
 def test_repair_loop_releases_dispatcher_owned_active_claim_on_shutdown(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
     repair_root = tmp_path / "repair-root"
     workspace = tmp_path / "workspace"
+    marker_dir = workspace / ".megaplan" / "cloud-sessions"
     bin_dir = tmp_path / "bin"
-    marker_dir.mkdir()
+    marker_dir.mkdir(parents=True)
     repair_root.mkdir()
-    workspace.mkdir()
     bin_dir.mkdir()
 
     (marker_dir / "demo-session.json").write_text(
@@ -108,6 +107,7 @@ def test_repair_loop_releases_dispatcher_owned_active_claim_on_shutdown(tmp_path
     env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
+    env["MEGAPLAN_RUNTIME_SRC"] = str(REPO_ROOT)
     env["ARNOLD_REPAIR_QUEUE_ROOT"] = str(queue_root)
     env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
     env["CLOUD_WATCHDOG_REPAIR_REQUEST_ID"] = request_id

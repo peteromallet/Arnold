@@ -104,7 +104,11 @@ def test_l3_trigger_requires_typed_request_and_uses_pointer_prompt() -> None:
 
 def test_meta_repair_provenance_bootstrap_uses_safe_python_path() -> None:
     text = _meta_repair_wrapper()
-    assert 'PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$marker_path"' in text
+    assert (
+        'PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \\\n'
+        '    "$marker_path" "${ARNOLD_MANAGED_AGENT_MANIFEST:-}"'
+        in text
+    )
     assert 'INSTALL_SYNC_STATUS="commit_custody_failed"' in text
     assert "will NOT install sync or retrigger ordinary repair" in text
     assert 'post_retrigger_verification["commit_custody"]' in text
