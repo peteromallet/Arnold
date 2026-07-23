@@ -1119,6 +1119,7 @@ def _overlay_newer_chain_state(
     completed_len = len(completed) if isinstance(completed, list) else 0
     current_index = _as_int(chain_state.get("current_milestone_index"))
     last_state = str(chain_state.get("last_state") or "").strip()
+    current_plan_name = str(chain_state.get("current_plan_name") or "").strip()
     chain_complete = _chain_state_complete(
         last_state=last_state,
         completed_len=completed_len,
@@ -1126,6 +1127,7 @@ def _overlay_newer_chain_state(
     )
     custody_mismatch = bool(
         last_state.lower() in {"done", "complete", "completed"}
+        and not current_plan_name
         and milestone_count is not None
         and completed_len < milestone_count
     )
