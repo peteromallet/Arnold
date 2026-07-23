@@ -140,6 +140,66 @@ def test_context_is_bounded_and_carries_exact_error_and_recent_repairs(tmp_path:
     ]["recover_state"]["allowed_mutations"] == [f"supported_cli:{supported_cli}"]
 
 
+def test_context_uses_identity_bound_profile_preserving_marker_relaunch(
+    tmp_path: Path,
+) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    marker_dir = tmp_path / "markers"
+    marker_command = (
+        "export PYTHONPATH=/runtime/pinned; "
+        "python -c \"assert 'pinned-sha'\"; "
+        f"python -m arnold_pipelines.megaplan chain start --spec {spec} "
+        f"--project-dir {workspace} --no-git-refresh --no-push"
+    )
+    _write(
+        marker_dir / "custody-control-plane-20260714.json",
+        {
+            "session": "custody-control-plane-20260714",
+            "workspace": str(workspace),
+            "remote_spec": str(spec),
+            "relaunch_command": marker_command,
+            "runtime_attestation": {
+                "expected_commit": "pinned-sha",
+                "expected_import": "/runtime/pinned",
+            },
+        },
+    )
+    request_payload = json.loads(request.read_text(encoding="utf-8"))
+    request_payload["marker_dir"] = str(marker_dir)
+    request_payload["target"] = {
+        "plan_name": "current-m5a",
+        "configured_profile": "partnered-5",
+        "recovery_contract": {"preserve_configured_profile": True},
+    }
+    _write(request, request_payload)
+    state_path = workspace / ".megaplan/plans/current-m5a/state.json"
+    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    state_payload["config"] = {"profile": "partnered-5"}
+    _write(state_path, state_payload)
+
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+
+    boundaries = context["safe_repair_boundaries"]
+    assert boundaries["supported_recovery_cli"] == marker_command
+    assert boundaries["marker_relaunch_binding"] == {
+        "verified": True,
+        "marker_path": str(marker_dir / "custody-control-plane-20260714.json"),
+        "runtime_commit": "pinned-sha",
+        "runtime_import": "/runtime/pinned",
+        "configured_profile": "partnered-5",
+        "profile_preserved": True,
+        "no_git_refresh": True,
+        "no_push": True,
+    }
+
+
 def test_historical_recount_recovery_uses_guarded_override_before_chain_start(
     tmp_path: Path,
 ) -> None:
