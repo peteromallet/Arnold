@@ -1,15 +1,15 @@
 {
   "schema": "m6.ownership-decision-record.v1",
-  "generated_at": "2026-07-21T23:36:18.298792+00:00",
+  "generated_at": "2026-07-24T01:10:44.993614+00:00",
   "generator": "tools/generate_m6_ownership_decision.py",
   "source_evidence": {
-    "prerequisite_verification": "/workspace/custody-control-plane-20260714/Arnold/evidence/m6-prerequisite-verification.json",
-    "migration_matrix_reconciled": "/workspace/custody-control-plane-20260714/Arnold/evidence/migration-matrix-reconciled.json",
-    "controlled_writer_registry": "/workspace/custody-control-plane-20260714/Arnold/evidence/controlled-writer-registry.json",
-    "authority_reader_registry": "/workspace/custody-control-plane-20260714/Arnold/evidence/authority-reader-registry.json",
-    "finding_prevention_register": "/workspace/custody-control-plane-20260714/Arnold/evidence/finding-prevention-register.json",
-    "unified_authority_research": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md",
-    "lineage_audit": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/research/authority-lineage-and-gap-audit-20260711.md"
+    "prerequisite_verification": "/workspace/critique-ledger-m9-glm-20260723/Arnold/evidence/m6-prerequisite-verification.json",
+    "migration_matrix_reconciled": "/workspace/critique-ledger-m9-glm-20260723/Arnold/evidence/migration-matrix-reconciled.json",
+    "controlled_writer_registry": "/workspace/critique-ledger-m9-glm-20260723/Arnold/evidence/controlled-writer-registry.json",
+    "authority_reader_registry": "/workspace/critique-ledger-m9-glm-20260723/Arnold/evidence/authority-reader-registry.json",
+    "finding_prevention_register": "/workspace/critique-ledger-m9-glm-20260723/Arnold/evidence/finding-prevention-register.json",
+    "unified_authority_research": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md",
+    "lineage_audit": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/initiatives/custody-control-plane/research/authority-lineage-and-gap-audit-20260711.md"
   },
   "north_star_principles": [
     "One exact-version Run Authority reducer decides which attempts and claims are accepted.",
@@ -351,8 +351,7 @@
           "row_index": 6,
           "consumer_surface": "`.pypeline` and named subworkflows",
           "blocked_by": [
-            "m5_bound_head_vs_current_head",
-            "wbc_file_hashes"
+            "m5_final_attestation"
           ],
           "proof_required": "native traceability/conformance",
           "milestone": "M8"
@@ -361,14 +360,13 @@
           "row_index": 72,
           "consumer_surface": "Native Parity Corrective",
           "blocked_by": [
-            "m5_bound_head_vs_current_head",
-            "wbc_file_hashes"
+            "m5_final_attestation"
           ],
           "proof_required": "completion/traceability proof",
           "milestone": "M6/M8"
         }
       ],
-      "row_hash": "7f9b0f705e9f8a7ad8096378acdae9993b72815c450f70821833605862819d87"
+      "row_hash": "81153de4fc441480dfb422f179e520ad8dc2c20d1d0ec16ff7ecd5a267933762"
     },
     {
       "owner": "Native Platform",
@@ -552,8 +550,7 @@
           "row_index": 78,
           "consumer_surface": "installed/editable/cloud runtime",
           "blocked_by": [
-            "m5_bound_head_vs_current_head",
-            "wbc_file_hashes"
+            "m5_final_attestation"
           ],
           "proof_required": "import/source SHA gate",
           "milestone": "M11"
@@ -562,14 +559,13 @@
           "row_index": 91,
           "consumer_surface": "PC adjacent work",
           "blocked_by": [
-            "m5_bound_head_vs_current_head",
-            "wbc_file_hashes"
+            "m5_final_attestation"
           ],
           "proof_required": "`PC_SCOPE_DECISION`",
           "milestone": "M6"
         }
       ],
-      "row_hash": "5507df0a204a4c7586690e97fad864ef811008c4939d1e8fe5ad88bb8d14f6c1"
+      "row_hash": "a9a7e10b5df1902156e68987397107060b02feefe5e9fb99a6499f661dd912e6"
     },
     {
       "owner": "Run Authority",
@@ -655,8 +651,7 @@
           "row_index": 0,
           "consumer_surface": "Run Authority M1-M3 completion receipts",
           "blocked_by": [
-            "m5_bound_head_vs_current_head",
-            "wbc_file_hashes"
+            "m5_final_attestation"
           ],
           "proof_required": "canonical receipt regeneration plus `chain verify` divergence count 0",
           "milestone": "M5"
@@ -665,8 +660,7 @@
           "row_index": 1,
           "consumer_surface": "Canonical `runauthority-epic` retirement",
           "blocked_by": [
-            "m5_bound_head_vs_current_head",
-            "wbc_file_hashes"
+            "m5_final_attestation"
           ],
           "proof_required": "three accepted receipts, canonical divergence count 0, regenerated proof/manifest, exact chain-state identity, constrained duplicate-session lookup/tombstone, and canonical asset hashes",
           "milestone": "M5"
@@ -675,14 +669,13 @@
           "row_index": 9,
           "consumer_surface": "`RunAuthorityKernel` grants",
           "blocked_by": [
-            "m5_bound_head_vs_current_head",
-            "wbc_file_hashes"
+            "m5_final_attestation"
           ],
           "proof_required": "grant/fence/quarantine tests",
           "milestone": "M7"
         }
       ],
-      "row_hash": "2ff8fd75cc9632153a77a6e5f59b6c11571d498a91841cd4814717088687bfbd"
+      "row_hash": "8560bb072b0faff9bcde3979d15e7773684ffe61f081a515e434c40fcf771b81"
     },
     {
       "owner": "TransitionWriter/repair custody",
@@ -847,8 +840,7 @@
           "row_index": 66,
           "consumer_surface": "WBC declarations/attempt ledger",
           "blocked_by": [
-            "m5_bound_head_vs_current_head",
-            "wbc_file_hashes"
+            "m5_final_attestation"
           ],
           "proof_required": "exact landed/runtime proof plus store, call-site set equality, runtime traces, fault/replay and bypass-negative suite",
           "milestone": "M6/M6A/M8/M11"
@@ -857,8 +849,7 @@
           "row_index": 67,
           "consumer_surface": "WBC payload/privacy/retention/encryption",
           "blocked_by": [
-            "m5_bound_head_vs_current_head",
-            "wbc_file_hashes"
+            "m5_final_attestation"
           ],
           "proof_required": "cross-tenant, missing-key, retention/hold/tombstone/deletion tests against stored bytes",
           "milestone": "M6A/M9/M11"
@@ -867,8 +858,7 @@
           "row_index": 68,
           "consumer_surface": "WBC schema/data migration",
           "blocked_by": [
-            "m5_bound_head_vs_current_head",
-            "wbc_file_hashes"
+            "m5_final_attestation"
           ],
           "proof_required": "every supported version, interruption/resume, corrupt/partial, duplicate backfill and rollback/forward-fix tests",
           "milestone": "M6A/M9/M10/M11"
@@ -877,8 +867,7 @@
           "row_index": 69,
           "consumer_surface": "WBC universal producer adoption",
           "blocked_by": [
-            "m5_bound_head_vs_current_head",
-            "wbc_file_hashes"
+            "m5_final_attestation"
           ],
           "proof_required": "generated contract/call-site/runtime-trace set equality plus positive, negative and failure/replay cases",
           "milestone": "M6/M8/M10/M11"
@@ -887,14 +876,13 @@
           "row_index": 70,
           "consumer_surface": "WBC universal consumer adoption",
           "blocked_by": [
-            "m5_bound_head_vs_current_head",
-            "wbc_file_hashes"
+            "m5_final_attestation"
           ],
           "proof_required": "generated consumer inventory and raw-state/prose/token/implicit-latest negative tests",
           "milestone": "M9/M11"
         }
       ],
-      "row_hash": "a3d33e98a6c6766e6ec5284c6682f99741d33f4898a679aecb6eb70e666eed79"
+      "row_hash": "2f8639ff616795498e8c8f15516f68bab132566f65c2c1bc171bc513d02cfb8d"
     },
     {
       "owner": "custody-control-plane",
@@ -1326,5 +1314,5 @@
       ]
     }
   ],
-  "composite_hash": "fffd53345726b1b5c1050d2ea228806d8c5e78c07dce6ec560f61685551e00cb"
+  "composite_hash": "bfef79ed1d2ed089b5a38e70dbb3bb7447489f327a1ec4596a28f02e50b2c85a"
 }

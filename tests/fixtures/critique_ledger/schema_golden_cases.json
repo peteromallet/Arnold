@@ -1,0 +1,469 @@
+{
+  "meta": {
+    "description": "Golden test cases for Critique Ledger v1 schemas. Covers every disposition family, all 8 relationship types, both context modes, valid no-additional results, unknown/legacy semantics, tombstones, unavailable evidence, additive-field preservation, and corrupt/future-version rejection.",
+    "schema_version": "cl.schema.v1",
+    "generated_by": "CL1 T5_T6 schema golden fixture"
+  },
+  "golden_cases": [
+    {
+      "case_id": "g-old-01-occurrence-basic",
+      "description": "Basic CritiqueOccurrenceEnvelope round-trip (strict mode)",
+      "schema": "CritiqueOccurrenceEnvelope",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "occurrence_id": "occ-001",
+        "attempt_id": "attempt-v4-run1",
+        "round_label": "v4",
+        "finding_id": "F-CRITIQUE-PRODUCER-A",
+        "semantic_finding_id": "CF-CD1C58FBC288E3BBA77C",
+        "producer_id": "producer-critique-check-scope",
+        "model_id": "deepseek-v4-pro",
+        "context_mode": "BLIND",
+        "parse_status": "COMPLETED",
+        "evidence_availability": "RETAINED",
+        "evidence_ref": "fixtures/m6/occ-001.json",
+        "redacted_prompt_hash": "sha256:abc123",
+        "raw_prompt_hash": "sha256:def456",
+        "raw_completion_hash": "sha256:ghi789",
+        "custody_receipt_refs": ["wbc:receipt:1"],
+        "metadata": {"producer_version": "v1"}
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    },
+    {
+      "case_id": "g-old-02-occurrence-strict-unknown-field",
+      "description": "CritiqueOccurrenceEnvelope rejects unknown field in strict mode",
+      "schema": "CritiqueOccurrenceEnvelope",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "occurrence_id": "occ-002",
+        "unknown_extra_field": "should-reject"
+      },
+      "expect_roundtrip": false,
+      "expect_strict_ok": false,
+      "expected_error": "Unknown field"
+    },
+    {
+      "case_id": "g-old-03-occurrence-preserve-unknown-field",
+      "description": "CritiqueOccurrenceEnvelope preserves unknown field in preserve mode",
+      "schema": "CritiqueOccurrenceEnvelope",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "occurrence_id": "occ-003",
+        "finding_id": "F-PRESERVE-TEST",
+        "semantic_finding_id": "CF-PRESERVE",
+        "unknown_extra_field": "should-preserve"
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": false,
+      "expect_preserve_ok": true
+    },
+    {
+      "case_id": "g-old-04-occurrence-future-schema",
+      "description": "CritiqueOccurrenceEnvelope rejects unsupported future schema version",
+      "schema": "CritiqueOccurrenceEnvelope",
+      "data": {
+        "schema_version": "cl.schema.v99-future",
+        "occurrence_id": "occ-004"
+      },
+      "expect_roundtrip": false,
+      "expect_strict_ok": false,
+      "expected_error": "Unsupported schema_version"
+    },
+    {
+      "case_id": "g-old-05-occurrence-corrupt-version",
+      "description": "CritiqueOccurrenceEnvelope rejects corrupt version string",
+      "schema": "CritiqueOccurrenceEnvelope",
+      "data": {
+        "schema_version": "corrupt-garbage",
+        "occurrence_id": "occ-005"
+      },
+      "expect_roundtrip": false,
+      "expect_strict_ok": false,
+      "expected_error": "Unsupported schema_version"
+    },
+    {
+      "case_id": "g-old-06-reconciliation-basic",
+      "description": "Basic FindingReconciliationEvent round-trip",
+      "schema": "FindingReconciliationEvent",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "reconciliation_id": "recon-001",
+        "canonical_finding_id": "F-CANONICAL-1",
+        "semantic_finding_id": "CF-CD1C58FBC288E3BBA77C",
+        "occurrence_ids": ["occ-001", "occ-002", "occ-003", "occ-004", "occ-005"],
+        "relationship": "DUPLICATE",
+        "authority": "EVALUATOR",
+        "reason": "All five occurrences describe the same blocked-prerequisite finding",
+        "evidence_refs": ["eval-verdict-v4.json"],
+        "is_reopen": false,
+        "timestamp_utc": "2026-07-23T00:00:00Z",
+        "metadata": {}
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    },
+    {
+      "case_id": "g-old-07-disposition-acted-on",
+      "description": "FindingDispositionEvent — acted-on family",
+      "schema": "FindingDispositionEvent",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "disposition_id": "disp-001",
+        "semantic_finding_id": "CF-CD1C58FBC288E3BBA77C",
+        "family": "acted-on",
+        "reason_subcode": "blocked-prerequisite-resolved",
+        "severity": "high",
+        "action_taken": true,
+        "action_description": "Replanned with explicit prerequisite ordering",
+        "accountable_scope": "M6 planning",
+        "is_reopen": false,
+        "evidence_refs": ["replan-decision.json"],
+        "authority": "EVALUATOR",
+        "timestamp_utc": "2026-07-23T00:00:00Z"
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    },
+    {
+      "case_id": "g-old-08-disposition-ignored",
+      "description": "FindingDispositionEvent — ignored family",
+      "schema": "FindingDispositionEvent",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "disposition_id": "disp-002",
+        "semantic_finding_id": "CF-IGNORED-1",
+        "family": "ignored",
+        "reason_subcode": "below-severity-threshold",
+        "severity": "low",
+        "action_taken": false,
+        "accountable_scope": "N/A",
+        "is_reopen": false,
+        "authority": "EVALUATOR",
+        "timestamp_utc": "2026-07-23T00:00:00Z"
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    },
+    {
+      "case_id": "g-old-09-disposition-deferred",
+      "description": "FindingDispositionEvent — deferred family with reopen",
+      "schema": "FindingDispositionEvent",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "disposition_id": "disp-003",
+        "semantic_finding_id": "CF-DEFERRED-1",
+        "family": "deferred",
+        "reason_subcode": "requires-CL2-persistence",
+        "severity": "medium",
+        "action_taken": false,
+        "action_description": "Deferred to CL2 when persistence layer is available",
+        "accountable_scope": "CL2 persistence gate",
+        "is_reopen": true,
+        "reopen_predicate": "CL2 persistence implementation complete",
+        "evidence_refs": [],
+        "authority": "EVALUATOR",
+        "timestamp_utc": "2026-07-23T00:00:00Z"
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    },
+    {
+      "case_id": "g-old-10-disposition-rejected",
+      "description": "FindingDispositionEvent — rejected family",
+      "schema": "FindingDispositionEvent",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "disposition_id": "disp-004",
+        "semantic_finding_id": "CF-REJECTED-1",
+        "family": "rejected",
+        "reason_subcode": "finding-not-actionable",
+        "severity": "informational",
+        "action_taken": false,
+        "action_description": "Finding describes a known non-actionable pattern",
+        "accountable_scope": "N/A",
+        "is_reopen": false,
+        "authority": "EVALUATOR",
+        "timestamp_utc": "2026-07-23T00:00:00Z"
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    },
+    {
+      "case_id": "g-old-11-disposition-duplicate",
+      "description": "FindingDispositionEvent — duplicate family",
+      "schema": "FindingDispositionEvent",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "disposition_id": "disp-005",
+        "semantic_finding_id": "CF-DUPLICATE-1",
+        "family": "duplicate",
+        "reason_subcode": "already-tracked-CF-CD1C58",
+        "severity": "N/A",
+        "action_taken": false,
+        "accountable_scope": "CF-CD1C58FBC288E3BBA77C",
+        "is_reopen": false,
+        "authority": "EVALUATOR",
+        "timestamp_utc": "2026-07-23T00:00:00Z"
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    },
+    {
+      "case_id": "g-old-12-disposition-accepted-risk",
+      "description": "FindingDispositionEvent — accepted-risk family",
+      "schema": "FindingDispositionEvent",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "disposition_id": "disp-006",
+        "semantic_finding_id": "CF-ACCEPTED-RISK-1",
+        "family": "accepted-risk",
+        "reason_subcode": "acceptable-replay-limitation",
+        "severity": "low",
+        "action_taken": false,
+        "action_description": "Replay limitation for unavailable evidence accepted under CL1",
+        "accountable_scope": "CL1 evidence availability",
+        "is_reopen": true,
+        "reopen_predicate": "Governed durable store available for raw prompts",
+        "authority": "EVALUATOR",
+        "timestamp_utc": "2026-07-23T00:00:00Z"
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    },
+    {
+      "case_id": "g-old-13-disposition-unknown",
+      "description": "FindingDispositionEvent — unknown family (legacy)",
+      "schema": "FindingDispositionEvent",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "disposition_id": "disp-007",
+        "semantic_finding_id": "CF-UNKNOWN-LEGACY-1",
+        "family": "unknown",
+        "reason_subcode": "legacy-artifact-no-evaluator",
+        "severity": "unknown",
+        "action_taken": false,
+        "accountable_scope": "historical",
+        "is_reopen": false,
+        "authority": "CURATOR_PROPOSAL",
+        "timestamp_utc": "2026-07-23T00:00:00Z"
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    },
+    {
+      "case_id": "g-old-14-disposition-resolved",
+      "description": "FindingDispositionEvent — resolved family",
+      "schema": "FindingDispositionEvent",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "disposition_id": "disp-008",
+        "semantic_finding_id": "CF-RESOLVED-1",
+        "family": "resolved",
+        "reason_subcode": "addressed-by-T1-T3-T5_T6",
+        "severity": "N/A",
+        "action_taken": true,
+        "action_description": "CL1 batch 1 execution resolves the finding",
+        "accountable_scope": "CL1 implementation",
+        "is_reopen": false,
+        "authority": "EVALUATOR",
+        "timestamp_utc": "2026-07-23T00:00:00Z"
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    },
+    {
+      "case_id": "g-old-15-reconciliation-all-relationships",
+      "description": "FindingReconciliationEvent with each of the 8 relationships",
+      "schema": "FindingReconciliationEvent",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "reconciliation_id": "recon-all-rels",
+        "canonical_finding_id": "F-CANONICAL-ALL",
+        "semantic_finding_id": "CF-ALL-RELS",
+        "occurrence_ids": ["occ-010"],
+        "relationship": "BLOCKS",
+        "authority": "EVALUATOR",
+        "reason": "This finding blocks further advancement",
+        "is_reopen": false,
+        "timestamp_utc": "2026-07-23T00:00:00Z"
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    },
+    {
+      "case_id": "g-old-16-occurrence-tombstone",
+      "description": "CritiqueOccurrenceEnvelope with TOMBSTONED parse status",
+      "schema": "CritiqueOccurrenceEnvelope",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "occurrence_id": "occ-tombstone",
+        "finding_id": "F-TOMBSTONED",
+        "semantic_finding_id": "CF-TOMBSTONE",
+        "parse_status": "TOMBSTONED",
+        "evidence_availability": "UNAVAILABLE",
+        "unavailable_reason": "Original producer output deleted per retention policy",
+        "reopen_condition": "Restore from backup if audit requires"
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    },
+    {
+      "case_id": "g-old-17-occurrence-no-additional",
+      "description": "CritiqueOccurrenceEnvelope with NO_ADDITIONAL_FINDINGS",
+      "schema": "CritiqueOccurrenceEnvelope",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "occurrence_id": "occ-no-additional",
+        "finding_id": "F-NO-ADDITIONAL",
+        "semantic_finding_id": "CF-NO-ADDITIONAL",
+        "parse_status": "NO_ADDITIONAL_FINDINGS",
+        "context_mode": "HISTORY_AWARE"
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    },
+    {
+      "case_id": "g-old-18-briefing-standard-budget",
+      "description": "DomainBriefingEnvelope with standard budget (2 domains / 10 findings)",
+      "schema": "DomainBriefingEnvelope",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "briefing_id": "brief-std-001",
+        "revision_manifest_hash": "sha256:abc123",
+        "budget_level": "standard",
+        "domains": ["megaplan", "critique_ledger"],
+        "findings": ["CF-1", "CF-2"],
+        "open_findings": [],
+        "blocked_findings": [],
+        "accepted_risk_findings": ["CF-1"],
+        "unknown_findings": [],
+        "cross_domain_refs": [],
+        "spillover_findings": [],
+        "no_additional_findings": false,
+        "no_open_blocking_findings": true,
+        "no_known_findings": false,
+        "no_adjacent_text_match": true,
+        "is_truncated": false,
+        "timestamp_utc": "2026-07-23T00:00:00Z"
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    },
+    {
+      "case_id": "g-old-19-briefing-high-budget",
+      "description": "DomainBriefingEnvelope with high budget (4 domains / 25 findings)",
+      "schema": "DomainBriefingEnvelope",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "briefing_id": "brief-high-001",
+        "revision_manifest_hash": "sha256:def456",
+        "budget_level": "high",
+        "domains": ["megaplan", "critique_ledger", "wbc", "run_authority"],
+        "findings": ["CF-1", "CF-2", "CF-3", "CF-4", "CF-5"],
+        "open_findings": ["CF-5"],
+        "blocked_findings": [],
+        "accepted_risk_findings": ["CF-1", "CF-2"],
+        "unknown_findings": [],
+        "cross_domain_refs": ["run_authority:CF-3"],
+        "spillover_findings": [],
+        "no_additional_findings": false,
+        "no_open_blocking_findings": false,
+        "no_known_findings": false,
+        "no_adjacent_text_match": false,
+        "is_truncated": false,
+        "timestamp_utc": "2026-07-23T00:00:00Z"
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    },
+    {
+      "case_id": "g-old-20-briefing-exhaustive-budget",
+      "description": "DomainBriefingEnvelope with exhaustive budget (unbounded)",
+      "schema": "DomainBriefingEnvelope",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "briefing_id": "brief-exhaust-001",
+        "revision_manifest_hash": "sha256:ghi789",
+        "budget_level": "exhaustive",
+        "domains": ["megaplan", "critique_ledger", "wbc", "run_authority", "maintenance"],
+        "findings": ["CF-1", "CF-2", "CF-3", "CF-4", "CF-5", "CF-6", "CF-7", "CF-8", "CF-9", "CF-10", "CF-11"],
+        "open_findings": [],
+        "blocked_findings": [],
+        "accepted_risk_findings": [],
+        "unknown_findings": ["CF-11"],
+        "cross_domain_refs": [],
+        "spillover_findings": [],
+        "no_additional_findings": false,
+        "no_open_blocking_findings": true,
+        "no_known_findings": false,
+        "no_adjacent_text_match": false,
+        "is_truncated": false,
+        "timestamp_utc": "2026-07-23T00:00:00Z"
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    },
+    {
+      "case_id": "g-old-21-briefing-budget-exceeded",
+      "description": "DomainBriefingEnvelope budget validation rejects exceeding standard budget",
+      "schema": "DomainBriefingEnvelope",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "briefing_id": "brief-overflow",
+        "revision_manifest_hash": "sha256:overflow",
+        "budget_level": "standard",
+        "domains": ["d1", "d2", "d3"],
+        "findings": ["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11"]
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true,
+      "expect_budget_failure": true
+    },
+    {
+      "case_id": "g-old-22-manifest-basic",
+      "description": "LedgerRevisionManifest basic round-trip",
+      "schema": "LedgerRevisionManifest",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "manifest_id": "manifest-001",
+        "revision_number": 1,
+        "prior_revision_hash": null,
+        "input_set_hash": "sha256:input-abc",
+        "source_revisions": ["ea2be1fe36c42c4f19afedd2c096b5dcec7c56df"],
+        "domain_completeness": {"critique_ledger": true, "wbc": true},
+        "wbc_receipt_refs": ["wbc:receipt:critique-to-gate-v4"],
+        "event_ids": ["occ-001", "recon-001", "disp-001"],
+        "included_reasons": {"occ-001": "parseable occurrence"},
+        "excluded_reasons": {},
+        "cross_domain_refs": [],
+        "timestamp_utc": "2026-07-23T00:00:00Z"
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    },
+    {
+      "case_id": "g-old-23-manifest-revision-chain",
+      "description": "LedgerRevisionManifest with prior revision chain",
+      "schema": "LedgerRevisionManifest",
+      "data": {
+        "schema_version": "cl.schema.v1",
+        "manifest_id": "manifest-002",
+        "revision_number": 2,
+        "prior_revision_hash": "sha256:revision-1-hash",
+        "input_set_hash": "sha256:input-def",
+        "source_revisions": ["ea2be1fe36c42c4f19afedd2c096b5dcec7c56df"],
+        "domain_completeness": {"critique_ledger": true},
+        "wbc_receipt_refs": [],
+        "event_ids": ["occ-002"],
+        "included_reasons": {"occ-002": "new occurrence"},
+        "excluded_reasons": {},
+        "cross_domain_refs": [],
+        "timestamp_utc": "2026-07-23T01:00:00Z"
+      },
+      "expect_roundtrip": true,
+      "expect_strict_ok": true
+    }
+  ]
+}

@@ -2,26 +2,35 @@
   "checks": [
     {
       "check": "current_head",
-      "head": "c86afd063ba074e09029834a84627334bb855bed",
+      "head": "d365ef68592b930c7f55c7f40f9b90af8cd03c06",
       "status": "PASS"
     },
     {
       "bound_artifacts_count": 13,
       "check": "m5_final_attestation",
+      "detail": "3 bound artifact(s) missing or mismatched",
+      "missing_bound_artifacts": [
+        ".megaplan/plans/sprint-1-authority-freeze-and-20260710-1935/completion_verdict.json",
+        ".megaplan/plans/sprint-2-dispatch-grants-and-20260710-2200/completion_verdict.json",
+        ".megaplan/plans/sprint-3-consumer-migration-20260711-0130/completion_verdict.json"
+      ],
       "path": ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/final-attestation.json",
       "repository_subject_head": "8bb779dcaa08edcc92736eb265689ad894d8d839",
       "retirement_status": "completed",
       "schema": "m5.final-attestation.v2",
-      "status": "PASS"
+      "status": "INCOHERENT"
     },
     {
       "check": "m5_bound_head_vs_current_head",
-      "current_head": "c86afd063ba074e09029834a84627334bb855bed",
-      "detail": "M5 bound head does not match current HEAD, but is an ancestor. HEAD has advanced past the M5 attestation point. Downstream M6 handoff must not be marked complete.",
+      "current_head": "d365ef68592b930c7f55c7f40f9b90af8cd03c06",
+      "detail": "M5 bound head is an ancestor of current HEAD. This advancement is EXPLAINED_BENIGN: The M5 bound-head/current-HEAD relationship is explainable: M5 bound head is a verified ancestor of current HEAD. The HEAD advancement is legitimate post-M5 evolution through M6 WBC merge, M6/M5A completions, and M6A evidence binding. No lineage break or unauthorized mutation detected.",
       "exact_match": false,
       "m5_bound_head": "8bb779dcaa08edcc92736eb265689ad894d8d839",
       "m5_is_ancestor_of_head": true,
-      "status": "INCOHERENT"
+      "resolution_class": "EXPLAINED_BENIGN",
+      "resolution_detail": "The M5 bound-head/current-HEAD relationship is explainable: M5 bound head is a verified ancestor of current HEAD. The HEAD advancement is legitimate post-M5 evolution through M6 WBC merge, M6/M5A completions, and M6A evidence binding. No lineage break or unauthorized mutation detected.",
+      "resolution_source": "evidence/m6a-prerequisite-resolution.json",
+      "status": "PASS"
     },
     {
       "check": "m5_milestone_attestation",
@@ -58,7 +67,7 @@
     },
     {
       "check": "wbc_ancestry",
-      "current_head": "c86afd063ba074e09029834a84627334bb855bed",
+      "current_head": "d365ef68592b930c7f55c7f40f9b90af8cd03c06",
       "first_parent_is_ancestor": true,
       "parents_from_evidence": {
         "first_parent": "7644f55dd9be75632670f990268e045d3ee1c2f7",
@@ -69,8 +78,16 @@
     },
     {
       "check": "wbc_package_metadata",
-      "detail": "pip not available \u2014 cannot inspect package metadata",
-      "status": "UNKNOWN"
+      "detail": "Package metadata recorded; activation receipt evidence is evaluated separately. Editable install alone is not proof of WBC activation.",
+      "editable_matches_repo_root": false,
+      "editable_project_location": "/workspace/runtime-candidates/arnold-bc0c600c418c8995331aa8aa6784fc62b4fddf17",
+      "import_resolves_to": "/workspace/runtime-candidates/arnold-b47f74fdd2bd261f1d402d83b1b351ed0617d280/arnold/__init__.py",
+      "install_location": "/root/.pyenv/versions/3.11.11/lib/python3.11/site-packages",
+      "is_editable": true,
+      "package_name": "arnold",
+      "repo_root": "/workspace/critique-ledger-m9-glm-20260723/Arnold",
+      "status": "UNKNOWN",
+      "version": "0.23.0"
     },
     {
       "boundary_category": {
@@ -106,6 +123,7 @@
         ],
         "label": "boundary",
         "summary": {
+          "explained_benign": 0,
           "matched": 4,
           "mismatched": 0,
           "missing_current": 0,
@@ -114,7 +132,39 @@
         }
       },
       "check": "wbc_file_hashes",
-      "detail": "1 file(s) differ between current tree and WBC merge commit 24afce00",
+      "detail": "All 13 WBC files match or have EXPLAINED_BENIGN resolution (10 matched, 3 explained) against WBC merge commit 24afce00",
+      "explained_benign_files": [
+        {
+          "current_sha256": "699d710fb279f00a5dd557811f9ac1fc729a6d6bd5227f3a8801361bba2c94ab",
+          "merge_missing": false,
+          "merge_sha256": "5778c4064f53ada1b884d50225d95ab12bb9f487dfa98586e8cc488ebd33d386",
+          "path": "arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json",
+          "resolution_class": "EXPLAINED_BENIGN",
+          "resolution_detail": "CL1 additive declaration: arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json was upgraded to v2 schema (wbc.contract_to_producer.v2) \u2014 critique_ledger owner domain, critique-custody producer contracts \u2014 as a versioned additive change preserving all 35 boundary-contract rows.",
+          "resolution_source": "cl1.v2-matrix-addition",
+          "status": "explained_benign"
+        },
+        {
+          "current_sha256": "76669b2ee62d785993828e6f297aa6a21f58d820446cfd88d6c90289a30d1a9a",
+          "merge_missing": false,
+          "merge_sha256": "d03f3302c63edb03706b3a5ef36ef50e8ccb17a5ed5c65802be0cb35479c1965",
+          "path": "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json",
+          "resolution_class": "EXPLAINED_BENIGN",
+          "resolution_detail": "CL1 additive declaration: arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json was upgraded to v2 schema (wbc.matrix.v2) \u2014 critique_ledger owner domain, critique-custody producer contracts \u2014 as a versioned additive change preserving all 35 boundary-contract rows.",
+          "resolution_source": "cl1.v2-matrix-addition",
+          "status": "explained_benign"
+        },
+        {
+          "current_sha256": "5e1f56262810790966696a7720e93fa0bccaabfe4085e70fa76bb0fd64eb7186",
+          "merge_missing": false,
+          "merge_sha256": "0f41737c72b6f798f929623c2d650723166f45fc1c683082ea173e83f2aa16d5",
+          "path": "arnold/workflow/source_compiler.py",
+          "resolution_class": "EXPLAINED_BENIGN",
+          "resolution_detail": "The source_compiler.py mismatch is legitimate post-M6 WBC contract evolution. The commit 4d1f22dbb ('fix(workflow): retain missing boundary contract diagnostics') extends the source compiler's row-spec resolution with stable contract row IDs from the generic workflow package. This strengthens the WBC contract surface without weakening any invariant, and was authored within WBC's canonical ownership domain.",
+          "resolution_source": "evidence/m6a-prerequisite-resolution.json",
+          "status": "explained_benign"
+        }
+      ],
       "integration_commit": "24afce006b9ad20391ac7af10ef67ea0b1774f9f",
       "runtime_category": {
         "files": [
@@ -142,6 +192,7 @@
         ],
         "label": "runtime",
         "summary": {
+          "explained_benign": 0,
           "matched": 3,
           "mismatched": 0,
           "missing_current": 0,
@@ -152,18 +203,24 @@
       "schema_category": {
         "files": [
           {
-            "current_sha256": "5778c4064f53ada1b884d50225d95ab12bb9f487dfa98586e8cc488ebd33d386",
+            "current_sha256": "699d710fb279f00a5dd557811f9ac1fc729a6d6bd5227f3a8801361bba2c94ab",
             "merge_missing": false,
             "merge_sha256": "5778c4064f53ada1b884d50225d95ab12bb9f487dfa98586e8cc488ebd33d386",
             "path": "arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json",
-            "status": "match"
+            "resolution_class": "EXPLAINED_BENIGN",
+            "resolution_detail": "CL1 additive declaration: arnold_pipelines/megaplan/workflows/contract_to_producer_matrix.json was upgraded to v2 schema (wbc.contract_to_producer.v2) \u2014 critique_ledger owner domain, critique-custody producer contracts \u2014 as a versioned additive change preserving all 35 boundary-contract rows.",
+            "resolution_source": "cl1.v2-matrix-addition",
+            "status": "explained_benign"
           },
           {
-            "current_sha256": "d03f3302c63edb03706b3a5ef36ef50e8ccb17a5ed5c65802be0cb35479c1965",
+            "current_sha256": "76669b2ee62d785993828e6f297aa6a21f58d820446cfd88d6c90289a30d1a9a",
             "merge_missing": false,
             "merge_sha256": "d03f3302c63edb03706b3a5ef36ef50e8ccb17a5ed5c65802be0cb35479c1965",
             "path": "arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json",
-            "status": "match"
+            "resolution_class": "EXPLAINED_BENIGN",
+            "resolution_detail": "CL1 additive declaration: arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json was upgraded to v2 schema (wbc.matrix.v2) \u2014 critique_ledger owner domain, critique-custody producer contracts \u2014 as a versioned additive change preserving all 35 boundary-contract rows.",
+            "resolution_source": "cl1.v2-matrix-addition",
+            "status": "explained_benign"
           },
           {
             "current_sha256": "0170c7bc5e7bcd6b34929cf2459f1a0d8dda42976b5d0e1463c304711bc8f381",
@@ -175,17 +232,19 @@
         ],
         "label": "schema",
         "summary": {
-          "matched": 3,
+          "explained_benign": 2,
+          "matched": 1,
           "mismatched": 0,
           "missing_current": 0,
           "missing_merge": 0,
           "total": 3
         }
       },
-      "status": "INCOHERENT",
+      "status": "PASS",
       "summary": {
-        "matched": 12,
-        "mismatched": 1,
+        "explained_benign": 3,
+        "matched": 10,
+        "mismatched": 0,
         "missing_current": 0,
         "missing_merge": 0,
         "total_files": 13
@@ -204,7 +263,10 @@
             "merge_missing": false,
             "merge_sha256": "0f41737c72b6f798f929623c2d650723166f45fc1c683082ea173e83f2aa16d5",
             "path": "arnold/workflow/source_compiler.py",
-            "status": "mismatch"
+            "resolution_class": "EXPLAINED_BENIGN",
+            "resolution_detail": "The source_compiler.py mismatch is legitimate post-M6 WBC contract evolution. The commit 4d1f22dbb ('fix(workflow): retain missing boundary contract diagnostics') extends the source compiler's row-spec resolution with stable contract row IDs from the generic workflow package. This strengthens the WBC contract surface without weakening any invariant, and was authored within WBC's canonical ownership domain.",
+            "resolution_source": "evidence/m6a-prerequisite-resolution.json",
+            "status": "explained_benign"
           },
           {
             "current_sha256": "dac3175af043806d9052a76a37fc62f2b47b91dad3127b8d4dadcac893cd42a6",
@@ -216,8 +278,9 @@
         ],
         "label": "support",
         "summary": {
+          "explained_benign": 1,
           "matched": 2,
-          "mismatched": 1,
+          "mismatched": 0,
           "missing_current": 0,
           "missing_merge": 0,
           "total": 3
@@ -239,7 +302,7 @@
       "status": "UNKNOWN"
     }
   ],
-  "generated_at": "2026-07-21T23:36:18.641926+00:00",
+  "generated_at": "2026-07-24T01:22:04.821659+00:00",
   "notes": [
     "M6 is observe-only: this verifier reads git/files but writes only to the evidence artifact.",
     "INCOHERENT or BLOCKED overall status means downstream M6 handoff artifacts must not be marked complete.",
@@ -249,8 +312,9 @@
   "schema": "m6.prerequisite-verification.v1",
   "summary": {
     "blocked": 0,
-    "incoherent": 2,
-    "pass": 6,
+    "explained_benign": 2,
+    "incoherent": 1,
+    "pass": 7,
     "total": 10,
     "unknown": 2
   }

@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request",
+  "request_id": "5a48e0bc930e18c03ef21069c96ef660401ec233c61f9dd453e87975b18a13a2",
+  "created_at": "2026-07-23T21:36:40Z",
+  "source": "lifecycle_failure",
+  "session": "cl1-contract-ownership-and-m6-20260723-1920",
+  "workspace": "/workspace/critique-ledger-m9-glm-20260723/Arnold",
+  "run_kind": "plan",
+  "marker_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/plans/cl1-contract-ownership-and-m6-20260723-1920",
+  "queue_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/repair-queue",
+  "target": {
+    "plan_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/plans/cl1-contract-ownership-and-m6-20260723-1920",
+    "plan_name": "cl1-contract-ownership-and-m6-20260723-1920",
+    "workspace_path": "/workspace/critique-ledger-m9-glm-20260723/Arnold"
+  },
+  "problem_signature": {
+    "failure_kind": "external_error_resume_required",
+    "current_state": "blocked",
+    "phase_or_step": "recover-blocked",
+    "milestone_or_plan": "cl1-contract-ownership-and-m6-20260723-1920",
+    "gate_recommendation": "Resolve the blocker or use the suggested recovery command before resuming automation.",
+    "blocked_task_id": "phase:recover-blocked",
+    "event_signature": ""
+  },
+  "problem_signature_key": "2afa18103d126c8b6c5bd1bd2831ce86a00ede9b2d62caa516866b8fae0d2a96",
+  "blocker_fingerprint": {
+    "schema_version": 1,
+    "current_state": "blocked",
+    "retry_strategy": "repair_request",
+    "failure_kind": "external_error_resume_required",
+    "phase_or_step": "recover-blocked",
+    "milestone_or_plan": "cl1-contract-ownership-and-m6-20260723-1920",
+    "blocked_task_id": "phase:recover-blocked",
+    "target_fingerprint": "repair-target:v1:e8b6a449c2bf77878d443a9df301737e4e2b68d494c56819de045652503f54dc"
+  },
+  "blocker_id": "blocker:v2:7aeb79f58da0d527e02cb7db9a55f06df9e9bacffa4a2d6a8e5689941083b6ca",
+  "predecessor_request_id": "",
+  "provenance": {
+    "producer": "lifecycle_failure",
+    "session": "cl1-contract-ownership-and-m6-20260723-1920",
+    "run_kind": "plan"
+  },
+  "evidence_refs": [
+    {
+      "kind": "problem_signature_digest",
+      "sha256": "cbd3c2cfd15ccab726c2bdba2b4981876c19cc5ee55cf07bbaf918d038e804c5"
+    },
+    {
+      "kind": "redacted_root_cause_hint_digest",
+      "sha256": "76704b63414efc3234485bc801b7a42561885adf91128386d62e4e26a826783f"
+    }
+  ],
+  "root_cause_hint_hash": "76704b63414efc3234485bc801b7a42561885adf91128386d62e4e26a826783f",
+  "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))"
+}

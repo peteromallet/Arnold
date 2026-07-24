@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request_decision",
+  "decision_id": "c9459cbd2d296a2cf1bbf210d78739c34d126853f34cabe6d0c49c050d16b3c3",
+  "request_id": "242659293b38b9872d2b74673d11a4dab5a002822d8cc1e405ef650428537ed2",
+  "decision": "coalesced",
+  "reason": "matching problem signature already queued",
+  "related_request_id": "40552f538a24b87d6533ead16746c73c7dfb559a18b5586989e75bc3bff943e5",
+  "created_at": "2026-07-23T20:21:08Z"
+}

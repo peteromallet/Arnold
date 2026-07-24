@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request",
+  "request_id": "d3ec0b69a868af4d5871d44e6ea37f93c2cde9b8464d288e8e1408d1a341fcc4",
+  "created_at": "2026-07-23T21:36:32Z",
+  "source": "lifecycle_failure",
+  "session": "cl1-contract-ownership-and-m6-20260723-1920",
+  "workspace": "/workspace/critique-ledger-m9-glm-20260723/Arnold",
+  "run_kind": "plan",
+  "marker_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/plans/cl1-contract-ownership-and-m6-20260723-1920",
+  "queue_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/repair-queue",
+  "target": {
+    "plan_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/plans/cl1-contract-ownership-and-m6-20260723-1920",
+    "plan_name": "cl1-contract-ownership-and-m6-20260723-1920",
+    "workspace_path": "/workspace/critique-ledger-m9-glm-20260723/Arnold"
+  },
+  "problem_signature": {
+    "failure_kind": "external_error",
+    "current_state": "blocked",
+    "phase_or_step": "finalize",
+    "milestone_or_plan": "cl1-contract-ownership-and-m6-20260723-1920",
+    "gate_recommendation": "External provider 'codex' returned quota. Fix provider/profile settings if needed, then run `python -m arnold_pipelines.megaplan resume --plan cl1-contract-ownership-and-m6-20260723-1920`.",
+    "blocked_task_id": "phase:finalize",
+    "event_signature": ""
+  },
+  "problem_signature_key": "605a2d81aa743c299642444dcb5355f262a9049d30359307053fb83a72e3e3cf",
+  "blocker_fingerprint": {
+    "schema_version": 1,
+    "current_state": "blocked",
+    "retry_strategy": "repair_request",
+    "failure_kind": "external_error",
+    "phase_or_step": "finalize",
+    "milestone_or_plan": "cl1-contract-ownership-and-m6-20260723-1920",
+    "blocked_task_id": "phase:finalize",
+    "target_fingerprint": "repair-target:v1:1f399f0a46840c9bb3c047fe4aac12a7739acc7397072d0f84dbdbbb26b6355a"
+  },
+  "blocker_id": "blocker:v2:ec4fe4cd0089e05c42aadbb498e2b9d00587c7ec2dbbc84d253a89e45a26fcd8",
+  "predecessor_request_id": "",
+  "provenance": {
+    "producer": "lifecycle_failure",
+    "session": "cl1-contract-ownership-and-m6-20260723-1920",
+    "run_kind": "plan"
+  },
+  "evidence_refs": [
+    {
+      "kind": "problem_signature_digest",
+      "sha256": "23b062488098cd28d81e52207c910ae04bb29ba94b33977c58855ea4fe73a9df"
+    },
+    {
+      "kind": "redacted_root_cause_hint_digest",
+      "sha256": "e854497fa9315457ebae9043b6e9132d14504ff5e7965230dae18a150b49af3b"
+    }
+  ],
+  "root_cause_hint_hash": "e854497fa9315457ebae9043b6e9132d14504ff5e7965230dae18a150b49af3b",
+  "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))"
+}

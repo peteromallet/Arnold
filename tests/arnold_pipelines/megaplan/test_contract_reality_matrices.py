@@ -40,7 +40,7 @@ def _load_json(path: Path) -> dict[str, Any]:
 # source_to_owner_matrix tests
 # ══════════════════════════════════════════════════════════════════════
 
-VALID_OWNERS = {"wbc", "run_authority", "maintenance"}
+VALID_OWNERS = {"wbc", "run_authority", "maintenance", "critique_ledger"}
 VALID_CATEGORIES = {"observation", "claim", "decision", "projection"}
 VALID_WBC_ACCESS_LEVELS = {"declare", "emit", "evaluate", "adapt", "consume"}
 
@@ -58,7 +58,7 @@ class TestSourceToOwnerMatrixIntegrity:
         assert "surfaces" in matrix
 
     def test_schema_version_is_pinned(self, matrix: dict[str, Any]) -> None:
-        assert matrix["meta"]["schema_version"] == "wbc.matrix.v1"
+        assert matrix["meta"]["schema_version"] == "wbc.matrix.v2"
 
     def test_matrix_id_matches_filename(self, matrix: dict[str, Any]) -> None:
         assert matrix["meta"]["matrix_id"] == "source_to_owner_matrix"
@@ -69,7 +69,7 @@ class TestSourceToOwnerMatrixIntegrity:
 
     def test_meta_has_owner_domains(self, matrix: dict[str, Any]) -> None:
         domains = matrix["meta"]["owner_domains"]
-        assert set(domains.keys()) == {"run_authority", "maintenance", "wbc"}
+        assert set(domains.keys()) == {"run_authority", "maintenance", "wbc", "critique_ledger"}
         for domain in VALID_OWNERS:
             assert "description" in domains[domain]
             assert "mutating_scope" in domains[domain]
@@ -299,7 +299,8 @@ VALID_PRODUCER_CATEGORIES = {
     "auto_matched",
     "manual_emit",
     "declared_only",
-    "unknown",
+    "not_emitted_by_contract",
+    "critique_custody",
 }
 VALID_NON_CONFORMANT_KINDS = {
     "no_auto_match",
@@ -322,7 +323,7 @@ class TestContractToProducerMatrixIntegrity:
         assert "summary" in matrix
 
     def test_schema_version_is_pinned(self, matrix: dict[str, Any]) -> None:
-        assert matrix["meta"]["schema_version"] == "wbc.contract_to_producer.v1"
+        assert matrix["meta"]["schema_version"] == "wbc.contract_to_producer.v2"
 
     def test_matrix_id_matches_filename(self, matrix: dict[str, Any]) -> None:
         assert matrix["meta"]["matrix_id"] == "contract_to_producer_matrix"
@@ -425,13 +426,13 @@ class TestContractToProducerMatrixIntegrity:
                     f"{contract['producer_category']}) has null handler_function"
                 )
 
-    def test_declared_only_and_unknown_may_have_null_producer_path(
+    def test_declared_only_and_not_emitted_by_contract_may_have_null_path(
         self, matrix: dict[str, Any]
     ) -> None:
-        """declared_only and unknown categories may have null producer_path
-        and handler_function — that is their classification."""
+        """declared_only and not_emitted_by_contract categories may have null
+        producer_path and handler_function — that is their classification."""
         for contract in matrix["contracts"]:
-            if contract["producer_category"] in {"declared_only", "unknown"}:
+            if contract["producer_category"] in {"declared_only", "not_emitted_by_contract"}:
                 # These are allowed to have null paths; we just check the
                 # field exists
                 pass
@@ -580,7 +581,8 @@ class TestContractToProducerMatrixIntegrity:
         self, matrix: dict[str, Any]
     ) -> None:
         """Handler functions should reference files in handlers/ or
-        orchestration/ or execute/ within the megaplan package."""
+        orchestration/ or execute/ within the megaplan package, or
+        arnold/critique_ledger/ for custody contracts."""
         for contract in matrix["contracts"]:
             hf = contract.get("handler_function")
             if hf is None:
@@ -589,6 +591,7 @@ class TestContractToProducerMatrixIntegrity:
                 "handlers/",
                 "orchestration/",
                 "execute/",
+                "arnold/critique_ledger/",
             )
             has_valid = any(hf.startswith(p) for p in valid_prefixes)
             assert has_valid, (
@@ -658,7 +661,8 @@ class TestSupportManifestIntegrity:
 
     def test_meta_has_owners_definitions(self, manifest: dict[str, Any]) -> None:
         owners = manifest["meta"]["owners"]
-        assert set(owners.keys()) == VALID_OWNERS
+        # Support manifest only carries the three original owner domains
+        assert set(owners.keys()) == {"wbc", "run_authority", "maintenance"}
 
     def test_meta_has_support_statuses(self, manifest: dict[str, Any]) -> None:
         statuses = manifest["meta"]["support_statuses"]
@@ -995,6 +999,10 @@ class TestCrossMatrixConsistency:
                 support_boundary_ids.add(entry["boundary_id"])
 
         for contract in producer_matrix["contracts"]:
+            # Critique-custody contracts are owned by critique_ledger domain
+            # and do not have entries in the megaplan support manifest.
+            if contract["producer_category"] == "critique_custody":
+                continue
             bid = contract["boundary_id"]
             assert bid in support_boundary_ids, (
                 f"contract boundary_id '{bid}' has no corresponding entry "
@@ -1055,9 +1063,9 @@ class TestCrossMatrixConsistency:
         support_manifest: dict[str, Any],
     ) -> None:
         """All three manifests pin their schema versions."""
-        assert source_matrix["meta"]["schema_version"] == "wbc.matrix.v1"
+        assert source_matrix["meta"]["schema_version"] == "wbc.matrix.v2"
         assert (producer_matrix["meta"]["schema_version"]
-                == "wbc.contract_to_producer.v1")
+                == "wbc.contract_to_producer.v2")
         assert (support_manifest["meta"]["schema_version"]
                 == "wbc.support_manifest.v1")
 
@@ -1097,3 +1105,189 @@ class TestCrossMatrixConsistency:
                 f"{name} generated_by field does not reference C1: "
                 f"'{generated_by}'"
             )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# CL1 v2 extension tests
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestCl1V2MatrixExtensions:
+    """Validate CL1 v2 additions: critique_ledger domain, custody contracts,
+    reclassification of unknown rows, and namespace isolation."""
+
+    @pytest.fixture(scope="class")
+    def source_matrix(self) -> dict[str, Any]:
+        return _load_json(SOURCE_TO_OWNER_PATH)
+
+    @pytest.fixture(scope="class")
+    def producer_matrix(self) -> dict[str, Any]:
+        return _load_json(CONTRACT_TO_PRODUCER_PATH)
+
+    # ── critique_ledger owner domain ──────────────────────────────────
+
+    def test_critique_ledger_is_distinct_owner_domain(
+        self, source_matrix: dict[str, Any]
+    ) -> None:
+        domains = source_matrix["meta"]["owner_domains"]
+        assert "critique_ledger" in domains
+        cl = domains["critique_ledger"]
+        assert "description" in cl
+        assert "mutating_scope" in cl
+        assert cl["mutating_scope"] == (
+            "critique_occurrence_reconciliation_disposition_briefing_manifest"
+        )
+
+    def test_critique_ledger_has_exactly_one_surface_with_one_writer(
+        self, source_matrix: dict[str, Any]
+    ) -> None:
+        cl_surfaces = [
+            s for s in source_matrix["surfaces"]
+            if s["surface_id"] == "critique_ledger"
+        ]
+        assert len(cl_surfaces) == 1, (
+            "critique_ledger must have exactly one surface entry"
+        )
+        surface = cl_surfaces[0]
+        assert surface["mutating_owner"] == "critique_ledger"
+        assert isinstance(surface["mutating_owner"], str)
+
+    def test_critique_ledger_has_all_compatibility_readers(
+        self, source_matrix: dict[str, Any]
+    ) -> None:
+        cl_surface = next(
+            s for s in source_matrix["surfaces"]
+            if s["surface_id"] == "critique_ledger"
+        )
+        readers = cl_surface["compatibility_readers"]
+        assert isinstance(readers, list)
+        assert len(readers) > 0
+        assert "contract_reality_validator" in readers
+        assert "c2_migration_gate" in readers
+
+    def test_all_four_owners_have_at_least_one_surface(
+        self, source_matrix: dict[str, Any]
+    ) -> None:
+        owners_found: set[str] = set()
+        for surface in source_matrix["surfaces"]:
+            owners_found.add(surface["mutating_owner"])
+        for owner in VALID_OWNERS:
+            assert owner in owners_found, (
+                f"owner '{owner}' has no surfaces assigned"
+            )
+
+    # ── custody contracts ─────────────────────────────────────────────
+
+    def test_producer_matrix_has_38_contracts(
+        self, producer_matrix: dict[str, Any]
+    ) -> None:
+        assert len(producer_matrix["contracts"]) == 38
+        assert producer_matrix["summary"]["total_contracts"] == 38
+
+    def test_three_critique_custody_contracts_present(
+        self, producer_matrix: dict[str, Any]
+    ) -> None:
+        custody_ids = [
+            c["boundary_id"] for c in producer_matrix["contracts"]
+            if c["producer_category"] == "critique_custody"
+        ]
+        assert len(custody_ids) == 3
+        expected = {
+            "critique_custody.write_critique_production_receipt",
+            "critique_custody.write_critique_clearance",
+            "critique_custody.bind_finalize_custody",
+        }
+        assert set(custody_ids) == expected
+
+    def test_custody_contracts_use_namespaced_boundary_id(
+        self, producer_matrix: dict[str, Any]
+    ) -> None:
+        for contract in producer_matrix["contracts"]:
+            if contract["producer_category"] == "critique_custody":
+                assert contract["boundary_id"].startswith("critique_custody."), (
+                    f"custody contract {contract['boundary_id']} must use "
+                    f"critique_custody.* namespace prefix"
+                )
+
+    def test_no_namespace_collision_between_boundary_and_custody(
+        self, producer_matrix: dict[str, Any]
+    ) -> None:
+        boundary_ids = {
+            c["boundary_id"] for c in producer_matrix["contracts"]
+            if c["producer_category"] != "critique_custody"
+        }
+        custody_ids = {
+            c["boundary_id"] for c in producer_matrix["contracts"]
+            if c["producer_category"] == "critique_custody"
+        }
+        collision = boundary_ids & custody_ids
+        assert len(collision) == 0, (
+            f"namespace collision between boundary and custody contracts: "
+            f"{collision}"
+        )
+
+    def test_custody_contracts_have_valid_producer_paths(
+        self, producer_matrix: dict[str, Any]
+    ) -> None:
+        for contract in producer_matrix["contracts"]:
+            if contract["producer_category"] == "critique_custody":
+                assert contract["producer_path"] is not None
+                assert "arnold.critique_ledger.custody" in contract["producer_path"]
+                assert contract["handler_function"] is not None
+                assert "arnold/critique_ledger/custody.py" in contract["handler_function"]
+
+    # ── zero unknown rows (CL1 v2 reclassification) ───────────────────
+
+    def test_zero_unknown_producer_rows(
+        self, producer_matrix: dict[str, Any]
+    ) -> None:
+        unknown = [
+            c["boundary_id"] for c in producer_matrix["contracts"]
+            if c["producer_category"] == "unknown"
+        ]
+        assert len(unknown) == 0, (
+            f"expected zero unknown rows after CL1 v2 reclassification; "
+            f"found: {unknown}"
+        )
+
+    def test_nine_not_emitted_by_contract_rows(
+        self, producer_matrix: dict[str, Any]
+    ) -> None:
+        nec = [
+            c["boundary_id"] for c in producer_matrix["contracts"]
+            if c["producer_category"] == "not_emitted_by_contract"
+        ]
+        assert len(nec) == 9, (
+            f"expected 9 not_emitted_by_contract rows, found {len(nec)}: {nec}"
+        )
+        # All 8 override contracts + replan_authority
+        for prefix in ("override_", "replan_"):
+            matching = [bid for bid in nec if bid.startswith(prefix)]
+            assert len(matching) > 0, (
+                f"no {prefix}* rows found in not_emitted_by_contract"
+            )
+
+    # ── summary consistency ───────────────────────────────────────────
+
+    def test_summary_counts_zero_unknown(
+        self, producer_matrix: dict[str, Any]
+    ) -> None:
+        assert "unknown" not in producer_matrix["summary"], (
+            "summary must not contain 'unknown' key after CL1 v2"
+        )
+        assert producer_matrix["summary"].get("not_emitted_by_contract") == 9
+        assert producer_matrix["summary"].get("critique_custody") == 3
+
+    def test_critique_custody_summary_category_exists(
+        self, producer_matrix: dict[str, Any]
+    ) -> None:
+        cats = producer_matrix["summary"]["contract_categories"]
+        assert "critique_custody" in cats
+        assert len(cats["critique_custody"]) == 3
+
+    def test_override_not_emitted_by_contract_summary_category(
+        self, producer_matrix: dict[str, Any]
+    ) -> None:
+        cats = producer_matrix["summary"]["contract_categories"]
+        assert "override_not_emitted_by_contract" in cats
+        assert len(cats["override_not_emitted_by_contract"]) == 8

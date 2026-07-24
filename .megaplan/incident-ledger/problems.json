@@ -1,19 +1,19 @@
 {
   "integrity": [
     {
-      "actual": "sha256:e9c19358c349721dc867a33b0d1afd9948ca84f5b1973bbe2e1893692182243d",
+      "actual": "sha256:042eb7ccecfc0e65a6f33abccd47e48ee765e29b8f1baed4787843f028a54a61",
       "code": "index_divergence",
-      "expected": "sha256:042eb7ccecfc0e65a6f33abccd47e48ee765e29b8f1baed4787843f028a54a61",
-      "message": "incidents projection source metadata diverged for digest: 'sha256:e9c19358c349721dc867a33b0d1afd9948ca84f5b1973bbe2e1893692182243d' != 'sha256:042eb7ccecfc0e65a6f33abccd47e48ee765e29b8f1baed4787843f028a54a61'",
+      "expected": "sha256:f3bb76118b56950657e34632f53b25f799eeaa457c3753322eae60dc0b96eb2d",
+      "message": "incidents projection source metadata diverged for digest: 'sha256:042eb7ccecfc0e65a6f33abccd47e48ee765e29b8f1baed4787843f028a54a61' != 'sha256:f3bb76118b56950657e34632f53b25f799eeaa457c3753322eae60dc0b96eb2d'",
       "projection": "incidents",
       "recommendation": "system.integrity_repair",
       "severity": "error"
     },
     {
-      "actual": "sha256:e9c19358c349721dc867a33b0d1afd9948ca84f5b1973bbe2e1893692182243d",
+      "actual": "sha256:042eb7ccecfc0e65a6f33abccd47e48ee765e29b8f1baed4787843f028a54a61",
       "code": "index_divergence",
-      "expected": "sha256:042eb7ccecfc0e65a6f33abccd47e48ee765e29b8f1baed4787843f028a54a61",
-      "message": "problems projection source metadata diverged for digest: 'sha256:e9c19358c349721dc867a33b0d1afd9948ca84f5b1973bbe2e1893692182243d' != 'sha256:042eb7ccecfc0e65a6f33abccd47e48ee765e29b8f1baed4787843f028a54a61'",
+      "expected": "sha256:f3bb76118b56950657e34632f53b25f799eeaa457c3753322eae60dc0b96eb2d",
+      "message": "problems projection source metadata diverged for digest: 'sha256:042eb7ccecfc0e65a6f33abccd47e48ee765e29b8f1baed4787843f028a54a61' != 'sha256:f3bb76118b56950657e34632f53b25f799eeaa457c3753322eae60dc0b96eb2d'",
       "projection": "problems",
       "recommendation": "system.integrity_repair",
       "severity": "error"
@@ -48,20 +48,40 @@
       "first_seen_seq": 587,
       "first_seen_ts": "2026-07-17T13:03:51.824973+00:00",
       "fix_commits": [],
-      "last_seen_seq": 642,
-      "last_seen_ts": "2026-07-22T14:55:12.935095+00:00",
+      "last_seen_seq": 748,
+      "last_seen_ts": "2026-07-23T19:29:20.038140+00:00",
       "linked_incident_ids": [
+        "inc-critique-ledger-m9-glm-20260723",
         "inc-custody-control-plane-20260714"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome recovery not verified kind chain workspace transient path",
-      "occurrence_count": 11,
-      "owner_actor": "six_hour_auditor",
+      "occurrence_count": 17,
+      "owner_actor": "immediate_repair",
       "problem_id": "problem-035056e1a4ef",
       "recurred_after_fix": false,
       "scope": "repair_system",
       "status": "open",
       "title": "repair-data outcome=recovery_not_verified kind=chain workspace=/workspace/custody-control-plane-20260714/Arnold"
+    },
+    {
+      "first_seen_seq": 661,
+      "first_seen_ts": "2026-07-22T15:29:06.998677+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 661,
+      "last_seen_ts": "2026-07-22T15:29:06.998677+00:00",
+      "linked_incident_ids": [
+        "inc-custody-control-plane-20260714"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "stale active step plan m rebuildable projections state critiqued phase revise pid not live",
+      "occurrence_count": 1,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-131f0402607c",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "stale_active_step: plan=m9-rebuildable-projections-20260722-0431; state=critiqued; phase=revise; worker_pid=3410588 not live"
     },
     {
       "first_seen_seq": 350,
@@ -100,6 +120,44 @@
       "scope": "repair_system",
       "status": "open",
       "title": "repair dispatch lacks canonical request/blocker identity"
+    },
+    {
+      "first_seen_seq": 675,
+      "first_seen_ts": "2026-07-22T21:41:39.439858+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 677,
+      "last_seen_ts": "2026-07-22T22:44:40.832855+00:00",
+      "linked_incident_ids": [
+        "inc-custody-control-plane-20260714"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "progress stall m rebuildable projections iteration attempt plan v count iteration plan v unchanged m",
+      "occurrence_count": 2,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-3e8a86739467",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "progress_stall:m9-rebuildable-projections-20260722-0431:iteration=8:attempt=1:plan_v_count=12:iteration=8>=8 plan_v_unchanged_48m"
+    },
+    {
+      "first_seen_seq": 669,
+      "first_seen_ts": "2026-07-22T18:34:37.775994+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 669,
+      "last_seen_ts": "2026-07-22T18:34:37.775994+00:00",
+      "linked_incident_ids": [
+        "inc-custody-control-plane-20260714"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "progress stall m rebuildable projections iteration attempt plan v count active step attempt plan v unchanged m",
+      "occurrence_count": 1,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-40e14c0d5ae2",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "progress_stall:m9-rebuildable-projections-20260722-0431:iteration=7:attempt=11:plan_v_count=10:active_step.attempt=11>=10 plan_v_unchanged_33m"
     },
     {
       "first_seen_seq": 360,
@@ -143,16 +201,17 @@
       "first_seen_seq": 487,
       "first_seen_ts": "2026-07-13T22:44:54.539079+00:00",
       "fix_commits": [],
-      "last_seen_seq": 615,
-      "last_seen_ts": "2026-07-16T11:50:55.090887+00:00",
+      "last_seen_seq": 750,
+      "last_seen_ts": "2026-07-23T19:30:21.916490+00:00",
       "linked_incident_ids": [
+        "inc-critique-ledger-m9-glm-20260723",
         "inc-custody-control-plane-20260714",
         "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "managed automatic repair accepted execution custody",
-      "occurrence_count": 25,
-      "owner_actor": "immediate_repair",
+      "occurrence_count": 46,
+      "owner_actor": "six_hour_auditor",
       "problem_id": "problem-51b6859a7c76",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -163,14 +222,14 @@
       "first_seen_seq": 532,
       "first_seen_ts": "2026-07-15T02:07:53.638543+00:00",
       "fix_commits": [],
-      "last_seen_seq": 640,
-      "last_seen_ts": "2026-07-22T14:27:32.145850+00:00",
+      "last_seen_seq": 680,
+      "last_seen_ts": "2026-07-22T23:46:52.257172+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair request claim failed",
-      "occurrence_count": 19,
+      "occurrence_count": 27,
       "owner_actor": "watchdog",
       "problem_id": "problem-5b2d4b8c99c1",
       "recurred_after_fix": false,
@@ -182,15 +241,15 @@
       "first_seen_seq": 566,
       "first_seen_ts": "2026-07-15T12:05:17.177256+00:00",
       "fix_commits": [],
-      "last_seen_seq": 612,
-      "last_seen_ts": "2026-07-17T14:17:09.716618+00:00",
+      "last_seen_seq": 646,
+      "last_seen_ts": "2026-07-22T14:55:27.061684+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome progressed kind chain workspace transient path",
-      "occurrence_count": 2,
-      "owner_actor": "immediate_repair",
+      "occurrence_count": 3,
+      "owner_actor": "github_sync",
       "problem_id": "problem-6356292eb79a",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -201,15 +260,16 @@
       "first_seen_seq": 348,
       "first_seen_ts": "2026-07-11T15:36:45.288233+00:00",
       "fix_commits": [],
-      "last_seen_seq": 618,
-      "last_seen_ts": "2026-07-16T11:51:07.764970+00:00",
+      "last_seen_seq": 747,
+      "last_seen_ts": "2026-07-23T19:25:18.166368+00:00",
       "linked_incident_ids": [
+        "inc-critique-ledger-m9-glm-20260723",
         "inc-custody-control-plane-20260714",
         "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing kind chain workspace transient path",
-      "occurrence_count": 35,
+      "occurrence_count": 56,
       "owner_actor": "immediate_repair",
       "problem_id": "problem-67a765759422",
       "recurred_after_fix": false,
@@ -240,14 +300,14 @@
       "first_seen_seq": 521,
       "first_seen_ts": "2026-07-14T19:08:55.195650+00:00",
       "fix_commits": [],
-      "last_seen_seq": 521,
-      "last_seen_ts": "2026-07-14T19:08:55.195650+00:00",
+      "last_seen_seq": 697,
+      "last_seen_ts": "2026-07-23T02:57:15.599940+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome deterministic failure kind chain workspace transient path",
-      "occurrence_count": 1,
+      "occurrence_count": 3,
       "owner_actor": "immediate_repair",
       "problem_id": "problem-690ba3ad3bda",
       "recurred_after_fix": false,
@@ -273,6 +333,25 @@
       "scope": "repair_system",
       "status": "open",
       "title": "managed automatic_meta_repair execution started"
+    },
+    {
+      "first_seen_seq": 700,
+      "first_seen_ts": "2026-07-23T05:12:18.619857+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 712,
+      "last_seen_ts": "2026-07-23T06:28:53.728307+00:00",
+      "linked_incident_ids": [
+        "inc-custody-control-plane-20260714"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "repair data outcome repair applied reinvestigate kind chain workspace transient path",
+      "occurrence_count": 3,
+      "owner_actor": "immediate_repair",
+      "problem_id": "problem-6d4cc15766bd",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "repair-data outcome=repair_applied_reinvestigate kind=chain workspace=/workspace/custody-control-plane-20260714/Arnold"
     },
     {
       "first_seen_seq": 5,
@@ -335,8 +414,8 @@
       "first_seen_seq": 202,
       "first_seen_ts": "2026-07-07T01:45:04.474384+00:00",
       "fix_commits": [],
-      "last_seen_seq": 530,
-      "last_seen_ts": "2026-07-15T00:04:03.800842+00:00",
+      "last_seen_seq": 668,
+      "last_seen_ts": "2026-07-22T18:03:31.577467+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714",
         "inc-megaplan-north-star-sense-checks-revise-design",
@@ -347,7 +426,7 @@
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome partial liveness kind chain workspace transient path",
-      "occurrence_count": 19,
+      "occurrence_count": 22,
       "owner_actor": "immediate_repair",
       "problem_id": "problem-72f87afd3954",
       "recurred_after_fix": false,
@@ -414,6 +493,25 @@
       "title": "progress_stall:s2-contract-foundation-and-20260713-1544:iteration=1:attempt=20:plan_v_count=1:active_step.attempt=20>=10"
     },
     {
+      "first_seen_seq": 663,
+      "first_seen_ts": "2026-07-22T17:32:48.736476+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 663,
+      "last_seen_ts": "2026-07-22T17:32:48.736476+00:00",
+      "linked_incident_ids": [
+        "inc-custody-control-plane-20260714"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "progress stall m rebuildable projections iteration attempt plan v count plan v unchanged m",
+      "occurrence_count": 1,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-964fc8e741bb",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "progress_stall:m9-rebuildable-projections-20260722-0431:iteration=7:attempt=1:plan_v_count=8:plan_v_unchanged_19m"
+    },
+    {
       "first_seen_seq": 9,
       "first_seen_ts": "2026-07-03T21:24:28.137736+00:00",
       "fix_commits": [],
@@ -436,15 +534,15 @@
       "first_seen_seq": 531,
       "first_seen_ts": "2026-07-15T02:07:51.598220+00:00",
       "fix_commits": [],
-      "last_seen_seq": 629,
-      "last_seen_ts": "2026-07-22T02:09:52.562929+00:00",
+      "last_seen_seq": 648,
+      "last_seen_ts": "2026-07-22T14:55:29.748152+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714"
       ],
       "next_review_ts": null,
       "normalized_signature": "chain state advertises last state done but only milestones are complete treating as incomplete stuck instead of terminal artifact transient path",
-      "occurrence_count": 16,
-      "owner_actor": "watchdog",
+      "occurrence_count": 17,
+      "owner_actor": "github_sync",
       "problem_id": "problem-a923a5d15e23",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -474,15 +572,16 @@
       "first_seen_seq": 488,
       "first_seen_ts": "2026-07-13T22:44:54.540909+00:00",
       "fix_commits": [],
-      "last_seen_seq": 616,
-      "last_seen_ts": "2026-07-16T11:50:55.092686+00:00",
+      "last_seen_seq": 746,
+      "last_seen_ts": "2026-07-23T19:25:05.506845+00:00",
       "linked_incident_ids": [
+        "inc-critique-ledger-m9-glm-20260723",
         "inc-custody-control-plane-20260714",
         "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "managed automatic repair execution started",
-      "occurrence_count": 10,
+      "occurrence_count": 29,
       "owner_actor": "immediate_repair",
       "problem_id": "problem-bca9d501eede",
       "recurred_after_fix": false,
@@ -494,15 +593,15 @@
       "first_seen_seq": 478,
       "first_seen_ts": "2026-07-13T17:40:27.256275+00:00",
       "fix_commits": [],
-      "last_seen_seq": 638,
-      "last_seen_ts": "2026-07-22T13:25:54.529737+00:00",
+      "last_seen_seq": 673,
+      "last_seen_ts": "2026-07-22T20:38:44.467450+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714",
         "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "stopped and needs repair attention",
-      "occurrence_count": 7,
+      "occurrence_count": 9,
       "owner_actor": "watchdog",
       "problem_id": "problem-bd43205325d0",
       "recurred_after_fix": false,
@@ -551,18 +650,37 @@
       "title": "managed automatic_meta_repair accepted execution custody"
     },
     {
+      "first_seen_seq": 671,
+      "first_seen_ts": "2026-07-22T19:36:37.156881+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 671,
+      "last_seen_ts": "2026-07-22T19:36:37.156881+00:00",
+      "linked_incident_ids": [
+        "inc-custody-control-plane-20260714"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "progress stall m rebuildable projections iteration attempt plan v count iteration",
+      "occurrence_count": 1,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-d01d1f0e8f89",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "progress_stall:m9-rebuildable-projections-20260722-0431:iteration=8:attempt=1:plan_v_count=11:iteration=8>=8"
+    },
+    {
       "first_seen_seq": 595,
       "first_seen_ts": "2026-07-17T13:36:30.860890+00:00",
       "fix_commits": [],
-      "last_seen_seq": 611,
-      "last_seen_ts": "2026-07-17T14:13:32.026946+00:00",
+      "last_seen_seq": 651,
+      "last_seen_ts": "2026-07-22T14:55:38.388246+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repair launch unverified kind chain workspace transient path",
-      "occurrence_count": 7,
-      "owner_actor": "immediate_repair",
+      "occurrence_count": 8,
+      "owner_actor": "github_sync",
       "problem_id": "problem-d93c1fe6a35c",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -573,14 +691,14 @@
       "first_seen_seq": 557,
       "first_seen_ts": "2026-07-15T11:26:01.495301+00:00",
       "fix_commits": [],
-      "last_seen_seq": 619,
-      "last_seen_ts": "2026-07-16T11:54:04.988775+00:00",
+      "last_seen_seq": 740,
+      "last_seen_ts": "2026-07-23T09:00:25.699002+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome fixer infrastructure failure kind chain workspace transient path",
-      "occurrence_count": 6,
+      "occurrence_count": 12,
       "owner_actor": "immediate_repair",
       "problem_id": "problem-dd5016fd3ab4",
       "recurred_after_fix": false,
@@ -592,21 +710,40 @@
       "first_seen_seq": 351,
       "first_seen_ts": "2026-07-11T22:46:03.299023+00:00",
       "fix_commits": [],
-      "last_seen_seq": 617,
-      "last_seen_ts": "2026-07-16T11:50:56.161882+00:00",
+      "last_seen_seq": 734,
+      "last_seen_ts": "2026-07-23T08:06:40.408348+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714",
         "inc-workflow-boundary-contracts-corrective-20260710"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair loop background dispatched",
-      "occurrence_count": 29,
+      "occurrence_count": 32,
       "owner_actor": "watchdog",
       "problem_id": "problem-e20c45ae0eb0",
       "recurred_after_fix": false,
       "scope": "repair_system",
       "status": "open",
       "title": "repair loop background-dispatched"
+    },
+    {
+      "first_seen_seq": 679,
+      "first_seen_ts": "2026-07-22T23:46:50.122628+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 679,
+      "last_seen_ts": "2026-07-22T23:46:50.122628+00:00",
+      "linked_incident_ids": [
+        "inc-custody-control-plane-20260714"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "stale active step plan m rebuildable projections state finalized phase execute pid not live",
+      "occurrence_count": 1,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-ed95e12660eb",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "stale_active_step: plan=m9-rebuildable-projections-20260722-0431; state=finalized; phase=execute; worker_pid=3608144 not live"
     },
     {
       "first_seen_seq": 636,
@@ -631,14 +768,14 @@
       "first_seen_seq": 592,
       "first_seen_ts": "2026-07-17T13:22:11.208730+00:00",
       "fix_commits": [],
-      "last_seen_seq": 592,
-      "last_seen_ts": "2026-07-17T13:22:11.208730+00:00",
+      "last_seen_seq": 701,
+      "last_seen_ts": "2026-07-23T06:01:51.245253+00:00",
       "linked_incident_ids": [
         "inc-custody-control-plane-20260714"
       ],
       "next_review_ts": null,
       "normalized_signature": "meta repair background dispatched",
-      "occurrence_count": 1,
+      "occurrence_count": 5,
       "owner_actor": "watchdog",
       "problem_id": "problem-fc037a661409",
       "recurred_after_fix": false,
@@ -650,10 +787,10 @@
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:042eb7ccecfc0e65a6f33abccd47e48ee765e29b8f1baed4787843f028a54a61",
-    "event_count": 642,
-    "journal_line_count": 642,
-    "last_seq": 642,
+    "digest": "sha256:f3bb76118b56950657e34632f53b25f799eeaa457c3753322eae60dc0b96eb2d",
+    "event_count": 750,
+    "journal_line_count": 750,
+    "last_seq": 750,
     "malformed_line_count": 0
   }
 }

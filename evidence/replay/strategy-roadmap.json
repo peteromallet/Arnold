@@ -1,6 +1,6 @@
 {
-  "composite_hash": "0c3342e3d2b5de9fa001368de272e264c0410712ca7276eb125472c37af9d853",
-  "generated_at": "2026-07-19T22:34:46.811797+00:00",
+  "composite_hash": "2862e9dc1d8c8b723b0f51feb86b3119cf04ad6b7f8a30639a72f37805b5a69a",
+  "generated_at": "2026-07-24T01:10:44.852261+00:00",
   "generator": "tools/generate_m6_replay_fixtures.py",
   "limitations": {
     "compaction_and_productive_baselines_unknown": {
@@ -32,14 +32,14 @@
       "pattern": "/workspace/[REDACTED:<sha256-prefix>]"
     }
   },
-  "repository_root": "/workspace/[REDACTED:6899d7db6ccd]",
+  "repository_root": "/workspace/[REDACTED:6023b469556d]",
   "schema": "m6.strategy-roadmap-replay-fixture.v1",
   "section_hashes": {
     "compaction_baseline": "008d97a300031265d1d40fc59d8fa69e46bbec71369461cab928a8986204491e",
     "handoff_context": "e68f0fb995c8d3d16eec2ba278e8ed1d8db94bf2f5b2629095e8f56533507f48",
     "incident_data": "e2f6a59d92bf02c880812c9a82bf07dfb99db6ff42d32ae16c4e0f33d2c14331",
     "initiative_artifacts": "ac4270256654130f53405657304e0e4754767fe78d102694c38c513be0268a6f",
-    "repair_data": "385b4a89b78690cc2f9384a5a721b23b97fc9b934b1f436de905c6aa67233489"
+    "repair_data": "b1d02120f9256fc2a217facb6e849031926f09bcbbd4202aa201fa6df17d3c9a"
   },
   "sections": {
     "compaction_baseline": {
@@ -138,7 +138,7 @@
       "source_directory": ".megaplan/initiatives/repository-strategy-roadmap"
     },
     "repair_data": {
-      "content_hash": "1b38e0339c32b76ab7602432a9651e38ffaa29583562c6aaf7276587de6ebc54",
+      "content_hash": "aebcc8246eb44ed37b68bc5122277e606e4d2551065330e589789bb10f212d86",
       "incident_summaries": [
         {
           "decision_count": 4,
@@ -177,7 +177,7 @@
       "source_path": ".megaplan/incident-ledger/incidents.json",
       "status": "present",
       "strategy_roadmap_incident_count": 1,
-      "total_incidents": 10
+      "total_incidents": 11
     }
   }
 }

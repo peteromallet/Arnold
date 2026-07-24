@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request",
+  "request_id": "c1df7fc58b2d2309213199d6ca6e4d8ae42f876e5c0e3d2fe404c09af3f2da95",
+  "created_at": "2026-07-23T20:05:38Z",
+  "source": "lifecycle_failure",
+  "session": "cl1-contract-ownership-and-m6-20260723-1920",
+  "workspace": "/workspace/critique-ledger-m9-glm-20260723/Arnold",
+  "run_kind": "plan",
+  "marker_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/plans/cl1-contract-ownership-and-m6-20260723-1920",
+  "queue_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/repair-queue",
+  "target": {
+    "plan_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/plans/cl1-contract-ownership-and-m6-20260723-1920",
+    "plan_name": "cl1-contract-ownership-and-m6-20260723-1920",
+    "workspace_path": "/workspace/critique-ledger-m9-glm-20260723/Arnold"
+  },
+  "problem_signature": {
+    "failure_kind": "deterministic_phase_failure",
+    "current_state": "blocked",
+    "phase_or_step": "prep",
+    "milestone_or_plan": "cl1-contract-ownership-and-m6-20260723-1920",
+    "gate_recommendation": "Repair or change the deterministic phase contract before resuming; re-running the same phase output cannot make progress.",
+    "blocked_task_id": "phase:prep",
+    "event_signature": ""
+  },
+  "problem_signature_key": "e9747d1f9f73c225d4075769b63a10bb59006ecbe1e4ace727e983dad2da8248",
+  "blocker_fingerprint": {
+    "schema_version": 1,
+    "current_state": "blocked",
+    "retry_strategy": "repair_phase_contract",
+    "failure_kind": "deterministic_phase_failure",
+    "phase_or_step": "prep",
+    "milestone_or_plan": "cl1-contract-ownership-and-m6-20260723-1920",
+    "blocked_task_id": "phase:prep",
+    "target_fingerprint": "repair-target:v1:d7df3fc513af9f3be3f5216c92bba4d5e2466ad6a1e166e774e19327310790b2"
+  },
+  "blocker_id": "blocker:v2:7df6ad11dcf18730ec961409814fa4697f4a8651694e24bf16d0a0f35b32ab61",
+  "predecessor_request_id": "",
+  "provenance": {
+    "producer": "lifecycle_failure",
+    "session": "cl1-contract-ownership-and-m6-20260723-1920",
+    "run_kind": "plan"
+  },
+  "evidence_refs": [
+    {
+      "kind": "problem_signature_digest",
+      "sha256": "0fbb277bbc3bbfc0cac1b3e664a670f29372862d11f8ed447848e2d1162acf14"
+    },
+    {
+      "kind": "redacted_root_cause_hint_digest",
+      "sha256": "9af54b9b3888be490f449b3a6de0a232f4fae5f75b46b90c5e43b1a2a754179e"
+    }
+  ],
+  "root_cause_hint_hash": "9af54b9b3888be490f449b3a6de0a232f4fae5f75b46b90c5e43b1a2a754179e",
+  "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
+  "resident_delegation": {
+    "schema_version": "arnold-resident-delegation-provenance-v1",
+    "applicability": "not_applicable",
+    "transport": "non_discord",
+    "source_kind": "codex_operator_request"
+  }
+}

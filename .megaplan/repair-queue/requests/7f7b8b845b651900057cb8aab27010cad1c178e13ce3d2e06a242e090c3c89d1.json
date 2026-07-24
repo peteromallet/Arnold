@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request",
+  "request_id": "7f7b8b845b651900057cb8aab27010cad1c178e13ce3d2e06a242e090c3c89d1",
+  "created_at": "2026-07-23T20:52:01Z",
+  "source": "lifecycle_failure",
+  "session": "cl1-contract-ownership-and-m6-20260723-1920",
+  "workspace": "/workspace/critique-ledger-m9-glm-20260723/Arnold",
+  "run_kind": "plan",
+  "marker_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/plans/cl1-contract-ownership-and-m6-20260723-1920",
+  "queue_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/repair-queue",
+  "target": {
+    "plan_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/plans/cl1-contract-ownership-and-m6-20260723-1920",
+    "plan_name": "cl1-contract-ownership-and-m6-20260723-1920",
+    "workspace_path": "/workspace/critique-ledger-m9-glm-20260723/Arnold"
+  },
+  "problem_signature": {
+    "failure_kind": "deterministic_phase_failure",
+    "current_state": "blocked",
+    "phase_or_step": "plan",
+    "milestone_or_plan": "cl1-contract-ownership-and-m6-20260723-1920",
+    "gate_recommendation": "Repair or change the deterministic phase contract before resuming; re-running the same phase output cannot make progress.",
+    "blocked_task_id": "phase:plan",
+    "event_signature": ""
+  },
+  "problem_signature_key": "143bef9a837613f508349ae5b3178f0f6bdc74afcd4453408de3fd14ef5eeff7",
+  "blocker_fingerprint": {
+    "schema_version": 1,
+    "current_state": "blocked",
+    "retry_strategy": "repair_phase_contract",
+    "failure_kind": "deterministic_phase_failure",
+    "phase_or_step": "plan",
+    "milestone_or_plan": "cl1-contract-ownership-and-m6-20260723-1920",
+    "blocked_task_id": "phase:plan",
+    "target_fingerprint": "repair-target:v1:913257a7415e906307eae1180f158d187d3326139ff64007ade1052e176b7932"
+  },
+  "blocker_id": "blocker:v2:38471ba5f3e9fb7c82f045ebc244806c07c7bb104737aaef26298a6ec2b6fa97",
+  "predecessor_request_id": "",
+  "provenance": {
+    "producer": "lifecycle_failure",
+    "session": "cl1-contract-ownership-and-m6-20260723-1920",
+    "run_kind": "plan"
+  },
+  "evidence_refs": [
+    {
+      "kind": "problem_signature_digest",
+      "sha256": "2e2aebde73c0f781b72422ce3bc30e2339e06fdc3337b0286235aaae317943ea"
+    },
+    {
+      "kind": "redacted_root_cause_hint_digest",
+      "sha256": "a8c908c3541adedfbf7b552d81fe2130c3e348c3c6cd102dc1de50c912cd092b"
+    }
+  ],
+  "root_cause_hint_hash": "a8c908c3541adedfbf7b552d81fe2130c3e348c3c6cd102dc1de50c912cd092b",
+  "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))"
+}

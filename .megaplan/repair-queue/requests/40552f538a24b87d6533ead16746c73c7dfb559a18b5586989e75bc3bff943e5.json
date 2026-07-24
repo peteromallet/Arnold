@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request",
+  "request_id": "40552f538a24b87d6533ead16746c73c7dfb559a18b5586989e75bc3bff943e5",
+  "created_at": "2026-07-23T20:05:22Z",
+  "source": "lifecycle_failure",
+  "session": "cl1-contract-ownership-and-m6-20260723-1920",
+  "workspace": "/workspace/critique-ledger-m9-glm-20260723/Arnold",
+  "run_kind": "plan",
+  "marker_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/plans/cl1-contract-ownership-and-m6-20260723-1920",
+  "queue_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/repair-queue",
+  "target": {
+    "plan_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/plans/cl1-contract-ownership-and-m6-20260723-1920",
+    "plan_name": "cl1-contract-ownership-and-m6-20260723-1920",
+    "workspace_path": "/workspace/critique-ledger-m9-glm-20260723/Arnold"
+  },
+  "problem_signature": {
+    "failure_kind": "phase_failed",
+    "current_state": "initialized",
+    "phase_or_step": "prep",
+    "milestone_or_plan": "cl1-contract-ownership-and-m6-20260723-1920",
+    "gate_recommendation": "Inspect phase output and resume from the failed phase.",
+    "blocked_task_id": "phase:prep",
+    "event_signature": ""
+  },
+  "problem_signature_key": "250df179ae8106e5b0380d3337f9767913975777bbc082e0fb581e1a716e4941",
+  "blocker_fingerprint": {
+    "schema_version": 1,
+    "current_state": "initialized",
+    "retry_strategy": "repair_request",
+    "failure_kind": "phase_failed",
+    "phase_or_step": "prep",
+    "milestone_or_plan": "cl1-contract-ownership-and-m6-20260723-1920",
+    "blocked_task_id": "phase:prep",
+    "target_fingerprint": "repair-target:v1:23caa9f7323fd2515490f0cd8250e4d373b459dafa2a97e6f9347957d3022379"
+  },
+  "blocker_id": "blocker:v2:5a5b50f06cc6c99598c9f99ab094e91b87e26b346f8640c9d3f0855e835b0822",
+  "predecessor_request_id": "",
+  "provenance": {
+    "producer": "lifecycle_failure",
+    "session": "cl1-contract-ownership-and-m6-20260723-1920",
+    "run_kind": "plan"
+  },
+  "evidence_refs": [
+    {
+      "kind": "problem_signature_digest",
+      "sha256": "766e52f2f61f9c46050eee32499a56d69328c6cb06d5f65536ba63a05f449889"
+    },
+    {
+      "kind": "redacted_root_cause_hint_digest",
+      "sha256": "877b5f9c455ca3f0872e7f427a8cbf933ceba8b898ee2784a713b9daa6ed2bfe"
+    }
+  ],
+  "root_cause_hint_hash": "877b5f9c455ca3f0872e7f427a8cbf933ceba8b898ee2784a713b9daa6ed2bfe",
+  "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
+  "resident_delegation": {
+    "schema_version": "arnold-resident-delegation-provenance-v1",
+    "applicability": "not_applicable",
+    "transport": "non_discord",
+    "source_kind": "codex_operator_request"
+  }
+}

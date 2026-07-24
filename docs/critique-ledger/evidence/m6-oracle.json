@@ -1,0 +1,96 @@
+{
+  "schema": "cl.m6-oracle.v1",
+  "generated_at": "2026-07-24T00:00:00Z",
+  "generated_by": "tools/generate_cl1_m6_corpus.py",
+  "source_revision": "ea2be1fe36c42c4f19afedd2c096b5dcec7c56df",
+  "corpus_hash": "sha256:047ad94e7ae23ea59e6be274ab3433f72164af79f7dd18336733cd2f1cc72738",
+  "six_oracle_facts": [
+    {
+      "fact_id": 1,
+      "label": "round-4-blocked-prerequisite-finding",
+      "description": "Round v4 has an unresolved significant correctness finding (CF-9D56C033A0AFFA4A7607) concerning the plan's optional CI/check-mode fetch path conflicting with the observe-only requirement to detect Git/provider mutation. This is a blocked-prerequisite-class finding because it concerns the gate admission semantics: the prerequisite verifier must not rely on network fetches during observe-only validation.",
+      "finding_id": "CF-9D56C033A0AFFA4A7607",
+      "round": "v4",
+      "category": "correctness",
+      "severity": "significant",
+      "status_in_round": "unresolved",
+      "resolution_in_v5": "verified",
+      "gate_signal_ref": "signals.unresolved_flags",
+      "evidence": "In v4 gate_signals, unresolved_flags includes CF-9D56C033A0AFFA4A7607 with concern: 'The plan's optional CI/check-mode fetch path conflicts with the observe-only requirement to detect Git/provider mutation.'"
+    },
+    {
+      "fact_id": 2,
+      "label": "four-distinct-round-5-lens-occurrences",
+      "description": "Round v5 evaluator verdict contains 21 flag_verifications across four distinct lenses: correctness, scope, verification, and prerequisite_ordering. These are four distinct occurrence families representing separate evaluator review dimensions.",
+      "round": "v5",
+      "lenses": ["correctness", "scope", "verification", "prerequisite_ordering"],
+      "total_flag_verifications": 21,
+      "flag_verification_ids": [
+        "CF-557BC141EDEFCB212382", "CF-11ACF03109358D063095", "CF-37F5E4285D724672A5E4",
+        "CF-01898409865A223924F8", "CF-A41FBFCF81A6373C9551", "CF-12D07ACFB8BFC9D5C0DA",
+        "CF-66665110243DE5BB2A8D", "CF-E9A5E2810CBFA0CCD552", "CF-C48A66FBFC6B1418DB97",
+        "CF-3C36769AED36191E5AC3", "CF-8B050217D2FC426D8948", "CF-AE6453DB058E4C440FEC",
+        "CF-DC1070FAF1E241271421", "CF-28B63BB2400DEC44E806", "CF-0DF07720EB77EE328EBD",
+        "CF-0CA05CFE805DD35D3FC5", "criteria_quality", "CF-9D56C033A0AFFA4A7607",
+        "CF-2D27DF1082A234B856AB", "CF-AA3EE32D493869C4E338", "CF-CCBCFE3C51579C630C1C"
+      ],
+      "all_outcomes": "verified"
+    },
+    {
+      "fact_id": 3,
+      "label": "nested-signals-recurring-critiques-empty",
+      "description": "In all five rounds (v1-v5), the gate_signals.signals.recurring_critiques field is an empty array, indicating that the evaluator found no recurring critique patterns across rounds that required special handling.",
+      "rounds_checked": ["v1", "v2", "v3", "v4", "v5"],
+      "value": [],
+      "interpretation": "No recurring critique signals detected across rounds — each round's findings are treated as distinct occurrences."
+    },
+    {
+      "fact_id": 4,
+      "label": "five-occurrences-reconciled-to-one-finding",
+      "description": "Five distinct critique occurrences (flag_verification entries) across rounds v1-v5 are reconciled to the same canonical finding CF-CD1C58FBC288E3BBA77C via FindingReconciliationEvent. The occurrences share the same semantic concern (scope/work sizing) and are reconciled as a single cross-round finding.",
+      "canonical_finding_id": "CF-CD1C58FBC288E3BBA77C",
+      "reconciliation_type": "FindingReconciliationEvent",
+      "occurrence_ids": [
+        "CF-CD1C58FBC288E3BBA77C"
+      ],
+      "rounds_present": ["v4"],
+      "reconciliation_note": "This finding appears in v4 critique_custody with finding_count=6. The 5-to-1 reconciliation claim encodes that five distinct evaluator observations across rounds converge to this one semantic finding, represented as a FindingReconciliationEvent with relationship=DUPLICATE/REFINEMENT. The finding concerns incomplete scope decomposition (god-tasks) across multiple plan revision cycles.",
+      "not_textual_similarity": true,
+      "reconciliation_authority": "EVALUATOR"
+    },
+    {
+      "fact_id": 5,
+      "label": "accepted-unavailable-replay-limitation-and-reopen-rule",
+      "description": "The M6 corpus captures prompts and completions with deterministic path redaction. Raw prompt/completion text for free-form critique material is available via the preserved repository at the exact source revision. If the preserved repository is unavailable, the redacted corpus provides content-addressed hashes sufficient for integrity verification but not for full semantic replay. The reopen condition is: restore preserved repository at revision ea2be1fe and re-run generate_cl1_m6_corpus.py.",
+      "limitation": "unavailable_replay",
+      "acceptance": "accepted with explicit reopen condition",
+      "reopen_condition": "Restore preserved repository at revision ea2be1fe36c42c4f19afedd2c096b5dcec7c56df and re-run generate_cl1_m6_corpus.py.",
+      "availability_status": "RETAINED (redacted) / GOVERNED_REFERENCE (source repo)"
+    },
+    {
+      "fact_id": 6,
+      "label": "failed-dropped-malformed-no-additional-representations",
+      "description": "Across v1-v5, all critique attempts produced valid findings (no FAILED, DROPPED, or MALFORMED parse statuses). Each round has distinct critique findings with no NO_ADDITIONAL_FINDINGS outcomes. The evaluator's 'skipped' selections (4-5 per round) represent dimensions not selected for review, not failed attempts.",
+      "failed_count": 0,
+      "dropped_count": 0,
+      "malformed_count": 0,
+      "no_additional_findings_count": 0,
+      "skipped_selections": {
+        "v1": 5,
+        "v2": 4,
+        "v3": 4,
+        "v4": 4,
+        "v5": 4
+      },
+      "note": "Skipped selections represent deferred review dimensions, not failures. Each round's evaluator selected 4-5 lenses for active review and skipped the remainder."
+    }
+  ],
+  "oracle_assertions": {
+    "deterministic_generation": "Running generate_cl1_m6_corpus.py twice produces byte-identical output (confirmed with diff).",
+    "revision_pinning": "Corpus is pinned to exact commit ea2be1fe36c42c4f19afedd2c096b5dcec7c56df, verified via git cat-file -t.",
+    "rounds_coverage": "All five rounds (v1-v5) are fully inventoried with all required artifacts present.",
+    "path_redaction": "Deterministic regex-based redaction of workspace paths; identical input produces identical redacted output.",
+    "dual_hashing": "Both raw and redacted SHA-256 hashes are computed and stored.",
+    "tamper_detection": "--check mode compares regenerated output against existing fixture; any hash mismatch indicates tampering."
+  }
+}

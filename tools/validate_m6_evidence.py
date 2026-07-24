@@ -496,7 +496,34 @@ def validate_all_evidence(strict: bool = False) -> dict[str, Any]:
         }
         entries.append(entry)
 
+    # ── Collect EXPLAINED_BENIGN information from prerequisites ─────────
+    explained_benign_count = 0
+    explained_benign_details: list[dict[str, Any]] = []
+    if prereq_data:
+        for check in prereq_data.get("checks", []):
+            if check.get("resolution_class") == "EXPLAINED_BENIGN":
+                explained_benign_count += 1
+                explained_benign_details.append({
+                    "check": check.get("check"),
+                    "resolution_class": check.get("resolution_class"),
+                    "resolution_source": check.get("resolution_source"),
+                    "resolution_detail": check.get("resolution_detail"),
+                })
+            # Also check for EXPLAINED_BENIGN files within wbc_file_hashes
+            for cat_key in ("boundary_category", "runtime_category", "schema_category", "support_category"):
+                for f in check.get(cat_key, {}).get("files", []):
+                    if f.get("resolution_class") == "EXPLAINED_BENIGN":
+                        explained_benign_count += 1
+                        explained_benign_details.append({
+                            "check": check.get("check"),
+                            "file": f.get("path"),
+                            "resolution_class": f.get("resolution_class"),
+                            "resolution_source": f.get("resolution_source"),
+                            "resolution_detail": f.get("resolution_detail"),
+                        })
+
     # ── Determine validation result ──────────────────────────────────────
+    # EXPLAINED_BENIGN checks do not block admission; only true blockers do
     has_blockers = bool(errors)
     prereq_blocked = prereq_status in ("INCOHERENT", "BLOCKED")
     wbc_blocked = wbc_ancestry.get("status") not in ("PASS",)
@@ -520,6 +547,8 @@ def validate_all_evidence(strict: bool = False) -> dict[str, Any]:
         "unexplained_row_artifacts": unexplained_row_artifacts,
         "schema_mismatches": schema_mismatches,
         "mutating_command_warnings": mutating_command_warnings,
+        "explained_benign_check_count": explained_benign_count,
+        "explained_benign_checks": explained_benign_details,
     }
 
     # Collect global unknowns from all artifacts

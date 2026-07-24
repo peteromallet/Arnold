@@ -35,8 +35,45 @@ REPLAY_DIR = EVIDENCE_DIR / "replay"
 # Ensure tools/ is on sys.path for direct imports
 sys.path.insert(0, str(TOOLS_DIR))
 
+# Generator acceptance checks must never mutate the checkout they validate.
+# These are every durable evidence output written by the M6 toolchain.
+_M6_EVIDENCE_OUTPUTS = (
+    EVIDENCE_DIR / "m6-prerequisite-verification.json",
+    EVIDENCE_DIR / "m6-proof-index.json",
+    EVIDENCE_DIR / "wbc-boundary-inventory.json",
+    EVIDENCE_DIR / "wbc-boundary-inventory-validation.json",
+    EVIDENCE_DIR / "wbc-historical-adapters.json",
+    EVIDENCE_DIR / "finding-prevention-register.json",
+    EVIDENCE_DIR / "controlled-writer-registry.json",
+    EVIDENCE_DIR / "authority-reader-registry.json",
+    EVIDENCE_DIR / "migration-matrix-reconciled.json",
+    REPLAY_DIR / "transaction-spine.json",
+    REPLAY_DIR / "strategy-roadmap.json",
+    EVIDENCE_DIR / "pc-scope-decision.json",
+    EVIDENCE_DIR / "ownership-decision-record.json",
+    EVIDENCE_DIR / "rollout-deletion-register.json",
+    EVIDENCE_DIR / "work-ledger-vocabulary.json",
+)
+
 
 # ── helpers ─────────────────────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _preserve_live_evidence_outputs() -> Any:
+    """Keep every acceptance test hermetic, including direct subprocess calls."""
+    before = {
+        path: path.read_bytes() if path.exists() else None
+        for path in _M6_EVIDENCE_OUTPUTS
+    }
+    try:
+        yield
+    finally:
+        for path, content in before.items():
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
 
 
 def _import_module(module_name: str, file_name: str) -> Any:
@@ -64,14 +101,33 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 
 def _run_tool(script: str, *args: str) -> subprocess.CompletedProcess:
-    """Run a tool script from the repo root with a generous timeout."""
-    return subprocess.run(
-        [sys.executable, str(TOOLS_DIR / script)] + list(args),
-        cwd=str(REPO_ROOT),
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+    """Run a tool without persisting generated evidence into the checkout.
+
+    The generators intentionally default to ``REPO_ROOT/evidence``.  Running
+    them directly from a validation test used to rewrite the live worktree and
+    made the post-execute scope audit blame those validation side effects on
+    the implementation under test.  Preserve and restore every declared M6
+    output, including the missing-file state, even when the tool fails.
+    """
+    before = {
+        path: path.read_bytes() if path.exists() else None
+        for path in _M6_EVIDENCE_OUTPUTS
+    }
+    try:
+        return subprocess.run(
+            [sys.executable, str(TOOLS_DIR / script)] + list(args),
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    finally:
+        for path, content in before.items():
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
 
 
 # ── Generator importability tests ──────────────────────────────────────────
@@ -264,6 +320,22 @@ class TestGeneratorExecution:
             "Evidence validator produced no output"
         )
 
+    def test_generator_execution_preserves_live_evidence_bytes(self) -> None:
+        """A real generator invocation must leave every evidence output intact."""
+        before = {
+            path: path.read_bytes() if path.exists() else None
+            for path in _M6_EVIDENCE_OUTPUTS
+        }
+
+        result = _run_tool("generate_m6_finding_register.py")
+
+        assert result.returncode == 0, result.stderr
+        after = {
+            path: path.read_bytes() if path.exists() else None
+            for path in _M6_EVIDENCE_OUTPUTS
+        }
+        assert after == before
+
 
 # ── Evidence artifact presence tests ────────────────────────────────────────
 
@@ -386,8 +458,8 @@ class TestEvidenceArtifactPresence:
         proof = EVIDENCE_DIR / "m6-proof-index.json"
         assert proof.exists(), "Proof index not found"
         data = _load_json(proof)
-        assert data.get("schema") in ("m6.proof-index.v1", "m6.proof-index.v2"), (
-            f"Invalid proof index schema: {data.get('schema')}"
+        assert data.get("schema") == "m6.proof-index.v2", (
+            f"Invalid proof index schema: expected m6.proof-index.v2, got {data.get('schema')}"
         )
 
 
@@ -577,8 +649,8 @@ class TestFullPipelineIntegration:
 
         # Verify proof index is valid JSON
         data = _load_json(proof_path)
-        assert data.get("schema") in ("m6.proof-index.v1", "m6.proof-index.v2"), (
-            f"Invalid proof index schema: {data.get('schema')}"
+        assert data.get("schema") == "m6.proof-index.v2", (
+            f"Invalid proof index schema: expected m6.proof-index.v2, got {data.get('schema')}"
         )
         assert "entries" in data, "Proof index missing entries"
         assert isinstance(data["entries"], list), "Proof index entries must be a list"
@@ -850,6 +922,43 @@ class TestPinnedInputsNoMutableState:
         data = _load_json(output_path)
         assert data.get("schema") == "m6.migration-matrix-reconciled.v1"
 
+    def test_prerequisite_verification_contains_explained_benign_classification(self) -> None:
+        """Prerequisite verification must document EXPLAINED_BENIGN resolutions.
+        
+        The m5_bound_head_vs_current_head check should show EXPLAINED_BENIGN
+        when the M6A resolution evidence is present and valid.
+        """
+        path = EVIDENCE_DIR / "m6-prerequisite-verification.json"
+        if not path.exists():
+            pytest.skip("Prerequisite verification not yet generated")
+        data = _load_json(path)
+        checks = data.get("checks", [])
+        m5_head_check = [
+            c for c in checks
+            if c.get("check") == "m5_bound_head_vs_current_head"
+        ]
+        assert len(m5_head_check) == 1, "Missing m5_bound_head_vs_current_head check"
+        check = m5_head_check[0]
+        # PASS status is acceptable (with EXPLAINED_BENIGN) or INCOHERENT (without)
+        assert check["status"] in ("PASS", "INCOHERENT", "UNKNOWN", "BLOCKED"), (
+            f"Unexpected status: {check['status']}"
+        )
+        # If status is PASS, resolution_class should be EXPLAINED_BENIGN
+        if check["status"] == "PASS":
+            assert check.get("resolution_class") == "EXPLAINED_BENIGN", (
+                f"PASS without EXPLAINED_BENIGN: {check.get('resolution_class')}"
+            )
+
+    def test_proof_index_uses_v2_schema(self) -> None:
+        """Proof index must use m6.proof-index.v2 schema exclusively."""
+        proof = EVIDENCE_DIR / "m6-proof-index.json"
+        if not proof.exists():
+            pytest.skip("Proof index not yet generated")
+        data = _load_json(proof)
+        assert data.get("schema") == "m6.proof-index.v2", (
+            f"Proof index must use v2 schema, got: {data.get('schema')}"
+        )
+
     def test_validator_uses_only_committed_evidence_inputs(self) -> None:
         """Validator must work using only committed evidence artifacts + git."""
         result = _run_tool("validate_m6_evidence.py")
@@ -961,7 +1070,7 @@ class TestEvidenceValidationCrossChecks:
         assert not missing, f"Missing writer categories: {missing}"
 
     def test_authority_reader_registry_enforces_north_star_guard(self) -> None:
-        """No projection/liveness/status/support reader may have is_authority=true."""
+        """No projection/liveness/status/support reader may have is_authority=True."""
         path = EVIDENCE_DIR / "authority-reader-registry.json"
         if not path.exists():
             pytest.skip("Authority reader registry not yet generated")

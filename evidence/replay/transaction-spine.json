@@ -1,6 +1,6 @@
 {
-  "composite_hash": "856d9988975f2766df6516ad87bda409e62cc0d1acde93112eade87463bd8101",
-  "generated_at": "2026-07-19T22:34:46.749789+00:00",
+  "composite_hash": "333f2937de2a576740f826537eebecc5044211f0e9d14fa885409f4137f8b415",
+  "generated_at": "2026-07-24T01:10:44.790897+00:00",
   "generator": "tools/generate_m6_replay_fixtures.py",
   "limitations": {
     "missing_original_workspace": {
@@ -22,12 +22,12 @@
       "pattern": "/workspace/[REDACTED:<sha256-prefix>]"
     }
   },
-  "repository_root": "/workspace/[REDACTED:6899d7db6ccd]",
+  "repository_root": "/workspace/[REDACTED:6023b469556d]",
   "schema": "m6.transaction-spine-replay-fixture.v1",
   "section_hashes": {
     "handoff_documents": "5f1d9c3dece0084e26e3d26fa2bbc75fb772887924e3b95cbba1fa73d7320182",
     "incident_summaries": "7f74b25067bbf4b06dd4d1ac1e9979e404654acc5b6d24b340360ab6148f7e36",
-    "repair_data": "b1cf8f3b0ca0b7d511ad2981031ea5ac45b65468501f7669c11a4ef8222f5daf"
+    "repair_data": "7b03d467e5328ee97a1e301c81981aecf0eda4a448716ffd949feb2a66fc41d8"
   },
   "sections": {
     "handoff_documents": {
@@ -487,7 +487,7 @@
       "source_directory": ".megaplan/incident-ledger/summaries/incidents"
     },
     "repair_data": {
-      "content_hash": "1b38e0339c32b76ab7602432a9651e38ffaa29583562c6aaf7276587de6ebc54",
+      "content_hash": "aebcc8246eb44ed37b68bc5122277e606e4d2551065330e589789bb10f212d86",
       "incident_summaries": [
         {
           "decision_count": 2,
@@ -509,13 +509,32 @@
           "session_id": "canonical-run-state-control-plane"
         },
         {
+          "decision_count": 2,
+          "decisions": [
+            {
+              "hypothesis_class": "NO_NEW_LAUNCH",
+              "hypothesis_preview": "NO_NEW_LAUNCH\nCanonical live owner managed-automatic-repair-2e3124d1071c3d5a7e06 has stable objective alignment; the six-hour auditor recorded a no-op and launched no reviewer or repair agent.",
+              "reconciler_finding_count": 10,
+              "seq": 749
+            },
+            {
+              "hypothesis_class": "NO_NEW_LAUNCH",
+              "hypothesis_preview": "NO_NEW_LAUNCH\nCanonical live owner managed-automatic-repair-2e3124d1071c3d5a7e06 has stable objective alignment; the six-hour auditor recorded a no-op and launched no reviewer or repair agent.",
+              "reconciler_finding_count": 10,
+              "seq": 750
+            }
+          ],
+          "event_count": 6,
+          "session_id": "critique-ledger-m9-glm-20260723"
+        },
+        {
           "decision_count": 0,
           "decisions": [],
           "event_count": 1,
           "session_id": "custody-control-plane"
         },
         {
-          "decision_count": 31,
+          "decision_count": 54,
           "decisions": [
             {
               "hypothesis_class": null,
@@ -702,9 +721,147 @@
               "hypothesis_preview": null,
               "reconciler_finding_count": 0,
               "seq": 617
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 622
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 624
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 626
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 628
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 630
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 637
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 640
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog repeatedly observes stops; repair-trigger accepts custody but does not claim it; immediate repair records `fixer_infrastructure_failure` without a valid",
+              "reconciler_finding_count": 10,
+              "seq": 641
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog repeatedly observes stops; repair-trigger accepts custody but does not claim it; immediate repair records `fixer_infrastructure_failure` without a valid",
+              "reconciler_finding_count": 10,
+              "seq": 642
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 662
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 664
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 670
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 672
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 674
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 676
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 678
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 680
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 685
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 690
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 695
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 698
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 701
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 734
             }
           ],
-          "event_count": 101,
+          "event_count": 225,
           "session_id": "custody-control-plane-20260714"
         },
         {
@@ -990,7 +1147,7 @@
       "schema": "m6.transaction-spine.repair-data.v1",
       "source_path": ".megaplan/incident-ledger/incidents.json",
       "status": "present",
-      "total_incidents": 10
+      "total_incidents": 11
     }
   }
 }

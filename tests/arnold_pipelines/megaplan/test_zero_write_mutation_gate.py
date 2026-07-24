@@ -37,6 +37,7 @@ import json
 import os
 import pathlib
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -79,6 +80,10 @@ class WriteDetector:
         self._original_shutil_move = shutil.move
         self._original_shutil_copy = shutil.copy
         self._original_shutil_copy2 = shutil.copy2
+        self._original_subprocess_run = subprocess.run
+        self._original_subprocess_Popen = subprocess.Popen
+        self._original_subprocess_check_call = subprocess.check_call
+        self._original_subprocess_check_output = subprocess.check_output
 
     # ── recording helpers ────────────────────────────────────────────────
 
@@ -115,6 +120,26 @@ class WriteDetector:
 
     def _record_shutil_copy2(self, *args: Any, **kwargs: Any) -> None:
         self.calls.append(("shutil.copy2", args, kwargs))
+
+    def _record_subprocess_run(self, *args: Any, **kwargs: Any) -> Any:
+        """Intercept subprocess.run -- record any external process invocation."""
+        self.calls.append(("subprocess.run", args, kwargs))
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=b"", stderr=b"")
+
+    def _record_subprocess_Popen(self, *args: Any, **kwargs: Any) -> Any:
+        """Intercept subprocess.Popen -- record any process creation."""
+        self.calls.append(("subprocess.Popen", args, kwargs))
+        raise RuntimeError("subprocess.Popen blocked by WriteDetector")
+
+    def _record_subprocess_check_call(self, *args: Any, **kwargs: Any) -> Any:
+        """Intercept subprocess.check_call -- record any checked call."""
+        self.calls.append(("subprocess.check_call", args, kwargs))
+        return 0
+
+    def _record_subprocess_check_output(self, *args: Any, **kwargs: Any) -> Any:
+        """Intercept subprocess.check_output -- record any checked output."""
+        self.calls.append(("subprocess.check_output", args, kwargs))
+        return b""
 
     # ── open() guard ─────────────────────────────────────────────────────
 
@@ -155,6 +180,12 @@ class WriteDetector:
         shutil.copy = self._record_shutil_copy  # type: ignore[assignment]
         shutil.copy2 = self._record_shutil_copy2  # type: ignore[assignment]
 
+        # subprocess guard
+        subprocess.run = self._record_subprocess_run  # type: ignore[assignment]
+        subprocess.Popen = self._record_subprocess_Popen  # type: ignore[assignment]
+        subprocess.check_call = self._record_subprocess_check_call  # type: ignore[assignment]
+        subprocess.check_output = self._record_subprocess_check_output  # type: ignore[assignment]
+
         # builtins.open guard (but let reads through)
         builtins.open = self._guarded_open  # type: ignore[assignment]
 
@@ -168,6 +199,10 @@ class WriteDetector:
         shutil.move = self._original_shutil_move  # type: ignore[assignment]
         shutil.copy = self._original_shutil_copy  # type: ignore[assignment]
         shutil.copy2 = self._original_shutil_copy2  # type: ignore[assignment]
+        subprocess.run = self._original_subprocess_run  # type: ignore[assignment]
+        subprocess.Popen = self._original_subprocess_Popen  # type: ignore[assignment]
+        subprocess.check_call = self._original_subprocess_check_call  # type: ignore[assignment]
+        subprocess.check_output = self._original_subprocess_check_output  # type: ignore[assignment]
         builtins.open = self._original_open  # type: ignore[assignment]
 
     @property
@@ -175,11 +210,21 @@ class WriteDetector:
         """Subset of calls that represent write/mutate operations.
 
         Excludes read-mode open calls that were let through.
+        Includes subprocess calls as external-effect writes.
         """
         return [
             c
             for c in self.calls
             if c[0] != "open"  # read-mode open is not a write
+        ]
+
+    @property
+    def external_effect_calls(self) -> list[tuple[str, tuple[Any, ...], dict[str, Any]]]:
+        """Subset of calls that represent external effects (subprocess, network, delivery)."""
+        return [
+            c
+            for c in self.calls
+            if c[0].startswith("subprocess.")
         ]
 
 
@@ -1019,6 +1064,8 @@ class TestWriteSurfaceCategoryCoverage:
             assert os.replace is not detector._original_os_replace
             assert shutil.move is not detector._original_shutil_move
             assert builtins.open is not detector._original_open
+            assert subprocess.run is not detector._original_subprocess_run
+            assert subprocess.Popen is not detector._original_subprocess_Popen
         finally:
             detector.unpatch_all()
 
@@ -1030,3 +1077,285 @@ class TestWriteSurfaceCategoryCoverage:
         assert os.replace is detector._original_os_replace
         assert shutil.move is detector._original_shutil_move
         assert builtins.open is detector._original_open
+        assert subprocess.run is detector._original_subprocess_run
+        assert subprocess.Popen is detector._original_subprocess_Popen
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Tests: semantic loop zero-write
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestSemanticLoopZeroWrite:
+    """Prove :func:`replay_full` from :mod:`arnold.critique_ledger.semantic_loop`
+    performs zero writes across all mutation surfaces including filesystem,
+    subprocess, Git, provider, delivery, and external effects.
+
+    The semantic loop functions are pure by design — they accept frozen
+    dataclass instances and return plain dicts with no I/O. These tests
+    prove that the pure contract holds under write detection.
+    """
+
+    # ── fixture data matching oracle fact 4 ──────────────────────────────
+
+    @staticmethod
+    def _make_m6_occurrences() -> list:
+        """Create five occurrences representing the five-to-one finding."""
+        from arnold.critique_ledger.schemas import (
+            ContextMode,
+            CritiqueOccurrenceEnvelope,
+            EvidenceAvailability,
+            ParseStatus,
+        )
+        occs = []
+        for i in range(1, 6):
+            occs.append(CritiqueOccurrenceEnvelope(
+                occurrence_id=f"occ-v{i}-CF-CD1C",
+                attempt_id="attempt-v1",
+                round_label=f"v{i}",
+                finding_id="CF-CD1C58FBC288E3BBA77C",
+                producer_id="test-producer",
+                model_id="test-model",
+                context_mode=ContextMode.HISTORY_AWARE.value,
+                parse_status=ParseStatus.SELECTED.value,
+                evidence_availability=EvidenceAvailability.RETAINED.value,
+                custody_receipt_refs=("wbc-001",),
+            ))
+        return occs
+
+    @staticmethod
+    def _make_m6_reconciliation() -> list:
+        """Create the five-to-one reconciliation event."""
+        from arnold.critique_ledger.schemas import (
+            Authority,
+            FindingReconciliationEvent,
+            Relationship,
+        )
+        return [
+            FindingReconciliationEvent(
+                reconciliation_id="rec-scope-god-task",
+                canonical_finding_id="CF-CD1C58FBC288E3BBA77C",
+                semantic_finding_id="sem-finding-scope-god-task",
+                occurrence_ids=tuple(f"occ-v{i}-CF-CD1C" for i in range(1, 6)),
+                relationship=Relationship.DUPLICATE.value,
+                authority=Authority.EVALUATOR.value,
+                reason="Same scope/work-sizing concern (god-tasks) across five rounds",
+            ),
+        ]
+
+    @staticmethod
+    def _make_m6_disposition() -> list:
+        """Create the accepted-risk disposition with reopen predicate."""
+        from arnold.critique_ledger.schemas import (
+            Authority,
+            DispositionFamily,
+            FindingDispositionEvent,
+        )
+        return [
+            FindingDispositionEvent(
+                disposition_id="disp-scope-god-task",
+                semantic_finding_id="sem-finding-scope-god-task",
+                family=DispositionFamily.ACCEPTED_RISK.value,
+                authority=Authority.EVALUATOR.value,
+                is_reopen=True,
+                reopen_predicate="Re-run generate_cl1_m6_corpus.py when preserved repo restored",
+            ),
+        ]
+
+    # ── zero-write tests ─────────────────────────────────────────────────
+
+    def test_semantic_loop_zero_path_writes(self) -> None:
+        """Path.write_text / write_bytes / mkdir must never be called
+        during semantic loop replay."""
+        from arnold.critique_ledger.semantic_loop import replay_full
+
+        occs = self._make_m6_occurrences()
+        recs = self._make_m6_reconciliation()
+        disps = self._make_m6_disposition()
+
+        detector = WriteDetector()
+        detector.patch_all()
+        try:
+            result = replay_full(
+                occs,
+                recs,
+                disps,
+                wbc_receipt_chain={"wbc-001": {"valid": True}},
+                budget_level="standard",
+                domain_assignments={"sem-finding-scope-god-task": "critique_ledger"},
+            )
+        finally:
+            detector.unpatch_all()
+
+        # Results must be meaningful
+        assert "manifest" in result
+        assert "briefing" in result
+        assert "reviser_projection" in result
+        assert "gate_projection" in result
+
+        writes = detector.write_calls
+        assert len(writes) == 0, (
+            f"semantic loop replay triggered {len(writes)} write call(s): "
+            f"{writes[:10]}"
+        )
+
+    def test_semantic_loop_zero_subprocess_effects(self) -> None:
+        """No subprocess.run/Popen/check_call/check_output calls during
+        semantic loop replay."""
+        from arnold.critique_ledger.semantic_loop import replay_full
+
+        occs = self._make_m6_occurrences()
+        recs = self._make_m6_reconciliation()
+        disps = self._make_m6_disposition()
+
+        detector = WriteDetector()
+        detector.patch_all()
+        try:
+            _result = replay_full(
+                occs,
+                recs,
+                disps,
+                wbc_receipt_chain={"wbc-001": {"valid": True}},
+                budget_level="standard",
+                domain_assignments={"sem-finding-scope-god-task": "critique_ledger"},
+            )
+        finally:
+            detector.unpatch_all()
+
+        external = detector.external_effect_calls
+        assert len(external) == 0, (
+            f"semantic loop triggered {len(external)} external effect(s): "
+            f"{external[:5]}"
+        )
+
+    def test_semantic_loop_zero_writes_all_gates_off(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """With all mutation gates explicitly disabled, semantic loop
+        replay must perform zero writes."""
+        from arnold.critique_ledger.semantic_loop import replay_full
+
+        for var in TestMutationGatesOff.MUTATION_GATE_VARS:
+            monkeypatch.setenv(var, "0")
+
+        occs = self._make_m6_occurrences()
+        recs = self._make_m6_reconciliation()
+        disps = self._make_m6_disposition()
+
+        detector = WriteDetector()
+        detector.patch_all()
+        try:
+            result = replay_full(
+                occs,
+                recs,
+                disps,
+                wbc_receipt_chain={"wbc-001": {"valid": True}},
+                budget_level="standard",
+                domain_assignments={"sem-finding-scope-god-task": "critique_ledger"},
+            )
+        finally:
+            detector.unpatch_all()
+
+        assert "manifest" in result
+        writes = detector.write_calls
+        assert len(writes) == 0, (
+            f"All gates off → expected 0 writes, got {len(writes)}: "
+            f"{writes[:10]}"
+        )
+        external = detector.external_effect_calls
+        assert len(external) == 0, (
+            f"All gates off → expected 0 external effects, got {len(external)}: "
+            f"{external[:5]}"
+        )
+
+    def test_semantic_loop_five_to_one_finding_preserved(self) -> None:
+        """Oracle fact 4: five occurrences must map to one semantic finding
+        even under write detection."""
+        from arnold.critique_ledger.semantic_loop import replay_full
+
+        occs = self._make_m6_occurrences()
+        recs = self._make_m6_reconciliation()
+        disps = self._make_m6_disposition()
+
+        detector = WriteDetector()
+        detector.patch_all()
+        try:
+            result = replay_full(
+                occs,
+                recs,
+                disps,
+                wbc_receipt_chain={"wbc-001": {"valid": True}},
+                budget_level="standard",
+                domain_assignments={"sem-finding-scope-god-task": "critique_ledger"},
+            )
+        finally:
+            detector.unpatch_all()
+
+        fm = result["reconciliation"]["finding_map"]
+        assert len(fm) == 1, f"Expected 1 semantic finding, got {len(fm)}"
+        assert len(fm["sem-finding-scope-god-task"]) == 5, (
+            f"Expected 5 occurrences mapped, got "
+            f"{len(fm['sem-finding-scope-god-task'])}"
+        )
+        # Disposition is accepted-risk
+        assert result["disposition"]["family_counts"]["accepted-risk"] == 1
+        # Gate projection has no blocking findings
+        assert result["gate_projection"]["blocking_finding_count"] == 0
+        assert result["gate_projection"]["open_finding_count"] == 0
+        # Zero writes confirmed
+        assert len(detector.write_calls) == 0
+
+    def test_semantic_loop_replay_deterministic(self) -> None:
+        """Running replay_full twice with identical inputs must produce
+        identical manifest, briefing, reviser-projection, and gate-projection
+        hashes."""
+        from arnold.critique_ledger.schemas import canonical_hash
+        from arnold.critique_ledger.semantic_loop import replay_full
+
+        occs = self._make_m6_occurrences()
+        recs = self._make_m6_reconciliation()
+        disps = self._make_m6_disposition()
+
+        kwargs = {
+            "wbc_receipt_chain": {"wbc-001": {"valid": True}},
+            "budget_level": "standard",
+            "domain_assignments": {"sem-finding-scope-god-task": "critique_ledger"},
+        }
+
+        result1 = replay_full(occs, recs, disps, **kwargs)
+        result2 = replay_full(occs, recs, disps, **kwargs)
+
+        # Identical manifest
+        assert canonical_hash(result1["manifest"]) == canonical_hash(result2["manifest"]), (
+            "Manifest hash differs between runs"
+        )
+        # Identical briefing
+        assert canonical_hash(result1["briefing"]) == canonical_hash(result2["briefing"]), (
+            "Briefing hash differs between runs"
+        )
+        # Identical reviser projection
+        assert canonical_hash(result1["reviser_projection"]) == canonical_hash(result2["reviser_projection"]), (
+            "Reviser projection hash differs between runs"
+        )
+        # Identical gate projection
+        assert canonical_hash(result1["gate_projection"]) == canonical_hash(result2["gate_projection"]), (
+            "Gate projection hash differs between runs"
+        )
+
+    def test_semantic_loop_zero_write_detector_coverage(self) -> None:
+        """The WriteDetector must patch all primitives needed for semantic
+        loop write detection including subprocess."""
+        detector = WriteDetector()
+        detector.patch_all()
+        try:
+            assert subprocess.run is not detector._original_subprocess_run
+            assert subprocess.Popen is not detector._original_subprocess_Popen
+            assert subprocess.check_call is not detector._original_subprocess_check_call
+            assert subprocess.check_output is not detector._original_subprocess_check_output
+        finally:
+            detector.unpatch_all()
+
+        assert subprocess.run is detector._original_subprocess_run
+        assert subprocess.Popen is detector._original_subprocess_Popen
+        assert subprocess.check_call is detector._original_subprocess_check_call
+        assert subprocess.check_output is detector._original_subprocess_check_output

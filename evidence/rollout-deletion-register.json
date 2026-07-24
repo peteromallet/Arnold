@@ -1,10 +1,10 @@
 {
   "schema": "m6.rollout-deletion-register.v1",
-  "generated_at": "2026-07-21T23:36:18.347679+00:00",
+  "generated_at": "2026-07-24T01:10:45.039411+00:00",
   "generator": "tools/generate_m6_rollout_register.py",
   "source_evidence": {
-    "finding_prevention_register": "/workspace/custody-control-plane-20260714/Arnold/evidence/finding-prevention-register.json",
-    "unified_authority_research": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
+    "finding_prevention_register": "/workspace/critique-ledger-m9-glm-20260723/Arnold/evidence/finding-prevention-register.json",
+    "unified_authority_research": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md"
   },
   "north_star_guard": "Unavailable denominators (SLO baselines, measured p95, productive/replay fractions, cost attribution, compaction time, projection I/O latency) are preserved as UNKNOWN, never 0 or success evidence.",
   "entry_count": 25,

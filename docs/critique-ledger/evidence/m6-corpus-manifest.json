@@ -1,0 +1,67 @@
+{
+  "schema": "cl.m6-corpus-manifest.v1",
+  "generated_at": "2026-07-24T00:00:00Z",
+  "generated_by": "tools/generate_cl1_m6_corpus.py",
+  "source": {
+    "repository": "/workspace/custody-control-plane-20260714/Arnold",
+    "revision": "ea2be1fe36c42c4f19afedd2c096b5dcec7c56df",
+    "revision_verified": true,
+    "revision_verification_method": "git cat-file -t (commit object check)",
+    "plan": "m6-exact-contract-and-20260716-1303",
+    "plan_path": ".megaplan/plans/m6-exact-contract-and-20260716-1303",
+    "rounds_inventoried": "v1-v5"
+  },
+  "source_byte_hashes": {
+    "algorithm": "sha256",
+    "raw_hash": "sha256:047ad94e7ae23ea59e6be274ab3433f72164af79f7dd18336733cd2f1cc72738",
+    "redacted_hash": "sha256:047ad94e7ae23ea59e6be274ab3433f72164af79f7dd18336733cd2f1cc72738"
+  },
+  "retained_byte_hashes": {
+    "corpus_fixture": "tests/fixtures/critique_ledger/m6-corpus.json",
+    "algorithm": "sha256",
+    "hash": "sha256:047ad94e7ae23ea59e6be274ab3433f72164af79f7dd18336733cd2f1cc72738"
+  },
+  "schema_model_profile_prompt_vectors": {
+    "artifact_schemas_covered": [
+      "plan_v{N}.meta.json (v1-v5)",
+      "critique_v{N}.json (v1-v5)",
+      "evaluator_verdict_v{N}.json (v1-v5)",
+      "gate_signals_v{N}.json (v1-v5)",
+      "critique_custody_v{N}.json (v1-v5)",
+      "step_receipt_critique_v{N}.json (v1-v5)",
+      "step_receipt_gate_v{N}.json (v1-v5)",
+      "critique_check_*_producer_v{N}.json (various checks, v1-v5)",
+      "state.json",
+      "contract.json",
+      "faults.json",
+      "phase_result.json"
+    ],
+    "evaluator_model_used": "claude-sonnet-4-20250514 (documented in evaluator_verdict)",
+    "critique_producer_models": "multiple (per check dimension)",
+    "prompt_vectors": "RETAINED in critique_raw_v{N}.txt and critique_check_*_raw_v{N}.txt (redacted)"
+  },
+  "custody_references": {
+    "critique_custody_versions": ["v1", "v2", "v3", "v4", "v5"],
+    "step_receipts_present": ["critique", "gate"],
+    "wbc_receipt_references": "derived from gate_signals and evaluator_verdict"
+  },
+  "availability": {
+    "overall": "complete",
+    "missing_required_artifacts": [],
+    "unavailable_evidence": [],
+    "redaction_applied": true,
+    "redaction_rules": [
+      "Workspace paths → <SOURCE_REPO>",
+      "Python site-packages → <PYTHON_SITE>",
+      "Home directory → <HOME>",
+      "Temp paths → <TMP>"
+    ]
+  },
+  "limitations": [
+    "Prompts and completions are redacted (paths deterministically replaced) but retain content-addressed hashes for integrity verification.",
+    "Free-form critique raw text is redacted; exact prompts are stored as redacted content with SHA-256 hashes.",
+    "Private repository evidence (evaluator credentials, model API keys, runtime secrets) was never captured.",
+    "Historical replay of v1-v5 requires the preserved repository at the exact revision; replay from fixture alone provides redacted bytes sufficient for semantic extraction.",
+    "Not all producer files are available for every round/check combination (some rounds had different check dimensions)."
+  ]
+}

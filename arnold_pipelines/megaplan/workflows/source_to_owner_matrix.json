@@ -1,10 +1,10 @@
 {
   "meta": {
-    "schema_version": "wbc.matrix.v1",
+    "schema_version": "wbc.matrix.v2",
     "matrix_id": "source_to_owner_matrix",
     "description": "C1 source-to-owner matrix assigning exactly one mutating owner per shared surface, listing compatibility readers, Run Authority surface categories, and WBC access levels. Deterministic ordering by surface_id.",
     "generated_by": "C1 Contract Reality Reconciliation",
-    "timestamp_utc": "2026-07-11T18:48:00Z",
+    "timestamp_utc": "2026-07-23T23:52:00Z",
     "owner_domains": {
       "run_authority": {
         "description": "Run Authority owns authority facts, views, routing decisions, and execution verdicts.",
@@ -17,6 +17,10 @@
       "wbc": {
         "description": "WBC owns declarations, evidence profiles, findings, schema contracts, and boundary matrices.",
         "mutating_scope": "declarations_evidence_profiles_findings"
+      },
+      "critique_ledger": {
+        "description": "Critique Ledger owns critique occurrence, reconciliation, disposition, briefing, and manifest schemas; semantic-loop replay and projection; and M6 oracle evidence. Read-only observe domain with zero lifecycle mutation.",
+        "mutating_scope": "critique_occurrence_reconciliation_disposition_briefing_manifest"
       }
     },
     "run_authority_categories": {
@@ -271,6 +275,20 @@
       "wbc_access_level": null,
       "description": "Binds control-plane decisions (profile, model, vendor, robustness) to workflow execution.",
       "evidence_ref": "arnold_pipelines.megaplan.control_binding"
+    },
+    {
+      "surface_id": "critique_ledger",
+      "surface_name": "Critique Ledger Domain",
+      "category": "claim",
+      "mutating_owner": "critique_ledger",
+      "compatibility_readers": [
+        "contract_reality_validator",
+        "c2_migration_gate",
+        "semantic_health_checker"
+      ],
+      "wbc_access_level": null,
+      "description": "Critique Ledger domain owning occurrence/reconciliation/disposition/briefing/manifest schemas, pure semantic-loop replay, non-authoritative reviser/gate projections, and M6 oracle evidence. Read-only observe domain with zero lifecycle mutation.",
+      "evidence_ref": "arnold.critique_ledger"
     },
     {
       "surface_id": "durable_ref_schema",

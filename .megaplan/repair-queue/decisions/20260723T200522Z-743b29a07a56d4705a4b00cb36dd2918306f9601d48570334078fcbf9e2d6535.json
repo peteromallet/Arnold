@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request_decision",
+  "decision_id": "743b29a07a56d4705a4b00cb36dd2918306f9601d48570334078fcbf9e2d6535",
+  "request_id": "40552f538a24b87d6533ead16746c73c7dfb559a18b5586989e75bc3bff943e5",
+  "decision": "accepted",
+  "reason": "queued",
+  "related_request_id": "",
+  "created_at": "2026-07-23T20:05:22Z",
+  "resident_delegation": {
+    "schema_version": "arnold-resident-delegation-provenance-v1",
+    "applicability": "not_applicable",
+    "transport": "non_discord",
+    "source_kind": "codex_operator_request"
+  }
+}

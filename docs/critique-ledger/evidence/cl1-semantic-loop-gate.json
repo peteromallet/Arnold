@@ -1,0 +1,148 @@
+{
+  "schema": "cl.semantic-loop-gate.v1",
+  "generated_at": "2026-07-24T01:00:56.096104+00:00",
+  "generated_by": "tools/generate_cl1_semantic_loop_gate.py",
+  "implementation_hashes": {
+    "semantic_loop": "4b3bd7337fccbe6501add9b7eebced2c11d8d4367f762b224647952342abd3fd",
+    "schemas": "0fd36a75e0e723e6f889ecf7126812c3c59ca9c6a638d2ca20ce685dc6c4c7bb"
+  },
+  "source_hashes": {
+    "head_sha": "d365ef68592b930c7f55c7f40f9b90af8cd03c06",
+    "corpus_hash": "bd8a244ccb1a39b8d50a6003522586afb4cdb049a8f5f5f2172919ab90765233",
+    "oracle_hash": "5ff15bc92d1a5f32d4ba8d60b001cb6a62502f154d0df2c24f8aed0ad8fbcf64",
+    "corpus_path": "/workspace/critique-ledger-m9-glm-20260723/Arnold/tests/fixtures/critique_ledger/m6-corpus.json",
+    "oracle_path": "/workspace/critique-ledger-m9-glm-20260723/Arnold/docs/critique-ledger/evidence/m6-oracle.json",
+    "m6_source_revision": "ea2be1fe36c42c4f19afedd2c096b5dcec7c56df"
+  },
+  "schema_versions": {
+    "occurrence_schema_version": "cl.schema.v1",
+    "corpus_schema_version": "cl.m6-corpus.v1",
+    "oracle_schema_version": "cl.m6-oracle.v1"
+  },
+  "projection_hashes": {
+    "manifest_hash": "dd1db89dde68e2d464ea05ad53c9c27d07d338bb20125608e9bb11ae1bc3457e",
+    "briefing_hash": "f93e6a871ef5d4c1ff05348bd9531d146d9d96c3372729cb5db20ba169bea792",
+    "reviser_projection_hash": "db3b663d5f399309c546c6cf35af858aae2380a487aec333a1aecb14d9b3531e",
+    "gate_projection_hash": "8f077f2d6bb9e255d8081c9c2301a6aa46ec006d909577df56b44b5d4dfe7a18"
+  },
+  "reconciliation_event_hashes": {
+    "five_to_one_reconciliation_hash": "87222d2711d56efdfb9c1db5d22456d18c9750111f68a501457ef7993c8b3199"
+  },
+  "wbc_receipt_references": [
+    "wbc-001"
+  ],
+  "assertions": {
+    "five_to_one": {
+      "claim": "Five occurrences reconciled to one semantic finding via evaluator-authored reconciliation event",
+      "oracle_fact": 4,
+      "semantic_finding_id": "sem-finding-scope-god-task",
+      "canonical_finding_id": "CF-CD1C58FBC288E3BBA77C",
+      "occurrence_count": 5,
+      "reconciliation_hash": "87222d2711d56efdfb9c1db5d22456d18c9750111f68a501457ef7993c8b3199",
+      "verified": true
+    },
+    "limitation_reopen": {
+      "claim": "Accepted replay limitation with explicit reopen condition",
+      "oracle_fact": 5,
+      "reopen_condition": "Restore preserved repository at revision ea2be1fe and re-run generate_cl1_m6_corpus.py",
+      "verified": true
+    }
+  },
+  "failure_case_results": {
+    "first_replay_error": null,
+    "second_replay_error": null,
+    "any_replay_failed": false
+  },
+  "zero_write_result": {
+    "passed": true,
+    "assertion": "Semantic loop functions are pure \u2014 zero filesystem writes and zero subprocess calls",
+    "evidence": "tests/arnold_pipelines/megaplan/test_zero_write_mutation_gate.py::TestSemanticLoopZeroWrite",
+    "detail": "Zero-write assertion recorded; proof in test suite"
+  },
+  "reviewer_state": {
+    "reviewed": false,
+    "reviewer": "",
+    "reviewed_at": "",
+    "notes": "Pending reviewer sign-off"
+  },
+  "unresolved_gaps": [],
+  "verdict": {
+    "accepted": true,
+    "reason": "All gate checks passed \u2014 custody, freshness, replay equality, authority, schema, and prerequisite checks complete"
+  },
+  "next_authorized_gate": "CL2 handoff (T12)",
+  "checks_detail": {
+    "custody": {
+      "passed": true,
+      "valid": true,
+      "failure_count": 0,
+      "detail": "Custody valid"
+    },
+    "reconciliation": {
+      "passed": true,
+      "accepted": true,
+      "total_semantic_findings": 1,
+      "detail": "Reconciliation accepted (1 finding(s))"
+    },
+    "disposition": {
+      "passed": true,
+      "accepted": true,
+      "family_counts": {
+        "accepted-risk": 1
+      },
+      "detail": "Disposition accepted"
+    },
+    "five_to_one_assertion": {
+      "passed": true,
+      "semantic_finding_id": "sem-finding-scope-god-task",
+      "mapped_occurrence_count": 5,
+      "total_semantic_findings": 1,
+      "detail": "Five-to-one assertion holds: 5 occurrences \u2192 1 semantic finding"
+    },
+    "limitation_reopen_assertion": {
+      "passed": true,
+      "is_reopen": true,
+      "has_reopen_predicate": true,
+      "detail": "Accepted-risk disposition with reopen predicate present"
+    },
+    "determinism": {
+      "passed": true,
+      "manifest_hash": "dd1db89dde68e2d464ea05ad53c9c27d07d338bb20125608e9bb11ae1bc3457e",
+      "briefing_hash": "f93e6a871ef5d4c1ff05348bd9531d146d9d96c3372729cb5db20ba169bea792",
+      "reviser_projection_hash": "db3b663d5f399309c546c6cf35af858aae2380a487aec333a1aecb14d9b3531e",
+      "gate_projection_hash": "8f077f2d6bb9e255d8081c9c2301a6aa46ec006d909577df56b44b5d4dfe7a18",
+      "manifest_match": true,
+      "briefing_match": true,
+      "reviser_match": true,
+      "gate_match": true,
+      "detail": "All projection hashes match across runs"
+    },
+    "zero_write": {
+      "passed": true,
+      "assertion": "Semantic loop functions are pure \u2014 zero filesystem writes and zero subprocess calls",
+      "evidence": "tests/arnold_pipelines/megaplan/test_zero_write_mutation_gate.py::TestSemanticLoopZeroWrite",
+      "detail": "Zero-write assertion recorded; proof in test suite"
+    },
+    "authority": {
+      "passed": true,
+      "custody_valid": true,
+      "reconciliation_accepted": true,
+      "disposition_accepted": true,
+      "detail": "All authority checks pass"
+    },
+    "schema_version": {
+      "passed": true,
+      "expected": "cl.schema.v1",
+      "observed": [
+        "cl.schema.v1"
+      ],
+      "detail": "All occurrences use schema version cl.schema.v1"
+    },
+    "corpus_oracle_freshness": {
+      "passed": true,
+      "corpus_hash": "bd8a244ccb1a39b8d50a6003522586afb4cdb049a8f5f5f2172919ab90765233",
+      "oracle_hash": "5ff15bc92d1a5f32d4ba8d60b001cb6a62502f154d0df2c24f8aed0ad8fbcf64",
+      "detail": "Corpus and oracle hashes available"
+    }
+  }
+}

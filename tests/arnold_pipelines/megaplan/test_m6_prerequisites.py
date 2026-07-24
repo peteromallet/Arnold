@@ -393,6 +393,479 @@ class TestMissingAttestation:
 
 
 # ---------------------------------------------------------------------------
+# EXPLAINED_BENIGN edge cases (T2b)
+# ---------------------------------------------------------------------------
+
+
+class TestExplainedBenignM5Head:
+    """Tests for EXPLAINED_BENIGN resolution of M5-to-HEAD advancement."""
+
+    def test_exact_ancestry_match_yields_pass_with_explained_benign(self) -> None:
+        """When resolution evidence matches exact bound_head and ancestry → PASS with EXPLAINED_BENIGN."""
+        attestation = _make_final_attestation_dict(
+            bound_head="8bb779dcaa08edcc92736eb265689ad894d8d839",
+        )
+
+        with mock.patch(
+            "tools.verify_m6_prerequisites._read_json",
+            return_value=attestation,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.current_head",
+            return_value="904560e44aaa0f6ae59f0834ad062b017666adaa",
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.commit_exists",
+            return_value=True,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.is_ancestor",
+            return_value=True,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites._load_resolution",
+            return_value={
+                "m5_bound_head_relationship": {
+                    "m5_bound_head": "8bb779dcaa08edcc92736eb265689ad894d8d839",
+                    "m5_is_ancestor_of_head": True,
+                    "m6_landed_squash_merge": "3fb5cac558499eba56ec54eeb4e10a96900d362a",
+                    "verdict": "Legitimate post-M5 evolution",
+                }
+            },
+        ):
+            result = check_m5_bound_head_vs_current_head()
+            assert result["status"] == "PASS"
+            assert result.get("resolution_class") == "EXPLAINED_BENIGN"
+            assert result["exact_match"] is False
+            assert result["m5_is_ancestor_of_head"] is True
+
+    def test_stale_resolution_bound_head_mismatch_yields_incoherent(self) -> None:
+        """When resolution refers to a different bound_head → INCOHERENT (stale evidence)."""
+        attestation = _make_final_attestation_dict(
+            bound_head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+
+        with mock.patch(
+            "tools.verify_m6_prerequisites._read_json",
+            return_value=attestation,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.current_head",
+            return_value="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.commit_exists",
+            return_value=True,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.is_ancestor",
+            return_value=True,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites._load_resolution",
+            return_value={
+                "m5_bound_head_relationship": {
+                    "m5_bound_head": "cccccccccccccccccccccccccccccccccccccccc",
+                    "m5_is_ancestor_of_head": True,
+                    "m6_landed_squash_merge": "3fb5cac558499eba56ec54eeb4e10a96900d362a",
+                    "verdict": "Stale resolution for a different bound_head",
+                }
+            },
+        ):
+            result = check_m5_bound_head_vs_current_head()
+            assert result["status"] == "INCOHERENT"
+            assert "resolution_class" not in result
+
+    def test_divergent_history_landed_merge_not_ancestor_yields_incoherent(self) -> None:
+        """When landed squash merge is no longer ancestor → INCOHERENT (divergent history)."""
+        attestation = _make_final_attestation_dict(
+            bound_head="8bb779dcaa08edcc92736eb265689ad894d8d839",
+        )
+
+        def _is_ancestor_side_effect(maybe_ancestor, descendant):
+            # M5 is ancestor of HEAD, but landed merge is NOT
+            if maybe_ancestor == "8bb779dcaa08edcc92736eb265689ad894d8d839":
+                return True
+            if maybe_ancestor == "3fb5cac558499eba56ec54eeb4e10a96900d362a":
+                return False
+            return True
+
+        with mock.patch(
+            "tools.verify_m6_prerequisites._read_json",
+            return_value=attestation,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.current_head",
+            return_value="904560e44aaa0f6ae59f0834ad062b017666adaa",
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.commit_exists",
+            return_value=True,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.is_ancestor",
+            side_effect=_is_ancestor_side_effect,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites._load_resolution",
+            return_value={
+                "m5_bound_head_relationship": {
+                    "m5_bound_head": "8bb779dcaa08edcc92736eb265689ad894d8d839",
+                    "m5_is_ancestor_of_head": True,
+                    "m6_landed_squash_merge": "3fb5cac558499eba56ec54eeb4e10a96900d362a",
+                    "verdict": "Legitimate post-M5 evolution",
+                }
+            },
+        ):
+            result = check_m5_bound_head_vs_current_head()
+            assert result["status"] == "INCOHERENT"
+            assert "resolution_class" not in result
+
+    def test_missing_resolution_ancestor_mismatch_yields_incoherent(self) -> None:
+        """When bound_head is ancestor but no resolution → INCOHERENT."""
+        attestation = _make_final_attestation_dict(
+            bound_head="8bb779dcaa08edcc92736eb265689ad894d8d839",
+        )
+
+        with mock.patch(
+            "tools.verify_m6_prerequisites._read_json",
+            return_value=attestation,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.current_head",
+            return_value="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.commit_exists",
+            return_value=True,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.is_ancestor",
+            return_value=True,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites._load_resolution",
+            return_value=None,  # No resolution available
+        ):
+            result = check_m5_bound_head_vs_current_head()
+            assert result["status"] == "INCOHERENT"
+            assert "resolution_class" not in result
+
+
+class TestExplainedBenignSourceCompiler:
+    """Tests for EXPLAINED_BENIGN resolution of source_compiler.py mismatch."""
+
+    def test_source_compiler_exact_hashes_yield_explained_benign(self) -> None:
+        """When resolution hashes match current/merge exactly → EXPLAINED_BENIGN."""
+        current_hash = "5e1f56262810790966696a7720e93fa0bccaabfe4085e70fa76bb0fd64eb7186"
+        merge_hash = "0f41737c72b6f798f929623c2d650723166f45fc1c683082ea173e83f2aa16d5"
+        modifying_sha = "4d1f22dbbd20efb9c246ed461f65b3cd57d91090"
+
+        resolution = {
+            "source_compiler_mismatch_investigation": {
+                "status": "explained_and_benign",
+                "current_sha256": current_hash,
+                "merge_sha256": merge_hash,
+                "modifying_commit": {
+                    "sha": modifying_sha,
+                    "subject": "fix(workflow): retain missing boundary contract diagnostics",
+                    "is_ancestor_of_head": True,
+                },
+                "change_analysis": {
+                    "wbc_owner_aligned": True,
+                },
+                "verdict": "Legitimate WBC-owned post-merge evolution",
+            }
+        }
+
+        from tools.verify_m6_prerequisites import _check_source_compiler_explained
+
+        with mock.patch(
+            "tools.verify_m6_prerequisites.commit_exists",
+            return_value=True,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.is_ancestor",
+            return_value=True,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.current_head",
+            return_value="904560e44aaa0f6ae59f0834ad062b017666adaa",
+        ):
+            result = _check_source_compiler_explained(current_hash, merge_hash, resolution)
+            assert result is not None
+            assert result["resolution_class"] == "EXPLAINED_BENIGN"
+            assert result["modifying_commit"] == modifying_sha
+
+    def test_altered_source_bytes_different_current_hash_yields_none(self) -> None:
+        """When current_hash in resolution doesn't match actual → None (no resolution)."""
+        current_hash_actual = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        merge_hash_actual = "0f41737c72b6f798f929623c2d650723166f45fc1c683082ea173e83f2aa16d5"
+        modifying_sha = "4d1f22dbbd20efb9c246ed461f65b3cd57d91090"
+
+        resolution = {
+            "source_compiler_mismatch_investigation": {
+                "status": "explained_and_benign",
+                "current_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "merge_sha256": merge_hash_actual,
+                "modifying_commit": {
+                    "sha": modifying_sha,
+                    "subject": "fix",
+                    "is_ancestor_of_head": True,
+                },
+                "change_analysis": {"wbc_owner_aligned": True},
+                "verdict": "something",
+            }
+        }
+
+        from tools.verify_m6_prerequisites import _check_source_compiler_explained
+
+        with mock.patch(
+            "tools.verify_m6_prerequisites.commit_exists",
+            return_value=True,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.is_ancestor",
+            return_value=True,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.current_head",
+            return_value="904560e44aaa0f6ae59f0834ad062b017666adaa",
+        ):
+            result = _check_source_compiler_explained(current_hash_actual, merge_hash_actual, resolution)
+            assert result is None
+
+    def test_modified_by_non_ancestor_yields_none(self) -> None:
+        """When modifying commit is not ancestor of HEAD → None."""
+        current_hash = "5e1f56262810790966696a7720e93fa0bccaabfe4085e70fa76bb0fd64eb7186"
+        merge_hash = "0f41737c72b6f798f929623c2d650723166f45fc1c683082ea173e83f2aa16d5"
+        modifying_sha = "4d1f22dbbd20efb9c246ed461f65b3cd57d91090"
+
+        resolution = {
+            "source_compiler_mismatch_investigation": {
+                "status": "explained_and_benign",
+                "current_sha256": current_hash,
+                "merge_sha256": merge_hash,
+                "modifying_commit": {
+                    "sha": modifying_sha,
+                    "subject": "fix",
+                    "is_ancestor_of_head": True,
+                },
+                "change_analysis": {"wbc_owner_aligned": True},
+                "verdict": "something",
+            }
+        }
+
+        from tools.verify_m6_prerequisites import _check_source_compiler_explained
+
+        with mock.patch(
+            "tools.verify_m6_prerequisites.commit_exists",
+            return_value=True,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.is_ancestor",
+            return_value=False,  # modifying commit NOT ancestor
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.current_head",
+            return_value="904560e44aaa0f6ae59f0834ad062b017666adaa",
+        ):
+            result = _check_source_compiler_explained(current_hash, merge_hash, resolution)
+            assert result is None
+
+    def test_wbc_owner_not_aligned_yields_none(self) -> None:
+        """When change_analysis.wbc_owner_aligned is False → None."""
+        current_hash = "5e1f56262810790966696a7720e93fa0bccaabfe4085e70fa76bb0fd64eb7186"
+        merge_hash = "0f41737c72b6f798f929623c2d650723166f45fc1c683082ea173e83f2aa16d5"
+        modifying_sha = "4d1f22dbbd20efb9c246ed461f65b3cd57d91090"
+
+        resolution = {
+            "source_compiler_mismatch_investigation": {
+                "status": "explained_and_benign",
+                "current_sha256": current_hash,
+                "merge_sha256": merge_hash,
+                "modifying_commit": {
+                    "sha": modifying_sha,
+                    "subject": "fix",
+                    "is_ancestor_of_head": True,
+                },
+                "change_analysis": {"wbc_owner_aligned": False},
+                "verdict": "something",
+            }
+        }
+
+        from tools.verify_m6_prerequisites import _check_source_compiler_explained
+
+        with mock.patch(
+            "tools.verify_m6_prerequisites.commit_exists",
+            return_value=True,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.is_ancestor",
+            return_value=True,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.current_head",
+            return_value="904560e44aaa0f6ae59f0834ad062b017666adaa",
+        ):
+            result = _check_source_compiler_explained(current_hash, merge_hash, resolution)
+            assert result is None
+
+
+class TestExplainedBenignV2Matrices:
+    """Tests for V2 matrix delta EXPLAINED_BENIGN classification."""
+
+    def test_known_v2_matrix_with_v2_schema_yields_explained_benign(self, tmp_path: Path) -> None:
+        """When a file is in V2_MATRIX_FILES and has v2 schema → EXPLAINED_BENIGN."""
+        matrix_file = tmp_path / "source_to_owner_matrix.json"
+        matrix_file.parent.mkdir(parents=True, exist_ok=True)
+        matrix_file.write_text(json.dumps({
+            "meta": {"schema_version": "v2"},
+            "data": {"rows": []},
+        }))
+
+        from tools.verify_m6_prerequisites import _check_v2_matrix_delta, V2_MATRIX_FILES
+
+        with mock.patch(
+            "tools.verify_m6_prerequisites.REPO_ROOT", tmp_path
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.V2_MATRIX_FILES",
+            {"source_to_owner_matrix.json"},
+        ):
+            result = _check_v2_matrix_delta("source_to_owner_matrix.json")
+            assert result is not None
+            assert result["resolution_class"] == "EXPLAINED_BENIGN"
+            assert "v2" in result["resolution_source"] or "cl1" in result["resolution_source"].lower()
+
+    def test_unrecognized_matrix_not_in_v2_set_yields_none(self, tmp_path: Path) -> None:
+        """When a file is NOT in V2_MATRIX_FILES → None (unrecognized change)."""
+        unknown_file = tmp_path / "unknown_matrix.json"
+        unknown_file.parent.mkdir(parents=True, exist_ok=True)
+        unknown_file.write_text(json.dumps({
+            "meta": {"schema_version": "v2"},
+        }))
+
+        from tools.verify_m6_prerequisites import _check_v2_matrix_delta
+
+        with mock.patch(
+            "tools.verify_m6_prerequisites.REPO_ROOT", tmp_path
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.V2_MATRIX_FILES",
+            {"source_to_owner_matrix.json"},  # different set
+        ):
+            result = _check_v2_matrix_delta("unknown_matrix.json")
+            assert result is None
+
+    def test_v2_matrix_without_v2_schema_yields_none(self, tmp_path: Path) -> None:
+        """When a V2_MATRIX_FILES entry has v1 schema → None (content doesn't match)."""
+        matrix_file = tmp_path / "contract_to_producer_matrix.json"
+        matrix_file.parent.mkdir(parents=True, exist_ok=True)
+        matrix_file.write_text(json.dumps({
+            "meta": {"schema_version": "v1"},
+            "data": {"rows": []},
+        }))
+
+        from tools.verify_m6_prerequisites import _check_v2_matrix_delta
+
+        with mock.patch(
+            "tools.verify_m6_prerequisites.REPO_ROOT", tmp_path
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.V2_MATRIX_FILES",
+            {"contract_to_producer_matrix.json"},
+        ):
+            result = _check_v2_matrix_delta("contract_to_producer_matrix.json")
+            assert result is None
+
+    def test_v2_matrix_file_missing_on_disk_yields_none(self, tmp_path: Path) -> None:
+        """When a V2_MATRIX_FILES entry doesn't exist on disk → None."""
+        from tools.verify_m6_prerequisites import _check_v2_matrix_delta
+
+        with mock.patch(
+            "tools.verify_m6_prerequisites.REPO_ROOT", tmp_path
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.V2_MATRIX_FILES",
+            {"nonexistent_matrix.json"},
+        ):
+            result = _check_v2_matrix_delta("nonexistent_matrix.json")
+            assert result is None
+
+
+class TestExplainedBenignWbcFileHashes:
+    """Integration tests: check_wbc_file_hashes with EXPLAINED_BENIGN path."""
+
+    def test_v2_matrix_mismatch_resolved_as_explained_benign(self, tmp_path: Path) -> None:
+        """When a v2 matrix file mismatches, it should be classified EXPLAINED_BENIGN."""
+        current_content = json.dumps({
+            "meta": {"schema_version": "v2"},
+            "data": {"rows": [{"test": "row"}]},
+        }).encode("utf-8")
+        merge_content = json.dumps({
+            "meta": {"schema_version": "v1"},
+            "data": {"rows": []},
+        }).encode("utf-8")
+        current_hash = hashlib.sha256(current_content).hexdigest()
+        merge_hash = hashlib.sha256(merge_content).hexdigest()
+
+        # Create the v2 matrix file on disk
+        matrix_path = tmp_path / "arnold_pipelines" / "megaplan" / "workflows" / "source_to_owner_matrix.json"
+        matrix_path.parent.mkdir(parents=True, exist_ok=True)
+        matrix_path.write_bytes(current_content)
+
+        with mock.patch(
+            "tools.verify_m6_prerequisites.commit_exists",
+            return_value=True,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.ALL_WBC_FILES",
+            ["arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json"],
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.WBC_BOUNDARY_FILES", []
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.WBC_RUNTIME_FILES", []
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.WBC_SCHEMA_FILES",
+            ["arnold_pipelines/megaplan/workflows/source_to_owner_matrix.json"],
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.WBC_SUPPORT_FILES", []
+        ), mock.patch(
+            "tools.verify_m6_prerequisites._sha256_file",
+            return_value=current_hash,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.file_content_at_commit",
+            return_value=merge_content,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites._check_v2_matrix_delta",
+            return_value={
+                "resolution_class": "EXPLAINED_BENIGN",
+                "resolution_source": "cl1.v2-matrix-addition",
+                "resolution_detail": "CL1 additive declaration: v2",
+            },
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.REPO_ROOT", tmp_path
+        ):
+            result = check_wbc_file_hashes()
+            assert result["status"] == "PASS"
+            assert result["summary"]["explained_benign"] == 1
+            assert result["summary"]["mismatched"] == 0
+
+    def test_unrecognized_file_mismatch_yields_incoherent(self, tmp_path: Path) -> None:
+        """When a non-v2, non-source_compiler file mismatches → INCOHERENT."""
+        current_content = b"new content\n"
+        merge_content = b"old content\n"
+        current_hash = hashlib.sha256(current_content).hexdigest()
+
+        unknown_file = tmp_path / "arnold" / "workflow" / "unknown.py"
+        unknown_file.parent.mkdir(parents=True, exist_ok=True)
+        unknown_file.write_bytes(current_content)
+
+        with mock.patch(
+            "tools.verify_m6_prerequisites.commit_exists",
+            return_value=True,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.ALL_WBC_FILES",
+            ["arnold/workflow/unknown.py"],
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.WBC_BOUNDARY_FILES",
+            ["arnold/workflow/unknown.py"],
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.WBC_RUNTIME_FILES", []
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.WBC_SCHEMA_FILES", []
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.WBC_SUPPORT_FILES", []
+        ), mock.patch(
+            "tools.verify_m6_prerequisites._sha256_file",
+            return_value=current_hash,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.file_content_at_commit",
+            return_value=merge_content,
+        ), mock.patch(
+            "tools.verify_m6_prerequisites._check_explained_benign_file",
+            return_value=None,  # no resolution
+        ), mock.patch(
+            "tools.verify_m6_prerequisites.REPO_ROOT", tmp_path
+        ):
+            result = check_wbc_file_hashes()
+            assert result["status"] == "INCOHERENT"
+            assert result["summary"]["mismatched"] == 1
+
+
+# ---------------------------------------------------------------------------
 # Integration / aggregate
 # ---------------------------------------------------------------------------
 

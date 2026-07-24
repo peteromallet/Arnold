@@ -1,0 +1,143 @@
+{
+  "schema": "cl.retention-class-mapping.v1",
+  "generated_at": "2026-07-24T00:00:00Z",
+  "description": "Maps every critique ledger evidence class to its retention, redaction, privacy, and encryption policy using only landed WBC enum values.",
+  "evidence_class_mappings": [
+    {
+      "evidence_class": "critique_prompts_and_completions",
+      "description": "Raw prompts sent to critique producer models and their completion outputs.",
+      "retention_mode": "run",
+      "redaction_mode": "default_on",
+      "privacy_class": "confidential",
+      "retention_class": "run",
+      "encryption": "encrypted_governed_references",
+      "access": "restricted to critique_ledger owner domain writers and compatibility readers",
+      "availability": "RETAINED (redacted in fixture) / GOVERNED_REFERENCE (source repo)",
+      "expiry": "run lifetime",
+      "tombstone": "marker_tombstone on run completion",
+      "reopen_behavior": "Reopen requires preserved repository at exact source revision",
+      "rationale": "Prompts and completions may contain sensitive plan details and model interactions. Redacted on by default, encrypted at rest, governed references for audit trail."
+    },
+    {
+      "evidence_class": "critique_occurrence_envelopes",
+      "description": "CritiqueOccurrenceEnvelope records with occurrence_id, finding_id, semantic_finding_id, and producer metadata.",
+      "retention_mode": "run",
+      "redaction_mode": "default_on",
+      "privacy_class": "confidential",
+      "retention_class": "run",
+      "encryption": "encrypted_governed_references",
+      "access": "restricted to critique_ledger owner domain",
+      "availability": "RETAINED",
+      "expiry": "run lifetime",
+      "tombstone": "marker_tombstone on run completion",
+      "reopen_behavior": "Reopen requires accepted FindingReconciliationEvent from evaluator",
+      "rationale": "Occurrence envelopes contain producer-local finding IDs and metadata that should not be exposed beyond the critique ledger domain."
+    },
+    {
+      "evidence_class": "finding_reconciliation_events",
+      "description": "FindingReconciliationEvent records mapping occurrence IDs to canonical finding IDs with relationship types.",
+      "retention_mode": "audit",
+      "redaction_mode": "none",
+      "privacy_class": "restricted",
+      "retention_class": "audit",
+      "encryption": "field_level_encryption",
+      "access": "restricted access, audited reads",
+      "availability": "RETAINED",
+      "expiry": "audit lifetime (permanent until explicit tombstone)",
+      "tombstone": "explicit authority tombstone required",
+      "reopen_behavior": "Reopen requires new FindingReconciliationEvent from evaluator authority",
+      "rationale": "Reconciliation decisions are the semantic authority — they must be preserved verbatim with no redaction to maintain the integrity of finding relationships. Field-level encryption protects sensitive fields while allowing structural audit."
+    },
+    {
+      "evidence_class": "finding_disposition_events",
+      "description": "FindingDispositionEvent records across 8 disposition families with reason_subcodes, severity, evidence limits, action/non-action, and reopen predicates.",
+      "retention_mode": "audit",
+      "redaction_mode": "none",
+      "privacy_class": "restricted",
+      "retention_class": "audit",
+      "encryption": "field_level_encryption",
+      "access": "restricted access, audited reads",
+      "availability": "RETAINED",
+      "expiry": "audit lifetime (permanent until explicit tombstone)",
+      "tombstone": "explicit authority tombstone required",
+      "reopen_behavior": "Reopen requires new FindingDispositionEvent with reopen predicate satisfied",
+      "rationale": "Dispositions encode accountability decisions — acted-on, ignored, deferred, rejected decisions must survive redaction. Field-level encryption protects sensitive rationale fields."
+    },
+    {
+      "evidence_class": "domain_briefing_envelopes",
+      "description": "DomainBriefingEnvelope with provisional CL1 budgets (standard: 2 domains/10 findings, high: 4/25, exhaustive: all/unbounded), linked spillover, and no silent truncation.",
+      "retention_mode": "run",
+      "redaction_mode": "default_on",
+      "privacy_class": "confidential",
+      "retention_class": "run",
+      "encryption": "encrypted_governed_references",
+      "access": "restricted to critique_ledger owner domain and briefing recipients",
+      "availability": "RETAINED",
+      "expiry": "run lifetime",
+      "tombstone": "marker_tombstone on run completion",
+      "reopen_behavior": "Reopen requires regenerating briefing from current manifest state",
+      "rationale": "Briefings are consumable projections — they may contain cross-domain findings and should be protected but not retained beyond the run."
+    },
+    {
+      "evidence_class": "ledger_revision_manifests",
+      "description": "LedgerRevisionManifest with freshness vectors, included/excluded reasons, cross-domain references, input-set hashes, prior-revision hashes, and completeness maps.",
+      "retention_mode": "audit",
+      "redaction_mode": "none",
+      "privacy_class": "restricted",
+      "retention_class": "audit",
+      "encryption": "field_level_encryption",
+      "access": "restricted access, audited reads",
+      "availability": "RETAINED",
+      "expiry": "audit lifetime",
+      "tombstone": "explicit authority tombstone required",
+      "reopen_behavior": "Reopen requires rebuilding manifest from complete event chain",
+      "rationale": "Manifests are the authoritative revision anchor — they chain revisions via prior-revision hashes. Must be preserved verbatim to maintain the integrity of the append-only ledger."
+    },
+    {
+      "evidence_class": "private_repository_evidence",
+      "description": "Evidence artifacts stored in private repositories including evaluator credentials, model API keys, runtime secrets, and WBC activation receipts.",
+      "retention_mode": "audit",
+      "redaction_mode": "none",
+      "privacy_class": "restricted",
+      "retention_class": "audit",
+      "encryption": "field_level_encryption",
+      "access": "restricted access, audited reads",
+      "availability": "GOVERNED_REFERENCE (never captured in public corpus)",
+      "expiry": "audit lifetime",
+      "tombstone": "explicit authority tombstone required",
+      "reopen_behavior": "Reopen requires access to private repository with valid credentials",
+      "rationale": "Private repository evidence is never captured in the public corpus. Access requires governed references with field-level encryption. Redaction is NONE after secret exclusion (secrets are never captured)."
+    },
+    {
+      "evidence_class": "m6_corpus_fixture",
+      "description": "Frozen M6 corpus fixture with redacted paths, dual SHA-256 hashing, and explicit unavailable evidence with reopen conditions.",
+      "retention_mode": "audit",
+      "redaction_mode": "default_on",
+      "privacy_class": "confidential",
+      "retention_class": "audit",
+      "encryption": "encrypted_governed_references",
+      "access": "restricted to critique_ledger owner domain",
+      "availability": "RETAINED (fixture) / GOVERNED_REFERENCE (source repo)",
+      "expiry": "audit lifetime",
+      "tombstone": "marker_tombstone when source repo is unavailable",
+      "reopen_behavior": "Reopen requires preserved repository at exact source revision",
+      "rationale": "The corpus is the frozen M6 evidence — must be retained for audit but with path redaction to prevent workspace leakage."
+    }
+  ],
+  "cross_reference": {
+    "schemas_covered": [
+      "CritiqueOccurrenceEnvelope",
+      "FindingReconciliationEvent",
+      "FindingDispositionEvent",
+      "DomainBriefingEnvelope",
+      "LedgerRevisionManifest"
+    ],
+    "wbc_enums_used": {
+      "RetentionMode": ["run", "audit"],
+      "RedactionMode": ["default_on", "none"],
+      "PrivacyClass": ["confidential", "restricted"],
+      "RetentionClass": ["run", "audit"],
+      "PersistenceStatus": ["durable", "persistence_failed", "indeterminate"]
+    }
+  }
+}

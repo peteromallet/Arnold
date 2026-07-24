@@ -1,0 +1,13 @@
+{
+  "success": false,
+  "step": "resume",
+  "plan": "cl1-contract-ownership-and-m6-20260723-1920",
+  "phase": "finalize",
+  "resume_cursor": {
+    "phase": "finalize",
+    "retry_strategy": "check_provider_and_retry"
+  },
+  "exit_code": 1,
+  "stdout": "{\n  \"success\": false,\n  \"error\": \"parse_error\",\n  \"message\": \"Shannon output was not valid JSON: Expecting value: line 1 column 1 (char 0)\",\n  \"details\": {\n    \"raw_output\": \"error: Cannot find package 'commander' from '/workspace/runtime-candidates/arnold-99f8e0964a4cc4985b67039f402e91cda2411f9d/arnold_pipelines/megaplan/vendor/shannon/index.ts'\\n\\nBun v1.3.14 (Linux x64)\\n\"\n  }\n}\n",
+  "stderr": "M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin finalize=claude:claude-opus-4-7 shadows the profile default finalize=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.\n[megaplan] shannon session strategy for finalize: new (session f7b0ef03-567e-4b9b-829d-47f0c473243a).\n"
+}

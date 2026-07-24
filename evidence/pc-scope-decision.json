@@ -1,10 +1,10 @@
 {
   "schema": "m6.pc-scope-decision.v1",
-  "generated_at": "2026-07-21T23:36:18.298622+00:00",
+  "generated_at": "2026-07-24T01:10:44.993442+00:00",
   "generator": "tools/generate_m6_ownership_decision.py",
   "source_evidence": {
-    "prerequisite_verification": "/workspace/custody-control-plane-20260714/Arnold/evidence/m6-prerequisite-verification.json",
-    "migration_matrix_reconciled": "/workspace/custody-control-plane-20260714/Arnold/evidence/migration-matrix-reconciled.json"
+    "prerequisite_verification": "/workspace/critique-ledger-m9-glm-20260723/Arnold/evidence/m6-prerequisite-verification.json",
+    "migration_matrix_reconciled": "/workspace/critique-ledger-m9-glm-20260723/Arnold/evidence/migration-matrix-reconciled.json"
   },
   "default_interpretation": "program_counter",
   "default_rationale": "PC in checkpoint/cursor contexts defaults to native program counter. All committed source evidence (IR compiler, checkpoint module, runtime, trace) uses 'pc' as a zero-based instruction index. No repository evidence proves an alternative scope (Parity Corrective, control plane, or otherwise).",

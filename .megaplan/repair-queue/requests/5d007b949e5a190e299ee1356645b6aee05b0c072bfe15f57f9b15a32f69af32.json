@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "kind": "repair_request",
+  "request_id": "5d007b949e5a190e299ee1356645b6aee05b0c072bfe15f57f9b15a32f69af32",
+  "created_at": "2026-07-23T20:37:40Z",
+  "source": "lifecycle_failure",
+  "session": "cl1-contract-ownership-and-m6-20260723-1920",
+  "workspace": "/workspace/critique-ledger-m9-glm-20260723/Arnold",
+  "run_kind": "plan",
+  "marker_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/plans/cl1-contract-ownership-and-m6-20260723-1920",
+  "queue_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/repair-queue",
+  "target": {
+    "plan_dir": "/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/plans/cl1-contract-ownership-and-m6-20260723-1920",
+    "plan_name": "cl1-contract-ownership-and-m6-20260723-1920",
+    "workspace_path": "/workspace/critique-ledger-m9-glm-20260723/Arnold"
+  },
+  "problem_signature": {
+    "failure_kind": "phase_failed",
+    "current_state": "prepped",
+    "phase_or_step": "plan",
+    "milestone_or_plan": "cl1-contract-ownership-and-m6-20260723-1920",
+    "gate_recommendation": "Inspect phase output and resume from the failed phase.",
+    "blocked_task_id": "phase:plan",
+    "event_signature": ""
+  },
+  "problem_signature_key": "a17730cfccfbf23ec5fc23fde31bdfe860f1ea172d0b38bdb4f14c19d5da3caa",
+  "blocker_fingerprint": {
+    "schema_version": 1,
+    "current_state": "prepped",
+    "retry_strategy": "repair_request",
+    "failure_kind": "phase_failed",
+    "phase_or_step": "plan",
+    "milestone_or_plan": "cl1-contract-ownership-and-m6-20260723-1920",
+    "blocked_task_id": "phase:plan",
+    "target_fingerprint": "repair-target:v1:d8349c019b4683001d6baadb6fe076e37d022ef31181b22eff4af43a595aee71"
+  },
+  "blocker_id": "blocker:v2:11834d341ca1192768186fc487bfb787fcbe3ed07c6e798e7cc5264cfa8adfdd",
+  "predecessor_request_id": "",
+  "provenance": {
+    "producer": "lifecycle_failure",
+    "session": "cl1-contract-ownership-and-m6-20260723-1920",
+    "run_kind": "plan"
+  },
+  "evidence_refs": [
+    {
+      "kind": "problem_signature_digest",
+      "sha256": "3b6687aa2229ccb87c82be4d1e84a603d53e315796f2bc4b654c39f094482a7b"
+    },
+    {
+      "kind": "redacted_root_cause_hint_digest",
+      "sha256": "4ccc5c7543e3a824a404a085888cdb17dc685305d0ef4ce32d36e8d2f5f69598"
+    }
+  ],
+  "root_cause_hint_hash": "4ccc5c7543e3a824a404a085888cdb17dc685305d0ef4ce32d36e8d2f5f69598",
+  "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))"
+}

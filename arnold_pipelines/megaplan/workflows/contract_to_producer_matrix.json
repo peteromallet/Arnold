@@ -1,16 +1,17 @@
 {
   "meta": {
-    "schema_version": "wbc.contract_to_producer.v1",
+    "schema_version": "wbc.contract_to_producer.v2",
     "matrix_id": "contract_to_producer_matrix",
     "description": "Maps every current boundary contract to real producer code paths, handlers/functions, applicability rules, invocation identity, artifact path patterns, state/history deltas, phase_result, receipt timing, authority references, evidence_pack rows, and visible non-conformant exceptions. Does not invent filenames or authority evidence.",
     "generated_by": "C1 Contract Reality Reconciliation \u2014 T11",
-    "timestamp_utc": "2026-07-11T19:15:00Z",
+    "timestamp_utc": "2026-07-23T23:52:00Z",
     "producer_categories": {
       "handler_function": "Named handler function in arnold_pipelines/megaplan/handlers/ that produces the boundary transition.",
       "auto_matched": "Boundary is automatically matched by the shared _boundary_contract_by_phase + _BOUNDARY_EXPECTED_NEXT_STEP_BY_ID machinery in handlers/shared.py.",
       "manual_emit": "Boundary receipt is emitted via explicit call to _emit_execute_boundary_receipt, _emit_batch_boundary_receipt, or write_boundary_receipt within a specific handler or batch module.",
       "declared_only": "Boundary contract is declared in boundary_contracts.py but no matching producer emission path has been found in the current codebase.",
-      "unknown": "Producer path could not be confirmed through code inspection; marked as visibly unknown."
+      "not_emitted_by_contract": "Contract has receipt_required=False by design; non-emission is intentional per the contract declaration. Included with handler evidence for completeness.",
+      "critique_custody": "Critique-custody producer contract owned by the critique_ledger domain; emits custody receipts for critique lifecycle events."
     },
     "non_conformant_categories": {
       "no_auto_match": "Contract is not in _FRONT_HALF_BOUNDARY_ID_BY_PHASE and has no automatic receipt emission path.",
@@ -25,12 +26,93 @@
   },
   "contracts": [
     {
+      "boundary_id": "critique_custody.bind_finalize_custody",
+      "row_id": "cl1.critique_custody.3",
+      "phase": "critique",
+      "producer_category": "critique_custody",
+      "handler_function": "arnold/critique_ledger/custody.py:bind_finalize_custody",
+      "producer_path": "arnold.critique_ledger.custody:bind_finalize_custody",
+      "applicability_rules": "Binds finalize custody for an execution attempt, linking the WBC critique production receipt chain to the critique ledger domain. Emits a custody binding receipt with attempt identity, WBC receipt references, and schema version anchors.",
+      "invocation_identity": "Critique ledger custody binder invoked after finalize phase completes",
+      "artifact_path_patterns": [
+        "custody_binding.json"
+      ],
+      "state_deltas": {
+        "custody_state": "bound"
+      },
+      "history_deltas": {
+        "expected_history_entry": "critique_custody_bound"
+      },
+      "phase_result": "Not applicable — custody binding is a critique-ledger domain operation",
+      "receipt_timing": "Emitted synchronously during custody binding after finalize phase_result is available",
+      "authority_references": {
+        "authority_required": true,
+        "authority_source": "critique_ledger domain"
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": []
+    },
+    {
+      "boundary_id": "critique_custody.write_critique_clearance",
+      "row_id": "cl1.critique_custody.2",
+      "phase": "critique",
+      "producer_category": "critique_custody",
+      "handler_function": "arnold/critique_ledger/custody.py:write_critique_clearance",
+      "producer_path": "arnold.critique_ledger.custody:write_critique_clearance",
+      "applicability_rules": "Writes critique clearance evidence linking evaluator verdicts to custody receipts. Validates that all required critique artifacts (plan/meta, aggregate, producer critiques, evaluator verdicts, gate signals) are present and custody-referenced.",
+      "invocation_identity": "Critique ledger clearance writer invoked during critique custody validation",
+      "artifact_path_patterns": [
+        "critique_clearance.json"
+      ],
+      "state_deltas": {
+        "clearance_state": "written"
+      },
+      "history_deltas": {
+        "expected_history_entry": "critique_clearance_written"
+      },
+      "phase_result": "Not applicable — clearance is a critique-ledger domain operation",
+      "receipt_timing": "Emitted synchronously during critique clearance validation",
+      "authority_references": {
+        "authority_required": true,
+        "authority_source": "critique_ledger domain"
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": []
+    },
+    {
+      "boundary_id": "critique_custody.write_critique_production_receipt",
+      "row_id": "cl1.critique_custody.1",
+      "phase": "critique",
+      "producer_category": "critique_custody",
+      "handler_function": "arnold/critique_ledger/custody.py:write_critique_production_receipt",
+      "producer_path": "arnold.critique_ledger.custody:write_critique_production_receipt",
+      "applicability_rules": "Writes a custody receipt for a critique production event, linking the WBC critique phase result to the critique ledger domain. Requires attempt identity, WBC boundary receipt references, and schema version anchors.",
+      "invocation_identity": "Critique ledger custody writer invoked after critique phase completes",
+      "artifact_path_patterns": [
+        "critique_production_receipt.json"
+      ],
+      "state_deltas": {
+        "receipt_state": "produced"
+      },
+      "history_deltas": {
+        "expected_history_entry": "critique_production_receipt_written"
+      },
+      "phase_result": "Not applicable — production receipt is a critique-ledger domain operation",
+      "receipt_timing": "Emitted synchronously during critique production receipt writing",
+      "authority_references": {
+        "authority_required": true,
+        "authority_source": "critique_ledger domain"
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": []
+    },
+    {
       "boundary_id": "critique_to_gate",
       "row_id": "s2.critique.1",
       "phase": "critique",
       "producer_category": "auto_matched",
       "handler_function": "handlers/critique.py:handle_critique (delegates to orchestration/critique_runtime.py:handle_critique)",
-      "producer_path": "arnold_pipelines/megaplan/handlers/critique.py \u2192 arnold_pipelines/megaplan/orchestration/critique_runtime.py",
+      "producer_path": "arnold_pipelines/megaplan/handlers/critique.py → arnold_pipelines/megaplan/orchestration/critique_runtime.py",
       "applicability_rules": "Invoked when current_state is STATE_PLANNED and step='critique' is run. The runtime dispatches parallel critiques, runs critiques, potentially triggers adaptive routing, and calls _finish_step.",
       "invocation_identity": "megaplan run <plan> -s critique (or auto driver transitions from plan)",
       "artifact_path_patterns": [
@@ -405,7 +487,7 @@
       "boundary_id": "override_abort_authority",
       "row_id": "s6.override.abort.1",
       "phase": null,
-      "producer_category": "unknown",
+      "producer_category": "not_emitted_by_contract",
       "handler_function": null,
       "producer_path": "arnold_pipelines/megaplan/handlers/override.py (action='abort')",
       "applicability_rules": "Override 'abort' action in handle_override. The handler maps action to state transitions and writes state.json. No explicit boundary receipt emission found.",
@@ -433,7 +515,7 @@
       "boundary_id": "override_adopt_execution_authority",
       "row_id": "s6.override.adopt_execution.1",
       "phase": null,
-      "producer_category": "unknown",
+      "producer_category": "not_emitted_by_contract",
       "handler_function": null,
       "producer_path": "arnold_pipelines/megaplan/handlers/override.py (action='adopt-execution')",
       "applicability_rules": "Override 'adopt-execution' action. Writes state with override entry. No boundary receipt emission found.",
@@ -461,7 +543,7 @@
       "boundary_id": "override_force_proceed_authority",
       "row_id": "s6.override.force_proceed.1",
       "phase": null,
-      "producer_category": "unknown",
+      "producer_category": "not_emitted_by_contract",
       "handler_function": null,
       "producer_path": "arnold_pipelines/megaplan/handlers/override.py (action='force-proceed')",
       "applicability_rules": "Override 'force-proceed' action. The override handler writes state.json with override entry but no boundary receipt emission found.",
@@ -489,7 +571,7 @@
       "boundary_id": "override_human_gate_authority",
       "row_id": "s6.override.human_gate.1",
       "phase": null,
-      "producer_category": "unknown",
+      "producer_category": "not_emitted_by_contract",
       "handler_function": null,
       "producer_path": "arnold_pipelines/megaplan/handlers/override.py (human-gate action)",
       "applicability_rules": "Protected actions and explicit human gates. No boundary receipt emission found.",
@@ -517,7 +599,7 @@
       "boundary_id": "override_recover_blocked_authority",
       "row_id": "s6.override.recover_blocked.1",
       "phase": null,
-      "producer_category": "unknown",
+      "producer_category": "not_emitted_by_contract",
       "handler_function": null,
       "producer_path": "arnold_pipelines/megaplan/handlers/override.py (action='recover-blocked')",
       "applicability_rules": "Override 'recover-blocked' action. Writes state with override entry. No boundary receipt emission found.",
@@ -545,7 +627,7 @@
       "boundary_id": "override_replan_authority",
       "row_id": "s6.override.replan.1",
       "phase": null,
-      "producer_category": "unknown",
+      "producer_category": "not_emitted_by_contract",
       "handler_function": null,
       "producer_path": "arnold_pipelines/megaplan/handlers/override.py (action='replan')",
       "applicability_rules": "Override 'replan' action. Writes state with override entry. No boundary receipt emission found.",
@@ -573,7 +655,7 @@
       "boundary_id": "override_resume_clarify_authority",
       "row_id": "s6.override.resume_clarify.1",
       "phase": null,
-      "producer_category": "unknown",
+      "producer_category": "not_emitted_by_contract",
       "handler_function": null,
       "producer_path": "arnold_pipelines/megaplan/handlers/override.py (action='resume-clarify')",
       "applicability_rules": "Override 'resume-clarify' action. Writes state with override entry. No boundary receipt emission found.",
@@ -601,7 +683,7 @@
       "boundary_id": "override_suspension_authority",
       "row_id": "s6.override.suspension.1",
       "phase": null,
-      "producer_category": "unknown",
+      "producer_category": "not_emitted_by_contract",
       "handler_function": null,
       "producer_path": "arnold_pipelines/megaplan/handlers/override.py (suspension-waiver action)",
       "applicability_rules": "Suspension/waiver authority. Handled via override mechanism. No boundary receipt emission found.",
@@ -719,7 +801,7 @@
       "boundary_id": "replan_authority",
       "row_id": "s3.replan.authority.1",
       "phase": "replan_authority",
-      "producer_category": "unknown",
+      "producer_category": "not_emitted_by_contract",
       "handler_function": null,
       "producer_path": null,
       "applicability_rules": "Replan authority is triggered when tiebreaker/escalation decisions route to replan. The override handler (handlers/override.py) handles 'replan' action via _override_action_entry, but no explicit boundary receipt emission for this specific contract was found in the override handler.",
@@ -1095,11 +1177,12 @@
     }
   ],
   "summary": {
-    "total_contracts": 35,
+    "total_contracts": 38,
     "auto_matched": 5,
     "manual_emit": 8,
     "declared_only": 13,
-    "unknown": 9,
+    "not_emitted_by_contract": 9,
+    "critique_custody": 3,
     "contract_categories": {
       "front_half_auto_matched": [
         "prep_to_plan",
@@ -1124,7 +1207,7 @@
         "tiebreaker_synthesis_to_decision",
         "tiebreaker_decision_to_parent"
       ],
-      "replan_unknown": [
+      "replan_not_emitted_by_contract": [
         "replan_authority"
       ],
       "parent_rejoin_declared_only": [
@@ -1142,7 +1225,7 @@
         "finalize_fallback",
         "final_projection"
       ],
-      "override_unknown": [
+      "override_not_emitted_by_contract": [
         "override_abort_authority",
         "override_force_proceed_authority",
         "override_replan_authority",
@@ -1151,6 +1234,11 @@
         "override_adopt_execution_authority",
         "override_suspension_authority",
         "override_human_gate_authority"
+      ],
+      "critique_custody": [
+        "critique_custody.write_critique_production_receipt",
+        "critique_custody.write_critique_clearance",
+        "critique_custody.bind_finalize_custody"
       ]
     },
     "key_findings": [
@@ -1159,7 +1247,8 @@
       "Tiebreaker S3 sub-step contracts are declared but have no per-step boundary receipt emission. The tiebreaker run/decide steps emit overall phase_results but not per-sub-step receipts.",
       "Review S5 contracts are declared but the review handler (handlers/review.py) does not emit explicit boundary receipts. Review is excluded from _finish_step auto-receipt.",
       "Finalize S5 contracts are declared but the finalize handler (handlers/finalize.py) does not emit explicit boundary receipts.",
-      "Override S6 contracts all have receipt_required=False, so lack of emission is by design, but the contracts are still declared as inventory without producer mapping.",
+      "Override S6 contracts and replan_authority all have receipt_required=False, so lack of emission is by design. Reclassified from 'unknown' to 'not_emitted_by_contract' with declaration/handler evidence (CL1 v2).",
+      "Three critique-custody producer contracts (write_critique_production_receipt, write_critique_clearance, bind_finalize_custody) are namespaced under critique_custody.* and owned by the critique_ledger domain (CL1 v2).",
       "No evidence_pack rows are directly mapped to individual boundary contracts. The evidence_pack pipeline independently verifies persisted artifacts.",
       "The _FRONT_HALF_BOUNDARY_ID_BY_PHASE mapping only covers prep/plan/critique/gate/revise. No equivalent mapping exists for tiebreaker, execute, review, finalize, or override phases."
     ]

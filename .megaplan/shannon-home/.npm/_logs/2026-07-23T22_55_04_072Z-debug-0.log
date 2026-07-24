@@ -1,0 +1,25 @@
+0 verbose cli /root/.nvm/versions/node/v20.20.2/bin/node /usr/local/bin/npm
+1 info using npm@10.8.2
+2 info using node@v20.20.2
+3 silly config load:file:/root/.nvm/versions/node/v20.20.2/lib/node_modules/npm/npmrc
+4 silly config load:file:/workspace/critique-ledger-m9-glm-20260723/Arnold/.npmrc
+5 silly config load:file:/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/shannon-home/.npmrc
+6 silly config load:file:/root/.nvm/versions/node/v20.20.2/etc/npmrc
+7 verbose title npm view @anthropic-ai/claude-code@latest version
+8 verbose argv "view" "@anthropic-ai/claude-code@latest" "version" "--prefer-online"
+9 verbose logfile logs-max:10 dir:/workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/shannon-home/.npm/_logs/2026-07-23T22_55_04_072Z-
+10 verbose logfile /workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/shannon-home/.npm/_logs/2026-07-23T22_55_04_072Z-debug-0.log
+11 silly logfile done cleaning log files
+12 http fetch GET 200 https://registry.npmjs.org/npm 152ms
+13 http fetch GET 200 https://registry.npmjs.org/@anthropic-ai%2fclaude-code 192ms (cache miss)
+14 verbose cwd /workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/shannon-home
+15 verbose os Linux 6.8.0-117-generic
+16 verbose node v20.20.2
+17 verbose npm  v10.8.2
+18 notice
+18 notice New major version of npm available! 10.8.2 -> 12.0.1
+18 notice Changelog: https://github.com/npm/cli/releases/tag/v12.0.1
+18 notice To update run: npm install -g npm@12.0.1
+18 notice  { force: true, [Symbol(proc-log.meta)]: true }
+19 verbose exit 0
+20 info ok
