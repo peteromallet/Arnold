@@ -1,0 +1,14 @@
+{
+  "id": "tool_5e94896eab24",
+  "turn_id": "turn_42256d4635a3",
+  "tool_name": "send_message",
+  "operation_kind": "write",
+  "arguments": {
+    "content": "hi"
+  },
+  "result": {
+    "discord_message_id": "inv_turn_42256d4635a3_1"
+  },
+  "called_at": "2026-07-14T01:19:38.276078Z",
+  "duration_ms": 1
+}

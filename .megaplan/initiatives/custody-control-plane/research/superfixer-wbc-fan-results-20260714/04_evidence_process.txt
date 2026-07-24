@@ -1,0 +1,58 @@
+Now I have all evidence. Here is the final report:
+
+---
+
+## Cloud Status — Canonical (YAML/Marker)
+
+**Marker**: `/workspace/.megaplan/cloud-sessions/workflow-boundary-contracts-corrective-20260710.json`
+- `should_run: true`, `started_at: 2026-07-13T15:20:06Z`, `run_kind: chain`
+- `allow_human_gates: true` | `identity_digest: bb7024decf`
+- Watchdog (2026-07-14T00:25:55Z): status **`alive`**, no repair dispatched
+
+**Chain JSON** (`chain-06e4c6966e36.json`):
+- `current_milestone_index: 2` (s3), `last_state: finalized`
+- Completed: s1 (`c1-contract-reality-20260711-1433`, done), s2 (`s2-contract-foundation-and-20260713-1544`, done)
+- `current_plan_name: s3-megaplan-boundary-coverage-20260713-1934`
+
+**Active Step** (from `state.json`):
+- Phase: `execute`, Agent: `hermes`, Model: `deepseek:deepseek-v4-pro`
+- `worker_pid: 1004788`, `started_at: 2026-07-14T00:20:16Z`, `attempt: 1`
+
+---
+
+## Live Process Truth (Independent)
+
+**Chain PID 1004788** — `python -P -m arnold_pipelines.megaplan chain start --spec .../chain.yaml --project-dir .../Arnold`
+- Started: **Tue Jul 14 00:06** (from parent bash PID 1004252, also 00:06)
+- CPU: 37.5%, RSS: 298 MB, runtime: ~22 min
+- **Correlates with active_step.worker_pid: 1004788** ✅
+
+**No tmux session for this chain:**
+```
+tmux ls → agent, heartbeat, megaplan-resident-discord, watchdog
+```
+**NO `workflow-boundary-contracts-corrective-20260710` tmux session exists.**
+
+---
+
+## L1/L2/L3 Liveness
+
+| Layer | Process | PID | Start | State |
+|-------|---------|-----|-------|-------|
+| **L1 (Chain)** | `chain start` | 1004788 | Jul 14 00:06 | **Executing** — batch 19, active |
+| **L2 (Watchdog)** | tmux `watchdog` | 169 | Jul 13 21:43 | Sleeping 3600s (PID 1141277, since 00:26). Last report: 00:25:55 — session `alive`, no repair. |
+| **L3 (Auditor)** | Not directly observed | — | — | A resident subagent (`subagent-20260714-002231-320225ff`, PID 1117269, since 00:22) is actively running superfixer-debug on this session. |
+
+---
+
+## Contradictions & Findings
+
+1. **No tmux custody** — The SKILL mandates cloud chains run inside tmux (`chain_session`). This chain runs as a bare background process (PID 1004788, parent bash 1004252), bypassing the canonical marker contract. Watchdog classifies it as `alive` solely from process-liveness, not tmux-session identity.
+
+2. **State label mismatch** — `state.json` reports `current_state: finalized` while the active_step is `phase: execute`. The chain JSON `last_state: finalized` is stale (the gate-result label), but execution is genuinely underway with worker_pid matching. This is a labeling lag, not a stall.
+
+3. **Re-launch, not fresh** — Marker `started_at` is Jul 13 15:20 but current PID started Jul 14 00:06. Previous run died; this is a resume. The chain correctly picked up at s3 with gate already passed.
+
+4. **merge_policy: manual + allow_human_gates: true** — The chain.yaml declares `merge_policy: manual` but the marker has `allow_human_gates: true`. Per SKILL gotcha, cloud chains with manual gates should fail preflight unless `--allow-human-gates` is explicitly passed. The chain launched anyway.
+
+5. **No duplicate/stale processes** — Only one chain process (PID 1004788). Watchdog is not dispatching a competing repair for this session. The resident subagent debugging this session is a separate observer, not a conflicting runner.

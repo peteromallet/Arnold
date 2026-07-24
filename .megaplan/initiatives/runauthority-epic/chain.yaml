@@ -1,0 +1,46 @@
+base_branch: main
+anchors:
+  north_star: NORTHSTAR.md
+milestones:
+- label: m1-foundation
+  idea: .megaplan/initiatives/runauthority-epic/briefs/m1.md
+  branch: megaplan/runauthority-epic/m1-foundation
+  profile: partnered-5
+  robustness: full
+  depth: high
+  with_prep: true
+  prep_direction: Inspect current authority readers and incident-adjacent execute
+    replay/reconcile paths before task decomposition. Scope this milestone to regression
+    freeze, authority input inventory, kernel contracts, and read-only shadow views.
+- label: m2-enforcement
+  idea: .megaplan/initiatives/runauthority-epic/briefs/m2.md
+  branch: megaplan/runauthority-epic/m2-enforcement
+  profile: partnered-5
+  robustness: full
+  depth: high
+  with_prep: true
+  prep_direction: Start from Sprint 1 outputs. Focus on dispatch grants, unified merge/reconcile
+    validation, quarantine, and frontier/dependency authority from accepted task attempts.
+- label: m3-consumers
+  idea: .megaplan/initiatives/runauthority-epic/briefs/m3.md
+  branch: megaplan/runauthority-epic/m3-consumers
+  profile: partnered-5
+  robustness: full
+  depth: high
+  with_prep: true
+  prep_direction: Start from Sprint 1 and Sprint 2 outputs. Focus on sibling operational
+    views, consumer rewiring through shadow/warn/enforce, second-consumer proof where
+    feasible, and compatibility cleanup.
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  robustness: full
+  phase_timeout: 10800
+  auto_approve: true
+  on_escalate: abort
+  max_iterations: 60
+  poll_sleep: 8.0
+

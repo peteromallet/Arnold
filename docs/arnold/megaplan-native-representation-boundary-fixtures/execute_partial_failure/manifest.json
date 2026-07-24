@@ -1,0 +1,31 @@
+{
+  "artifact_refs": [
+    "blocked_batch_report.json"
+  ],
+  "authority_records": [],
+  "boundary_id": "execute_partial_failure",
+  "capability_effects": [
+    "artifact",
+    "external_effect",
+    "phase_result",
+    "receipt",
+    "state_history"
+  ],
+  "external_effect_refs": [
+    "effects/execute_partial_failure.json",
+    "execute:blocked-recovery"
+  ],
+  "fixture_id": "execute_partial_failure",
+  "path_hashes": {
+    "phase_result_path": "sha256:f188312dd99cd26d6c5ecb30481258afc1a6c92f73a999200180df11c21ac26a",
+    "receipt_path": "sha256:92c741f405d78b0ca4f441058a52caa68838ef82957d41b7c97eccea9522ae17",
+    "semantic_health_path": "sha256:f0069aabcd12c04322efe6d4a5bda4b480a3d8c0e54199a15902ef6b6951f16a",
+    "state_path": "sha256:895acfae2127cf56c1e2a01d571bad644156b58f51c005ee7979ee8167f73e35"
+  },
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_partial_failure/phase_result.json",
+  "plan_dir": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_partial_failure",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_partial_failure/boundary_receipts/execute_partial_failure.json",
+  "reducer_promotion": false,
+  "semantic_health_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_partial_failure/semantic_health.json",
+  "state_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_partial_failure/state.json"
+}

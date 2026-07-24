@@ -1,0 +1,121 @@
+{
+  "finalize": {
+    "tasks": [
+      {
+        "id": "T1",
+        "status": "skipped",
+        "executor_notes": "contradictory finalize label",
+        "sections_written": []
+      },
+      {
+        "id": "T2",
+        "status": "done",
+        "executor_notes": "contradictory finalize label",
+        "sections_written": []
+      },
+      {
+        "id": "T3",
+        "status": "done",
+        "executor_notes": "unrelated terminal task",
+        "sections_written": ["untouched"]
+      }
+    ],
+    "sense_checks": [
+      {"id": "SC1", "task_id": "T1", "executor_note": ""},
+      {"id": "SC2", "task_id": "T2", "executor_note": ""},
+      {"id": "SC3", "task_id": "T3", "executor_note": "unchanged"}
+    ]
+  },
+  "dispatches": [
+    {
+      "batch_number": 1,
+      "task_ids": ["T1"],
+      "sense_check_ids": ["SC1"],
+      "payload": {
+        "task_updates": [
+          {
+            "task_id": "T1",
+            "status": "done",
+            "executor_notes": "batch one proven",
+            "sections_written": ["allowed_one"],
+            "stance": {
+              "challenge_engaged": "Kept the original dispatch boundary.",
+              "angle_taken": "Replayed only the proven subject.",
+              "what_changed": "Replaced the contradictory label."
+            },
+            "stop_signal": {"requested": false, "defense": ""}
+          },
+          {
+            "task_id": "T3",
+            "status": "blocked",
+            "executor_notes": "stale off-scope update",
+            "sections_written": ["corruption"],
+            "stance": {
+              "challenge_engaged": "Attempted a stale update.",
+              "angle_taken": "Crossed the dispatch boundary.",
+              "what_changed": "Nothing should change."
+            },
+            "stop_signal": {"requested": false, "defense": ""}
+          }
+        ],
+        "sense_check_acknowledgments": [
+          {"sense_check_id": "SC1", "executor_note": "batch one proven"},
+          {"sense_check_id": "SC3", "executor_note": "stale off-scope check"}
+        ]
+      }
+    },
+    {
+      "batch_number": 2,
+      "task_ids": ["T2"],
+      "sense_check_ids": ["SC2"],
+      "payload": {
+        "task_updates": [
+          {
+            "task_id": "T2",
+            "status": "blocked",
+            "executor_notes": "batch two proven",
+            "sections_written": ["allowed_two"],
+            "stance": {
+              "challenge_engaged": "Preserved the second dispatch boundary.",
+              "angle_taken": "Reconciled only its proven subject.",
+              "what_changed": "Replaced the contradictory label."
+            },
+            "stop_signal": {"requested": false, "defense": ""}
+          },
+          {
+            "task_id": "T1",
+            "status": "blocked",
+            "executor_notes": "creative cross-task update",
+            "sections_written": ["corruption"],
+            "stance": {
+              "challenge_engaged": "Attempted a creative cross-task update.",
+              "angle_taken": "Crossed the dispatch boundary.",
+              "what_changed": "Nothing should change."
+            },
+            "stop_signal": {"requested": false, "defense": ""}
+          }
+        ],
+        "sense_check_acknowledgments": [
+          {"sense_check_id": "SC2", "executor_note": "batch two proven"},
+          {"sense_check_id": "SC1", "executor_note": "creative cross-task check"}
+        ]
+      }
+    }
+  ],
+  "legacy": {
+    "batch_number": 3,
+    "payload": {
+      "task_updates": [
+        {
+          "task_id": "T3",
+          "status": "blocked",
+          "executor_notes": "legacy artifact attempted mutation",
+          "sections_written": ["legacy_corruption"]
+        }
+      ],
+      "sense_check_acknowledgments": [
+        {"sense_check_id": "SC3", "executor_note": "legacy check"}
+      ]
+    }
+  }
+}

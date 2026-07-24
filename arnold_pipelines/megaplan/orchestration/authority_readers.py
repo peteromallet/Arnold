@@ -1,0 +1,1673 @@
+"""M2 authority-reader route inventory.
+
+Every production site that reads raw terminal task status, milestone outcome,
+or batch completion state and can increase authority (by skipping work,
+unblocking dependencies, resuming/redriving, selecting a plan, classifying
+success, setting success exit status, or advancing work) must be listed here
+with one of five dispositions:
+
+* ``enforced`` — authority adapter fully controls the decision; legacy path
+  is either removed or gated behind equivalence diagnostics.
+* ``warn-only`` — authority is wired and produces drift diagnostics, but the
+  legacy decision path is preserved as the effective outcome (fail-open).
+* ``shadow-only`` — authority runs purely in diagnostic/shadow mode with no
+  behavioural change to the production path.
+* ``informational`` — read-only status display that never increases
+  authority (operator visibility only).
+* ``deferred`` — not migrated in this milestone, with an explicit deferral
+  reason.
+
+This inventory is the source of truth for the T16 raw-status grep/code audit
+and the SC1 sense check.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from arnold_pipelines.megaplan.observability.events import EventKind, emit
+from arnold_pipelines.megaplan._core import list_batch_artifacts
+from arnold_pipelines.megaplan.authority.batch_scope import (
+    resolve_batch_authority_metadata,
+)
+from arnold_pipelines.megaplan.authority.binding import (
+    ResultEnvelope,
+    TaskClaim,
+    TaskValidationDecision,
+)
+from arnold_pipelines.megaplan.authority.views import (
+    LegacyTaskLabel,
+    PlanExecutionView,
+    derive_plan_execution_view,
+)
+from arnold_pipelines.megaplan.orchestration.completion_io import (
+    read_typed_completion_verdict,
+)
+from arnold_pipelines.megaplan.orchestration.evidence_contract import (
+    ArtifactRef,
+    EvidenceRef,
+    EvidenceStatus,
+    TrustClass,
+)
+from arnold_pipelines.megaplan.orchestration.rubber_stamp import is_rubber_stamp
+from arnold_pipelines.megaplan.orchestration.task_satisfaction import (
+    EvidenceExecutionWindow,
+    TaskSatisfactionResult,
+    is_task_satisfied,
+)
+from arnold_pipelines.run_authority import (
+    CASExpectation,
+    ContractError,
+    reduce_run_authority,
+)
+
+# ── Route disposition vocabulary ──────────────────────────────────────────
+
+ENFORCED = "enforced"
+WARN_ONLY = "warn-only"
+SHADOW_ONLY = "shadow-only"
+INFORMATIONAL = "informational"
+DEFERRED = "deferred"
+
+# Legacy aliases kept for backward compatibility during migration window.
+MIGRATED = ENFORCED  # noqa: backward-compat alias
+TESTED = ENFORCED    # noqa: backward-compat alias
+
+
+@dataclass(frozen=True)
+class AuthorityRoute:
+    """A single authority-increasing or informational reader route."""
+
+    id: str
+    file: str
+    line_range: str
+    description: str
+    disposition: str  # enforced | warn-only | shadow-only | informational | deferred
+    owner_or_reason: str
+    route_family: str  # execute | resume | chain | supervisor | status | timeout
+
+
+AUTHORITATIVE_TASK_STATUSES = frozenset(
+    status.value
+    for status in (
+        EvidenceStatus.satisfied,
+        EvidenceStatus.waived,
+        EvidenceStatus.not_applicable,
+    )
+)
+
+AUTHORITY_DIVERGENCE_LEDGER = "authority_divergence.jsonl"
+_TERMINAL_AUTHORITY_CLAIMS = frozenset({"done", "skipped", "waived", "not_applicable"})
+_AUDIT_RESEARCH_NOTES_MIN_LEN = 100
+
+
+def has_durable_terminal_task_evidence(task: Mapping[str, Any]) -> bool:
+    """Whether terminal finalized output must survive stale batch overlays."""
+    status = _optional_str(task.get("status"))
+    if status == "done":
+        return any(
+            _string_values(task.get(field))
+            for field in ("files_changed", "commands_run", "evidence_files", "sections_written")
+        )
+    if status == "skipped":
+        notes = _optional_str(task.get("executor_notes"))
+        return bool(notes and not is_rubber_stamp(notes, strict=True))
+    return status in {"waived", "not_applicable"}
+
+
+
+
+@dataclass(frozen=True)
+class AuthorityDecision:
+    """Authority adapter decision for one task.
+
+    ``status`` is copied from ``is_task_satisfied``. Raw legacy terminal labels
+    are retained as diagnostics only; they never become success by themselves.
+    """
+
+    task_id: str
+    status: EvidenceStatus
+    satisfied: bool
+    evidence: tuple[EvidenceRef, ...] = ()
+    diagnostics: dict[str, Any] = field(default_factory=dict)
+    missing_outputs: tuple[str, ...] = ()
+    stale_evidence: tuple[str, ...] = ()
+    would_block_reasons: tuple[str, ...] = ()
+    error: str | None = None
+
+    @property
+    def authoritative(self) -> bool:
+        return self.status in {
+            EvidenceStatus.satisfied,
+            EvidenceStatus.waived,
+            EvidenceStatus.not_applicable,
+        }
+
+    @classmethod
+    def from_result(
+        cls,
+        task_id: str,
+        result: TaskSatisfactionResult,
+        *,
+        diagnostics: Mapping[str, Any] | None = None,
+        error: str | None = None,
+    ) -> "AuthorityDecision":
+        merged_diagnostics = dict(result.diagnostics)
+        if diagnostics:
+            merged_diagnostics.update(dict(diagnostics))
+        return cls(
+            task_id=task_id,
+            status=result.status,
+            satisfied=result.satisfied,
+            evidence=result.evidence,
+            diagnostics=merged_diagnostics,
+            missing_outputs=result.missing_outputs,
+            stale_evidence=result.stale_evidence,
+            would_block_reasons=result.would_block_reasons,
+            error=error,
+        )
+
+    @classmethod
+    def unknown(
+        cls,
+        task_id: str,
+        *,
+        reason: str,
+        diagnostics: Mapping[str, Any] | None = None,
+        error: str | None = None,
+    ) -> "AuthorityDecision":
+        merged = {"reason": reason}
+        if diagnostics:
+            merged.update(dict(diagnostics))
+        return cls(
+            task_id=task_id,
+            status=EvidenceStatus.unknown,
+            satisfied=False,
+            diagnostics=merged,
+            would_block_reasons=(reason,),
+            error=error,
+        )
+
+
+@dataclass(frozen=True)
+class AcceptedAttemptProjection:
+    """Read-only execute projection built from accepted dispatch envelopes."""
+
+    view: PlanExecutionView
+    source_paths: tuple[str, ...]
+
+
+def authority_decision_for_task(
+    task: Mapping[str, Any],
+    evidence_nucleus: Any,
+    *,
+    current_head: str | None = None,
+    current_code_hash: str | None = None,
+    execution_window: EvidenceExecutionWindow | None = None,
+) -> AuthorityDecision:
+    """Return the authority decision for one task via ``is_task_satisfied``."""
+
+    task_id = _task_id(task)
+    try:
+        result = is_task_satisfied(
+            task,
+            evidence_nucleus,
+            current_head=current_head,
+            current_code_hash=current_code_hash,
+            execution_window=execution_window,
+        )
+    except Exception as exc:
+        return AuthorityDecision.unknown(
+            task_id,
+            reason="is_task_satisfied_error",
+            diagnostics={"exception_type": type(exc).__name__},
+            error=str(exc),
+        )
+    return AuthorityDecision.from_result(
+        task_id,
+        result,
+        diagnostics={"raw_terminal_status": _optional_str(task.get("status"))},
+    )
+
+
+def corroborated_completed_task_ids(
+    tasks: Iterable[Mapping[str, Any]],
+    *,
+    plan_dir: Path | str | None = None,
+    evidence_nucleus: Any = None,
+    current_head: str | None = None,
+    current_code_hash: str | None = None,
+    execution_window: EvidenceExecutionWindow | None = None,
+    decisions: dict[str, AuthorityDecision] | None = None,
+) -> set[str]:
+    """Compatibility/shadow adapter for evidence-corroborated completion IDs.
+
+    The only success path is an ``is_task_satisfied`` decision. Per-task errors
+    degrade to ``unknown`` and do not stop other tasks from being evaluated.
+    Raw legacy terminal labels are retained only as drift diagnostics.
+    """
+
+    task_records = tuple(tasks)
+    nucleus, load_diagnostics = _resolve_evidence_nucleus(
+        plan_dir=Path(plan_dir) if plan_dir is not None else None,
+        evidence_nucleus=evidence_nucleus,
+        default_head=current_head,
+    )
+    completed: set[str] = set()
+    for task in task_records:
+        task_id = _task_id(task)
+        task_nucleus = tuple(nucleus)
+        diagnostics = dict(load_diagnostics)
+        if any(error.get("scope") == "task" and error.get("task_id") == task_id for error in load_diagnostics.get("errors", ())):
+            task_nucleus = ()
+        try:
+            result = is_task_satisfied(
+                task,
+                task_nucleus,
+                current_head=current_head,
+                current_code_hash=current_code_hash,
+                execution_window=execution_window,
+            )
+            decision = AuthorityDecision.from_result(
+                task_id,
+                result,
+                diagnostics={
+                    **diagnostics,
+                    "authority_adapter": "corroborated_completed_task_ids",
+                    "adapter_mode": "compatibility_shadow",
+                    "raw_terminal_status": _optional_str(task.get("status")),
+                },
+            )
+        except Exception as exc:
+            decision = AuthorityDecision.unknown(
+                task_id,
+                reason="is_task_satisfied_error",
+                diagnostics={
+                    "exception_type": type(exc).__name__,
+                    **diagnostics,
+                    "authority_adapter": "corroborated_completed_task_ids",
+                    "adapter_mode": "compatibility_shadow",
+                },
+                error=str(exc),
+            )
+        if plan_dir is not None:
+            _emit_authority_divergence_diagnostics(Path(plan_dir), task, decision)
+        if decisions is not None:
+            decisions[task_id] = decision
+        if decision.authoritative:
+            completed.add(task_id)
+    return completed
+
+
+def scheduler_completed_ids(
+    tasks: Iterable[Mapping[str, Any]],
+    *,
+    plan_dir: Path | str | None = None,
+    evidence_nucleus: Any = None,
+    current_head: str | None = None,
+    current_code_hash: str | None = None,
+    execution_window: EvidenceExecutionWindow | None = None,
+    decisions: dict[str, AuthorityDecision] | None = None,
+) -> set[str]:
+    """Compatibility/shadow adapter for scheduler ``completed_ids``.
+
+    Scheduler ``completed_ids`` must be corroborated authority decisions, not
+    raw ``status="done"`` / ``"skipped"`` claims. This wrapper makes that
+    boundary explicit at production call sites while keeping the scheduler
+    itself pure and evidence-agnostic. When available, the helper also threads
+    through the current git HEAD so stale task evidence cannot unlock
+    dependents in production.
+    """
+
+    resolved_plan_dir = Path(plan_dir) if plan_dir is not None else None
+    resolved_current_head = current_head
+    if resolved_current_head is None and resolved_plan_dir is not None:
+        resolved_current_head = _best_effort_git_head(resolved_plan_dir)
+
+    completed = corroborated_completed_task_ids(
+        tasks,
+        plan_dir=resolved_plan_dir,
+        evidence_nucleus=evidence_nucleus,
+        current_head=resolved_current_head,
+        current_code_hash=current_code_hash,
+        execution_window=execution_window,
+        decisions=decisions,
+    )
+    if decisions is not None:
+        for decision in decisions.values():
+            decision.diagnostics["authority_adapter"] = "scheduler_completed_ids"
+            decision.diagnostics["adapter_mode"] = "compatibility_shadow"
+            decision.diagnostics["shadow_delegate"] = "corroborated_completed_task_ids"
+    return completed
+
+
+def execute_execution_window(
+    state: Mapping[str, Any] | None,
+    *,
+    project_dir: Path,
+    current_head: str | None = None,
+) -> EvidenceExecutionWindow | None:
+    """Return the execution-window freshness envelope from persisted plan state."""
+
+    if not isinstance(state, Mapping):
+        return None
+    meta = state.get("meta")
+    if not isinstance(meta, Mapping):
+        return None
+    baseline = meta.get("execution_baseline")
+    if not isinstance(baseline, Mapping):
+        return None
+    base_sha = _optional_str(baseline.get("base_sha")) or _optional_str(
+        baseline.get("head")
+    )
+    if base_sha is None:
+        return None
+    head_sha = current_head or _optional_str(baseline.get("head"))
+    base_ref = _optional_str(baseline.get("base_ref"))
+    return EvidenceExecutionWindow(
+        project_dir=project_dir,
+        base_sha=base_sha,
+        head_sha=head_sha,
+        base_ref=base_ref,
+    )
+
+
+def effective_execute_completed_task_ids(
+    tasks: Iterable[Mapping[str, Any]],
+    *,
+    plan_dir: Path | str | None = None,
+    project_dir: Path | str | None = None,
+    state: Mapping[str, Any] | None = None,
+    evidence_nucleus: Any = None,
+    current_head: str | None = None,
+    current_code_hash: str | None = None,
+    decisions: dict[str, AuthorityDecision] | None = None,
+) -> set[str]:
+    """Compatibility/shadow adapter for execute completion IDs.
+
+    Execute scheduling and end-of-run accounting need one shared notion of
+    "effectively complete": corroborated task evidence may come from an earlier
+    commit within the same execution window, and conditional tasks can be
+    explicitly skipped with a substantive executor note. Execute also treats
+    narrow verification checkpoints as complete when their only declared
+    command outputs are already corroborated by another authoritative task in
+    the same execute run.
+    """
+
+    task_records = tuple(tasks)
+    resolved_plan_dir = Path(plan_dir) if plan_dir is not None else None
+    resolved_project_dir = Path(project_dir) if project_dir is not None else None
+    if resolved_project_dir is None and isinstance(state, Mapping):
+        config = state.get("config")
+        raw_project_dir = config.get("project_dir") if isinstance(config, Mapping) else None
+        if isinstance(raw_project_dir, (str, Path)):
+            resolved_project_dir = Path(raw_project_dir)
+    if current_head is None:
+        baseline_head = _execution_baseline_head(state)
+        current_head = _resolve_execute_authority_current_head(
+            resolved_plan_dir,
+            project_dir=resolved_project_dir,
+            baseline_head=baseline_head,
+        )
+    projection = accepted_attempt_execution_projection(
+        task_records,
+        plan_dir=resolved_plan_dir,
+    )
+    if projection is not None:
+        projection_decisions = decisions if decisions is not None else {}
+        _populate_projection_decisions(
+            projection.view,
+            decisions=projection_decisions,
+        )
+        if resolved_plan_dir is not None:
+            _emit_projection_drift_diagnostics(
+                resolved_plan_dir,
+                task_records,
+                decisions=projection_decisions,
+            )
+        return set(projection.view.dependency_closed_completed_task_ids)
+    execution_window = (
+        execute_execution_window(
+            state,
+            project_dir=resolved_project_dir,
+            current_head=current_head,
+        )
+        if resolved_project_dir is not None
+        else None
+    )
+    # A replayed milestone changes recorded commit IDs without changing its
+    # declared diff. Re-anchor only terminal file evidence wholly present in
+    # that diff, then feed the same current-head refs to all execute consumers.
+    effective_tasks = list(tasks)
+    effective_nucleus = evidence_nucleus
+    chain_policy = (
+        state.get("meta", {}).get("chain_policy", {})
+        if isinstance(state, Mapping) and isinstance(state.get("meta"), Mapping)
+        else {}
+    )
+    base_ref = chain_policy.get("milestone_base_sha") if isinstance(chain_policy, Mapping) else None
+    if (
+        resolved_plan_dir is not None
+        and resolved_project_dir is not None
+        and isinstance(base_ref, str)
+        and base_ref.strip()
+        and current_head
+    ):
+        try:
+            from arnold_pipelines.megaplan.loop.git import _collect_committed_range_paths
+            committed = _collect_committed_range_paths(resolved_project_dir, base_ref=base_ref)
+            reanchored_refs: list[EvidenceRef] = []
+            reanchored_tasks: list[Mapping[str, Any]] = []
+            for task in effective_tasks:
+                files = set(_string_values(task.get("files_changed")))
+                if (
+                    has_durable_terminal_task_evidence(task)
+                    and files
+                    and files.issubset(committed)
+                ):
+                    copied = dict(task)
+                    copied["head_sha"] = current_head
+                    reanchored_tasks.append(copied)
+                    reanchored_refs.extend(
+                        _evidence_from_task_record(
+                            copied,
+                            resolved_plan_dir / "finalize.json",
+                            root=resolved_plan_dir,
+                            default_head=current_head,
+                        )
+                    )
+                else:
+                    reanchored_tasks.append(task)
+            effective_tasks = reanchored_tasks
+            if reanchored_refs:
+                existing = _normalize_refs(evidence_nucleus)
+                effective_nucleus = (*existing, *reanchored_refs)
+        except Exception:
+            pass
+
+    completed = corroborated_completed_task_ids(
+        effective_tasks,
+        plan_dir=resolved_plan_dir,
+        evidence_nucleus=effective_nucleus,
+        current_head=current_head,
+        current_code_hash=current_code_hash,
+        execution_window=execution_window,
+        decisions=decisions,
+    )
+    if decisions is not None:
+        for decision in decisions.values():
+            decision.diagnostics["authority_adapter"] = "effective_execute_completed_task_ids"
+            decision.diagnostics["adapter_mode"] = "compatibility_shadow"
+            decision.diagnostics["shadow_delegate"] = "corroborated_completed_task_ids"
+    explained_skips = {
+        task_id
+        for task in effective_tasks
+        if isinstance(task, Mapping)
+        and isinstance(task_id := _task_id(task), str)
+        and _is_explained_skip(task)
+    }
+    completed |= explained_skips
+    explained_noops = {
+        task_id
+        for task in effective_tasks
+        if isinstance(task, Mapping)
+        and isinstance(task_id := _task_id(task), str)
+        and _is_explained_noop_completion(task)
+    }
+    completed |= explained_noops
+    if decisions is not None:
+        for task in effective_tasks:
+            if not isinstance(task, Mapping):
+                continue
+            task_id = _task_id(task)
+            if task_id in explained_skips:
+                decisions[task_id] = _explained_skip_decision(task_id, task)
+            elif task_id in explained_noops:
+                decisions[task_id] = _explained_noop_decision(task_id, task)
+
+    authoritative_commands = {
+        command
+        for task in effective_tasks
+        if isinstance(task, Mapping)
+        and _task_id(task) in completed
+        for command in _string_values(task.get("commands_run"))
+    }
+    for task in effective_tasks:
+        if not isinstance(task, Mapping):
+            continue
+        task_id = _task_id(task)
+        if task_id in completed or not _is_execute_command_checkpoint(task):
+            continue
+        commands = set(_string_values(task.get("commands_run")))
+        if commands and commands.issubset(authoritative_commands):
+            completed.add(task_id)
+            if decisions is not None:
+                decisions[task_id] = AuthorityDecision(
+                    task_id=task_id,
+                    status=EvidenceStatus.satisfied,
+                    satisfied=True,
+                    diagnostics={
+                        "authority_adapter": "effective_execute_completed_task_ids",
+                        "adapter_mode": "compatibility_shadow",
+                        "raw_terminal_status": _optional_str(task.get("status")),
+                        "execute_completion": "shared_authoritative_commands",
+                    },
+                )
+    return completed
+
+
+def accepted_attempt_execution_projection(
+    tasks: Iterable[Mapping[str, Any]],
+    *,
+    plan_dir: Path | str | None,
+) -> AcceptedAttemptProjection | None:
+    """Build the accepted-attempt execute projection when durable metadata exists.
+
+    The projection is intentionally derived only from result envelopes whose
+    merge-time ``authority_validation`` outcome was accepted.  ``batch_scope``
+    and legacy task statuses are carried as diagnostics through
+    ``derive_plan_execution_view``; they never mint accepted attempts.
+    """
+
+    if plan_dir is None:
+        return None
+    root = Path(plan_dir)
+    task_records = tuple(task for task in tasks if isinstance(task, Mapping))
+    if not task_records:
+        return None
+    collected = _collect_accepted_attempt_authority(root)
+    if collected is None:
+        return None
+    records, evidence_decisions, legacy_labels, run_id, run_revision, source_paths = collected
+    try:
+        authority = reduce_run_authority(
+            records,
+            run_id=run_id,
+            run_revision=run_revision,
+        )
+        view = derive_plan_execution_view(
+            authority,
+            {"tasks": task_records},
+            evidence_decisions=evidence_decisions,
+            legacy_labels=legacy_labels,
+        )
+    except (ContractError, ValueError):
+        return None
+    return AcceptedAttemptProjection(
+        view=view,
+        source_paths=source_paths,
+    )
+
+
+def _collect_accepted_attempt_authority(
+    plan_dir: Path,
+) -> tuple[
+    tuple[Any, ...],
+    dict[str, AuthorityDecision],
+    tuple[LegacyTaskLabel, ...],
+    str,
+    str,
+    tuple[str, ...],
+] | None:
+    authority_records: list[Any] = []
+    evidence_decisions: dict[str, AuthorityDecision] = {}
+    legacy_labels: list[LegacyTaskLabel] = []
+    source_paths: set[str] = set()
+    run_identity: tuple[str, str] | None = None
+    saw_validation_projection = False
+
+    for artifact_path in list_batch_artifacts(plan_dir):
+        try:
+            payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            continue
+        if not isinstance(payload, Mapping):
+            continue
+        source = _relative_artifact_path(artifact_path, plan_dir)
+        source_paths.add(source)
+        for label in _legacy_task_labels_from_payload(payload, source):
+            legacy_labels.append(label)
+
+        resolution = resolve_batch_authority_metadata(payload, source)
+        if resolution.quarantine is not None or resolution.metadata is None:
+            continue
+        identity = resolution.metadata.dispatch_identity
+        run_identity = run_identity or (identity.run_id, identity.run_revision)
+        envelopes = resolution.metadata.result_envelopes
+        by_digest = {envelope.digest(): envelope for envelope in envelopes}
+        by_subject: dict[str, list[ResultEnvelope]] = {}
+        for envelope in envelopes:
+            by_subject.setdefault(envelope.subject_id, []).append(envelope)
+        for entry in _task_entries(payload):
+            validation = entry.get("authority_validation")
+            if not isinstance(validation, Mapping):
+                continue
+            outcome = _optional_str(validation.get("outcome"))
+            if outcome:
+                saw_validation_projection = True
+            if outcome != "accepted":
+                continue
+            envelope = _entry_envelope(entry, validation, by_digest, by_subject)
+            if envelope is None or not isinstance(envelope.claim, TaskClaim):
+                continue
+            if (envelope.run_id, envelope.run_revision) != run_identity:
+                continue
+            try:
+                decision = _accepted_projection_decision(envelope, validation, source)
+            except ContractError:
+                continue
+            # CAS expectations are dispatch-time preconditions, not durable
+            # run-authority ledger facts. Feeding one to reduce_run_authority
+            # makes the accepted-attempt projection fail closed even though
+            # the merge-time validation already accepted the envelope.
+            authority_records.extend(
+                record
+                for record in envelope.authority_records()
+                if not isinstance(record, CASExpectation)
+            )
+            authority_records.extend((decision.idempotency, decision))
+            evidence_decisions[envelope.subject_id] = AuthorityDecision(
+                task_id=envelope.subject_id,
+                status=EvidenceStatus.satisfied,
+                satisfied=True,
+                diagnostics={
+                    "execute_completion": "accepted_attempt_projection",
+                    "source_path": source,
+                    "envelope_digest": envelope.digest(),
+                    "authority_validation": dict(validation),
+                },
+            )
+
+    if not saw_validation_projection or run_identity is None:
+        return None
+    run_id, run_revision = run_identity
+    return (
+        tuple(authority_records),
+        evidence_decisions,
+        tuple(legacy_labels),
+        run_id,
+        run_revision,
+        tuple(sorted(source_paths)),
+    )
+
+
+def _task_entries(payload: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    entries = payload.get("task_updates")
+    if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+        return ()
+    return tuple(entry for entry in entries if isinstance(entry, Mapping))
+
+
+def _legacy_task_labels_from_payload(
+    payload: Mapping[str, Any],
+    source: str,
+) -> tuple[LegacyTaskLabel, ...]:
+    labels: list[LegacyTaskLabel] = []
+    for entry in _task_entries(payload):
+        task_id = _optional_str(entry.get("task_id") or entry.get("id"))
+        status = _optional_str(entry.get("status"))
+        if task_id is not None and status is not None:
+            try:
+                labels.append(LegacyTaskLabel(task_id, status, source, "observation"))
+            except ValueError:
+                continue
+    return tuple(labels)
+
+
+def _entry_envelope(
+    entry: Mapping[str, Any],
+    validation: Mapping[str, Any],
+    by_digest: Mapping[str, ResultEnvelope],
+    by_subject: Mapping[str, list[ResultEnvelope]],
+) -> ResultEnvelope | None:
+    digest = _optional_str(validation.get("envelope_digest"))
+    if digest is None:
+        authority = entry.get("authority")
+        if isinstance(authority, Mapping):
+            digest = _optional_str(authority.get("envelope_digest"))
+    if digest is not None and digest in by_digest:
+        return by_digest[digest]
+    subject_id = _optional_str(
+        validation.get("subject_id") or entry.get("task_id") or entry.get("id")
+    )
+    if subject_id is None:
+        return None
+    candidates = by_subject.get(subject_id, ())
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _accepted_projection_decision(
+    envelope: ResultEnvelope,
+    validation: Mapping[str, Any],
+    source: str,
+) -> TaskValidationDecision:
+    if envelope.decision is not None:
+        return (
+            envelope.decision
+            if isinstance(envelope.decision, TaskValidationDecision)
+            else TaskValidationDecision.from_dict(envelope.decision.to_dict())
+        )
+    payload = {
+        "reason": _optional_str(validation.get("reason")) or "accepted_attempt_projection",
+        "source_path": source,
+        "envelope_digest": envelope.digest(),
+        "validation": _json_safe_mapping(validation),
+    }
+    decision_id = f"{envelope.claim.claim_id}:accepted"
+    return TaskValidationDecision(
+        decision_id=decision_id,
+        run_id=envelope.run_id,
+        run_revision=envelope.run_revision,
+        subject_id=envelope.subject_id,
+        attempt_id=envelope.attempt.attempt_id,
+        grant_id=envelope.dispatch_id,
+        coordinator_attempt_id=envelope.dispatch.coordinator_attempt_id,
+        fence_token=envelope.dispatch.fence_token,
+        claim_id=envelope.claim.claim_id,
+        outcome="accepted",
+        evidence_ids=envelope.evidence_ids,
+        idempotency_key=decision_id,
+        payload=payload,
+    )
+
+
+def _json_safe_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, item in value.items():
+        key_str = str(key)
+        if item is None or isinstance(item, (bool, int, float, str)):
+            safe[key_str] = item
+        elif isinstance(item, Mapping):
+            safe[key_str] = _json_safe_mapping(item)
+        elif isinstance(item, Sequence) and not isinstance(item, (str, bytes)):
+            safe[key_str] = [
+                element
+                if element is None or isinstance(element, (bool, int, float, str))
+                else str(element)
+                for element in item
+            ]
+        else:
+            safe[key_str] = str(item)
+    return safe
+
+
+def _populate_projection_decisions(
+    view: PlanExecutionView,
+    *,
+    decisions: dict[str, AuthorityDecision],
+) -> None:
+    diagnostics_by_task: dict[str, list[dict[str, str]]] = {}
+    for diagnostic in view.diagnostics:
+        diagnostics_by_task.setdefault(diagnostic.subject_id, []).append(
+            diagnostic.to_dict()
+        )
+    for task in view.tasks:
+        if task.dependency_closed:
+            decisions[task.task_id] = AuthorityDecision(
+                task_id=task.task_id,
+                status=EvidenceStatus.satisfied,
+                satisfied=True,
+                diagnostics={
+                    "authority_adapter": "effective_execute_completed_task_ids",
+                    "adapter_mode": "compatibility_shadow",
+                    "execute_completion": "accepted_attempt_projection",
+                    "accepted_attempt_ids": list(task.accepted_attempt_ids),
+                    "accepted_decision_ids": list(task.accepted_decision_ids),
+                    "source_paths": list(task.source_paths),
+                },
+            )
+            continue
+        reason = (
+            "accepted_attempt_dependency_unresolved"
+            if task.accepted
+            else "no_accepted_attempt"
+        )
+        decisions[task.task_id] = AuthorityDecision.unknown(
+            task.task_id,
+            reason=reason,
+            diagnostics={
+                "authority_adapter": "effective_execute_completed_task_ids",
+                "adapter_mode": "compatibility_shadow",
+                "execute_completion": "accepted_attempt_projection",
+                "accepted": task.accepted,
+                "dependency_closed": task.dependency_closed,
+                "accepted_attempt_ids": list(task.accepted_attempt_ids),
+                "unresolved_claim_ids": list(task.unresolved_claim_ids),
+                "unresolved_dependency_ids": list(task.unresolved_dependency_ids),
+                "projection_diagnostics": diagnostics_by_task.get(task.task_id, []),
+            },
+        )
+
+
+def _emit_projection_drift_diagnostics(
+    plan_dir: Path,
+    tasks: Iterable[Mapping[str, Any]],
+    *,
+    decisions: Mapping[str, AuthorityDecision],
+) -> None:
+    for task in tasks:
+        if not isinstance(task, Mapping):
+            continue
+        decision = decisions.get(_task_id(task))
+        if decision is None:
+            continue
+        _emit_authority_divergence_diagnostics(plan_dir, task, decision)
+
+
+def _is_explained_skip(task: Mapping[str, Any]) -> bool:
+    return _optional_str(task.get("status")) == "skipped" and (
+        _optional_str(task.get("reviewer_verdict")) == "deferred_baseline_unavailable"
+        or (
+            isinstance(task.get("executor_notes"), str)
+            and task["executor_notes"].strip()
+            and not is_rubber_stamp(task["executor_notes"], strict=True)
+        )
+    )
+
+
+def _is_explained_noop_completion(task: Mapping[str, Any]) -> bool:
+    status = _optional_str(task.get("status"))
+    if status not in {"done", "completed"}:
+        return False
+    if _declared_task_outputs(task):
+        return False
+    notes = task.get("executor_notes")
+    return (
+        isinstance(notes, str)
+        and notes.strip()
+        and not is_rubber_stamp(notes, strict=True)
+    )
+
+
+def _explained_skip_decision(task_id: str, task: Mapping[str, Any]) -> AuthorityDecision:
+    return AuthorityDecision(
+        task_id=task_id,
+        status=EvidenceStatus.not_applicable,
+        satisfied=False,
+        diagnostics={
+            "authority_adapter": "effective_execute_completed_task_ids",
+            "adapter_mode": "compatibility_shadow",
+            "raw_terminal_status": _optional_str(task.get("status")),
+            "execute_completion": "explained_skip",
+        },
+    )
+
+
+def _explained_noop_decision(task_id: str, task: Mapping[str, Any]) -> AuthorityDecision:
+    return AuthorityDecision(
+        task_id=task_id,
+        status=EvidenceStatus.satisfied,
+        satisfied=True,
+        diagnostics={
+            "authority_adapter": "effective_execute_completed_task_ids",
+            "adapter_mode": "compatibility_shadow",
+            "raw_terminal_status": _optional_str(task.get("status")),
+            "execute_completion": "explained_noop_completion",
+        },
+    )
+
+
+def _declared_task_outputs(task: Mapping[str, Any]) -> tuple[str, ...]:
+    declared: list[str] = []
+    for key in ("files_changed", "commands_run", "evidence_files", "sections_written"):
+        values = task.get(key)
+        if isinstance(values, str):
+            if values.strip():
+                declared.append(key)
+        elif isinstance(values, Sequence):
+            if any(isinstance(item, str) and item.strip() for item in values):
+                declared.append(key)
+    return tuple(declared)
+
+
+def _execution_baseline_head(state: Mapping[str, Any] | None) -> str | None:
+    if not isinstance(state, Mapping):
+        return None
+    meta = state.get("meta")
+    if not isinstance(meta, Mapping):
+        return None
+    baseline = meta.get("execution_baseline")
+    if not isinstance(baseline, Mapping):
+        return None
+    head = baseline.get("head")
+    return head.strip() if isinstance(head, str) and head.strip() else None
+
+
+def _resolve_execute_authority_current_head(
+    plan_dir: Path | None,
+    *,
+    project_dir: Path | None,
+    baseline_head: str | None,
+) -> str | None:
+    actual_head = _best_effort_git_head_for_path(project_dir) if project_dir is not None else None
+    recorded_head = _latest_recorded_execution_head(plan_dir) if plan_dir is not None else None
+    if actual_head and recorded_head:
+        if actual_head == recorded_head:
+            return actual_head
+        if project_dir is not None:
+            if _git_is_ancestor(project_dir, recorded_head, actual_head):
+                return actual_head
+            if _git_is_ancestor(project_dir, actual_head, recorded_head):
+                return recorded_head
+    return recorded_head or baseline_head or actual_head
+
+
+def _is_execute_command_checkpoint(task: Mapping[str, Any]) -> bool:
+    if _optional_str(task.get("status")) != "pending":
+        return False
+    if _optional_str(task.get("kind")) != "test":
+        return False
+    if not _string_values(task.get("commands_run")):
+        return False
+    return not any(
+        _string_values(task.get(field))
+        for field in ("files_changed", "evidence_files", "sections_written")
+    )
+
+
+def load_evidence_nucleus(
+    plan_dir: Path | str,
+    *,
+    default_head: str | None = None,
+) -> tuple[EvidenceRef, ...]:
+    """Load the small task evidence nucleus from existing plan artifacts."""
+
+    root = Path(plan_dir)
+    refs: list[EvidenceRef] = []
+    verdict = read_typed_completion_verdict(root)
+    if verdict is not None:
+        refs.extend(verdict.evidence)
+    for artifact_path in _iter_existing_artifacts(root):
+        refs.extend(
+            _evidence_from_execution_artifact(
+                root,
+                artifact_path,
+                default_head=default_head,
+            )
+        )
+    return tuple(refs)
+
+
+def _resolve_evidence_nucleus(
+    *,
+    plan_dir: Path | None,
+    evidence_nucleus: Any,
+    default_head: str | None = None,
+) -> tuple[tuple[EvidenceRef, ...], dict[str, Any]]:
+    refs: list[EvidenceRef] = []
+    diagnostics: dict[str, Any] = {"evidence_sources": []}
+    if evidence_nucleus is not None:
+        refs.extend(_normalize_refs(evidence_nucleus))
+        diagnostics["evidence_sources"].append("provided")
+    if plan_dir is not None:
+        try:
+            loaded = load_evidence_nucleus(plan_dir, default_head=default_head)
+            refs.extend(loaded)
+            diagnostics["evidence_sources"].append("plan_artifacts")
+            diagnostics["loaded_evidence_count"] = len(loaded)
+        except Exception as exc:
+            diagnostics.setdefault("errors", []).append(
+                {
+                    "scope": "plan",
+                    "reason": "load_evidence_nucleus_error",
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc),
+                }
+            )
+    return tuple(refs), diagnostics
+
+
+def _iter_existing_artifacts(plan_dir: Path) -> tuple[Path, ...]:
+    paths = sorted(list_batch_artifacts(plan_dir))
+    finalize = plan_dir / "finalize.json"
+    if finalize.is_file():
+        paths.append(finalize)
+    return tuple(paths)
+
+
+def _evidence_from_execution_artifact(
+    plan_dir: Path,
+    artifact_path: Path,
+    *,
+    default_head: str | None = None,
+) -> tuple[EvidenceRef, ...]:
+    try:
+        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ()
+    if not isinstance(payload, Mapping):
+        return ()
+
+    refs: list[EvidenceRef] = []
+    refs.extend(_normalize_refs(payload.get("evidence")))
+    for record in _task_records(payload):
+        refs.extend(_normalize_refs(record.get("evidence")))
+        refs.extend(
+            _evidence_from_task_record(
+                record,
+                artifact_path,
+                root=plan_dir,
+                default_head=default_head,
+            )
+        )
+    return tuple(refs)
+
+
+def _task_records(payload: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    records: list[Mapping[str, Any]] = []
+    for key in ("task_updates", "tasks"):
+        raw = payload.get(key)
+        if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)):
+            records.extend(item for item in raw if isinstance(item, Mapping))
+    return tuple(records)
+
+
+def _best_effort_git_head_for_path(path: Path) -> str | None:
+    """Return the git HEAD for the repo containing *path*, if available."""
+
+    root = path if path.is_dir() else path.parent
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return completed.stdout.strip() or None
+
+
+def _latest_recorded_execution_head(plan_dir: Path) -> str | None:
+    for path in sorted(
+        list_batch_artifacts(plan_dir),
+        key=_execution_batch_sort_key,
+        reverse=True,
+    ):
+        head = _latest_head_in_artifact(path)
+        if head:
+            return head
+    return _latest_head_in_artifact(plan_dir / "finalize.json")
+
+
+def _latest_head_in_artifact(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    latest_head: str | None = None
+    for key in ("task_updates", "tasks"):
+        raw_records = payload.get(key)
+        if not isinstance(raw_records, Sequence):
+            continue
+        for record in raw_records:
+            if not isinstance(record, Mapping):
+                continue
+            observed = record.get("head_sha") or record.get("head")
+            if isinstance(observed, str) and observed.strip():
+                latest_head = observed.strip()
+    return latest_head
+
+
+def _execution_batch_sort_key(path: Path) -> int:
+    name = path.stem
+    try:
+        return int(name.rsplit("_", 1)[-1])
+    except ValueError:
+        return -1
+
+
+def _git_is_ancestor(project_dir: Path, ancestor: str, descendant: str) -> bool:
+    try:
+        completed = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+            cwd=project_dir,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
+
+
+def _evidence_from_task_record(
+    record: Mapping[str, Any],
+    artifact_path: Path,
+    *,
+    root: Path,
+    default_head: str | None = None,
+) -> tuple[EvidenceRef, ...]:
+    task_id = _task_id(record)
+    fallback_head = _optional_str(record.get("head_sha") or record.get("head"))
+    if fallback_head is None:
+        fallback_head = _optional_str(default_head)
+    if fallback_head is None and root is not None:
+        fallback_head = _best_effort_git_head_for_path(root)
+    refs: list[EvidenceRef] = []
+    # Only treat reported files/commands as corroborating evidence when the
+    # task has reached a terminal state. Finalize may pre-attribute expected
+    # files to pending tasks; those speculative attributions must not count
+    # as completed work before the executor has run.
+    terminal_statuses = {"done", "skipped", "waived", "not_applicable"}
+    status = _optional_str(record.get("status"))
+    if status in terminal_statuses:
+        for field_name in ("files_changed", "commands_run", "evidence_files", "sections_written"):
+            for value in _string_values(record.get(field_name)):
+                refs.append(
+                    EvidenceRef(
+                        kind=f"task_{field_name}",
+                        status=EvidenceStatus.satisfied,
+                        summary=f"{field_name} reported for {task_id}",
+                        details={
+                            "task_id": task_id,
+                            field_name: [value],
+                            "head_sha": fallback_head,
+                            "code_hash": _optional_str(record.get("code_hash")),
+                        },
+                        trust_class=TrustClass.evidence,
+                        artifact=ArtifactRef(path=_relative_artifact_path(artifact_path, root)),
+                        source=artifact_path.name,
+                        subject=task_id,
+                        code_hash=_optional_str(record.get("code_hash")),
+                    )
+                )
+    kind = _optional_str(record.get("kind"))
+    notes = _optional_str(record.get("executor_notes"))
+    if (
+        not refs
+        and kind in {"audit", "research"}
+        and notes is not None
+        and len(notes.strip()) >= _AUDIT_RESEARCH_NOTES_MIN_LEN
+        and not is_rubber_stamp(notes, strict=True)
+    ):
+        refs.append(
+            EvidenceRef(
+                kind="task_executor_notes",
+                status=EvidenceStatus.satisfied,
+                summary=f"Substantive {kind} notes reported for {task_id}",
+                details={
+                    "task_id": task_id,
+                    "kind": kind,
+                    "executor_notes_length": len(notes.strip()),
+                    "head_sha": fallback_head,
+                    "code_hash": _optional_str(record.get("code_hash")),
+                },
+                trust_class=TrustClass.evidence,
+                artifact=ArtifactRef(path=_relative_artifact_path(artifact_path, root)),
+                source=artifact_path.name,
+                subject=task_id,
+                code_hash=_optional_str(record.get("code_hash")),
+            )
+        )
+    if not refs and _optional_str(record.get("status")) in {"waived", "not_applicable"}:
+        status = EvidenceStatus(_optional_str(record.get("status")))
+        refs.append(
+            EvidenceRef(
+                kind="task_terminal_exception",
+                status=status,
+                summary=f"{status.value} task exception for {task_id}",
+                details={"task_id": task_id},
+                trust_class=TrustClass.judgment,
+                artifact=ArtifactRef(path=_relative_artifact_path(artifact_path, root)),
+                source=artifact_path.name,
+                subject=task_id,
+            )
+        )
+    return tuple(refs)
+
+
+def _normalize_refs(value: Any) -> tuple[EvidenceRef, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, EvidenceRef):
+        return (value,)
+    if isinstance(value, Mapping):
+        return (EvidenceRef.from_dict(dict(value)),)
+    if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
+        refs: list[EvidenceRef] = []
+        for item in value:
+            if isinstance(item, EvidenceRef):
+                refs.append(item)
+            elif isinstance(item, Mapping):
+                refs.append(EvidenceRef.from_dict(dict(item)))
+        return tuple(refs)
+    return ()
+
+
+def _relative_artifact_path(path: Path, root: Path) -> str:
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def _task_id(task: Mapping[str, Any]) -> str:
+    return str(task.get("task_id") or task.get("id") or "")
+
+
+def _best_effort_git_head(plan_dir: Path) -> str | None:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=plan_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    head = completed.stdout.strip()
+    return head or None
+
+
+def _string_values(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,) if value else ()
+    if isinstance(value, Mapping):
+        return _string_values(value.get("path") or value.get("name") or value.get("id"))
+    if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
+        result: list[str] = []
+        for item in value:
+            result.extend(_string_values(item))
+        return tuple(item for item in result if item)
+    return (str(value),)
+
+
+def _optional_str(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _emit_authority_divergence_diagnostics(
+    plan_dir: Path,
+    task: Mapping[str, Any],
+    decision: AuthorityDecision,
+) -> None:
+    payload = _authority_divergence_payload(task, decision)
+    if payload is None:
+        return
+    try:
+        _append_authority_divergence_jsonl(plan_dir, payload)
+    except Exception:
+        pass
+    try:
+        emit(EventKind.AUTHORITY_DIVERGENCE, plan_dir=plan_dir, phase="execute", payload=payload)
+    except Exception:
+        pass
+
+
+def _authority_divergence_payload(
+    task: Mapping[str, Any],
+    decision: AuthorityDecision,
+) -> dict[str, Any] | None:
+    raw_status = _optional_str(task.get("status"))
+    if (
+        raw_status not in _TERMINAL_AUTHORITY_CLAIMS
+        or decision.authoritative
+        or _is_explained_skip(task)
+        or _is_explained_noop_completion(task)
+    ):
+        return None
+    reasons = tuple(
+        str(reason)
+        for reason in decision.would_block_reasons
+        if isinstance(reason, str) and reason
+    )
+    return {
+        "diagnostic_version": 1,
+        "task_id": decision.task_id,
+        "raw_terminal_status": raw_status,
+        "authority_status": decision.status.value,
+        "authoritative": decision.authoritative,
+        "reason": reasons[0] if reasons else _optional_str(decision.diagnostics.get("reason")) or "authority_diverged",
+        "missing_outputs": list(decision.missing_outputs),
+        "stale_evidence": list(decision.stale_evidence),
+        "would_block_reasons": list(reasons),
+        "error": decision.error,
+        "diagnostics": dict(decision.diagnostics),
+        "ts_utc": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _append_authority_divergence_jsonl(plan_dir: Path, payload: Mapping[str, Any]) -> None:
+    path = plan_dir / AUTHORITY_DIVERGENCE_LEDGER
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(dict(payload), sort_keys=True) + "\n")
+
+
+# ── Route inventory ────────────────────────────────────────────────────────
+
+AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
+    # ═══ Execute family ═══════════════════════════════════════════════════
+    AuthorityRoute(
+        id="EXEC-01",
+        file="arnold_pipelines/megaplan/execute/batch.py",
+        line_range="1650-1654",
+        description="Auto-loop task selection: builds completed_task_ids from raw task.get('status') in {'done','skipped'}",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority adapters (effective_execute_completed_task_ids) exist and are used by chain/supervisor; batch.py raw reads not yet replaced at source. Drift diagnostics emitted.",
+        route_family="execute",
+    ),
+    AuthorityRoute(
+        id="EXEC-02",
+        file="arnold_pipelines/megaplan/execute/batch.py",
+        line_range="951-957",
+        description="Batch prerequisite gate: completed_ids from batch_status_overlay trusting raw {'done','skipped'}",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority adapters wired downstream (chain/supervisor use effective_execute_completed_task_ids); batch.py raw reads not yet replaced at source.",
+        route_family="execute",
+    ),
+    AuthorityRoute(
+        id="EXEC-03",
+        file="arnold_pipelines/megaplan/execute/batch.py",
+        line_range="1114-1118",
+        description="All-tracked check for batch completion: all(t.get('status') in {'done','skipped'})",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority adapters exist; chain/supervisor completion checks use effective_execute_completed_task_ids with drift diagnostics; batch.py source not yet migrated.",
+        route_family="execute",
+    ),
+    AuthorityRoute(
+        id="EXEC-04",
+        file="arnold_pipelines/megaplan/execute/batch.py",
+        line_range="2083",
+        description="Post-batch completed_id update re-reading raw status from finalize.json",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority adapters available; chain/supervisor consumers use authority-backed completion; batch.py still re-reads raw status at source.",
+        route_family="execute",
+    ),
+    AuthorityRoute(
+        id="EXEC-05",
+        file="arnold_pipelines/megaplan/_core/io.py",
+        line_range="58-104",
+        description="compute_task_batches: accepts completed_ids as satisfied deps; wrapper must supply corroborated IDs",
+        disposition=WARN_ONLY,
+        owner_or_reason="Pure function — callers (chain/supervisor) now supply authority-backed completed_ids via effective_execute_completed_task_ids; function itself accepts any input.",
+        route_family="execute",
+    ),
+    AuthorityRoute(
+        id="EXEC-06",
+        file="arnold_pipelines/megaplan/_core/scheduler/topo.py",
+        line_range="15-62",
+        description="schedule_batches: threads completed_ids through; same pure-assertion consumer as compute_task_batches",
+        disposition=WARN_ONLY,
+        owner_or_reason="Pure function — callers supply authority-backed completed_ids; no internal raw status reads.",
+        route_family="execute",
+    ),
+    AuthorityRoute(
+        id="EXEC-07",
+        file="arnold_pipelines/megaplan/execute/_binding/reducer.py",
+        line_range="132",
+        description="all_tracked = all(t.get('status') in {'done','skipped'}) determines BatchOutcome.SUCCESS",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority adapters exist; chain/supervisor cross-check reducer outcome against authority with drift diagnostics; reducer source not yet migrated.",
+        route_family="execute",
+    ),
+    AuthorityRoute(
+        id="EXEC-08",
+        file="arnold_pipelines/megaplan/execute/timeout.py",
+        line_range="350",
+        description="Timeout recovery completed_tasks from raw status in {'done','skipped'}",
+        disposition=WARN_ONLY,
+        owner_or_reason="Best-effort corroborated completion via effective_execute_completed_task_ids; uncorroborated tasks labelled; fail-open (SD3).",
+        route_family="execute",
+    ),
+    AuthorityRoute(
+        id="EXEC-09",
+        file="arnold_pipelines/megaplan/prompts/execute.py",
+        line_range="156",
+        description="Prompt helper filtering done_tasks from raw task.get('status') in ('done','skipped')",
+        disposition=WARN_ONLY,
+        owner_or_reason="Prompt helpers accept completed IDs from callers; chain/supervisor now supply authority-backed IDs; helper itself is pure projection.",
+        route_family="execute",
+    ),
+
+    # ═══ Resume / redrive family ══════════════════════════════════════════
+    AuthorityRoute(
+        id="RESUME-01",
+        file="arnold_pipelines/megaplan/_core/workflow.py",
+        line_range="508-699",
+        description="resume_plan: reads resume_cursor, dispatches phase, pops cursor on success — no corroboration",
+        disposition=WARN_ONLY,
+        owner_or_reason="Control interface rewired (T9) with source_view_hash/revision on override receipts; compatibility path preserved for callers without view hash. Drift diagnostics emitted.",
+        route_family="resume",
+    ),
+    AuthorityRoute(
+        id="RESUME-02",
+        file="arnold_pipelines/megaplan/_pipeline/resume.py",
+        line_range="133,166",
+        description="Pipeline resume cursor: ResumeCursor.load() and with_entry() re-enter pipeline without corroboration",
+        disposition=WARN_ONLY,
+        owner_or_reason="Storage support; cursor payload preservation available for guard annotation; not yet gated on authority.",
+        route_family="resume",
+    ),
+    AuthorityRoute(
+        id="RESUME-03",
+        file="arnold_pipelines/megaplan/auto.py",
+        line_range="1675-1691",
+        description="_active_phase_already_completed: trusts phase_produced_state without task-level corroboration",
+        disposition=WARN_ONLY,
+        owner_or_reason="Human gate and control interface rewired (T9/T10); active-phase completion still legacy-trusting with compatibility path preserved.",
+        route_family="resume",
+    ),
+    AuthorityRoute(
+        id="RESUME-04",
+        file="arnold_pipelines/megaplan/auto.py",
+        line_range="2217-2280",
+        description="Auto terminal success signaling: terminal_status == 'done' gates PLAN_FINISHED, exit-code-0, shadow verdict",
+        disposition=WARN_ONLY,
+        owner_or_reason="Human gate rewired with view hash/revision; terminal success gating produces drift diagnostics but legacy outcome preserved (fail-open per SD3).",
+        route_family="resume",
+    ),
+
+    # ═══ Chain family ═════════════════════════════════════════════════════
+    AuthorityRoute(
+        id="CHAIN-01",
+        file="arnold_pipelines/megaplan/chain/__init__.py",
+        line_range="1742-1968",
+        description="_latest_execution_batch_all_tasks_done: now uses effective_execute_completed_task_ids (authority-backed) over batch artifacts + finalize.json",
+        disposition=ENFORCED,
+        owner_or_reason="Fully migrated to authority adapter via effective_execute_completed_task_ids with accepted-attempt projections and evidence nucleus; completion decisions are authority-backed.",
+        route_family="chain",
+    ),
+    AuthorityRoute(
+        id="CHAIN-02",
+        file="arnold_pipelines/megaplan/chain/__init__.py",
+        line_range="887-973",
+        description="_handle_outcome: advances on outcome.status in {'done','finalized'} without task-level corroboration",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority drift diagnostics captured via epic chain aggregation (T11); legacy ADVANCE decision preserved as effective outcome (fail-open per SD2).",
+        route_family="chain",
+    ),
+    AuthorityRoute(
+        id="CHAIN-03",
+        file="arnold_pipelines/megaplan/chain/__init__.py",
+        line_range="666-698",
+        description="_recover_blocked_execute_if_tasks_done: uses _latest_execution_batch_all_tasks_done (now authority-enforced)",
+        disposition=WARN_ONLY,
+        owner_or_reason="Delegates to CHAIN-01 (enforced) for completion check; recovery decision itself is fail-open with drift diagnostics per T12.",
+        route_family="chain",
+    ),
+    AuthorityRoute(
+        id="CHAIN-04",
+        file="arnold_pipelines/megaplan/chain/__init__.py",
+        line_range="1125-1154",
+        description="Seed plan terminal skip: compares plan state against TERMINAL_SKIP_STATES {'done','aborted','failed'}",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority drift captured via epic chain aggregation (T11); legacy terminal-state comparison preserved as effective outcome (fail-open).",
+        route_family="chain",
+    ),
+    AuthorityRoute(
+        id="CHAIN-05",
+        file="arnold_pipelines/megaplan/chain/__init__.py",
+        line_range="1167-1217",
+        description="current_plan_name pointer reads used to skip or advance chain work",
+        disposition=WARN_ONLY,
+        owner_or_reason="Informational pointer reads are safe; skip/advance from pointer cross-checked with authority drift diagnostics (T11/T12); legacy preserved.",
+        route_family="chain",
+    ),
+
+    # ═══ Supervisor family ════════════════════════════════════════════════
+    AuthorityRoute(
+        id="SUP-01",
+        file="arnold_pipelines/megaplan/supervisor/chain_runner.py",
+        line_range="875-930",
+        description="_recover_blocked_execute_if_tasks_done: duplicate of CHAIN-03; now uses _latest_execution_batch_all_tasks_done backed by effective_execute_completed_task_ids (shared authority helper)",
+        disposition=WARN_ONLY,
+        owner_or_reason="QUARANTINED duplicate of CHAIN-03. Equivalence covered by shared effective_execute_completed_task_ids and _latest_execution_batch_all_tasks_done (both use accepted-attempt projections). Recovery decision fail-open per T12.",
+        route_family="supervisor",
+    ),
+    AuthorityRoute(
+        id="SUP-02",
+        file="arnold_pipelines/megaplan/supervisor/chain_runner.py",
+        line_range="453-463",
+        description="_assert_dependencies_completed: gates on completed_node_ids labels only — no evidence corroboration",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority shadow derivation wired (T12); cross-checks ladder ADVANCE against authority-backed completion; legacy dependency gates preserved (fail-open).",
+        route_family="supervisor",
+    ),
+    AuthorityRoute(
+        id="SUP-03",
+        file="arnold_pipelines/megaplan/supervisor/chain_runner.py",
+        line_range="97-385",
+        description="run_chain milestone advancement loop: advances on LadderAction.ADVANCE from driver outcome",
+        disposition=WARN_ONLY,
+        owner_or_reason="Authority shadow derivation wired (T12) for ADVANCE and PR-merge paths; drift captured as diagnostic; legacy ADVANCE preserved as effective (fail-open per SD2).",
+        route_family="supervisor",
+    ),
+    AuthorityRoute(
+        id="SUP-04",
+        file="arnold_pipelines/megaplan/supervisor/chain_runner.py",
+        line_range="150-385",
+        description="Supervisor dependency gates, PR-merge advancement, and blocked-execute recovery in run_chain",
+        disposition=WARN_ONLY,
+        owner_or_reason="Same authority semantics as canonical chain (T12); divergence captured as diagnostic; legacy preserved (fail-open).",
+        route_family="supervisor",
+    ),
+
+    # ═══ Status-only / informational routes ═══════════════════════════════
+    AuthorityRoute(
+        id="STATUS-01",
+        file="arnold_pipelines/megaplan/cli/status_view.py",
+        line_range="586",
+        description="Status view filtering: displays done/skipped task counts for operator visibility",
+        disposition=INFORMATIONAL,
+        owner_or_reason="Informational read; does not skip, unblock, resume, classify success, or advance work (SD3)",
+        route_family="status",
+    ),
+    AuthorityRoute(
+        id="STATUS-02",
+        file="arnold_pipelines/megaplan/auto.py",
+        line_range="1395-1455",
+        description="_shadow_completion_verdict in auto drive: calls compute_verdict but only blocks in enforce mode",
+        disposition=DEFERRED,
+        owner_or_reason="Completion contract enforcement is a later milestone concern; shadow/warn modes are fail-open",
+        route_family="status",
+    ),
+    AuthorityRoute(
+        id="STATUS-03",
+        file="arnold_pipelines/megaplan/chain/__init__.py",
+        line_range="465-500",
+        description="_shadow_milestone_completion_verdict: shadow-only; explicitly NOT enforcement",
+        disposition=DEFERRED,
+        owner_or_reason="Deferred to later milestone; documented as SHADOW-ONLY, fail-open, never blocks advancement",
+        route_family="status",
+    ),
+    AuthorityRoute(
+        id="STATUS-04",
+        file="arnold_pipelines/megaplan/orchestration/completion_contract.py",
+        line_range="1698",
+        description="compute_verdict: milestone-level completion checking from objective evidence (git, artifacts, suites)",
+        disposition=DEFERRED,
+        owner_or_reason="Shadow-only with SHADOW_TODOS; deliberately not enforcement per M2 scope boundary (SD2)",
+        route_family="status",
+    ),
+    AuthorityRoute(
+        id="STATUS-05",
+        file="arnold_pipelines/megaplan/auto.py",
+        line_range="1406-1436",
+        description="Shadow verdict in auto terminal: calls compute_verdict for completion contract shadow/warn/enforce",
+        disposition=DEFERRED,
+        owner_or_reason="Shadow verdict path; evidence/shadow infrastructure, not authority enforcement (SD2, success criterion 13)",
+        route_family="status",
+    ),
+    AuthorityRoute(
+        id="STATUS-06",
+        file="arnold_pipelines/megaplan/chain/__init__.py",
+        line_range="485-525",
+        description="Shadow verdict in chain _handle_outcome flow: calls compute_verdict for milestone check",
+        disposition=DEFERRED,
+        owner_or_reason="Shadow verdict path; fail-open, non-blocking in shadow/warn modes; enforcement deferred",
+        route_family="status",
+    ),
+
+    # ═══ Timeout-reporting (operator-reporting) ════════════════════════════
+    AuthorityRoute(
+        id="TIMEOUT-01",
+        file="arnold_pipelines/megaplan/execute/timeout.py",
+        line_range="1-388",
+        description="Timeout recovery summary: best-effort operator reporting; not a blocking authority gate",
+        disposition=WARN_ONLY,
+        owner_or_reason="Best-effort corroborated completion via effective_execute_completed_task_ids; uncorroborated tasks labelled as asserted_terminal; fail-open (SD3).",
+        route_family="timeout",
+    ),
+)
+
+
+# ── Convenience views ──────────────────────────────────────────────────────
+
+def enforced_routes() -> tuple[AuthorityRoute, ...]:
+    """Return every route with disposition == 'enforced'."""
+    return tuple(r for r in AUTHORITY_ROUTES if r.disposition == ENFORCED)
+
+
+def warn_only_routes() -> tuple[AuthorityRoute, ...]:
+    """Return every route with disposition == 'warn-only'."""
+    return tuple(r for r in AUTHORITY_ROUTES if r.disposition == WARN_ONLY)
+
+
+def shadow_only_routes() -> tuple[AuthorityRoute, ...]:
+    """Return every route with disposition == 'shadow-only'."""
+    return tuple(r for r in AUTHORITY_ROUTES if r.disposition == SHADOW_ONLY)
+
+
+def deferred_routes() -> tuple[AuthorityRoute, ...]:
+    """Return every route with disposition == 'deferred'."""
+    return tuple(r for r in AUTHORITY_ROUTES if r.disposition == DEFERRED)
+
+
+def informational_routes() -> tuple[AuthorityRoute, ...]:
+    """Return every route with disposition == 'informational'."""
+    return tuple(r for r in AUTHORITY_ROUTES if r.disposition == INFORMATIONAL)
+
+
+# Backward-compat alias — prefer enforced_routes().
+def migrated_routes() -> tuple[AuthorityRoute, ...]:
+    """Backward-compat: return every route with disposition == 'enforced'."""
+    return enforced_routes()
+
+
+def routes_by_family(family: str) -> tuple[AuthorityRoute, ...]:
+    """Return all routes for a given route_family."""
+    return tuple(r for r in AUTHORITY_ROUTES if r.route_family == family)
+
+
+def route_ids_by_disposition() -> dict[str, list[str]]:
+    """Group route IDs by disposition for audit convenience."""
+    result: dict[str, list[str]] = {}
+    for r in AUTHORITY_ROUTES:
+        result.setdefault(r.disposition, []).append(r.id)
+    return result

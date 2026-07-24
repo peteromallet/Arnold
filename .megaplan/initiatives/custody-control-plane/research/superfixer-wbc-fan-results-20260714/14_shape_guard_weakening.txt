@@ -1,0 +1,28 @@
+## Verdict: **NO**
+
+No GUARD-WEAKENING detected. The evidence shows genuine repair, not shortcut-taking.
+
+---
+
+### Evidence from attempt-66 commit `3ff595994e`
+
+**What it fixed (genuine):** In `model_seam.py:701-720`, `_normalize_gate_capture_payload` previously copied all payload keys verbatim (`normalized = dict(payload)`), causing the gate schema to reject model-added fields like `north_star_actions` with `invalid_gate: additional_property at /north_star_actions`. The fix filters to an explicit allowlist of 12 known gate fields, dropping unknown extras before schema validation.
+
+**Regression test added (strengthening):** `test_gate_audit_strips_unknown_top_level_fields_from_inline_payload` — a new, non-weakening test proving `audit_step_payload("gate", ...)` tolerates `north_star_actions` by stripping it. No existing assertions removed, no skips/xfails added, no guard lowered.
+
+```
++    normalized = {key: value for key, value in payload.items() if key in allowed}
+```
+
+### Uncommitted S3 work-in-progress (strengthening, not weakening)
+
+The 58-file / 10,623-line uncommitted diff in the target workspace is the actual S3 product. It adds **14 new boundary contracts** (35→49) and **5 new templates** (12→17), each with identity assertion tests matching S3's explicit Done Criteria:
+
+- `chain_milestone_start`, `chain_milestone_completion`, `chain_complete` (criterion #4)
+- `pr_ready`, `pr_merged` (criterion #5)
+- `cloud_repair_dispatch`, `ordinary_repair_completion`, `meta_repair_completion`, `auditor_6h_completion` (criterion #6)
+- `cloud_custody_managed_running`, `cloud_custody_complete`, `cloud_custody_unmanaged_running_warning`, `cloud_custody_blocked_relaunch_failure`, `cloud_custody_escalated_repeated_unchanged` (criterion #7)
+
+**Zero removed test functions. Zero relaxed assertions.** Every "removed" assertion was a count bump (`27→35→49`, `12→17`). The one message change (`"reconciled terminal plan"` → `"reconciled cursor past completed milestone"`) reflects the new `_reconcile_chain_from_ground_truth` function, not a lowered bar.
+
+The repair `3ff595994e` genuinely broke the c1 gate-loop that had spun 34 times. The chain advanced through c1→S2→S3. The uncommitted changes are the S3 work product executing T18 — strengthening contracts, not relaxing them.

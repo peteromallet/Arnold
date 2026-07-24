@@ -1,0 +1,3 @@
+Follow the full megaplan-cloud skill at `/workspace/arnold/arnold_pipelines/megaplan/data/_codex_skills/megaplan-cloud/SKILL.md`; read-only.
+
+For `workflow-boundary-contracts-corrective-20260710`, test specifically for TOKEN DRIFT / UNREACHABLE REPAIR / CONTEXT failure. Trace concrete writer tokens and reader branches for request/claim/attempt/outcome states relevant to current status, including `launched`, managed `completed`, `repairing`, `finalized`, `between_milestones`, and active-step liveness. Use artifacts plus source grep. Return YES/NO, exact missing mapping if any, sibling locations, under 450 words.

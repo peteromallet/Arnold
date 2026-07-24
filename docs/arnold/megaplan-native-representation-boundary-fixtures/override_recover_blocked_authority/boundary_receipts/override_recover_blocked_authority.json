@@ -1,0 +1,42 @@
+{
+  "authority_records": [
+    {
+      "actor": "fixture-operator",
+      "authority_version": "arnold.workflow.authority_record.v1",
+      "decision": "recover-blocked",
+      "details": {
+        "actor_role_ref": "authority_records[].{actor,role}",
+        "authority_transition": "recover-blocked",
+        "contract_ref": "override_recover_blocked_authority",
+        "evidence_hashes": {
+          "phase_result.json": "5226f3cd1b4b7830e67ce4933a4033d24a0433b367f7dbb03a1c814e98a4804d",
+          "state.json": "e82a0c10c286cbd5d5b501ee6200a399a0ae17bb0018ef4b2eacbf777ee8bfbd"
+        },
+        "freshness_token": "inv-override_recover_blocked_authority",
+        "freshness_token_ref": "state.meta.current_invocation_id",
+        "optional_evidence_refs": [
+          "phase_result.json"
+        ],
+        "required_evidence_refs": [
+          "state.json"
+        ]
+      },
+      "evidence_refs": [
+        "state.json",
+        "phase_result.json"
+      ],
+      "role": "reviewer",
+      "scope": "override.recover_blocked"
+    }
+  ],
+  "boundary_id": "override_recover_blocked_authority",
+  "invocation_id": "inv-override_recover_blocked_authority",
+  "outcome": "succeeded",
+  "phase_result_ref": "phase_result.json",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s6.override.recover_blocked.1",
+  "state_observation": {
+    "current_state": "critiqued"
+  },
+  "workflow_id": "megaplan-review"
+}

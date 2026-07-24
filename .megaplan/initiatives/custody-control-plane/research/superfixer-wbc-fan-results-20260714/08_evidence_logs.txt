@@ -1,0 +1,36 @@
+Now I have all the evidence needed. Here is the timestamped causal sequence:
+
+---
+
+## `workflow-boundary-contracts-corrective-20260710` — Causal Sequence
+
+### 1. Launch & C1 Stop (July 11, 14:32–17:10 UTC)
+
+- **14:32:31** — Initial launch fails: `launch_precondition_failed`, missing prerequisite chain state `chain-5733397cf1e9.json`.
+- **14:33:13** — Second launch succeeds. Reconciled `cursor_index: -1 → 0`. Milestone `c1-contract-reality-reconciliation` starts, plan `c1-contract-reality-20260711-1433`.
+- **14:33–~17:10** — C1 runs prep→plan→critique→gate→finalize→execute→review through 23 iterations. Gate phase repeatedly fails schema audit: `additional_property at /north_star_actions: unexpected property 'north_star_actions'` (at least 5× explicit `internal_error`). Iter 23: plan terminates **`blocked`** due to `finalize_baseline_test_scope` failure (archived test paths). Chain reports `status: "stopped"` at **17:10**. *This is the historical gate spin — C1's gate loop, not T18.*
+
+### 2. S2 & Recovery (July 13, 15:44–19:34)
+
+- **S1** completed as `c1-contract-reality-20260711-1433` → `done` (relabeled post-hoc as `s1-operational-semantic-health`).
+- **S2** (`s2-contract-foundation-and-20260713-1544`) completed at L8311: `terminal state reached: done`. S2 suffered **51 identical gate structural audit failures** (`missing_required at /north_star_actions`) before succeeding — deterministic retry exhaustion, the true historical gate spin.
+- **S3** launched at **19:34:44**: plan `s3-megaplan-boundary-coverage-20260713-1934`, through plan→critique→gate(PROCEED)→finalize→execute. Execute reached batch_18 where **T18** returned `status: pending` with empty output — the current T18 failure.
+
+### 3. Chain Re-engagement & T18 (July 14, ~00:02–00:31)
+
+- **~00:02** — Watchdog cleared orphaned active-step for dead worker PID. Chain refresh synced `last_state: between_milestones → finalized`.
+- **~00:06** — Chain resumed existing plan `s3-megaplan-boundary-coverage-20260713-1934` at `finalized→execute`. Worker re-entered batch_18 tasks. The chain log ends at L10607 with the worker still active, investigating `repair_contract.py`/`status_snapshot.py` custody classification changes — the T18 batch remained uncompleted.
+
+### Missing/Contradictory Terminal Records
+
+1. **Incident ledger frozen at seq 474**: projection says `outcome: stopped`, `next_expected_event: watchdog.dispatch` — but chain recovered through S2→S3 with live heartbeat. No recovery/supersession event was ever emitted. The auditor (L3, 20260713T193411Z) flagged this as `DRIFT_DETECTED`.
+
+2. **Repair-data tracks obsolete C1**: `workflow-boundary-contracts-corrective-20260710.repair-data.json` (attempt_counter: 66, outcome: `repairing`) still references `milestone_or_plan: "c1-contract-reality-20260711-1433"` while S3 is live.
+
+3. **L1 supervisor universally blocked**: All 96 entries in the supervise log (July 12–13) show `L1 supervisor mutation blocked (requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED)` — zero automated repair executed.
+
+4. **Kimi goal-operator artifacts absent**: Directory `/workspace/.megaplan/kimi-goal-operator/` contains no entries for this chain.
+
+5. **T18 output empty**: `execute_batch_18_output.json` shows T18 `status: pending` with no executor notes, files, or commands — execution was never completed.
+
+6. **Chain/plan state contradiction**: Chain state says `last_state: finalized` with `current_milestone_index: 2`; S3 plan state says `current_state: finalized`, `iteration: 1` — both agree on `finalized` but neither reflects the re-engaged execute worker that was actively patching custody code at log end.

@@ -1,0 +1,1167 @@
+{
+  "meta": {
+    "schema_version": "wbc.contract_to_producer.v1",
+    "matrix_id": "contract_to_producer_matrix",
+    "description": "Maps every current boundary contract to real producer code paths, handlers/functions, applicability rules, invocation identity, artifact path patterns, state/history deltas, phase_result, receipt timing, authority references, evidence_pack rows, and visible non-conformant exceptions. Does not invent filenames or authority evidence.",
+    "generated_by": "C1 Contract Reality Reconciliation \u2014 T11",
+    "timestamp_utc": "2026-07-11T19:15:00Z",
+    "producer_categories": {
+      "handler_function": "Named handler function in arnold_pipelines/megaplan/handlers/ that produces the boundary transition.",
+      "auto_matched": "Boundary is automatically matched by the shared _boundary_contract_by_phase + _BOUNDARY_EXPECTED_NEXT_STEP_BY_ID machinery in handlers/shared.py.",
+      "manual_emit": "Boundary receipt is emitted via explicit call to _emit_execute_boundary_receipt, _emit_batch_boundary_receipt, or write_boundary_receipt within a specific handler or batch module.",
+      "declared_only": "Boundary contract is declared in boundary_contracts.py but no matching producer emission path has been found in the current codebase.",
+      "unknown": "Producer path could not be confirmed through code inspection; marked as visibly unknown."
+    },
+    "non_conformant_categories": {
+      "no_auto_match": "Contract is not in _FRONT_HALF_BOUNDARY_ID_BY_PHASE and has no automatic receipt emission path.",
+      "partial_coverage": "Contract is emitted in some code paths but not all the contract's declared scenarios.",
+      "declared_only_no_producer": "Contract is in BOUNDARY_CONTRACTS but no emission callsite was found."
+    },
+    "evidence_pack_notes": {
+      "pipeline": "arnold/pipelines/evidence_pack/pipeline.py \u2014 model-less verification of persisted evidence-pack JSON artifacts.",
+      "steps": "EvidencePackStep in arnold/pipelines/evidence_pack/steps.py performs structured verification.",
+      "rows_note": "Evidence_pack rows are not directly mapped to boundary contracts; the pipeline independently verifies evidence artifacts. Receipts written by boundary producers become verifiable evidence rows."
+    }
+  },
+  "contracts": [
+    {
+      "boundary_id": "critique_to_gate",
+      "row_id": "s2.critique.1",
+      "phase": "critique",
+      "producer_category": "auto_matched",
+      "handler_function": "handlers/critique.py:handle_critique (delegates to orchestration/critique_runtime.py:handle_critique)",
+      "producer_path": "arnold_pipelines/megaplan/handlers/critique.py \u2192 arnold_pipelines/megaplan/orchestration/critique_runtime.py",
+      "applicability_rules": "Invoked when current_state is STATE_PLANNED and step='critique' is run. The runtime dispatches parallel critiques, runs critiques, potentially triggers adaptive routing, and calls _finish_step.",
+      "invocation_identity": "megaplan run <plan> -s critique (or auto driver transitions from plan)",
+      "artifact_path_patterns": [
+        "critique.md",
+        "scores.json"
+      ],
+      "state_deltas": {
+        "current_phase": "critique",
+        "current_state": "STATE_CRITIQUED"
+      },
+      "history_deltas": {
+        "expected_history_entry": "critique_completed"
+      },
+      "phase_result": "phase_result.json emitted by _finish_step via _emit_phase_result",
+      "receipt_timing": "Emitted synchronously within _finish_step in handlers/shared.py (step not in {execute, review})",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": []
+    },
+    {
+      "boundary_id": "execute_aggregate_promotion",
+      "row_id": "s4.execute.1",
+      "phase": "execute",
+      "producer_category": "manual_emit",
+      "handler_function": "execute/batch.py:_emit_batch_boundary_receipt",
+      "producer_path": "arnold_pipelines/megaplan/execute/batch.py",
+      "applicability_rules": "Emitted on final batch when transition is terminal (not blocked). The dispatcher emits aggregate promotion receipt with child_trace_refs including execution.json and task_count.",
+      "invocation_identity": "megaplan run <plan> -s execute (final batch completion)",
+      "artifact_path_patterns": [
+        "execute_payload.json",
+        "execution.json"
+      ],
+      "state_deltas": {
+        "current_phase": "execute",
+        "aggregation_stage": "promoted"
+      },
+      "history_deltas": {
+        "expected_history_entry": "execute_aggregate_promotion"
+      },
+      "phase_result": "phase_result.json emitted via _emit_phase_result at handler level",
+      "receipt_timing": "Emitted within handle_execute_auto_loop on terminal batch completion",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": []
+    },
+    {
+      "boundary_id": "execute_approval",
+      "row_id": "s4.execute.1",
+      "phase": "execute",
+      "producer_category": "manual_emit",
+      "handler_function": "handlers/execute.py:_emit_execute_boundary_receipt",
+      "producer_path": "arnold_pipelines/megaplan/handlers/execute.py",
+      "applicability_rules": "Emitted when execute approval gate clears (_enforce_approval_gate returns APPROVED). The receipt is observational only \u2014 evidence-only, does not affect branch decisions. Emitted BEFORE batch dispatch.",
+      "invocation_identity": "megaplan run <plan> -s execute (after approval gate clears)",
+      "artifact_path_patterns": [
+        "approval_record.json"
+      ],
+      "state_deltas": {
+        "current_phase": "execute",
+        "approval_gate": "cleared"
+      },
+      "history_deltas": {
+        "expected_history_entry": "execute_approval_cleared"
+      },
+      "phase_result": "phase_result.json emitted after batch dispatch completes (not at approval time)",
+      "receipt_timing": "Emitted before batch dispatch, in handle_execute after approval gate passes. Not part of _finish_step (execute is excluded from auto-receipt in _finish_step).",
+      "authority_references": {
+        "authority_required": true,
+        "authority_source": "worker auth_metadata / auth_channel"
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": []
+    },
+    {
+      "boundary_id": "execute_approval_denial",
+      "row_id": "s4.execute.1",
+      "phase": "execute",
+      "producer_category": "manual_emit",
+      "handler_function": "handlers/execute.py:_emit_execute_boundary_receipt",
+      "producer_path": "arnold_pipelines/megaplan/handlers/execute.py",
+      "applicability_rules": "Emitted when execute approval gate fails (missing confirmation or missing approval). Evidence-only receipt before CliError propagates.",
+      "invocation_identity": "megaplan run <plan> -s execute (when approval gate fails)",
+      "artifact_path_patterns": [],
+      "state_deltas": {
+        "current_phase": "execute",
+        "approval_gate": "denied"
+      },
+      "history_deltas": {
+        "expected_history_entry": "execute_approval_denied"
+      },
+      "phase_result": "Not applicable \u2014 phase_result_required is False",
+      "receipt_timing": "Emitted in except CliError handler before re-raise. Not part of _finish_step.",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": []
+    },
+    {
+      "boundary_id": "execute_batch_checkpoint",
+      "row_id": "s4.execute.1",
+      "phase": "execute",
+      "producer_category": "manual_emit",
+      "handler_function": "execute/batch.py:_emit_batch_boundary_receipt",
+      "producer_path": "arnold_pipelines/megaplan/execute/batch.py",
+      "applicability_rules": "Emitted for each non-final, non-blocked batch within handle_execute_auto_loop. The batch dispatcher emits this when next_step_decision.transition is not BLOCKED and not terminal.",
+      "invocation_identity": "megaplan run <plan> -s execute --batch <N> (or auto loop for non-final batch)",
+      "artifact_path_patterns": [
+        "batch_checkpoint.json"
+      ],
+      "state_deltas": {
+        "current_phase": "execute",
+        "batch_stage": "checkpoint"
+      },
+      "history_deltas": {
+        "expected_history_entry": "execute_batch_checkpoint"
+      },
+      "phase_result": "phase_result.json emitted per batch within handle_execute_auto_loop",
+      "receipt_timing": "Emitted within handle_execute_auto_loop in execute/batch.py for each intermediate batch",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": []
+    },
+    {
+      "boundary_id": "execute_blocked_anchor",
+      "row_id": "s4.execute.1",
+      "phase": "execute",
+      "producer_category": "manual_emit",
+      "handler_function": "handlers/execute.py:_emit_execute_boundary_receipt",
+      "producer_path": "arnold_pipelines/megaplan/handlers/execute.py",
+      "applicability_rules": "Emitted when response.get('result') == 'blocked' in handle_execute. The receipt includes blocked_task_ids, deviations, and optionally the blocked_retry_decision.",
+      "invocation_identity": "megaplan run <plan> -s execute (when batch result is blocked)",
+      "artifact_path_patterns": [
+        "retry_decision.json"
+      ],
+      "state_deltas": {
+        "current_phase": "execute",
+        "retry_stage": "blocked_anchor"
+      },
+      "history_deltas": {
+        "expected_history_entry": "execute_blocked_anchor"
+      },
+      "phase_result": "phase_result.json emitted via _emit_phase_result with exit_kind=blocked_by_prereq",
+      "receipt_timing": "Emitted after clear_active_step and save_state_merge_meta, within handle_execute when blocked",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": []
+    },
+    {
+      "boundary_id": "execute_no_review_terminal",
+      "row_id": "s4.execute.1",
+      "phase": "execute",
+      "producer_category": "manual_emit",
+      "handler_function": "handlers/execute.py:_emit_execute_boundary_receipt",
+      "producer_path": "arnold_pipelines/megaplan/handlers/execute.py",
+      "applicability_rules": "Emitted when robustness is 'bare' or 'light' without deferred_must, and response.state is STATE_EXECUTED with no review step in workflow. Two call-sites: (1) bare robustness skips review entirely, (2) light robustness generates stub review artifact and skips review.",
+      "invocation_identity": "megaplan run <plan> -s execute (bare/light robustness, no review in workflow)",
+      "artifact_path_patterns": [],
+      "state_deltas": {
+        "current_phase": "execute",
+        "terminal_stage": "no_review"
+      },
+      "history_deltas": {
+        "expected_history_entry": "execute_no_review_terminal"
+      },
+      "phase_result": "phase_result.json emitted at handler level",
+      "receipt_timing": "Emitted within handle_execute after no-review terminal decision, before returning response",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": []
+    },
+    {
+      "boundary_id": "execute_partial_failure",
+      "row_id": "s4.execute.1",
+      "phase": "execute",
+      "producer_category": "manual_emit",
+      "handler_function": "execute/batch.py:_emit_batch_boundary_receipt",
+      "producer_path": "arnold_pipelines/megaplan/execute/batch.py",
+      "applicability_rules": "Emitted when next_step_decision.transition is BLOCKED. The dispatcher emits a partial receipt with outcome PARTIAL and child trace refs.",
+      "invocation_identity": "megaplan run <plan> -s execute (when batch is blocked by quality gates)",
+      "artifact_path_patterns": [
+        "blocked_batch_report.json"
+      ],
+      "state_deltas": {
+        "current_phase": "execute",
+        "batch_stage": "partial_failure"
+      },
+      "history_deltas": {
+        "expected_history_entry": "execute_partial_failure"
+      },
+      "phase_result": "phase_result.json emitted with exit_kind=blocked_by_quality or blocked_by_prereq",
+      "receipt_timing": "Emitted within handle_execute_auto_loop when transition is BLOCKED",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": []
+    },
+    {
+      "boundary_id": "execute_resume_anchor",
+      "row_id": "s4.execute.1",
+      "phase": "execute",
+      "producer_category": "manual_emit",
+      "handler_function": "handlers/execute.py:_emit_execute_boundary_receipt",
+      "producer_path": "arnold_pipelines/megaplan/handlers/execute.py",
+      "applicability_rules": "Emitted when force_fresh is True (rework re-execution or blocked retry). Emitted before batch dispatch, with session_freshness=True.",
+      "invocation_identity": "megaplan run <plan> -s execute (when retry requires fresh session)",
+      "artifact_path_patterns": [
+        "fresh_session_request.json"
+      ],
+      "state_deltas": {
+        "current_phase": "execute",
+        "retry_stage": "resume_anchor"
+      },
+      "history_deltas": {
+        "expected_history_entry": "execute_resume_anchor"
+      },
+      "phase_result": "phase_result.json emitted after batch dispatch",
+      "receipt_timing": "Emitted before batch dispatch in handle_execute, when force_fresh is triggered",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": []
+    },
+    {
+      "boundary_id": "final_projection",
+      "row_id": "s5.final_projection.1",
+      "phase": null,
+      "producer_category": "declared_only",
+      "handler_function": null,
+      "producer_path": null,
+      "applicability_rules": "Terminal or continuation projection visible in finalize policy metadata. No explicit boundary receipt emission found.",
+      "invocation_identity": "megaplan run <plan> -s finalize",
+      "artifact_path_patterns": [
+        "finalize.json"
+      ],
+      "state_deltas": {},
+      "history_deltas": {
+        "expected_history_entry": "final_projection_recorded"
+      },
+      "phase_result": "phase_result.json emitted at finalize handler level",
+      "receipt_timing": "Not emitted \u2014 declared only",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "declared_only_no_producer",
+          "detail": "Contract declared but no boundary receipt emission found."
+        },
+        {
+          "kind": "no_auto_match",
+          "detail": "No auto-match mechanism."
+        }
+      ]
+    },
+    {
+      "boundary_id": "finalize_artifacts",
+      "row_id": "s5.finalize_artifacts.1",
+      "phase": null,
+      "producer_category": "declared_only",
+      "handler_function": null,
+      "producer_path": null,
+      "applicability_rules": "Finalize publishes canonical plan artifacts. The finalize handler (handlers/finalize.py:handle_finalize) handles finalize. No explicit boundary receipt emission found for finalize_artifacts.",
+      "invocation_identity": "megaplan run <plan> -s finalize",
+      "artifact_path_patterns": [
+        "contract.json",
+        "final.md",
+        "finalize.json"
+      ],
+      "state_deltas": {
+        "current_phase": "finalize"
+      },
+      "history_deltas": {
+        "expected_history_entry": "finalize_artifacts_published"
+      },
+      "phase_result": "phase_result.json emitted at finalize handler level",
+      "receipt_timing": "Not emitted \u2014 declared only. Finalize is not in _FRONT_HALF_BOUNDARY_ID_BY_PHASE and no explicit boundary receipt found.",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "declared_only_no_producer",
+          "detail": "Contract declared but no boundary receipt emission found in finalize handler."
+        },
+        {
+          "kind": "no_auto_match",
+          "detail": "No auto-match mechanism for finalize phase."
+        }
+      ]
+    },
+    {
+      "boundary_id": "finalize_fallback",
+      "row_id": "s5.finalize_fallback.1",
+      "phase": null,
+      "producer_category": "declared_only",
+      "handler_function": null,
+      "producer_path": null,
+      "applicability_rules": "Revise fallback evidence persisted as declarative contract when baseline test selection is unresolved. No explicit boundary receipt emission found.",
+      "invocation_identity": "megaplan run <plan> -s finalize (when baseline selection is unresolved)",
+      "artifact_path_patterns": [
+        "finalize_revise_feedback.json"
+      ],
+      "state_deltas": {
+        "current_phase": "finalize"
+      },
+      "history_deltas": {
+        "expected_history_entry": "finalize_revise_fallback"
+      },
+      "phase_result": "phase_result.json emitted at finalize handler level",
+      "receipt_timing": "Not emitted \u2014 declared only",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "declared_only_no_producer",
+          "detail": "Contract declared but no boundary receipt emission found."
+        },
+        {
+          "kind": "no_auto_match",
+          "detail": "No auto-match mechanism."
+        }
+      ]
+    },
+    {
+      "boundary_id": "gate_to_revise",
+      "row_id": "s2.gate.1",
+      "phase": "gate",
+      "producer_category": "auto_matched",
+      "handler_function": "handlers/gate.py:handle_gate",
+      "producer_path": "arnold_pipelines/megaplan/handlers/gate.py",
+      "applicability_rules": "Invoked when current_state is STATE_CRITIQUED and step='gate' is run. The handler calls run_gate_checks, build_gate_signals, and evaluates the gate outcome. The receipt is only emitted when recommendation is iterate/retry/revise (gate_to_revise boundary). For proceed outcomes, no boundary receipt is emitted (handler proceeds to execute).",
+      "invocation_identity": "megaplan run <plan> -s gate (or auto driver transitions from critique)",
+      "artifact_path_patterns": [
+        "gate_decision.json",
+        "phase_result.json",
+        "gate.json",
+        "gate_carry.json"
+      ],
+      "state_deltas": {
+        "current_phase": "gate",
+        "current_state": "STATE_GATED"
+      },
+      "history_deltas": {
+        "expected_history_entry": "gate_iterate"
+      },
+      "phase_result": "phase_result.json emitted by _finish_step via _emit_phase_result",
+      "receipt_timing": "Emitted synchronously within _finish_step in handlers/shared.py (step not in {execute, review}). Gate-specific: gate_summary authority data is included in receipt details.",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": []
+    },
+    {
+      "boundary_id": "override_abort_authority",
+      "row_id": "s6.override.abort.1",
+      "phase": null,
+      "producer_category": "unknown",
+      "handler_function": null,
+      "producer_path": "arnold_pipelines/megaplan/handlers/override.py (action='abort')",
+      "applicability_rules": "Override 'abort' action in handle_override. The handler maps action to state transitions and writes state.json. No explicit boundary receipt emission found.",
+      "invocation_identity": "megaplan override abort <plan>",
+      "artifact_path_patterns": [],
+      "state_deltas": {},
+      "history_deltas": {
+        "expected_history_entry": null
+      },
+      "phase_result": "Not applicable \u2014 phase_result_required=False, receipt_required=False",
+      "receipt_timing": "Not emitted \u2014 receipt_required is False",
+      "authority_references": {
+        "authority_required": true,
+        "authority_source": "state.meta.overrides[action=abort]"
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "no_auto_match",
+          "detail": "No auto-match mechanism for override phases. Contract has receipt_required=False so this is by design, but the contract is declared without a producer path."
+        }
+      ]
+    },
+    {
+      "boundary_id": "override_adopt_execution_authority",
+      "row_id": "s6.override.adopt_execution.1",
+      "phase": null,
+      "producer_category": "unknown",
+      "handler_function": null,
+      "producer_path": "arnold_pipelines/megaplan/handlers/override.py (action='adopt-execution')",
+      "applicability_rules": "Override 'adopt-execution' action. Writes state with override entry. No boundary receipt emission found.",
+      "invocation_identity": "megaplan override adopt-execution <plan>",
+      "artifact_path_patterns": [],
+      "state_deltas": {},
+      "history_deltas": {
+        "expected_history_entry": null
+      },
+      "phase_result": "Not applicable \u2014 phase_result_required=False, receipt_required=False",
+      "receipt_timing": "Not emitted \u2014 receipt_required is False",
+      "authority_references": {
+        "authority_required": true,
+        "authority_source": "state.meta.overrides[action=adopt-execution]"
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "no_auto_match",
+          "detail": "Overrides have receipt_required=False. No producer emission path."
+        }
+      ]
+    },
+    {
+      "boundary_id": "override_force_proceed_authority",
+      "row_id": "s6.override.force_proceed.1",
+      "phase": null,
+      "producer_category": "unknown",
+      "handler_function": null,
+      "producer_path": "arnold_pipelines/megaplan/handlers/override.py (action='force-proceed')",
+      "applicability_rules": "Override 'force-proceed' action. The override handler writes state.json with override entry but no boundary receipt emission found.",
+      "invocation_identity": "megaplan override force-proceed <plan>",
+      "artifact_path_patterns": [],
+      "state_deltas": {},
+      "history_deltas": {
+        "expected_history_entry": null
+      },
+      "phase_result": "Not applicable \u2014 phase_result_required=False, receipt_required=False",
+      "receipt_timing": "Not emitted \u2014 receipt_required is False",
+      "authority_references": {
+        "authority_required": true,
+        "authority_source": "state.meta.overrides[action=force-proceed]"
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "no_auto_match",
+          "detail": "Overrides have receipt_required=False. No producer emission path."
+        }
+      ]
+    },
+    {
+      "boundary_id": "override_human_gate_authority",
+      "row_id": "s6.override.human_gate.1",
+      "phase": null,
+      "producer_category": "unknown",
+      "handler_function": null,
+      "producer_path": "arnold_pipelines/megaplan/handlers/override.py (human-gate action)",
+      "applicability_rules": "Protected actions and explicit human gates. No boundary receipt emission found.",
+      "invocation_identity": "megaplan override human-gate <plan>",
+      "artifact_path_patterns": [],
+      "state_deltas": {},
+      "history_deltas": {
+        "expected_history_entry": null
+      },
+      "phase_result": "Not applicable \u2014 phase_result_required=False, receipt_required=False",
+      "receipt_timing": "Not emitted \u2014 receipt_required is False",
+      "authority_references": {
+        "authority_required": true,
+        "authority_source": "approval_scope_ref in details"
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "no_auto_match",
+          "detail": "Overrides have receipt_required=False. No producer emission path."
+        }
+      ]
+    },
+    {
+      "boundary_id": "override_recover_blocked_authority",
+      "row_id": "s6.override.recover_blocked.1",
+      "phase": null,
+      "producer_category": "unknown",
+      "handler_function": null,
+      "producer_path": "arnold_pipelines/megaplan/handlers/override.py (action='recover-blocked')",
+      "applicability_rules": "Override 'recover-blocked' action. Writes state with override entry. No boundary receipt emission found.",
+      "invocation_identity": "megaplan override recover-blocked <plan>",
+      "artifact_path_patterns": [],
+      "state_deltas": {},
+      "history_deltas": {
+        "expected_history_entry": null
+      },
+      "phase_result": "Not applicable \u2014 phase_result_required=False, receipt_required=False",
+      "receipt_timing": "Not emitted \u2014 receipt_required is False",
+      "authority_references": {
+        "authority_required": true,
+        "authority_source": "state.meta.overrides[action=recover-blocked]"
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "no_auto_match",
+          "detail": "Overrides have receipt_required=False. No producer emission path."
+        }
+      ]
+    },
+    {
+      "boundary_id": "override_replan_authority",
+      "row_id": "s6.override.replan.1",
+      "phase": null,
+      "producer_category": "unknown",
+      "handler_function": null,
+      "producer_path": "arnold_pipelines/megaplan/handlers/override.py (action='replan')",
+      "applicability_rules": "Override 'replan' action. Writes state with override entry. No boundary receipt emission found.",
+      "invocation_identity": "megaplan override replan <plan>",
+      "artifact_path_patterns": [],
+      "state_deltas": {},
+      "history_deltas": {
+        "expected_history_entry": null
+      },
+      "phase_result": "Not applicable \u2014 phase_result_required=False, receipt_required=False",
+      "receipt_timing": "Not emitted \u2014 receipt_required is False",
+      "authority_references": {
+        "authority_required": true,
+        "authority_source": "state.meta.overrides[action=replan]"
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "no_auto_match",
+          "detail": "Overrides have receipt_required=False. No producer emission path."
+        }
+      ]
+    },
+    {
+      "boundary_id": "override_resume_clarify_authority",
+      "row_id": "s6.override.resume_clarify.1",
+      "phase": null,
+      "producer_category": "unknown",
+      "handler_function": null,
+      "producer_path": "arnold_pipelines/megaplan/handlers/override.py (action='resume-clarify')",
+      "applicability_rules": "Override 'resume-clarify' action. Writes state with override entry. No boundary receipt emission found.",
+      "invocation_identity": "megaplan override resume-clarify <plan>",
+      "artifact_path_patterns": [],
+      "state_deltas": {},
+      "history_deltas": {
+        "expected_history_entry": null
+      },
+      "phase_result": "Not applicable \u2014 phase_result_required=False, receipt_required=False",
+      "receipt_timing": "Not emitted \u2014 receipt_required is False",
+      "authority_references": {
+        "authority_required": true,
+        "authority_source": "state.meta.overrides[action=resume-clarify]"
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "no_auto_match",
+          "detail": "Overrides have receipt_required=False. No producer emission path."
+        }
+      ]
+    },
+    {
+      "boundary_id": "override_suspension_authority",
+      "row_id": "s6.override.suspension.1",
+      "phase": null,
+      "producer_category": "unknown",
+      "handler_function": null,
+      "producer_path": "arnold_pipelines/megaplan/handlers/override.py (suspension-waiver action)",
+      "applicability_rules": "Suspension/waiver authority. Handled via override mechanism. No boundary receipt emission found.",
+      "invocation_identity": "megaplan override suspension <plan>",
+      "artifact_path_patterns": [],
+      "state_deltas": {},
+      "history_deltas": {
+        "expected_history_entry": null
+      },
+      "phase_result": "Not applicable \u2014 phase_result_required=False, receipt_required=False",
+      "receipt_timing": "Not emitted \u2014 receipt_required is False",
+      "authority_references": {
+        "authority_required": true,
+        "authority_source": "waiver_reason_ref in authority_records"
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "no_auto_match",
+          "detail": "Overrides have receipt_required=False. No producer emission path."
+        }
+      ]
+    },
+    {
+      "boundary_id": "parent_rejoin_promotion",
+      "row_id": "s3.parent.rejoin.1",
+      "phase": "parent_rejoin",
+      "producer_category": "declared_only",
+      "handler_function": null,
+      "producer_path": null,
+      "applicability_rules": "Parent rejoin happens when tiebreaker decision resolves and the parent workflow resumes. No explicit boundary receipt emission was found for this transition.",
+      "invocation_identity": "Auto transition after tiebreaker_decision resolves (parent workflow resumes)",
+      "artifact_path_patterns": [],
+      "state_deltas": {
+        "parent_rejoined": true
+      },
+      "history_deltas": {
+        "expected_history_entry": "parent_rejoin_completed"
+      },
+      "phase_result": "Not applicable \u2014 phase_result_required is False",
+      "receipt_timing": "Not emitted \u2014 declared only",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "declared_only_no_producer",
+          "detail": "Contract declared but no producer emission path found. Parent rejoin is an implicit transition."
+        },
+        {
+          "kind": "no_auto_match",
+          "detail": "No auto-match entry for parent_rejoin phase."
+        }
+      ]
+    },
+    {
+      "boundary_id": "plan_to_critique",
+      "row_id": "s2.plan.1",
+      "phase": "plan",
+      "producer_category": "auto_matched",
+      "handler_function": "handlers/plan.py:handle_plan",
+      "producer_path": "arnold_pipelines/megaplan/handlers/plan.py",
+      "applicability_rules": "Invoked when current_state is STATE_PREPPED and step='plan' is run. Calls _write_plan_version with _validate_generated_plan_or_raise, then _finish_step which emits the boundary receipt.",
+      "invocation_identity": "megaplan run <plan> -s plan (or auto driver transitions from prep)",
+      "artifact_path_patterns": [
+        "plan.md",
+        "plan_v{N}.md",
+        "plan_v{N}.meta.json"
+      ],
+      "state_deltas": {
+        "current_phase": "plan",
+        "current_state": "STATE_PLANNED"
+      },
+      "history_deltas": {
+        "expected_history_entry": "plan_completed"
+      },
+      "phase_result": "phase_result.json emitted by _finish_step via _emit_phase_result",
+      "receipt_timing": "Emitted synchronously within _finish_step in handlers/shared.py (step not in {execute, review})",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": []
+    },
+    {
+      "boundary_id": "prep_to_plan",
+      "row_id": "s2.prep.1",
+      "phase": "prep",
+      "producer_category": "auto_matched",
+      "handler_function": "handlers/plan.py:handle_prep",
+      "producer_path": "arnold_pipelines/megaplan/handlers/plan.py",
+      "applicability_rules": "Invoked when current_state is STATE_INITIALIZED and step='prep' is run. The handler calls _build_prep_clarify_signal + _apply_prep_signal to determine next_state. MOCK path (prep.json) and orchestrated path (run_prep_orchestration from orchestration/prep_research.py) both call _finish_step which emits the boundary receipt.",
+      "invocation_identity": "megaplan run <plan> -s prep (or auto driver transitions from init)",
+      "artifact_path_patterns": [
+        "prep.json"
+      ],
+      "state_deltas": {
+        "current_phase": "prep",
+        "current_state": "STATE_PREPPED (or STATE_AWAITING_HUMAN if clarification needed)"
+      },
+      "history_deltas": {
+        "expected_history_entry": "prep_completed"
+      },
+      "phase_result": "phase_result.json emitted by _finish_step via _emit_phase_result",
+      "receipt_timing": "Emitted synchronously within _finish_step in handlers/shared.py (step not in {execute, review})",
+      "authority_references": {
+        "authority_required": true,
+        "authority_source": "_boundary_authority_records in handlers/shared.py, sources actor/role from auth_metadata or worker channel"
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": []
+    },
+    {
+      "boundary_id": "replan_authority",
+      "row_id": "s3.replan.authority.1",
+      "phase": "replan_authority",
+      "producer_category": "unknown",
+      "handler_function": null,
+      "producer_path": null,
+      "applicability_rules": "Replan authority is triggered when tiebreaker/escalation decisions route to replan. The override handler (handlers/override.py) handles 'replan' action via _override_action_entry, but no explicit boundary receipt emission for this specific contract was found in the override handler.",
+      "invocation_identity": "megaplan override replan <plan>",
+      "artifact_path_patterns": [
+        "replan_decision.json"
+      ],
+      "state_deltas": {
+        "replan_triggered": true
+      },
+      "history_deltas": {
+        "expected_history_entry": "replan_authorized"
+      },
+      "phase_result": "Not applicable \u2014 receipt_required is False",
+      "receipt_timing": "Not emitted \u2014 declared only. Contract has receipt_required=False.",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "declared_only_no_producer",
+          "detail": "Contract declared with receipt_required=False but no producer emission path confirmed. Override handler maps 'replan' action to state transitions but does not call a boundary receipt function for this specific contract."
+        },
+        {
+          "kind": "no_auto_match",
+          "detail": "No auto-match entry for replan_authority phase."
+        }
+      ]
+    },
+    {
+      "boundary_id": "review_cap_authority",
+      "row_id": "s5.review_cap_authority.1",
+      "phase": null,
+      "producer_category": "declared_only",
+      "handler_function": null,
+      "producer_path": null,
+      "applicability_rules": "Cap exhaustion outcomes carry explicit authority records. No explicit boundary receipt emission found.",
+      "invocation_identity": "megaplan run <plan> -s review (cap exhaustion scenarios)",
+      "artifact_path_patterns": [
+        "review.json"
+      ],
+      "state_deltas": {
+        "current_phase": "review"
+      },
+      "history_deltas": {
+        "expected_history_entry": "review_cap_authorized"
+      },
+      "phase_result": "phase_result.json emitted at review handler level",
+      "receipt_timing": "Not emitted \u2014 declared only",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "declared_only_no_producer",
+          "detail": "Contract declared but no boundary receipt emission found."
+        },
+        {
+          "kind": "no_auto_match",
+          "detail": "No auto-match mechanism."
+        }
+      ]
+    },
+    {
+      "boundary_id": "review_child_outputs",
+      "row_id": "s5.review_child_outputs.1",
+      "phase": null,
+      "producer_category": "declared_only",
+      "handler_function": null,
+      "producer_path": null,
+      "applicability_rules": "Review fan-out children produce durable outputs. The review handler (handlers/review.py:handle_review) does not appear to emit explicit boundary receipts for child_outputs. The review step is excluded from auto-receipt in _finish_step.",
+      "invocation_identity": "megaplan run <plan> -s review (during child output processing)",
+      "artifact_path_patterns": [
+        "review.json"
+      ],
+      "state_deltas": {
+        "current_phase": "review"
+      },
+      "history_deltas": {
+        "expected_history_entry": "review_child_outputs_recorded"
+      },
+      "phase_result": "phase_result.json emitted at review handler level",
+      "receipt_timing": "Not emitted \u2014 declared only. Review is excluded from _finish_step auto-receipt and no explicit boundary receipt call found.",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "declared_only_no_producer",
+          "detail": "Contract declared but review handler does not emit explicit boundary receipts. Review step is excluded from _finish_step auto-receipt (step is 'review'). No write_boundary_receipt call found in handlers/review.py for review_child_outputs."
+        },
+        {
+          "kind": "no_auto_match",
+          "detail": "No _FRONT_HALF_BOUNDARY_ID_BY_PHASE entry (review is not a front-half phase) and no auto-match mechanism exists."
+        }
+      ]
+    },
+    {
+      "boundary_id": "review_human_verification",
+      "row_id": "s5.review_human_verification.1",
+      "phase": null,
+      "producer_category": "declared_only",
+      "handler_function": null,
+      "producer_path": null,
+      "applicability_rules": "Deferred-human review records suspension and resume evidence. The verifiability handler (handlers/verifiability.py:handle_verify_human) handles human verification. No explicit boundary receipt for the review\u2192human boundary was found.",
+      "invocation_identity": "megaplan run <plan> -s review (when human verification is deferred)",
+      "artifact_path_patterns": [
+        "review.json"
+      ],
+      "state_deltas": {
+        "current_phase": "review"
+      },
+      "history_deltas": {
+        "expected_history_entry": "review_human_verification_deferred"
+      },
+      "phase_result": "phase_result.json emitted at review handler level",
+      "receipt_timing": "Not emitted \u2014 declared only",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "declared_only_no_producer",
+          "detail": "Contract declared but no boundary receipt emission found for review_human_verification."
+        },
+        {
+          "kind": "no_auto_match",
+          "detail": "No auto-match mechanism."
+        }
+      ]
+    },
+    {
+      "boundary_id": "review_reducer_promotion",
+      "row_id": "s5.review_reducer_promotion.1",
+      "phase": null,
+      "producer_category": "declared_only",
+      "handler_function": null,
+      "producer_path": null,
+      "applicability_rules": "Review reducer promotion when fan-in reducer promotes child outputs into canonical review payload. No explicit boundary receipt emission found.",
+      "invocation_identity": "megaplan run <plan> -s review (reducer promotion stage)",
+      "artifact_path_patterns": [
+        "review.json"
+      ],
+      "state_deltas": {
+        "current_phase": "review"
+      },
+      "history_deltas": {
+        "expected_history_entry": "review_reducer_promoted"
+      },
+      "phase_result": "phase_result.json emitted at review handler level",
+      "receipt_timing": "Not emitted \u2014 declared only",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "declared_only_no_producer",
+          "detail": "Contract declared but no boundary receipt emission found in review handler."
+        },
+        {
+          "kind": "no_auto_match",
+          "detail": "No auto-match mechanism for review phase states."
+        }
+      ]
+    },
+    {
+      "boundary_id": "review_rework_effects",
+      "row_id": "s5.review_rework_effects.1",
+      "phase": null,
+      "producer_category": "declared_only",
+      "handler_function": null,
+      "producer_path": null,
+      "applicability_rules": "Triggered when review_verdict is 'needs_rework'. The review handler preserves raw rework verdicts via _preserve_raw_review_rework_verdict. No explicit boundary receipt emission found.",
+      "invocation_identity": "megaplan run <plan> -s review (when review finds needs_rework)",
+      "artifact_path_patterns": [
+        "review.json"
+      ],
+      "state_deltas": {
+        "current_phase": "review"
+      },
+      "history_deltas": {
+        "expected_history_entry": "review_rework_projected"
+      },
+      "phase_result": "phase_result.json emitted at review handler level",
+      "receipt_timing": "Not emitted \u2014 declared only",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "declared_only_no_producer",
+          "detail": "Contract declared but no boundary receipt emission found. Review rework verdict is persisted in review.json but no evidence-only boundary receipt is emitted."
+        },
+        {
+          "kind": "no_auto_match",
+          "detail": "No auto-match mechanism."
+        }
+      ]
+    },
+    {
+      "boundary_id": "revise_to_critique",
+      "row_id": "s2.revise.1",
+      "phase": "revise",
+      "producer_category": "auto_matched",
+      "handler_function": "handlers/critique.py:handle_revise (delegates to orchestration/critique_runtime.py:handle_revise)",
+      "producer_path": "arnold_pipelines/megaplan/handlers/critique.py \u2192 arnold_pipelines/megaplan/orchestration/critique_runtime.py",
+      "applicability_rules": "Invoked when current_state is STATE_GATED and step='revise' is run (gate recommended iterate). The handler calls _write_plan_version for revised plan, then _finish_step.",
+      "invocation_identity": "megaplan run <plan> -s revise (or auto driver transitions from gate iterate)",
+      "artifact_path_patterns": [
+        "revised_plan.md",
+        "revision_log.md"
+      ],
+      "state_deltas": {
+        "current_phase": "revise",
+        "current_state": "STATE_PLANNED"
+      },
+      "history_deltas": {
+        "expected_history_entry": "revise_completed"
+      },
+      "phase_result": "phase_result.json emitted by _finish_step via _emit_phase_result",
+      "receipt_timing": "Emitted synchronously within _finish_step in handlers/shared.py (step not in {execute, review})",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": []
+    },
+    {
+      "boundary_id": "tiebreaker_challenger_to_synthesis",
+      "row_id": "s3.tiebreaker.challenger.1",
+      "phase": "tiebreaker_challenger",
+      "producer_category": "declared_only",
+      "handler_function": null,
+      "producer_path": null,
+      "applicability_rules": "Tiebreaker sub-pipeline: challenger step runs within tiebreaker_run after researcher. No explicit boundary receipt emission found.",
+      "invocation_identity": "megaplan run <plan> -s tiebreaker_run \u2192 internal challenger step",
+      "artifact_path_patterns": [
+        "challenge_findings.json"
+      ],
+      "state_deltas": {
+        "current_phase": "tiebreaker_challenger"
+      },
+      "history_deltas": {
+        "expected_history_entry": "tiebreaker_challenger_completed"
+      },
+      "phase_result": "phase_result.json emitted for overall tiebreaker_run step",
+      "receipt_timing": "Not emitted \u2014 declared only",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "declared_only_no_producer",
+          "detail": "Contract declared but no boundary receipt emission found. Tiebreaker sub-steps have no per-step receipt machinery."
+        },
+        {
+          "kind": "no_auto_match",
+          "detail": "No auto-match entry for tiebreaker_challenger phase."
+        }
+      ]
+    },
+    {
+      "boundary_id": "tiebreaker_decision_to_parent",
+      "row_id": "s3.tiebreaker.decision.1",
+      "phase": "tiebreaker_decision",
+      "producer_category": "declared_only",
+      "handler_function": null,
+      "producer_path": null,
+      "applicability_rules": "Tiebreaker sub-pipeline: decision step within tiebreaker_decide emits tiebreaker_decisions.json. No explicit boundary receipt emission found for the decision\u2192parent transition.",
+      "invocation_identity": "megaplan run <plan> -s tiebreaker_decide \u2192 internal decision step",
+      "artifact_path_patterns": [
+        "tiebreaker_decisions.json"
+      ],
+      "state_deltas": {
+        "current_phase": "tiebreaker_decision"
+      },
+      "history_deltas": {
+        "expected_history_entry": "tiebreaker_decision_produced"
+      },
+      "phase_result": "phase_result.json emitted for overall tiebreaker_decide step",
+      "receipt_timing": "Not emitted \u2014 declared only",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "declared_only_no_producer",
+          "detail": "Contract declared but no boundary receipt emission found for tiebreaker_decision_to_parent."
+        },
+        {
+          "kind": "no_auto_match",
+          "detail": "No auto-match entry for tiebreaker_decision phase."
+        }
+      ]
+    },
+    {
+      "boundary_id": "tiebreaker_researcher_to_challenger",
+      "row_id": "s3.tiebreaker.researcher.1",
+      "phase": "tiebreaker_researcher",
+      "producer_category": "declared_only",
+      "handler_function": null,
+      "producer_path": null,
+      "applicability_rules": "Tiebreaker sub-pipeline: researcher step runs within tiebreaker_run. No explicit auto-matcher in _FRONT_HALF_BOUNDARY_ID_BY_PHASE. The tiebreaker implementation in handlers/_tiebreaker_impl.py and orchestration/tiebreaker_runtime.py does not call _emit_boundary_receipt or _emit_execute_boundary_receipt for the internal researcher\u2192challenger transition.",
+      "invocation_identity": "megaplan run <plan> -s tiebreaker_run \u2192 internal researcher step",
+      "artifact_path_patterns": [
+        "research_findings.json"
+      ],
+      "state_deltas": {
+        "current_phase": "tiebreaker_researcher"
+      },
+      "history_deltas": {
+        "expected_history_entry": "tiebreaker_researcher_completed"
+      },
+      "phase_result": "phase_result.json emitted by the tiebreaker runtime for the overall tiebreaker_run step (not per sub-step)",
+      "receipt_timing": "Not emitted \u2014 declared only",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "declared_only_no_producer",
+          "detail": "Contract declared in BOUNDARY_CONTRACTS but no _emit_boundary_receipt call found for tiebreaker_researcher_to_challenger. The tiebreaker sub-pipeline uses internal state transitions without boundary receipts per sub-step."
+        },
+        {
+          "kind": "no_auto_match",
+          "detail": "_FRONT_HALF_BOUNDARY_ID_BY_PHASE only covers prep/plan/critique/gate/revise. S3 phases (including tiebreaker_researcher) have no auto-match entry."
+        }
+      ]
+    },
+    {
+      "boundary_id": "tiebreaker_synthesis_to_decision",
+      "row_id": "s3.tiebreaker.synthesis.1",
+      "phase": "tiebreaker_synthesis",
+      "producer_category": "declared_only",
+      "handler_function": null,
+      "producer_path": null,
+      "applicability_rules": "Tiebreaker sub-pipeline: synthesis step runs within tiebreaker_decide. No explicit boundary receipt emission found.",
+      "invocation_identity": "megaplan run <plan> -s tiebreaker_decide \u2192 internal synthesis step",
+      "artifact_path_patterns": [
+        "tiebreaker_payload.json"
+      ],
+      "state_deltas": {
+        "current_phase": "tiebreaker_synthesis"
+      },
+      "history_deltas": {
+        "expected_history_entry": "tiebreaker_synthesis_completed"
+      },
+      "phase_result": "phase_result.json emitted for overall tiebreaker_decide step",
+      "receipt_timing": "Not emitted \u2014 declared only",
+      "authority_references": {
+        "authority_required": true
+      },
+      "evidence_pack_rows": [],
+      "visible_non_conformant": [
+        {
+          "kind": "declared_only_no_producer",
+          "detail": "Contract declared but no boundary receipt emission found. Tiebreaker sub-steps have no per-step receipt machinery."
+        },
+        {
+          "kind": "no_auto_match",
+          "detail": "No auto-match entry for tiebreaker_synthesis phase."
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "total_contracts": 35,
+    "auto_matched": 5,
+    "manual_emit": 8,
+    "declared_only": 13,
+    "unknown": 9,
+    "contract_categories": {
+      "front_half_auto_matched": [
+        "prep_to_plan",
+        "plan_to_critique",
+        "critique_to_gate",
+        "gate_to_revise",
+        "revise_to_critique"
+      ],
+      "execute_manual_emit": [
+        "execute_approval",
+        "execute_approval_denial",
+        "execute_batch_checkpoint",
+        "execute_partial_failure",
+        "execute_blocked_anchor",
+        "execute_resume_anchor",
+        "execute_aggregate_promotion",
+        "execute_no_review_terminal"
+      ],
+      "tiebreaker_declared_only": [
+        "tiebreaker_researcher_to_challenger",
+        "tiebreaker_challenger_to_synthesis",
+        "tiebreaker_synthesis_to_decision",
+        "tiebreaker_decision_to_parent"
+      ],
+      "replan_unknown": [
+        "replan_authority"
+      ],
+      "parent_rejoin_declared_only": [
+        "parent_rejoin_promotion"
+      ],
+      "review_declared_only": [
+        "review_child_outputs",
+        "review_reducer_promotion",
+        "review_rework_effects",
+        "review_cap_authority",
+        "review_human_verification"
+      ],
+      "finalize_declared_only": [
+        "finalize_artifacts",
+        "finalize_fallback",
+        "final_projection"
+      ],
+      "override_unknown": [
+        "override_abort_authority",
+        "override_force_proceed_authority",
+        "override_replan_authority",
+        "override_recover_blocked_authority",
+        "override_resume_clarify_authority",
+        "override_adopt_execution_authority",
+        "override_suspension_authority",
+        "override_human_gate_authority"
+      ]
+    },
+    "key_findings": [
+      "Front-half S2 contracts (prep/plan/critique/gate/revise) have full producer coverage through auto-matching and _finish_step in handlers/shared.py.",
+      "Execute boundary contracts (S4) have full producer coverage through manual _emit_execute_boundary_receipt and _emit_batch_boundary_receipt in handlers/execute.py and execute/batch.py.",
+      "Tiebreaker S3 sub-step contracts are declared but have no per-step boundary receipt emission. The tiebreaker run/decide steps emit overall phase_results but not per-sub-step receipts.",
+      "Review S5 contracts are declared but the review handler (handlers/review.py) does not emit explicit boundary receipts. Review is excluded from _finish_step auto-receipt.",
+      "Finalize S5 contracts are declared but the finalize handler (handlers/finalize.py) does not emit explicit boundary receipts.",
+      "Override S6 contracts all have receipt_required=False, so lack of emission is by design, but the contracts are still declared as inventory without producer mapping.",
+      "No evidence_pack rows are directly mapped to individual boundary contracts. The evidence_pack pipeline independently verifies persisted artifacts.",
+      "The _FRONT_HALF_BOUNDARY_ID_BY_PHASE mapping only covers prep/plan/critique/gate/revise. No equivalent mapping exists for tiebreaker, execute, review, finalize, or override phases."
+    ]
+  }
+}

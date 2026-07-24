@@ -1,0 +1,3 @@
+Use the full `/workspace/arnold/arnold_pipelines/megaplan/data/_codex_skills/megaplan-cloud/SKILL.md` on-box observation procedure. Read-only investigation only.
+
+For session `workflow-boundary-contracts-corrective-20260710`, lead with canonical cloud status using the supplied YAML, then independently establish live process/tmux/supervisor truth. Identify the exact chain PID and active-step worker relationship, L1/L2/L3 process liveness, start times, and whether any process is stale, duplicated, or unrelated. Correlate with marker and active_step PID. Return under 350 words, exact commands/evidence/timestamps, and contradictions only.

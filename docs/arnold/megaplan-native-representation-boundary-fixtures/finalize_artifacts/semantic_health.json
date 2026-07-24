@@ -1,0 +1,16 @@
+{
+  "authority_record_count": 0,
+  "boundary_id": "finalize_artifacts",
+  "external_effect_refs": [],
+  "fixture_id": "finalize_artifacts",
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts/phase_result.json",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts/boundary_receipts/finalize_artifacts.json",
+  "reducer_promotion": false,
+  "scope_boundary_ids": [
+    "finalize_artifacts"
+  ],
+  "scoped_error_count": 0,
+  "scoped_findings": [],
+  "scoped_warning_count": 0,
+  "status": "healthy"
+}

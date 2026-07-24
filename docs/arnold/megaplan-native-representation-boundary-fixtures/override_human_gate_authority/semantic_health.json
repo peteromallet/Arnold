@@ -1,0 +1,16 @@
+{
+  "authority_record_count": 1,
+  "boundary_id": "override_human_gate_authority",
+  "external_effect_refs": [],
+  "fixture_id": "override_human_gate_authority",
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_human_gate_authority/phase_result.json",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/override_human_gate_authority/boundary_receipts/override_human_gate_authority.json",
+  "reducer_promotion": false,
+  "scope_boundary_ids": [
+    "override_human_gate_authority"
+  ],
+  "scoped_error_count": 0,
+  "scoped_findings": [],
+  "scoped_warning_count": 0,
+  "status": "healthy"
+}

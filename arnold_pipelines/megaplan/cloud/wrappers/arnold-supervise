@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+set -uo pipefail
+if [[ $# -lt 2 ]]; then
+  echo "usage: arnold-supervise <log-suffix> <cmd...>" >&2
+  exit 64
+fi
+SUFFIX="$1"; shift
+CMD=("$@")
+LOG="${ARNOLD_SUPERVISE_LOG:-/workspace/supervise-${SUFFIX}.log}"
+MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
+SUPERVISE_SESSION="${ARNOLD_SUPERVISE_SESSION:-}"
+SUPERVISE_WORKSPACE="${ARNOLD_SUPERVISE_WORKSPACE:-}"
+SUPERVISE_REMOTE_SPEC="${ARNOLD_SUPERVISE_REMOTE_SPEC:-}"
+SUPERVISE_RUN_KIND="${ARNOLD_SUPERVISE_RUN_KIND:-}"
+SUPERVISE_SOURCE="${MEGAPLAN_SUPERVISOR_SOURCE:-${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"
+QUOTA_MAX=4; QUOTA_BACKOFF=1800
+OTHER_MAX=5
+# Exponential backoff: 60s, 120s, 240s, 480s, 960s
+OTHER_BACKOFFS=(60 120 240 480 960)
+STREAK_MAX=5
+quota_count=0; other_count=0
+last_err=""; streak=0
+log() { echo "[supervise $(date -Iseconds)] $*" | tee -a "$LOG"; }
+
+if [[ -n "${MEGAPLAN_RUNTIME_LAUNCH_SEED:-}" \
+  || "${MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED:-0}" == "1" ]]; then
+  SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]}")/arnold-supervisor-runtime-lib"
+  if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" && -f "$SUPERVISE_SOURCE/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib" ]]; then
+    SUPERVISOR_RUNTIME_LIB="$SUPERVISE_SOURCE/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
+  fi
+  if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
+    SUPERVISOR_RUNTIME_LIB="/usr/local/bin/arnold-supervisor-runtime-lib"
+  fi
+  # shellcheck source=/dev/null
+  source "$SUPERVISOR_RUNTIME_LIB"
+  arnold_supervisor_runtime_init supervisor "$SUPERVISE_SOURCE" || exit $?
+fi
+
+deterministic_failure_reason() {
+  local run_log="$1"
+  if grep -q '"error"[[:space:]]*:[[:space:]]*"chain_execution_binding_drift"' "$run_log"; then
+    printf '%s\n' chain_execution_binding_drift
+    return 0
+  fi
+  if grep -q '"error"[[:space:]]*:[[:space:]]*"gh_pr_view_failed"' "$run_log" \
+    && grep -q 'gh auth login\|GH_TOKEN environment variable' "$run_log"; then
+    printf '%s\n' github_auth_unavailable
+    return 0
+  fi
+  if grep -q '"error"[[:space:]]*:[[:space:]]*"\(invalid_spec\|initiative_retired\)"' "$run_log"; then
+    printf '%s\n' invalid_or_retired_initiative
+    return 0
+  fi
+  if [[ -n "$SUPERVISE_WORKSPACE" ]]; then
+    local durable_reason
+    durable_reason="$(python3 - "$SUPERVISE_WORKSPACE" <<'PY'
+import json
+import pathlib
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+chain_root = workspace / ".megaplan" / "plans" / ".chains"
+try:
+    chains = sorted(
+        chain_root.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True
+    )
+except OSError:
+    chains = []
+for chain_path in chains:
+    try:
+        if chain_path.stat().st_size > 2 * 1024 * 1024:
+            continue
+        chain = json.loads(chain_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        continue
+    plan = str(chain.get("current_plan_name") or "").strip()
+    if not plan:
+        continue
+    state_path = workspace / ".megaplan" / "plans" / plan / "state.json"
+    try:
+        if state_path.stat().st_size > 2 * 1024 * 1024:
+            break
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        break
+    failure = state.get("latest_failure")
+    failure = failure if isinstance(failure, dict) else {}
+    kind = str(failure.get("kind") or "").strip().lower()
+    message = str(failure.get("message") or "").strip().lower()
+    blocked = str(state.get("current_state") or "").strip().lower() == "blocked"
+    quality_block = (
+        kind.startswith("review_quality_blocked")
+        or kind in {"quality_gate_blocked", "review_rework_exhausted"}
+        or "review rework budget exhausted" in message
+    )
+    if blocked and quality_block:
+        print(f"durable_review_quality_block:{kind or 'unknown'}")
+    break
+PY
+)"
+    if [[ -n "$durable_reason" ]]; then
+      printf '%s\n' "$durable_reason"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+l1_mutation_authorized() {
+  PYTHONPATH="$SUPERVISE_SOURCE:${PYTHONPATH:-}" python3 -B -c \
+    'from arnold_pipelines.megaplan.cloud.feature_flags import MUTATION_PATH_L1, mutation_authorized; raise SystemExit(0 if mutation_authorized(MUTATION_PATH_L1) else 1)'
+}
+
+queue_repair_request() {
+  local reason="$1"
+  if [[ -z "$SUPERVISE_SESSION" || -z "$SUPERVISE_WORKSPACE" || -z "$SUPERVISE_REMOTE_SPEC" ]]; then
+    log "repair queue skipped: missing session/workspace/spec context"
+    return 0
+  fi
+  local queue_root="${ARNOLD_REPAIR_QUEUE_ROOT:-${SUPERVISE_WORKSPACE}/.megaplan/repair-queue}"
+  PYTHONPATH="$SUPERVISE_SOURCE:${PYTHONPATH:-}" python3 - "$queue_root" "$MARKER_DIR" "$SUPERVISE_SESSION" "$SUPERVISE_WORKSPACE" "$SUPERVISE_REMOTE_SPEC" "$SUPERVISE_RUN_KIND" "$reason" "$LOG" <<'PY'
+import json
+import sys
+
+from arnold_pipelines.megaplan.cloud.supervise import enqueue_supervisor_repair_request
+
+queue_root, marker_dir, session, workspace, remote_spec, run_kind, reason, log_path = sys.argv[1:]
+result = enqueue_supervisor_repair_request(
+    queue_root=queue_root,
+    marker_dir=marker_dir,
+    session=session,
+    workspace=workspace,
+    run_kind=run_kind,
+    remote_spec=remote_spec,
+    reason=reason,
+    log_path=log_path,
+)
+print(json.dumps({"status": result.get("status"), "path": result.get("path")}, sort_keys=True))
+PY
+}
+
+exit_with_repair_request() {
+  local reason="$1"
+  queue_result="$(queue_repair_request "$reason" 2>&1 || true)"
+  log "repair queue result: $queue_result"
+  exit 1
+}
+
+# The supervised command may mutate plan state, source, commits, or remotes.
+# Check the shared predicate at the child-process boundary; blocked supervisors
+# still emit an observation but do not start or describe work as dispatched.
+if ! l1_mutation_authorized; then
+  log "observed: L1 supervisor mutation blocked (requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED)"
+  # Refusing the effect is not a successful launch.  A zero exit code is
+  # consumed by repair-loop as a durable mechanical-launch receipt and can
+  # falsely describe a command that never started as successful.
+  exit 77
+fi
+
+log "starting cmd: ${CMD[*]}"
+while true; do
+  if declare -F arnold_runtime_attestation_check >/dev/null \
+    && ! arnold_runtime_attestation_check supervisor; then
+    arnold_supervisor_failure_artifact supervisor "runtime_attestation_stale"
+    log "supervisor refused command launch: runtime attestation is stale"
+    exit 78
+  fi
+  RUN_LOG=$(mktemp)
+  "${CMD[@]}" 2>&1 | tee "$RUN_LOG"
+  rc=${PIPESTATUS[0]}
+  log "cmd exited rc=$rc"
+  if [[ $rc -eq 0 ]]; then
+    log "cmd exited clean (rc=0) — supervisor exiting; inner driver owns plan state"
+    rm -f "$RUN_LOG"; exit 0
+  fi
+  deterministic_reason="$(deterministic_failure_reason "$RUN_LOG" || true)"
+  if [[ -n "$deterministic_reason" ]]; then
+    log "deterministic failure ($deterministic_reason) — refusing retry spin"
+    rm -f "$RUN_LOG"
+    exit_with_repair_request "deterministic supervised failure: $deterministic_reason"
+  fi
+  if grep -q 'quota_exceeded\|insufficient_quota\|rate_limit' "$RUN_LOG"; then
+    err_class="quota"
+  else
+    err_class="error"
+  fi
+  if [[ "$err_class" == "$last_err" ]]; then
+    streak=$((streak+1))
+  else
+    streak=1; last_err="$err_class"
+  fi
+  if [[ $streak -ge $STREAK_MAX ]]; then
+    log "STREAK: same error class '$err_class' x$streak — supervisor stops"
+    rm -f "$RUN_LOG"; exit 1
+  fi
+  case "$err_class" in
+    quota)
+      quota_count=$((quota_count+1))
+      if [[ $quota_count -gt $QUOTA_MAX ]]; then
+        log "quota retries exhausted ($quota_count > $QUOTA_MAX) — supervisor stops"
+        rm -f "$RUN_LOG"; exit 1
+      fi
+      log "quota_exceeded retry $quota_count/$QUOTA_MAX — sleeping ${QUOTA_BACKOFF}s"
+      sleep "$QUOTA_BACKOFF"
+      ;;
+    error)
+      other_count=$((other_count+1))
+      if [[ $other_count -gt $OTHER_MAX ]]; then
+        log "non-quota retries exhausted ($other_count > $OTHER_MAX) — supervisor queues repair"
+        rm -f "$RUN_LOG"
+        exit_with_repair_request "non-quota retries exhausted"
+      fi
+      backoff=${OTHER_BACKOFFS[$((other_count-1))]}
+      log "error retry $other_count/$OTHER_MAX — sleeping ${backoff}s"
+      sleep "$backoff"
+      ;;
+  esac
+  rm -f "$RUN_LOG"
+done
