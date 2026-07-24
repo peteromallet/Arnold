@@ -137,6 +137,57 @@ def _bind_marker_runtime(
         return marker
 
 
+def _prepared_runtime_identity(report: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the exact runtime identity admitted by execution binding.
+
+    ``driver.execution_binding=required`` does not imply that editable runtime
+    matching is required.  In that legitimate policy shape the outer
+    execution binding must still match, while ``runtime_binding_report``
+    returns ``not_required`` by design.  Treat only that explicit
+    ``required=False`` result as admitted; real drift/missing/invalid results
+    remain fail-closed.
+    """
+
+    if report.get("status") != "match":
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "chain execution binding was not ready after preparation",
+        )
+    runtime_report = report.get("runtime_binding")
+    runtime_report = (
+        runtime_report if isinstance(runtime_report, Mapping) else {}
+    )
+    runtime_status = runtime_report.get("status")
+    runtime_required = runtime_report.get("required")
+    admitted = runtime_status == "match" or (
+        runtime_status == "not_required" and runtime_required is False
+    )
+    expected = runtime_report.get("expected")
+    active = runtime_report.get("active")
+    if (
+        not admitted
+        or not isinstance(expected, Mapping)
+        or not expected
+        or not isinstance(active, Mapping)
+        or not active
+    ):
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "chain runtime binding was not ready after preparation",
+        )
+    normalized_expected = normalize_runtime_identity(expected)
+    normalized_active = normalize_runtime_identity(active)
+    if (
+        normalized_expected["content_sha256"]
+        != normalized_active["content_sha256"]
+    ):
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "chain runtime identity drifted during preparation",
+        )
+    return normalized_expected
+
+
 def prepare_session_runtime(
     *,
     marker_path: Path,
@@ -168,13 +219,7 @@ def prepare_session_runtime(
     bind_execution_identity(spec_path, state)
     chain_spec.save_chain_state(spec_path, state)
     report = execution_binding_report(spec_path, state)
-    runtime_report = report.get("runtime_binding") or {}
-    runtime_identity = runtime_report.get("expected") or {}
-    if runtime_report.get("status") != "match" or not runtime_identity:
-        raise CliError(
-            RUNTIME_ATTESTATION_ERROR,
-            "chain runtime binding was not ready after preparation",
-        )
+    runtime_identity = _prepared_runtime_identity(report)
     _bind_marker_runtime(
         marker_path,
         spec_path=spec_path,

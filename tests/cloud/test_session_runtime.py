@@ -105,7 +105,13 @@ def test_prepare_session_runtime_rebinds_seed_to_target_marker_and_spec(
         session_runtime,
         "execution_binding_report",
         lambda *_args: {
-            "runtime_binding": {"status": "match", "expected": _identity()}
+            "status": "match",
+            "runtime_binding": {
+                "required": True,
+                "status": "match",
+                "expected": _identity(),
+                "active": _identity(),
+            },
         },
     )
     validated: list[tuple[dict, str]] = []
@@ -155,6 +161,77 @@ def test_prepare_session_runtime_rebinds_seed_to_target_marker_and_spec(
     assert "/workspace/custody/chain.yaml" not in env_text
     assert verified == [json.loads(base_seed.read_text())]
     assert len(validated) == 1
+
+
+def test_prepared_runtime_identity_accepts_not_required_runtime_match_policy() -> None:
+    identity = _identity()
+
+    assert session_runtime._prepared_runtime_identity(
+        {
+            "status": "match",
+            "runtime_binding": {
+                "required": False,
+                "status": "not_required",
+                "expected": identity,
+                "active": identity,
+            },
+        }
+    ) == identity
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        {
+            "status": "drift",
+            "runtime_binding": {
+                "required": False,
+                "status": "not_required",
+                "expected": _identity(),
+            },
+        },
+        {
+            "status": "match",
+            "runtime_binding": {
+                "required": True,
+                "status": "not_required",
+                "expected": _identity(),
+            },
+        },
+        {
+            "status": "match",
+            "runtime_binding": {
+                "required": False,
+                "status": "drift",
+                "expected": _identity(),
+                "active": _identity(),
+            },
+        },
+        {
+            "status": "match",
+            "runtime_binding": {
+                "required": False,
+                "status": "not_required",
+                "expected": None,
+                "active": None,
+            },
+        },
+        {
+            "status": "match",
+            "runtime_binding": {
+                "required": False,
+                "status": "not_required",
+                "expected": _identity("/workspace/runtime-a"),
+                "active": _identity("/workspace/runtime-b"),
+            },
+        },
+    ],
+)
+def test_prepared_runtime_identity_rejects_drift_or_invalid_not_required(
+    report: dict,
+) -> None:
+    with pytest.raises(CliError, match="not ready|drifted"):
+        session_runtime._prepared_runtime_identity(report)
 
 
 def test_session_marker_refuses_foreign_runtime(tmp_path: Path) -> None:
