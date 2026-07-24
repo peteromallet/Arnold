@@ -108,9 +108,38 @@ def _git_revision(root: Path) -> str:
 
 
 def _module_vector(expected_root: Path) -> tuple[list[dict[str, str]], list[str]]:
+    """Return a stable worker import contract plus ambient-root violations.
+
+    A launch seed can be created by a long-lived control-plane process whose
+    import history is necessarily larger than that of a fresh phase worker.
+    Encoding every currently loaded optional module makes the seed depend on
+    that history: the fresh worker then fails because it has not imported an
+    otherwise valid module yet.  Attest a fixed required module set instead,
+    while still scanning every loaded Arnold module and failing closed if any
+    of them came from another root.
+    """
+
+    import arnold
+    import arnold_pipelines
+    import arnold_pipelines.megaplan
+
+    runtime_attestation_module = importlib.import_module(
+        "arnold_pipelines.megaplan.cloud.runtime_attestation"
+    )
+    required_modules = {
+        "arnold": arnold,
+        "arnold_pipelines": arnold_pipelines,
+        "arnold_pipelines.megaplan": arnold_pipelines.megaplan,
+        "arnold_pipelines.megaplan.cloud.runtime_attestation": (
+            runtime_attestation_module
+        ),
+    }
     entries: list[dict[str, str]] = []
     errors: list[str] = []
     expected = expected_root.resolve(strict=False)
+
+    # Ambient optional modules are not part of the equality vector, but a
+    # mixed-root optional module is still a hard attestation failure.
     for name, module in sorted(sys.modules.items()):
         if not any(
             name == prefix or name.startswith(prefix + ".")
@@ -121,15 +150,21 @@ def _module_vector(expected_root: Path) -> tuple[list[dict[str, str]], list[str]
         if not isinstance(raw_file, str) or not raw_file:
             continue
         path = Path(raw_file).resolve(strict=False)
+        if not path.is_relative_to(expected):
+            errors.append(f"mixed_module_root:{name}")
+
+    for name, module in sorted(required_modules.items()):
+        path = Path(str(module.__file__)).resolve(strict=False)
+        inside = path.is_relative_to(expected)
         entry = {
             "module": name,
             "path": str(path),
-            "root": str(expected) if path.is_relative_to(expected) else "",
+            "root": str(expected) if inside else "",
         }
         entries.append(entry)
-        if not path.is_relative_to(expected):
+        if not inside:
             errors.append(f"mixed_module_root:{name}")
-    return entries, errors
+    return entries, sorted(set(errors))
 
 
 def _supervisor_module_vector(

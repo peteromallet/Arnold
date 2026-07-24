@@ -259,6 +259,46 @@ def test_complete_loaded_module_vector_rejects_mixed_and_late_modules(
         attestation.validate_runtime_launch_seed(seed, component="worker")
 
 
+def test_worker_module_vector_is_independent_of_optional_creator_import_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    optional_name = "arnold_pipelines.megaplan.cloud.runtime_cutover"
+    optional_module = type(
+        "OptionalCreatorModule",
+        (),
+        {"__file__": str(root / "arnold_pipelines" / "optional.py")},
+    )()
+    worker_modules, worker_errors = attestation._module_vector(root)
+    monkeypatch.setitem(sys.modules, optional_name, optional_module)
+
+    creator_modules, creator_errors = attestation._module_vector(root)
+    monkeypatch.delitem(sys.modules, optional_name)
+
+    assert creator_errors == []
+    assert worker_errors == []
+    assert creator_modules == worker_modules
+    assert optional_name not in {item["module"] for item in creator_modules}
+
+
+def test_worker_module_vector_still_rejects_optional_mixed_root_import(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    optional_name = "arnold_pipelines.megaplan.cloud.foreign_optional"
+    optional_module = type(
+        "ForeignOptionalModule",
+        (),
+        {"__file__": str(tmp_path / "foreign" / "optional.py")},
+    )()
+    monkeypatch.setitem(sys.modules, optional_name, optional_module)
+
+    _modules, errors = attestation._module_vector(root)
+
+    assert f"mixed_module_root:{optional_name}" in errors
+
+
 def test_unowned_executable_pth_is_recorded_and_rejected(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
