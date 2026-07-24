@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import logging
+import os
 import re
 import subprocess
+import tempfile
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -124,12 +127,16 @@ def _state_path_candidates_for(spec_path: Path) -> list[Path]:
 
 def _load_chain_state_file(path: Path) -> ChainState:
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        encoded = path.read_bytes()
+        raw = json.loads(encoded)
     except json.JSONDecodeError as exc:
         raise CliError("invalid_chain_state", f"chain_state.json is invalid JSON: {exc}") from exc
     if not isinstance(raw, dict):
         raise CliError("invalid_chain_state", "chain_state.json must be an object")
-    return ChainState.from_dict(raw)
+    state = ChainState.from_dict(raw)
+    state._loaded_state_revision = hashlib.sha256(encoded).hexdigest()
+    state._loaded_state_path = str(path.resolve(strict=False))
+    return state
 
 
 def _normalize_stale_current_plan_reference(state: "ChainState") -> "ChainState":
@@ -1255,6 +1262,20 @@ class ChainState:
     schema_version: int = 0
     milestone_boundary_evidence: dict[str, dict[str, Any]] = field(default_factory=dict)
     candidate_invalidation: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    # In-memory CAS custody. These fields are populated only by
+    # _load_chain_state_file() / save_chain_state() and are never serialized.
+    _loaded_state_revision: str | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _loaded_state_path: str | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -2043,7 +2064,7 @@ def save_chain_state(
     (used by internal rebuild/repair callers that should not create
     duplicate records).
     """
-    state_path = _state_path_for(spec_path)
+    state_path = _state_path_for(spec_path).resolve(strict=False)
     state_path.parent.mkdir(parents=True, exist_ok=True)
     spec_identity = _storage_identity_for_chain_spec(spec_path)
     metadata = dict(state.metadata)
@@ -2066,9 +2087,96 @@ def save_chain_state(
     metadata.setdefault("_m7_projection_first_seen_at", now_utc())
     # ─────────────────────────────────────────────────────────────────────
     state.metadata = metadata
-    tmp = state_path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state.to_dict(), indent=2) + "\n", encoding="utf-8")
-    tmp.replace(state_path)
+    encoded = (json.dumps(state.to_dict(), indent=2) + "\n").encode("utf-8")
+    lock_path = state_path.with_suffix(state_path.suffix + ".lock")
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        current_bytes: bytes | None
+        try:
+            current_bytes = state_path.read_bytes()
+        except FileNotFoundError:
+            current_bytes = None
+
+        expected_revision = (
+            state._loaded_state_revision
+            if state._loaded_state_path == str(state_path)
+            else None
+        )
+        if current_bytes is not None:
+            current_revision = hashlib.sha256(current_bytes).hexdigest()
+            if (
+                expected_revision is not None
+                and expected_revision != current_revision
+            ):
+                raise CliError(
+                    "chain_state_stale_write",
+                    "chain state changed after it was loaded; refusing stale writer",
+                )
+            try:
+                current_raw = json.loads(current_bytes)
+            except json.JSONDecodeError as exc:
+                raise CliError(
+                    "invalid_chain_state",
+                    f"chain_state.json is invalid JSON: {exc}",
+                ) from exc
+            if not isinstance(current_raw, dict):
+                raise CliError(
+                    "invalid_chain_state",
+                    "chain_state.json must be an object",
+                )
+            current_state = ChainState.from_dict(current_raw)
+            if state.current_milestone_index < current_state.current_milestone_index:
+                raise CliError(
+                    "chain_state_regression",
+                    "chain state cursor regression refused: "
+                    f"{current_state.current_milestone_index} -> "
+                    f"{state.current_milestone_index}",
+                )
+            current_completed = {
+                str(record.get("label") or ""): str(record.get("plan") or "")
+                for record in current_state.completed
+                if isinstance(record, dict) and str(record.get("label") or "")
+            }
+            candidate_completed = {
+                str(record.get("label") or ""): str(record.get("plan") or "")
+                for record in state.completed
+                if isinstance(record, dict) and str(record.get("label") or "")
+            }
+            lost_or_changed = sorted(
+                label
+                for label, plan in current_completed.items()
+                if candidate_completed.get(label) != plan
+            )
+            if lost_or_changed:
+                raise CliError(
+                    "chain_state_regression",
+                    "chain state completed-set regression refused: "
+                    + ", ".join(lost_or_changed),
+                )
+        elif expected_revision is not None:
+            raise CliError(
+                "chain_state_stale_write",
+                "chain state disappeared after it was loaded; refusing stale writer",
+            )
+
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=state_path.name + ".",
+            dir=state_path.parent,
+        )
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_name, state_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
+        state._loaded_state_revision = hashlib.sha256(encoded).hexdigest()
+        state._loaded_state_path = str(state_path)
 
     # ── M7 projection side-effect ────────────────────────────────────────
     if _record_projection:
