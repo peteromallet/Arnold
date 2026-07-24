@@ -388,6 +388,61 @@ class TestGateOutcomeSemantics:
         assert outcome["route_signal"] == "retry_gate"
         assert outcome["blocking_unresolved_ids"]
 
+    def test_verify_fixed_accepts_durable_revise_claim_after_reopen(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+        from arnold_pipelines.megaplan.planning.state import STATE_GATED
+
+        state: dict[str, Any] = {
+            "name": "p",
+            "iteration": 7,
+            "config": {},
+            "meta": {},
+            "current_state": "critiqued",
+        }
+        summary = {
+            "recommendation": "PROCEED",
+            "passed": True,
+            "rationale": "Verified against the revised plan and repository.",
+            "signals_assessment": "converged",
+            "warnings": [],
+            "criteria_check": {},
+            "preflight_results": {},
+            "unresolved_flags": [
+                {
+                    "id": "f1",
+                    "severity": "significant",
+                    "status": "open",
+                    "concern": "cross-attempt identity",
+                    "addressed_in": "plan_v7.md",
+                    "resolution": {
+                        "kind": "fixed",
+                        "claim": "Added stable identity and CAS.",
+                        "where": "Steps 8B1-8B3",
+                    },
+                }
+            ],
+            "addressed_flags": [],
+            "flag_resolutions": [
+                {
+                    "flag_id": "f1",
+                    "action": "verify_fixed",
+                    "evidence": "plan_v7.md Steps 8B1-8B3 and repository checks",
+                    "rationale": "",
+                }
+            ],
+            "orchestrator_guidance": "",
+        }
+
+        outcome = _build_gate_route_signal(
+            state, summary, robustness="standard", plan_dir=tmp_path
+        )
+
+        assert outcome["result"] == "success"
+        assert outcome["route_signal"] == "proceed"
+        assert state["current_state"] == STATE_GATED
+
 
 class TestTiebreakerOutcomeSemantics:
     def test_pick_promotes_proceed_signal(self) -> None:

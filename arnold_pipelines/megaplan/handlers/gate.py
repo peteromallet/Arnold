@@ -624,6 +624,23 @@ def _build_gate_route_signal(
 
         # Validate each explicit resolution
         addressed_ids = {f.get("id") for f in addressed if f.get("id")}
+        # A later critique/evaluator pass may reopen a flag after revise while
+        # retaining the durable revise claim that it was addressed.  The gate
+        # is the authority that verifies that claim, so `verify_fixed` must
+        # remain admissible from the persisted addressed_in + fixed-resolution
+        # evidence instead of depending only on the transient registry status.
+        for flag in unresolved:
+            if not isinstance(flag, dict):
+                continue
+            resolution = flag.get("resolution")
+            if (
+                isinstance(flag.get("id"), str)
+                and isinstance(flag.get("addressed_in"), str)
+                and flag["addressed_in"].strip()
+                and isinstance(resolution, dict)
+                and resolution.get("kind") == "fixed"
+            ):
+                addressed_ids.add(flag["id"])
         valid_resolved_ids: set[str] = set()
         valid_resolutions: list[dict[str, Any]] = []
         for res in resolutions:

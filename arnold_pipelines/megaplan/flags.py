@@ -112,11 +112,27 @@ def _synthesize_flags_from_checks(
             if isinstance(finding, dict) and finding.get("flagged")
         ]
         for index, finding in enumerate(flagged_findings, start=1):
-            check_def = get_check_def(check_id)
-            if isinstance(check_def, dict):
-                severity = check_def.get("default_severity", "uncertain")
-            else:
-                severity = getattr(check_def, "default_severity", "uncertain")
+            raw_severity = str(finding.get("severity_hint") or "").strip().lower()
+            severity_aliases = {
+                "likely-significant": "likely-significant",
+                "significant": "likely-significant",
+                "major": "likely-significant",
+                "high": "likely-significant",
+                "critical": "likely-significant",
+                "likely-minor": "likely-minor",
+                "minor": "likely-minor",
+                "low": "likely-minor",
+                "trivial": "likely-minor",
+                "cosmetic": "likely-minor",
+                "uncertain": "uncertain",
+            }
+            severity = severity_aliases.get(raw_severity)
+            if severity is None:
+                check_def = get_check_def(check_id)
+                if isinstance(check_def, dict):
+                    severity = check_def.get("default_severity", "uncertain")
+                else:
+                    severity = getattr(check_def, "default_severity", "uncertain")
             if id_prefix == "REVIEW":
                 flag_id = _review_flag_id(check_id, index)
             else:

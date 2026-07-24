@@ -72,6 +72,31 @@ def test_deterministic_verifiability_flags_carry_source_criterion_evidence() -> 
     assert payload["flags"][0]["id"].startswith("CF-")
 
 
+def test_synthesized_flag_preserves_explicit_finding_severity() -> None:
+    payload = {
+        "checks": [
+            {
+                "id": "correctness",
+                "question": "Is it correct?",
+                "findings": [
+                    {
+                        "detail": "A bounded implementation note.",
+                        "flagged": True,
+                        "severity_hint": "minor",
+                    }
+                ],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+
+    prepare_critique_payload(payload, expected_check_ids=["correctness"])
+
+    assert payload["flags"][0]["severity_hint"] == "likely-minor"
+
+
 def _oversized_payload(*, two_findings: bool = False) -> dict[str, Any]:
     findings = [
         {
