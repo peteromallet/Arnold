@@ -31,6 +31,7 @@ import hashlib
 import json
 import logging
 logger = logging.getLogger(__name__)
+import math
 import os
 import queue as _queue
 import random
@@ -3754,6 +3755,14 @@ class AIAgent:
         try:
             timeout = float(os.getenv(timeout_env, os.getenv("HERMES_API_TIMEOUT", default_timeout)))
         except (TypeError, ValueError):
+            timeout = default_timeout
+        # "Unbounded" resident execution means that the supervising process
+        # has no wall-clock kill deadline.  An infinite per-request timeout is
+        # not a valid socket deadline on all platforms (httpx eventually hands
+        # it to socket.settimeout, which can overflow time_t).  Keep transport
+        # and request progress bounded even if a legacy environment still
+        # contains ``inf``.
+        if not math.isfinite(timeout) or timeout <= 0:
             timeout = default_timeout
         # Scale the deadline by 1.5x per consecutive streaming-timeout retry
         # (capped at 4x the base). A slow reasoning model on a large prompt

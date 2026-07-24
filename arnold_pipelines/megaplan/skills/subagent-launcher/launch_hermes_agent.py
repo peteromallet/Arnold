@@ -515,10 +515,21 @@ def run(
 
     _load_hermes_env()
     if os.environ.get("ARNOLD_RESIDENT_UNBOUNDED_REQUEST") == "1":
-        # Apply after dotenv loading so ambient Hermes defaults cannot restore
-        # a whole-request deadline. Transport/progress stall guards remain.
-        os.environ["HERMES_API_TIMEOUT"] = "inf"
-        os.environ["HERMES_DEEPSEEK_API_TIMEOUT"] = "inf"
+        # The resident supervisor owns the unbounded *process* lifetime.
+        # Preserve finite provider request/transport deadlines: mapping this
+        # policy to ``inf`` reaches socket.settimeout and can overflow time_t
+        # before the request connects.
+        for timeout_name in (
+            "HERMES_API_TIMEOUT",
+            "HERMES_DEEPSEEK_API_TIMEOUT",
+        ):
+            if os.environ.get(timeout_name, "").strip().lower() in {
+                "inf",
+                "+inf",
+                "infinity",
+                "+infinity",
+            }:
+                os.environ.pop(timeout_name, None)
 
     # Optional cwd change so file tools resolve relative paths the caller expects.
     if project_dir:

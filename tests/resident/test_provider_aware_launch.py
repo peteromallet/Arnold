@@ -412,8 +412,14 @@ def test_managed_worker_timeout_is_opt_in_for_every_backend(
         else:
             assert argv[argv.index("--timeout") + 1] == str(explicit_timeout_s)
     if backend == "hermes" and explicit_timeout_s is None:
-        assert captured["env"]["HERMES_API_TIMEOUT"] == "inf"
-        assert captured["env"]["HERMES_DEEPSEEK_API_TIMEOUT"] == "inf"
+        assert captured["env"].get("HERMES_API_TIMEOUT") not in {
+            "inf",
+            "infinity",
+        }
+        assert captured["env"].get("HERMES_DEEPSEEK_API_TIMEOUT") not in {
+            "inf",
+            "infinity",
+        }
         assert captured["env"]["ARNOLD_RESIDENT_UNBOUNDED_REQUEST"] == "1"
 
 

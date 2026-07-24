@@ -381,8 +381,8 @@ def test_unbounded_root_hermes_command_disables_inherited_request_deadlines(
         resume=False,
     )
 
-    assert env["HERMES_API_TIMEOUT"] == "inf"
-    assert env["HERMES_DEEPSEEK_API_TIMEOUT"] == "inf"
+    assert env.get("HERMES_API_TIMEOUT") not in {"inf", "infinity"}
+    assert env.get("HERMES_DEEPSEEK_API_TIMEOUT") not in {"inf", "infinity"}
     assert env["ARNOLD_RESIDENT_UNBOUNDED_REQUEST"] == "1"
 
 

@@ -265,5 +265,5 @@ def test_hermes_launcher_hydrates_persisted_history_on_resume(
     ]
     assert json.loads(metadata.read_text())["session_id"] == session_id
     assert "RESUMED" in capsys.readouterr().out
-    assert os.environ["HERMES_API_TIMEOUT"] == "inf"
-    assert os.environ["HERMES_DEEPSEEK_API_TIMEOUT"] == "inf"
+    assert os.environ["HERMES_API_TIMEOUT"] == "300"
+    assert os.environ["HERMES_DEEPSEEK_API_TIMEOUT"] == "1200"

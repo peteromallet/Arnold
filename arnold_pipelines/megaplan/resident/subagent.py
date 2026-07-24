@@ -4595,10 +4595,9 @@ def _run_managed_manifest(manifest_path: Path) -> int:
         if worker_env is None:
             worker_env = os.environ.copy()
         if backend == "hermes" and timeout_s is None:
-            # Disable Hermes whole-request deadlines while retaining finite
-            # connect/read and no-progress stream-stall safeguards.
-            worker_env["HERMES_API_TIMEOUT"] = "inf"
-            worker_env["HERMES_DEEPSEEK_API_TIMEOUT"] = "inf"
+            # No supervisor kill deadline does not imply an infinite socket or
+            # API-request timeout.  The launcher preserves finite provider
+            # transport/progress guards.
             worker_env["ARNOLD_RESIDENT_UNBOUNDED_REQUEST"] = "1"
         if backend == "claude":
             worker_env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(

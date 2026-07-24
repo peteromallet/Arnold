@@ -1076,8 +1076,6 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
             if resume:
                 argv.append("--resume-session")
             if self.config.model_timeout_s is None:
-                env["HERMES_API_TIMEOUT"] = "inf"
-                env["HERMES_DEEPSEEK_API_TIMEOUT"] = "inf"
                 env["ARNOLD_RESIDENT_UNBOUNDED_REQUEST"] = "1"
             return argv, None, env
         if backend == "claude":
