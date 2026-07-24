@@ -23,6 +23,7 @@ from arnold_pipelines.megaplan.managed_agent import (
     RESIDENT_DELEGATION_ENV,
     SEALED_STDIN_PLACEHOLDER,
     machine_origin_provenance,
+    _managed_incident_root,
     reserve_managed_command,
     run_managed_command,
     stable_managed_run_id,
@@ -249,6 +250,7 @@ def test_claim_is_fenced_to_managed_run_and_incident_gets_claim_and_attempt(
     assert claim.claimed
     monkeypatch.setenv("CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID", str(os.getpid()))
     monkeypatch.setenv("CLOUD_WATCHDOG_REPAIR_REQUEST_ID", "request-claim")
+    monkeypatch.setenv("ARNOLD_INCIDENT_LEDGER_ROOT", str(tmp_path))
     item = spec(
         tmp_path,
         identity="request-claim",
@@ -278,6 +280,23 @@ def test_claim_is_fenced_to_managed_run_and_incident_gets_claim_and_attempt(
     assert incident["attempts"][0]["attempt_id"] == payload["run_id"]
     attempt_event = next(event for event in incident["events"] if event["type"] == "repair_attempt")
     assert attempt_event["parent"] == [payload["incident_claim_event_id"]]
+
+
+def test_cloud_managed_incidents_never_default_to_runtime_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_candidate = tmp_path / "runtime-candidates" / "arnold-deadbeef"
+    manifest = {
+        "project_dir": str(runtime_candidate),
+        "links": {"cloud_session": "critique-ledger"},
+    }
+
+    monkeypatch.delenv("ARNOLD_INCIDENT_LEDGER_ROOT", raising=False)
+    assert _managed_incident_root(manifest) == Path("/workspace")
+
+    control_root = tmp_path / "control"
+    monkeypatch.setenv("ARNOLD_INCIDENT_LEDGER_ROOT", str(control_root))
+    assert _managed_incident_root(manifest) == control_root.resolve()
 
 
 def _cli(root: Path, marker: Path) -> list[str]:
