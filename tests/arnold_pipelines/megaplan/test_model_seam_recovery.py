@@ -138,6 +138,95 @@ def test_plan_capture_normalizes_extra_model_metadata() -> None:
     assert "### Step 1: Patch worker" in outcome.legacy_payload["plan"]
 
 
+def _revise_payload_with_blast_radius() -> dict[str, object]:
+    return {
+        "plan": "\n".join(
+            [
+                "# Implementation Plan: Repair Duplicate Projection",
+                "",
+                "## Phase 1",
+                "",
+                "### Step 1: Preserve model evidence",
+                "",
+                "1. Copy only the schema-declared duplicate field.",
+            ]
+        ),
+        "changes_summary": "Preserve the exact model-emitted changed surfaces.",
+        "flags_addressed": [],
+        "north_star_actions_addressed": [],
+        "assumptions": [],
+        "success_criteria": [],
+        "questions": [],
+        "changed_surfaces": ["src/worker.py", "tests/test_worker.py"],
+        "test_blast_radius": {
+            "strategy": "scoped",
+            "confidence": "high",
+            "selectors": [
+                {
+                    "kind": "path",
+                    "value": "tests/test_worker.py",
+                    "reason": "Covers the changed worker.",
+                }
+            ],
+            "always_run": [],
+            "full_suite_fallback": True,
+            "rationale": "The change is scoped to one worker.",
+            "import_graph": {
+                "degraded": False,
+                "dependent_tests": 0,
+                "unresolved": [],
+            },
+        },
+    }
+
+
+def test_revise_capture_projects_only_exact_changed_surfaces_duplicate() -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "validation_step": "revise",
+            "compatibility_validation_step": "revise",
+        },
+    )
+    payload = _revise_payload_with_blast_radius()
+
+    outcome = capture_step_output(invocation, payload)
+
+    assert outcome.legacy_payload["test_blast_radius"]["changed_surfaces"] == (
+        payload["changed_surfaces"]
+    )
+    assert outcome.telemetry.audit_result.value == "passed"
+    projection_sources = [
+        source
+        for source in outcome.contract_result.provenance.sources
+        if source.startswith("model_schema_projection:")
+    ]
+    assert len(projection_sources) == 1
+    receipt = json.loads(projection_sources[0].split(":", 1)[1])
+    assert receipt["kind"] == "exact_duplicate_field_projection"
+    assert receipt["source_pointer"] == "/changed_surfaces"
+    assert receipt["target_pointer"] == "/test_blast_radius/changed_surfaces"
+    assert len(receipt["schema_sha256"]) == 64
+    assert len(receipt["value_sha256"]) == 64
+
+
+def test_revise_capture_does_not_infer_other_missing_blast_radius_fields() -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "validation_step": "revise",
+            "compatibility_validation_step": "revise",
+        },
+    )
+    payload = _revise_payload_with_blast_radius()
+    payload["test_blast_radius"].pop("confidence")
+
+    with pytest.raises(ModelStructuralAuditError) as exc:
+        capture_step_output(invocation, payload)
+
+    assert "/test_blast_radius/confidence" in str(exc.value)
+
+
 def test_plan_audit_rejects_numbered_list_without_step_headings() -> None:
     payload = {
         "plan": (

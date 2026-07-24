@@ -24,6 +24,7 @@ working unchanged.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from copy import deepcopy
@@ -223,6 +224,18 @@ def capture_step_output(
     """
 
     legacy_payload, capture_sources = _capture_payload(invocation, output)
+    legacy_payload, projection_receipts = _apply_exact_duplicate_field_projections(
+        invocation,
+        legacy_payload,
+    )
+    capture_sources = (
+        *capture_sources,
+        *(
+            "model_schema_projection:"
+            + json.dumps(receipt, sort_keys=True, separators=(",", ":"))
+            for receipt in projection_receipts
+        ),
+    )
     legacy_payload = _normalize_capture_payload_with_contract(
         invocation,
         legacy_payload,
@@ -272,6 +285,109 @@ def capture_step_output(
         legacy_payload=legacy_payload,
         telemetry=telemetry,
     )
+
+
+def _canonical_json_bytes(value: Any) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _apply_exact_duplicate_field_projections(
+    invocation: StepInvocation,
+    payload: Mapping[str, Any],
+) -> tuple[dict[str, Any], tuple[dict[str, str], ...]]:
+    """Repair only schema-declared, byte-identical duplicate projections.
+
+    Plan and revise deliberately expose ``changed_surfaces`` twice: once as a
+    top-level model field and once inside ``test_blast_radius``.  Some providers
+    emit the complete top-level value but omit the required nested duplicate.
+    That shape error is mechanically repairable without semantic inference,
+    but only when the authoritative schema declares both fields with identical
+    schemas and the source value was actually emitted by the model.
+
+    Every projection produces a deterministic provenance receipt.  All other
+    omissions remain untouched and fail the ordinary model schema audit.
+    """
+
+    step = _optional_str(
+        invocation.metadata.get("compatibility_validation_step")
+        or invocation.metadata.get("validation_step")
+    )
+    if step not in {"plan", "revise"}:
+        return dict(payload), ()
+
+    schema = invocation.metadata.get("capture_schema") or invocation.metadata.get(
+        "output_schema"
+    )
+    if not isinstance(schema, Mapping):
+        schema = invocation.metadata.get("schema")
+    if not isinstance(schema, Mapping):
+        schema = _capture_schema_for_invocation(invocation)
+    if not isinstance(schema, Mapping):
+        return dict(payload), ()
+
+    properties = schema.get("properties")
+    properties = properties if isinstance(properties, Mapping) else {}
+    source_schema = properties.get("changed_surfaces")
+    blast_schema = properties.get("test_blast_radius")
+    blast_properties = (
+        blast_schema.get("properties")
+        if isinstance(blast_schema, Mapping)
+        else None
+    )
+    target_schema = (
+        blast_properties.get("changed_surfaces")
+        if isinstance(blast_properties, Mapping)
+        else None
+    )
+    blast_required = (
+        blast_schema.get("required")
+        if isinstance(blast_schema, Mapping)
+        else None
+    )
+    if (
+        not isinstance(source_schema, Mapping)
+        or not isinstance(target_schema, Mapping)
+        or not isinstance(blast_required, list)
+        or "changed_surfaces" not in blast_required
+        or _canonical_json_bytes(source_schema) != _canonical_json_bytes(target_schema)
+    ):
+        return dict(payload), ()
+
+    source_value = payload.get("changed_surfaces")
+    blast_value = payload.get("test_blast_radius")
+    if (
+        not isinstance(source_value, list)
+        or not isinstance(blast_value, Mapping)
+        or "changed_surfaces" in blast_value
+    ):
+        return dict(payload), ()
+
+    projected = dict(payload)
+    projected_blast = dict(blast_value)
+    projected_blast["changed_surfaces"] = deepcopy(source_value)
+    if _canonical_json_bytes(projected_blast["changed_surfaces"]) != _canonical_json_bytes(
+        source_value
+    ):
+        raise ModelStructuralAuditError(
+            "exact duplicate-field projection changed model-emitted bytes"
+        )
+    projected["test_blast_radius"] = projected_blast
+
+    schema_sha256 = hashlib.sha256(_canonical_json_bytes(source_schema)).hexdigest()
+    value_sha256 = hashlib.sha256(_canonical_json_bytes(source_value)).hexdigest()
+    receipt = {
+        "kind": "exact_duplicate_field_projection",
+        "source_pointer": "/changed_surfaces",
+        "target_pointer": "/test_blast_radius/changed_surfaces",
+        "schema_sha256": schema_sha256,
+        "value_sha256": value_sha256,
+    }
+    return projected, (receipt,)
 
 
 def _capture_payload(
