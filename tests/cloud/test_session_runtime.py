@@ -163,6 +163,102 @@ def test_prepare_session_runtime_rebinds_seed_to_target_marker_and_spec(
     assert len(validated) == 1
 
 
+def test_successor_session_uses_admitted_runtime_and_matching_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_revision = "a" * 40
+    new_revision = "b" * 40
+    old_root = tmp_path / "runtime-old"
+    new_root = tmp_path / "runtime-new"
+    old_receipt = (
+        tmp_path / "receipts" / old_revision / "supervisor-python" / "last-prepare.json"
+    )
+    new_receipt = (
+        tmp_path / "receipts" / new_revision / "supervisor-python" / "last-prepare.json"
+    )
+    new_receipt.parent.mkdir(parents=True)
+    supervisor_runtime = tmp_path / "supervisor-new"
+    new_receipt.write_text(
+        json.dumps(
+            {
+                "source": str(new_root),
+                "source_revision": new_revision,
+                "runtime": str(supervisor_runtime),
+                "status": "ready",
+            }
+        )
+        + "\n"
+    )
+    base_seed = {
+        "expected_root": str(old_root),
+        "expected_revision": old_revision,
+        "hot_env": {
+            "selectors": {
+                "MEGAPLAN_RUNTIME_SRC": str(old_root),
+                "MEGAPLAN_SUPERVISOR_SOURCE": str(old_root),
+            }
+        },
+        "input_paths": {"supervisor_receipt": str(old_receipt)},
+    }
+    identity = _identity(str(new_root))
+    identity["source_revision"] = new_revision
+    identity["editable_revision"] = new_revision
+    identity = normalize_runtime_identity(identity)
+
+    root, revision, receipt, selectors = (
+        session_runtime._release_inputs_for_runtime(base_seed, identity)
+    )
+
+    assert root == new_root.resolve()
+    assert revision == new_revision
+    assert receipt == new_receipt.resolve()
+    assert selectors["MEGAPLAN_RUNTIME_SRC"] == str(new_root.resolve())
+    assert selectors["MEGAPLAN_SUPERVISOR_SOURCE"] == str(new_root.resolve())
+    assert selectors["MEGAPLAN_SUPERVISOR_PYTHON"] == str(
+        supervisor_runtime.resolve() / "bin" / "python3"
+    )
+    assert str(old_root) not in set(selectors.values())
+
+
+def test_successor_session_rejects_foreign_supervisor_receipt(
+    tmp_path: Path,
+) -> None:
+    old_revision = "a" * 40
+    new_revision = "b" * 40
+    old_receipt = (
+        tmp_path / "receipts" / old_revision / "supervisor-python" / "last-prepare.json"
+    )
+    new_receipt = (
+        tmp_path / "receipts" / new_revision / "supervisor-python" / "last-prepare.json"
+    )
+    new_receipt.parent.mkdir(parents=True)
+    new_receipt.write_text(
+        json.dumps(
+            {
+                "source": str(tmp_path / "wrong-runtime"),
+                "source_revision": new_revision,
+                "runtime": str(tmp_path / "supervisor"),
+                "status": "ready",
+            }
+        )
+        + "\n"
+    )
+    base_seed = {
+        "expected_root": str(tmp_path / "runtime-old"),
+        "expected_revision": old_revision,
+        "hot_env": {"selectors": {}},
+        "input_paths": {"supervisor_receipt": str(old_receipt)},
+    }
+    identity = _identity(str(tmp_path / "runtime-new"))
+    identity["source_revision"] = new_revision
+    identity["editable_revision"] = new_revision
+    identity = normalize_runtime_identity(identity)
+
+    with pytest.raises(CliError, match="no ready supervisor receipt matches"):
+        session_runtime._release_inputs_for_runtime(base_seed, identity)
+
+
 def test_prepared_runtime_identity_accepts_not_required_runtime_match_policy() -> None:
     identity = _identity()
 

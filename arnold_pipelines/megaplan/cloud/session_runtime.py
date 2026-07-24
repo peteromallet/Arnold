@@ -24,6 +24,7 @@ from arnold_pipelines.megaplan.chain.execution_binding import (
 )
 from arnold_pipelines.megaplan.cloud.runtime_attestation import (
     RUNTIME_ATTESTATION_ERROR,
+    RUNTIME_SELECTOR_NAMES,
     _atomic_write,
     build_runtime_launch_seed,
     validate_runtime_launch_seed,
@@ -188,6 +189,87 @@ def _prepared_runtime_identity(report: Mapping[str, Any]) -> dict[str, Any]:
     return normalized_expected
 
 
+def _release_inputs_for_runtime(
+    base_seed: Mapping[str, Any],
+    runtime_identity: Mapping[str, Any],
+) -> tuple[Path, str, Path, dict[str, str]]:
+    """Resolve seed inputs for the runtime admitted by this session.
+
+    A base seed authenticates its own release, but a session may have been
+    atomically rebound to a newer content-addressed successor.  In that case
+    copying the base seed's root, revision, receipt, and hot selectors would
+    recreate the old release under the new marker.  Derive those inputs from
+    the admitted identity and require a matching successor supervisor receipt.
+    """
+
+    root = Path(str(runtime_identity.get("import_root") or "")).resolve(
+        strict=False
+    )
+    revision = str(runtime_identity.get("source_revision") or "")
+    if not str(runtime_identity.get("import_root") or "") or not revision:
+        raise CliError(
+            RUNTIME_ATTESTATION_ERROR,
+            "admitted runtime identity has no import root or source revision",
+        )
+
+    base_root = Path(str(base_seed.get("expected_root") or "")).resolve(
+        strict=False
+    )
+    base_revision = str(base_seed.get("expected_revision") or "")
+    input_paths = base_seed.get("input_paths")
+    input_paths = input_paths if isinstance(input_paths, Mapping) else {}
+    base_receipt = Path(
+        str(input_paths.get("supervisor_receipt") or "")
+    ).resolve(strict=False)
+
+    selectors = {
+        str(name): str(value)
+        for name, value in ((base_seed.get("hot_env") or {}).get("selectors") or {}).items()
+        if str(name).strip() and str(value).strip()
+    }
+    for name in RUNTIME_SELECTOR_NAMES[:6]:
+        selectors[name] = str(root)
+
+    same_release = root == base_root and revision == base_revision
+    if same_release:
+        return root, revision, base_receipt, selectors
+
+    candidates: list[Path] = []
+    explicit = os.environ.get("MEGAPLAN_SUPERVISOR_RUNTIME_RECEIPT")
+    if explicit:
+        candidates.append(Path(explicit).resolve(strict=False))
+    if base_revision and base_revision in base_receipt.parts:
+        parts = [
+            revision if part == base_revision else part
+            for part in base_receipt.parts
+        ]
+        candidates.append(Path(*parts))
+
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        receipt = _json(candidate, label="successor supervisor receipt")
+        receipt_source = Path(str(receipt.get("source") or "")).resolve(
+            strict=False
+        )
+        if (
+            receipt_source != root
+            or str(receipt.get("source_revision") or "") != revision
+            or str(receipt.get("status") or "") != "ready"
+        ):
+            continue
+        runtime = Path(str(receipt.get("runtime") or "")).resolve(strict=False)
+        selectors["MEGAPLAN_SUPERVISOR_PYTHON"] = str(
+            runtime / "bin" / "python3"
+        )
+        return root, revision, candidate, selectors
+
+    raise CliError(
+        RUNTIME_ATTESTATION_ERROR,
+        "no ready supervisor receipt matches the admitted successor runtime",
+    )
+
+
 def prepare_session_runtime(
     *,
     marker_path: Path,
@@ -231,7 +313,10 @@ def prepare_session_runtime(
     env_path = output_dir / SESSION_RUNTIME_ENV
     seed_path = output_dir / SESSION_RUNTIME_SEED
     process_path = output_dir / SESSION_PROCESS_ATTESTATION
-    selectors = (base_seed.get("hot_env") or {}).get("selectors") or {}
+    root, revision, supervisor_receipt, selectors = _release_inputs_for_runtime(
+        base_seed,
+        runtime_identity,
+    )
     _write_session_env(
         env_path,
         selectors=selectors,
@@ -239,12 +324,10 @@ def prepare_session_runtime(
         seed_path=seed_path,
         process_attestation_path=process_path,
     )
-    input_paths = base_seed.get("input_paths")
-    input_paths = input_paths if isinstance(input_paths, Mapping) else {}
     seed = build_runtime_launch_seed(
-        expected_root=Path(str(base_seed.get("expected_root") or "")),
-        expected_revision=str(base_seed.get("expected_revision") or ""),
-        supervisor_receipt_path=Path(str(input_paths.get("supervisor_receipt") or "")),
+        expected_root=root,
+        expected_revision=revision,
+        supervisor_receipt_path=supervisor_receipt,
         hot_env_path=env_path,
         marker_path=marker_path,
         chain_spec_path=spec_path,
