@@ -25,6 +25,24 @@ set -uo pipefail
 # Long L2 runs must not resume through a wrapper that activation rewrote while
 # Bash was waiting on a child.  Pin a syntax-checked per-invocation snapshot;
 # keep the original path only for repository and sibling discovery.
+if [[ "${ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
+  if [[ -f /workspace/.cloud-hot-env ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    . /workspace/.cloud-hot-env
+    set +a
+  fi
+  meta_repair_loop_selected_root="${MEGAPLAN_META_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-}}}"
+  meta_repair_loop_selected_wrapper="$meta_repair_loop_selected_root/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
+  if [[ -n "$meta_repair_loop_selected_root" && -x "$meta_repair_loop_selected_wrapper" ]]; then
+    meta_repair_loop_self_real="$(readlink -f "${BASH_SOURCE[0]:-$0}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]:-$0}")"
+    meta_repair_loop_selected_real="$(readlink -f "$meta_repair_loop_selected_wrapper" 2>/dev/null || printf '%s' "$meta_repair_loop_selected_wrapper")"
+    if [[ "$meta_repair_loop_self_real" != "$meta_repair_loop_selected_real" ]]; then
+      exec "$meta_repair_loop_selected_wrapper" "$@"
+    fi
+  fi
+  unset meta_repair_loop_selected_root meta_repair_loop_selected_wrapper meta_repair_loop_self_real meta_repair_loop_selected_real
+fi
 ARNOLD_META_REPAIR_LOOP_ORIGIN="${ARNOLD_META_REPAIR_LOOP_ORIGIN:-${BASH_SOURCE[0]:-$0}}"
 if [[ "${ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
   meta_repair_loop_snapshot="$(mktemp "${TMPDIR:-/tmp}/arnold-meta-repair-loop.XXXXXXXX")"

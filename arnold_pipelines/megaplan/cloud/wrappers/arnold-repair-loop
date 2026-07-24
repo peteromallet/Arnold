@@ -7,6 +7,24 @@ set -m
 # parser consume two revisions.  Execute one syntax-checked immutable snapshot
 # for the lifetime of this invocation while retaining the authoritative origin
 # for sibling/runtime discovery.
+if [[ "${ARNOLD_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
+  if [[ -f /workspace/.cloud-hot-env ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    . /workspace/.cloud-hot-env
+    set +a
+  fi
+  repair_loop_selected_root="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-}}"
+  repair_loop_selected_wrapper="$repair_loop_selected_root/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+  if [[ -n "$repair_loop_selected_root" && -x "$repair_loop_selected_wrapper" ]]; then
+    repair_loop_self_real="$(readlink -f "${BASH_SOURCE[0]:-$0}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]:-$0}")"
+    repair_loop_selected_real="$(readlink -f "$repair_loop_selected_wrapper" 2>/dev/null || printf '%s' "$repair_loop_selected_wrapper")"
+    if [[ "$repair_loop_self_real" != "$repair_loop_selected_real" ]]; then
+      exec "$repair_loop_selected_wrapper" "$@"
+    fi
+  fi
+  unset repair_loop_selected_root repair_loop_selected_wrapper repair_loop_self_real repair_loop_selected_real
+fi
 ARNOLD_REPAIR_LOOP_ORIGIN="${ARNOLD_REPAIR_LOOP_ORIGIN:-${BASH_SOURCE[0]:-$0}}"
 if [[ "${ARNOLD_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
   repair_loop_snapshot="$(mktemp "${TMPDIR:-/tmp}/arnold-repair-loop.XXXXXXXX")"

@@ -4,6 +4,30 @@ set -uo pipefail
 # The resident watchdog can outlive multiple source activations.  Bash parses
 # large scripts lazily, so run from one validated immutable snapshot and retain
 # the origin path separately for source/sibling reconciliation.
+#
+# Resolve the selected runtime *before* snapshotting an installed entrypoint.
+# A pre-activation /usr/local wrapper must never snapshot itself and then source
+# a newer runtime's sibling library: an old dynamic EXIT trap can otherwise
+# unlink that newer library.  The installed copy is only a trampoline whenever
+# the content-addressed runtime selects a different wrapper.
+if [[ "${ARNOLD_WATCHDOG_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
+  if [[ -f /workspace/.cloud-hot-env ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    . /workspace/.cloud-hot-env
+    set +a
+  fi
+  watchdog_selected_root="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-}}"
+  watchdog_selected_wrapper="$watchdog_selected_root/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog"
+  if [[ -n "$watchdog_selected_root" && -x "$watchdog_selected_wrapper" ]]; then
+    watchdog_self_real="$(readlink -f "${BASH_SOURCE[0]:-$0}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]:-$0}")"
+    watchdog_selected_real="$(readlink -f "$watchdog_selected_wrapper" 2>/dev/null || printf '%s' "$watchdog_selected_wrapper")"
+    if [[ "$watchdog_self_real" != "$watchdog_selected_real" ]]; then
+      exec "$watchdog_selected_wrapper" "$@"
+    fi
+  fi
+  unset watchdog_selected_root watchdog_selected_wrapper watchdog_self_real watchdog_selected_real
+fi
 ARNOLD_WATCHDOG_ORIGIN="${ARNOLD_WATCHDOG_ORIGIN:-${BASH_SOURCE[0]:-$0}}"
 if [[ "${ARNOLD_WATCHDOG_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
   watchdog_snapshot="$(mktemp "${TMPDIR:-/tmp}/arnold-watchdog.XXXXXXXX")"
@@ -2072,24 +2096,99 @@ sync_cloud_runtime_wrappers() {
   local wrapper_src_dir="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers"
   local wrapper_dest_dir="/usr/local/bin"
   local support_dest_dir="/usr/local/share/arnold-watchdog"
-  local wrapper dest
+  local install_lock="$wrapper_dest_dir/.arnold-supervisor-bundle.lock"
+  local stage_dir wrapper staged dest
+  local -a critical_bundle=(
+    arnold-supervisor-runtime-lib
+    arnold-watchdog
+    arnold-repair-loop
+    arnold-meta-repair-loop
+    arnold-progress-auditor
+  )
   [[ -d "$wrapper_src_dir" ]] || return 0
 
   mkdir -p "$wrapper_dest_dir" "$support_dest_dir"
+  exec {wrapper_install_fd}>"$install_lock" || return 1
+  flock -x "$wrapper_install_fd" || {
+    exec {wrapper_install_fd}>&-
+    return 1
+  }
+  stage_dir="$(mktemp -d "$wrapper_dest_dir/.arnold-supervisor-bundle.XXXXXXXX")" || {
+    flock -u "$wrapper_install_fd" 2>/dev/null || true
+    exec {wrapper_install_fd}>&-
+    return 1
+  }
+
+  # Stage and validate the load-bearing supervisor bundle as one generation.
+  # The shared library is published first; every new wrapper then has an exact
+  # sibling and never falls through into a separately activated source tree.
+  for wrapper in "${critical_bundle[@]}"; do
+    [[ -f "$wrapper_src_dir/$wrapper" ]] || {
+      rm -rf -- "$stage_dir"
+      flock -u "$wrapper_install_fd" 2>/dev/null || true
+      exec {wrapper_install_fd}>&-
+      return 1
+    }
+    staged="$stage_dir/$wrapper"
+    install -m 0755 "$wrapper_src_dir/$wrapper" "$staged" || {
+      rm -rf -- "$stage_dir"
+      flock -u "$wrapper_install_fd" 2>/dev/null || true
+      exec {wrapper_install_fd}>&-
+      return 1
+    }
+    if [[ "$wrapper" != "arnold-supervisor-runtime-lib" ]]; then
+      bash -n "$staged" || {
+        rm -rf -- "$stage_dir"
+        flock -u "$wrapper_install_fd" 2>/dev/null || true
+        exec {wrapper_install_fd}>&-
+        return 1
+      }
+    fi
+  done
+  for wrapper in "${critical_bundle[@]}"; do
+    staged="$stage_dir/$wrapper"
+    dest="$wrapper_dest_dir/$wrapper"
+    if [[ -f "$dest" ]] && cmp -s "$staged" "$dest"; then
+      continue
+    fi
+    mv -fT "$staged" "$dest" || {
+      rm -rf -- "$stage_dir"
+      flock -u "$wrapper_install_fd" 2>/dev/null || true
+      exec {wrapper_install_fd}>&-
+      return 1
+    }
+  done
+
   for wrapper in "$wrapper_src_dir"/arnold-* "$wrapper_src_dir"/mp-*; do
     [[ -f "$wrapper" ]] || continue
     dest="$wrapper_dest_dir/$(basename "$wrapper")"
+    case " ${critical_bundle[*]} " in
+      *" $(basename "$wrapper") "*) continue ;;
+    esac
     if [[ -f "$dest" ]] && cmp -s "$wrapper" "$dest"; then
       continue
     fi
-    install -m 0755 "$wrapper" "$dest" || return 1
+    install -m 0755 "$wrapper" "$dest" || {
+      rm -rf -- "$stage_dir"
+      flock -u "$wrapper_install_fd" 2>/dev/null || true
+      exec {wrapper_install_fd}>&-
+      return 1
+    }
   done
   if [[ -f "$wrapper_src_dir/principles.md" ]]; then
     dest="$support_dest_dir/principles.md"
     if [[ ! -f "$dest" ]] || ! cmp -s "$wrapper_src_dir/principles.md" "$dest"; then
-      install -m 0644 "$wrapper_src_dir/principles.md" "$dest" || return 1
+      install -m 0644 "$wrapper_src_dir/principles.md" "$dest" || {
+        rm -rf -- "$stage_dir"
+        flock -u "$wrapper_install_fd" 2>/dev/null || true
+        exec {wrapper_install_fd}>&-
+        return 1
+      }
     fi
   fi
+  rm -rf -- "$stage_dir"
+  flock -u "$wrapper_install_fd" 2>/dev/null || true
+  exec {wrapper_install_fd}>&-
 }
 
 refresh_editable_install() {

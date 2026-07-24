@@ -136,6 +136,127 @@ def test_long_running_superfixer_wrappers_pin_syntax_checked_source_snapshot(
 
 
 @pytest.mark.parametrize(
+    ("wrapper_name", "prefix"),
+    [
+        ("arnold-watchdog", "ARNOLD_WATCHDOG"),
+        ("arnold-repair-loop", "ARNOLD_REPAIR_LOOP"),
+        ("arnold-meta-repair-loop", "ARNOLD_META_REPAIR_LOOP"),
+    ],
+)
+def test_installed_supervisor_trampolines_to_selected_runtime_before_snapshot(
+    wrapper_name: str,
+    prefix: str,
+) -> None:
+    text = _wrapper(wrapper_name)
+    trampoline = text.index(f"{prefix}_SNAPSHOT_ACTIVE")
+    origin = text.index(f'{prefix}_ORIGIN="')
+    snapshot = text.index("mktemp", origin)
+    runtime_lib = text.index("arnold-supervisor-runtime-lib", snapshot)
+
+    assert trampoline < origin < snapshot < runtime_lib
+    assert "MEGAPLAN_RUNTIME_SRC" in text[:origin]
+    assert f"/{wrapper_name}\"" in text[:origin]
+    assert "exec " in text[:origin]
+
+
+@pytest.mark.parametrize(
+    ("wrapper_name", "prefix", "snapshot_prefix"),
+    [
+        ("arnold-watchdog", "ARNOLD_WATCHDOG", "arnold-watchdog"),
+        ("arnold-repair-loop", "ARNOLD_REPAIR_LOOP", "arnold-repair-loop"),
+        (
+            "arnold-meta-repair-loop",
+            "ARNOLD_META_REPAIR_LOOP",
+            "arnold-meta-repair-loop",
+        ),
+    ],
+)
+def test_stale_installed_entrypoint_never_sources_or_unlinks_selected_runtime_library(
+    tmp_path: Path,
+    wrapper_name: str,
+    prefix: str,
+    snapshot_prefix: str,
+) -> None:
+    """The installed entrypoint selects the runtime before making a snapshot.
+
+    This models the production failure where /usr/local still held an older
+    wrapper after the hot selector moved.  The selected wrapper deliberately
+    exits from a function in its sibling library, the stack shape that made a
+    legacy dynamic EXIT trap unlink that library.
+    """
+
+    installed_dir = tmp_path / "installed"
+    installed_dir.mkdir()
+    installed_wrapper = installed_dir / wrapper_name
+    installed_wrapper.write_text(_wrapper(wrapper_name), encoding="utf-8")
+    installed_wrapper.chmod(0o755)
+
+    selected_root = tmp_path / "selected"
+    selected_dir = (
+        selected_root / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
+    )
+    selected_dir.mkdir(parents=True)
+    selected_lib = selected_dir / "arnold-supervisor-runtime-lib"
+    selected_lib.write_text(
+        "exit_from_selected_runtime_library() { exit 0; }\n",
+        encoding="utf-8",
+    )
+    selected_wrapper = selected_dir / wrapper_name
+    selected_wrapper.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env bash",
+                "set -uo pipefail",
+                f'{prefix}_ORIGIN="${{{prefix}_ORIGIN:-${{BASH_SOURCE[0]:-$0}}}}"',
+                f'if [[ "${{{prefix}_SNAPSHOT_ACTIVE:-0}}" != "1" ]]; then',
+                f'  selected_snapshot="$(mktemp "${{TMPDIR:-/tmp}}/{snapshot_prefix}.XXXXXXXX")"',
+                f'  cp -- "${prefix}_ORIGIN" "$selected_snapshot"',
+                f"  export {prefix}_ORIGIN",
+                f"  export {prefix}_SNAPSHOT_ACTIVE=1",
+                '  exec bash "$selected_snapshot" "$@"',
+                "fi",
+                f'{prefix}_SNAPSHOT_PATH="${{BASH_SOURCE[0]:-$0}}"',
+                f"readonly {prefix}_SNAPSHOT_PATH",
+                f'trap \'rm -f -- "${prefix}_SNAPSHOT_PATH"\' EXIT',
+                f'. "$(dirname "${prefix}_ORIGIN")/arnold-supervisor-runtime-lib"',
+                "exit_from_selected_runtime_library",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    selected_wrapper.chmod(0o755)
+    selected_lib_sha = hashlib.sha256(selected_lib.read_bytes()).hexdigest()
+
+    snapshots = tmp_path / "snapshots"
+    snapshots.mkdir()
+    env = {
+        **os.environ,
+        "TMPDIR": str(snapshots),
+        "MEGAPLAN_RUNTIME_SRC": str(selected_root),
+    }
+    for key in (
+        f"{prefix}_ORIGIN",
+        f"{prefix}_SNAPSHOT_ACTIVE",
+        f"{prefix}_SNAPSHOT_PATH",
+    ):
+        env.pop(key, None)
+    result = subprocess.run(
+        [str(installed_wrapper), "demo", str(tmp_path), str(tmp_path / "spec")],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert selected_lib.exists()
+    assert hashlib.sha256(selected_lib.read_bytes()).hexdigest() == selected_lib_sha
+    assert installed_wrapper.exists()
+    assert not list(snapshots.glob(f"{snapshot_prefix}.*"))
+
+
+@pytest.mark.parametrize(
     ("wrapper_name", "prefix", "args", "expected_returncode"),
     [
         ("arnold-repair-loop", "arnold-repair-loop", [], 64),
@@ -9096,6 +9217,17 @@ def test_watchdog_refresh_syncs_cloud_runtime_wrappers() -> None:
     assert 'local wrapper_src_dir="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers"' in text
     assert 'local wrapper_dest_dir="/usr/local/bin"' in text
     assert 'local support_dest_dir="/usr/local/share/arnold-watchdog"' in text
+    assert 'local install_lock="$wrapper_dest_dir/.arnold-supervisor-bundle.lock"' in text
+    assert "arnold-supervisor-runtime-lib" in text
+    assert "arnold-repair-loop" in text
+    assert "arnold-meta-repair-loop" in text
+    assert "arnold-progress-auditor" in text
+    assert 'stage_dir="$(mktemp -d "$wrapper_dest_dir/.arnold-supervisor-bundle.XXXXXXXX")"' in text
+    assert 'flock -x "$wrapper_install_fd"' in text
+    assert 'mv -fT "$staged" "$dest"' in text
+    assert text.index("arnold-supervisor-runtime-lib") < text.index(
+        'for wrapper in "${critical_bundle[@]}"; do', text.index("sync_cloud_runtime_wrappers()")
+    )
     assert 'if [[ -f "$dest" ]] && cmp -s "$wrapper" "$dest"; then' in text
     assert 'install -m 0755 "$wrapper" "$dest"' in text
     assert 'if [[ ! -f "$dest" ]] || ! cmp -s "$wrapper_src_dir/principles.md" "$dest"; then' in text
