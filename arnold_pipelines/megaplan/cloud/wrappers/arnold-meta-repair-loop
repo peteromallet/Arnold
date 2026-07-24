@@ -26,7 +26,8 @@ set -uo pipefail
 # Bash was waiting on a child.  Pin a syntax-checked per-invocation snapshot;
 # keep the original path only for repository and sibling discovery.
 if [[ "${ARNOLD_META_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
-  if [[ -f /workspace/.cloud-hot-env ]]; then
+  if [[ -z "${MEGAPLAN_META_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-}}}" \
+    && -f /workspace/.cloud-hot-env ]]; then
     set -a
     # shellcheck disable=SC1091
     . /workspace/.cloud-hot-env
