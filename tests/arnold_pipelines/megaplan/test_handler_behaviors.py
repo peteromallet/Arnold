@@ -1217,6 +1217,86 @@ class TestOverrideReplanBehavior:
         assert response["state"] == "planned"
         assert state["current_state"] == "planned"
         assert state["meta"]["overrides"][-1]["from_state"] == "blocked"
+        assert state["meta"]["overrides"][-1]["source_iteration"] == 7
+        assert state["meta"]["overrides"][-1]["gate_recommendation"] == "ITERATE"
+
+    def test_blocked_iterate_replan_routes_one_fresh_critique_to_revise(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arnold_pipelines.megaplan._core.workflow import workflow_next
+        from arnold_pipelines.megaplan.replan_state import (
+            pending_replan_revise_allowed,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        plan_file = plan_dir / "plan_v7.md"
+        plan_file.write_text("# plan\n", encoding="utf-8")
+        state = {
+            "name": "demo",
+            "current_state": "blocked",
+            "iteration": 7,
+            "config": {"robustness": "full"},
+            "plan_versions": [{"version": 7, "file": "plan_v7.md"}],
+            "meta": {},
+            "last_gate": {"recommendation": "ITERATE", "passed": False},
+        }
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.save_state_merge_meta",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.latest_plan_path",
+            lambda *args, **kwargs: plan_file,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override._warn_best_effort_emit_failure",
+            lambda *args, **kwargs: None,
+        )
+
+        _override_replan(
+            tmp_path,
+            plan_dir,
+            state,
+            argparse.Namespace(reason="one bounded repair", note=None),
+        )
+
+        # The fresh critique commits without restoring last_gate.  The
+        # iteration-bound replan receipt must route to revise, not back to gate.
+        state["current_state"] = "critiqued"
+        assert state["last_gate"] == {}
+        assert pending_replan_revise_allowed(state) is True
+        assert workflow_next(state) == ["revise", "step"]
+
+        # Revise writes v8.  Merely advancing the iteration consumes the
+        # authority, so the following critique takes the ordinary gate route.
+        state["iteration"] = 8
+        assert pending_replan_revise_allowed(state) is False
+        assert workflow_next(state) == ["gate", "step"]
+
+    def test_legacy_unbound_replan_receipt_does_not_invent_revise_authority(
+        self,
+    ) -> None:
+        from arnold_pipelines.megaplan.replan_state import (
+            pending_replan_revise_allowed,
+        )
+
+        state = {
+            "current_state": "critiqued",
+            "iteration": 7,
+            "meta": {
+                "overrides": [
+                    {
+                        "action": "replan",
+                        "from_state": "blocked",
+                        "plan_file": "plan_v7.md",
+                    }
+                ]
+            },
+            "last_gate": {},
+        }
+
+        assert pending_replan_revise_allowed(state) is False
 
     def test_override_replan_clears_stale_loop_state_and_records_plan_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

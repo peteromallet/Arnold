@@ -1288,12 +1288,20 @@ class PlanningControlBinding:
             plan_dir = _plan_dir(state, transition)
             plan_file = latest_plan_path(plan_dir, state)  # type: ignore[arg-type]
             timestamp = now_utc()
+            last_gate = state.get("last_gate")
+            gate_recommendation = (
+                last_gate.get("recommendation")
+                if isinstance(last_gate, Mapping)
+                else None
+            )
             override_entry = {
                 "action": "replan",
                 "timestamp": timestamp,
                 "reason": reason,
                 "from_state": current_state,
                 "plan_file": plan_file.name,
+                "source_iteration": state.get("iteration"),
+                "gate_recommendation": gate_recommendation,
             }
             note_entry = None
             if isinstance(note, str) and note:

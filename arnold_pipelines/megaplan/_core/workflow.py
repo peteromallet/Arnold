@@ -23,6 +23,7 @@ from typing import Any, Mapping
 
 from arnold.pipeline.declaration_lowering import bind_with_lowered_declarations
 from arnold_pipelines.megaplan.profiles.policy import normalize_robustness
+from arnold_pipelines.megaplan.replan_state import pending_replan_revise_allowed
 from arnold_pipelines.megaplan.types import CliError, PlanState
 from arnold_pipelines.megaplan.planning.state import (
     STATE_CRITIQUED,
@@ -306,9 +307,9 @@ def _transition_matches(state: PlanState, condition: str) -> bool:
         gate = {}
     recommendation = gate.get("recommendation")
     if condition == "gate_unset":
-        return not recommendation
+        return not recommendation and not pending_replan_revise_allowed(state)
     if condition == "gate_iterate":
-        return recommendation == "ITERATE"
+        return recommendation == "ITERATE" or pending_replan_revise_allowed(state)
     if condition == "gate_escalate":
         return recommendation == "ESCALATE"
     if condition == "gate_tiebreaker":

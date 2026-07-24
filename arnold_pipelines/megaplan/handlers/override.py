@@ -1151,6 +1151,12 @@ def _override_replan(
     reason = args.reason or args.note or "Re-entering planning loop"
     plan_file = latest_plan_path(plan_dir, state)
     timestamp = now_utc()
+    last_gate = state.get("last_gate")
+    gate_recommendation = (
+        last_gate.get("recommendation")
+        if isinstance(last_gate, dict)
+        else None
+    )
     _append_to_meta(
         state,
         "overrides",
@@ -1160,6 +1166,8 @@ def _override_replan(
             "reason": reason,
             "from_state": previous_state,
             "plan_file": plan_file.name,
+            "source_iteration": state.get("iteration"),
+            "gate_recommendation": gate_recommendation,
         },
     )
     if args.note:

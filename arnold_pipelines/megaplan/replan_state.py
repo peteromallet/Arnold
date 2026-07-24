@@ -119,6 +119,57 @@ def blocked_iterate_gate_replan_allowed(state: Mapping[str, Any]) -> bool:
     )
 
 
+def pending_replan_revise_allowed(state: Mapping[str, Any]) -> bool:
+    """Return whether a replan still owns one revise transition.
+
+    ``override replan`` clears ``last_gate`` before returning to ``planned``.
+    After the required fresh critique, ordinary workflow routing would
+    otherwise see an unset gate and offer ``gate`` again.  At the critique-loop
+    cap that immediately re-enters the cap branch, making the declared
+    replan->revise route unreachable.
+
+    Bind the recovery authority to the exact plan iteration and the ITERATE
+    verdict that caused the replan.  A successful revise increments
+    ``state.iteration``, consuming this authority without a mutable latch.
+    Older replan receipts that lack the binding remain fail closed.
+    """
+
+    raw_iteration = state.get("iteration")
+    if isinstance(raw_iteration, bool):
+        return False
+    try:
+        iteration = int(raw_iteration)
+    except (TypeError, ValueError):
+        return False
+
+    meta = state.get("meta")
+    if not isinstance(meta, Mapping):
+        return False
+    overrides = meta.get("overrides")
+    if not isinstance(overrides, list):
+        return False
+
+    latest_replan = next(
+        (
+            entry
+            for entry in reversed(overrides)
+            if isinstance(entry, Mapping) and entry.get("action") == "replan"
+        ),
+        None,
+    )
+    if latest_replan is None:
+        return False
+    if latest_replan.get("gate_recommendation") != "ITERATE":
+        return False
+    source_iteration = latest_replan.get("source_iteration")
+    if isinstance(source_iteration, bool):
+        return False
+    try:
+        return int(source_iteration) == iteration
+    except (TypeError, ValueError):
+        return False
+
+
 def reset_replan_loop_state(
     state: MutableMapping[str, Any],
     *,
