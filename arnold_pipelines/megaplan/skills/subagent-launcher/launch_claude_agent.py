@@ -82,10 +82,15 @@ def build_claude_command(
     settings: Optional[str] = None,
     fallback_model: Optional[str] = None,
     output_format: str = "text",
+    verbose: bool = False,
+    session_id: Optional[str] = None,
+    resume: Optional[str] = None,
     bare: bool = False,
     dangerously_skip_permissions: bool = False,
-    no_session_persistence: bool = True,
+    no_session_persistence: bool = False,
 ) -> list[str]:
+    if session_id and resume:
+        raise ValueError("--session-id and --resume are mutually exclusive")
     cmd = [
         claude_bin,
         "--print",
@@ -120,6 +125,12 @@ def build_claude_command(
         cmd += ["--settings", settings]
     if fallback_model:
         cmd += ["--fallback-model", fallback_model]
+    if verbose:
+        cmd.append("--verbose")
+    if session_id:
+        cmd += ["--session-id", session_id]
+    if resume:
+        cmd += ["--resume", resume]
     if no_session_persistence:
         cmd.append("--no-session-persistence")
     if bare:
@@ -140,6 +151,9 @@ def run(
     dry_run: bool,
     **command_options,
 ) -> int:
+    if timeout is not None and timeout <= 0:
+        _eprint("error: --timeout must be positive")
+        return 2
     try:
         prompt = read_query(query, query_file)
         cmd = build_claude_command(
@@ -171,15 +185,16 @@ def run(
         "[launch_claude_agent] "
         f"model={resolve_model_selector(model)} cwd={cwd or Path.cwd()}"
     )
+    run_kwargs = {
+        "input": prompt,
+        "text": True,
+        "cwd": cwd,
+        "check": False,
+    }
+    if timeout is not None:
+        run_kwargs["timeout"] = timeout
     try:
-        completed = subprocess.run(
-            cmd,
-            input=prompt,
-            text=True,
-            cwd=cwd,
-            check=False,
-            timeout=timeout,
-        )
+        completed = subprocess.run(cmd, **run_kwargs)
     except subprocess.TimeoutExpired:
         _eprint(f"error: Claude process exceeded --timeout={timeout}s")
         return 124
@@ -197,7 +212,12 @@ def _parser() -> argparse.ArgumentParser:
     prompt.add_argument("--query-file", help="Path to prompt file")
     parser.add_argument("--project-dir", help="Working directory for the Claude process")
     parser.add_argument("--claude-bin", default="claude", help="Claude CLI path/name")
-    parser.add_argument("--timeout", type=float, default=1800, help="Optional process timeout in seconds")
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="Optional positive process timeout in seconds; omitted means no wall-time limit",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print command JSON instead of launching")
 
     parser.add_argument("--agent", help="Claude Code agent name for this session")
@@ -212,8 +232,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--setting-sources", help="Comma-separated Claude setting sources")
     parser.add_argument("--settings", help="Settings file path or JSON")
     parser.add_argument("--fallback-model", help="Optional Claude CLI fallback model list")
+    session = parser.add_mutually_exclusive_group()
+    session.add_argument("--session-id", help="Persistent UUID for a new Claude session")
+    session.add_argument("--resume", help="Resume an existing persistent Claude session UUID")
     parser.add_argument("--output-format", default="text", choices=["text", "json", "stream-json"])
-    parser.add_argument("--keep-session", dest="no_session_persistence", action="store_false")
+    parser.add_argument("--verbose", action="store_true", help="Request full Claude event output")
+    parser.add_argument(
+        "--no-session-persistence",
+        action="store_true",
+        help="Disable persistence explicitly; managed launches do not use this",
+    )
     parser.add_argument("--bare", action="store_true")
     parser.add_argument("--dangerously-skip-permissions", action="store_true")
     return parser

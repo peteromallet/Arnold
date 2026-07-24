@@ -163,6 +163,32 @@ def test_empty_stdout_is_failure(monkeypatch) -> None:
     assert result.ok is False
 
 
+def test_model_tool_exposes_optional_user_verified_timeout() -> None:
+    field = profile_module.LaunchSubagentInput.model_fields["timeout_s"]
+    assert field.default is None
+
+
+def test_explicit_timeout_requires_trusted_ingress() -> None:
+    with pytest.raises(ValueError, match="trusted ingress"):
+        subagent_module.launch_managed_subagent_detached(
+            task="bounded",
+            provider_timeout_s=1,
+        )
+
+
+def test_markerless_legacy_timeout_is_unbounded() -> None:
+    legacy = {"provider_options": {"timeout_s": 600}}
+    assert subagent_module._explicit_manifest_timeout(legacy) is None
+    explicit = {
+        "timeout_policy": {
+            "mode": "explicit",
+            "source": "trusted_cli",
+            "timeout_s": 42,
+        }
+    }
+    assert subagent_module._explicit_manifest_timeout(explicit) == 42.0
+
+
 def test_timeout_is_failure(monkeypatch) -> None:
     def raise_timeout(argv, **kw):
         raise _subprocess.TimeoutExpired(cmd=argv, timeout=0.01)
@@ -273,6 +299,8 @@ def test_codex_background_launch_writes_durable_manifest(tmp_path, monkeypatch) 
     assert manifest["git_custody"]["schema_version"] == "arnold-resident-git-custody-v1"
     assert manifest["git_custody"]["evidence_path"].endswith("git-custody-evidence.json")
     assert "[Git implementation custody contract — deterministic v1]" in prompt
+    assert "implementation.base_revision is the actual feature base" in prompt
+    assert "only with strict containment proof" in prompt
     assert "Missing or inconsistent evidence fails the delegated run" in prompt
     assert FINAL_SUMMARY_INSTRUCTION in prompt
     assert manifest["discord_origin"]["conversation_key"] == "discord:guild:12:channel:34:thread:56"
@@ -299,6 +327,50 @@ def test_managed_launch_rejects_oversized_task_before_creating_run(tmp_path) -> 
         )
 
     assert not (tmp_path / ".megaplan/plans/resident-subagents").exists()
+
+
+def test_scheduled_standalone_dm_manifest_has_no_reply_or_source_custody(
+    tmp_path, monkeypatch
+) -> None:
+    class _Process:
+        pid = 4321
+
+    monkeypatch.setattr(subagent_module.subprocess, "Popen", lambda *args, **kwargs: _Process())
+    result = asyncio.run(
+        launch_subagent_task(
+            ResidentConfig(model_name="gpt-test"),
+            task="inspect scheduled state",
+            project_dir=str(tmp_path),
+            request_id="occ_standalone_1",
+            launch_origin={"applicability": "not_applicable", "source_kind": "schedule"},
+            schedule_context={
+                "schema_version": "arnold-resident-schedule-occurrence-v1",
+                "schedule_id": "sched_standalone_dm",
+                "schedule_revision": 1,
+                "generation": 1,
+                "occurrence_id": "occ_standalone_1",
+                "occurrence_key": "sha256:test",
+                "nominal_at": "2026-07-20T08:00:00+00:00",
+                "authorization_digest": "sha256:auth",
+                "pinned_definition_digest": "sha256:def",
+                "delivery": {"mode": "standalone", "route_ref": "discord:dm:42"},
+            },
+        )
+    )
+
+    manifest = json.loads(Path(result.manifest_path).read_text())
+    assert manifest["launch_provenance"]["applicability"] == "not_applicable"
+    assert manifest["discord_delivery_target"] == {
+        "transport": "discord",
+        "conversation_key": "discord:dm:42",
+        "mode": "standalone",
+    }
+    assert "discord_origin" not in manifest
+    assert "source_record_id" not in manifest
+    assert manifest["completion_delivery"]["destination"] == {
+        "conversation_key": "discord:dm:42"
+    }
+    assert "reply_target" not in manifest["completion_delivery"]
 
 
 def test_codex_background_launch_resolves_resident_message_record_to_discord_id(

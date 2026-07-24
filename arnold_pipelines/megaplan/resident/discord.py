@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
 import hashlib
 import json
 import logging
@@ -17,14 +16,12 @@ from urllib.parse import urlparse
 
 import httpx
 from agentbox.redaction import redact_text
-from arnold_pipelines.megaplan.store import ScheduledJobInput, deterministic_idempotency_key
+from arnold_pipelines.megaplan.store import deterministic_idempotency_key
 
 from .auth import AuthorizationSubject
 from .currently_running import (
     CURRENTLY_RUNNING_COMMAND,
     CURRENTLY_RUNNING_DESCRIPTION,
-    CurrentlyRunningReport,
-    _safe_label,
     collect_currently_running,
     render_currently_running,
 )
@@ -43,6 +40,7 @@ from .discord_follow_up import (
     render_follow_up_receipt,
     resolve_live_managed_agent,
 )
+from .fix_the_fixer import parse_fix_the_fixer_command, resident_command_catalog
 from .discord_reactions import DiscordReactionEffectLedger, ReactionEffectSweepResult
 from .runtime import InboundEvent, OutboundMessage, OutboundSink, ResidentRuntime
 from .reply_chain import (
@@ -1421,8 +1419,8 @@ class ResidentDiscordService:
             else:
                 reaction_delivery = None
             self._log_transcription_readiness()
-            self._ensure_scheduler_started(client)
             self._seed_special_requests_job()
+            self._ensure_scheduler_started(client)
             user = getattr(client, "user", None)
             guilds = getattr(client, "guilds", ())
             LOGGER.info(
@@ -1476,15 +1474,7 @@ class ResidentDiscordService:
         await client.start(self.token)
 
     async def handle_currently_running_interaction(self, interaction: Any) -> None:
-        """Serve ``/whats-cooking`` without invoking the resident model.
-
-        M9 (T25): Non-authoritative metadata and degraded states are preserved
-        independently per source.  Status-node and managed-agent inventory
-        degrade independently — a failure in one source does not invent
-        activity for the other.  Source-cursor metadata is surfaced as a
-        non-authoritative footer so operators can distinguish fresh, stale,
-        and unknown dimensional evidence.
-        """
+        """Serve ``/whats-cooking`` without invoking the resident model."""
 
         user_id = _optional_snowflake(
             getattr(getattr(interaction, "user", None), "id", None)
@@ -1512,43 +1502,19 @@ class ResidentDiscordService:
             return
 
         await interaction.response.defer(thinking=True, ephemeral=True)
-
-        # ── M9: independent degradation per source ──
-        report: CurrentlyRunningReport | None = None
-        collection_failed = False
         try:
             timezone_name = TimezoneService(
                 getattr(self.runtime, "store", None),
                 getattr(self.runtime, "config", None),
             ).resolve(user_id=user_id, guild_id=guild_id).name
             report = await collect_currently_running(self.runtime)
+            rendered = render_currently_running(report, timezone_name=timezone_name)
         except Exception:
-            LOGGER.exception("Resident whats-cooking collect phase failed")
-            collection_failed = True
-
-        if collection_failed or report is None:
-            # ── M9: no invented activity — both sources unavailable ──
+            LOGGER.exception("Resident whats-cooking command failed")
             rendered = (
                 "# Currently running\n"
-                "⚠️ Canonical status is temporarily unavailable; "
-                "no running-state claims were made.\n"
-                "\n"
-                "## ⛓️ Epics & chains\n"
-                "⚠️ Status-node collection failed — no chain state available.\n"
-                "\n"
-                "## 🤖 Managed agents\n"
-                "⚠️ Managed-agent inventory collection failed — no agent state available.\n"
-                "\n"
-                "> ⚠️ _non-authoritative — this report is a projection, not source authority._"
+                "⚠️ Canonical status is temporarily unavailable; no running-state claims were made."
             )
-        else:
-            rendered = render_currently_running(
-                report,
-                timezone_name=timezone_name,
-            )
-            # ── M9: attach non-authoritative source-cursor metadata footer ──
-            rendered = _attach_m9_whats_cooking_metadata(report, rendered)
-
         for chunk in split_discord_message(rendered):
             await interaction.followup.send(chunk, ephemeral=True)
 
@@ -1705,10 +1671,10 @@ class ResidentDiscordService:
             return
 
         await interaction.response.defer(thinking=True, ephemeral=True)
-        project_root = Path(
-            getattr(self.runtime, "project_root", Path.cwd())
-        ).resolve()
         try:
+            project_root = Path(
+                getattr(self.runtime, "project_root", Path.cwd())
+            ).resolve()
             target = await asyncio.to_thread(
                 resolve_live_managed_agent,
                 agent,
@@ -1726,15 +1692,6 @@ class ResidentDiscordService:
                 operator_user_id=user_id,
                 conversation_key=delivery_target.conversation_key,
             )
-        except (DiscordFollowUpError, ValueError, OSError) as exc:
-            await interaction.followup.send(
-                "Follow-up rejected: "
-                f"{redact_text(str(exc))}. No instruction was attached.",
-                ephemeral=True,
-            )
-            return
-
-        try:
             result = await asyncio.to_thread(
                 follow_up_managed_subagent,
                 run_id=target.run_id,
@@ -1748,9 +1705,8 @@ class ResidentDiscordService:
             rendered = render_follow_up_receipt(result)
         except (DiscordFollowUpError, SubagentFollowupError, ValueError, OSError) as exc:
             rendered = (
-                "Follow-up did not return a confirmed interrupting continuation: "
-                f"{redact_text(str(exc))}. No acceptance or completion is being claimed; "
-                "inspect durable managed-run status before retrying."
+                "Follow-up rejected: "
+                f"{redact_text(str(exc))}. No instruction was attached."
             )
         except Exception:
             LOGGER.exception("Resident Discord follow-up command failed")
@@ -1815,6 +1771,10 @@ class ResidentDiscordService:
         )
         await self.runtime.receive(event, authorization_decision=decision)
 
+    @staticmethod
+    def command_catalog() -> tuple[dict[str, str], ...]:
+        return resident_command_catalog()
+
     async def handle_message(self, message: Any) -> None:
         """Convert one Discord message into a resident event, transcribing audio first."""
 
@@ -1832,6 +1792,25 @@ class ResidentDiscordService:
                 inbound.to_inbound_event(),
                 authorization_decision=authorization_decision,
             )
+            return
+        command = parse_fix_the_fixer_command(inbound.content)
+        if command is not None:
+            inbound = replace(
+                inbound,
+                reply_chain=await _capture_discord_reply_chain(message),
+            )
+            event = inbound.to_inbound_event()
+            event = replace(
+                event,
+                raw={**event.raw, "resident_command": command.resident_payload()},
+            )
+            if authorization_decision is None:
+                await self.runtime.receive(event)
+            else:
+                await self.runtime.receive(
+                    event,
+                    authorization_decision=authorization_decision,
+                )
             return
         if await self._handle_timezone_command(message, inbound):
             return
@@ -2039,35 +2018,20 @@ class ResidentDiscordService:
             or f"discord:dm:{subject_user_id}"
         )
         store = self.runtime.store
-        if store.list_scheduled_jobs(job_type="vp_todo_sweep", status="pending", limit=1):
-            return
-        target = DiscordDeliveryTarget.from_conversation_key(conversation_key)
-        interval_s = int(config.special_requests_interval_s)
-        payload = {
-            "conversation_key": conversation_key,
-            "subject_user_id": subject_user_id,
-            "guild_id": target.guild_id,
-            # A DM has no channel id; leave it unset so the inbound channel
-            # allowlist (if any) doesn't block the system-generated turn.
-            "channel_id": None if target.dm_user_id else target.channel_id,
-            "dm_user_id": target.dm_user_id,
-            "interval_s": interval_s,
-        }
-        store.create_scheduled_job(
-            ScheduledJobInput(
-                job_type="vp_todo_sweep",
-                payload=payload,
-                scheduled_for=datetime.now(UTC),
-                max_attempts=3,
-            ),
-            idempotency_key=deterministic_idempotency_key(
-                "resident-vp-todo-sweep-seed", conversation_key
-            ),
+        from .schedules import reconcile_vp_todo_schedule
+
+        receipt = reconcile_vp_todo_schedule(
+            store,
+            interval_seconds=int(config.special_requests_interval_s),
         )
         LOGGER.info(
-            "VP to-do sweep job seeded target=%s interval_s=%s",
+            "VP to-do recurrence reconciled target=%s interval_s=%s "
+            "schedule_id=%s next_occurrence=%s cancelled_legacy=%s",
             conversation_key,
-            interval_s,
+            config.special_requests_interval_s,
+            receipt["schedule_id"],
+            receipt["next_occurrence"],
+            len(receipt["cancelled_legacy_job_ids"]),
         )
 
     async def _scheduler_loop(self, client: Any) -> None:
@@ -2129,67 +2093,6 @@ class ResidentDiscordService:
 def discord_token_from_env(env_name: str) -> str | None:
     token = os.environ.get(env_name)
     return token.strip() if token and token.strip() else None
-
-
-def _attach_m9_whats_cooking_metadata(
-    report: CurrentlyRunningReport,
-    rendered: str,
-) -> str:
-    """Attach non-authoritative source-cursor metadata footer to the report.
-
-    M9 (T25): The footer surfaces source-cursor freshness per dimension
-    and independently marks the status-node and managed-agent inventory
-    degradation states.  No activity is invented — when a source is
-    unavailable, its degradation is stated explicitly rather than
-    defaulting to an optimistic label.
-    """
-    lines: list[str] = [rendered, ""]
-
-    # ── Per-source degradation status ──
-    degradation_parts: list[str] = []
-    if report.status_error:
-        degradation_parts.append(
-            f"⛓️ Epics & chains: degraded — {_safe_label(report.status_error)}"
-        )
-    if report.managed_agents_error:
-        degradation_parts.append(
-            f"🤖 Managed agents: degraded — {_safe_label(report.managed_agents_error)}"
-        )
-    if degradation_parts:
-        lines.append("### ⚠️ Source degradation")
-        for part in degradation_parts:
-            lines.append(f"- {part}")
-        lines.append("")
-
-    # ── Source-cursor metadata from status_node ──
-    status_node = report.status_node
-    if isinstance(status_node, Mapping):
-        source_cursor = status_node.get("source_cursor_aggregate")
-        if isinstance(source_cursor, Mapping):
-            lines.append("### 📊 Source-cursor evidence")
-            non_fresh = source_cursor.get("non_fresh_count", 0)
-            dims = source_cursor.get("dimensions")
-            lines.append(f"- Non-fresh dimensions: {non_fresh}")
-            if isinstance(dims, list):
-                for dim in dims:
-                    if isinstance(dim, Mapping):
-                        d_name = dim.get("dimension", "?")
-                        d_state = dim.get("state", "?")
-                        lines.append(f"  - `{d_name}`: {d_state}")
-            vector_id = source_cursor.get("vector_id", "")
-            if vector_id:
-                lines.append(f"- Vector ID: `{vector_id[:24]}...`")
-            lines.append("")
-
-    # ── Non-authoritative footer ──
-    lines.append(
-        "> ⚠️ _non-authoritative — this report is a projection, "
-        "not source authority.  Source-cursor dimensions may be "
-        "stale or unknown; no running-state claims are invented "
-        "from missing evidence._"
-    )
-
-    return "\n".join(lines)
 
 
 def _optional_snowflake(value: object) -> str | None:

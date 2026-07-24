@@ -51,7 +51,7 @@ def resolve_live_managed_agent(
     project_root: str | Path,
     workspace_root: str | Path | None = "/workspace",
 ) -> LiveManagedAgentTarget:
-    """Resolve one full run ID or unique displayed suffix from live canonical rows."""
+    """Resolve one full run ID or unique displayed suffix, live-only."""
 
     selector = str(selector or "").strip()
     if not (
@@ -66,17 +66,14 @@ def resolve_live_managed_agent(
     inventory = list_managed_resident_agents(
         project_root=Path(project_root).resolve(),
         workspace_root=workspace_root,
-        recent_limit=0,
-        queue_limit=0,
+        recent_limit=1_000_000,
+        queue_limit=1_000_000,
     )
-    running = inventory.get("running")
-    rows = [
-        row
-        for row in running
-        if isinstance(row, Mapping)
-        and row.get("live") is True
-        and row.get("evidence_class") == "canonical"
-    ] if isinstance(running, list) else []
+    rows: list[Mapping[str, Any]] = []
+    for field in ("running", "queued", "recent"):
+        values = inventory.get(field)
+        if isinstance(values, list):
+            rows.extend(row for row in values if isinstance(row, Mapping))
 
     def matches(row: Mapping[str, Any]) -> bool:
         run_id = str(row.get("run_id") or "")
@@ -90,21 +87,20 @@ def resolve_live_managed_agent(
     if len(unique_locations) > 1:
         matched_ids = sorted({run_id for run_id, _path in unique_locations})
         raise DiscordFollowUpError(
-            "agent selector is ambiguous across live canonical managed runs: "
+            "agent selector is ambiguous across managed runs: "
             + ", ".join(matched_ids)
         )
     if not candidates:
         raise DiscordFollowUpError(
-            f"no live canonical resident-managed run matches agent selector: {selector}"
+            f"no resident-managed run matches agent selector: {selector}"
         )
 
     row = candidates[0]
     run_id = str(row.get("run_id") or "")
     status = str(row.get("status") or "unknown")
-    manifest_path = str(row.get("manifest_path") or "")
-    if not manifest_path:
+    if row.get("live") is not True:
         raise DiscordFollowUpError(
-            f"resident-managed run {run_id} has no canonical manifest path"
+            f"resident-managed run {run_id} is not live (status: {status})"
         )
     launch_provenance = row.get("launch_provenance")
     if not isinstance(launch_provenance, Mapping):
@@ -123,7 +119,7 @@ def resolve_live_managed_agent(
         )
     return LiveManagedAgentTarget(
         run_id=run_id,
-        manifest_path=manifest_path,
+        manifest_path=str(row.get("manifest_path") or ""),
         launch_provenance=normalized,
         status=status,
     )
@@ -136,7 +132,7 @@ def command_control_provenance(
     operator_user_id: str,
     conversation_key: str,
 ) -> dict[str, Any]:
-    """Bind an interaction to the target's exact immutable conversation custody."""
+    """Bind an interaction to the target's immutable delivery ownership."""
 
     target_provenance = dict(target.launch_provenance)
     if target_provenance.get("conversation_key") != conversation_key:
@@ -161,24 +157,18 @@ def command_control_provenance(
 
 
 def render_follow_up_receipt(result: Any) -> str:
-    """Render durable acceptance without claiming delegated task completion."""
+    """Render acceptance without claiming delegated task completion."""
 
     continuation = str(getattr(result, "continuation_run_id", None) or "")
     followup_id = str(getattr(result, "followup_id", "") or "")
     target_run_id = str(getattr(result, "target_run_id", "") or "")
     status = str(getattr(result, "status", "unknown") or "unknown")
-    if (
-        getattr(result, "ok", False) is not True
-        or not continuation
-        or not followup_id
-        or not target_run_id
-    ):
+    if not continuation:
         raise DiscordFollowUpError(
-            "the follow-up returned no complete durable continuation receipt"
+            "the follow-up returned no interrupting continuation receipt"
         )
-    replay = " (idempotent replay)" if getattr(result, "idempotent_replay", False) else ""
     return (
-        f"Follow-up durably accepted for `{target_run_id}`{replay}.\n"
+        f"Follow-up durably accepted for `{target_run_id}`.\n"
         f"Interrupting continuation: `{continuation}` (receipt `{followup_id}`).\n"
         f"Status: `{status}` — the instruction is attached; target completion is not claimed."
     )

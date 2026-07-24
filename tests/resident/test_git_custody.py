@@ -166,7 +166,7 @@ def test_genuinely_detached_candidates_fail_closed_with_exact_gate(tmp_path: Pat
     assert _git(runtime, "rev-parse", "HEAD") == base
 
 
-def test_integrated_receipt_proves_clean_worktree_diff_tests_and_ancestry(
+def test_integrated_receipt_accepts_rebased_implementation_after_target_advance(
     tmp_path: Path,
 ) -> None:
     project = tmp_path / "project"
@@ -188,7 +188,7 @@ def test_integrated_receipt_proves_clean_worktree_diff_tests_and_ancestry(
     commit = _git(feature, "rev-parse", "HEAD")
     assert commit != original_commit
     _git(runtime, "merge", "--ff-only", "refs/heads/feature/custody")
-    after = _git(runtime, "rev-parse", "refs/heads/resident-runtime")
+    after = _commit(runtime, "later authorized target advance", "later.txt")
     evidence_path.write_text(
         json.dumps(
             {
@@ -200,7 +200,7 @@ def test_integrated_receipt_proves_clean_worktree_diff_tests_and_ancestry(
                 "implementation": {
                     "worktree_path": str(feature),
                     "branch_ref": "refs/heads/feature/custody",
-                    "base_revision": base,
+                    "base_revision": before,
                     "commit_revision": commit,
                 },
                 "verification": {
@@ -211,7 +211,7 @@ def test_integrated_receipt_proves_clean_worktree_diff_tests_and_ancestry(
                 "preservation": {"launch_checkout_untouched": True},
                 "revalidation": {
                     "target_ref": "refs/heads/resident-runtime",
-                    "observed_revision": before,
+                    "observed_revision": after,
                 },
                 "integration": {
                     "status": "integrated",
@@ -226,8 +226,10 @@ def test_integrated_receipt_proves_clean_worktree_diff_tests_and_ancestry(
 
     verified = validate_git_custody_evidence(custody)
     assert verified["status"] == "verified_integrated"
+    assert verified["base_revision"] == base
+    assert verified["implementation_base_revision"] == before
     assert verified["commit_revision"] == commit
-    assert verified["target_revision"] == commit
+    assert verified["target_revision"] == after
     assert _git(feature, "status", "--porcelain") == ""
     assert (
         _git(
@@ -239,6 +241,201 @@ def test_integrated_receipt_proves_clean_worktree_diff_tests_and_ancestry(
         )
         == ""
     )
+
+
+@pytest.mark.parametrize(
+    ("implementation_base", "error"),
+    [
+        ("", "implementation.base_revision is required"),
+        (
+            "0000000000000000000000000000000000000000",
+            "implementation base does not exist in the target repository",
+        ),
+    ],
+)
+def test_integrated_receipt_rejects_missing_implementation_base_ancestry(
+    tmp_path: Path,
+    implementation_base: str,
+    error: str,
+) -> None:
+    project = tmp_path / "project"
+    base = _repo(project)
+    runtime = tmp_path / "runtime"
+    _git(project, "worktree", "add", "-b", "resident-runtime", str(runtime), base)
+    evidence_path = tmp_path / "receipt.json"
+    custody = resolve_launch_git_custody(
+        project_root=project,
+        runtime_root=runtime,
+        evidence_path=evidence_path,
+    )
+    feature = tmp_path / "feature"
+    _git(project, "worktree", "add", "-b", "feature/custody", str(feature), base)
+    commit = _commit(feature, "implement", "feature.txt")
+    _git(runtime, "merge", "--ff-only", "refs/heads/feature/custody")
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": GIT_CUSTODY_EVIDENCE_SCHEMA,
+                "launch_target": {
+                    "target_ref": "refs/heads/resident-runtime",
+                    "base_revision": base,
+                },
+                "implementation": {
+                    "worktree_path": str(feature),
+                    "branch_ref": "refs/heads/feature/custody",
+                    "base_revision": implementation_base,
+                    "commit_revision": commit,
+                },
+                "verification": {
+                    "diff_reviewed": True,
+                    "git_diff_check": "passed",
+                    "tests": [{"command": "pytest -q focused", "status": "passed"}],
+                },
+                "preservation": {"launch_checkout_untouched": True},
+                "revalidation": {
+                    "target_ref": "refs/heads/resident-runtime",
+                    "observed_revision": base,
+                },
+                "integration": {
+                    "status": "integrated",
+                    "target_ref": "refs/heads/resident-runtime",
+                    "before_revision": base,
+                    "after_revision": commit,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(GitCustodyError, match=error):
+        validate_git_custody_evidence(custody)
+
+
+def test_integrated_receipt_rejects_implementation_base_from_unrelated_lineage(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    base = _repo(project)
+    runtime = tmp_path / "runtime"
+    _git(project, "worktree", "add", "-b", "resident-runtime", str(runtime), base)
+    evidence_path = tmp_path / "receipt.json"
+    custody = resolve_launch_git_custody(
+        project_root=project,
+        runtime_root=runtime,
+        evidence_path=evidence_path,
+    )
+    feature = tmp_path / "feature"
+    _git(project, "worktree", "add", "-b", "feature/custody", str(feature), base)
+    commit = _commit(feature, "implement", "feature.txt")
+    unrelated = _git(
+        project,
+        "commit-tree",
+        _git(project, "rev-parse", f"{base}^{{tree}}"),
+        "-m",
+        "unrelated implementation base",
+    )
+    _git(runtime, "merge", "--ff-only", "refs/heads/feature/custody")
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": GIT_CUSTODY_EVIDENCE_SCHEMA,
+                "launch_target": {
+                    "target_ref": "refs/heads/resident-runtime",
+                    "base_revision": base,
+                },
+                "implementation": {
+                    "worktree_path": str(feature),
+                    "branch_ref": "refs/heads/feature/custody",
+                    "base_revision": unrelated,
+                    "commit_revision": commit,
+                },
+                "verification": {
+                    "diff_reviewed": True,
+                    "git_diff_check": "passed",
+                    "tests": [{"command": "pytest -q focused", "status": "passed"}],
+                },
+                "preservation": {"launch_checkout_untouched": True},
+                "revalidation": {
+                    "target_ref": "refs/heads/resident-runtime",
+                    "observed_revision": base,
+                },
+                "integration": {
+                    "status": "integrated",
+                    "target_ref": "refs/heads/resident-runtime",
+                    "before_revision": base,
+                    "after_revision": commit,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        GitCustodyError,
+        match="implementation base is not a descendant of the recorded launch base",
+    ):
+        validate_git_custody_evidence(custody)
+
+
+def test_integrated_receipt_rejects_base_not_contained_by_implementation_commit(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    base = _repo(project)
+    runtime = tmp_path / "runtime"
+    _git(project, "worktree", "add", "-b", "resident-runtime", str(runtime), base)
+    evidence_path = tmp_path / "receipt.json"
+    custody = resolve_launch_git_custody(
+        project_root=project,
+        runtime_root=runtime,
+        evidence_path=evidence_path,
+    )
+    feature = tmp_path / "feature"
+    _git(project, "worktree", "add", "-b", "feature/custody", str(feature), base)
+    commit = _commit(feature, "implement", "feature.txt")
+    advanced_base = _commit(runtime, "concurrent target advance", "runtime.txt")
+    _git(runtime, "merge", "--no-ff", "refs/heads/feature/custody", "-m", "integrate")
+    after = _git(runtime, "rev-parse", "HEAD")
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": GIT_CUSTODY_EVIDENCE_SCHEMA,
+                "launch_target": {
+                    "target_ref": "refs/heads/resident-runtime",
+                    "base_revision": base,
+                },
+                "implementation": {
+                    "worktree_path": str(feature),
+                    "branch_ref": "refs/heads/feature/custody",
+                    "base_revision": advanced_base,
+                    "commit_revision": commit,
+                },
+                "verification": {
+                    "diff_reviewed": True,
+                    "git_diff_check": "passed",
+                    "tests": [{"command": "pytest -q focused", "status": "passed"}],
+                },
+                "preservation": {"launch_checkout_untouched": True},
+                "revalidation": {
+                    "target_ref": "refs/heads/resident-runtime",
+                    "observed_revision": advanced_base,
+                },
+                "integration": {
+                    "status": "integrated",
+                    "target_ref": "refs/heads/resident-runtime",
+                    "before_revision": advanced_base,
+                    "after_revision": after,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        GitCustodyError,
+        match="implementation base is not an ancestor of the implementation commit",
+    ):
+        validate_git_custody_evidence(custody)
 
 
 def test_zero_exit_worker_fails_closed_without_git_custody_receipt(
@@ -270,7 +467,9 @@ def test_zero_exit_worker_fails_closed_without_git_custody_receipt(
                 "project_dir": str(project),
                 "model": "gpt-test",
                 "reasoning_effort": "high",
+                "task_kind": "mechanical",
                 "work_intent": "execution",
+                "mutation_claim": "git_backed",
                 "git_custody": custody,
             }
         ),
@@ -298,3 +497,79 @@ def test_zero_exit_worker_fails_closed_without_git_custody_receipt(
     assert terminal["terminal_outcome"] == "failed"
     assert terminal["error"] == "git custody verification failed"
     assert "missing or invalid git custody evidence" in terminal["git_custody_error"]
+    assert terminal["completion_verification"]["status"] == "failed"
+
+
+def test_zero_exit_non_mutating_mechanical_result_has_applicable_success_without_git_custody(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    _repo(project)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    prompt_path = run_dir / "prompt.md"
+    result_path = run_dir / "result.md"
+    manifest_path = run_dir / "manifest.json"
+    prompt_path.write_text("choose one word", encoding="utf-8")
+    result_path.write_text("WORD_1: lantern", encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "arnold-managed-agent-run-v2",
+                "run_kind": "resident_delegated_agent",
+                "custodian": "arnold.megaplan.managed_agent",
+                "status": "running",
+                "pid": 111,
+                "prompt_path": str(prompt_path),
+                "result_path": str(result_path),
+                "project_dir": str(project),
+                "model": "gpt-test",
+                "reasoning_effort": "low",
+                "task_kind": "mechanical",
+                "work_intent": "execution",
+                "mutation_claim": "none",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _Worker:
+        pid = 222
+
+        def wait(self, timeout=None):
+            return 0
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(
+        subagent_module.subprocess,
+        "Popen",
+        lambda *args, **kwargs: _Worker(),
+    )
+
+    assert subagent_module._run_codex_manifest(manifest_path) == 0
+    terminal = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert terminal["status"] == "completed"
+    assert terminal["terminal_outcome"] == "completed"
+    assert "git_custody" not in terminal
+    assert terminal["completion_verification"] == {
+        "schema_version": subagent_module.COMPLETION_VERIFICATION_SCHEMA,
+        "status": "success",
+        "classification": "applicable_non_mutating_success",
+        "git_custody": "not_applicable",
+        "basis": {
+            "task_kind": "mechanical",
+            "work_intent": "execution",
+            "mutation_claim": "none",
+        },
+    }
+
+
+def test_mutation_shaped_execution_cannot_opt_out_of_git_custody() -> None:
+    with pytest.raises(ValueError, match="cannot opt out"):
+        subagent_module.resolve_delegated_mutation_claim(
+            task_kind="coding",
+            work_intent="execution",
+            mutation_claim="none",
+        )

@@ -21,6 +21,7 @@ from arnold_pipelines.megaplan.resident.provenance import DELEGATION_CONTEXT_ENV
 
 
 PREDECESSOR_RUN_ID = "subagent-20260715-120000-aaaaaaaa"
+SECOND_PREDECESSOR_RUN_ID = "subagent-20260715-120100-cccccccc"
 CALLER_RUN_ID = "subagent-20260715-130000-bbbbbbbb"
 
 
@@ -92,6 +93,7 @@ def _write_authoritative_request(
     provenance: dict[str, object],
     *,
     author_id: str,
+    ancestor_content: str | None = None,
 ) -> None:
     store = root / ".megaplan/resident"
     messages = store / "messages"
@@ -118,6 +120,18 @@ def _write_authoritative_request(
                         "channel_id": provenance["channel_id"],
                         "dm_user_id": provenance["dm_user_id"],
                     },
+                    **(
+                        {
+                            "ancestors": [
+                                {
+                                    "status": "available",
+                                    "content": ancestor_content,
+                                }
+                            ]
+                        }
+                        if ancestor_content is not None
+                        else {}
+                    ),
                 },
             },
             sort_keys=True,
@@ -241,14 +255,74 @@ def _queue_cross_request(root: Path):
     )
 
 
+def _cross_request_root_turn_fixture(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[dict[str, object], Path, Path]:
+    monkeypatch.setenv(
+        "MEGAPLAN_RESIDENT_STORE_ROOT", str(root / ".megaplan/resident")
+    )
+    predecessor_provenance = _cross_provenance(
+        source_record_id="msg_predecessor1",
+        message_id="1527043418327486586",
+    )
+    current_provenance = _cross_provenance(
+        source_record_id="msg_currentreq1",
+        message_id="1527043418327486587",
+    )
+    current_provenance["resident_turn_id"] = "turn_123456789abc"
+    _write_authoritative_request(
+        root, predecessor_provenance, author_id="42"
+    )
+    _write_authoritative_request(
+        root,
+        current_provenance,
+        author_id="42",
+        ancestor_content=f"Launched `{PREDECESSOR_RUN_ID}`.",
+    )
+    predecessor_path = _write_predecessor(
+        root, provenance=predecessor_provenance
+    )
+    source = str(current_provenance["source_record_id"])
+    relationship = {
+        "schema_version": "arnold-resident-query-relationship-v1",
+        "conversation_id": current_provenance["resident_conversation_id"],
+        "current_request": {"source_record_id": source},
+        "delivery_owner": {"source_record_id": source},
+        "aggregation_owner": {"source_record_id": source},
+    }
+    relationship_dir = root / ".megaplan/resident/query_relationships"
+    relationship_dir.mkdir(parents=True, exist_ok=True)
+    relationship_dir.joinpath(f"{source}.json").write_text(
+        json.dumps(relationship), encoding="utf-8"
+    )
+    turn_dir = root / ".megaplan/resident/turns"
+    turn_dir.mkdir(parents=True, exist_ok=True)
+    turn_path = turn_dir / f"{current_provenance['resident_turn_id']}.json"
+    turn_path.write_text(
+        json.dumps(
+            {
+                "id": current_provenance["resident_turn_id"],
+                "status": "in_progress",
+                "triggered_by_message_ids": [source],
+                "prompt_snapshot": {"message_count": 1},
+                "started_at": "2026-07-15T13:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(DELEGATION_CONTEXT_ENV, json.dumps(current_provenance))
+    return current_provenance, predecessor_path, turn_path
+
+
 def _write_predecessor(
     root: Path,
     *,
+    run_id: str = PREDECESSOR_RUN_ID,
     status: str = "running",
     provenance: dict[str, object] | None = None,
     result: str = "",
 ) -> Path:
-    run_dir = root / ".megaplan/plans/resident-subagents" / PREDECESSOR_RUN_ID
+    run_dir = root / ".megaplan/plans/resident-subagents" / run_id
     run_dir.mkdir(parents=True)
     result_path = run_dir / "result.md"
     result_path.write_text(result, encoding="utf-8")
@@ -260,7 +334,7 @@ def _write_predecessor(
         "schema_version": MANAGED_AGENT_SCHEMA,
         "run_kind": "resident_delegated_agent",
         "custodian": MANAGED_AGENT_CUSTODIAN,
-        "run_id": PREDECESSOR_RUN_ID,
+        "run_id": run_id,
         "status": status,
         "terminal_outcome": (
             status
@@ -293,7 +367,7 @@ def _write_predecessor(
             "key": "aggregation-queue-test",
             "synthesis_group": "queue-test",
             "role": "synthesis_delivery_owner",
-            "delivery_owner_run_id": PREDECESSOR_RUN_ID,
+            "delivery_owner_run_id": run_id,
             "delivery_target_source_record_id": provenance.get("source_record_id"),
             "contributors": [],
         },
@@ -338,6 +412,22 @@ def _queue_successor(
         launch_origin=provenance or _non_discord_provenance(),
         depends_on_run_id=PREDECESSOR_RUN_ID,
         queue_max_launch_attempts=max_attempts,
+    )
+
+
+def _queue_fanin_successor(
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    provenance: dict[str, object] | None = None,
+):
+    monkeypatch.delenv(DELEGATION_CONTEXT_ENV, raising=False)
+    return subagent.launch_codex_subagent_detached(
+        task="Synthesize every predecessor result into one final decision.",
+        description="Synthesize the predecessor fan-in",
+        project_dir=str(root),
+        launch_origin=provenance or _non_discord_provenance(),
+        depends_on_run_ids=[PREDECESSOR_RUN_ID, SECOND_PREDECESSOR_RUN_ID],
     )
 
 
@@ -406,6 +496,352 @@ def test_queue_happy_path_is_durable_and_duplicate_terminal_observation_launches
     assert second.launched == 0
     assert launches == [successor_path]
     assert json.loads(successor_path.read_text())["status"] == "running"
+
+
+def _launch_four_deep_non_mutating_chain(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[list[Path], list[Path]]:
+    monkeypatch.delenv(DELEGATION_CONTEXT_ENV, raising=False)
+    provenance = _discord_provenance()
+    group = "four-word-regression"
+    launched: list[Path] = []
+
+    def launch(path, manifest):
+        launched.append(path)
+        running = dict(manifest)
+        running.update({"status": "running", "pid": _Supervisor.pid})
+        path.write_text(json.dumps(running), encoding="utf-8")
+        return _Supervisor(), running
+
+    monkeypatch.setattr(subagent, "_spawn_managed_supervisor", launch)
+    first = subagent.launch_codex_subagent_detached(
+        task="Choose WORD_1 without modifying the repository.",
+        description="Choose word one",
+        project_dir=str(root),
+        launch_origin=provenance,
+        task_kind="mechanical",
+        work_intent="execution",
+        aggregation_role="internal_contributor",
+        synthesis_group=group,
+    )
+    second = subagent.launch_codex_subagent_detached(
+        task="Read WORD_1 and choose WORD_2 without modifying the repository.",
+        description="Choose word two",
+        project_dir=str(root),
+        launch_origin=provenance,
+        aggregation_role="internal_contributor",
+        synthesis_group=group,
+        depends_on_run_id=first.run_id,
+    )
+    third = subagent.launch_codex_subagent_detached(
+        task="Read two words and choose WORD_3 without modifying the repository.",
+        description="Choose word three",
+        project_dir=str(root),
+        launch_origin=provenance,
+        aggregation_role="internal_contributor",
+        synthesis_group=group,
+        depends_on_run_id=second.run_id,
+    )
+    fourth = subagent.launch_codex_subagent_detached(
+        task="Read three words, choose WORD_4, and synthesize all four.",
+        description="Synthesize all four words",
+        project_dir=str(root),
+        launch_origin=provenance,
+        aggregation_role="synthesis_delivery_owner",
+        synthesis_group=group,
+        depends_on_run_id=third.run_id,
+    )
+    return [
+        Path(item.manifest_path) for item in (first, second, third, fourth)
+    ], launched
+
+
+def _complete_non_mutating_run(path: Path, result: str) -> None:
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest.update(
+        {
+            "status": "completed",
+            "terminal_outcome": "completed",
+            "returncode": 0,
+            "finished_at": "2026-07-16T19:00:00+00:00",
+            "completion_verification": {
+                "schema_version": subagent.COMPLETION_VERIFICATION_SCHEMA,
+                "status": "success",
+                "classification": "applicable_non_mutating_success",
+                "git_custody": "not_applicable",
+                "basis": {
+                    "task_kind": "mechanical",
+                    "work_intent": "execution",
+                    "mutation_claim": "none",
+                },
+            },
+        }
+    )
+    Path(manifest["result_path"]).write_text(result, encoding="utf-8")
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def test_non_mutating_mechanical_predecessor_launches_successor_and_four_deep_chain_reaches_owner(
+    tmp_path, monkeypatch
+) -> None:
+    paths, launched = _launch_four_deep_non_mutating_chain(tmp_path, monkeypatch)
+    assert launched == [paths[0]]
+
+    words = ["lantern", "meadow", "cobalt"]
+    for index, word in enumerate(words):
+        _complete_non_mutating_run(paths[index], f"WORD_{index + 1}: {word}")
+        sweep = subagent.reconcile_managed_subagent_queues(
+            project_root=tmp_path, workspace_root=None
+        )
+        assert sweep.launched == 1
+        assert launched[-1] == paths[index + 1]
+
+    manifests = [json.loads(path.read_text()) for path in paths]
+    assert [item["mutation_claim"] for item in manifests] == ["none"] * 4
+    assert [item["aggregation"]["role"] for item in manifests] == [
+        "internal_contributor",
+        "internal_contributor",
+        "internal_contributor",
+        "synthesis_delivery_owner",
+    ]
+    assert [item["completion_delivery"]["status"] for item in manifests] == [
+        "suppressed",
+        "suppressed",
+        "suppressed",
+        "pending",
+    ]
+    assert manifests[3]["status"] == "running"
+
+
+def test_four_deep_dependency_failure_propagates_without_executing_successors(
+    tmp_path, monkeypatch
+) -> None:
+    paths, launched = _launch_four_deep_non_mutating_chain(tmp_path, monkeypatch)
+    first = json.loads(paths[0].read_text())
+    first.update(
+        {
+            "status": "failed",
+            "terminal_outcome": "failed",
+            "returncode": 1,
+            "finished_at": "2026-07-16T19:00:00+00:00",
+        }
+    )
+    paths[0].write_text(json.dumps(first))
+
+    for _ in range(4):
+        subagent.reconcile_managed_subagent_queues(
+            project_root=tmp_path, workspace_root=None
+        )
+
+    assert launched == [paths[0]]
+    successors = [json.loads(path.read_text()) for path in paths[1:]]
+    assert [item["status"] for item in successors] == ["failed"] * 3
+    assert all(item.get("started_at") is None for item in successors)
+    assert all(
+        item["queue"]["attention"] == "predecessor_terminal_failure"
+        for item in successors
+    )
+
+
+def test_queue_fanin_waits_for_all_then_launches_exactly_once_after_restart(
+    tmp_path, monkeypatch
+) -> None:
+    first_path = _write_predecessor(tmp_path)
+    second_path = _write_predecessor(
+        tmp_path, run_id=SECOND_PREDECESSOR_RUN_ID
+    )
+    queued = _queue_fanin_successor(tmp_path, monkeypatch)
+    successor_path = Path(queued.manifest_path)
+    committed = json.loads(successor_path.read_text())
+
+    assert committed["queue"]["predecessor_run_ids"] == [
+        PREDECESSOR_RUN_ID,
+        SECOND_PREDECESSOR_RUN_ID,
+    ]
+    assert "predecessor_run_id" not in committed["queue"]
+    assert len(committed["queue"]["predecessor_references"]) == 6
+    assert len(committed["queue"]["predecessor_states"]) == 2
+
+    _complete_predecessor(first_path)
+    monkeypatch.setattr(
+        subagent,
+        "_spawn_managed_supervisor",
+        lambda *args, **kwargs: pytest.fail("partial fan-in must not launch"),
+    )
+    partial = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+    waiting = json.loads(successor_path.read_text())
+
+    assert partial.waiting == 1
+    assert partial.launched == 0
+    assert waiting["queue"]["state"] == "waiting_predecessors"
+    assert waiting["queue"]["predecessor_states"] == [
+        {
+            "run_id": PREDECESSOR_RUN_ID,
+            "status": "completed",
+            "result_state": "valid",
+            "attention": "ready",
+        },
+        {
+            "run_id": SECOND_PREDECESSOR_RUN_ID,
+            "status": "running",
+            "result_state": "pending",
+            "attention": "waiting_for_predecessor",
+        },
+    ]
+
+    _complete_predecessor(second_path)
+    launches = []
+
+    def launch(path, manifest):
+        launches.append(path)
+        running = json.loads(path.read_text())
+        running.update({"status": "running", "pid": _Supervisor.pid})
+        running["queue"].update({"state": "running", "attention": "none"})
+        path.write_text(json.dumps(running))
+        return _Supervisor(), running
+
+    monkeypatch.setattr(subagent, "_spawn_managed_supervisor", launch)
+    monkeypatch.setattr(
+        subagent, "_pid_matches_manifest", lambda pid, path: pid == _Supervisor.pid
+    )
+    recovered = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+    replay = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+
+    assert recovered.launched == 1
+    assert replay.launched == 0
+    assert launches == [successor_path]
+    assert json.loads(successor_path.read_text())["queue"]["attempt_count"] == 1
+
+
+@pytest.mark.parametrize(
+    ("second_status", "result", "expected_status", "expected_attention"),
+    [
+        ("failed", "", "failed", "predecessor_terminal_failure"),
+        ("cancelled", "", "cancelled", "predecessor_cancelled"),
+        ("superseded", "", "superseded", "predecessor_superseded"),
+        ("abandoned", "partial predecessor result", "failed", "predecessor_abandoned"),
+        ("completed", "", "failed", "predecessor_result_empty_or_invalid"),
+    ],
+)
+def test_queue_fanin_propagates_any_terminal_dependency_violation(
+    tmp_path,
+    monkeypatch,
+    second_status,
+    result,
+    expected_status,
+    expected_attention,
+) -> None:
+    first_path = _write_predecessor(tmp_path)
+    _complete_predecessor(first_path)
+    _write_predecessor(
+        tmp_path,
+        run_id=SECOND_PREDECESSOR_RUN_ID,
+        status=second_status,
+        result=result,
+    )
+    queued = _queue_fanin_successor(tmp_path, monkeypatch)
+
+    sweep = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+    terminal = json.loads(Path(queued.manifest_path).read_text())
+
+    assert sweep.failed_closed == 1
+    assert terminal["status"] == expected_status
+    assert terminal["queue"]["attention"] == expected_attention
+    assert terminal["queue"]["failed_predecessor_run_id"] == (
+        SECOND_PREDECESSOR_RUN_ID
+    )
+    assert len(terminal["queue"]["predecessor_states"]) == 2
+
+
+def test_queue_dependency_input_contract_rejects_duplicates_mixed_and_malformed(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.delenv(DELEGATION_CONTEXT_ENV, raising=False)
+    _write_predecessor(tmp_path)
+    provenance = _non_discord_provenance()
+    common = {
+        "task": "Synthesize dependency evidence.",
+        "description": "Synthesize dependency evidence",
+        "project_dir": str(tmp_path),
+        "launch_origin": provenance,
+    }
+
+    with pytest.raises(subagent.SubagentQueueError, match="duplicate predecessor"):
+        subagent.launch_codex_subagent_detached(
+            **common,
+            depends_on_run_ids=[PREDECESSOR_RUN_ID, PREDECESSOR_RUN_ID],
+        )
+    with pytest.raises(subagent.SubagentQueueError, match="mutually exclusive"):
+        subagent.launch_codex_subagent_detached(
+            **common,
+            depends_on_run_id=PREDECESSOR_RUN_ID,
+            depends_on_run_ids=[PREDECESSOR_RUN_ID],
+        )
+    with pytest.raises(subagent.SubagentQueueError, match="must not be empty"):
+        subagent.launch_codex_subagent_detached(**common, depends_on_run_ids=[])
+    with pytest.raises(subagent.SubagentQueueError, match="malformed"):
+        subagent.launch_codex_subagent_detached(
+            **common, depends_on_run_ids=[PREDECESSOR_RUN_ID, "bad-id"]
+        )
+    with pytest.raises(subagent.SubagentQueueError, match="unknown predecessor"):
+        subagent.launch_codex_subagent_detached(
+            **common,
+            depends_on_run_ids=[
+                PREDECESSOR_RUN_ID,
+                "subagent-20260715-120200-dddddddd",
+            ],
+        )
+
+
+def test_queue_fanin_cycle_and_committed_self_dependency_fail_closed(
+    tmp_path, monkeypatch
+) -> None:
+    first_path = _write_predecessor(tmp_path)
+    second_path = _write_predecessor(
+        tmp_path, run_id=SECOND_PREDECESSOR_RUN_ID
+    )
+    first = json.loads(first_path.read_text())
+    second = json.loads(second_path.read_text())
+    first["queue"] = {
+        "schema_version": subagent.QUEUE_SCHEMA,
+        "predecessor_run_ids": [SECOND_PREDECESSOR_RUN_ID],
+    }
+    second["queue"] = {
+        "schema_version": subagent.QUEUE_SCHEMA,
+        "predecessor_run_ids": [PREDECESSOR_RUN_ID],
+    }
+    first_path.write_text(json.dumps(first))
+    second_path.write_text(json.dumps(second))
+    with pytest.raises(subagent.SubagentQueueError, match="cycle"):
+        _queue_fanin_successor(tmp_path, monkeypatch)
+
+    first.pop("queue")
+    second.pop("queue")
+    first_path.write_text(json.dumps(first))
+    second_path.write_text(json.dumps(second))
+    queued = _queue_fanin_successor(tmp_path, monkeypatch)
+    successor_path = Path(queued.manifest_path)
+    successor = json.loads(successor_path.read_text())
+    successor["queue"].pop("predecessor_run_id", None)
+    successor["queue"]["predecessor_run_ids"] = [queued.run_id]
+    successor_path.write_text(json.dumps(successor))
+
+    sweep = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+    terminal = json.loads(successor_path.read_text())
+    assert sweep.failed_closed == 1
+    assert terminal["status"] == "failed"
+    assert terminal["queue"]["attention"] == "invalid_dependency_contract"
+    assert "depend on itself" in terminal["queue"]["last_validation_error"]["message"]
 
 
 def test_queue_restart_recovery_replays_a_precommitted_launch_claim(
@@ -607,6 +1043,40 @@ def test_queue_inherits_discord_provenance_and_cannot_broaden_authorization(
     assert manifest["completion_delivery"]["status"] == "pending"
 
 
+def test_queue_fanin_preserves_provenance_and_exactly_one_delivery_owner(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.delenv(DELEGATION_CONTEXT_ENV, raising=False)
+    provenance = _discord_provenance()
+    first_path = _write_predecessor(tmp_path, provenance=provenance)
+    second_path = _write_predecessor(
+        tmp_path,
+        run_id=SECOND_PREDECESSOR_RUN_ID,
+        provenance=provenance,
+    )
+    queued = _queue_fanin_successor(
+        tmp_path, monkeypatch, provenance=provenance
+    )
+    successor = json.loads(Path(queued.manifest_path).read_text())
+    predecessors = [
+        json.loads(first_path.read_text()),
+        json.loads(second_path.read_text()),
+    ]
+
+    assert successor["launch_provenance"] == provenance
+    assert successor["aggregation"]["role"] == "synthesis_delivery_owner"
+    assert successor["aggregation"]["delivery_owner_run_id"] == queued.run_id
+    assert successor["completion_delivery"]["status"] == "pending"
+    assert successor["completion_delivery"]["reply_target"]["source_record_id"] == (
+        provenance["source_record_id"]
+    )
+    assert all(
+        item["aggregation"]["role"] == "internal_contributor"
+        and item["completion_delivery"]["status"] == "superseded"
+        for item in predecessors
+    )
+
+
 def test_cross_request_queue_uses_authoritative_same_subject_and_current_delivery(
     tmp_path, monkeypatch
 ) -> None:
@@ -645,6 +1115,44 @@ def test_cross_request_queue_uses_authoritative_same_subject_and_current_deliver
     predecessor = json.loads(predecessor_path.read_text())
     assert predecessor["aggregation"]["role"] == "synthesis_delivery_owner"
     assert predecessor["completion_delivery"]["status"] == "pending"
+
+
+def test_cross_request_queue_accepts_immutable_resident_root_turn_authority(
+    tmp_path, monkeypatch
+) -> None:
+    current, predecessor_path, turn_path = _cross_request_root_turn_fixture(
+        tmp_path, monkeypatch
+    )
+
+    queued = _queue_cross_request(tmp_path)
+    successor = json.loads(Path(queued.manifest_path).read_text())
+    authorization = successor["queue"]["cross_request_authorization"]
+
+    assert queued.status == "queued"
+    assert successor["launch_provenance"] == current
+    assert authorization["authorization_source"] == "resident_root_turn"
+    assert authorization["caller_turn_id"] == current["resident_turn_id"]
+    assert "caller_run_id" not in authorization
+    assert authorization["current_source_record_id"] == current["source_record_id"]
+
+    turn = json.loads(turn_path.read_text())
+    turn["status"] = "completed"
+    turn["completed_at"] = "2026-07-15T13:01:00+00:00"
+    turn_path.write_text(json.dumps(turn))
+    _complete_predecessor(predecessor_path)
+    launched: list[Path] = []
+    monkeypatch.setattr(
+        subagent,
+        "_spawn_managed_supervisor",
+        lambda path, manifest: (launched.append(path) or _Supervisor(), manifest),
+    )
+
+    result = subagent.reconcile_managed_subagent_queues(
+        project_root=tmp_path, workspace_root=None
+    )
+
+    assert result.launched == 1
+    assert launched == [Path(queued.manifest_path)]
 
 
 @pytest.mark.parametrize(
@@ -1245,3 +1753,42 @@ def test_resident_cli_can_create_and_inspect_bounded_queue_dependency(
     assert inspected["items"][0]["predecessor_run_id"] == PREDECESSOR_RUN_ID
     assert inspected["items"][0]["authorization_mode"] == "same_request_custody"
     assert len(inspected["items"][0]["predecessor_references"]) == 3
+
+
+def test_resident_cli_plural_contract_exposes_complete_dependency_states(
+    tmp_path, monkeypatch
+) -> None:
+    _write_predecessor(tmp_path)
+    _write_predecessor(tmp_path, run_id=SECOND_PREDECESSOR_RUN_ID)
+    monkeypatch.delenv(DELEGATION_CONTEXT_ENV, raising=False)
+    created = resident_cli._resident_queue_subagent_successor(
+        tmp_path,
+        ResidentConfig(),
+        argparse.Namespace(
+            prompt="Synthesize every predecessor into one final note.",
+            prompt_file=None,
+            description="Finalize the fan-in note",
+            project_dir=str(tmp_path),
+            after_run_id=None,
+            after_run_ids=[PREDECESSOR_RUN_ID, SECOND_PREDECESSOR_RUN_ID],
+            max_launch_attempts=3,
+        ),
+    )
+    inspected = resident_cli._resident_inspect_subagent_queue(
+        tmp_path,
+        argparse.Namespace(
+            project_dir=str(tmp_path), run_id=created["run_id"], limit=8
+        ),
+    )
+
+    assert created["predecessor_run_id"] is None
+    assert created["predecessor_run_ids"] == [
+        PREDECESSOR_RUN_ID,
+        SECOND_PREDECESSOR_RUN_ID,
+    ]
+    item = inspected["items"][0]
+    assert item["predecessor_run_ids"] == created["predecessor_run_ids"]
+    assert [state["run_id"] for state in item["predecessor_states"]] == (
+        created["predecessor_run_ids"]
+    )
+    assert len(item["predecessor_references"]) == 6

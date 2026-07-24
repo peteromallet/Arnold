@@ -13,21 +13,34 @@ from arnold_pipelines.megaplan.resident.agent_loop import (
     AgentRequest,
     AgentTimeoutError,
     CodexCliAgentRunner,
+    _openai_transport_timeout,
 )
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
 from arnold_pipelines.megaplan.resident.tool_registry import ToolRegistry
 from arnold_pipelines.megaplan.resident.provenance import DELEGATION_CONTEXT_ENV
 
 
-def test_resident_config_defaults_to_codex() -> None:
+def test_openai_transport_has_stall_guards_without_total_deadline() -> None:
+    timeout = _openai_transport_timeout()
+    assert timeout.connect == 30.0
+    assert timeout.read == 120.0
+    assert timeout.write == 30.0
+    assert timeout.pool == 30.0
+
+
+def test_resident_config_defaults_to_hermes_glm_52() -> None:
     config = ResidentConfig()
     env_config = ResidentConfig.from_env({})
 
-    assert config.model_provider == "codex"
-    assert config.model_name == "gpt-5.6-sol"
+    assert config.model_provider == "hermes"
+    assert config.model_name == "zhipu:glm-5.2"
+    assert config.model_max_tokens == 65_536
+    assert config.model_toolsets == "file,web,terminal"
     assert config.codex_reasoning_effort == "low"
-    assert env_config.model_provider == "codex"
-    assert env_config.model_name == "gpt-5.6-sol"
+    assert env_config.model_provider == "hermes"
+    assert env_config.model_name == "zhipu:glm-5.2"
+    assert env_config.model_max_tokens == 65_536
+    assert env_config.model_toolsets == "file,web,terminal"
     assert env_config.codex_reasoning_effort == "low"
 
 
@@ -88,6 +101,48 @@ def test_codex_cli_runner_uses_configured_sandbox(tmp_path: Path) -> None:
     assert runner.sandbox == "danger-full-access"
 
 
+def test_codex_cli_runner_forces_read_only_for_report_only_request(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls.txt"
+    codex = bin_dir / "codex"
+    codex.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$@\" > \"$CODEX_CALLS\"\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  if [[ \"$1\" == \"--output-last-message\" ]]; then shift; printf 'audit\\n' > \"$1\"; fi\n"
+        "  shift || true\n"
+        "done\n"
+        "cat >/dev/null\n",
+        encoding="utf-8",
+    )
+    codex.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("CODEX_CALLS", str(calls))
+    runner = CodexCliAgentRunner(
+        ResidentConfig(model_provider="codex", codex_sandbox="danger-full-access"),
+        cwd=tmp_path,
+    )
+
+    response = asyncio.run(
+        runner.run(
+            AgentRequest(
+                conversation_id="audit-conversation",
+                messages=({"role": "user", "content": "audit"},),
+                system_prompt="system",
+                report_only=True,
+            ),
+            ToolRegistry(),
+        )
+    )
+
+    assert "--sandbox\nread-only" in calls.read_text(encoding="utf-8")
+    assert response.metadata["sandbox"] == "read-only"
+    assert response.metadata["report_only"] is True
+
+
 def test_codex_cli_runner_recovers_same_invocation_after_initial_timeout(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -104,7 +159,7 @@ def test_codex_cli_runner_recovers_same_invocation_after_initial_timeout(
         "  shift || true\n"
         "done\n"
         "cat >/dev/null\n"
-        "sleep 0.12\n"
+        "sleep 0.30\n"
         "printf 'recovered resident reply\\n' > \"$output\"\n",
         encoding="utf-8",
     )

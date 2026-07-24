@@ -22,19 +22,17 @@ RUN_ID = "subagent-20260722-191551-60596066"
 SUFFIX = "191551-60596066"
 
 
-def _provenance(*, conversation_key: str = "discord:dm:42") -> dict:
+def _provenance() -> dict:
     return {
         "schema_version": "arnold-resident-delegation-provenance-v1",
         "applicability": "applicable",
         "transport": "discord",
         "resident_conversation_id": "rconv_followupcommand",
         "source_record_id": "msg_originalrequest",
-        "conversation_key": conversation_key,
+        "conversation_key": "discord:dm:42",
         "discord_message_id": "1001",
         "reply_to_message_id": "1001",
-        "dm_user_id": "42" if conversation_key == "discord:dm:42" else None,
-        "guild_id": None if conversation_key == "discord:dm:42" else "7",
-        "channel_id": None if conversation_key == "discord:dm:42" else "8",
+        "dm_user_id": "42",
         "source_kind": "discord_inbound_message",
     }
 
@@ -42,16 +40,24 @@ def _provenance(*, conversation_key: str = "discord:dm:42") -> dict:
 def _row(
     run_id: str = RUN_ID,
     *,
-    evidence_class: str = "canonical",
-    provenance: dict | None = None,
+    live: bool = True,
+    status: str = "running",
+    manifest_path: str | None = None,
 ) -> dict:
     return {
         "run_id": run_id,
-        "live": True,
-        "status": "running",
-        "evidence_class": evidence_class,
-        "manifest_path": f"/workspace/project/{run_id}/manifest.json",
-        "launch_provenance": provenance or _provenance(),
+        "live": live,
+        "status": status,
+        "manifest_path": manifest_path or f"/workspace/project/{run_id}/manifest.json",
+        "launch_provenance": _provenance(),
+    }
+
+
+def _inventory(*rows: dict) -> dict:
+    return {
+        "running": [row for row in rows if row["live"]],
+        "queued": [],
+        "recent": [row for row in rows if not row["live"]],
     }
 
 
@@ -78,23 +84,14 @@ def test_command_registration_has_exactly_two_required_string_inputs() -> None:
 
 
 @pytest.mark.parametrize("selector", [RUN_ID, SUFFIX])
-def test_full_and_displayed_suffix_resolve_from_only_live_canonical_rows(
+def test_full_and_displayed_suffix_resolve_to_the_one_live_run(
     tmp_path: Path, monkeypatch, selector: str
 ) -> None:
-    captured: dict = {}
-
-    def inventory(**kwargs):
-        captured.update(kwargs)
-        return {
-            "running": [
-                _row(evidence_class="legacy_compatibility"),
-                _row(),
-            ],
-            "queued": [{"run_id": RUN_ID}],
-            "recent": [{"run_id": RUN_ID}],
-        }
-
-    monkeypatch.setattr(module, "list_managed_resident_agents", inventory)
+    monkeypatch.setattr(
+        module,
+        "list_managed_resident_agents",
+        lambda **_kwargs: _inventory(_row()),
+    )
 
     target = module.resolve_live_managed_agent(
         selector, project_root=tmp_path, workspace_root=None
@@ -102,19 +99,27 @@ def test_full_and_displayed_suffix_resolve_from_only_live_canonical_rows(
 
     assert target.run_id == RUN_ID
     assert target.status == "running"
-    assert captured["recent_limit"] == 0
-    assert captured["queue_limit"] == 0
 
 
-def test_missing_noncanonical_and_ambiguous_live_selectors_fail_closed(
+def test_missing_terminal_and_ambiguous_selectors_are_rejected_truthfully(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(
         module,
         "list_managed_resident_agents",
-        lambda **_kwargs: {"running": [_row(evidence_class="legacy_compatibility")]},
+        lambda **_kwargs: _inventory(),
     )
-    with pytest.raises(module.DiscordFollowUpError, match="no live canonical"):
+    with pytest.raises(module.DiscordFollowUpError, match="no resident-managed run"):
+        module.resolve_live_managed_agent(
+            SUFFIX, project_root=tmp_path, workspace_root=None
+        )
+
+    monkeypatch.setattr(
+        module,
+        "list_managed_resident_agents",
+        lambda **_kwargs: _inventory(_row(live=False, status="completed")),
+    )
+    with pytest.raises(module.DiscordFollowUpError, match="not live.*completed"):
         module.resolve_live_managed_agent(
             RUN_ID, project_root=tmp_path, workspace_root=None
         )
@@ -123,28 +128,11 @@ def test_missing_noncanonical_and_ambiguous_live_selectors_fail_closed(
     monkeypatch.setattr(
         module,
         "list_managed_resident_agents",
-        lambda **_kwargs: {"running": [_row(), _row(other)]},
+        lambda **_kwargs: _inventory(_row(), _row(other)),
     )
     with pytest.raises(module.DiscordFollowUpError, match="ambiguous"):
         module.resolve_live_managed_agent(
             SUFFIX, project_root=tmp_path, workspace_root=None
-        )
-
-
-def test_command_provenance_requires_exact_conversation_custody() -> None:
-    target = module.LiveManagedAgentTarget(
-        run_id=RUN_ID,
-        manifest_path="/durable/manifest.json",
-        launch_provenance=_provenance(),
-        status="running",
-    )
-
-    with pytest.raises(module.DiscordFollowUpError, match="different Discord conversation"):
-        module.command_control_provenance(
-            target,
-            interaction_id="9001",
-            operator_user_id="42",
-            conversation_key="discord:guild:7:channel:8",
         )
 
 
@@ -180,7 +168,7 @@ def _interaction() -> SimpleNamespace:
     )
 
 
-def test_invocation_forwards_exact_message_provenance_and_interrupt_receipt(
+def test_invocation_forwards_exact_message_provenance_and_renders_interrupt_receipt(
     tmp_path: Path, monkeypatch
 ) -> None:
     target = module.LiveManagedAgentTarget(

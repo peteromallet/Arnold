@@ -24,6 +24,9 @@ from .agent_loop import (
     AgentRunner,
     AgentTimeoutError,
     durable_launch_run_ids,
+    ToolRuntimeContext,
+    durable_launch_run_ids,
+    execute_registered_tool,
 )
 from .auth import AuthorizationDecision, AuthorizationSubject, ResidentAuthorizer
 from .cloud import CloudToolRequest
@@ -31,6 +34,7 @@ from .coalescing import AsyncBurstCoalescer, BurstBatch
 from .config import ResidentConfig
 from .context_tree import classify_intent_packs
 from .escalations import EscalationAnswerDecision, authorize_escalation_answer, confirm_escalation_resolution
+from .fix_the_fixer import FIX_THE_FIXER_TOOL
 from .profile import MegaplanResidentProfile
 from .query_relationship import (
     classify_query_relationship,
@@ -135,11 +139,6 @@ class ResidentRuntime:
         *,
         authorization_decision: AuthorizationDecision | None = None,
     ) -> None:
-        from arnold_pipelines.megaplan.cloud.runtime_attestation import (
-            require_configured_runtime_launch,
-        )
-
-        require_configured_runtime_launch("resident")
         decision = authorization_decision or self.authorizer.authorize_inbound(event.subject)
         if not decision.allowed:
             if decision.audit is not None:
@@ -197,9 +196,143 @@ class ResidentRuntime:
             current=persisted.message,
             project_root=self.project_root,
         )
+        if await self._route_resident_command(persisted):
+            return
         if await self._route_discord_managed_followup(persisted):
             return
         await self.coalescer.submit(persisted.conversation.id, persisted)
+
+    async def _route_resident_command(self, persisted: PersistedInboundEvent) -> bool:
+        command = persisted.event.raw.get("resident_command")
+        if not isinstance(command, Mapping) or command.get("name") != FIX_THE_FIXER_TOOL:
+            return False
+        conversation = self.store.load_resident_conversation(persisted.conversation.id)
+        conversation = conversation or persisted.conversation
+        hot_context = await self.profile.load_hot_context(conversation.id)
+        turn = self.store.create_turn(
+            epic_id=conversation.active_epic_id,
+            triggered_by_message_ids=[persisted.message.id],
+            prompt_snapshot={
+                "resident_command": FIX_THE_FIXER_TOOL,
+                "tool_catalog": self.profile.tools().as_compact_catalog(),
+            },
+            prompt_version=hot_context.get("prompt_version") if isinstance(hot_context, dict) else None,
+            state_at_turn=hot_context,
+            model_version="resident-direct-command",
+            idempotency_key=deterministic_idempotency_key(
+                "resident-command-turn", persisted.message.id, FIX_THE_FIXER_TOOL
+            ),
+        )
+        self.store.update_message(
+            persisted.message.id,
+            bot_turn_id=turn.id,
+            idempotency_key=deterministic_idempotency_key(
+                "resident-command-message-turn", persisted.message.id, turn.id
+            ),
+        )
+        discord_message_id = _optional_string(persisted.event.raw.get("discord_message_id"))
+        processing_message_ids = [discord_message_id] if discord_message_id else []
+        await self._invoke_transport_lifecycle(
+            "mark_processing",
+            conversation_key=conversation.conversation_key,
+            message_ids=processing_message_ids,
+            turn_id=turn.id,
+        )
+        error = _optional_string(command.get("error"))
+        processing_continues = False
+        if error:
+            safe_text = f"I couldn't launch fix-the-fixer: {error}"
+            turn_status = "completed"
+        else:
+            arguments = command.get("arguments")
+            arguments = dict(arguments) if isinstance(arguments, Mapping) else {}
+            audit_id = f"resident_command_{turn.id}"
+            launch_origin = self._managed_subagent_launch_origin(
+                [persisted],
+                turn_id=turn.id,
+                timezone_name=_timezone_name_from_hot_context(hot_context),
+            )
+            audit = await execute_registered_tool(
+                tools=self.profile.tools(),
+                tool_name=FIX_THE_FIXER_TOOL,
+                arguments=arguments,
+                audit_id=audit_id,
+                timeout_s=30.0,
+                runtime_context=ToolRuntimeContext(
+                    conversation_id=conversation.id,
+                    subject=persisted.event.subject,
+                    launch_origin={**launch_origin, "delegation_id": audit_id},
+                    tool_call_id=audit_id,
+                ),
+            )
+            result = audit.result if isinstance(audit.result, dict) else {}
+            data = result.get("data") if isinstance(result.get("data"), dict) else {}
+            run_id = _optional_string(data.get("run_id"))
+            run_status = _optional_string(data.get("status"))
+            if result.get("ok") is True and run_id and run_status:
+                target = str(data.get("target") or arguments.get("target") or "")
+                safe_text = (
+                    f"Launched one durable fix-the-fixer meta-fixer `{run_id}` for target "
+                    f"{json.dumps(target, ensure_ascii=False)}. It has D10/high recovery "
+                    "custody and will deliver its evidence-backed result to this request."
+                )
+                processing_continues = run_status in {"launching", "queued", "running"}
+                turn_status = "completed"
+            else:
+                safe_text = "I couldn't launch fix-the-fixer: " + str(
+                    result.get("message") or "the durable launch returned no run receipt"
+                )
+                turn_status = "failed"
+            self._record_tool_calls(
+                turn.id,
+                AgentResponse(final_text=safe_text, tool_calls=(audit,)),
+            )
+        safe_text = redact_text(safe_text)
+        outbound = self.store.create_message(
+            epic_id=conversation.active_epic_id,
+            conversation_id=conversation.id,
+            direction="outbound",
+            content=safe_text,
+            bot_turn_id=turn.id,
+            idempotency_key=deterministic_idempotency_key(
+                "resident-command-outbound", turn.id, FIX_THE_FIXER_TOOL
+            ),
+        )
+        await self.outbound.send(
+            OutboundMessage(
+                conversation_key=conversation.conversation_key,
+                content=safe_text,
+                idempotency_key=outbound.idempotency_key,
+                metadata={
+                    "conversation_id": conversation.id,
+                    "message_id": outbound.id,
+                    "turn_id": turn.id,
+                    "discord_reply_to_message_id": discord_message_id,
+                    "discord_processing_message_ids": processing_message_ids,
+                    "discord_processing_turn_id": turn.id,
+                    "discord_processing_continues": processing_continues,
+                },
+            )
+        )
+        self.store.update_resident_conversation(
+            conversation.id,
+            last_outbound_message_id=outbound.id,
+            delivery_cursor=outbound.id,
+            last_active_at=utc_now(),
+            idempotency_key=deterministic_idempotency_key(
+                "resident-command-conversation-outbound", conversation.id, outbound.id
+            ),
+        )
+        self.store.update_turn(
+            turn.id,
+            status=turn_status,
+            final_output_message_id=outbound.id,
+            message_sent=True,
+            idempotency_key=deterministic_idempotency_key(
+                "resident-command-turn-finished", turn.id, turn_status
+            ),
+        )
+        return True
 
     async def _route_discord_managed_followup(
         self, persisted: PersistedInboundEvent
@@ -311,6 +444,7 @@ class ResidentRuntime:
                     "parent_source_record_id": parent.id,
                     "target_run_id": target.run_id,
                     "error_class": exc.__class__.__name__,
+                    "rejection_reason": " ".join(redact_text(str(exc)).split())[:240],
                 },
                 idempotency_key=deterministic_idempotency_key(
                     "resident-subagent-followup-fallback", persisted.message.id
@@ -327,13 +461,15 @@ class ResidentRuntime:
             level="info",
             category="system",
             event_type="resident_subagent_followup_routed",
-            message="Discord reply queued into its exact resident-managed model session",
+            message="Discord reply durably routed to its canonical managed owner",
             details={
                 "source_record_id": persisted.message.id,
                 "parent_source_record_id": parent.id,
                 "target_run_id": target.run_id,
                 "lineage_root_run_id": target.lineage_root_run_id,
                 "continuation_run_id": result.continuation_run_id,
+                "route": result.route,
+                "delivery_owner_run_id": result.delivery_owner_run_id,
                 "launch_anchor": target.launch_anchor,
                 "launch_anchor_field": target.launch_anchor_field,
                 "window_seconds": 900,
@@ -550,46 +686,74 @@ class ResidentRuntime:
         provenance = manifest.get("launch_provenance")
         if not isinstance(provenance, Mapping):
             raise RuntimeError("managed completion has no immutable launch provenance")
-        source_record_id = str(provenance.get("source_record_id") or "")
-        conversation_id = str(provenance.get("resident_conversation_id") or "")
-        source_message = self.store.load_message(source_record_id)
-        conversation = self.store.load_resident_conversation(conversation_id)
-        if source_message is None or conversation is None:
-            raise RuntimeError("managed completion source message or conversation is unavailable")
-        if source_message.conversation_id != conversation.id:
-            raise RuntimeError("managed completion provenance does not match the source conversation")
-        expected_reply = str(provenance.get("reply_to_message_id") or "")
-        if not expected_reply or source_message.discord_message_id != expected_reply:
-            raise RuntimeError("managed completion provenance does not match the inbound reply target")
+        standalone_target = manifest.get("discord_delivery_target")
+        is_standalone = (
+            provenance.get("applicability") == "not_applicable"
+            and isinstance(standalone_target, Mapping)
+            and standalone_target.get("mode") == "standalone"
+        )
+        source_message = None
+        if is_standalone:
+            route = str(standalone_target.get("conversation_key") or "")
+            conversation = self.store.get_resident_conversation_by_key(
+                transport="discord", conversation_key=route
+            )
+            if conversation is None:
+                raise RuntimeError("managed completion standalone conversation is unavailable")
+            source_text = (
+                "Scheduled standalone task; the immutable managed-run manifest and original "
+                "delegated prompt are the authority. There is no inbound user request or reply target."
+            )
+        else:
+            source_record_id = str(provenance.get("source_record_id") or "")
+            conversation_id = str(provenance.get("resident_conversation_id") or "")
+            source_message = self.store.load_message(source_record_id)
+            conversation = self.store.load_resident_conversation(conversation_id)
+            if source_message is None or conversation is None:
+                raise RuntimeError("managed completion source message or conversation is unavailable")
+            if source_message.conversation_id != conversation.id:
+                raise RuntimeError("managed completion provenance does not match the source conversation")
+            expected_reply = str(provenance.get("reply_to_message_id") or "")
+            if not expected_reply or source_message.discord_message_id != expected_reply:
+                raise RuntimeError("managed completion provenance does not match the inbound reply target")
+            source_text = source_message.content
 
         hot_context = await self.profile.load_hot_context(conversation.id)
-        hot_context["current_request"] = {
-            "authority": "persisted inbound record triggering the delegated run",
-            "source_record_ids": [source_message.id],
-            "query_relationship": (
-                dict(manifest["query_relationship"])
-                if isinstance(manifest.get("query_relationship"), Mapping)
-                else None
-            ),
-        }
+        hot_context["current_request"] = (
+            {
+                "authority": "immutable scheduled managed-run prompt",
+                "schedule_occurrence": manifest.get("schedule_occurrence"),
+                "source_record_ids": [],
+            }
+            if is_standalone
+            else {
+                "authority": "persisted inbound record triggering the delegated run",
+                "source_record_ids": [source_message.id],
+                "query_relationship": (
+                    dict(manifest["query_relationship"])
+                    if isinstance(manifest.get("query_relationship"), Mapping)
+                    else None
+                ),
+            }
+        )
         if isinstance(hot_context.get("context_root"), dict):
             hot_context["context_root"]["intent_packs"] = ["delegation", "conversation"]
         prompt_for = getattr(self.profile, "system_prompt_for", None)
         profile_prompt = (
-            prompt_for(source_message.content)
+            prompt_for(source_text)
             if callable(prompt_for)
             else self.profile.system_prompt()
         )
         system_prompt = (
             profile_prompt
             + "\n\n"
-            + _authoritative_current_request_records_prompt(
-                [
-                    {
-                        "source_record_id": source_message.id,
-                        "content": source_message.content,
-                    }
-                ]
+            + (
+                "Authoritative current scheduled task: no inbound source record exists. "
+                "Use only the immutable managed-run manifest and delegated prompt."
+                if is_standalone
+                else _authoritative_current_request_records_prompt(
+                    [{"source_record_id": source_message.id, "content": source_message.content}]
+                )
             )
             + "\n\n"
             + _timezone_instruction_from_hot_context(hot_context)
@@ -615,7 +779,7 @@ class ResidentRuntime:
         else:
             turn = self.store.create_turn(
                 epic_id=conversation.active_epic_id,
-                triggered_by_message_ids=[source_message.id],
+                triggered_by_message_ids=[] if is_standalone else [source_message.id],
                 prompt_snapshot={
                     "system_prompt": system_prompt,
                     "message_count": 1,
@@ -636,7 +800,12 @@ class ResidentRuntime:
         verification_prompt = _managed_completion_verification_prompt(
             manifest_path=manifest_path,
             manifest=manifest,
-            source_message=source_message.content,
+            source_message=source_text,
+            source_label=(
+                "Authoritative scheduled task (no inbound request or reply target)"
+                if is_standalone
+                else "Authoritative original user request (preserve its requirements)"
+            ),
         )
         # Completion verification is correlated to one immutable delegation.
         # Conversation history may contain newer user commands (for example a
@@ -648,6 +817,7 @@ class ResidentRuntime:
             conversation_id=conversation.id,
             messages=messages,
             system_prompt=system_prompt,
+            turn_id=turn_id,
             hot_context=hot_context,
             model_seam_metadata=self._model_seam_metadata(
                 conversation_id=conversation.id,
@@ -890,6 +1060,7 @@ class ResidentRuntime:
             conversation_id=conversation.id,
             messages=request_messages,
             system_prompt=system_prompt,
+            turn_id=turn.id,
             hot_context=hot_context,
             model_seam_metadata=model_seam_metadata,
             subject=items[-1].event.subject,
@@ -900,6 +1071,9 @@ class ResidentRuntime:
                 items,
                 turn_id=turn.id,
                 timezone_name=_timezone_name_from_hot_context(hot_context),
+            ),
+            report_only=bool(items) and all(
+                item.event.raw.get("report_only") is True for item in items
             ),
         )
         try:
@@ -1136,12 +1310,16 @@ class ResidentRuntime:
                 item.event.raw.get("source_kind") == "scheduled_turn"
                 for item in items
             )
+            report_only = bool(items) and all(
+                item.event.raw.get("report_only") is True for item in items
+            )
             return {
                 "transport": "non_discord",
                 "applicability": "not_applicable",
                 "source_kind": (
                     "scheduled_turn" if scheduled_turn else "scheduler_or_internal_turn"
                 ),
+                "report_only": report_only,
             }
         item = discord_items[0]
         message_id = _optional_string(item.event.raw.get("discord_message_id"))
@@ -1296,10 +1474,16 @@ class ResidentRuntime:
             limit=self.config.history_window,
             exclude_ids=exclude_ids,
         )
+        has_discord_inbound = any(
+            message.direction == "inbound"
+            and getattr(message, "discord_message_id", None)
+            for message in rows
+        )
         history: list[dict[str, Any]] = []
         for message in rows:
             if (
                 discord_only
+                and has_discord_inbound
                 and message.direction == "inbound"
                 and not getattr(message, "discord_message_id", None)
             ):
@@ -1521,6 +1705,7 @@ def _managed_completion_verification_prompt(
     manifest_path: Path,
     manifest: Mapping[str, Any],
     source_message: str,
+    source_label: str = "Authoritative original user request (preserve its requirements)",
 ) -> str:
     def resolved_path(field: str, fallback: str) -> str:
         path = Path(str(manifest.get(field) or fallback))
@@ -1536,6 +1721,40 @@ def _managed_completion_verification_prompt(
         if isinstance(relationship, Mapping)
         else ""
     )
+    completion_verification = manifest.get("completion_verification")
+    verification_context = (
+        "Resident completion-verification contract outcome:\n"
+        + json.dumps(completion_verification, sort_keys=True, default=str)
+        + "\nTreat applicable_non_mutating_success as an explicit applicable success; do not "
+        "request git commit/diff/clean-worktree evidence for that classification. Git-backed "
+        "mutation still requires git_backed_mutation_custody_verified.\n\n"
+        if isinstance(completion_verification, Mapping)
+        else ""
+    )
+    queue = manifest.get("queue")
+    dependency_context = ""
+    if isinstance(queue, Mapping) and queue.get("state") == "dependency_failed":
+        dependency_context = (
+            "Terminal dependency evidence from the synthesis/delivery owner's durable queue:\n"
+            + json.dumps(
+                {
+                    key: queue.get(key)
+                    for key in (
+                        "state",
+                        "attention",
+                        "failed_predecessor_run_id",
+                        "predecessor_status",
+                        "predecessor_states",
+                    )
+                    if queue.get(key) is not None
+                },
+                sort_keys=True,
+                default=str,
+            )
+            + "\nThe synthesis/delivery child did not execute. Inspect predecessor manifests and "
+            "artifacts for partial work, label it as partial/unverified as appropriate, clearly "
+            "name the blocked or abandoned dependency, and never claim downstream synthesis ran.\n\n"
+        )
     return (
         "A resident-managed delegated execution has reached a terminal state and now requires "
         "independent completion verification. Do not accept its final response as proof.\n\n"
@@ -1548,7 +1767,9 @@ def _managed_completion_verification_prompt(
         f"Delegated final claim: {resolved_path('result_path', 'result.md')}\n"
         f"Full delegated log: {resolved_path('full_log_path', str(manifest.get('log_path') or 'run.log'))}\n\n"
         f"{relationship_context}"
-        "Authoritative original user request (preserve its requirements):\n"
+        f"{verification_context}"
+        f"{dependency_context}"
+        f"{source_label}:\n"
         f"{source_message[:12000]}"
     )
 
