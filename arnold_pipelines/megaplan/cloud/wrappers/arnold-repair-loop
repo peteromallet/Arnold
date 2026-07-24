@@ -20,7 +20,24 @@ if [[ "${ARNOLD_REPAIR_LOOP_SNAPSHOT_ACTIVE:-0}" != "1" ]]; then
   export ARNOLD_REPAIR_LOOP_SNAPSHOT_ACTIVE=1
   exec bash "$repair_loop_snapshot" "$@"
 fi
-trap 'rm -f -- "${BASH_SOURCE[0]:-$0}"' EXIT
+ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"
+repair_loop_snapshot_real="$(readlink -f "$ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH" 2>/dev/null || printf '%s' "$ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH")"
+repair_loop_origin_real="$(readlink -f "$ARNOLD_REPAIR_LOOP_ORIGIN" 2>/dev/null || printf '%s' "$ARNOLD_REPAIR_LOOP_ORIGIN")"
+repair_loop_origin_root="$(cd "$(dirname "$repair_loop_origin_real")/../../../.." 2>/dev/null && pwd -P || printf '%s' "")"
+repair_loop_snapshot_root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P || printf '%s' "")"
+if [[ -z "$repair_loop_snapshot_root" \
+  || "$repair_loop_snapshot_real" != "$repair_loop_snapshot_root"/arnold-repair-loop.* \
+  || "$repair_loop_snapshot_real" == "$repair_loop_origin_real" \
+  || ( -n "$repair_loop_origin_root" \
+    && ( "$repair_loop_snapshot_real" == "$repair_loop_origin_root" \
+      || "$repair_loop_snapshot_real" == "$repair_loop_origin_root"/* ) ) ]]; then
+  echo "arnold-repair-loop: refusing unsafe immutable snapshot cleanup path" >&2
+  exit 78
+fi
+ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH="$repair_loop_snapshot_real"
+readonly ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH
+trap 'rm -f -- "$ARNOLD_REPAIR_LOOP_SNAPSHOT_PATH"' EXIT
+unset repair_loop_snapshot_real repair_loop_origin_real repair_loop_origin_root repair_loop_snapshot_root
 
 if [[ $# -lt 3 ]]; then
   echo "usage: arnold-repair-loop <session> <workspace> <remote-spec>" >&2

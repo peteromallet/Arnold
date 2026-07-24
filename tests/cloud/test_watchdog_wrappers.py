@@ -129,7 +129,10 @@ def test_long_running_superfixer_wrappers_pin_syntax_checked_source_snapshot(
     assert "mktemp" in text
     assert "bash -n" in text
     assert f"export {prefix}_SNAPSHOT_ACTIVE=1" in text
-    assert 'trap \'rm -f -- "${BASH_SOURCE[0]:-$0}"\' EXIT' in text
+    assert f'{prefix}_SNAPSHOT_PATH="${{BASH_SOURCE[0]:-$0}}"' in text
+    assert f"readonly {prefix}_SNAPSHOT_PATH" in text
+    assert f'trap \'rm -f -- "${prefix}_SNAPSHOT_PATH"\' EXIT' in text
+    assert 'trap \'rm -f -- "${BASH_SOURCE[0]:-$0}"\' EXIT' not in text
 
 
 @pytest.mark.parametrize(
@@ -160,12 +163,114 @@ def test_wrapper_snapshot_is_removed_after_fail_closed_usage_exit(
     assert not list(snapshot_dir.glob(f"{prefix}.*"))
 
 
+@pytest.mark.parametrize(
+    ("wrapper_name", "prefix", "snapshot_prefix", "cleanup_unset"),
+    [
+        (
+            "arnold-watchdog",
+            "ARNOLD_WATCHDOG",
+            "arnold-watchdog",
+            "unset watchdog_snapshot_real watchdog_origin_real watchdog_origin_root watchdog_snapshot_root",
+        ),
+        (
+            "arnold-repair-loop",
+            "ARNOLD_REPAIR_LOOP",
+            "arnold-repair-loop",
+            "unset repair_loop_snapshot_real repair_loop_origin_real repair_loop_origin_root repair_loop_snapshot_root",
+        ),
+        (
+            "arnold-meta-repair-loop",
+            "ARNOLD_META_REPAIR_LOOP",
+            "arnold-meta-repair-loop",
+            "unset meta_repair_loop_snapshot_real meta_repair_loop_origin_real meta_repair_loop_origin_root meta_repair_loop_snapshot_root",
+        ),
+        (
+            "arnold-progress-auditor",
+            "ARNOLD_PROGRESS_AUDITOR",
+            "arnold-progress-auditor",
+            "unset progress_auditor_snapshot_real progress_auditor_origin_real progress_auditor_origin_root progress_auditor_snapshot_root",
+        ),
+    ],
+)
+def test_snapshot_cleanup_cannot_delete_sourced_library_or_runtime_source(
+    tmp_path: Path,
+    wrapper_name: str,
+    prefix: str,
+    snapshot_prefix: str,
+    cleanup_unset: str,
+) -> None:
+    """EXIT from a sourced function must unlink only the captured snapshot.
+
+    Bash evaluates ``BASH_SOURCE`` against the active source stack when an
+    EXIT trap runs.  The old dynamic trap therefore selected the sourced
+    supervisor library rather than the temporary wrapper.  Exercise each real
+    wrapper bootstrap against that exact failure shape.
+    """
+
+    source_wrapper = WRAPPER_DIR / wrapper_name
+    source_runtime_lib = WRAPPER_DIR / "arnold-supervisor-runtime-lib"
+    source_wrapper_sha = hashlib.sha256(source_wrapper.read_bytes()).hexdigest()
+    source_runtime_lib_sha = hashlib.sha256(source_runtime_lib.read_bytes()).hexdigest()
+
+    snapshots = tmp_path / "snapshots"
+    snapshots.mkdir()
+    sourced_lib = tmp_path / "exit-from-sourced-library"
+    sourced_lib.write_text(
+        "exit_from_sourced_library() { exit 0; }\n",
+        encoding="utf-8",
+    )
+
+    text = source_wrapper.read_text(encoding="utf-8")
+    bootstrap_start = text.index(f'{prefix}_ORIGIN="')
+    bootstrap_end = text.index(cleanup_unset, bootstrap_start) + len(cleanup_unset)
+    cleanup_bootstrap = text[bootstrap_start:bootstrap_end]
+    snapshot = snapshots / f"{snapshot_prefix}.regression"
+    snapshot.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env bash",
+                "set -uo pipefail",
+                f"export {prefix}_SNAPSHOT_ACTIVE=1",
+                f"export {prefix}_ORIGIN={shlex.quote(str(source_wrapper))}",
+                cleanup_bootstrap,
+                f'. {shlex.quote(str(sourced_lib))}',
+                "exit_from_sourced_library",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["bash", str(snapshot)],
+        env={**os.environ, "TMPDIR": str(snapshots)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not snapshot.exists()
+    assert sourced_lib.exists()
+    assert hashlib.sha256(source_wrapper.read_bytes()).hexdigest() == source_wrapper_sha
+    assert hashlib.sha256(source_runtime_lib.read_bytes()).hexdigest() == source_runtime_lib_sha
+
+
 def test_repair_wrapper_snapshot_survives_origin_replacement_while_waiting(
     tmp_path: Path,
 ) -> None:
     wrapper = _repair_wrapper()
     bootstrap = wrapper[: wrapper.index("\n\nif [[ $# -lt 3 ]]")]
-    origin = tmp_path / "repair-wrapper"
+    origin = (
+        tmp_path
+        / "source"
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "wrappers"
+        / "arnold-repair-loop"
+    )
+    origin.parent.mkdir(parents=True)
     snapshot_dir = tmp_path / "snapshots"
     snapshot_dir.mkdir()
     origin.write_text(

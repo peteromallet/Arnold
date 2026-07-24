@@ -51,7 +51,7 @@ def test_auditor_snapshot_never_trampolines_back_to_immutable_source() -> None:
     assert source_guard in text
     assert text.index(source_guard) < text.index('exec "$SOURCE_AUDITOR" "$@"')
     assert text.index('export ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_ACTIVE=1') < text.index(
-        'trap \'rm -f -- "${BASH_SOURCE[0]:-$0}"\' EXIT'
+        'trap \'rm -f -- "$ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH"\' EXIT'
     )
 
 
