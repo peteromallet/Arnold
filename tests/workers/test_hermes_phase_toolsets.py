@@ -4,6 +4,7 @@ import pytest
 
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.workers.hermes import (
+    _default_max_tokens_for_step,
     _finalize_structural_repair_prompt,
     _install_content_tool_call_normalizer,
     _raise_for_terminal_provider_failure,
@@ -99,6 +100,26 @@ def test_finalize_length_truncation_is_not_laundered_through_structural_repair()
     assert raised.value.extra["provider_failure_category"] == "capacity"
 
 
+def test_finalize_detects_production_first_response_truncation_shape() -> None:
+    # AIAgent does not append the first truncated assistant message to the
+    # returned messages list. It reports the terminal condition via
+    # failed/error instead; this is the exact production result shape.
+    result = {
+        "final_response": None,
+        "messages": [{"role": "user", "content": "large finalize prompt"}],
+        "api_calls": 1,
+        "completed": False,
+        "failed": True,
+        "error": "First response truncated due to output length limit",
+    }
+
+    with pytest.raises(CliError) as raised:
+        _raise_for_terminal_provider_failure(result, step="finalize")
+
+    assert raised.value.code == "worker_output_truncated"
+    assert raised.value.extra == {"provider_failure_category": "capacity"}
+
+
 def test_non_finalize_length_response_preserves_existing_recovery_paths() -> None:
     _raise_for_terminal_provider_failure(
         {
@@ -108,3 +129,9 @@ def test_non_finalize_length_response_preserves_existing_recovery_paths() -> Non
         },
         step="execute",
     )
+
+
+def test_finalize_and_execute_receive_large_graph_output_budget() -> None:
+    assert _default_max_tokens_for_step("finalize") == 65536
+    assert _default_max_tokens_for_step("execute") == 65536
+    assert _default_max_tokens_for_step("critique") == 32768

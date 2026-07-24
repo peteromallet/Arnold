@@ -151,6 +151,12 @@ def _normalize_worker_options(worker_options: dict[str, object] | None) -> dict[
     return normalized
 
 
+def _default_max_tokens_for_step(step: str) -> int:
+    """Keep graph-producing phases out of the ordinary response budget."""
+
+    return 65536 if step in {"execute", "finalize"} else 32768
+
+
 def _import_hermes_runtime():
     """Resolve the vendored hermes runtime packages.
 
@@ -1691,6 +1697,12 @@ _TERMINAL_STREAMING_TIMEOUT_MARKERS = (
     "streaming deadline retry ceiling reached",
     "streaming deadline hit again",
 )
+_TERMINAL_OUTPUT_CAPACITY_MARKERS = (
+    "truncated due to output length limit",
+    "remained truncated after",
+    "max output tokens",
+    "output token limit",
+)
 
 
 def _terminal_finish_reason(result: dict) -> str | None:
@@ -1721,12 +1733,19 @@ def _raise_for_terminal_provider_failure(result: dict, *, step: str) -> None:
     model call.
     """
 
-    if step == "finalize" and _terminal_finish_reason(result) in {
-        "length",
-        "max_tokens",
-        "max_output_tokens",
-        "incomplete",
-    }:
+    provider_error = str(result.get("error") or "").strip().lower()
+    output_capacity_exhausted = (
+        _terminal_finish_reason(result)
+        in {"length", "max_tokens", "max_output_tokens", "incomplete"}
+        or (
+            (result.get("failed") is True or result.get("partial") is True)
+            and any(
+                marker in provider_error
+                for marker in _TERMINAL_OUTPUT_CAPACITY_MARKERS
+            )
+        )
+    )
+    if step == "finalize" and output_capacity_exhausted:
         raise CliError(
             "worker_output_truncated",
             (
@@ -2174,7 +2193,7 @@ def run_hermes_step(
     # without `stream=true`.
     agent_max_tokens = int(
         normalized_worker_options.get("max_tokens")
-        or (65536 if step == "execute" else 32768)
+        or _default_max_tokens_for_step(step)
     )
 
     db_override = normalized_worker_options.get("session_db_path")

@@ -178,12 +178,13 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
 
         Requirements:
         - Produce structured JSON only.
-        - Keep the graph compact enough to complete atomically. Default to exactly one task per `## Step`; emit more than one only when the 15-minute or 5-path limits genuinely require a split. Never repeat plan prose.
+        - Keep the graph compact enough to complete atomically. For plans with more than 40 implementation steps, target 24-40 tasks by merging adjacent, tightly related microsteps when their dependency ordering and complete write sets align. A task may cover multiple adjacent plan steps, but every plan step must be named in at least one task description. Split only when the 15-minute or 5-path limits require it. Never repeat plan prose.
+        - Emit `critique_resolution_coverage` before `tasks` in the JSON object so immutable finding custody cannot be lost at the tail of a large graph.
         - Use these output bounds: objective <= 160 characters; description <= 600; complexity_justification <= 240; each dependency reason and required_output <= 200; each sense-check question <= 200; each critique resolution_evidence <= 240; each watch item <= 200; meta_commentary <= 400.
         - Preserve every cleared critique obligation in the task DAG and watch items. The handler will bind this clearance to the exact final graph and revalidate it before execution; do not omit, reinterpret, or replace finding IDs.
         - Return `critique_resolution_coverage` with exactly one row for every `finding_id` in critique custody clearance. Each row must name one or more real finalized `task_ids` that preserve the resolved plan mutation and a concrete `resolution_evidence` explanation. Return `[]` when clearance has no findings. Partial, duplicate, unknown, or empty mappings fail finalization.
         - Set `task_contract_version` to `2` and `validation_jobs` to `[]`. The harness derives and runs integration/full-suite validation jobs; model tasks must not duplicate them.
-        - For each `## Step N:` in the plan, emit 1-N tasks.
+        - Cover every `## Step N:` in the plan with 1-N tasks. One task may cover multiple adjacent plan steps under the compact-graph rule above.
         - For each task, emit one sense_check.
         - Default `user_actions` to `[]`. Identify a user_action ONLY when the work is genuinely non-mechanical and the executor literally cannot do it (secrets the human alone holds, identity-bound infra access, legal/license signatories, manual UI smoke tests on production). If a check is mechanical, make it a task — not a user_action. See the detailed guidance below.
         - Do not invent tasks that don't trace to a plan step.
