@@ -1687,6 +1687,61 @@ def test_receipt_validator_rejects_oversized_input_before_json_parse(tmp_path: P
     assert "investigator receipt exceeds 65536-byte bound" in result.stderr
 
 
+def test_receipt_validator_atomically_canonicalizes_fenced_model_output(
+    tmp_path: Path,
+) -> None:
+    receipt = tmp_path / "fenced-receipt.json"
+    receipt.write_text(
+        "```json\n" + json.dumps(_receipt()) + "\n```\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-P",
+            "-m",
+            "arnold_pipelines.megaplan.cloud.repair_investigation",
+            "validate",
+            "--receipt",
+            str(receipt),
+            "--context-digest",
+            "digest-1",
+            "--canonical-output",
+            str(receipt),
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    canonical = json.loads(receipt.read_text(encoding="utf-8"))
+    assert canonical["schema_version"] == REPAIR_INVESTIGATOR_RECEIPT_SCHEMA
+    assert canonical["receipt_digest"]
+    assert not receipt.read_text(encoding="utf-8").lstrip().startswith("```")
+
+
+def test_repair_wrappers_persist_canonical_receipts_before_reuse() -> None:
+    l1 = (
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+    ).read_text(encoding="utf-8")
+    l2 = (
+        REPO_ROOT / "arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
+    ).read_text(encoding="utf-8")
+
+    assert l1.count('--canonical-output "$INVESTIGATOR_RECEIPT_PATH"') == 2
+    assert l2.count('--canonical-output "$META_INVESTIGATION_RECEIPT_PATH"') == 2
+    assert (
+        '(validated.get("safe_repair_target") or {}).get("kind") not in {'
+        in l2
+    )
+    assert '"none",' in l2
+    assert '"repair_custody",' in l2
+
+
 def test_l1_investigation_precedes_every_target_mutation_and_failures_stop() -> None:
     wrapper = (
         REPO_ROOT / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"

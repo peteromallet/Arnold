@@ -702,7 +702,8 @@ EOF
       arnold_pipelines.megaplan.cloud.repair_investigation validate \
       --receipt "$META_INVESTIGATION_RECEIPT_PATH" \
       --context-digest "$META_INVESTIGATION_CONTEXT_DIGEST" \
-      --observation "$META_INVESTIGATION_OBSERVATION_PATH" 2>&1
+      --observation "$META_INVESTIGATION_OBSERVATION_PATH" \
+      --canonical-output "$META_INVESTIGATION_RECEIPT_PATH" 2>&1
   )"; then
     printf '%s\n' "$validation_output" >>"$RUN_LOG"
     invalid_receipt_path="${META_INVESTIGATION_RECEIPT_PATH%.json}.invalid-1.json"
@@ -754,7 +755,8 @@ EOF
       arnold_pipelines.megaplan.cloud.repair_investigation validate \
       --receipt "$META_INVESTIGATION_RECEIPT_PATH" \
       --context-digest "$META_INVESTIGATION_CONTEXT_DIGEST" \
-      --observation "$META_INVESTIGATION_OBSERVATION_PATH" >>"$RUN_LOG" 2>&1 || return 1
+      --observation "$META_INVESTIGATION_OBSERVATION_PATH" \
+      --canonical-output "$META_INVESTIGATION_RECEIPT_PATH" >>"$RUN_LOG" 2>&1 || return 1
   else
     printf '%s\n' "$validation_output" >>"$RUN_LOG"
   fi
@@ -897,8 +899,11 @@ validated = validate_investigator_receipt(
 )
 if validated.get("recommended_action") != "replan":
     raise SystemExit("L2 replan handoff action disagrees")
-if (validated.get("safe_repair_target") or {}).get("kind") != "repair_custody":
-    raise SystemExit("L2 replan handoff did not target repair custody")
+if (validated.get("safe_repair_target") or {}).get("kind") not in {
+    "none",
+    "repair_custody",
+}:
+    raise SystemExit("L2 replan handoff named an unsafe repair target")
 PY
   if ! l2_mutation_authorized; then
     log "observed: L2 replan effects blocked by master-plus-path authorization gate session=$SESSION"

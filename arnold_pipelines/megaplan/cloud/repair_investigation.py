@@ -144,6 +144,16 @@ def _load_bounded_json(path: str | Path, *, max_bytes: int, label: str) -> dict[
     return value
 
 
+def load_investigator_receipt(path: str | Path) -> dict[str, Any]:
+    """Load one bounded model receipt using the canonical tolerant parser."""
+
+    return _load_bounded_json(
+        path,
+        max_bytes=MAX_RECEIPT_BYTES,
+        label="investigator receipt",
+    )
+
+
 def _digest(value: Mapping[str, Any]) -> str:
     return hashlib.sha256(
         json.dumps(dict(value), sort_keys=True, separators=(",", ":"), default=str).encode()
@@ -2480,6 +2490,11 @@ def _parser() -> argparse.ArgumentParser:
     validate.add_argument("--context-digest", required=True)
     validate.add_argument("--observation", default="")
     validate.add_argument("--context", default="")
+    validate.add_argument(
+        "--canonical-output",
+        default="",
+        help="Atomically persist the validated canonical receipt for downstream custody.",
+    )
     return parser
 
 
@@ -2518,11 +2533,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _atomic_write(Path(args.output), value)
     else:
         value = validate_investigator_receipt(
-            _load_bounded_json(
-                args.receipt,
-                max_bytes=MAX_RECEIPT_BYTES,
-                label="investigator receipt",
-            ),
+            load_investigator_receipt(args.receipt),
             expected_context_digest=args.context_digest,
             observation_bundle=(
                 _load_bounded_json(
@@ -2547,6 +2558,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 else None
             ),
         )
+        if args.canonical_output:
+            _atomic_write(Path(args.canonical_output), value)
     print(json.dumps(value, sort_keys=True))
     return 0
 
@@ -2567,6 +2580,7 @@ __all__ = [
     "build_meta_observation_bundle",
     "build_repair_observation_bundle",
     "build_investigation_context",
+    "load_investigator_receipt",
     "summarize_investigation_artifacts",
     "validate_meta_investigation_context",
     "validate_investigator_receipt",

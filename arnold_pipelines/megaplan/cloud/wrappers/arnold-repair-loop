@@ -7458,7 +7458,8 @@ EOF
       --receipt "$INVESTIGATOR_RECEIPT_PATH" \
       --context-digest "$context_digest" \
       --observation "$INVESTIGATION_OBSERVATION_PATH" \
-      --context "$INVESTIGATION_CONTEXT_PATH" 2>&1
+      --context "$INVESTIGATION_CONTEXT_PATH" \
+      --canonical-output "$INVESTIGATOR_RECEIPT_PATH" 2>&1
   )" || {
     printf '%s\n' "$validation_output" >>"$LOG"
     invalid_receipt_path="${INVESTIGATOR_RECEIPT_PATH%.json}.invalid-1.json"
@@ -7563,7 +7564,8 @@ EOF
       --receipt "$INVESTIGATOR_RECEIPT_PATH" \
       --context-digest "$context_digest" \
       --observation "$INVESTIGATION_OBSERVATION_PATH" \
-      --context "$INVESTIGATION_CONTEXT_PATH" >>"$LOG" 2>&1; then
+      --context "$INVESTIGATION_CONTEXT_PATH" \
+      --canonical-output "$INVESTIGATOR_RECEIPT_PATH" >>"$LOG" 2>&1; then
       repair_data_set_outcome "fixer_infrastructure_failure"
       persist_repair_investigation_failure \
         "investigator_dispatch_or_validation" \
