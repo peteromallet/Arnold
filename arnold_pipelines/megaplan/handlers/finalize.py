@@ -419,6 +419,40 @@ def _apply_programmatic_coverage(payload: dict[str, Any], plan_dir: Path, state:
 _FINALIZE_INPUT_SCHEMA = FINALIZE_MODEL_OUTPUT_SCHEMA
 
 
+def _canonicalize_dependency_reason_rows(payload: dict[str, Any], _reject) -> None:
+    """Convert the strict-output transport rows to the internal dependency map."""
+
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list):
+        return
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        raw_reasons = task.get("dependency_reasons")
+        if raw_reasons is None:
+            task["dependency_reasons"] = {}
+            continue
+        if not isinstance(raw_reasons, list):
+            _reject(
+                f"Finalize task {task.get('id', '<unknown>')} must encode "
+                "`dependency_reasons` as strict transport rows."
+            )
+        reason_map: dict[str, dict[str, str]] = {}
+        for row in raw_reasons:
+            task_id = row["task_id"]
+            if task_id in reason_map:
+                _reject(
+                    f"Finalize task {task.get('id', '<unknown>')} has duplicate "
+                    f"`dependency_reasons` rows for {task_id!r}."
+                )
+            reason_map[task_id] = {
+                "kind": row["kind"],
+                "reason": row["reason"],
+                "required_output": row["required_output"],
+            }
+        task["dependency_reasons"] = reason_map
+
+
 def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerResult) -> None:
     """Thin wrapper: route schema-expressible checks through the C1 chokepoint
     (``validate_payload_against_schema``) then delegate residual semantic checks
@@ -459,6 +493,7 @@ def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerR
             validate_finalize_resolution_coverage(payload, read_json(clearance_path))
         except CritiqueCustodyError as error:
             _reject(str(error))
+    _canonicalize_dependency_reason_rows(payload, _reject)
 
 
 def _finalize_semantic_postcheck(

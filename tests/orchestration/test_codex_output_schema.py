@@ -4,6 +4,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from arnold_pipelines.megaplan._core.io import _enforce_openai_strict_mode
 from arnold.pipeline import validate_payload_against_schema
 from arnold_pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
@@ -16,6 +18,7 @@ from arnold_pipelines.megaplan.step_contracts import (
 )
 from arnold_pipelines.megaplan.handlers.finalize import _validate_finalize_payload
 from arnold_pipelines.megaplan.model_seam import capture_step_output
+from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.workers import WorkerResult
 
 
@@ -110,6 +113,26 @@ def test_finalize_codex_schema_excludes_harness_owned_evidence() -> None:
     assert "critique_resolution_coverage" in properties
 
 
+def test_finalize_dependency_reasons_use_strict_typed_rows() -> None:
+    contract = STEP_CONTRACTS["finalize"]
+    schema = _enforce_openai_strict_mode(
+        strict_schema(deepcopy(SCHEMAS[contract.schema_key]))
+    )
+    reasons = schema["properties"]["tasks"]["items"]["properties"][
+        "dependency_reasons"
+    ]
+
+    assert reasons["type"] == "array"
+    row = reasons["items"]
+    assert row["additionalProperties"] is False
+    assert set(row["required"]) == set(row["properties"]) == {
+        "task_id",
+        "kind",
+        "reason",
+        "required_output",
+    }
+
+
 def test_finalize_critique_resolution_schema_cannot_drift_at_runtime_boundary() -> None:
     """The Codex capture schema must preserve the model contract's typed rows."""
     contract_schema = FINALIZE_MODEL_OUTPUT_SCHEMA["properties"][
@@ -141,7 +164,7 @@ def test_model_native_finalize_graph_passes_capture_seam_and_handler(
                 "complexity_justification": "Two coupled source and regression files.",
                 "estimated_minutes": 30,
                 "depends_on": [],
-                "dependency_reasons": {},
+                "dependency_reasons": [],
                 "routing_group": "implementation",
                 "write_set": {
                     "paths": ["arnold_pipelines/megaplan/example.py"],
@@ -188,6 +211,73 @@ def test_model_native_finalize_graph_passes_capture_seam_and_handler(
         "config": {"mode": "code"},
     }
     _validate_finalize_payload(tmp_path, state, worker)
+    assert worker.payload["tasks"][0]["dependency_reasons"] == {}
+
+
+def test_finalize_rejects_duplicate_dependency_reason_rows(tmp_path: Path) -> None:
+    payload = {
+        "task_contract_version": 1,
+        "tasks": [
+            {
+                "id": "T2",
+                "objective": "Consume the dependency output.",
+                "description": "Consume the bounded output from T1.",
+                "status": "pending",
+                "kind": "code",
+                "complexity": 2,
+                "complexity_justification": "One bounded consumer.",
+                "estimated_minutes": 10,
+                "depends_on": ["T1"],
+                "dependency_reasons": [
+                    {
+                        "task_id": "T1",
+                        "kind": "consumes_output",
+                        "reason": "T2 consumes the artifact created by T1.",
+                        "required_output": "T1 artifact",
+                    },
+                    {
+                        "task_id": "T1",
+                        "kind": "consumes_output",
+                        "reason": "Duplicate row must fail closed.",
+                        "required_output": "T1 artifact",
+                    },
+                ],
+                "routing_group": "",
+                "write_set": {"paths": ["example.py"], "complete": True},
+                "narrow_tests": {
+                    "selectors": [],
+                    "max_seconds": 0,
+                    "max_runs": 0,
+                },
+                "checkpoint": {
+                    "required": False,
+                    "max_interval_seconds": 300,
+                    "records": [],
+                },
+            }
+        ],
+        "validation_jobs": [],
+        "critique_resolution_coverage": [],
+        "sense_checks": [],
+        "watch_items": [],
+        "user_actions": [],
+        "meta_commentary": "Compiled from the gated plan.",
+    }
+    worker = WorkerResult(
+        payload=payload,
+        raw_output="",
+        duration_ms=1,
+        cost_usd=0.0,
+    )
+    state = {
+        "iteration": 1,
+        "config": {"mode": "code"},
+        "history": [],
+        "meta": {"total_cost_usd": 0.0},
+    }
+
+    with pytest.raises(CliError, match="duplicate `dependency_reasons` rows"):
+        _validate_finalize_payload(tmp_path, state, worker)
 
 
 def test_critique_evaluator_schema_rejects_invented_catalog_lens_ids() -> None:

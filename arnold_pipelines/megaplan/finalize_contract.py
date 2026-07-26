@@ -41,7 +41,31 @@ FINALIZE_MODEL_OUTPUT_SCHEMA: dict[str, Any] = {
                     "complexity_justification": {"type": "string"},
                     "estimated_minutes": {"type": "integer"},
                     "depends_on": {"type": "array", "items": {"type": "string"}},
-                    "dependency_reasons": {"type": "object", "additionalProperties": {"type": "string"}},
+                    "dependency_reasons": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": [
+                                "task_id",
+                                "kind",
+                                "reason",
+                                "required_output",
+                            ],
+                            "properties": {
+                                "task_id": {"type": "string"},
+                                "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                        "consumes_output",
+                                        "write_conflict",
+                                        "human_prerequisite",
+                                    ],
+                                },
+                                "reason": {"type": "string"},
+                                "required_output": {"type": "string"},
+                            },
+                        },
+                    },
                     "routing_group": {"type": "string"},
                     "write_set": {
                         "type": "object",

@@ -204,7 +204,7 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
           - `description`: concrete work item
           - `estimated_minutes`: integer 1-15 for implementation plus narrow verification. Split anything that cannot credibly finish within 15 minutes.
           - `depends_on`: array of earlier task IDs or `[]`
-          - `dependency_reasons`: object keyed exactly by `depends_on`. Each value has `kind` (`consumes_output`, `write_conflict`, or `human_prerequisite`), a concrete `reason`, and the exact `required_output`. Routing, model isolation, authoring order, and batch sizing are forbidden reasons.
+          - `dependency_reasons`: array with exactly one row per `depends_on` entry (or `[]`). Each row has `task_id` equal to that dependency ID, `kind` (`consumes_output`, `write_conflict`, or `human_prerequisite`), a concrete `reason`, and the exact `required_output`. Routing, model isolation, authoring order, and batch sizing are forbidden reasons.
           - `routing_group`: `""` unless independent tasks intentionally share context or overlapping writes; routing groups influence batching but grant no dependency authority
           - `write_set`: `{{ "paths": [...], "complete": true }}`, declaring every planned output path. Mutating tasks must name 1-5 unique paths; split larger write sets.
           - `narrow_tests`: `{{ "selectors": [...], "max_seconds": 120, "max_runs": 2 }}`. Use at most 3 changed-behavior selectors; use zero budgets for tasks that require no tests. Integration/full-suite checks belong to the harness.
