@@ -38,6 +38,10 @@ fi
 
 deterministic_failure_reason() {
   local run_log="$1"
+  if grep -q '"error"[[:space:]]*:[[:space:]]*"chain_runtime_binding_drift"' "$run_log"; then
+    printf '%s\n' chain_runtime_binding_drift
+    return 0
+  fi
   if grep -q '"error"[[:space:]]*:[[:space:]]*"chain_execution_binding_drift"' "$run_log"; then
     printf '%s\n' chain_execution_binding_drift
     return 0

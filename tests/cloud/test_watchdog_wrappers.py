@@ -45,6 +45,88 @@ def _repair_wrapper() -> str:
     return _wrapper("arnold-repair-loop")
 
 
+def _extract_bash_function(wrapper_text: str, name: str) -> str:
+    """Extract a top-level bash function definition by balanced-brace matching."""
+    start_marker = f"{name}() {{"
+    start = wrapper_text.index(start_marker)
+    depth = 0
+    idx = start + len(start_marker) - 1  # position of the opening brace
+    while idx < len(wrapper_text):
+        ch = wrapper_text[idx]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return wrapper_text[start : idx + 1]
+        idx += 1
+    raise ValueError(f"unterminated bash function: {name}")
+
+
+def test_supervisor_deterministic_failure_reason_detects_runtime_binding_drift() -> None:
+    """Regression: the supervisor must fail-fast on chain_runtime_binding_drift.
+
+    ``deterministic_failure_reason`` previously matched only
+    ``chain_execution_binding_drift``.  The runtime binding guard actually
+    emits ``chain_runtime_binding_drift``, so the real failure was treated as
+    transient and retried in a STREAK loop instead of routing to the repair
+    queue.  Both drift error codes must now be classified deterministic.
+    """
+    supervise_text = _wrapper("arnold-supervise")
+    func = _extract_bash_function(supervise_text, "deterministic_failure_reason")
+
+    drift_cases = {
+        "runtime_drift": (
+            '{"success": false, "error": "chain_runtime_binding_drift",'
+            ' "message": "expected=abc; active=def"}'
+        ),
+        "execution_drift": (
+            '{"success": false, "error": "chain_execution_binding_drift",'
+            ' "message": "execution binding mismatch"}'
+        ),
+    }
+    for label, log_line in drift_cases.items():
+        with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False) as handle:
+            handle.write(log_line + "\n")
+            run_log = handle.name
+        try:
+            harness = (
+                "set -eo pipefail\n"
+                "export SUPERVISE_WORKSPACE=\n"
+                f"{func}\n"
+                f'deterministic_failure_reason "{run_log}"\n'
+            )
+            result = subprocess.run(
+                ["bash", "-c", harness], capture_output=True, text=True
+            )
+        finally:
+            os.unlink(run_log)
+        assert result.returncode == 0, f"{label}: rc={result.returncode} stderr={result.stderr!r}"
+        reason = result.stdout.strip()
+        assert reason.endswith("_binding_drift"), (
+            f"{label}: expected a *_binding_drift deterministic reason, got {reason!r}"
+        )
+
+    # An unrelated transient error must NOT be classified deterministic (rc=1).
+    with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False) as handle:
+        handle.write('{"error": "some_transient_error"}\n')
+        unrelated_log = handle.name
+    try:
+        harness = (
+            "export SUPERVISE_WORKSPACE=\n"
+            f"{func}\n"
+            f'if deterministic_failure_reason "{unrelated_log}"; then exit 0; else exit 1; fi\n'
+        )
+        result = subprocess.run(
+            ["bash", "-c", harness], capture_output=True, text=True
+        )
+    finally:
+        os.unlink(unrelated_log)
+    assert result.returncode == 1, (
+        f"unrelated error must not be deterministic: rc={result.returncode} out={result.stdout!r}"
+    )
+
+
 def test_auditor_classifies_meta_trigger_rejection_as_current_failure(
     tmp_path: Path,
 ) -> None:
