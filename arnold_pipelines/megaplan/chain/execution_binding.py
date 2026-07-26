@@ -535,22 +535,22 @@ def _strict_external_runtime_shape(
         shannon_dependencies if isinstance(shannon_dependencies, Mapping) else {}
     )
     expected_vendor_root = (
-        import_root
-        / "arnold_pipelines"
-        / "megaplan"
-        / "vendor"
-        / "shannon"
+        import_root / "arnold_pipelines" / "megaplan" / "vendor" / "shannon"
     )
-    if (
-        not bool(shannon_dependencies.get("ready"))
-        or shannon_dependencies.get("errors")
-    ):
-        errors.append("shannon_dependencies_not_ready")
-    if (
-        Path(str(shannon_dependencies.get("vendor_root") or "")).resolve(strict=False)
-        != expected_vendor_root
-    ):
-        errors.append("shannon_dependencies_root_mismatch")
+    if expected_vendor_root.exists():
+        if not bool(shannon_dependencies.get("ready")) or shannon_dependencies.get(
+            "errors"
+        ):
+            errors.append("shannon_dependencies_not_ready")
+        if (
+            Path(str(shannon_dependencies.get("vendor_root") or "")).resolve(
+                strict=False
+            )
+            != expected_vendor_root
+        ):
+            errors.append("shannon_dependencies_root_mismatch")
+    elif shannon_dependencies:
+        errors.append("shannon_dependencies_unexpected")
     return errors
 
 

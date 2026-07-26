@@ -14,9 +14,6 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import unquote, urlparse
 
-from arnold_pipelines.megaplan.cloud.shannon_runtime import dependency_vector
-
-
 RUNTIME_PROVENANCE_RECEIPT_SCHEMA = "arnold.megaplan.runtime_provenance_receipt.v1"
 _RUNTIME_IDENTITY_KEYS = (
     "import_root",
@@ -115,6 +112,30 @@ def _pth_identity() -> list[dict[str, Any]]:
     return records
 
 
+def _shannon_dependency_vector(import_root: Path) -> dict[str, Any] | None:
+    """Attest Shannon only for runtimes that actually vendor it.
+
+    This module is deliberately executed by the runtime being observed.  A
+    historical rollback runtime may predate both ``vendor/shannon`` and the
+    ``shannon_runtime`` helper, so importing that helper at module import time
+    would make independent verification impossible.  Once the vendor path
+    exists, however, the dependency vector remains mandatory and fail-closed.
+    """
+
+    vendor_root = import_root / "arnold_pipelines" / "megaplan" / "vendor" / "shannon"
+    if not vendor_root.exists():
+        return None
+    try:
+        from arnold_pipelines.megaplan.cloud.shannon_runtime import dependency_vector
+    except ImportError as exc:
+        return {
+            "vendor_root": str(vendor_root),
+            "ready": False,
+            "errors": [f"attestor_unavailable:{type(exc).__name__}"],
+        }
+    return dependency_vector(vendor_root)
+
+
 def runtime_provenance(
     *,
     expected_root: Path | None = None,
@@ -134,7 +155,7 @@ def runtime_provenance(
         "arnold_pipelines": str(Path(arnold_pipelines.__file__).resolve()),
         "megaplan": str(Path(arnold_pipelines.megaplan.__file__).resolve()),
     }
-    shannon_dependencies = dependency_vector()
+    shannon_dependencies = _shannon_dependency_vector(import_root)
     errors: list[str] = []
     if expected is not None and import_root != expected:
         errors.append("import_root_mismatch")
@@ -164,12 +185,12 @@ def runtime_provenance(
             errors.append("editable_pth_unreadable")
     if expected_revision and source_revision != expected_revision:
         errors.append("source_revision_mismatch")
-    if not bool(shannon_dependencies.get("ready")):
+    if shannon_dependencies is not None and not bool(shannon_dependencies.get("ready")):
         errors.extend(
             f"shannon_dependencies:{item}"
             for item in shannon_dependencies.get("errors") or []
         )
-    return {
+    payload = {
         "ok": not errors,
         "errors": errors,
         "expected_root": str(expected) if expected is not None else "",
@@ -181,8 +202,10 @@ def runtime_provenance(
         "source_revision": source_revision,
         "runtime_revision": source_revision,
         "imports": imports,
-        "shannon_dependencies": shannon_dependencies,
     }
+    if shannon_dependencies is not None:
+        payload["shannon_dependencies"] = shannon_dependencies
+    return payload
 
 
 def normalized_runtime_identity(provenance: Mapping[str, Any]) -> dict[str, Any]:

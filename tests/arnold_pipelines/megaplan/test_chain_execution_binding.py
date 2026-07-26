@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +22,7 @@ from arnold_pipelines.megaplan.chain.execution_binding import (
     require_bound_chain_spec,
     rebind_execution_identity,
     rebind_runtime_identity,
+    _strict_external_runtime_shape,
     verify_external_runtime_identity,
 )
 from arnold_pipelines.megaplan.chain.spec import (
@@ -72,6 +74,14 @@ def offline_rollback_runtime(
         capture_output=True,
         text=True,
     )
+    shutil.rmtree(source_a / "arnold_pipelines" / "megaplan" / "vendor" / "shannon")
+    (
+        source_a / "arnold_pipelines" / "megaplan" / "cloud" / "shannon_runtime.py"
+    ).unlink()
+    _git(source_a, "config", "user.email", "tests@example.com")
+    _git(source_a, "config", "user.name", "Tests")
+    _git(source_a, "add", "-A")
+    _git(source_a, "commit", "-m", "simulate runtime predating vendored Shannon")
     subprocess.run(
         [
             sys.executable,
@@ -103,19 +113,24 @@ def offline_rollback_runtime(
             capture_output=True,
             text=True,
         )
-        subprocess.run(
-            [
-                str(python),
-                "-P",
-                "-m",
-                "arnold_pipelines.megaplan.cloud.shannon_runtime",
-                "prepare",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
-        )
+        if (source / "arnold_pipelines" / "megaplan" / "vendor" / "shannon").is_dir():
+            subprocess.run(
+                [
+                    str(python),
+                    "-P",
+                    "-m",
+                    "arnold_pipelines.megaplan.cloud.shannon_runtime",
+                    "prepare",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env={
+                    key: value
+                    for key, value in os.environ.items()
+                    if key != "PYTHONPATH"
+                },
+            )
     revision_a = _git(source_a, "rev-parse", "HEAD")
     receipt = root / "runtime-a-receipt.json"
     identity = root / "runtime-a-identity.json"
@@ -152,6 +167,89 @@ def offline_rollback_runtime(
         "receipt": receipt,
         "identity": identity,
     }
+
+
+def _external_runtime_shape(
+    root: Path,
+    *,
+    shannon_dependencies: dict | None = None,
+) -> tuple[dict, dict]:
+    revision = "a" * 40
+    identity = {
+        "import_root": str(root),
+        "source_revision": revision,
+        "editable_root": str(root),
+        "editable_revision": revision,
+        "direct_url": {
+            "dir_info": {"editable": True},
+            "url": root.as_uri(),
+        },
+        "pth": [
+            {
+                "path": "/venv/site-packages/_editable_impl_arnold.pth",
+                "entries": [str(root)],
+                "readable": True,
+            }
+        ],
+        "imports": {
+            "arnold": str(root / "arnold" / "__init__.py"),
+            "arnold_pipelines": str(root / "arnold_pipelines" / "__init__.py"),
+            "megaplan": str(root / "arnold_pipelines" / "megaplan" / "__init__.py"),
+        },
+    }
+    if shannon_dependencies is not None:
+        identity["shannon_dependencies"] = shannon_dependencies
+    provenance = {
+        "ok": True,
+        "errors": [],
+        "expected_root": str(root),
+        "expected_revision": revision,
+        "source_revision": revision,
+    }
+    return identity, provenance
+
+
+def test_external_runtime_shape_allows_pre_shannon_runtime(tmp_path: Path) -> None:
+    root = tmp_path / "historical-runtime"
+    root.mkdir()
+    identity, provenance = _external_runtime_shape(root)
+
+    assert _strict_external_runtime_shape(identity, provenance) == []
+
+
+def test_external_runtime_shape_requires_ready_vector_when_vendor_exists(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "vendored-runtime"
+    vendor_root = root / "arnold_pipelines" / "megaplan" / "vendor" / "shannon"
+    vendor_root.mkdir(parents=True)
+    identity, provenance = _external_runtime_shape(root)
+
+    errors = _strict_external_runtime_shape(identity, provenance)
+
+    assert "shannon_dependencies_not_ready" in errors
+    assert "shannon_dependencies_root_mismatch" in errors
+
+
+def test_external_runtime_shape_rejects_vector_without_vendor(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "historical-runtime"
+    root.mkdir()
+    identity, provenance = _external_runtime_shape(
+        root,
+        shannon_dependencies={
+            "ready": True,
+            "errors": [],
+            "vendor_root": str(
+                root / "arnold_pipelines" / "megaplan" / "vendor" / "shannon"
+            ),
+        },
+    )
+
+    assert _strict_external_runtime_shape(identity, provenance) == [
+        "shannon_dependencies_unexpected"
+    ]
 
 
 def _write_chain(root: Path, labels: tuple[str, ...]) -> Path:
@@ -839,6 +937,29 @@ def test_external_runtime_receipt_rejects_b_self_asserting_a(
             Path(offline_rollback_runtime["identity"]),
             forged_path,
         )
+
+
+def test_external_runtime_receipt_accepts_pre_shannon_interpreter(
+    offline_rollback_runtime: dict[str, Path | str],
+) -> None:
+    identity_path = Path(offline_rollback_runtime["identity"])
+    receipt_path = Path(offline_rollback_runtime["receipt"])
+    identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+
+    assert "shannon_dependencies" not in identity
+    assert "shannon_dependencies" not in receipt["provenance"]
+    assert not (
+        Path(offline_rollback_runtime["source_a"])
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "shannon_runtime.py"
+    ).exists()
+
+    observed = verify_external_runtime_identity(identity_path, receipt_path)
+
+    assert observed == identity
 
 
 def test_external_runtime_receipt_rejects_stale_pth_observation(
