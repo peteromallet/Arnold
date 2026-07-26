@@ -139,6 +139,81 @@ INVESTIGATION_CONTEXT_PATH="$RUN_DIR/repair-investigation-context.json"
 INVESTIGATION_OBSERVATION_PATH="$RUN_DIR/repair-investigator-observations.json"
 INVESTIGATOR_PROMPT_PATH="$RUN_DIR/repair-investigator-prompt.md"
 INVESTIGATOR_RECEIPT_PATH="$RUN_DIR/repair-investigator-receipt.json"
+
+normalize_investigator_receipt_fences() {
+  # GLM (coding endpoint) wraps receipts in ```json fences and/or backslash-
+  # escapes interior quotes. Rewrite the receipt file as clean JSON in place so
+  # every downstream json.loads sees valid JSON. Best-effort.
+  local receipt_path="$1"
+  [[ -f "$receipt_path" ]] || return 0
+  "$MEGAPLAN_SUPERVISOR_PYTHON" -P - "$receipt_path" <<'PY_NORMALIZE_FN' || true
+import json, sys
+from pathlib import Path
+bt = chr(96)
+fence = bt * 3
+path = Path(sys.argv[1])
+try:
+    raw = path.read_text(encoding="utf-8")
+except OSError:
+    sys.exit(0)
+text = raw.strip()
+if not text:
+    sys.exit(0)
+try:
+    json.loads(text)
+    sys.exit(0)
+except json.JSONDecodeError:
+    pass
+candidate = text
+low = candidate.find(fence)
+if low >= 0:
+    inner_start = candidate.find(chr(10), low)
+    if inner_start < 0:
+        inner_start = low + len(fence)
+    else:
+        inner_start = inner_start + 1
+    close = candidate.find(fence, inner_start)
+    if close > inner_start:
+        candidate = candidate[inner_start:close].strip()
+deescaped = None
+if candidate.startswith("{") and candidate.endswith("}") and (chr(92) + chr(34)) in candidate:
+    try:
+        inner = json.loads(chr(34) + candidate + chr(34))
+        if isinstance(inner, str):
+            deescaped = inner
+    except (json.JSONDecodeError, ValueError):
+        deescaped = None
+parsed = None
+for attempt in [candidate, deescaped]:
+    if not attempt:
+        continue
+    try:
+        v = json.loads(attempt)
+        if isinstance(v, dict):
+            parsed = v
+            break
+    except (json.JSONDecodeError, TypeError):
+        pass
+    decoder = json.JSONDecoder()
+    idx = attempt.find("{")
+    while idx >= 0:
+        try:
+            v, _end = decoder.raw_decode(attempt[idx:])
+            if isinstance(v, dict):
+                parsed = v
+                break
+        except json.JSONDecodeError:
+            pass
+        idx = attempt.find("{", idx + 1)
+    if parsed is not None:
+        break
+if parsed is not None:
+    path.write_text(json.dumps(parsed, indent=2), encoding="utf-8")
+PY_NORMALIZE_FN
+}
+
+
+
 INVESTIGATION_BUILD_ERROR_PATH="$RUN_DIR/repair-investigation-context-error.log"
 
 load_resident_delegation_context() {
@@ -7375,6 +7450,7 @@ EOF
     log "repair investigator dispatch failed session=$SESSION run_id=${investigator_run_id:-unknown}"
     return 1
   fi
+  normalize_investigator_receipt_fences "$INVESTIGATOR_RECEIPT_PATH"
   validation_output="$(
     PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
       "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
@@ -7480,6 +7556,7 @@ EOF
       return 1
     fi
     investigator_run_id="$(cat "$run_id_file" 2>/dev/null || true)"
+    normalize_investigator_receipt_fences "$INVESTIGATOR_RECEIPT_PATH"
     if ! PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" \
       "$MEGAPLAN_SUPERVISOR_PYTHON" -P -m \
       arnold_pipelines.megaplan.cloud.repair_investigation validate \

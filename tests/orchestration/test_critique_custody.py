@@ -584,6 +584,161 @@ def test_clearance_accepts_explicit_gate_tradeoff_for_significant_finding(
     ]
 
 
+def test_clearance_audits_superseded_source_plan_mismatch_without_losing_findings(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    first = _oversized_payload()
+    _persist_critique(plan_dir, state, first)
+
+    state["iteration"] = 2
+    state["plan_versions"].append({"version": 2, "file": "plan_v2.md"})
+    second = _oversized_payload()
+    _persist_critique(plan_dir, state, second)
+    finding_id = second["flags"][0]["id"]
+    update_flags_after_gate(
+        plan_dir,
+        [
+            {
+                "flag_id": finding_id,
+                "action": "accept_tradeoff",
+                "evidence": "The gate reviewed the remaining bounded concern.",
+                "rationale": "The tradeoff is explicit and accepted.",
+            }
+        ],
+    )
+
+    atomic_write_text(plan_dir / "plan_v1.md", "# Corrupted historical source\n")
+    clearance = write_critique_clearance(plan_dir, state)
+
+    assert clearance["finding_ids"] == [finding_id]
+    assert clearance["source_receipts"][0]["role"] == "superseded"
+    assert (
+        clearance["source_receipts"][0]["source_plan_audit"]["status"]
+        == "hash_mismatch"
+    )
+    assert clearance["source_receipts"][1]["role"] == "canonical"
+    assert clearance["source_receipts"][1]["source_plan_audit"]["status"] == "verified"
+
+
+def test_clearance_still_rejects_canonical_source_plan_mismatch(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    payload = _oversized_payload()
+    _persist_critique(plan_dir, state, payload)
+
+    atomic_write_text(plan_dir / "plan_v1.md", "# Corrupted canonical source\n")
+
+    with pytest.raises(CritiqueCustodyError, match="source plan artifact hash mismatch"):
+        write_critique_clearance(plan_dir, state)
+
+
+def test_gate_bound_receipt_is_canonical_and_hash_mismatch_fails(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    first = _oversized_payload()
+    first_receipt = _persist_critique(plan_dir, state, first)
+
+    state["iteration"] = 2
+    state["plan_versions"].append({"version": 2, "file": "plan_v2.md"})
+    second = _oversized_payload()
+    _persist_critique(plan_dir, state, second)
+    finding_id = second["flags"][0]["id"]
+    update_flags_after_gate(
+        plan_dir,
+        [
+            {
+                "flag_id": finding_id,
+                "action": "accept_tradeoff",
+                "evidence": "The gate accepted the bounded concern.",
+                "rationale": "Explicitly accepted.",
+            }
+        ],
+    )
+    atomic_write_json(
+        plan_dir / "gate.json",
+        {
+            "signals": {
+                "critique_custody": {
+                    "receipt": "critique_custody_v1.json",
+                    "receipt_sha256": critique_custody.sha256_file(
+                        plan_dir / "critique_custody_v1.json"
+                    ),
+                }
+            }
+        },
+    )
+    clearance = write_critique_clearance(plan_dir, state)
+    roles = {
+        row["artifact"]: row["role"]
+        for row in clearance["source_receipts"]
+    }
+    assert roles == {
+        "critique_custody_v1.json": "canonical",
+        "critique_custody_v2.json": "superseded",
+    }
+
+    gate = critique_custody.read_json(plan_dir / "gate.json")
+    gate["signals"]["critique_custody"]["receipt_sha256"] = "sha256:wrong"
+    atomic_write_json(plan_dir / "gate.json", gate)
+    with pytest.raises(CritiqueCustodyError, match="gate-bound receipt hash mismatch"):
+        write_critique_clearance(plan_dir, state)
+
+
+def test_execute_revalidates_superseded_source_plan_audit(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _state(tmp_path)
+    first = _oversized_payload()
+    _persist_critique(plan_dir, state, first)
+
+    state["iteration"] = 2
+    state["plan_versions"].append({"version": 2, "file": "plan_v2.md"})
+    second = _oversized_payload()
+    _persist_critique(plan_dir, state, second)
+    finding_id = second["flags"][0]["id"]
+    update_flags_after_gate(
+        plan_dir,
+        [
+            {
+                "flag_id": finding_id,
+                "action": "accept_tradeoff",
+                "evidence": "The gate accepted the bounded concern.",
+                "rationale": "Explicitly accepted.",
+            }
+        ],
+    )
+    atomic_write_text(plan_dir / "plan_v1.md", "# Historical drift\n")
+    clearance = write_critique_clearance(plan_dir, state)
+    graph = _admitted_graph()
+    graph["critique_resolution_coverage"] = [
+        {
+            "finding_id": finding_id,
+            "task_ids": ["T1"],
+            "resolution_evidence": "T1 preserves the accepted bounded tradeoff.",
+        }
+    ]
+    bind_finalize_custody(plan_dir, graph, clearance)
+    assert_finalize_custody(plan_dir, graph)
+
+    atomic_write_text(plan_dir / "plan_v1.md", "# Different historical drift\n")
+    with pytest.raises(
+        CritiqueCustodyError,
+        match="source plan audit mismatch",
+    ):
+        assert_finalize_custody(plan_dir, graph)
+
+
 def test_clearance_rejects_reused_legacy_slot_with_blocking_occurrence(
     tmp_path: Path,
 ) -> None:

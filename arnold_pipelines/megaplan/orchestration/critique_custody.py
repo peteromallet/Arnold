@@ -304,7 +304,36 @@ def write_critique_production_receipt(
     return receipt
 
 
-def _validate_production_receipt(plan_dir: Path, receipt: Mapping[str, Any]) -> None:
+def _source_plan_audit(
+    plan_dir: Path,
+    receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Describe whether a receipt's historical source plan is still byte-identical."""
+    plan_name = receipt.get("plan_artifact")
+    expected_sha256 = receipt.get("plan_sha256")
+    audit: dict[str, Any] = {
+        "artifact": plan_name,
+        "expected_sha256": expected_sha256,
+    }
+    if not isinstance(plan_name, str) or not plan_name or Path(plan_name).name != plan_name:
+        audit["status"] = "unsafe_artifact_name"
+        return audit
+    plan_path = plan_dir / plan_name
+    if not plan_path.exists():
+        audit["status"] = "missing"
+        return audit
+    actual_sha256 = sha256_file(plan_path)
+    audit["actual_sha256"] = actual_sha256
+    audit["status"] = "verified" if expected_sha256 == actual_sha256 else "hash_mismatch"
+    return audit
+
+
+def _validate_production_receipt(
+    plan_dir: Path,
+    receipt: Mapping[str, Any],
+    *,
+    require_source_plan_match: bool = True,
+) -> None:
     issues: list[str] = []
     if receipt.get("schema_version") != CUSTODY_SCHEMA_VERSION or receipt.get("admitted") is not True:
         issues.append("unsupported or non-admitted production receipt")
@@ -316,12 +345,12 @@ def _validate_production_receipt(plan_dir: Path, receipt: Mapping[str, Any]) -> 
         name = receipt.get(field)
         if not isinstance(name, str) or not name or Path(name).name != name:
             issues.append(f"{field} is not a safe artifact basename")
-    plan_name = receipt.get("plan_artifact")
-    if isinstance(plan_name, str):
-        plan_path = plan_dir / plan_name
-        if not plan_path.exists():
+    plan_audit = _source_plan_audit(plan_dir, receipt)
+    if require_source_plan_match:
+        plan_name = receipt.get("plan_artifact")
+        if plan_audit["status"] == "missing":
             issues.append(f"missing source plan artifact {plan_name}")
-        elif receipt.get("plan_sha256") != sha256_file(plan_path):
+        elif plan_audit["status"] == "hash_mismatch":
             issues.append(f"source plan artifact hash mismatch for {plan_name}")
     critique_name = receipt.get("critique_artifact")
     if isinstance(critique_name, str):
@@ -436,6 +465,64 @@ def _receipt_paths(plan_dir: Path) -> list[Path]:
     return sorted(plan_dir.glob("critique_custody_v*.json"), key=iteration)
 
 
+def _canonical_receipt_path(plan_dir: Path, receipt_paths: Sequence[Path]) -> Path | None:
+    """Return the receipt authorized by the gate, falling back for legacy flows."""
+    if not receipt_paths:
+        return None
+    gate_path = plan_dir / "gate.json"
+    if not gate_path.exists():
+        return receipt_paths[-1]
+    gate = read_json(gate_path)
+    signals = gate.get("signals") if isinstance(gate, Mapping) else None
+    custody = signals.get("critique_custody") if isinstance(signals, Mapping) else None
+    if not isinstance(custody, Mapping) or "receipt" not in custody:
+        return receipt_paths[-1]
+    receipt_name = custody.get("receipt")
+    if (
+        not isinstance(receipt_name, str)
+        or not receipt_name
+        or Path(receipt_name).name != receipt_name
+    ):
+        raise CritiqueCustodyError(
+            "critique_gate_receipt_binding_invalid",
+            ["gate critique custody receipt is not a safe artifact basename"],
+        )
+    by_name = {path.name: path for path in receipt_paths}
+    receipt_path = by_name.get(receipt_name)
+    if receipt_path is None:
+        raise CritiqueCustodyError(
+            "critique_gate_receipt_binding_invalid",
+            [f"gate-bound receipt {receipt_name} is not a production receipt"],
+        )
+    expected_sha256 = custody.get("receipt_sha256")
+    actual_sha256 = sha256_file(receipt_path)
+    if expected_sha256 != actual_sha256:
+        raise CritiqueCustodyError(
+            "critique_gate_receipt_binding_invalid",
+            [f"gate-bound receipt hash mismatch for {receipt_name}"],
+        )
+    return receipt_path
+
+
+def _gate_proceeded(plan_dir: Path) -> bool:
+    """Return True iff the plan's gate verdict authorizes proceeding.
+
+    Reads the canonical gate artifact (``gate.json``) using the same predicate
+    the driver trusts elsewhere (``recommendation == "PROCEED"`` and
+    ``passed is True``).  The gate is the authority that accepted the plan --
+    including any accepted-tradeoff findings the gate chose to proceed past
+    without emitting a per-finding ``gate_resolution``.  Interpretation only:
+    reads existing plan data, mutates nothing.
+    """
+    gate_path = plan_dir / "gate.json"
+    if not gate_path.exists():
+        return False
+    gate = read_json(gate_path)
+    if not isinstance(gate, Mapping):
+        return False
+    return gate.get("recommendation") == "PROCEED" and gate.get("passed") is True
+
+
 def _resolution_for_finding(
     flag: Mapping[str, Any],
     finding: Mapping[str, Any],
@@ -446,6 +533,7 @@ def _resolution_for_finding(
     source_plan_sha256: str,
     plan_version_order: Mapping[str, int],
     gate_expected: bool,
+    gate_proceeded: bool = False,
 ) -> dict[str, Any]:
     flag_id = str(finding.get("flag_id"))
     status = flag.get("status")
@@ -504,8 +592,64 @@ def _resolution_for_finding(
                 "disposition": "minor_tradeoff",
                 "evidence": rationale,
             }
+    # A finding classified accepted_tradeoff whose flag carries a fixed
+    # resolution (resolution.kind == "fixed") with a non-empty claim and
+    # where, pointing at an admitted descendant plan version that the
+    # current plan descends from, has been addressed by a traceable plan
+    # mutation.  The gate PROCEED path may leave such a flag at
+    # accepted_tradeoff without emitting a per-finding gate_resolution
+    # (it force-proceeds past addressed flags), but the plan mutation recorded
+    # in custody IS the verification: the finding was materially fixed in the
+    # plan.  Resolve it via the same fixed_claim predicate the verified
+    # branch uses, so finalize custody does not block on a stale status label
+    # for a finding the plan has already addressed.  This is interpretation
+    # logic only -- it reads existing custody data and emits a resolution; it
+    # mutates no persisted flag/custody/cursor state.
     if (
-        status in {"open", "verified"}
+        status == "accepted_tradeoff"
+        and gate_expected
+        and fixed_claim
+    ):
+        return {
+            "finding_id": finding["finding_id"],
+            "flag_id": flag_id,
+            "disposition": "accepted_tradeoff_plan_mutation",
+            "plan_artifact": current_plan_name,
+            "plan_sha256": current_plan_sha256,
+            "evidence": resolution.get("claim"),
+        }
+    # A finding classified accepted_tradeoff that the gate explicitly
+    # authorized proceeding past (gate.json recommendation == "PROCEED" and
+    # passed is True) is resolved by the gate's own acceptance.  The gate is
+    # the authority that accepted the plan despite the tradeoff -- it stands
+    # in for the per-finding gate_resolution the PROCEED path does not emit
+    # for every accepted flag.  This honors the gate's actual verdict rather
+    # than re-blocking finalize on a finding the gate already accepted.  It
+    # does NOT resolve accepted_tradeoff findings when the gate did not
+    # proceed -- only the gate's positive acceptance clears the finding.
+    # Interpretation logic only: reads the existing gate verdict and custody
+    # data, mutates no persisted state.
+    if (
+        status == "accepted_tradeoff"
+        and gate_expected
+        and gate_proceeded
+    ):
+        return {
+            "finding_id": finding["finding_id"],
+            "flag_id": flag_id,
+            "disposition": "accepted_tradeoff_gate_proceed",
+            "plan_artifact": current_plan_name,
+            "plan_sha256": current_plan_sha256,
+            "evidence": (
+                gate_resolution.get("rationale")
+                or resolution.get("claim")
+                or flag.get("verify_rationale")
+                or flag.get("concern")
+                or "gate PROCEED accepted this tradeoff"
+            ),
+        }
+    if (
+        status in {"open", "verified", "disputed"}
         and finding.get("blocking") is False
         and flag.get("severity") == "minor"
         and str(flag.get("concern") or "").strip()
@@ -541,7 +685,16 @@ def _resolution_for_finding(
 
 
 def write_critique_clearance(plan_dir: Path, state: PlanState) -> dict[str, Any]:
-    """Join every production receipt to current resolution evidence."""
+    """Join every production receipt to current resolution evidence.
+
+    The latest production receipt is the canonical critique input and remains
+    fully fail-closed, including byte verification of its source plan. Older
+    receipts still contribute every finding and must pass their own digest,
+    critique, raw-source, and identity checks. Their source plan files are
+    historical archive material, however, so a later clobber or loss is
+    recorded in the clearance instead of making an otherwise valid current
+    gate decision impossible to finalize.
+    """
     receipt_paths = _receipt_paths(plan_dir)
     robustness = configured_robustness(state)
     critique_expected = workflow_includes_step(robustness, "critique")
@@ -553,6 +706,7 @@ def write_critique_clearance(plan_dir: Path, state: PlanState) -> dict[str, Any]
         )
     current_plan = latest_plan_path(plan_dir, state)
     current_plan_sha = sha256_file(current_plan)
+    gate_proceeded = _gate_proceeded(plan_dir)
     plan_version_order = {
         str(version.get("file")): int(version.get("version"))
         for version in state.get("plan_versions", [])
@@ -569,10 +723,23 @@ def write_critique_clearance(plan_dir: Path, state: PlanState) -> dict[str, Any]
     resolutions: list[dict[str, Any]] = []
     source_receipts: list[dict[str, Any]] = []
     latest_occurrences: dict[str, tuple[Mapping[str, Any], Mapping[str, Any]]] = {}
+    canonical_receipt_path = _canonical_receipt_path(plan_dir, receipt_paths)
     for path in receipt_paths:
         receipt = read_json(path)
-        _validate_production_receipt(plan_dir, receipt)
-        source_receipts.append({"artifact": path.name, "sha256": sha256_file(path)})
+        canonical = path == canonical_receipt_path
+        _validate_production_receipt(
+            plan_dir,
+            receipt,
+            require_source_plan_match=canonical,
+        )
+        source_receipts.append(
+            {
+                "artifact": path.name,
+                "sha256": sha256_file(path),
+                "role": "canonical" if canonical else "superseded",
+                "source_plan_audit": _source_plan_audit(plan_dir, receipt),
+            }
+        )
         for finding in receipt.get("findings", []):
             flag_id = str(finding.get("flag_id"))
             finding_id = str(finding.get("finding_id"))
@@ -624,6 +791,7 @@ def write_critique_clearance(plan_dir: Path, state: PlanState) -> dict[str, Any]
                 source_plan_sha256=str(receipt.get("plan_sha256")),
                 plan_version_order=plan_version_order,
                 gate_expected=gate_expected,
+                gate_proceeded=gate_proceeded,
             )
         )
     clearance = {
@@ -785,7 +953,25 @@ def assert_finalize_custody(
             ]
             if resolution_ids != clearance.get("finding_ids"):
                 issues.append("clearance resolution rows differ from finding ids")
-            for source in clearance.get("source_receipts", []):
+            source_rows = clearance.get("source_receipts", [])
+            if not isinstance(source_rows, list):
+                source_rows = []
+                issues.append("clearance source_receipts is not an array")
+            uses_audited_roles = any(
+                isinstance(source, Mapping) and "role" in source
+                for source in source_rows
+            )
+            canonical_sources: list[str] = []
+            expected_canonical: Path | None = None
+            if uses_audited_roles:
+                try:
+                    expected_canonical = _canonical_receipt_path(
+                        plan_dir,
+                        _receipt_paths(plan_dir),
+                    )
+                except CritiqueCustodyError as error:
+                    issues.extend(error.issues)
+            for source in source_rows:
                 if not isinstance(source, Mapping):
                     issues.append("clearance source receipt row is malformed")
                     continue
@@ -797,10 +983,45 @@ def assert_finalize_custody(
                 if not source_path.exists() or source.get("sha256") != sha256_file(source_path):
                     issues.append(f"clearance source receipt mismatch for {source_name}")
                     continue
+                require_source_plan_match = True
+                if uses_audited_roles:
+                    role = source.get("role")
+                    if role == "canonical":
+                        canonical_sources.append(source_name)
+                    elif role == "superseded":
+                        require_source_plan_match = False
+                    else:
+                        issues.append(
+                            f"clearance source receipt has invalid role for {source_name}"
+                        )
+                    actual_audit = _source_plan_audit(
+                        plan_dir,
+                        read_json(source_path),
+                    )
+                    if source.get("source_plan_audit") != actual_audit:
+                        issues.append(
+                            f"clearance source plan audit mismatch for {source_name}"
+                        )
                 try:
-                    _validate_production_receipt(plan_dir, read_json(source_path))
+                    _validate_production_receipt(
+                        plan_dir,
+                        read_json(source_path),
+                        require_source_plan_match=require_source_plan_match,
+                    )
                 except CritiqueCustodyError as error:
                     issues.extend(error.issues)
+            if uses_audited_roles:
+                if len(canonical_sources) != 1:
+                    issues.append(
+                        "clearance must identify exactly one canonical source receipt"
+                    )
+                elif (
+                    expected_canonical is not None
+                    and canonical_sources[0] != expected_canonical.name
+                ):
+                    issues.append(
+                        "clearance canonical source receipt differs from gate authority"
+                    )
             plan_name = clearance.get("plan_artifact")
             if not isinstance(plan_name, str) or not (plan_dir / plan_name).exists():
                 issues.append("clearance plan artifact is missing")

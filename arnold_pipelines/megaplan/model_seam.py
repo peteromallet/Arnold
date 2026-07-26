@@ -584,6 +584,10 @@ def _normalize_native_capture_payload(
         return _normalize_critique_evaluator_capture_payload(payload)
     if step == "prep-distill":
         return _normalize_prep_distill_capture_payload(payload)
+    if step == "tiebreaker_researcher":
+        return _normalize_tiebreaker_researcher_capture_payload(payload)
+    if step == "tiebreaker_challenger":
+        return _normalize_tiebreaker_challenger_capture_payload(payload)
     if step != "finalize":
         return payload
     if _finalize_schema_requires_nullable_task_optionals(invocation):
@@ -1014,6 +1018,198 @@ def _normalize_critique_evaluator_capture_payload(payload: dict[str, Any]) -> di
     return normalized
 
 
+def _normalize_tiebreaker_researcher_capture_payload(
+    payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Resilient GLM/hermes tiebreaker-researcher normalizer.
+
+    GLM investigates correctly but its field naming is highly variable across
+    runs (``type``/``files``/``paths``, ``question``/``decision_question``,
+    ``least_sure``/``least_sure_about``/``what_im_least_sure_about``, pick as
+    bare string or object with ``chosen_option``/``option_name``/``choice``...).
+    Rather than chase each spelling, this normalizer maps by alias family and
+    coerces ``preliminary_pick`` from any shape, so the strict
+    ``additionalProperties=false`` schema passes while preserving substance.
+    """
+    raw = payload if isinstance(payload, Mapping) else {}
+
+    # ── alias families (first non-empty hit wins) ──
+    def _first(d, aliases, default=None):
+        if not isinstance(d, Mapping):
+            return default
+        for a in aliases:
+            v = d.get(a)
+            if v not in (None, "", [], {}):
+                return v
+        return default
+
+    QUESTION_ALIASES = ("question", "decision_question", "decision", "the_question", "prompt")
+    ETYPE_ALIASES = ("evidence_type", "type", "kind", "category")
+    FILEPATHS_ALIASES = ("file_paths", "files", "paths", "file_path", "file", "locations", "sources")
+    QUOTE_ALIASES = ("quote", "snippet", "text", "excerpt", "code")
+    CLAIM_ALIASES = ("claim", "statement", "assertion", "finding", "summary")
+    PICK_OPTION_ALIASES = ("option_name", "chosen_option", "choice", "pick", "selected_option", "recommended_option", "recommendation", "answer", "option", "selected", "verdict")
+    PICK_RATIONALE_ALIASES = ("rationale", "reason", "reasoning", "justification", "why", "explanation")
+    PICK_UNSURE_ALIASES = ("what_im_least_sure_about", "least_sure_about", "least_sure", "not_sure_about", "uncertainties", "caveats", "uncertainty", "doubts", "reservations")
+
+    # ── evidence: rebuild each item from aliases ──
+    evidence_out = []
+    for item in (raw.get("evidence") or []):
+        if not isinstance(item, Mapping):
+            continue
+        etype = _first(item, ETYPE_ALIASES, "code")
+        if etype not in ("code", "measurement", "pattern", "doc"):
+            etype_l = str(etype).lower()
+            etype = "code" if "code" in etype_l else "measurement" if "meas" in etype_l else "pattern" if "pattern" in etype_l else "doc" if "doc" in etype_l else "code"
+        fp = _first(item, FILEPATHS_ALIASES, [])
+        if isinstance(fp, str):
+            fp = [fp] if fp else []
+        elif not isinstance(fp, list):
+            fp = []
+        evidence_out.append({
+            "claim": str(_first(item, CLAIM_ALIASES, "")),
+            "evidence_type": etype,
+            "file_paths": [str(x) for x in fp],
+            "quote": str(_first(item, QUOTE_ALIASES, "")),
+        })
+
+    # ── options: rebuild each from aliases ──
+    options_out = []
+    for opt in (raw.get("options") or []):
+        if not isinstance(opt, Mapping):
+            continue
+        desc = _first(opt, ("description", "desc", "summary", "what"), "")
+        assum = _first(opt, ("assumptions", "assumption", "assumes"), [])
+        if isinstance(assum, str):
+            assum = [assum] if assum else []
+        costs = _first(opt, ("costs", "cost", "tradeoffs", "downsides", "drawbacks"), [])
+        if isinstance(costs, str):
+            costs = [costs] if costs else []
+        options_out.append({
+            "name": str(_first(opt, ("name", "option", "option_name", "label", "title"), "")),
+            "description": str(desc),
+            "assumptions": [str(x) for x in assum] if isinstance(assum, list) else [],
+            "costs": [str(x) for x in costs] if isinstance(costs, list) else [],
+        })
+
+    # ── preliminary_pick: coerce from any shape ──
+    # When GLM hoists rationale/unsure to the top level (common when it emits
+    # pick as a bare string), fall back to the top-level raw payload.
+    pick_raw = raw.get("preliminary_pick")
+    if isinstance(pick_raw, Mapping):
+        pick_src = pick_raw
+    elif isinstance(pick_raw, str):
+        pick_src = {"chosen_option": pick_raw}
+    else:
+        pick_src = {}
+    pick_option = _first(pick_src, PICK_OPTION_ALIASES, "") or ""
+    pick_rationale = _first(pick_src, PICK_RATIONALE_ALIASES, "") or _first(raw, PICK_RATIONALE_ALIASES, "") or ""
+    pick_unsure = _first(pick_src, PICK_UNSURE_ALIASES, "") or _first(raw, PICK_UNSURE_ALIASES, "") or ""
+    preliminary_pick = {
+        "option_name": str(pick_option),
+        "rationale": str(pick_rationale),
+        "what_im_least_sure_about": str(pick_unsure),
+    }
+
+    return {
+        "question": str(_first(raw, QUESTION_ALIASES, "")),
+        "evidence": evidence_out,
+        "options": options_out,
+        "preliminary_pick": preliminary_pick,
+    }
+
+
+def _normalize_tiebreaker_challenger_capture_payload(
+    payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Normalize GLM/hermes tiebreaker-challenger output to the strict schema.
+
+    Mirrors the researcher normalizer: GLM's analysis is sound but its field
+    shapes drift from ``tiebreaker_challenger.json`` (extra properties, missing
+    required sub-fields, bare strings where objects are required). Project to
+    schema-owned fields at every strict node and backfill required defaults so
+    ``additionalProperties=false`` passes without losing the substance.
+    """
+    schema = SCHEMAS["tiebreaker_challenger.json"]
+    normalized = project_schema_owned_fields(
+        payload,
+        schema,
+        contract="tiebreaker challenger capture normalization",
+    )
+
+    def _project_list_items(value, schema_path, required_defaults):
+        if not isinstance(value, list):
+            return []
+        item_schema = schema_mapping_at_path(
+            schema, schema_path, contract="tiebreaker challenger item schema"
+        )
+        out = []
+        for item in value:
+            if not isinstance(item, Mapping):
+                continue
+            projected = project_schema_owned_fields(
+                dict(item),
+                item_schema,
+                contract="tiebreaker challenger item normalization",
+            )
+            for req_key, default in required_defaults.items():
+                projected.setdefault(req_key, default)
+            out.append(projected)
+        return out
+
+    normalized["missing_options"] = _project_list_items(
+        normalized.get("missing_options"),
+        ("properties", "missing_options", "items"),
+        {"name": "", "description": "", "why_missed": ""},
+    )
+    normalized["hard_cases"] = _project_list_items(
+        normalized.get("hard_cases"),
+        ("properties", "hard_cases", "items"),
+        {"scenario": "", "which_option_breaks": "", "severity": "uncertain"},
+    )
+    reframings = normalized.get("reframings")
+    normalized["reframings"] = [
+        r for r in reframings if isinstance(r, str)
+    ] if isinstance(reframings, list) else []
+
+    # counter_recommendation is a required strict object; accept bare string
+    # (option name) and backfill required fields.
+    counter = normalized.get("counter_recommendation")
+    if isinstance(counter, str):
+        counter = {"option_name": counter}
+    if not isinstance(counter, Mapping):
+        counter = {}
+    counter = project_schema_owned_fields(
+        dict(counter),
+        schema_mapping_at_path(
+            schema,
+            ("properties", "counter_recommendation"),
+            contract="tiebreaker challenger counter schema",
+        ),
+        contract="tiebreaker challenger counter normalization",
+    )
+    agrees = counter.get("agrees_with_researcher")
+    if not isinstance(agrees, bool):
+        counter["agrees_with_researcher"] = False
+    counter.setdefault("option_name", "")
+    counter.setdefault("rationale", "")
+    normalized["counter_recommendation"] = counter
+
+    # GLM sometimes emits these required string fields as lists/objects/nulls;
+    # coerce any non-string to a string (join lists, stringify objects, "" for null).
+    def _coerce_str(value):
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return "; ".join(str(x) for x in value if x not in (None, ""))
+        if value is None:
+            return ""
+        return str(value)
+    normalized["measurements_vs_assumptions"] = _coerce_str(normalized.get("measurements_vs_assumptions"))
+    normalized["aging_analysis"] = _coerce_str(normalized.get("aging_analysis"))
+    return normalized
+
+
 def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize structured provider plan output to the canonical plan schema."""
 
@@ -1022,9 +1218,17 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
         SCHEMAS["plan.json"],
         contract="plan capture normalization",
     )
-    if isinstance(payload.get("plan"), str):
-        normalized["plan"] = payload["plan"]
-        extracted = _extract_plan_markdown_metadata(payload["plan"])
+    # Prefer full step-bearing markdown over a provider summary.
+    _plan_candidate = payload.get("plan_markdown")
+    if isinstance(_plan_candidate, str) and "### Step " in _plan_candidate:
+        _plan_source = _plan_candidate
+    elif isinstance(payload.get("plan"), str):
+        _plan_source = payload["plan"]
+    else:
+        _plan_source = None
+    if isinstance(_plan_source, str):
+        normalized["plan"] = _plan_source
+        extracted = _extract_plan_markdown_metadata(_plan_source)
         normalized["questions"] = _normalize_plan_questions(
             payload.get("questions", extracted.get("questions"))
         )
@@ -1081,7 +1285,12 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
                             parts.append(f"- {sub}")
             elif isinstance(step, str):
                 parts.append(f"- {step}")
-    plan_text = payload.get("plan_text") or payload.get("markdown") or "\n\n".join(parts)
+    plan_text = (
+        payload.get("plan_markdown")
+        or payload.get("plan_text")
+        or payload.get("markdown")
+        or "\n\n".join(parts)
+    )
     if not isinstance(plan_text, str):
         plan_text = "\n\n".join(parts)
     extracted = _extract_plan_markdown_metadata(plan_text)
@@ -1594,6 +1803,12 @@ def _register_hooks() -> None:
         "critique_evaluator", _normalize_critique_evaluator_capture_payload
     )
     register_native_normalizer("prep-distill", _normalize_prep_distill_capture_payload)
+    register_native_normalizer(
+        "tiebreaker_researcher", _normalize_tiebreaker_researcher_capture_payload
+    )
+    register_native_normalizer(
+        "tiebreaker_challenger", _normalize_tiebreaker_challenger_capture_payload
+    )
 
     def _finalize_normalizer(payload: Mapping[str, Any]) -> dict[str, Any]:
         # Generic hook signature is payload-only; schema-aware nullable handling

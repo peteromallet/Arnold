@@ -188,6 +188,17 @@ def handle_tiebreaker_run(root: Path, args: argparse.Namespace) -> StepResponse:
             exit_code = _run_tiebreaker(root, plan_dir, state, tb_args)
             transition = workflow_transition(state, "tiebreaker-run")
             state["current_state"] = transition.next_state
+            # Persist the state advance: unlike pipeline-driven phases (which have an
+            # outer driver that commits state), the tiebreaker is a standalone command
+            # with no such driver, so it must commit its own transition here.
+            from arnold_pipelines.megaplan._core.state import write_plan_state
+            write_plan_state(
+                plan_dir,
+                mode="replace",
+                state=state,
+                kind="tiebreaker-run",
+                detail=f"tiebreaker bridge completed; advanced to {transition.next_state}",
+            )
         else:
             require_state(state, lock_step, {STATE_TIEBREAKER_READY})
             exit_code = 0
@@ -274,6 +285,15 @@ def handle_tiebreaker_decide(root: Path, args: argparse.Namespace) -> StepRespon
             reset_replan_loop_state(state, target_state=STATE_CRITIQUED)
         else:
             state["current_state"] = STATE_CRITIQUED
+        # Persist the decision's state advance (standalone command, no outer driver).
+        from arnold_pipelines.megaplan._core.state import write_plan_state
+        write_plan_state(
+            plan_dir,
+            mode="replace",
+            state=state,
+            kind="tiebreaker-decide",
+            detail=f"tiebreaker decided ({action}); advanced to {state['current_state']}",
+        )
 
         return {
             "success": True,

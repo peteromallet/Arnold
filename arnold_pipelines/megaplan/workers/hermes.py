@@ -69,6 +69,15 @@ def _pre_dispatch_budget_check(
     render_step_message; ModelBudgetError must propagate so an oversized prompt
     cannot reach the provider.
     """
+    # Resolve the model's actual context length so the budget check uses
+    # real provider/model capacity rather than the conservative family default.
+    resolved_max_input_tokens = None
+    if model_name:
+        try:
+            from arnold.agent.agent.model_metadata import get_model_context_length
+            resolved_max_input_tokens = get_model_context_length(model_name, provider="")
+        except Exception:
+            resolved_max_input_tokens = None
     metadata = {
         "system": system,
         "history": conversation_history,
@@ -81,6 +90,8 @@ def _pre_dispatch_budget_check(
         "validation_step": step,
         "tier": tier.value if isinstance(tier, ModelTier) else tier,
     }
+    if resolved_max_input_tokens is not None:
+        metadata["max_input_tokens"] = resolved_max_input_tokens
     invocation = StepInvocation(kind="model", metadata=metadata)
     try:
         return render_step_message(invocation)
@@ -3207,6 +3218,23 @@ def _finalize_structural_repair_prompt(
     )
 
 
+def _deescape_double_encoded_json(raw):
+    if raw is None:
+        return None
+    text = raw.strip()
+    if not text.startswith("{") or not text.endswith("}"):
+        return None
+    if '\\"' not in text:
+        return None
+    try:
+        inner = json.loads('"' + text + '"')
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(inner, str):
+        return None
+    return inner
+
+
 def _parse_json_response(text: str) -> dict | None:
     """Extract a JSON object from a model response.
 
@@ -3221,6 +3249,26 @@ def _parse_json_response(text: str) -> dict | None:
     text = text.strip()
     if not text:
         return None
+
+    deescaped = _deescape_double_encoded_json(text)
+    if deescaped is not None:
+        try:
+            parsed = json.loads(deescaped)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+        for deescape_candidate in [deescaped, _repair_json(deescaped)]:
+            decoder = json.JSONDecoder()
+            for _i, ch in enumerate(deescape_candidate):
+                if ch != '{':
+                    continue
+                try:
+                    parsed, _end = decoder.raw_decode(deescape_candidate[_i:])
+                    if isinstance(parsed, dict):
+                        return parsed
+                except json.JSONDecodeError:
+                    continue
 
     for candidate in [text, _repair_json(text)]:
         # Direct parse

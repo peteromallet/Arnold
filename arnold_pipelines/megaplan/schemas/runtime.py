@@ -1214,7 +1214,24 @@ def _build_finalize_capture_schema() -> dict[str, Any]:
     the model fabricate custody and baseline evidence and can produce an invalid
     OpenAI schema for opaque harness objects.  Keep the transport boundary
     explicit while retaining the legacy task shape accepted by finalize.
+
+    The v2 planning contract (``FINALIZE_MODEL_OUTPUT_SCHEMA``) introduces
+    task-contract-v2 fields the model is instructed to emit for a planning
+    finalize (``task_contract_version``, ``validation_jobs`` at top level;
+    ``objective``, ``estimated_minutes``, ``routing_group``, ``write_set``,
+    ``narrow_tests``, ``checkpoint``, ``dependency_reasons`` per task).  These
+    are absent from the legacy execution-capture task shape, which would
+    otherwise reject them as ``additional_property``.  Merge the v2 task fields
+    over the base task schema and relax execution-only required task fields
+    (``files_changed``/``commands_run``/``evidence_files``/``auto_attributed_files``
+    /``stance``/``stop_signal``): a planning finalize legitimately lacks them
+    because the work has not been executed yet.  This keeps the capture schema
+    aligned with what the finalize prompt tells the model to produce.
     """
+
+    from arnold_pipelines.megaplan.finalize_contract import (
+        FINALIZE_MODEL_OUTPUT_SCHEMA,
+    )
 
     schema = deepcopy(SCHEMAS["finalize.json"])
     for field in (
@@ -1226,7 +1243,46 @@ def _build_finalize_capture_schema() -> dict[str, Any]:
         "suite_runs_ndjson_path",
     ):
         schema["properties"].pop(field, None)
-    schema["required"] = list(schema["properties"])
+
+    # Add v2 planning top-level properties (optional).
+    v2_top = FINALIZE_MODEL_OUTPUT_SCHEMA.get("properties", {})
+    for top_field in ("task_contract_version", "validation_jobs"):
+        if isinstance(v2_top.get(top_field), dict):
+            schema["properties"].setdefault(top_field, deepcopy(v2_top[top_field]))
+
+    # Merge v2 planning task fields over the base task schema, and relax
+    # execution-only required fields so a planning finalize validates clean.
+    base_task = schema.get("properties", {}).get("tasks", {}).get("items", {})
+    v2_task = v2_top.get("tasks", {}).get("items", {})
+    if isinstance(base_task.get("properties"), dict) and isinstance(v2_task.get("properties"), dict):
+        for tfield, tdef in v2_task["properties"].items():
+            base_task["properties"].setdefault(tfield, deepcopy(tdef))
+        exec_only = {
+            "files_changed", "commands_run", "evidence_files",
+            "auto_attributed_files", "stance", "stop_signal",
+        }
+        if isinstance(base_task.get("required"), list):
+            base_task["required"] = [r for r in base_task["required"] if r not in exec_only]
+
+    schema["required"] = [k for k in schema["properties"] if k in (
+        "tasks", "sense_checks", "watch_items", "user_actions", "meta_commentary",
+        "critique_resolution_coverage",
+    )]
+    # strict_schema (applied at materialization + audit) promotes every nested
+    # object property to ``required``.  For v2 planning task fields with
+    # optional nested members (``checkpoint`` carries only ``required`` from the
+    # model; ``max_interval_seconds``/``records`` are harness-optional), restore
+    # the authoritative per-object required sets so GLM's valid partial emission
+    # is not rejected as ``missing_required``.
+    _task_props = schema.get("properties", {}).get("tasks", {}).get("items", {}).get("properties", {})
+    for _nested, _req in (
+        ("checkpoint", ["required"]),
+        ("write_set", ["paths", "complete"]),
+        ("narrow_tests", ["selectors", "max_seconds", "max_runs"]),
+    ):
+        _obj = _task_props.get(_nested)
+        if isinstance(_obj, dict) and isinstance(_obj.get("properties"), dict):
+            _obj["required"] = [r for r in _req if r in _obj["properties"]]
     return schema
 
 

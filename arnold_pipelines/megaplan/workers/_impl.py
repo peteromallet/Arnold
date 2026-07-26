@@ -2431,6 +2431,14 @@ def _extract_json_candidates_from_raw(raw: str) -> list[dict[str, Any]]:
     recovered = _extract_json_from_mutating_tool_markup(raw)
     if recovered is not None:
         raw = recovered
+    try:
+        from arnold_pipelines.megaplan.workers.hermes import _deescape_double_encoded_json
+        deescaped = _deescape_double_encoded_json(raw)
+        if deescaped is not None:
+            raw = deescaped
+    except Exception:
+        pass
+
 
     def _iter_nested_json_dicts(value: Any) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
@@ -2583,6 +2591,17 @@ def _json_decode_error_for_raw(raw: str) -> json.JSONDecodeError | None:
         stripped = line.strip()
         if stripped.startswith("{") or stripped.startswith("["):
             candidates.append(stripped)
+    try:
+        from arnold_pipelines.megaplan.workers.hermes import _deescape_double_encoded_json
+        deescaped = _deescape_double_encoded_json(raw)
+        if deescaped is not None:
+            try:
+                json.loads(deescaped)
+                return None
+            except json.JSONDecodeError:
+                candidates.insert(0, deescaped)
+    except Exception:
+        pass
     for candidate in candidates:
         try:
             json.loads(candidate)
@@ -5078,12 +5097,27 @@ def run_step_with_worker(
             suppress_ambient_fallback = bool(
                 (worker_options or {}).get("_suppress_ambient_agent_fallback")
             )
+            # When the model's context window is too small for the prompt,
+            # try a fallback agent (DeepSeek/Claude) with a larger window
+            # before giving up.  The hermes budget guard raises ModelBudgetError
+            # which surfaces as worker_error with a "budget exceeded" message.
+            _budget_exceeded = (
+                "budget exceeded" in str(error)
+                and step not in _EXECUTE_STEPS
+                and agent == "hermes"
+            )
             if (
                 explicit_agent
                 or suppress_ambient_fallback
-                or error.code not in {"auth_error", "connection_error"}
+                or (error.code not in {"auth_error", "connection_error"} and not _budget_exceeded)
             ):
                 raise
+            if _budget_exceeded:
+                print(
+                    f"[megaplan] Model budget exceeded for step '{step}' "
+                    f"({agent}), falling back to runtime candidates",
+                    file=sys.stderr,
+                )
             fallback_candidates = [
                 candidate
                 for candidate in _runtime_fallback_candidates(agent)

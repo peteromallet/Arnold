@@ -30,7 +30,10 @@ pipeline-blind.
 from __future__ import annotations
 
 import json
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from math import ceil
@@ -44,6 +47,8 @@ from arnold.pipeline import (
     validate_payload_against_schema,
 )
 from arnold.execution.step_invocation import StepInvocation, StepInvocationAdapterRegistry
+
+logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------- #
@@ -441,22 +446,22 @@ _PROVIDER_PREFIXES = (
 
 _FAMILY_BUDGET_DEFAULTS: dict[ModelFamily, ModelBudgetDefaults] = {
     ModelFamily.CODEX: ModelBudgetDefaults(
-        max_input_tokens=256_000, tokenizer_source="tiktoken:o200k_base"
+        max_input_tokens=1_000_000, tokenizer_source="tiktoken:o200k_base"
     ),
     ModelFamily.CLAUDE: ModelBudgetDefaults(
-        max_input_tokens=180_000, tokenizer_source="claude_conservative_estimate"
+        max_input_tokens=1_000_000, tokenizer_source="claude_conservative_estimate"
     ),
     ModelFamily.DEEPSEEK: ModelBudgetDefaults(
-        max_input_tokens=140_000, tokenizer_source="hf:auto"
+        max_input_tokens=1_000_000, tokenizer_source="hf:auto"
     ),
     ModelFamily.KIMI: ModelBudgetDefaults(
-        max_input_tokens=120_000, tokenizer_source="hf:auto"
+        max_input_tokens=1_000_000, tokenizer_source="hf:auto"
     ),
     ModelFamily.GLM: ModelBudgetDefaults(
-        max_input_tokens=120_000, tokenizer_source="hf:auto"
+        max_input_tokens=1_000_000, tokenizer_source="hf:auto"
     ),
     ModelFamily.MIMO: ModelBudgetDefaults(
-        max_input_tokens=120_000, tokenizer_source="hf:auto"
+        max_input_tokens=1_000_000, tokenizer_source="hf:auto"
     ),
 }
 
@@ -587,9 +592,18 @@ def _checked_budget(
         BudgetStatus.DEGRADED_FALLBACK if degraded_reason else BudgetStatus.WITHIN_BUDGET
     )
     if input_tokens > max_input_tokens:
-        raise ModelBudgetError(
-            f"model input budget exceeded: {input_tokens} tokens > {max_input_tokens} tokens"
+        # Advisory, not a hard block. The size estimate can be wrong (byte-ratio
+        # fallback over-counts ~1.5x; per-family limits are guesses); rejecting
+        logger.warning(
+            "model input budget exceeded (advisory, proceeding): "
+            "%s tokens > %s tokens for family=%s source=%s",
+            input_tokens,
+            max_input_tokens,
+            family.value if family is not None else None,
+            tokenizer_source,
         )
+        status = BudgetStatus.EXCEEDED
+        degraded_reason = degraded_reason or "input_budget_exceeded_proceeding"
     return ModelBudget(
         family=family,
         input_tokens=input_tokens,

@@ -71,6 +71,55 @@ def _load(path: str | Path | None) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _repair_tolerant_json_loads(text: str) -> dict[str, Any]:
+    """Parse JSON from model output tolerantly.
+
+    GLM (coding endpoint) frequently wraps structured output in markdown code
+    fences and/or backslash-escapes the interior quotes (double-encoded JSON).
+    This helper strips fences, de-escapes one layer, and scans for the first
+    decodable JSON object before giving up.
+    """
+    import re as _re
+    candidate = text.strip()
+
+    # Strip a single ```json ... ``` (or ``` ... ```) fenced block.
+    fenced = _re.search(r"```(?:json)?\s*\n?(.*?)```", candidate, _re.DOTALL)
+    if fenced:
+        candidate = fenced.group(1).strip()
+
+    # Double-encoded JSON: text starts with '{', ends with '}', and contains '\"'.
+    deescaped = None
+    if candidate.startswith("{") and candidate.endswith("}") and '\\"' in candidate:
+        try:
+            inner = json.loads('"' + candidate + '"')
+            if isinstance(inner, str):
+                deescaped = inner
+        except (json.JSONDecodeError, ValueError):
+            deescaped = None
+
+    for attempt in [candidate, deescaped]:
+        if not attempt:
+            continue
+        try:
+            value = json.loads(attempt)
+            if isinstance(value, dict):
+                return value
+        except (json.JSONDecodeError, TypeError):
+            pass
+        # First-'{' object scan as a last resort.
+        decoder = json.JSONDecoder()
+        for i, ch in enumerate(attempt):
+            if ch != "{":
+                continue
+            try:
+                parsed, _end = decoder.raw_decode(attempt[i:])
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+    raise json.JSONDecodeError("Expecting value", attempt or text, 0)
+
+
 def _load_bounded_json(path: str | Path, *, max_bytes: int, label: str) -> dict[str, Any]:
     source = Path(path)
     try:
@@ -80,9 +129,16 @@ def _load_bounded_json(path: str | Path, *, max_bytes: int, label: str) -> dict[
     if len(encoded) > max_bytes:
         raise ValueError(f"{label} exceeds {max_bytes}-byte bound")
     try:
-        value = json.loads(encoded.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        text = encoded.decode("utf-8")
+    except UnicodeDecodeError as exc:
         raise ValueError(f"{label} is not valid UTF-8 JSON") from exc
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        try:
+            value = _repair_tolerant_json_loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{label} is not valid UTF-8 JSON") from exc
     if not isinstance(value, dict):
         raise ValueError(f"{label} must be a JSON object")
     return value

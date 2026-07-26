@@ -41,7 +41,7 @@ FINALIZE_MODEL_OUTPUT_SCHEMA: dict[str, Any] = {
                     "complexity_justification": {"type": "string"},
                     "estimated_minutes": {"type": "integer"},
                     "depends_on": {"type": "array", "items": {"type": "string"}},
-                    "dependency_reasons": {"type": "object"},
+                    "dependency_reasons": {"type": "object", "additionalProperties": {"type": "string"}},
                     "routing_group": {"type": "string"},
                     "write_set": {
                         "type": "object",

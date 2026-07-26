@@ -259,7 +259,17 @@ _NESTED_WORKER_ENV = "ARNOLD_NESTED_MANAGED_AGENT_WORKER"
 
 
 def _resolve_model_shortcut(model: str) -> str:
-    return _MODEL_SHORTCUTS.get(str(model).strip(), model)
+    stripped = str(model).strip()
+    if stripped in _MODEL_SHORTCUTS:
+        return _MODEL_SHORTCUTS[stripped]
+    # The chain/hermes layer addresses providers as ``hermes:<provider>:<model>``
+    # (e.g. ``hermes:zhipu:glm-5.2``). The subagent launcher's resolve_model
+    # expects the bare provider form (``zhipu:glm-5.2``). Strip a leading
+    # ``hermes:`` so repair-investigator models configured in hermes-form route
+    # to the correct native provider instead of falling through to OpenRouter.
+    if stripped.startswith("hermes:"):
+        return stripped[len("hermes:"):]
+    return stripped
 
 
 def _automatic_managed_reexec() -> int | None:

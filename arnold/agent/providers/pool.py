@@ -61,7 +61,7 @@ _PROVIDER_BASE_URL_VARS = {
     "xai": "XAI_BASE_URL",
 }
 _DEFAULT_BASE_URLS = {
-    "zhipu": "https://open.bigmodel.cn/api/paas/v4",
+    "zhipu": "https://open.bigmodel.cn/api/coding/paas/v4",
     "kimi": "https://api.moonshot.ai/v1",
     "minimax": "https://api.minimax.io/v1",
     "mimo": "https://api.xiaomimimo.com/v1",
