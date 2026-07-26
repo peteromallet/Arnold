@@ -617,6 +617,11 @@ def _dispatch(
     escalation_id = str(escalation_gate.get("escalation_id") or "")
     context_path = str(request_target.get("repair_context_path") or "")
     context_digest = str(request_target.get("repair_context_digest") or "")
+    repair_target = (
+        request_target.get("repair_target")
+        if isinstance(request_target.get("repair_target"), Mapping)
+        else {}
+    )
     retry_of_run_id = str(request_target.get("retry_of_run_id") or "")
     outcome_path = str(Path(context_path).with_name("repair-outcome.json")) if context_path else ""
     if deep_dispatch:
@@ -627,6 +632,25 @@ def _dispatch(
         env["ARNOLD_L3_REPAIR_OUTCOME_PATH"] = outcome_path
         env["ARNOLD_META_REPAIR_DIFFICULTY"] = "9"
         env["ARNOLD_META_REPAIR_CHILD_DIFFICULTY_CEILING"] = "9"
+        if repair_target:
+            env["ARNOLD_L3_FIX_TARGET_SRC"] = str(
+                repair_target.get("source_root") or ""
+            )
+            env["ARNOLD_L3_FIX_TARGET_BRANCH"] = str(
+                repair_target.get("source_branch") or ""
+            )
+            env["ARNOLD_L3_FIX_TARGET_BASELINE"] = str(
+                repair_target.get("baseline_revision") or ""
+            )
+            env["ARNOLD_L3_FIX_TARGET_RUNTIME_IDENTITY"] = str(
+                repair_target.get("runtime_identity_sha256") or ""
+            )
+            env["ARNOLD_L3_FIX_TARGET_RELAUNCH_COMMAND"] = str(
+                repair_target.get("relaunch_command") or ""
+            )
+            env["ARNOLD_L3_FIX_TARGET_NO_PUSH"] = (
+                "1" if repair_target.get("no_push") is True else "0"
+            )
     run_kind = (
         "automatic_root_cause_repair"
         if deep_dispatch

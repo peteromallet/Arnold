@@ -253,6 +253,94 @@ def test_l3_dispatch_context_requires_coherent_bounded_request_custody(
         )
 
 
+def test_l3_context_pins_repairs_to_the_session_runtime_branch(
+    tmp_path: Path,
+) -> None:
+    finding = _true_stall()
+    finding["session_header"].update(
+        {
+            "editable_source_branch": "runtime/custody-older-engine-fixes-92aee998",
+            "relaunch_command": (
+                "cd /workspace/stuck/Arnold && "
+                "MEGAPLAN_RUNTIME_SRC=/workspace/runtime-candidates/arnold-92aee998 "
+                "python -m arnold_pipelines.megaplan chain start --no-push"
+            ),
+            "runtime_binding": {
+                "current_identity": {
+                    "content_sha256": "1" * 64,
+                    "import_root": "/workspace/runtime-candidates/arnold-92aee998",
+                    "editable_revision": "92aee998" + "0" * 32,
+                }
+            },
+            "project_branch": "megaplan/custody-control-plane/m10",
+            "project_dirty": True,
+        }
+    )
+    context = bounded_repair_context(finding)
+    target = context["repair_target"]
+
+    assert target == {
+        "schema_version": "arnold-l3-session-runtime-repair-target-v1",
+        "source_root": "/workspace/runtime-candidates/arnold-92aee998",
+        "source_branch": "runtime/custody-older-engine-fixes-92aee998",
+        "baseline_revision": "92aee998" + "0" * 32,
+        "runtime_identity_sha256": "1" * 64,
+        "relaunch_command": finding["session_header"]["relaunch_command"],
+        "project_workspace": "/workspace/stuck/Arnold",
+        "project_branch": "megaplan/custody-control-plane/m10",
+        "project_dirty": True,
+        "preserve_project_workspace": True,
+        "no_push": True,
+    }
+
+    context_path = tmp_path / "repair-context.json"
+    context_path.write_text(json.dumps(context), encoding="utf-8")
+    request_id = "e" * 64
+    request_path = tmp_path / f"{request_id}.json"
+    gate = context["gate"]
+    request = {
+        "kind": "repair_request",
+        "request_id": request_id,
+        "source": "six_hour_auditor",
+        "session": context["session"],
+        "resident_delegation": {
+            "schema_version": "arnold-resident-delegation-provenance-v1",
+        },
+        "target": {
+            "dispatch_intent": "deep_superfixer_repair",
+            "retry_strategy": "deep_superfixer_repair",
+            "repair_context_path": str(context_path),
+            "repair_context_digest": context["context_digest"],
+            "root_cause_identity": gate["escalation_id"],
+            "l3_escalation_gate": gate,
+            "repair_target": target,
+        },
+    }
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+
+    pointer = validate_l3_repair_dispatch_context(
+        context_path=context_path,
+        request_path=request_path,
+        expected_session=context["session"],
+        expected_context_digest=context["context_digest"],
+        expected_escalation_id=gate["escalation_id"],
+        expected_request_id=request_id,
+    )
+    assert pointer["repair_target"] == target
+
+    request["target"]["repair_target"]["source_branch"] = "editible-install"
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+    with pytest.raises(ValueError, match="session runtime repair target"):
+        validate_l3_repair_dispatch_context(
+            context_path=context_path,
+            request_path=request_path,
+            expected_session=context["session"],
+            expected_context_digest=context["context_digest"],
+            expected_escalation_id=gate["escalation_id"],
+            expected_request_id=request_id,
+        )
+
+
 def test_l3_dispatch_context_fails_closed_above_64_kib(tmp_path: Path) -> None:
     context_path = tmp_path / "repair-context.json"
     context_path.write_bytes(b"{" + b" " * (64 * 1024) + b"}")

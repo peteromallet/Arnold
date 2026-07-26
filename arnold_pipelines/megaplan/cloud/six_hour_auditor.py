@@ -261,6 +261,11 @@ def enqueue_audit_repair_request(
             "l3_escalation_gate": escalation_gate,
             "repair_context_path": str(audit_item.get("l3_repair_context_path") or ""),
             "repair_context_digest": str(audit_item.get("l3_repair_context_digest") or ""),
+            "repair_target": (
+                dict(audit_item.get("repair_target") or {})
+                if isinstance(audit_item.get("repair_target"), dict)
+                else {}
+            ),
             "route": escalation_gate.get("route") or {},
         },
         workspace=workspace,

@@ -17,6 +17,7 @@ WRAPPER_PATH = (
     / "wrappers"
     / "arnold-meta-repair-loop"
 )
+REPAIR_TRIGGER_PATH = WRAPPER_PATH.with_name("arnold-repair-trigger")
 
 
 def _meta_repair_wrapper() -> str:
@@ -78,7 +79,7 @@ def test_unrecordable_codex_response_dispatches_direct_hermes() -> None:
 def test_meta_repair_wrapper_fails_closed_on_commit_custody() -> None:
     text = _meta_repair_wrapper()
 
-    assert 'SOURCE_BASELINE_HEAD="$(git -C "$ARNOLD_SRC" rev-parse HEAD' in text
+    assert 'SOURCE_BASELINE_HEAD="$(git -C "$FIX_TARGET_SRC" rev-parse HEAD' in text
     assert "verify_meta_repair_commit_custody" in text
 
 
@@ -100,6 +101,19 @@ def test_l3_trigger_requires_typed_request_and_uses_pointer_prompt() -> None:
     assert "deep repair pointer exceeds its 8 KiB prompt budget" in text
     assert "json.dumps(pointer, indent=2, sort_keys=True)" in text
     assert "json.dumps(payload, indent=2, sort_keys=True)" not in text
+
+
+def test_l3_repair_uses_marker_bound_source_without_mutating_project_workspace() -> None:
+    text = _meta_repair_wrapper()
+    trigger = REPAIR_TRIGGER_PATH.read_text(encoding="utf-8")
+
+    assert 'FIX_TARGET_SRC="${ARNOLD_L3_FIX_TARGET_SRC:-$ARNOLD_SRC}"' in text
+    assert 'FIX_TARGET_BRANCH="${ARNOLD_L3_FIX_TARGET_BRANCH:-' in text
+    assert 'git -C "$FIX_TARGET_SRC" merge-base --is-ancestor' in text
+    assert '--project-dir "$FIX_TARGET_SRC"' in text
+    assert '"$FIX_TARGET_SRC" "$SOURCE_BASELINE_HEAD"' in text
+    assert 'env["ARNOLD_L3_FIX_TARGET_SRC"]' in trigger
+    assert 'env["ARNOLD_L3_FIX_TARGET_BRANCH"]' in trigger
 
 
 def test_meta_repair_provenance_bootstrap_uses_safe_python_path() -> None:

@@ -1082,8 +1082,8 @@ class TestGreenChecksNoFindings:
         timer = _systemd_file("megaplan-progress-audit.timer")
         service = _systemd_file("megaplan-progress-audit.service")
 
-        assert "OnUnitActiveSec=6h" in timer
-        assert "Description=Megaplan 6-hour DeepSeek plan progress audit" in service
+        assert "OnUnitActiveSec=3h" in timer
+        assert "Description=Megaplan 3-hour plan progress audit" in service
         assert "Codex then reads the subagent-launcher skill" in text
         assert "DeepSeek research subagents" in text
         assert "First audit the repair system itself" in text
@@ -1091,6 +1091,8 @@ class TestGreenChecksNoFindings:
         assert "Arnold superfixer bug" in text
         assert "Fix the watchdog/repair-trigger/auditor source" in text
         assert "do not hand-unblock only this run" in text
+        assert "repair_runtime_target_drift" in text
+        assert "marker-bound repair source" in text
 
     def test_publication_attempt_ts_detects_github_issue_evidence(self) -> None:
         namespace: dict[str, object] = {}

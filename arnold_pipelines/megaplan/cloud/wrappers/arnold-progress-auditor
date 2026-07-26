@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # arnold-progress-auditor — deterministic gather/report with an explicitly gated Codex review phase.
 #
-# Host-side systemd oneshot (megaplan-progress-audit.service, every 6h via
+# Host-side systemd oneshot (megaplan-progress-audit.service, every 3h via
 # megaplan-progress-audit.timer). When invoked on the host it docker-execs into
 # the megaplan-cloud-agent container (mirroring ensure-megaplan-watchdog) and
 # re-invokes itself there. When invoked inside the container it runs the audit.
@@ -578,6 +578,9 @@ def _merge(
             ("remote_spec", "remote_spec"),
             ("spec", "remote_spec"),
             ("launch_command", "launch_command"),
+            ("relaunch_command", "relaunch_command"),
+            ("editable_source_branch", "editable_source_branch"),
+            ("runtime_binding", "runtime_binding"),
             ("launch_outcome", "launch_outcome"),
             ("engine_ref_check", "engine_ref_check"),
             ("log", "log"),
@@ -697,6 +700,29 @@ for entry in entries.values():
     current_plan = _authoritative_current_plan(pathlib.Path(entry["workspace"]))
     entry["authoritative_current_plan"] = current_plan
     entry["session_evidence_scope"] = bool(current_plan and current_plan == entry["plan"])
+    try:
+        branch = subprocess.run(
+            ["git", "-C", entry["workspace"], "branch", "--show-current"],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+        dirty = subprocess.run(
+            ["git", "-C", entry["workspace"], "status", "--porcelain"],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        branch = dirty = None
+    entry["project_branch"] = (
+        branch.stdout.strip() if branch is not None and branch.returncode == 0 else ""
+    )
+    entry["project_dirty"] = bool(
+        dirty is not None and dirty.returncode == 0 and dirty.stdout.strip()
+    )
 
 with open(out, "w", encoding="utf-8") as handle:
     for entry in sorted(entries.values(), key=lambda item: (item["workspace"], item["plan"])):
@@ -4823,6 +4849,11 @@ def _plan_evidence(entry):
         "kind": run_kind,
         "remote_spec": entry.get("remote_spec") or "",
         "launch_command": entry.get("launch_command") or "",
+        "relaunch_command": entry.get("relaunch_command") or "",
+        "editable_source_branch": entry.get("editable_source_branch") or "",
+        "runtime_binding": entry.get("runtime_binding") or {},
+        "project_branch": entry.get("project_branch") or "",
+        "project_dirty": entry.get("project_dirty") is True,
         "launch_outcome": entry.get("launch_outcome") or {},
         "engine_ref_check": entry.get("engine_ref_check") or {},
         "log": entry.get("log") or "",
@@ -5276,6 +5307,26 @@ for entry in plans:
     ):
         if deterministic_reason:
             session_reasons.append(deterministic_reason)
+    session_header = ev.get("session_header") or {}
+    runtime_binding = session_header.get("runtime_binding") or {}
+    runtime_identity = runtime_binding.get("current_identity") or {}
+    session_repair_root = str(
+        runtime_identity.get("import_root")
+        or runtime_identity.get("editable_root")
+        or ""
+    ).strip()
+    if (
+        session_reasons
+        and session_repair_root
+        and pathlib.Path(session_repair_root) != pathlib.Path(arnold_src)
+    ):
+        session_reasons.append(
+            "repair_runtime_target_drift: global auditor source "
+            f"{arnold_src} differs from marker-bound repair source "
+            f"{session_repair_root} on branch "
+            f"{session_header.get('editable_source_branch') or 'unknown'}; "
+            "route any repair mutation to the marker-bound source"
+        )
     if not completed_shadow:
         wrapper_drift = _installed_wrapper_drift_reason(ev)
         if wrapper_drift:

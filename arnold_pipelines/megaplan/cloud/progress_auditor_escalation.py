@@ -216,8 +216,24 @@ def validate_l3_repair_dispatch_context(
     ):
         raise ValueError("L3 repair request disagrees with its context or provenance")
 
+    repair_target = _mapping(context.get("repair_target"))
+    request_repair_target = _mapping(target.get("repair_target"))
+    if repair_target and (
+        request_repair_target != repair_target
+        or _text(repair_target.get("schema_version"))
+        != "arnold-l3-session-runtime-repair-target-v1"
+        or not _text(repair_target.get("source_root"))
+        or not _text(repair_target.get("source_branch"))
+        or not _text(repair_target.get("baseline_revision"))
+        or not _text(repair_target.get("runtime_identity_sha256"))
+        or not _text(repair_target.get("relaunch_command"))
+        or repair_target.get("preserve_project_workspace") is not True
+    ):
+        raise ValueError(
+            "L3 repair request disagrees with its session runtime repair target"
+        )
     custody = _mapping(gate.get("custody_walk"))
-    return {
+    pointer = {
         "schema_version": "arnold-l3-meta-repair-pointer-v1",
         "session": normalized_session,
         "request_id": normalized_request_id,
@@ -236,6 +252,9 @@ def validate_l3_repair_dispatch_context(
             "missed_by_axis": _text(custody.get("missed_by_axis")),
         },
     }
+    if repair_target:
+        pointer["repair_target"] = dict(repair_target)
+    return pointer
 
 
 def _bounded_review_value(
@@ -1409,6 +1428,42 @@ def record_reverification(
 def bounded_repair_context(finding: Mapping[str, Any]) -> dict[str, Any]:
     """Select concrete bounded artifacts and raw failure mechanics for D9."""
 
+    session_header = _mapping(finding.get("session_header"))
+    runtime_binding = _mapping(session_header.get("runtime_binding"))
+    runtime_identity = _mapping(runtime_binding.get("current_identity"))
+    source_root = _text(
+        runtime_identity.get("import_root") or runtime_identity.get("editable_root")
+    )
+    source_branch = _text(session_header.get("editable_source_branch"))
+    source_revision = _text(
+        runtime_identity.get("editable_revision")
+        or runtime_identity.get("source_revision")
+    )
+    runtime_identity_sha256 = _text(runtime_identity.get("content_sha256"))
+    relaunch_command = _text(session_header.get("relaunch_command"))
+    repair_target = {}
+    if any(
+        (
+            source_root,
+            source_branch,
+            source_revision,
+            runtime_identity_sha256,
+            relaunch_command,
+        )
+    ):
+        repair_target = {
+            "schema_version": "arnold-l3-session-runtime-repair-target-v1",
+            "source_root": source_root,
+            "source_branch": source_branch,
+            "baseline_revision": source_revision,
+            "runtime_identity_sha256": runtime_identity_sha256,
+            "relaunch_command": relaunch_command,
+            "project_workspace": _text(finding.get("workspace")),
+            "project_branch": _text(session_header.get("project_branch")),
+            "project_dirty": session_header.get("project_dirty") is True,
+            "preserve_project_workspace": True,
+            "no_push": "--no-push" in relaunch_command,
+        }
     latest = _mapping(finding.get("plan_latest_failure"))
     metadata = _mapping(latest.get("metadata") or finding.get("latest_failure_metadata"))
     repair = _mapping(finding.get("repair_data_summary"))
@@ -1432,6 +1487,7 @@ def bounded_repair_context(finding: Mapping[str, Any]) -> dict[str, Any]:
         "session": finding.get("session"),
         "plan": finding.get("plan"),
         "workspace": finding.get("workspace"),
+        "repair_target": repair_target,
         "gate": classify_true_stall(finding),
         "failure_mechanics": mechanics,
         "latest_failure": {

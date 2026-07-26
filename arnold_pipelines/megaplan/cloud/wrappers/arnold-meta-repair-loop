@@ -94,6 +94,8 @@ fi
 MARKER_DIR="${MEGAPLAN_META_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${MEGAPLAN_META_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
 ARNOLD_SRC="${MEGAPLAN_META_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"
+FIX_TARGET_SRC="${ARNOLD_L3_FIX_TARGET_SRC:-$ARNOLD_SRC}"
+FIX_TARGET_BRANCH="${ARNOLD_L3_FIX_TARGET_BRANCH:-${MEGAPLAN_META_SYNC_BRANCH:-editible-install}}"
 SELF_PATH="${MEGAPLAN_META_SELF_PATH:-$ARNOLD_META_REPAIR_LOOP_ORIGIN}"
 if command -v readlink >/dev/null 2>&1; then
   SELF_PATH="$(readlink -f "$SELF_PATH" 2>/dev/null || printf '%s' "$SELF_PATH")"
@@ -139,7 +141,7 @@ SUPERFIXER_SKILL="${MEGAPLAN_SUPERFIXER_SKILL:-$ARNOLD_SRC/arnold_pipelines/mega
 META_REPAIR_BUDGET="${MEGAPLAN_META_BUDGET_SECS:-7200}"
 META_REPAIR_ENABLED_VAR="${ARNOLD_META_REPAIR_ENABLED:-1}"
 META_REPAIR_COMMIT_ENABLED_VAR="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-1}"
-SYNC_BRANCH="${MEGAPLAN_META_SYNC_BRANCH:-editible-install}"
+SYNC_BRANCH="$FIX_TARGET_BRANCH"
 REPAIR_LOOP_BIN="${MEGAPLAN_META_REPAIR_LOOP_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop}"
 REPAIR_LOOP_FALLBACK="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
 if [[ ! -f "$REPAIR_LOOP_BIN" && -f "$REPAIR_LOOP_FALLBACK" ]]; then
@@ -473,6 +475,37 @@ if [[ "$WATCHDOG_TRIGGER" == "l3_progress_auditor" ]]; then
     exit 65
   fi
   export L3_REPAIR_POINTER_JSON
+  if [[ -n "${ARNOLD_L3_FIX_TARGET_SRC:-}" ]]; then
+    if [[ "$FIX_TARGET_SRC" != /workspace/* \
+      || ! -d "$FIX_TARGET_SRC" \
+      || -z "$(git -C "$FIX_TARGET_SRC" rev-parse --git-dir 2>/dev/null || true)" \
+      || -z "$FIX_TARGET_BRANCH" \
+      || -z "${ARNOLD_L3_FIX_TARGET_BASELINE:-}" \
+      || -z "${ARNOLD_L3_FIX_TARGET_RUNTIME_IDENTITY:-}" \
+      || -z "${ARNOLD_L3_FIX_TARGET_RELAUNCH_COMMAND:-}" ]]; then
+      log "session-bound L3 repair target is incomplete or unsafe; refusing dispatch"
+      exit 65
+    fi
+    observed_branch="$(git -C "$FIX_TARGET_SRC" branch --show-current 2>/dev/null || true)"
+    observed_head="$(git -C "$FIX_TARGET_SRC" rev-parse HEAD 2>/dev/null || true)"
+    target_drift=0
+    if [[ "$observed_branch" != "$FIX_TARGET_BRANCH" \
+      || -z "$observed_head" \
+      || "${ARNOLD_L3_FIX_TARGET_RELAUNCH_COMMAND}" != *"$FIX_TARGET_SRC"* \
+      || ( "${ARNOLD_L3_FIX_TARGET_NO_PUSH:-0}" == "1" \
+        && "${ARNOLD_L3_FIX_TARGET_RELAUNCH_COMMAND}" != *"--no-push"* ) ]]; then
+      target_drift=1
+    fi
+    if ! git -C "$FIX_TARGET_SRC" merge-base --is-ancestor \
+      "${ARNOLD_L3_FIX_TARGET_BASELINE}" "$observed_head" 2>/dev/null; then
+      target_drift=1
+    fi
+    if [[ "$target_drift" == "1" ]]; then
+      log "session-bound L3 repair target drifted from marker custody; refusing dispatch"
+      exit 65
+    fi
+    log "validated session-bound fix target source=$FIX_TARGET_SRC branch=$FIX_TARGET_BRANCH baseline=${ARNOLD_L3_FIX_TARGET_BASELINE}"
+  fi
   log "validated typed L3 repair request request_id=${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-} escalation_id=${ARNOLD_L3_ESCALATION_ID:-}"
 elif [[ "${ARNOLD_L3_DEEP_REPAIR:-0}" == "1" ]]; then
   log "deep-repair authorization supplied without the L3 trigger; refusing dispatch"
@@ -636,7 +669,7 @@ EOF
     python3 -m arnold_pipelines.megaplan.managed_agent run
     --run-kind automatic_research_subagent
     --identity-key "meta-repair-investigator:${SESSION}:${TRIGGER_TYPE}:${META_INVESTIGATION_CONTEXT_DIGEST}"
-    --project-dir "$ARNOLD_SRC" --task-kind root_cause --difficulty 8
+    --project-dir "$FIX_TARGET_SRC" --task-kind root_cause --difficulty 8
     --model "$investigator_model" --reasoning-effort high
     --route-class meta_repair_read_only_investigator --backend "$investigator_mode"
     --command-display "read-only L2 repair investigation $SESSION"
@@ -658,7 +691,7 @@ EOF
     # above.  Suppress only the launcher's automatic *second* managed wrapper
     # so stdout remains the typed JSON receipt channel; diagnostics stay on
     # stderr in the outer managed run log.
-    managed_cmd+=(-- bash -c 'ARNOLD_NESTED_MANAGED_AGENT_WORKER=1 exec "$1" -P "$2" --model "$3" --toolsets "" --query_file "$4" --project_dir "$5" --max_tokens 16384 > "$6"' _ "$MEGAPLAN_SUPERVISOR_PYTHON" "$LAUNCHER" "$DEEPSEEK_MODEL" "$META_INVESTIGATION_PROMPT_PATH" "$ARNOLD_SRC" "$META_INVESTIGATION_RECEIPT_PATH")
+    managed_cmd+=(-- bash -c 'ARNOLD_NESTED_MANAGED_AGENT_WORKER=1 exec "$1" -P "$2" --model "$3" --toolsets "" --query_file "$4" --project_dir "$5" --max_tokens 16384 > "$6"' _ "$MEGAPLAN_SUPERVISOR_PYTHON" "$LAUNCHER" "$DEEPSEEK_MODEL" "$META_INVESTIGATION_PROMPT_PATH" "$FIX_TARGET_SRC" "$META_INVESTIGATION_RECEIPT_PATH")
   fi
   (cd "$ARNOLD_SRC" && "${managed_cmd[@]}") >>"$RUN_LOG" 2>&1 || return 1
   META_INVESTIGATION_RUN_ID="$(cat "$META_INVESTIGATION_RUN_ID_PATH" 2>/dev/null || true)"
@@ -1025,6 +1058,10 @@ if ! {
   echo
   echo "**Trigger:** \`$TRIGGER_TYPE\`"
   echo "**Session:** \`$SESSION\`"
+  echo "**Authorized Arnold fix target:** \`$FIX_TARGET_SRC\`"
+  echo "**Authorized fix branch:** \`$FIX_TARGET_BRANCH\`"
+  echo "**Audited project workspace (read-only):** \`${WORKSPACE:-unknown}\`"
+  echo "**Canonical relaunch remains marker-owned:** \`${ARNOLD_L3_FIX_TARGET_RELAUNCH_COMMAND:-not-session-bound}\`"
   echo "**Repair Data Directory:** \`$REPAIR_DATA_DIR\`"
   echo "**Validated L2 investigation context:** \`$META_INVESTIGATION_CONTEXT_PATH\`"
   echo "**Validated L2 investigator receipt:** \`$META_INVESTIGATION_RECEIPT_PATH\`"
@@ -1051,7 +1088,7 @@ ordinary repair can succeed.
 ### Scope and authority
 - You have `danger-full-access` sandbox scope.
 - You may read, patch, and test files in the Arnold checkout
-  (`$ARNOLD_SRC` on the `editible-install` branch).
+  (`$FIX_TARGET_SRC` on the `$FIX_TARGET_BRANCH` branch).
 - You may inspect the repair data, watchdog reports, chain state, session
   markers, and audit reports as evidence.
 - You MUST delegate broad mapping, log/history review, independent
@@ -1156,7 +1193,7 @@ ordinary repair can succeed.
 ### Scope and authority
 - You have `danger-full-access` sandbox scope.
 - You may read, patch, and test files in the Arnold checkout
-  (`$ARNOLD_SRC` on the `editible-install` branch).
+  (`$FIX_TARGET_SRC` on the `$FIX_TARGET_BRANCH` branch).
 - You may inspect the repair data, watchdog reports, chain state, session
   markers, and audit reports as evidence.
 - You MUST delegate broad mapping, log/history review, independent
@@ -1240,7 +1277,7 @@ COMMIT_GATE="$(commit_gate_check 2>&1)" || true
 COMMIT_ALLOWED="$(echo "$COMMIT_GATE" | sed -n 's/^COMMIT_ALLOWED=//p')"
 PUSH_ALLOWED="$(echo "$COMMIT_GATE" | sed -n 's/^PUSH_ALLOWED=//p')"
 log "commit_allowed=$COMMIT_ALLOWED push_allowed=$PUSH_ALLOWED"
-SOURCE_BASELINE_HEAD="$(git -C "$ARNOLD_SRC" rev-parse HEAD 2>/dev/null || true)"
+SOURCE_BASELINE_HEAD="$(git -C "$FIX_TARGET_SRC" rev-parse HEAD 2>/dev/null || true)"
 log "captured pre-dispatch source HEAD=${SOURCE_BASELINE_HEAD:-unavailable}"
 
 # ---- Codex dispatch ---------------------------------------------------------
@@ -1273,8 +1310,8 @@ run_direct_hermes_fallback() {
 # Direct Hermes Meta-Repair Fallback
 
 The Codex orchestration path failed before producing a recordable verdict.
-You are the direct repair agent now. Work on the Arnold source checkout at
-\`$ARNOLD_SRC\`; do not modify the audited project workspace. Perform the
+You are the direct repair agent now. Work on the session-bound Arnold source checkout at
+\`$FIX_TARGET_SRC\` on branch \`$FIX_TARGET_BRANCH\`; do not modify the audited project workspace. Perform the
 bounded investigation and repair yourself without launching another Codex
 or Hermes agent. Preserve the output contract in the brief below.
 
@@ -1292,8 +1329,8 @@ EOF
       set +a
     fi
     export PYENV_VERSION=3.11.11
-    export ARNOLD_PATH="$ARNOLD_SRC"
-    export ARNOLD_SRC="$ARNOLD_SRC"
+    export ARNOLD_PATH="$FIX_TARGET_SRC"
+    export ARNOLD_SRC="$FIX_TARGET_SRC"
     export ARNOLD_META_REPAIR_COMMIT_ENABLED="$META_REPAIR_COMMIT_ENABLED_VAR"
     # Import the launcher from a neutral directory.  A source checkout may
     # contain a product-local `megaplan` package that shadows Hermes runtime
@@ -1490,13 +1527,14 @@ elif command -v codex >/dev/null 2>&1; then
     export MEGAPLAN_DEFAULT_PROFILE="$SUBAGENT_PROFILE"
     export MEGAPLAN_REPAIR_PROFILE="$SUBAGENT_PROFILE"
     export ARNOLD_META_REPAIR_COMMIT_ENABLED="$META_REPAIR_COMMIT_ENABLED_VAR"
-    export ARNOLD_SRC="$ARNOLD_SRC"
+    export ARNOLD_FIX_TARGET_SRC="$FIX_TARGET_SRC"
+    export ARNOLD_FIX_TARGET_BRANCH="$FIX_TARGET_BRANCH"
     cd "$ARNOLD_SRC" || exit 1
     managed_cmd=(
       python3 -m arnold_pipelines.megaplan.managed_agent run
       --run-kind automatic_meta_repair_worker
       --identity-key "meta-repair-worker:${SESSION}:${TRIGGER_TYPE}:${ARNOLD_MANAGED_AGENT_RUN_ID:-$TS}"
-      --project-dir "$ARNOLD_SRC"
+      --project-dir "$FIX_TARGET_SRC"
       --task-kind root_cause
       --difficulty "$META_REPAIR_DIFFICULTY"
       --child-difficulty-ceiling "$META_REPAIR_CHILD_DIFFICULTY_CEILING"
@@ -1573,7 +1611,7 @@ else
   log "verdict=UNKNOWN (first line: ${VERDICT:0:80})"
 fi
 
-COMMIT_CUSTODY_JSON="$(PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$ARNOLD_SRC" "$SOURCE_BASELINE_HEAD" "$VERDICT" "$PUSH_ALLOWED" <<'PY'
+COMMIT_CUSTODY_JSON="$(PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$FIX_TARGET_SRC" "$SOURCE_BASELINE_HEAD" "$VERDICT" "$PUSH_ALLOWED" <<'PY'
 import json, sys
 from arnold_pipelines.megaplan.cloud.meta_repair import verify_meta_repair_commit_custody
 repo, baseline, verdict, push_allowed = sys.argv[1:5]
@@ -1601,7 +1639,7 @@ export INSTALL_SYNC_JSON="{}"
 if [[ "$VERDICT" == FIXED* && "$COMMIT_CUSTODY_ACCEPTED" == "true" ]]; then
   log "verdict=FIXED; checking for source commits before install sync"
 
-  INSTALL_SYNC_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$ARNOLD_SRC" "$WRAPPER_REPO_ROOT" <<'PY'
+  INSTALL_SYNC_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$FIX_TARGET_SRC" "$WRAPPER_REPO_ROOT" <<'PY'
 import json, subprocess, sys
 from pathlib import Path
 

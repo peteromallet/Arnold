@@ -508,6 +508,7 @@ def run_escalation_controller(
                     "l3_escalation_gate": gate,
                     "l3_repair_context_path": str(context_path),
                     "l3_repair_context_digest": context.get("context_digest"),
+                    "repair_target": context.get("repair_target") or {},
                     "l3_retry_ordinal": len(attempts) + 1,
                     "l3_retry_of_run_id": str(attempts[-1].get("managed_run_id") or "")
                     if attempts
