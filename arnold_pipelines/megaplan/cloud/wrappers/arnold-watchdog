@@ -194,11 +194,12 @@ if [[ ! -x "$PRIMARY_REPAIR_BIN" && -x "$PRIMARY_REPAIR_FALLBACK_BIN" ]]; then
     PRIMARY_REPAIR_BIN=""
   fi
 fi
-META_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
+META_REPAIR_SOURCE_ROOT="${MEGAPLAN_META_ARNOLD_SRC:-$SRC_DIR}"
+META_REPAIR_SOURCE_BIN="$META_REPAIR_SOURCE_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"
 META_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-meta-repair-loop"
 META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-$META_REPAIR_SOURCE_BIN}"
 if [[ ! -x "$META_REPAIR_BIN" && -x "$META_REPAIR_FALLBACK_BIN" ]]; then
-  if selected_fallback="$(arnold_supervisor_select_exact_fallback watchdog-meta-repair "$META_REPAIR_SOURCE_BIN" "$META_REPAIR_FALLBACK_BIN" "$SRC_DIR")"; then
+  if selected_fallback="$(arnold_supervisor_select_exact_fallback watchdog-meta-repair "$META_REPAIR_SOURCE_BIN" "$META_REPAIR_FALLBACK_BIN" "$META_REPAIR_SOURCE_ROOT")"; then
     META_REPAIR_BIN="$selected_fallback"
   else
     META_REPAIR_BIN=""

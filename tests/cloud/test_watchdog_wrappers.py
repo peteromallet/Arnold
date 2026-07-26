@@ -16291,9 +16291,11 @@ def test_meta_repair_dispatch_defaults_structural() -> None:
     assert "set CLOUD_WATCHDOG_PUSH_REPAIRS=1" in watchdog_text
 
     # META_REPAIR_BIN default
-    assert 'META_REPAIR_SOURCE_BIN="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"' in watchdog_text
+    assert 'META_REPAIR_SOURCE_ROOT="${MEGAPLAN_META_ARNOLD_SRC:-$SRC_DIR}"' in watchdog_text
+    assert 'META_REPAIR_SOURCE_BIN="$META_REPAIR_SOURCE_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop"' in watchdog_text
     assert 'META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-$META_REPAIR_SOURCE_BIN}"' in watchdog_text
     assert 'META_REPAIR_FALLBACK_BIN="/usr/local/bin/arnold-meta-repair-loop"' in watchdog_text
+    assert '"$META_REPAIR_FALLBACK_BIN" "$META_REPAIR_SOURCE_ROOT"' in watchdog_text
 
     # dispatch_meta_repair function
     assert "dispatch_meta_repair() {" in watchdog_text
