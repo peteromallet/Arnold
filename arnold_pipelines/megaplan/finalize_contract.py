@@ -97,102 +97,16 @@ FINALIZE_MODEL_OUTPUT_SCHEMA: dict[str, Any] = {
         },
         "validation_jobs": {
             "type": "array",
+            "maxItems": 0,
             "description": (
                 "Harness-owned validation jobs compiled from test_selection and "
                 "narrow_tests. The model MUST emit an empty array; the handler "
                 "derives deterministic no-file validation jobs."
             ),
-            "items": {
-                "type": "object",
-                "required": [
-                    "id",
-                    "scope",
-                    "command",
-                    "environment",
-                    "expected_exit_codes",
-                    "timeout_seconds",
-                    "content_hash_algorithm",
-                    "evidence_label",
-                    "mutates",
-                    "reason",
-                ],
-                "properties": {
-                    "id": {
-                        "type": "string",
-                        "description": "Stable validation-job identifier (VJ-prefixed).",
-                    },
-                    "kind": {
-                        "type": "string",
-                        "enum": [
-                            "post_execute_suite",
-                            "narrow_recheck",
-                        ],
-                        "description": (
-                            "post_execute_suite: authoritative harness-owned suite run. "
-                            "narrow_recheck: bounded recheck of a single task's narrow test selectors."
-                        ),
-                    },
-                    "command": {
-                        "type": "string",
-                        "description": "Deterministic pytest command with timeout prefix.",
-                    },
-                    "scope": {
-                        "type": "string",
-                        "description": "Deterministic scope label (post_execute_suite or narrow_recheck:<task_id>).",
-                    },
-                    "environment": {
-                        "type": "object",
-                        "description": "Pinned subprocess environment overrides (empty for harness-owned jobs).",
-                    },
-                    "expected_exit_codes": {
-                        "type": "array",
-                        "items": {"type": "integer"},
-                        "description": "Exit codes that mean the validation ran and passed (harness-owned jobs expect [0]).",
-                    },
-                    "timeout_seconds": {
-                        "type": "integer",
-                        "description": "Maximum wall-clock seconds for this validation run.",
-                    },
-                    "content_hash_algorithm": {
-                        "type": "string",
-                        "enum": ["sha256"],
-                        "description": "Content-addressing algorithm for validation evidence.",
-                    },
-                    "evidence_label": {
-                        "type": "string",
-                        "description": "Stable label for the content-addressed evidence artifact.",
-                    },
-                    "mutates": {
-                        "type": "boolean",
-                        "description": "Always false for harness-owned validation jobs.",
-                    },
-                    "selectors": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Test selectors scoped to one task's write-set blast radius.",
-                    },
-                    "max_seconds": {
-                        "type": "integer",
-                        "description": "Maximum wall-clock seconds for this validation run.",
-                    },
-                    "max_runs": {
-                        "type": "integer",
-                        "description": "Maximum execution attempts before circuit-open.",
-                    },
-                    "reason": {
-                        "type": "string",
-                        "description": "Why this validation job exists (e.g. task T1 narrow recheck).",
-                    },
-                    "task_id": {
-                        "type": "string",
-                        "description": "Source task id for narrow_recheck jobs.",
-                    },
-                    "writes_files": {
-                        "type": "boolean",
-                        "description": "Always false for harness-owned validation jobs.",
-                    },
-                },
-            },
+            # The model owns no validation-job fields. Keep a scalar item
+            # schema only because strict JSON Schema requires ``items`` for
+            # arrays; ``maxItems: 0`` makes the transport contract exact.
+            "items": {"type": "string"},
         },
         "critique_resolution_coverage": {
             "type": "array",

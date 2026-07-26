@@ -50,6 +50,25 @@ def _assert_array_schemas_have_items(schema: Any, path: tuple[str, ...] = ()) ->
             _assert_array_schemas_have_items(value, path + (str(index),))
 
 
+def _assert_no_empty_object_schemas(schema: Any, path: tuple[str, ...] = ()) -> None:
+    """Codex strict lowering cannot preserve property-free object schemas."""
+
+    if isinstance(schema, dict):
+        schema_type = schema.get("type")
+        if schema_type == "object" or (
+            isinstance(schema_type, list) and "object" in schema_type
+        ):
+            properties = schema.get("properties")
+            assert isinstance(properties, dict) and properties, (
+                f"empty object schema is not Codex-strict-safe at {'/'.join(path)}"
+            )
+        for key, value in schema.items():
+            _assert_no_empty_object_schemas(value, path + (str(key),))
+    elif isinstance(schema, list):
+        for index, value in enumerate(schema):
+            _assert_no_empty_object_schemas(value, path + (str(index),))
+
+
 def test_plan_and_revise_codex_output_schemas_keep_test_blast_radius_declared() -> None:
     for schema_name in ("plan.json", "revise.json"):
         schema = _enforce_openai_strict_mode(strict_schema(deepcopy(SCHEMAS[schema_name])))
@@ -131,6 +150,18 @@ def test_finalize_dependency_reasons_use_strict_typed_rows() -> None:
         "reason",
         "required_output",
     }
+
+
+def test_finalize_model_contract_has_no_property_free_objects() -> None:
+    contract = STEP_CONTRACTS["finalize"]
+    schema = _enforce_openai_strict_mode(
+        strict_schema(deepcopy(SCHEMAS[contract.schema_key]))
+    )
+
+    _assert_no_empty_object_schemas(schema)
+    validation_jobs = schema["properties"]["validation_jobs"]
+    assert validation_jobs["maxItems"] == 0
+    assert validation_jobs["items"] == {"type": "string"}
 
 
 def test_finalize_critique_resolution_schema_cannot_drift_at_runtime_boundary() -> None:
