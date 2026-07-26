@@ -106,6 +106,8 @@ def test_superfixer_wrappers_prefer_pinned_runtime_source() -> None:
     assert 'SRC_DIR="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"' in _wrapper("arnold-watchdog")
     assert 'ARNOLD_SRC="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"' in _repair_wrapper()
     assert 'ARNOLD_SRC="${MEGAPLAN_META_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}}"' in _wrapper("arnold-meta-repair-loop")
+    assert "MEGAPLAN_META_ORDINARY_REPAIR_LOOP_BIN" in _wrapper("arnold-meta-repair-loop")
+    assert "MEGAPLAN_META_REPAIR_LOOP_BIN" not in _wrapper("arnold-meta-repair-loop")
     auditor = _wrapper("arnold-progress-auditor")
     assert "${MEGAPLAN_AUDIT_ARNOLD_SRC:-${MEGAPLAN_RUNTIME_SRC:-" in auditor
 
@@ -9529,10 +9531,12 @@ def test_meta_replan_effects_require_l2_mutation_authority() -> None:
     branch = text.index('if [[ "$META_INVESTIGATION_ACTION" == "replan" ]]')
     authority = text.index("if ! l2_mutation_authorized; then", branch)
     reconciliation = text.index('REPLAN_RECONCILIATION="$', branch)
+    recursion_record = text.index('REPLAN_RECORD_PATH="$', reconciliation)
     retrigger = text.index('log "accepted L2 replan handoff; retriggering ordinary repair', branch)
 
-    assert branch < authority < reconciliation < retrigger
+    assert branch < authority < reconciliation < recursion_record < retrigger
     assert "observed: L2 replan effects blocked by master-plus-path authorization gate" in text
+    assert 'outcome="replan_handoff_reconciled"' in text[recursion_record:retrigger]
 
 
 @pytest.mark.parametrize(

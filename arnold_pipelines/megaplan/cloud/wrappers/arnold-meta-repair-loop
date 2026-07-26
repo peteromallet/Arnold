@@ -142,7 +142,7 @@ META_REPAIR_BUDGET="${MEGAPLAN_META_BUDGET_SECS:-7200}"
 META_REPAIR_ENABLED_VAR="${ARNOLD_META_REPAIR_ENABLED:-1}"
 META_REPAIR_COMMIT_ENABLED_VAR="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-1}"
 SYNC_BRANCH="$FIX_TARGET_BRANCH"
-REPAIR_LOOP_BIN="${MEGAPLAN_META_REPAIR_LOOP_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop}"
+REPAIR_LOOP_BIN="${MEGAPLAN_META_ORDINARY_REPAIR_LOOP_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop}"
 REPAIR_LOOP_FALLBACK="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
 if [[ ! -f "$REPAIR_LOOP_BIN" && -f "$REPAIR_LOOP_FALLBACK" ]]; then
   REPAIR_LOOP_BIN="$(
@@ -937,13 +937,71 @@ PY
     exit 1
   }
   IFS=$'\t' read -r REPLAN_RECONCILIATION_STATUS REPLAN_EPOCH <<< "$(python3 -c 'import json,sys; value=json.load(sys.stdin); print("\t".join((str(value.get("status") or ""), str(value.get("replan_epoch") or ""))))' <<< "$REPLAN_RECONCILIATION")"
+  if [[ "$REPLAN_RECONCILIATION_STATUS" != "newly_reconciled" \
+    && "$REPLAN_RECONCILIATION_STATUS" != "already_reconciled" ]] \
+    || [[ -z "$REPLAN_EPOCH" ]]; then
+    log "L2 replan reconciliation returned invalid transition; refusing ordinary retrigger"
+    exit 1
+  fi
+  REPLAN_RECORD_PATH="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" "$MEGAPLAN_SUPERVISOR_PYTHON" -P - \
+    "$SESSION" "$TRIGGER_TYPE" "$REPAIR_DATA_DIR" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" \
+    "$META_INVESTIGATION_CONTEXT_DIGEST" "$META_INVESTIGATION_RECEIPT_PATH" \
+    "$META_INVESTIGATION_RUN_ID" "$REPLAN_RECONCILIATION_STATUS" "$REPLAN_EPOCH" <<'PY'
+import hashlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.meta_repair import (
+    MetaRepairRecord,
+    MetaRepairTrigger,
+    persist_meta_repair_record,
+)
+
+(
+    session,
+    trigger_raw,
+    repair_data_dir,
+    blocker_id,
+    context_digest,
+    receipt_path,
+    investigator_run_id,
+    reconciliation_status,
+    epoch,
+) = sys.argv[1:]
+try:
+    trigger = MetaRepairTrigger(trigger_raw)
+except ValueError:
+    trigger = None
+record_key = hashlib.sha256(
+    f"{session}\0{blocker_id}\0{context_digest}\0{epoch}".encode()
+).hexdigest()[:24]
+record = MetaRepairRecord(
+    meta_repair_id=f"meta-replan-{record_key}",
+    session=session,
+    trigger=trigger,
+    blocker_id=blocker_id,
+    diagnosis="Accepted durable L2 investigation and reconciled its bounded replan handoff.",
+    subagent_results={
+        "investigator_run_id": investigator_run_id,
+        "receipt_path": receipt_path,
+        "context_digest": context_digest,
+    },
+    post_retrigger_verification={
+        "reconciliation_status": reconciliation_status,
+        "replan_epoch": int(epoch),
+        "ordinary_retrigger_status": "pending",
+    },
+    outcome="replan_handoff_reconciled",
+)
+print(persist_meta_repair_record(record, repair_data_dir=repair_data_dir))
+PY
+)" || {
+    log "L2 replan recursion record failed closed; refusing ordinary retrigger"
+    exit 1
+  }
+  log "L2 replan recursion record persisted path=$REPLAN_RECORD_PATH"
   if [[ "$REPLAN_RECONCILIATION_STATUS" == "already_reconciled" ]]; then
     log "L2 replan handoff already reconciled; refusing duplicate ordinary retrigger session=$SESSION epoch=$REPLAN_EPOCH"
     exit 0
-  fi
-  if [[ "$REPLAN_RECONCILIATION_STATUS" != "newly_reconciled" || -z "$REPLAN_EPOCH" ]]; then
-    log "L2 replan reconciliation returned invalid transition; refusing ordinary retrigger"
-    exit 1
   fi
   REPLAN_RUN_ID_PATH="$RUN_DIR/${TS}-${SAFE_SESSION}-ordinary-retrigger-run-id"
   IFS=$'\t' read -r REPLAN_WORKSPACE REPLAN_REMOTE_SPEC < <(
