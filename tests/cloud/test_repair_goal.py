@@ -187,6 +187,49 @@ def test_l2_replan_epoch_is_idempotent_and_preserves_checkpoint(tmp_path: Path) 
     assert [item["context_digest"] for item in persisted["l2_replans"]] == ["digest-1", "digest-2"]
 
 
+def test_l2_replan_accepts_equivalent_relative_and_absolute_remote_spec(
+    tmp_path: Path,
+) -> None:
+    path, goal = _goal(tmp_path)
+    target = goal["target"]
+    workspace = Path(target["workspace"])
+    absolute_spec = Path(target["remote_spec"])
+    relative_spec = absolute_spec.relative_to(workspace)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["target"]["remote_spec"] = str(relative_spec)
+    _write_json(path, payload)
+
+    result = reconcile_l2_replan(
+        path,
+        session=target["session"],
+        workspace=workspace,
+        remote_spec=str(absolute_spec),
+        blocker_id=target["blocker_id"],
+        context_digest="equivalent-path-forms",
+    )
+
+    assert result["status"] == "newly_reconciled"
+
+
+def test_l2_replan_rejects_a_different_remote_spec(tmp_path: Path) -> None:
+    path, goal = _goal(tmp_path)
+    target = goal["target"]
+
+    try:
+        reconcile_l2_replan(
+            path,
+            session=target["session"],
+            workspace=target["workspace"],
+            remote_spec=".megaplan/initiatives/other/chain.yaml",
+            blocker_id=target["blocker_id"],
+            context_digest="different-path",
+        )
+    except ValueError as exc:
+        assert str(exc) == "L2 replan reconciliation target identity disagrees"
+    else:
+        raise AssertionError("different remote spec unexpectedly reconciled")
+
+
 def test_l2_replan_epoch_scopes_deterministic_owner_breaker(tmp_path: Path) -> None:
     path, goal = _goal(tmp_path)
     target = goal["target"]

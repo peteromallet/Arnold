@@ -484,6 +484,30 @@ def _same_path(left: object, right: object) -> bool | None:
     return Path(left_text).resolve(strict=False) == Path(right_text).resolve(strict=False)
 
 
+def _same_workspace_path(
+    left: object,
+    *,
+    left_workspace: object,
+    right: object,
+    right_workspace: object,
+) -> bool | None:
+    """Compare paths after resolving relative forms under their target workspace."""
+
+    left_text = str(left or "").strip()
+    right_text = str(right or "").strip()
+    left_workspace_text = str(left_workspace or "").strip()
+    right_workspace_text = str(right_workspace or "").strip()
+    if not all((left_text, right_text, left_workspace_text, right_workspace_text)):
+        return None
+    left_path = Path(left_text)
+    right_path = Path(right_text)
+    if not left_path.is_absolute():
+        left_path = Path(left_workspace_text) / left_path
+    if not right_path.is_absolute():
+        right_path = Path(right_workspace_text) / right_path
+    return left_path.resolve(strict=False) == right_path.resolve(strict=False)
+
+
 def _session_identity_observation(
     *,
     marker_dir: str | Path | None,
@@ -1134,7 +1158,7 @@ def reconcile_l2_replan(
     path = Path(goal_path)
     identity = {
         "session": str(session or "").strip(),
-        "workspace": str(Path(workspace)),
+        "workspace": str(workspace or "").strip(),
         "remote_spec": str(remote_spec or "").strip(),
         "blocker_id": str(blocker_id or "").strip(),
     }
@@ -1153,11 +1177,23 @@ def reconcile_l2_replan(
         target = payload.get("target") if isinstance(payload.get("target"), Mapping) else {}
         actual = {
             "session": str(target.get("session") or "").strip(),
-            "workspace": str(Path(str(target.get("workspace") or ""))),
+            "workspace": str(target.get("workspace") or "").strip(),
             "remote_spec": str(target.get("remote_spec") or "").strip(),
             "blocker_id": str(target.get("blocker_id") or "").strip(),
         }
-        if actual != identity:
+        identity_matches = (
+            actual["session"] == identity["session"]
+            and actual["blocker_id"] == identity["blocker_id"]
+            and _same_path(actual["workspace"], identity["workspace"]) is True
+            and _same_workspace_path(
+                actual["remote_spec"],
+                left_workspace=actual["workspace"],
+                right=identity["remote_spec"],
+                right_workspace=identity["workspace"],
+            )
+            is True
+        )
+        if not identity_matches:
             raise ValueError("L2 replan reconciliation target identity disagrees")
         replans = payload.setdefault("l2_replans", [])
         if not isinstance(replans, list):
