@@ -281,6 +281,27 @@ def test_prerequisite_blocked_task_ids_excludes_harness_generated_blocks() -> No
     assert task_ids == {"T8"}
 
 
+def test_prerequisite_blocked_task_ids_excludes_durably_completed_tasks() -> None:
+    task_ids = _prerequisite_blocked_task_ids(
+        [
+            {
+                "id": "T8",
+                "status": "blocked",
+                "executor_notes": "Stale blocked projection from an earlier attempt.",
+            },
+            {
+                "id": "T9",
+                "status": "blocked",
+                "executor_notes": "Still blocked by prerequisite `T8`.",
+            },
+        ],
+        active_task_ids={"T8", "T9"},
+        completed_task_ids={"T8"},
+    )
+
+    assert task_ids == {"T9"}
+
+
 def test_pre_existing_contract_ids_skip_hollow_done_evidence(tmp_path: Path) -> None:
     project_dir = tmp_path / "project"
     project_dir.mkdir()

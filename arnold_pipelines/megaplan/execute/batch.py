@@ -1975,7 +1975,9 @@ def _prerequisite_blocked_task_ids(
     tasks: Iterable[dict[str, Any]],
     *,
     active_task_ids: set[str],
+    completed_task_ids: set[str] | None = None,
 ) -> set[str]:
+    completed = completed_task_ids or set()
     return {
         task["id"]
         for task in tasks
@@ -1983,6 +1985,7 @@ def _prerequisite_blocked_task_ids(
         and not _is_harness_generated_block(task)
         and isinstance(task.get("id"), str)
         and task["id"] in active_task_ids
+        and task["id"] not in completed
     }
 
 
@@ -4706,6 +4709,7 @@ def handle_execute_auto_loop(
     prereq_blocked_task_ids = _prerequisite_blocked_task_ids(
         finalize_data.get("tasks", []),
         active_task_ids=active_task_ids,
+        completed_task_ids=completed_task_ids,
     )
     blocked_task_reason = _blocked_task_reason(active_blocked_task_ids)
     if blocked_task_reason:
