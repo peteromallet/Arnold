@@ -753,12 +753,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--codex-bin", default=os.getenv("MEGAPLAN_SIMPLE_FIXER_CODEX_BIN", "codex"))
     parser.add_argument(
-        "--model", default=os.getenv("MEGAPLAN_SIMPLE_FIXER_MODEL", "gpt-5.6-sol")
+        "--model", default=os.getenv("MEGAPLAN_SIMPLE_FIXER_MODEL") or "gpt-5.6-sol"
     )
     parser.add_argument(
         "--timeout",
         type=int,
-        default=int(os.getenv("MEGAPLAN_SIMPLE_FIXER_TIMEOUT_SECS", "7200")),
+        default=int(os.getenv("MEGAPLAN_SIMPLE_FIXER_TIMEOUT_SECS") or "7200"),
     )
     return parser
 
