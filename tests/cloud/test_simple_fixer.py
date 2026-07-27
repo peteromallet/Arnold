@@ -159,6 +159,27 @@ def test_discovery_preserves_completed_and_explicit_operator_pause(tmp_path: Pat
     assert snapshots["human-wait"].disposition == "paused"
 
 
+def test_discovery_excludes_plan_progress_sidecars(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    _marker(marker_dir, "chain", workspace, status="running")
+    (marker_dir / "milestone.progress.json").write_text(
+        json.dumps(
+            {
+                "events_mtime": 1785102627.967471,
+                "iteration": 9,
+                "plan_v_count": 9,
+                "unchanged_ticks": 8,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snapshots = simple_fixer.discover(marker_dir)
+
+    assert [item.session for item in snapshots] == ["chain"]
+
+
 def test_one_direct_operator_inspects_all_nonterminal_sessions_and_no_children(
     tmp_path: Path, monkeypatch
 ) -> None:

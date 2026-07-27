@@ -7,5 +7,6 @@ Requires=docker.service
 Type=oneshot
 ExecStart=/usr/local/bin/arnold-progress-auditor
 TimeoutStartSec=2h30m
+RuntimeMaxSec=2h30m
 KillMode=control-group
 TimeoutStopSec=30s

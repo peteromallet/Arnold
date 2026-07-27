@@ -44,6 +44,7 @@ VOLATILE_KEYS = frozenset(
 SIDECAR_SUFFIXES = (
     ".chain-health.progress.json",
     ".needs-human.json",
+    ".progress.json",
     ".reap-progress.json",
     ".repair-data.json",
     ".repair-progress.json",
