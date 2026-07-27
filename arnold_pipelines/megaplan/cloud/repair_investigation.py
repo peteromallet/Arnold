@@ -1795,6 +1795,189 @@ def _bound_observation_value(value: Any, *, depth: int = 0) -> Any:
     return value
 
 
+def _authoritative_json_observation(
+    kind: str,
+    path: str | Path,
+    *,
+    expected_sha256: str = "",
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Re-read one state file with content-addressed, race-safe custody."""
+
+    ref = _file_reference(kind, path)
+    if expected_sha256 and ref["sha256"] != expected_sha256:
+        raise ValueError(f"authoritative {kind} changed after context capture: {path}")
+    encoded = _verified_reference_bytes(ref)
+    try:
+        value = json.loads(encoded)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"authoritative {kind} is not valid JSON: {path}") from exc
+    if not isinstance(value, Mapping):
+        raise ValueError(f"authoritative {kind} is not an object: {path}")
+    return dict(value), ref
+
+
+def _refresh_authoritative_state_observations(
+    observations: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Invalidate cached state projections using live chain/plan JSON.
+
+    L1 contexts inline a point-in-time checkpoint, while L2 contexts include
+    immutable references alongside a potentially older repair-data snapshot.
+    Observation construction is the last custody boundary before a repair
+    investigator acts, so always re-read the named state files here. Preserve
+    displaced values as contradiction evidence rather than silently erasing
+    the stale snapshot.
+    """
+
+    by_kind = {str(item.get("kind") or ""): item for item in observations}
+    plan_item = by_kind.get("plan_state")
+    chain_item = by_kind.get("chain_state")
+    repair_item = by_kind.get("repair_data")
+
+    def mapping(value: object) -> dict[str, Any]:
+        return dict(value) if isinstance(value, Mapping) else {}
+
+    plan_observed = mapping(plan_item.get("observed") if plan_item else {})
+    repair_observed = mapping(repair_item.get("observed") if repair_item else {})
+    repair_target = mapping(repair_observed.get("target"))
+    plan_path = str(plan_item.get("path") or "") if plan_item else ""
+    plan_path = plan_path or str(mapping(repair_target.get("plan_state")).get("path") or "")
+    chain_path = str(chain_item.get("path") or "") if chain_item else ""
+    chain_path = chain_path or str(plan_observed.get("chain_state_path") or "")
+    chain_path = chain_path or str(
+        mapping(repair_target.get("chain_state")).get("path") or ""
+    )
+    if not plan_path and not chain_path:
+        return {}, []
+
+    plan_state, plan_ref = ({}, {})
+    if plan_path:
+        plan_state, plan_ref = _authoritative_json_observation(
+            "plan_state",
+            plan_path,
+            expected_sha256=str(plan_item.get("sha256") or "") if plan_item else "",
+        )
+    chain_state, chain_ref = ({}, {})
+    if chain_path:
+        chain_state, chain_ref = _authoritative_json_observation(
+            "chain_state",
+            chain_path,
+            expected_sha256=str(chain_item.get("sha256") or "") if chain_item else "",
+        )
+
+    plan_current_state = _text(
+        plan_state.get("current_state") or plan_state.get("state"), 300
+    ).lower()
+    chain_last_state = _text(chain_state.get("last_state"), 300).lower()
+    chain_plan_name = _text(chain_state.get("current_plan_name"), 500)
+    plan_name = _text(
+        plan_state.get("name") or plan_state.get("plan_name") or chain_plan_name,
+        500,
+    )
+    latest_failure = mapping(plan_state.get("latest_failure"))
+    projection = {
+        "chain_last_state": chain_last_state,
+        "plan_current_state": plan_current_state,
+        "current_plan_name": plan_name or chain_plan_name,
+        "chain_current_plan_name": chain_plan_name,
+        "latest_failure": _bound_observation_value(latest_failure),
+        "chain_state_ref": chain_ref,
+        "plan_state_ref": plan_ref,
+    }
+
+    if plan_item:
+        plan_item["observed"] = {
+            **plan_observed,
+            "plan_state": plan_current_state,
+            "current_state": plan_current_state,
+            "plan_name": plan_name,
+            "latest_failure": projection["latest_failure"],
+            "chain_last_state": chain_last_state,
+            "chain_state_path": chain_path,
+        }
+        plan_item.update(plan_ref)
+        plan_item["path"] = plan_path
+    fresh_chain = {
+        **mapping(chain_item.get("observed") if chain_item else {}),
+        "last_state": chain_last_state,
+        "current_plan_name": chain_plan_name,
+    }
+    if chain_path and chain_item:
+        chain_item["observed"] = fresh_chain
+        chain_item.update(chain_ref)
+        chain_item["path"] = chain_path
+    elif chain_path:
+        observations.append(
+            {
+                "kind": "chain_state",
+                "path": chain_path,
+                "authority": 4,
+                **chain_ref,
+                "observed": fresh_chain,
+            }
+        )
+
+    contradictions: list[dict[str, str]] = []
+    cached_refs = mapping(repair_target.get("current_refs"))
+    for field, current, path in (
+        ("chain_last_state", chain_last_state, chain_path),
+        ("plan_current_state", plan_current_state, plan_path),
+    ):
+        cached = _text(cached_refs.get(field), 500)
+        if cached and cached != current:
+            contradictions.append(
+                {
+                    "left_source": f"repair_data.target.current_refs.{field}",
+                    "right_source": path,
+                    "contradiction": (
+                        f"cached {field}={cached!r} disagrees with "
+                        f"authoritative value {current!r}"
+                    ),
+                }
+            )
+
+    if repair_item:
+        target = {
+            **repair_target,
+            "current_refs": {
+                **cached_refs,
+                "chain_last_state": chain_last_state,
+                "plan_current_state": plan_current_state,
+                "current_plan_name": plan_name or chain_plan_name,
+                "chain_current_plan_name": chain_plan_name,
+            },
+        }
+        if contradictions:
+            target["invalidated_cached_current_refs"] = cached_refs
+        failure_context = mapping(repair_observed.get("current_failure_context"))
+        if failure_context:
+            cached_failure = mapping(failure_context.get("plan_latest_failure"))
+            if cached_failure and cached_failure != latest_failure:
+                failure_context["invalidated_cached_plan_latest_failure"] = cached_failure
+            failure_context["plan_latest_failure"] = {
+                "current_state": plan_current_state,
+                "state_path": plan_path,
+                **projection["latest_failure"],
+            }
+            failure_context["chain_state_summary"] = {
+                **mapping(failure_context.get("chain_state_summary")),
+                "path": chain_path,
+                "last_state": chain_last_state,
+            }
+            if plan_current_state == "blocked" and latest_failure:
+                failure_context["failure_classification"] = "live_failure"
+                if "stale_state" in failure_context:
+                    failure_context["invalidated_stale_state"] = failure_context.pop(
+                        "stale_state"
+                    )
+        repair_item["observed"] = {
+            **repair_observed,
+            "target": target,
+            "current_failure_context": failure_context,
+        }
+    return projection, contradictions
+
+
 def _external_guard_applicability(
     observations: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -1827,6 +2010,7 @@ def _external_guard_applicability(
                 observed.get("chain_last_state")
                 or observed.get("last_state")
                 or current.get("last_state")
+                or observed.get("current_state")
                 or chain_state
             ).strip().lower()
             latest = observed.get("latest_failure")
@@ -1839,6 +2023,7 @@ def _external_guard_applicability(
             failure_phase = str(
                 metadata.get("phase")
                 or metadata.get("failure_step")
+                or latest.get("phase")
                 or observed.get("current_phase")
                 or observed.get("target_stage")
                 or active_worker.get("phase")
@@ -1909,6 +2094,9 @@ def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
                 "observed": observed,
             }
         )
+    authoritative_state, custody_contradictions = (
+        _refresh_authoritative_state_observations(observations)
+    )
     required_receipt = _common_required_output("l2_repair_system")
     # Replace the illustrative placeholder with the one current immutable
     # envelope identity. Prior receipts are summarized above without their old
@@ -1958,6 +2146,8 @@ def build_meta_observation_bundle(context_path: str | Path) -> dict[str, Any]:
             ),
             "external_guard_applicability": external_guard_applicability,
             "quality_resolution_commit_custody": quality_resolution_commit_custody,
+            "authoritative_state": authoritative_state,
+            "custody_contradictions": custody_contradictions,
             "quality_commit_policy": (
                 "Missing durable quality-resolution commits forbid recover_state and "
                 "chain-state synchronization. Replan to ordinary L1 so the bounded "
@@ -1999,6 +2189,9 @@ def build_repair_observation_bundle(context_path: str | Path) -> dict[str, Any]:
                 "observed": _bound_observation_value(source.get("observed")),
             }
         )
+    authoritative_state, custody_contradictions = (
+        _refresh_authoritative_state_observations(observations)
+    )
 
     analysis_keys = (
         "exact_error",
@@ -2059,6 +2252,8 @@ def build_repair_observation_bundle(context_path: str | Path) -> dict[str, Any]:
             "target_kind": context.get("target_kind"),
             "access_verified": True,
             "analysis_context": _bound_observation_value(analysis_context),
+            "authoritative_state": authoritative_state,
+            "custody_contradictions": custody_contradictions,
             "external_guard_policy": (
                 "A failed or pending PR/CI check forbids recover_state only when the "
                 "current chain/failure phase makes that external guard operative. When a "

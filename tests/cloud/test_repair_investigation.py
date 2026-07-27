@@ -271,6 +271,63 @@ def test_l1_broker_observation_is_digest_bound_typed_and_bounded(tmp_path: Path)
         build_repair_observation_bundle(context_path)
 
 
+def test_l1_broker_re_reads_chain_and_plan_after_context_capture(
+    tmp_path: Path,
+) -> None:
+    workspace, spec, repair_data, request, goal = _fixture(tmp_path)
+    state_path = workspace / ".megaplan/plans/current-m5a/state.json"
+    chain_path = workspace / ".megaplan/plans/.chains/chain.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["current_state"] = "finalized"
+    state["latest_failure"] = {}
+    _write(state_path, state)
+    chain = json.loads(chain_path.read_text(encoding="utf-8"))
+    chain["last_state"] = "execute"
+    _write(chain_path, chain)
+
+    context = build_investigation_context(
+        workspace=workspace,
+        session="custody-control-plane-20260714",
+        remote_spec=str(spec),
+        repair_data_path=repair_data,
+        request_path=request,
+        goal_path=goal,
+    )
+    context_path = tmp_path / "context-before-resume-block.json"
+    _write(context_path, context)
+
+    state["current_state"] = "blocked"
+    state["latest_failure"] = {
+        "kind": "execution_blocked",
+        "phase": "execute",
+        "message": "fresh quality-gate failure",
+    }
+    _write(state_path, state)
+    chain["last_state"] = "blocked"
+    _write(chain_path, chain)
+
+    observation = build_repair_observation_bundle(context_path)
+
+    assert observation["authoritative_state"]["plan_current_state"] == "blocked"
+    assert observation["authoritative_state"]["chain_last_state"] == "blocked"
+    assert observation["authoritative_state"]["latest_failure"]["kind"] == (
+        "execution_blocked"
+    )
+    plan = next(
+        item for item in observation["observations"] if item["kind"] == "plan_state"
+    )
+    chain_observation = next(
+        item for item in observation["observations"] if item["kind"] == "chain_state"
+    )
+    assert plan["observed"]["current_state"] == "blocked"
+    assert plan["observed"]["latest_failure"]["message"] == (
+        "fresh quality-gate failure"
+    )
+    assert chain_observation["observed"]["last_state"] == "blocked"
+    assert len(plan["sha256"]) == 64
+    assert len(chain_observation["sha256"]) == 64
+
+
 def test_l1_broker_observation_bounds_oversized_error_without_losing_identity(
     tmp_path: Path,
 ) -> None:
@@ -1456,6 +1513,153 @@ def test_meta_context_uses_common_evidence_and_recovery_semantics(tmp_path: Path
     assert "Missing durable quality-resolution commits" in observation[
         "quality_commit_policy"
     ]
+
+
+def test_meta_observation_invalidates_stale_repair_current_refs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arnold_pipelines.megaplan.chain import spec as chain_spec
+
+    repair_dir = tmp_path / "repair-data"
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    spec = workspace / ".megaplan/initiatives/demo/chain.yaml"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("milestones: []\n", encoding="utf-8")
+    plan_name = "current-plan"
+    state_path = workspace / ".megaplan/plans" / plan_name / "state.json"
+    _write(
+        state_path,
+        {
+            "name": plan_name,
+            "current_state": "blocked",
+            "latest_failure": {
+                "kind": "execution_blocked",
+                "phase": "execute",
+                "message": "execute blocked by quality gates",
+            },
+        },
+    )
+    chain_path = chain_spec._state_path_for(spec)
+    _write(
+        chain_path,
+        {
+            "current_plan_name": plan_name,
+            "current_milestone_index": 8,
+            "completed": [{"plan": f"m{index}"} for index in range(8)],
+            "last_state": "blocked",
+            "metadata": {
+                "operator_resume": {
+                    "resumed_at": "2026-07-26T20:21:30Z",
+                    "restored_plan_state": "finalized",
+                }
+            },
+        },
+    )
+    goal = marker_dir / "repair-goals/demo/goal.json"
+    _write(
+        goal,
+        {
+            "goal_id": "goal-demo",
+            "checkpoint_digest": "a" * 64,
+            "target": {"blocker_id": "blocker-demo"},
+        },
+    )
+    _write(
+        repair_dir / "demo.repair-data.json",
+        {
+            "outcome": "recovery_not_verified",
+            "repair_goal": {
+                "goal_id": "goal-demo",
+                "goal_path": str(goal),
+                "checkpoint_digest": "a" * 64,
+            },
+            "target": {
+                "current_refs": {
+                    "chain_last_state": "execute",
+                    "plan_current_state": "finalized",
+                    "current_plan_name": plan_name,
+                },
+                "chain_state": {"path": str(chain_path), "last_state": "execute"},
+                "plan_state": {
+                    "path": str(state_path),
+                    "current_state": "finalized",
+                },
+            },
+            "current_failure_context": {
+                "failure_classification": "stale_state",
+                "stale_state": {
+                    "classification": "NO LATEST FAILURE",
+                    "summary": "no latest_failure is set",
+                },
+                "plan_latest_failure": {
+                    "current_state": "finalized",
+                    "kind": "",
+                    "message": "",
+                },
+                "chain_state_summary": {
+                    "path": str(chain_path),
+                    "last_state": "execute",
+                },
+            },
+        },
+    )
+    _write(
+        marker_dir / "demo.json",
+        {
+            "session": "demo",
+            "workspace": str(workspace),
+            "remote_spec": str(spec),
+            "run_kind": "chain",
+        },
+    )
+    external_path = repair_dir / "external.json"
+    _write(external_path, {"available": False, "error": "not applicable"})
+    monkeypatch.setattr(
+        repair_investigation,
+        "_external_pr_snapshot",
+        lambda **_: external_path,
+    )
+
+    context = build_meta_investigation_context(
+        session="demo",
+        trigger="persistent_recurring_retry",
+        repair_data_dir=repair_dir,
+        marker_dir=marker_dir,
+        arnold_src=REPO_ROOT,
+    )
+    context_path = tmp_path / "meta-context-stale-repair-data.json"
+    _write(context_path, context)
+
+    observation = build_meta_observation_bundle(context_path)
+
+    assert observation["authoritative_state"]["chain_last_state"] == "blocked"
+    assert observation["authoritative_state"]["plan_current_state"] == "blocked"
+    assert observation["authoritative_state"]["latest_failure"]["kind"] == (
+        "execution_blocked"
+    )
+    assert len(observation["custody_contradictions"]) == 2
+    repair = next(
+        item for item in observation["observations"] if item["kind"] == "repair_data"
+    )["observed"]
+    assert repair["target"]["current_refs"]["chain_last_state"] == "blocked"
+    assert repair["target"]["current_refs"]["plan_current_state"] == "blocked"
+    assert repair["target"]["invalidated_cached_current_refs"][
+        "chain_last_state"
+    ] == "execute"
+    assert repair["target"]["invalidated_cached_current_refs"][
+        "plan_current_state"
+    ] == "finalized"
+    failure = repair["current_failure_context"]
+    assert failure["failure_classification"] == "live_failure"
+    assert failure["plan_latest_failure"]["kind"] == "execution_blocked"
+    assert failure["invalidated_stale_state"]["classification"] == (
+        "NO LATEST FAILURE"
+    )
+    assert observation["external_guard_applicability"]["failure_kind"] == (
+        "execution_blocked"
+    )
+    assert observation["external_guard_applicability"]["failure_phase"] == "execute"
 
 
 def test_pathological_meta_context_stays_tiny_and_reference_only(tmp_path: Path) -> None:
