@@ -24,6 +24,88 @@ M11 closes C01–C20 from
 exact accepted M10 launch/effect/replay handoff and revalidates it byte-for-byte
 before initialization, canary, or retirement eligibility.
 
+## Binding 2026-07-27 production-recovery amendment
+
+This amendment is required acceptance scope, not a follow-up ticket. It records
+failures observed while recovering M10 on the installed Hetzner worker and
+supersedes older topology language in this brief where the two conflict.
+
+- The supported production recovery topology is one durable failure occurrence,
+  one non-agent event trigger, one singleton `simple_fixer` operator, at most one
+  canonical target runner, and a three-hour missed-event reconciliation
+  backstop. Do not re-enable watchdog, L1/L2/L3 investigator, repair-loop,
+  meta-repair, periodic audit-agent, or managed-child fanout to satisfy older
+  wording. The immediate trigger and three-hour timer must invoke the same
+  implementation and share the same singleton/occurrence claim.
+- Preserve the existing p95 under-five-minute eligible-blocker-to-accepted-
+  repair-or-typed-escalation requirement with the event trigger. The three-hour
+  timer is only the independently scheduled missed-event backstop; polling every
+  three hours alone does not satisfy the SLO. All older references in this brief
+  to hourly watchdog or six-hour recovery topology are replaced by this
+  immediate-trigger plus three-hour-backstop design.
+- Bind acceptance to the installed path actually used in production:
+  `megaplan-progress-audit.service`,
+  `/usr/local/bin/arnold-progress-auditor`, its exact systemd environment and
+  wrapper hashes, the pinned `MEGAPLAN_SIMPLE_FIXER_SOURCE_ROOT`, the loaded
+  `simple_fixer.py` hash/commit, the target marker, and the target runtime
+  provenance receipt. A source-only test, editable checkout, prompt snapshot,
+  or nominal service status cannot satisfy this canary.
+- At M11 initialization, import, hash, and join the three production recovery
+  cycles `20260727T183804.052936Z`, `20260727T194726.076432Z`, and
+  `20260727T200106.626010Z` from `/workspace/audit-reports/`, including their
+  prompts, operator results, transcripts, reports, before/after fingerprints,
+  target-runtime cutover/provenance receipts, focused-test evidence, and later
+  target events. Preserve the tested target-runtime commit
+  `e25f236d16b420881f4aafe87897e119b8d0dd8a`; fail closed if any cited artifact
+  is missing, mutable, unredacted, or cannot be bound to the exact occurrence.
+- Keep the fixer simple: the model prompt may investigate unknown causes, but a
+  small deterministic envelope must enforce the singleton lock, exact durable
+  occurrence identity, maximum two unchanged-fingerprint mutation attempts,
+  current Run Authority/Custody/WBC action gates before every mutation, one
+  canonical target runner, a hard no-child/no-subagent fence, redacted durable
+  transcript/result, and typed escalation. Prompt text alone is not proof of
+  the no-child fence.
+- The repair actor cannot verify itself. A separate verifier must later read the
+  exact occurrence, runtime/process identity, target state and receipts at 5m,
+  1h, and the next three-hour reconciliation. `state_cursor_advanced` alone is
+  insufficient: repeated identical divergence events, phase churn, status-only
+  rewrites, a fresh PID, or process presence without accepted work are negative
+  controls, not progress. Accepted progress requires a durable task/phase
+  acceptance or a fresh run-bound model/tool heartbeat followed by authoritative
+  forward movement; terminal repair also requires projection agreement.
+- Add the exact divergent-duplicate regression that failed in production.
+  Inject a divergent duplicate while transaction cleanup observes an already
+  ended transaction or commit failure. `DivergentDuplicateError` must remain the
+  primary typed outcome; quarantine must be durable or the result must remain
+  typed `INDETERMINATE`; no second terminal row/effect may exist. Restart/replay
+  of the same fixture must converge to the same typed result without blind
+  retry. A cleanup `OperationalError` may never mask the primary typed failure.
+- Add a cross-field phase-result invariant: `blocked_by_prereq` requires at
+  least one typed `blocked_tasks` entry after filtering stale projections
+  against durably completed task IDs. The producer must reject an empty
+  prerequisite block, and the reducer must emit `invalid_phase_result` /
+  `classification_incompatible` bound to the exact receipt hash. It must never
+  reinterpret the contradiction as a generic quality block or silently retry.
+- Add execution-ownership/scope regressions. Every execute batch must carry
+  complete batch-scope ownership evidence; unrelated operator/probe files must
+  be preserved outside claimed execution ownership. Exact replay must have no
+  added/missing files or unclaimed LOC. Repeated
+  `authority_divergence: batch_scope_missing_batch_scope` followed by phase
+  restart is a failed canary even if a cursor, state hash, or artifact changes.
+- Add installed-runtime symbol and review-routing regressions. Every helper
+  referenced by the execute/review recovery path, including
+  `_attach_next_step_runtime`, must exist in and be exercised from the exact
+  loaded runtime; source-only import success is insufficient. Every review
+  rework item must bind to one concrete known finalize task ID. A generic or
+  unknown ID such as `REVIEW` must become a typed invalid-review/classification
+  result and one actionable escalation; it may not be fed back into execute,
+  consume rerun attempts, or create an execute/review loop.
+- Add cross-surface agreement tests that reject `is_blocked=true` or an
+  attention/repairable-failure card after the authoritative occurrence is
+  cleared and the plan is validly `executed`, `reviewed`, or finalized without
+  a current failure. Conversely, projections may not hide a current durable
+  failure merely because a runner exists.
+
 ## In scope
 
 - Revalidate the exact M10 source/seed/runtime/process launch manifest,
@@ -69,7 +151,8 @@ before initialization, canary, or retirement eligibility.
   T7/T12 and same-basename cross-binding, torn cursor vectors, and orphan custody.
 - Exercise duplicate/late/lost/out-of-order triggers and retries, crash between
   every persistence/effect boundary, restart/replay, projection delete/rebuild,
-  missed-event reconciliation, six-hour backstop, and independent verification.
+  immediate event triggering, three-hour missed-event reconciliation, and
+  delayed independent verification.
 - Verify installed/editable/cloud/runtime revision equality and support-manifest
   coverage; test shadow, canary, promotion, kill switch, and forced rollback.
 - Run storage migration/backfill and mixed-version acceptance across each
@@ -85,18 +168,18 @@ before initialization, canary, or retirement eligibility.
   production deployment, promotion, or destructive removal.
 - Include the captured M5 quality-block chain-of-custody as a named regression:
   structured `failed: <detail>` evidence, canonical classification, eligible
-  trigger, managed-worker provenance, dispatch/launch failure, bounded
-  meta-repair, six-hour reconciliation, and final independent outcome must all
-  remain joinable under one exact occurrence.
+  trigger, single-fixer and canonical-runner provenance, dispatch/launch
+  failure, bounded repair, three-hour missed-event reconciliation, and final
+  independent outcome must all remain joinable under one exact occurrence.
 - For the genuine block, prove durable eligible blocker event, exact signature,
-  current Run Authority fence, current Custody lease/epoch, one managed repair,
-  accepted repair or typed escalation within
-  the p95 SLO, authoritative resumed progress, independent 5m/1h/6h checks,
+  current Run Authority fence, current Custody lease/epoch, one singleton fixer
+  occurrence claim, accepted repair or typed escalation within
+  the p95 SLO, authoritative resumed progress, independent 5m/1h/3h checks,
   projection agreement, and no duplicate/replayed effect.
 - Prove both outcomes for that regression: a repairable deterministic block
   reaches one accepted repair, while an unapproved or genuinely incoherent case
   reaches one typed human gate. Neither may stall as unknown due to prefix
-  parsing, disappear because L1 was never launched, or count as recovered
+  parsing, disappear because the immediate trigger was lost, or count as recovered
   without authoritative progress and independent verification.
 - Mark raw-state/status/process/marker/sidecar/wrapper/compatibility authority
   bypasses eligible for removal only after their gates pass; preserve required
@@ -148,10 +231,10 @@ and may not restore legacy write authority.
 
 - One integrated launch/cutover test joins source and seed binding, target
   checkout/HEAD, runtime vector, marker CAS, supervisor receipt, resident and
-  watchdog process identity, worker preflight, fresh gate, A→B, and independently
+  single-fixer process identity, worker preflight, fresh gate, A→B, and independently
   verified B→A. Component-only helper tests cannot satisfy this case.
 - One canonical acceptance adapter and target-bound chain loader drive status,
-  watchdog, advancement, successor admission, resident, and Discord; all C16
+  fixer, advancement, successor admission, resident, and Discord; all C16
   contradictions remain visible and cannot render `done` or accepted progress.
 - Static call-site equality and runtime traces prove every provider/effect path
   uses C13's WBC protocol; all C20 retirement predicates pass per path before a
@@ -189,6 +272,23 @@ and may not restore legacy write authority.
 - One genuine blocked-run acceptance—not a fixture, mocked status, nominal
   manifest, fresh PID, or local repair commit—meets recovery, custody, resumed-
   progress, delayed-verification, and projection-agreement gates.
+- Named installed-runtime cases prove: divergent duplicate rollback never masks
+  its typed outcome; restart/replay is deterministic; empty
+  `blocked_by_prereq` is rejected by producer and reducer; stale blocked
+  projections cannot override durable completion; execution ownership/batch
+  scope is complete; repeated authority divergence cannot count as progress;
+  execute/review recovery has no missing loaded-runtime symbol; review rework
+  IDs bind to concrete finalize tasks; and status/attention projections agree
+  with the authoritative current occurrence.
+- One production-path canary proves durable occurrence → immediate trigger →
+  one singleton fixer claim → current action gates → at most one canonical
+  runner → accepted progress or one typed escalation → separate delayed
+  verification. A second canary drops the immediate trigger and proves the
+  three-hour reconciliation catches the same occurrence without duplication.
+- The installed canary proves the exact systemd unit, wrapper, pinned fixer
+  source, prompt/input digest, target runtime and marker identities; zero new
+  managed-agent or legacy-repair manifests/processes; deterministic child-launch
+  denial; and the unchanged-fingerprint circuit breaker.
 - Productive-versus-replayed ledger coverage exposes unknowns and preserves
   legitimate workload; exact projection-I/O and compaction measurements are
   recorded or remain explicitly unknown rather than inferred as zero.
