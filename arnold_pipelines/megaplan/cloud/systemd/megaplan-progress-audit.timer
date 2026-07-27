@@ -1,5 +1,5 @@
 [Unit]
-Description=Run Megaplan progress auditor every 3 hours
+Description=Run Megaplan fixer every three hours
 
 [Timer]
 OnBootSec=5min

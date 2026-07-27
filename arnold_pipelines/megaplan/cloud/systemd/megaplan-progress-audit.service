@@ -1,8 +1,11 @@
 [Unit]
-Description=Megaplan 3-hour plan progress audit
+Description=Megaplan three-hour single-operator fixer
 After=docker.service
 Requires=docker.service
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/arnold-progress-auditor
+RuntimeMaxSec=2h30m
+KillMode=control-group
+TimeoutStopSec=30s
