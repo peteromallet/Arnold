@@ -23,7 +23,11 @@ from arnold.kernel.replay import ReplayCursor
 
 @dataclass
 class PlanStatusProjection:
-    """Projected status of a plan from manifest events."""
+    """Projected status of a plan from manifest events.
+
+    This is a **display-only projection** — it does not grant dispatch,
+    completion, cancellation, publication, or delivery authority.
+    """
 
     plan_name: str
     current_state: str
@@ -35,9 +39,10 @@ class PlanStatusProjection:
     pending_nodes: list[str] = field(default_factory=list)
     control_transitions: list[dict[str, Any]] = field(default_factory=list)
     artifacts: list[dict[str, Any]] = field(default_factory=list)
+    source_cursor_vector: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "plan_name": self.plan_name,
             "current_state": self.current_state,
             "iteration": self.iteration,
@@ -48,7 +53,11 @@ class PlanStatusProjection:
             "pending_nodes": self.pending_nodes,
             "control_transitions": self.control_transitions,
             "artifacts": self.artifacts,
+            "display_authority": "display_only_non_authoritative",
         }
+        if self.source_cursor_vector is not None:
+            result["source_cursor_vector"] = self.source_cursor_vector
+        return result
 
 
 @dataclass
@@ -93,7 +102,13 @@ def project_status(
     artifact_root: Path,
     expected_nodes: tuple[str, ...] = (),
 ) -> PlanStatusProjection:
-    """Project plan status from manifest journal events."""
+    """Project plan status from manifest journal events.
+
+    This projection is read-only and non-authoritative.  The returned
+    ``PlanStatusProjection`` is a **display-only** data structure — it must
+    never be used to authorize dispatch, completion, cancellation,
+    publication, or delivery.
+    """
 
     events = read_events(artifact_root)
     completed: set[str] = set()
@@ -103,10 +118,12 @@ def project_status(
     control_transitions: list[dict[str, Any]] = []
     artifacts: list[dict[str, Any]] = []
     iteration = 0
+    last_event_sequence: int | None = None
 
     for event in events:
         payload = event.payload
         node_ref = payload.get("node_ref")
+        last_event_sequence = event.sequence
         if event.kind == "node_completed" and isinstance(node_ref, str):
             completed.add(node_ref)
             started.discard(node_ref)
@@ -150,6 +167,17 @@ def project_status(
 
     pending = set(expected_nodes) - completed - failed - suspended - started
 
+    # Build a source cursor vector from the manifest journal position.
+    # This is an evidence trace, never an authority grant.
+    source_cursor_vector: dict[str, Any] = {
+        "authority": "manifest_journal_derived_display_only",
+        "artifact_root": str(artifact_root),
+        "event_count": len(events),
+        "last_event_sequence": last_event_sequence,
+        "terminal_kind": terminal_kind,
+        "active_node": active_node,
+    }
+
     return PlanStatusProjection(
         plan_name=plan_name,
         current_state=current_state,
@@ -161,6 +189,7 @@ def project_status(
         pending_nodes=sorted(pending),
         control_transitions=control_transitions,
         artifacts=artifacts,
+        source_cursor_vector=source_cursor_vector,
     )
 
 
@@ -271,7 +300,12 @@ def project_resume_status(artifact_root: Path, plan_name: str) -> dict[str, Any]
 
 
 def project_gate_status(artifact_root: Path) -> dict[str, Any]:
-    """Project gate status from journal control transitions and artifacts."""
+    """Project gate status from journal control transitions and artifacts.
+
+    The returned dict is **display-only**.  Gate recommendations shown here
+    are journal-derived observations; they do not constitute an authority
+    grant for gate passage, dispatch, or milestone completion.
+    """
 
     events = read_events(artifact_root)
     recommendations: list[dict[str, Any]] = []
@@ -291,11 +325,19 @@ def project_gate_status(artifact_root: Path) -> dict[str, Any]:
                 "artifact_id": event.payload.get("artifact_id"),
                 "relative_path": event.payload.get("relative_path"),
             })
-    return {"recommendations": recommendations}
+    return {
+        "recommendations": recommendations,
+        "display_authority": "display_only_non_authoritative",
+    }
 
 
 def project_review_status(artifact_root: Path) -> dict[str, Any]:
-    """Project review status from journal events."""
+    """Project review status from journal events.
+
+    Review verdicts shown here are journal-derived observations.  They do
+    not constitute a review authority grant — actual review decisions are
+    recorded in the review manifest or WBC terminal gate, not here.
+    """
 
     events = read_events(artifact_root)
     verdicts: list[dict[str, Any]] = []
@@ -309,11 +351,19 @@ def project_review_status(artifact_root: Path) -> dict[str, Any]:
                     "source": event.payload.get("source_node"),
                     "target": event.payload.get("target_node"),
                 })
-    return {"verdicts": verdicts}
+    return {
+        "verdicts": verdicts,
+        "display_authority": "display_only_non_authoritative",
+    }
 
 
 def project_execute_status(artifact_root: Path) -> dict[str, Any]:
-    """Project execute status from journal events."""
+    """Project execute status from journal events.
+
+    The returned started/completed/failed booleans are journal-derived
+    observations.  They do not authorize execution start, completion
+    claims, failure classification, or batch dispatch.
+    """
 
     events = read_events(artifact_root)
     started = any(
@@ -328,11 +378,21 @@ def project_execute_status(artifact_root: Path) -> dict[str, Any]:
         event.kind == "node_failed" and event.payload.get("node_ref") == "execute"
         for event in events
     )
-    return {"started": started, "completed": completed, "failed": failed}
+    return {
+        "started": started,
+        "completed": completed,
+        "failed": failed,
+        "display_authority": "display_only_non_authoritative",
+    }
 
 
 def project_override_status(artifact_root: Path) -> dict[str, Any]:
-    """Project override actions from journal control transitions."""
+    """Project override actions from journal control transitions.
+
+    Override actions shown here are journal-derived observations.  They
+    record what overrides were applied but do not themselves authorize
+    new overrides, dispatch, or plan mutation.
+    """
 
     events = read_events(artifact_root)
     actions: list[dict[str, Any]] = []
@@ -346,7 +406,10 @@ def project_override_status(artifact_root: Path) -> dict[str, Any]:
                     "source": event.payload.get("source_node"),
                     "target": event.payload.get("target_node"),
                 })
-    return {"override_actions": actions}
+    return {
+        "override_actions": actions,
+        "display_authority": "display_only_non_authoritative",
+    }
 
 
 def project_inspect(
@@ -355,7 +418,13 @@ def project_inspect(
     plan_name: str,
     manifest_hash: str | None = None,
 ) -> dict[str, Any]:
-    """Project a full inspect view from journal events and artifact bindings."""
+    """Project a full inspect view from journal events and artifact bindings.
+
+    The inspect view is a **display-only projection**.  No field in the
+    returned dict — not ``status``, ``trace``, or any nested value — may be
+    used to authorize dispatch, completion, cancellation, publication, or
+    delivery.
+    """
 
     status = project_status(plan_name=plan_name, artifact_root=artifact_root)
     trace = project_trace(artifact_root=artifact_root)
@@ -366,6 +435,14 @@ def project_inspect(
         "trace": [row.to_dict() for row in trace],
         "source_authority": "manifest_journal",
         "state_json_authority": False,
+        "display_authority": "display_only_non_authoritative",
+        "forbidden_actions": [
+            "dispatch",
+            "completion",
+            "cancellation",
+            "publication",
+            "delivery",
+        ],
     }
 
 

@@ -21,6 +21,7 @@ from arnold_pipelines.megaplan.agentbox_adapter import (
     MegaplanChainLaunchError,
     _record_completion_dm,
 )
+from arnold_pipelines.megaplan.custody.process_adapter_wbc import process_adapter_wbc_dir
 from arnold_pipelines.megaplan.chain.spec import ChainState, load_chain_state, save_chain_state
 
 
@@ -100,6 +101,55 @@ def test_megaplan_chain_launch_validates_relative_spec_before_tmux(
         ResourceType.PROCESS_SESSION,
     }
     assert sum(resource.resource_type is ResourceType.PROCESS_SESSION for resource in resources) == 1
+
+
+def test_megaplan_chain_launch_records_process_adapter_wbc_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    repo = config.repos_root / "app"
+    _write_valid_chain(repo)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "add chain spec")
+
+    monkeypatch.setattr("agentbox.host.start_session", lambda *args, **kwargs: "agentbox-chain-1")
+    monkeypatch.setattr(
+        "agentbox.host.inspect_session",
+        lambda name: SessionStatus(name, "running", True),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.agentbox_adapter.inspect_session",
+        lambda name: SessionStatus(name, "running", True),
+    )
+
+    result = MegaplanChainHandler().launch(
+        config,
+        "chain-1",
+        repo_name="app",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
+    )
+
+    sidecar = process_adapter_wbc_dir(
+        result.host_result.run_paths.root,
+        producer_family="agentbox_adapter",
+        adapter_name="megaplan_chain",
+    )
+    records = _events(sidecar / "events.ndjson")
+
+    assert [record["payload"]["boundary_event"] for record in records] == [
+        "started",
+        "effect",
+        "effect",
+        "terminal",
+    ]
+    assert records[0]["payload"]["surface"] == "launch"
+    assert records[-1]["payload"]["status"] == "running"
+    assert records[-1]["payload"]["outcome"] == "started"
+    assert records[-1]["payload"]["indeterminate_hooks"] == {
+        "signal": "reserved_for_m10_hardening",
+        "crash": "reserved_for_m10_hardening",
+    }
 
 
 @pytest.mark.parametrize(

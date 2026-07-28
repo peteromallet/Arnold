@@ -10,6 +10,7 @@ from arnold_pipelines.megaplan.cloud.github_sync import (
     main,
     sync_persistent_problems,
 )
+from arnold_pipelines.megaplan.notification_safety import FixtureSafetyDecision
 from arnold_pipelines.megaplan.cloud.incident_bridge import append_github_issue_published
 from arnold_pipelines.megaplan.incident import IncidentLedger
 
@@ -224,6 +225,35 @@ def test_sync_persistent_problems_retries_without_missing_labels(tmp_path: Path)
         "omitted_labels": ["incident-control-plane"],
         "applied_labels": ["persistent-problem"],
     }
+
+
+def test_sync_persistent_problems_skips_real_publication_when_action_off(tmp_path: Path, monkeypatch) -> None:
+    projections = _projections(_problem_projection(), _incident_projection())
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.cloud.github_sync_wbc.classify_fixture_safety",
+        lambda **_kwargs: FixtureSafetyDecision(False, "not_fixture"),
+    )
+
+    with patch("arnold_pipelines.megaplan.cloud.github_sync.github_cli.create_issue") as create_issue:
+        result = sync_persistent_problems(
+            config=GitHubSyncConfig(repo="acme/repo", repo_path=tmp_path),
+            root=tmp_path,
+            projections=projections,
+        )
+
+    assert result["published"] == []
+    assert result["failed"] == []
+    assert result["skipped"] == [
+        {
+            "problem_id": "prob-sync-1",
+            "reason": "action_off",
+            "suppression_reason": (
+                "megaplan.cloud.github_sync.create remains action-off outside "
+                "fixture-authorized execution during WBC adoption"
+            ),
+        }
+    ]
+    create_issue.assert_not_called()
 
 
 def test_sync_persistent_problems_uses_configurable_thresholds(tmp_path: Path) -> None:

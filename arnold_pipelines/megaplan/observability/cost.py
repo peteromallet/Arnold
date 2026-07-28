@@ -191,6 +191,51 @@ def _aggregate(events: list[dict], meta_cost: float) -> dict:
                 tokens_by_vendor["deepseek"] += tokens
                 # no model-level attribution in this path
 
+        # M9 T24: INFERENCE events carry model/token/cost data alongside
+        # the legacy LLM_CALL_END pathway.  Token keys are tokens_in /
+        # tokens_out (same as LLM_CALL_END); cost_usd may be present.
+        elif kind == EventKind.INFERENCE:
+            tokens_in = int(payload.get("tokens_in", 0) or 0)
+            tokens_out = int(payload.get("tokens_out", 0) or 0)
+            tokens = tokens_in + tokens_out
+
+            # Cost from inference event (may be absent — only count when present)
+            inf_cost = payload.get("cost_usd")
+            if inf_cost is not None:
+                try:
+                    inf_cost = float(inf_cost)
+                except (TypeError, ValueError):
+                    inf_cost = 0.0
+                if inf_cost > 0:
+                    payload_model = payload.get("model")
+                    model_key = str(payload_model).strip() if payload_model else "unknown"
+                    cost_by_model[model_key] += inf_cost
+                    vendor = _vendor_for_cost_event(payload, payload_model)
+                    cost_by_vendor[vendor] += inf_cost
+                    events_cost += inf_cost
+                    cost_records_total += 1
+                    if payload_model:
+                        distinct_models.add(str(payload_model))
+                    if phase:
+                        phase_cost[phase] += inf_cost
+
+            if tokens <= 0:
+                continue
+
+            payload_model = payload.get("model")
+            # phase token accumulation
+            if phase:
+                phase_tokens[phase] += tokens
+
+            if payload_model and isinstance(payload_model, str) and payload_model.strip():
+                m = payload_model.strip()
+                tokens_by_model[m] += tokens
+                tokens_by_vendor[_classify_vendor(m)] += tokens
+            else:
+                # No model — estimate via vendor default
+                exact_tokens = False
+                tokens_by_vendor["deepseek"] += tokens
+
     # ── cost reconciliation (same rule as introspect.py:530-560) ──────
     # Take the larger of events_cost vs meta_cost so we never undercount.
     if meta_cost > events_cost:
@@ -427,10 +472,13 @@ def handle_cost(root: Path, args: argparse.Namespace) -> int:
         return 1
 
     # Read cost-related events once (no new ndjson parser).
+    # Read cost-related events once (no new ndjson parser).
+    # M9 T24: include INFERENCE events which carry model/token/cost data
+    # alongside the legacy LLM_CALL_END pathway.
     events = list(
         read_events(
             plan_dir,
-            kinds=[EventKind.COST_RECORDED, EventKind.LLM_CALL_END],
+            kinds=[EventKind.COST_RECORDED, EventKind.LLM_CALL_END, EventKind.INFERENCE],
         )
     )
 

@@ -28,8 +28,10 @@ from arnold.workflow.attempt_ledger_store import (
     AttemptLedgerStore,
     AttemptReservation,
     GateStatus,
+    MissingStartEventError,
     MonotonicSequenceError,
     PostTerminalAppendError,
+    SequenceGapError,
     SqliteAttemptLedgerStore,
     StartGateResult,
     TerminalGateResult,
@@ -85,10 +87,11 @@ def _make_event(
     sequence: int = 1,
     event_type: AttemptEventType = AttemptEventType.STARTED,
     idempotency_key: str = "idem-1",
-    causal_predecessor_sequence: int = 0,
+    causal_predecessor_sequence: int | None = None,
     append_position: int = 0,
 ) -> LedgerEvent:
     aid = attempt_id if attempt_id is not None else _aid()
+    cps = sequence - 1 if causal_predecessor_sequence is None else causal_predecessor_sequence
     return LedgerEvent(
         idempotency_key=idempotency_key,
         event_type=event_type,
@@ -100,7 +103,7 @@ def _make_event(
         versions=VersionSet(code_version="c1"),
         grant_ref=GrantRef(grant_id="grant-1"),
         sequence=sequence,
-        causal_predecessor_sequence=causal_predecessor_sequence,
+        causal_predecessor_sequence=cps,
         append_position=append_position,
         occurred_at="2025-01-01T00:00:00Z",
         observed_at="2025-01-01T00:00:01Z",
@@ -131,6 +134,27 @@ def _make_completed_event(
         occurred_at="2025-01-01T00:00:10Z",
         observed_at="2025-01-01T00:00:11Z",
         outcome=AttemptOutcome.SUCCEEDED,
+    )
+
+
+def _insert_event_unchecked(
+    store: SqliteAttemptLedgerStore,
+    attempt_id: str,
+    event: LedgerEvent,
+) -> None:
+    """Seed intentionally incoherent legacy evidence for read-side diagnostics."""
+    store.conn.execute(
+        "INSERT INTO attempt_events "
+        "(attempt_id, sequence, idempotency_key, event_type, event_json, appended_at_ns) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            attempt_id,
+            event.sequence,
+            event.idempotency_key,
+            event.event_type.value,
+            json.dumps(event.to_dict(), sort_keys=True, ensure_ascii=False),
+            time.time_ns(),
+        ),
     )
 
 
@@ -536,10 +560,10 @@ class TestSqliteAttemptLedgerStoreWrite:
             store = SqliteAttemptLedgerStore(path)
             aid = _aid()
             e1 = _make_event(attempt_id=aid, sequence=1, idempotency_key="k1")
-            e2 = _make_event(attempt_id=aid, sequence=3, idempotency_key="k3")
+            e2 = _make_event(attempt_id=aid, sequence=2, idempotency_key="k2")
             store.append_event(aid, e1)
             store.append_event(aid, e2)
-            assert store.last_sequence(aid) == 3
+            assert store.last_sequence(aid) == 2
             store.close()
         finally:
             if os.path.exists(path):
@@ -638,8 +662,8 @@ class TestSqliteAttemptLedgerStoreRead:
                     grant_id="grt-rt",
                     decision_id="dec-rt",
                 ),
-                sequence=5,
-                causal_predecessor_sequence=4,
+                sequence=1,
+                causal_predecessor_sequence=0,
                 append_position=10,
                 occurred_at="2025-06-15T12:00:00Z",
                 observed_at="2025-06-15T12:00:01Z",
@@ -949,8 +973,8 @@ class TestStep4MonotonicSequence:
         try:
             store = SqliteAttemptLedgerStore(path)
             aid = _aid()
-            store.append_event(aid, _make_event(attempt_id=aid, sequence=5, idempotency_key="k5"))
-            e2 = _make_event(attempt_id=aid, sequence=3, idempotency_key="k3")
+            store.append_event(aid, _make_event(attempt_id=aid, sequence=1, idempotency_key="k1"))
+            e2 = _make_event(attempt_id=aid, sequence=1, idempotency_key="k2")
             with pytest.raises(MonotonicSequenceError):
                 store.append_event(aid, e2)
             assert store.event_count(aid) == 1
@@ -973,16 +997,17 @@ class TestStep4MonotonicSequence:
             if os.path.exists(path):
                 os.unlink(path)
 
-    def test_sequence_gap_allowed_when_strictly_increasing(self):
-        """Gaps in sequence are fine — only monotonicity is enforced."""
+    def test_sequence_gap_rejected_even_when_strictly_increasing(self):
+        """Strict increase is insufficient: durable sequences must be contiguous."""
         path = _store_path()
         try:
             store = SqliteAttemptLedgerStore(path)
             aid = _aid()
             store.append_event(aid, _make_event(attempt_id=aid, sequence=1, idempotency_key="k1"))
-            store.append_event(aid, _make_event(attempt_id=aid, sequence=7, idempotency_key="k7"))
-            assert store.event_count(aid) == 2
-            assert store.last_sequence(aid) == 7
+            with pytest.raises(SequenceGapError):
+                store.append_event(aid, _make_event(attempt_id=aid, sequence=7, idempotency_key="k7"))
+            assert store.event_count(aid) == 1
+            assert store.last_sequence(aid) == 1
             store.close()
         finally:
             if os.path.exists(path):
@@ -1059,16 +1084,15 @@ class TestStep4SingleTerminal:
             if os.path.exists(path):
                 os.unlink(path)
 
-    def test_terminal_can_be_first_event(self):
-        """No lifecycle ordering is enforced by the store — terminal may lead."""
+    def test_terminal_cannot_be_first_event(self):
+        """A terminal append must fail closed until STARTED is durable."""
         path = _store_path()
         try:
             store = SqliteAttemptLedgerStore(path)
             aid = _aid()
-            # Store does not require STARTED before terminal.
-            r = store.append_event(aid, _make_completed_event(attempt_id=aid, sequence=1, idempotency_key="k1"))
-            assert r.is_duplicate is False
-            assert store.has_terminal_event(aid)
+            with pytest.raises(MissingStartEventError):
+                store.append_event(aid, _make_completed_event(attempt_id=aid, sequence=1, idempotency_key="k1"))
+            assert not store.has_terminal_event(aid)
             store.close()
         finally:
             if os.path.exists(path):
@@ -1298,16 +1322,15 @@ class TestStep4TransactionAtomicity:
         try:
             store = SqliteAttemptLedgerStore(path)
             aid = _aid()
-            # Land sequence=2 first (skipping 1 — gaps are allowed by the store).
-            store.append_event(aid, _make_event(attempt_id=aid, sequence=2, idempotency_key="k2"))
-            # A monotonic violation (sequence=1 after 2) must roll back cleanly.
+            store.append_event(aid, _make_event(attempt_id=aid, sequence=1, idempotency_key="k1"))
+            # A monotonic violation at the durable tip must roll back cleanly.
             try:
-                store.append_event(aid, _make_event(attempt_id=aid, sequence=1, idempotency_key="k1"))
+                store.append_event(aid, _make_event(attempt_id=aid, sequence=1, idempotency_key="duplicate-seq"))
             except MonotonicSequenceError:
                 pass
             assert store.conn.in_transaction is False
             # Subsequent valid append must still succeed.
-            r = store.append_event(aid, _make_completed_event(attempt_id=aid, sequence=3, idempotency_key="k3"))
+            r = store.append_event(aid, _make_completed_event(attempt_id=aid, sequence=2, idempotency_key="k2"))
             assert r.is_duplicate is False
             store.close()
         finally:
@@ -1989,8 +2012,8 @@ class TestStep5StartGate:
         try:
             store = SqliteAttemptLedgerStore(path)
             aid = _aid()
-            store.append_event(
-                aid, _make_completed_event(attempt_id=aid, sequence=1, idempotency_key="k1")
+            _insert_event_unchecked(
+                store, aid, _make_completed_event(attempt_id=aid, sequence=1, idempotency_key="k1")
             )
             result = store.start_verified(aid)
             assert result.status == GateStatus.INCOMPLETE
@@ -2128,8 +2151,8 @@ class TestStep5StartGate:
         try:
             store = SqliteAttemptLedgerStore(path)
             aid = _aid()
-            store.append_failed(
-                aid, _make_failed_event(attempt_id=aid, sequence=1, idempotency_key="k1")
+            _insert_event_unchecked(
+                store, aid, _make_failed_event(attempt_id=aid, sequence=1, idempotency_key="k1")
             )
             result = store.start_verified(aid)
             assert result.status != GateStatus.VERIFIED
@@ -2359,8 +2382,8 @@ class TestStep5TerminalGate:
         try:
             store = SqliteAttemptLedgerStore(path)
             aid = _aid()
-            store.append_completed(
-                aid, _make_completed_event(attempt_id=aid, sequence=1, idempotency_key="k1")
+            _insert_event_unchecked(
+                store, aid, _make_completed_event(attempt_id=aid, sequence=1, idempotency_key="k1")
             )
             result = store.terminal_or_indeterminate_verified(aid)
             assert result.status == GateStatus.VERIFIED
@@ -2787,8 +2810,8 @@ class TestStep8QueryGaps:
         try:
             store = SqliteAttemptLedgerStore(path)
             aid = _aid()
-            store.append_event(aid, _make_event(attempt_id=aid, sequence=3, idempotency_key="k3"))
-            store.append_event(aid, _make_completed_event(attempt_id=aid, sequence=4, idempotency_key="k4"))
+            _insert_event_unchecked(store, aid, _make_event(attempt_id=aid, sequence=3, idempotency_key="k3"))
+            _insert_event_unchecked(store, aid, _make_completed_event(attempt_id=aid, sequence=4, idempotency_key="k4"))
 
             gaps = store.query_gaps(aid)
             assert len(gaps) == 1
@@ -2810,7 +2833,7 @@ class TestStep8QueryGaps:
             aid = _aid()
             store.append_event(aid, _make_event(attempt_id=aid, sequence=1, idempotency_key="k1"))
             store.append_event(aid, _make_event(attempt_id=aid, sequence=2, idempotency_key="k2"))
-            store.append_event(aid, _make_completed_event(attempt_id=aid, sequence=5, idempotency_key="k5"))
+            _insert_event_unchecked(store, aid, _make_completed_event(attempt_id=aid, sequence=5, idempotency_key="k5"))
 
             gaps = store.query_gaps(aid)
             assert len(gaps) == 1
@@ -2829,8 +2852,8 @@ class TestStep8QueryGaps:
         try:
             store = SqliteAttemptLedgerStore(path)
             aid = _aid()
-            store.append_event(aid, _make_event(attempt_id=aid, sequence=3, idempotency_key="k3"))
-            store.append_event(aid, _make_completed_event(attempt_id=aid, sequence=7, idempotency_key="k7"))
+            _insert_event_unchecked(store, aid, _make_event(attempt_id=aid, sequence=3, idempotency_key="k3"))
+            _insert_event_unchecked(store, aid, _make_completed_event(attempt_id=aid, sequence=7, idempotency_key="k7"))
 
             gaps = store.query_gaps(aid)
             assert len(gaps) == 2
@@ -2852,7 +2875,7 @@ class TestStep8QueryGaps:
             aid1 = _aid()
             aid2 = _aid()
             store.append_event(aid1, _make_event(attempt_id=aid1, sequence=1, idempotency_key="k1"))
-            store.append_event(aid1, _make_completed_event(attempt_id=aid1, sequence=3, idempotency_key="k3"))
+            _insert_event_unchecked(store, aid1, _make_completed_event(attempt_id=aid1, sequence=3, idempotency_key="k3"))
             store.append_event(aid2, _make_event(attempt_id=aid2, sequence=1, idempotency_key="a1"))
             store.append_event(aid2, _make_event(attempt_id=aid2, sequence=2, idempotency_key="a2"))
 
@@ -2868,7 +2891,7 @@ class TestStep8QueryGaps:
         try:
             store = SqliteAttemptLedgerStore(path)
             aid = _aid()
-            store.append_event(aid, _make_event(attempt_id=aid, sequence=3, idempotency_key="k3"))
+            _insert_event_unchecked(store, aid, _make_event(attempt_id=aid, sequence=3, idempotency_key="k3"))
             gaps = store.query_gaps(aid)
             g = gaps[0]
             with pytest.raises(Exception):
@@ -3090,8 +3113,8 @@ class TestStep8DiagnosticsAreEvidenceNotAuthority:
         try:
             store = SqliteAttemptLedgerStore(path)
             aid = _aid()
-            store.append_event(aid, _make_event(attempt_id=aid, sequence=5, idempotency_key="k5"))
-            assert store.last_sequence(aid) == 5
+            store.append_event(aid, _make_event(attempt_id=aid, sequence=1, idempotency_key="k1"))
+            assert store.last_sequence(aid) == 1
 
             from arnold.workflow.execution_attempt_ledger import (
                 PersistenceFailureDiagnostic,
@@ -3101,11 +3124,11 @@ class TestStep8DiagnosticsAreEvidenceNotAuthority:
                 aid,
                 PersistenceFailureDiagnostic(
                     failure_mode=PersistenceFailureMode.WRITE_FAILED,
-                    target_event_sequence=6,
+                    target_event_sequence=2,
                     observed_error="test",
                 ),
             )
-            assert store.last_sequence(aid) == 5
+            assert store.last_sequence(aid) == 1
             store.close()
         finally:
             if os.path.exists(path):
@@ -3203,10 +3226,10 @@ class TestStep8AppendFailureRaisesWithDiagnostic:
         try:
             store = SqliteAttemptLedgerStore(path)
             aid = _aid()
-            store.append_event(aid, _make_event(attempt_id=aid, sequence=3, idempotency_key="k3"))
+            store.append_event(aid, _make_event(attempt_id=aid, sequence=1, idempotency_key="k1"))
             # Same sequence → monotonic error, not a persistence failure.
             with pytest.raises(MonotonicSequenceError):
-                store.append_event(aid, _make_event(attempt_id=aid, sequence=1, idempotency_key="k1"))
+                store.append_event(aid, _make_event(attempt_id=aid, sequence=1, idempotency_key="k2"))
             assert store.query_persistence_diagnostics(aid) == []
             store.close()
         finally:

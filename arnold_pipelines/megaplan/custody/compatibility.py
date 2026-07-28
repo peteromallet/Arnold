@@ -490,6 +490,23 @@ class RollbackValidation:
         Count of quarantined entries that would be preserved.
     legacy_writers_blocked
         List of legacy authoritative writer IDs that remain retired.
+    exact_identity_gaps
+        Missing exact-identity proofs that force rollback to remain
+        evidence-only.
+    reread_gaps
+        Missing authoritative rereads that force rollback to remain
+        evidence-only.
+    non_unique_owner_conflicts
+        Subjects whose owner claims are missing or ambiguous.
+    historical_read_only_adapters
+        Read-only historical adapters that are still active; these keep
+        rollback in compatibility-only mode.
+    adopter_promotion_enabled
+        Whether adopter promotion is allowed. Rollback keeps this
+        disabled.
+    real_effects_enabled
+        Whether real external effects are allowed. Rollback keeps this
+        disabled.
     reason
         Human-readable explanation.
     """
@@ -498,6 +515,12 @@ class RollbackValidation:
     blocked_by: tuple[str, ...] = ()
     quarantined_preserved: int = 0
     legacy_writers_blocked: tuple[str, ...] = ()
+    exact_identity_gaps: tuple[str, ...] = ()
+    reread_gaps: tuple[str, ...] = ()
+    non_unique_owner_conflicts: tuple[str, ...] = ()
+    historical_read_only_adapters: tuple[str, ...] = ()
+    adopter_promotion_enabled: bool = False
+    real_effects_enabled: bool = False
     reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -506,8 +529,59 @@ class RollbackValidation:
             "blocked_by": list(self.blocked_by),
             "quarantined_preserved": self.quarantined_preserved,
             "legacy_writers_blocked": list(self.legacy_writers_blocked),
+            "exact_identity_gaps": list(self.exact_identity_gaps),
+            "reread_gaps": list(self.reread_gaps),
+            "non_unique_owner_conflicts": list(self.non_unique_owner_conflicts),
+            "historical_read_only_adapters": list(self.historical_read_only_adapters),
+            "adopter_promotion_enabled": self.adopter_promotion_enabled,
+            "real_effects_enabled": self.real_effects_enabled,
             "reason": self.reason,
         }
+
+
+def _normalize_labels(values: Sequence[str] | None) -> tuple[str, ...]:
+    if not values:
+        return ()
+    labels: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        label = value.strip()
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        labels.append(label)
+    return tuple(labels)
+
+
+def _non_unique_owner_conflicts(
+    owner_claims: Mapping[str, Sequence[str] | str] | None,
+) -> tuple[str, ...]:
+    if not owner_claims:
+        return ()
+
+    conflicts: list[str] = []
+    for subject, owners in owner_claims.items():
+        subject_label = str(subject).strip()
+        if not subject_label:
+            continue
+        if isinstance(owners, str):
+            owner_values = (owners,)
+        else:
+            owner_values = tuple(owners)
+        normalized = sorted(
+            {
+                owner.strip()
+                for owner in owner_values
+                if isinstance(owner, str) and owner.strip()
+            }
+        )
+        if len(normalized) == 1:
+            continue
+        rendered = ",".join(normalized) if normalized else "missing"
+        conflicts.append(f"{subject_label}:{rendered}")
+    return tuple(conflicts)
 
 
 def validate_rollback_safety(
@@ -515,6 +589,10 @@ def validate_rollback_safety(
     reader_ids: Sequence[str] | None = None,
     writer_ids: Sequence[str] | None = None,
     quarantined_count: int | None = None,
+    exact_identity_gaps: Sequence[str] | None = None,
+    reread_gaps: Sequence[str] | None = None,
+    owner_claims: Mapping[str, Sequence[str] | str] | None = None,
+    historical_adapter_ids: Sequence[str] | None = None,
 ) -> RollbackValidation:
     """Validate that a rollback is safe.
 
@@ -539,6 +617,18 @@ def validate_rollback_safety(
     quarantined_count:
         Number of quarantined entries.  If None, sums from the
         compatibility registry.
+    exact_identity_gaps:
+        Missing exact source / attempt / fence identities that would
+        make rollback promotion unsafe.
+    reread_gaps:
+        Missing authoritative rereads that would make rollback
+        promotion unsafe.
+    owner_claims:
+        Mapping of subject id to owner or owners. Subjects with zero or
+        multiple distinct owners disable promotion and effects.
+    historical_adapter_ids:
+        Active read-only historical adapters. These keep rollback in
+        compatibility-only mode and prevent promotion/effects.
 
     Returns
     -------
@@ -547,6 +637,10 @@ def validate_rollback_safety(
     """
     blocked: list[str] = []
     legacy_blocked: list[str] = []
+    identity_gaps = _normalize_labels(exact_identity_gaps)
+    reread_gaps_normalized = _normalize_labels(reread_gaps)
+    owner_conflicts = _non_unique_owner_conflicts(owner_claims)
+    historical_read_only_adapters = _normalize_labels(historical_adapter_ids)
 
     # ── Check 1: No legacy authoritative writer re-enabled ─────────────
     if writer_ids:
@@ -556,6 +650,22 @@ def validate_rollback_safety(
         # If any legacy writer would become active, block rollback
         for wid in writer_ids:
             blocked.append(f"legacy-writer:{wid}")
+
+    # ── Check 1b: Rollback must stay evidence-only without exact identity ─
+    for gap in identity_gaps:
+        blocked.append(f"missing-exact-identity:{gap}")
+
+    # ── Check 1c: Rollback must stay evidence-only without reread proof ──
+    for gap in reread_gaps_normalized:
+        blocked.append(f"missing-reread:{gap}")
+
+    # ── Check 1d: Multiple owners must not be promoted ──────────────────
+    for conflict in owner_conflicts:
+        blocked.append(f"non-unique-owner:{conflict}")
+
+    # ── Check 1e: Read-only historical adapters stay compatibility-only ─
+    for adapter_id in historical_read_only_adapters:
+        blocked.append(f"historical-read-only:{adapter_id}")
 
     # ── Check 2: Quarantined entries preserved ─────────────────────────
     total_quarantined = quarantined_count
@@ -576,17 +686,42 @@ def validate_rollback_safety(
 
     safe = len(blocked) == 0
 
-    reason = (
-        "Rollback is safe: no legacy authoritative writers re-enabled, "
-        f"{total_quarantined} quarantined entries preserved, "
-        "all promotion/effects disabled."
-    )
+    reason_parts = [
+        f"{total_quarantined} quarantined entr{'y' if total_quarantined == 1 else 'ies'} preserved",
+        "legacy authoritative writers remain retired",
+        "adopter promotion disabled",
+        "real effects disabled",
+    ]
+    if identity_gaps:
+        reason_parts.append(
+            "missing exact identity: " + ", ".join(identity_gaps)
+        )
+    if reread_gaps_normalized:
+        reason_parts.append(
+            "missing authoritative reread: " + ", ".join(reread_gaps_normalized)
+        )
+    if owner_conflicts:
+        reason_parts.append(
+            "non-unique owner claims: " + ", ".join(owner_conflicts)
+        )
+    if historical_read_only_adapters:
+        reason_parts.append(
+            "read-only historical adapters still active: "
+            + ", ".join(historical_read_only_adapters)
+        )
+    reason = "Rollback remains fail-closed: " + "; ".join(reason_parts) + "."
 
     return RollbackValidation(
         safe=safe,
         blocked_by=tuple(blocked),
         quarantined_preserved=total_quarantined,
         legacy_writers_blocked=tuple(legacy_blocked),
+        exact_identity_gaps=identity_gaps,
+        reread_gaps=reread_gaps_normalized,
+        non_unique_owner_conflicts=owner_conflicts,
+        historical_read_only_adapters=historical_read_only_adapters,
+        adopter_promotion_enabled=False,
+        real_effects_enabled=False,
         reason=reason,
     )
 

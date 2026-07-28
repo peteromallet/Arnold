@@ -20,21 +20,11 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, ClassVar, Iterable, Mapping, Sequence
+
+from .contracts import F01_REPAIR_OCCURRENCE_FIELDS
 
 # ── F01 repair occurrence tuple (from unified-authority-efficiency-prevention) ──
-F01_REPAIR_OCCURRENCE_FIELDS: tuple[str, ...] = (
-    "environment",
-    "session",
-    "chain",
-    "plan_revision",
-    "phase",
-    "task",
-    "attempt",
-    "normalized_failure_kind",
-    "blocker_or_phase_result_hash",
-    "fence",
-)
 
 # ── BlockerFingerprintV1 required fields (from repair_contract) ────────────────
 BLOCKER_FINGERPRINT_V1_FIELDS: tuple[str, ...] = (
@@ -115,17 +105,27 @@ M6_M6A_BLOCKER_REASONS: tuple[str, ...] = (
 )
 
 # ── Writer surface classification ──────────────────────────────────────────────
-OWNER_RUN_AUTHORITY = "Run Authority"
-OWNER_WBC = "WBC"
-OWNER_CUSTODY = "Custody"
-OWNER_PROJECTION = "Projection"
-OWNER_OBSERVABILITY = "Observability"
-OWNER_DOMAIN = "Domain (Megaplan)"
-OWNER_MAINTENANCE = "Maintenance"
+OWNER_RUN_AUTHORITY = "run_authority"
+OWNER_WBC = "wbc"
+OWNER_CUSTODY = "custody"
+OWNER_PROJECTION = "projection"
+OWNER_OBSERVABILITY = "observability"
+OWNER_DOMAIN = "domain"
+OWNER_MAINTENANCE = "maintenance"
 
 
 @dataclass(frozen=True)
-class WriterSurface:
+class _WriterSurfaceValue:
+    value: str
+
+
+class _WriterSurfaceMeta(type):
+    def __iter__(cls):
+        return iter(cls._values)
+
+
+@dataclass(frozen=True)
+class WriterSurface(metaclass=_WriterSurfaceMeta):
     """Classified writer surface in the provenance map."""
 
     surface_id: str
@@ -136,6 +136,18 @@ class WriterSurface:
     m7_enforcement: str
     reader: str
     notes: str = ""
+
+    _values: ClassVar[tuple[_WriterSurfaceValue, ...]] = (
+        _WriterSurfaceValue("lease_store"),
+        _WriterSurfaceValue("outbox"),
+        _WriterSurfaceValue("action_validator"),
+        _WriterSurfaceValue("canary"),
+        _WriterSurfaceValue("compatibility"),
+        _WriterSurfaceValue("projection_store"),
+        _WriterSurfaceValue("repair_receipt"),
+        _WriterSurfaceValue("writer_registry"),
+        _WriterSurfaceValue("writer_map"),
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -148,6 +160,10 @@ class WriterSurface:
             "reader": self.reader,
             "notes": self.notes,
         }
+
+
+for _surface in WriterSurface._values:
+    setattr(WriterSurface, _surface.value.upper(), _surface)
 
 
 # ── Writer surface registry ───────────────────────────────────────────────────
@@ -393,16 +409,19 @@ def _build_field_join() -> list[dict[str, Any]]:
 
 # ── Provenance map generation ──────────────────────────────────────────────────
 
-PROVENANCE_SCHEMA_VERSION = 1
+WRITER_MAP_SCHEMA_VERSION = "1"
+PROVENANCE_SCHEMA_VERSION = WRITER_MAP_SCHEMA_VERSION
 
 
 @dataclass(frozen=True)
 class OccurrenceWriterTerminalProvenanceMap:
     """Deterministic M7 provenance map artefact."""
 
-    schema_version: int = PROVENANCE_SCHEMA_VERSION
+    schema_version: str = PROVENANCE_SCHEMA_VERSION
     generated_at: str = ""
     sha256: str = ""
+    surfaces: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    ownership_map: Mapping[str, str] = field(default_factory=dict)
     f01_repair_occurrence_fields: tuple[str, ...] = F01_REPAIR_OCCURRENCE_FIELDS
     field_join: tuple[dict[str, Any], ...] = ()
     writer_surfaces: tuple[dict[str, Any], ...] = ()
@@ -413,11 +432,27 @@ class OccurrenceWriterTerminalProvenanceMap:
     gates_enabled: bool = False
     effects_enabled: bool = False
 
+    @property
+    def digest(self) -> str:
+        if self.sha256:
+            return self.sha256
+        payload = {
+            "schema_version": self.schema_version,
+            "surfaces": self.surfaces,
+            "ownership_map": self.ownership_map,
+        }
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
             "generated_at": self.generated_at,
             "sha256": self.sha256,
+            "surfaces": dict(self.surfaces),
+            "ownership_map": dict(self.ownership_map),
             "f01_repair_occurrence_fields": list(self.f01_repair_occurrence_fields),
             "field_join": list(self.field_join),
             "writer_surfaces": list(self.writer_surfaces),
@@ -440,6 +475,21 @@ def generate_writer_map(output_path: str | Path | None = None) -> OccurrenceWrit
 
     field_join = tuple(_build_field_join())
     writer_surfaces = tuple(s.to_dict() for s in WRITER_SURFACES)
+    surface_records = {
+        surface.value: {"surface": surface.value}
+        for surface in WriterSurface
+    }
+    ownership_map = {
+        WriterSurface.LEASE_STORE.value: OWNER_CUSTODY,
+        WriterSurface.OUTBOX.value: OWNER_CUSTODY,
+        WriterSurface.ACTION_VALIDATOR.value: OWNER_CUSTODY,
+        WriterSurface.CANARY.value: OWNER_OBSERVABILITY,
+        WriterSurface.COMPATIBILITY.value: OWNER_DOMAIN,
+        WriterSurface.PROJECTION_STORE.value: OWNER_PROJECTION,
+        WriterSurface.REPAIR_RECEIPT.value: OWNER_RUN_AUTHORITY,
+        WriterSurface.WRITER_REGISTRY.value: OWNER_CUSTODY,
+        WriterSurface.WRITER_MAP.value: OWNER_CUSTODY,
+    }
     authority_increasing = tuple(
         s.surface_id for s in WRITER_SURFACES if s.authority_increasing
     )
@@ -448,6 +498,8 @@ def generate_writer_map(output_path: str | Path | None = None) -> OccurrenceWrit
         schema_version=PROVENANCE_SCHEMA_VERSION,
         generated_at=generated_at,
         sha256="",
+        surfaces=surface_records,
+        ownership_map=ownership_map,
         f01_repair_occurrence_fields=F01_REPAIR_OCCURRENCE_FIELDS,
         field_join=field_join,
         writer_surfaces=writer_surfaces,
@@ -459,18 +511,16 @@ def generate_writer_map(output_path: str | Path | None = None) -> OccurrenceWrit
         effects_enabled=False,
     )
 
-    # Compute deterministic SHA-256 over the canonical JSON
-    provisional = provenance.to_dict()
-    provisional.pop("sha256", None)
-    provisional.pop("generated_at", None)
-    canonical_bytes = json.dumps(provisional, sort_keys=True, separators=(",", ":"),
-                                  ensure_ascii=False).encode("utf-8")
-    digest = "sha256:" + hashlib.sha256(canonical_bytes).hexdigest()
+    # The digest deliberately excludes generation time and legacy report
+    # decoration so equivalent ownership maps remain byte-stable.
+    digest = provenance.digest
 
     final = OccurrenceWriterTerminalProvenanceMap(
         schema_version=provenance.schema_version,
         generated_at=generated_at,
         sha256=digest,
+        surfaces=provenance.surfaces,
+        ownership_map=provenance.ownership_map,
         f01_repair_occurrence_fields=provenance.f01_repair_occurrence_fields,
         field_join=provenance.field_join,
         writer_surfaces=provenance.writer_surfaces,
