@@ -278,6 +278,19 @@ milestones:
   prep_clarify: false
   prep_direction: 'Apply the final F01-F17/R1-R3 acceptance allocation in the
     amendment decision and C01-C20 in the July 23 structural conformance closure.
+    Treat the Binding 2026-07-27 production-recovery amendment in the M11 brief
+    as load-bearing acceptance scope, not a follow-up. Preserve the simple
+    production topology: one durable occurrence, one immediate non-agent trigger,
+    one singleton simple_fixer operator, at most one canonical target runner,
+    a hard no-child fence, delayed independent verification, and the same fixer
+    on a three-hour missed-event backstop; do not restore watchdog/L1/L2/L3,
+    repair-loop, meta-repair, or managed-agent fanout.
+    Execute M11 through the existing editable install at
+    /workspace/.megaplan/engine-runtimes/d6a7b716-execute-projection/venv/bin/python,
+    still bound by _editable_impl_arnold.pth to
+    /workspace/runtime-candidates/arnold-5bf11d5a5600. The project worktree may
+    fast-forward in place after M10 merges, but do not reinstall Arnold, replace
+    the venv, rewrite the .pth, or cut over to another runtime.
     First revalidate every predecessor hash, manifest,
     inventory row, dependency, and compatibility expiry from one clean pinned
     vector before canary or deletion eligibility. Close every residual migration-matrix and WBC boundary-inventory
