@@ -887,6 +887,69 @@ def evaluate_recurrence(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Recurrence minimum interval enforcement
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def recurrence_minimum_interval_seconds(
+    *,
+    min_interval: int | None = None,
+) -> int:
+    """Return the enforced minimum interval for same-signature recurrence dispatches.
+
+    Defaults to :data:`~arnold_pipelines.megaplan.custody.contracts.DEFAULT_REPAIR_RECURRENCE_MINIMUM_INTERVAL_SECONDS`.
+    Callers may override via *min_interval*, but the value is always clamped
+    to at least the default (the default is a floor, not a ceiling).
+    """
+    from arnold_pipelines.megaplan.custody.contracts import (
+        DEFAULT_REPAIR_RECURRENCE_MINIMUM_INTERVAL_SECONDS,
+    )
+
+    floor = DEFAULT_REPAIR_RECURRENCE_MINIMUM_INTERVAL_SECONDS
+    if min_interval is None:
+        return floor
+    # Clamp: overrides must respect the minimum floor
+    if min_interval < floor:
+        return floor
+    return min_interval
+
+
+def last_dispatch_within_minimum_interval(
+    last_occurred_at: str | None,
+    *,
+    now: datetime | None = None,
+    min_interval: int | None = None,
+) -> bool:
+    """Return True when *last_occurred_at* is within the minimum recurrence interval.
+
+    When ``True``, the repair loop should suppress dispatch for this
+    recurrence identity.
+
+    Args:
+        last_occurred_at: ISO-8601 timestamp of the last dispatch (or None).
+        now: Current time for comparison (defaults to ``datetime.now(timezone.utc)``).
+        min_interval: Override minimum interval in seconds (clamped to default floor).
+    """
+    if last_occurred_at is None:
+        return False
+
+    interval = recurrence_minimum_interval_seconds(min_interval=min_interval)
+    try:
+        last_dt = _parse_when(last_occurred_at)
+    except (ValueError, TypeError):
+        return False
+
+    if last_dt is None:
+        return False
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    elapsed = (now - last_dt).total_seconds()
+    return elapsed < interval
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # M7 custody helpers — RepairOccurrenceKey construction from failure context
 # ═══════════════════════════════════════════════════════════════════════════
 

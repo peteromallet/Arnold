@@ -197,6 +197,7 @@ def _default_mock_critique_payload(state: PlanState, plan_dir: Path) -> dict[str
 
 def _default_mock_revise_payload(state: PlanState, plan_dir: Path) -> dict[str, Any]:
     return {
+        "north_star_actions_addressed": [],
         "plan": textwrap.dedent(
             f"""
             # Implementation Plan: Mock Revision Pass
@@ -269,6 +270,7 @@ def _default_mock_gate_payload(state: PlanState, plan_dir: Path) -> dict[str, An
         ),
         "warnings": [],
         "settled_decisions": [],
+        "north_star_actions": [],
         "flag_resolutions": [],
         "accepted_tradeoffs": [],
         "tiebreaker_question": "",

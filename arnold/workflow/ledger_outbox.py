@@ -29,6 +29,7 @@ from typing import Any, Callable, Optional
 from arnold.workflow.attempt_ledger_store import (
     _TERMINAL_EVENT_TYPE_VALUES,
     AppendResult,
+    DivergentDuplicateError,
     MonotonicSequenceError,
     PostTerminalAppendError,
     SqliteAttemptLedgerStore,
@@ -378,12 +379,33 @@ class SqliteLedgerOutbox(LedgerOutbox):
             )
             dup_row = cur.fetchone()
             if dup_row is not None:
-                conn.execute("ROLLBACK")
+                # Step 8A: canonical comparison of duplicate idempotency keys.
                 from arnold.workflow.attempt_ledger_store import (
+                    _compare_canonical_signatures,
                     _deserialize_ledger_event,
+                    _record_divergent_duplicate_quarantine,
                 )
 
-                existing = _deserialize_ledger_event(json.loads(dup_row[0]))
+                stored_json = dup_row[0]
+                divergences = _compare_canonical_signatures(stored_json, event_json)
+                if divergences:
+                    # End the append/outbox transaction before opening the
+                    # separate quarantine transaction on this connection.
+                    conn.execute("ROLLBACK")
+                    _record_divergent_duplicate_quarantine(
+                        self._store, attempt_id, event.idempotency_key,
+                        divergences, stored_json, event_json,
+                    )
+                    raise DivergentDuplicateError(
+                        attempt_id=attempt_id,
+                        idempotency_key=event.idempotency_key,
+                        divergences=divergences,
+                        stored_event_json=stored_json,
+                        new_event_json=event_json,
+                    )
+                # Exact duplicate — roll back and return existing.
+                conn.execute("ROLLBACK")
+                existing = _deserialize_ledger_event(json.loads(stored_json))
                 return AppendWithOutboxResult(
                     attempt_id=attempt_id,
                     event=existing,
@@ -480,7 +502,11 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 
             # (7) COMMIT — event + outbox records land together.
             conn.execute("COMMIT")
-        except (PostTerminalAppendError, MonotonicSequenceError):
+        except (
+            DivergentDuplicateError,
+            PostTerminalAppendError,
+            MonotonicSequenceError,
+        ):
             # Transaction already rolled back inside the handler.
             raise
         except Exception:

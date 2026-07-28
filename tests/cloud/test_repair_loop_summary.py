@@ -216,6 +216,7 @@ class TestIsKnownRepairableShapeWithSemanticFindings:
             current_state="blocked",
             retry_strategy="manual_review",
             failure_kind="",
+            latest_failure={},
             current_target=target,
             semantic_findings=findings,
         )
@@ -233,6 +234,7 @@ class TestIsKnownRepairableShapeWithSemanticFindings:
             current_state="blocked",
             retry_strategy="manual_review",
             failure_kind="blocked_recovery_not_resolved",
+            latest_failure={},
             current_target=target,
             semantic_findings=findings,
         )
@@ -248,6 +250,7 @@ class TestIsKnownRepairableShapeWithSemanticFindings:
             current_state="blocked",
             retry_strategy="manual_review",
             failure_kind="",
+            latest_failure={},
             current_target=target,
             semantic_findings=[],
         )
@@ -263,6 +266,7 @@ class TestIsKnownRepairableShapeWithSemanticFindings:
             current_state="blocked",
             retry_strategy="manual_review",
             failure_kind="",
+            latest_failure={},
             current_target=target,
             semantic_findings=findings,
         )
@@ -270,11 +274,10 @@ class TestIsKnownRepairableShapeWithSemanticFindings:
 
 
 class TestClassifyRepairDispatchWithSemanticFindings:
-    def test_dispatch_with_no_latest_failure_but_semantic_findings(self) -> None:
-        """When latest_failure is absent but semantic findings exist,
-        dispatch can proceed via the legacy path."""
+    def test_no_latest_failure_does_not_mint_dispatch_authority(self) -> None:
+        """Semantic findings alone cannot replace canonical blocker identity."""
         from arnold_pipelines.megaplan.cloud.repair_contract import (
-            DISPATCH_DECISION_L1,
+            DISPATCH_DECISION_HUMAN_REQUIRED,
         )
 
         plan_state = {
@@ -306,8 +309,10 @@ class TestClassifyRepairDispatchWithSemanticFindings:
                 session="test-session",
                 source="watchdog",
                 problem_signature={
-                    "failure_kind": "",
+                    "failure_kind": "semantic_finding",
                     "current_state": "blocked",
+                    "phase_or_step": "semantic_health",
+                    "blocked_task_id": "SH-1",
                 },
                 target=current_target,
             )
@@ -326,9 +331,10 @@ class TestClassifyRepairDispatchWithSemanticFindings:
                 custody_projection=custody,
                 semantic_findings=findings,
             )
-            # With semantic findings fallback + active request, should dispatch L1
-            assert decision.decision == DISPATCH_DECISION_L1
-            assert "known repairable blocker" in decision.rationale[0]
+            # Semantic evidence alone cannot mint dispatch authority when the
+            # canonical latest failure does not identify a repairable shape.
+            assert decision.decision == DISPATCH_DECISION_HUMAN_REQUIRED
+            assert "not a whitelisted repairable shape" in decision.rationale[0]
 
 
 # ── S4: wrapper regression — semantic_health in repair initial_facts ────────

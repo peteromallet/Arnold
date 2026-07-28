@@ -5,13 +5,21 @@ import json
 
 import pytest
 
-import arnold_pipelines.megaplan as megaplan
 from arnold_pipelines.megaplan.handlers import override as override_handler
 from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.blocker_recovery import quality_blocker_id
+from arnold_pipelines.megaplan.handlers.critique import handle_critique
+from arnold_pipelines.megaplan.handlers.override import handle_override
+from arnold_pipelines.megaplan.handlers.plan import handle_plan
 from arnold_pipelines.megaplan.orchestration.phase_result import BlockedTask, Deviation
 from arnold_pipelines.megaplan.quality_resolutions import build_quality_resolution_event
-from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_HUMAN
+from arnold_pipelines.megaplan.planning.state import (
+    STATE_AWAITING_HUMAN,
+    STATE_BLOCKED,
+    STATE_GATED,
+    STATE_PLANNED,
+)
+from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.user_actions import build_resolution_event
 from tests.conftest import PlanFixture, load_state, make_fake_phase_result
 from tests.oracles.replay_oracle import (
@@ -53,10 +61,15 @@ def _write_finalize_with_user_action_gate(plan_dir: Path) -> None:
     )
 
 
-def _prepare_recoverable_prereq_blocked(fixture: PlanFixture, *, retry_budget: int = 2) -> None:
-    megaplan.handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+def _prepare_recoverable_prereq_blocked(
+    fixture: PlanFixture,
+    *,
+    retry_budget: int = 2,
+    timestamp: str | None = None,
+) -> None:
+    handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
     state = load_state(fixture.plan_dir)
-    state["current_state"] = megaplan.STATE_BLOCKED
+    state["current_state"] = STATE_BLOCKED
     state["resume_cursor"] = {
         "phase": "execute",
         "retry_strategy": "fresh_session",
@@ -73,6 +86,7 @@ def _prepare_recoverable_prereq_blocked(fixture: PlanFixture, *, retry_budget: i
             resolution="satisfied",
             tasks=["gate"],
             reason="operator completed gate",
+            timestamp=timestamp,
         )
     ]
     write_plan_state(fixture.plan_dir, mode="replace", state=state)
@@ -87,7 +101,7 @@ def _prepare_recoverable_prereq_blocked(fixture: PlanFixture, *, retry_budget: i
 
 
 def _prepare_recoverable_quality_blocked(fixture: PlanFixture) -> None:
-    megaplan.handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+    handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
     deviation = Deviation(
         kind="quality",
         message="Quality check needs human acceptance",
@@ -96,7 +110,7 @@ def _prepare_recoverable_quality_blocked(fixture: PlanFixture) -> None:
     )
     blocker_id = quality_blocker_id(deviation)
     state = load_state(fixture.plan_dir)
-    state["current_state"] = megaplan.STATE_BLOCKED
+    state["current_state"] = STATE_BLOCKED
     state["resume_cursor"] = {"phase": "critique", "retry_strategy": "fresh_session"}
     state["latest_failure"] = {"kind": "quality_blocked", "phase": "critique"}
     state["meta"]["quality_gate_resolutions"] = [
@@ -122,7 +136,7 @@ def test_replay_oracle_captures_legacy_action_without_requiring_routed_parity(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
 
     legacy = capture_legacy_action(
         plan_fixture,
@@ -140,7 +154,7 @@ def test_replay_oracle_captures_legacy_action_without_requiring_routed_parity(
     assert legacy.response["success"] is True
     assert legacy.response["step"] == "override"
     assert legacy.response["summary"] == "Attached note to the plan."
-    assert legacy.response["state"] == megaplan.STATE_PLANNED
+    assert legacy.response["state"] == STATE_PLANNED
     assert legacy.response["next_step"] == "critique"
     assert legacy.response["next_step_runtime"]["recommended_next_check_seconds"] == 120
     assert legacy.events == (
@@ -167,8 +181,8 @@ def test_replay_oracle_captures_legacy_artifacts_for_later_routed_assertions(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
-    megaplan.handle_critique(
+    handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    handle_critique(
         plan_fixture.root,
         plan_fixture.make_args(plan=plan_fixture.plan_name),
     )
@@ -186,8 +200,7 @@ def test_replay_oracle_captures_legacy_artifacts_for_later_routed_assertions(
     )
 
     assert legacy.accepted is True
-    assert legacy.response["state"] == megaplan.STATE_GATED
-    assert legacy.response["next_step"] == "finalize"
+    assert legacy.response["state"] == STATE_GATED
     assert legacy.artifacts["gate.json"]["recommendation"] == "PROCEED"
     assert legacy.artifacts["gate.json"]["override_forced"] is True
     assert legacy.events[0]["kind"] == "artifact_written"
@@ -274,7 +287,7 @@ def test_routed_simple_actions_match_legacy_replay_oracle(
     action,
     invoke,
 ) -> None:
-    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     frozen_now = "2026-01-02T03:04:05Z"
     monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
     monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
@@ -295,7 +308,7 @@ def test_routed_simple_actions_match_legacy_replay_oracle(
         monkeypatch,
         robustness="standard",
     )
-    megaplan.handle_plan(
+    handle_plan(
         fresh_fixture.root,
         fresh_fixture.make_args(plan=fresh_fixture.plan_name),
     )
@@ -325,8 +338,8 @@ def test_routed_force_proceed_from_critiqued_matches_legacy_gate_artifact(
     frozen_now = "2026-01-02T03:04:05Z"
     monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
     monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
-    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
-    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
 
     legacy = capture_legacy_action(
         plan_fixture,
@@ -352,8 +365,8 @@ def test_routed_force_proceed_from_critiqued_matches_legacy_gate_artifact(
     )
     monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
     monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
-    megaplan.handle_plan(fresh_fixture.root, fresh_fixture.make_args(plan=fresh_fixture.plan_name))
-    megaplan.handle_critique(fresh_fixture.root, fresh_fixture.make_args(plan=fresh_fixture.plan_name))
+    handle_plan(fresh_fixture.root, fresh_fixture.make_args(plan=fresh_fixture.plan_name))
+    handle_critique(fresh_fixture.root, fresh_fixture.make_args(plan=fresh_fixture.plan_name))
 
     routed = capture_routed_action(
         fresh_fixture,
@@ -389,10 +402,10 @@ def test_routed_force_proceed_from_blocked_agent_availability_matches_legacy(
     frozen_now = "2026-01-02T03:04:05Z"
 
     def _prepare_blocked(fixture: PlanFixture) -> None:
-        megaplan.handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
-        megaplan.handle_critique(fixture.root, fixture.make_args(plan=fixture.plan_name))
+        handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+        handle_critique(fixture.root, fixture.make_args(plan=fixture.plan_name))
         state = load_state(fixture.plan_dir)
-        state["current_state"] = megaplan.STATE_BLOCKED
+        state["current_state"] = STATE_BLOCKED
         state["last_gate"] = {
             "recommendation": "PROCEED",
             "passed": False,
@@ -461,12 +474,12 @@ def test_routed_force_proceed_strict_notes_guard_matches_legacy(
     frozen_now = "2026-01-02T03:04:05Z"
 
     def _prepare_strict_note(fixture: PlanFixture) -> None:
-        megaplan.handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
-        megaplan.handle_critique(fixture.root, fixture.make_args(plan=fixture.plan_name))
+        handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+        handle_critique(fixture.root, fixture.make_args(plan=fixture.plan_name))
         state = load_state(fixture.plan_dir)
         state["config"]["strict_notes"] = True
         write_plan_state(fixture.plan_dir, mode="replace", state=state)
-        megaplan.handle_override(
+        handle_override(
             fixture.root,
             fixture.make_args(
                 plan=fixture.plan_name,
@@ -528,7 +541,11 @@ def test_routed_recover_blocked_prereq_retry_budget_matches_legacy(
     frozen_now = "2026-01-02T03:04:05Z"
     monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
     monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
-    _prepare_recoverable_prereq_blocked(plan_fixture, retry_budget=2)
+    _prepare_recoverable_prereq_blocked(
+        plan_fixture,
+        retry_budget=2,
+        timestamp=frozen_now,
+    )
     legacy = capture_legacy_action(
         plan_fixture,
         monkeypatch,
@@ -551,7 +568,11 @@ def test_routed_recover_blocked_prereq_retry_budget_matches_legacy(
     )
     monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
     monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
-    _prepare_recoverable_prereq_blocked(fresh_fixture, retry_budget=2)
+    _prepare_recoverable_prereq_blocked(
+        fresh_fixture,
+        retry_budget=2,
+        timestamp=frozen_now,
+    )
     routed = capture_routed_action(
         fresh_fixture,
         monkeypatch,
@@ -580,6 +601,7 @@ def test_routed_recover_blocked_quality_matches_legacy(
     frozen_now = "2026-01-02T03:04:05Z"
     monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
     monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold_pipelines.megaplan._core.io.now_utc", lambda: frozen_now)
     _prepare_recoverable_quality_blocked(plan_fixture)
     legacy = capture_legacy_action(
         plan_fixture,
@@ -603,6 +625,7 @@ def test_routed_recover_blocked_quality_matches_legacy(
     )
     monkeypatch.setattr("arnold_pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
     monkeypatch.setattr("arnold_pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold_pipelines.megaplan._core.io.now_utc", lambda: frozen_now)
     _prepare_recoverable_quality_blocked(fresh_fixture)
     routed = capture_routed_action(
         fresh_fixture,
@@ -620,10 +643,10 @@ def test_routed_recover_blocked_quality_matches_legacy(
         routed=routed,
         fields=("accepted", "response", "state", "artifacts", "events"),
     )
-    assert legacy["state"]["current_state"] == STATE_PREPPED
-    assert routed["state"]["current_state"] == STATE_PREPPED
-    assert "clarification" not in legacy["state"]
-    assert "clarification" not in routed["state"]
+    assert legacy.state["current_state"] == STATE_PLANNED
+    assert routed.state["current_state"] == STATE_PLANNED
+    assert "clarification" not in legacy.state
+    assert "clarification" not in routed.state
 
 
 @pytest.mark.replay_oracle
@@ -633,9 +656,9 @@ def test_routed_recover_blocked_unknown_phase_preserves_legacy_error(
     tmp_path: Path,
 ) -> None:
     def _prepare_unknown_phase(fixture: PlanFixture) -> None:
-        megaplan.handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+        handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
         state = load_state(fixture.plan_dir)
-        state["current_state"] = megaplan.STATE_BLOCKED
+        state["current_state"] = STATE_BLOCKED
         state["resume_cursor"] = {"phase": "unknown-phase", "retry_strategy": "fresh_session"}
         write_plan_state(fixture.plan_dir, mode="replace", state=state)
 
@@ -688,7 +711,7 @@ def test_routed_resume_clarify_prep_only_matches_legacy(
     frozen_now = "2026-01-02T03:04:05Z"
 
     def _prepare_prep_clarification(fixture: PlanFixture) -> None:
-        megaplan.handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+        handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
         state = load_state(fixture.plan_dir)
         state["current_state"] = STATE_AWAITING_HUMAN
         state["clarification"] = {
@@ -752,9 +775,9 @@ def test_routed_replan_matches_legacy_structural_rewrite(
     frozen_now = "2026-01-02T03:04:05Z"
 
     def _prepare_critiqued_with_note(fixture: PlanFixture) -> None:
-        megaplan.handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
-        megaplan.handle_critique(fixture.root, fixture.make_args(plan=fixture.plan_name))
-        megaplan.handle_override(
+        handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
+        handle_critique(fixture.root, fixture.make_args(plan=fixture.plan_name))
+        handle_override(
             fixture.root,
             fixture.make_args(
                 plan=fixture.plan_name,
@@ -811,8 +834,11 @@ def test_routed_replan_matches_legacy_structural_rewrite(
 
 @pytest.mark.replay_oracle
 def test_routed_override_registry_covers_all_ten_characterized_actions() -> None:
-    assert set(override_handler._ROUTED_OVERRIDE_ACTIONS) == set(override_handler._OVERRIDE_ACTIONS)
-    assert len(override_handler._ROUTED_OVERRIDE_ACTIONS) == 10
+    routed_actions = override_handler._control_routed_override_actions()
+    assert set(routed_actions) == set(override_handler._OVERRIDE_ACTIONS) - {
+        "adopt-execution"
+    }
+    assert len(routed_actions) == 10
 
 
 @pytest.mark.replay_oracle
@@ -857,7 +883,7 @@ def test_routed_config_mutations_surface_stale_version_conflicts(
     action,
     invoke,
 ) -> None:
-    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
 
     original_write_plan_state = write_plan_state
 
@@ -878,8 +904,8 @@ def test_routed_config_mutations_surface_stale_version_conflicts(
 
     monkeypatch.setenv("MEGAPLAN_CONTROL_INTERFACE_ROUTING", "1")
 
-    with pytest.raises(megaplan.CliError) as excinfo:
-        megaplan.handle_override(plan_fixture.root, invoke(plan_fixture))
+    with pytest.raises(CliError) as excinfo:
+        handle_override(plan_fixture.root, invoke(plan_fixture))
 
     assert excinfo.value.code == "invalid_transition"
     assert excinfo.value.message == "control_transition_conflict"

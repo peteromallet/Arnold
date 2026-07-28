@@ -825,10 +825,19 @@ def _build_completion_dm(run: Any) -> str:
     )
 
 
-def _send_completion_dm(run: Any, *, fallback_text: str) -> None:
+def _send_completion_dm(
+    run: Any,
+    *,
+    fallback_text: str,
+    delivery_effects: Any | None = None,
+) -> None:
+    """Send completion DM, optionally routed through delivery effects (Step 13G2)."""
     try:
         payload = _build_completion_dm_payload(run, fallback_text=fallback_text)
-        send_discord_dm(payload)
+        if delivery_effects is not None:
+            send_discord_dm(payload, delivery_effects=delivery_effects)
+        else:
+            send_discord_dm(payload)
     except Exception:
         LOGGER.warning("Completion Discord DM send crashed for operation %s", run.id, exc_info=True)
 

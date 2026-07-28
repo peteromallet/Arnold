@@ -701,8 +701,18 @@ def seed_rematerialize(
             raise _refuse("chain-state SHA-256 changed")
         if hashlib.sha256(plan_raw).hexdigest() != plan_sha:
             raise _refuse("plan-state SHA-256 changed")
-        if _current_branch(project_root) != branch or _current_head(project_root) != head:
-            raise _refuse("current branch/HEAD does not match the seed guard")
+        current_branch = _current_branch(project_root)
+        current_head = _current_head(project_root)
+        if current_branch != branch or current_head != head:
+            raise _refuse(
+                "current branch/HEAD does not match the seed guard",
+                extra={
+                    "expected_branch": branch,
+                    "actual_branch": current_branch,
+                    "expected_head": head,
+                    "actual_head": current_head,
+                },
+            )
         _assert_clean_worktree(project_root)
         if chain.get("current_plan_name") != expected_current_plan:
             raise _refuse("current plan does not match the seed guard")

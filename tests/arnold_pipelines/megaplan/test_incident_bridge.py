@@ -59,6 +59,10 @@ def _recovery_verification(
             "blocker_cleared": True,
             "directly_observed": True,
             "independent": True,
+            "canonical_runner_live": True,
+            "fresh_progress_beyond_checkpoint": True,
+            "continued_progress": True,
+            "first_progress_observed_at": "2026-07-03T19:59:30+00:00",
             "observed_at": "2026-07-03T20:00:00+00:00",
         },
     }

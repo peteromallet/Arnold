@@ -1154,6 +1154,40 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
         _write_gate_carry(plan_dir, gate_summary, iteration=iteration)
         gate_hash = _write_gate_json(plan_dir, gate_summary)
 
+        # ── Step 7A: persist and enforce strict schema hash ─────────
+        from arnold_pipelines.megaplan.handlers.schema_parity import (
+            SchemaParityError,
+            canonical_schema_hash,
+            verify_schema_hash,
+        )
+
+        _gate_schema_hash_path = plan_dir / "gate_schema_hash.json"
+        _gate_schema = SCHEMAS.get("gate.json")
+        if isinstance(_gate_schema, dict):
+            _computed_hash = canonical_schema_hash(_gate_schema)
+            # Persist the schema hash at invocation time
+            atomic_write_json(_gate_schema_hash_path, {
+                "schema_hash": _computed_hash,
+                "phase": "gate",
+                "iteration": iteration,
+                "produced_at": now_utc(),
+            })
+            # Verify the persisted gate artifact matches the declared schema hash
+            try:
+                verify_schema_hash(
+                    _computed_hash, gate_summary, phase="gate"
+                )
+            except SchemaParityError as exc:
+                log.error("gate schema parity failure: %s", exc)
+                # Record the parity error but do not block the gate —
+                # the receipt carries the evidence for finalize to consume.
+                state.setdefault("meta", {}).setdefault("schema_parity_errors", []).append({
+                    "phase": "gate",
+                    "reason": exc.reason,
+                    "detail": exc.detail,
+                    "iteration": iteration,
+                })
+
         # Emit flag_raised / flag_resolved based on delta vs prior gate pass
         raised: set[str] = set()
         resolved: set[str] = set()

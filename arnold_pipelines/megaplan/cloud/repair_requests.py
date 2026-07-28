@@ -396,6 +396,7 @@ def enqueue_repair_request(
     acceptance_transaction_id: str = "",
     acceptance_snapshot_hash: str = "",
     lease_store_dir: str | Path | None = None,
+    repair_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write a request marker once, recording any rejection/coalescing separately.
 
@@ -525,6 +526,31 @@ def enqueue_repair_request(
         "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
     }
 
+    # ── Step 13A: carry exact repair identity (occurrence, host/process birth,
+    # grant/fence, WBC attempt/global effect, lease, epoch) on the request
+    # record so later recovery joins bind the same tuple.  Additive and
+    # optional: legacy callers omitting it produce an empty identity block and
+    # a ``pending`` shadow lease (see ``_shadow_acquire_custody_lease``).
+    normalized_identity: dict[str, Any] = {}
+    if repair_identity:
+        for identity_field in (
+            "run_id",
+            "run_revision",
+            "coordinator_attempt_id",
+            "run_authority_grant_id",
+            "coordinator_fence_token",
+            "wbc_attempt_reference",
+            "global_logical_effect_key",
+            "lease_id",
+            "custody_epoch",
+            "owner_host",
+            "owner_pid",
+            "owner_boot_id",
+        ):
+            if identity_field in repair_identity:
+                normalized_identity[identity_field] = repair_identity[identity_field]
+    record["repair_identity"] = normalized_identity
+
     if stale_reason:
         _write_once_json(request_path, record)
         decision = write_decision(
@@ -596,14 +622,22 @@ def enqueue_repair_request(
             target=target,
         )
         identity = process_birth_identity()
+        _ri = repair_identity or {}
         lease_result = _shadow_acquire_custody_lease(
             lease_store=lease_store,
             lease_id=f"repair-req-{request_id}",
             target=custody_target,
-            owner_host=identity.get("host", _hostname()),
-            owner_pid=identity.get("pid", str(os.getpid())),
-            owner_boot_id=identity.get("boot_id", ""),
-            run_authority_grant_id=record.get("request_id", ""),
+            owner_host=_ri.get("owner_host") or identity.get("host", _hostname()),
+            owner_pid=str(_ri.get("owner_pid") or identity.get("pid", os.getpid())),
+            owner_boot_id=_ri.get("owner_boot_id") or identity.get("boot_id", ""),
+            run_id=str(_ri.get("run_id") or ""),
+            run_revision=str(_ri.get("run_revision") or ""),
+            coordinator_attempt_id=str(_ri.get("coordinator_attempt_id") or ""),
+            run_authority_grant_id=str(
+                _ri.get("run_authority_grant_id") or ""
+            ),
+            coordinator_fence_token=int(_ri.get("coordinator_fence_token") or 0),
+            wbc_attempt_reference=str(_ri.get("wbc_attempt_reference") or ""),
             payload_extra={
                 "source": source,
                 "request_id": request_id,
@@ -793,6 +827,7 @@ def write_decision(
     reason: str,
     related_request_id: str = "",
     created_at: str | None = None,
+    evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write an immutable decision record separate from request markers."""
 
@@ -810,24 +845,27 @@ def write_decision(
             )
 
     when = created_at or utc_now()
+    decision_identity: dict[str, Any] = {
+        "request_id": request_id,
+        "decision": decision,
+        "reason": reason,
+        "related_request_id": related_request_id,
+        "created_at": when,
+    }
+    if evidence is not None:
+        decision_identity["evidence"] = dict(evidence)
     record = {
         "schema_version": CURRENT_SCHEMA_VERSION,
         "kind": "repair_request_decision",
-        "decision_id": _sha256_json(
-            {
-                "request_id": request_id,
-                "decision": decision,
-                "reason": reason,
-                "related_request_id": related_request_id,
-                "created_at": when,
-            }
-        ),
+        "decision_id": _sha256_json(decision_identity),
         "request_id": str(request_id or "").strip(),
         "decision": decision,
         "reason": str(reason or "").strip(),
         "related_request_id": str(related_request_id or "").strip(),
         "created_at": when,
     }
+    if evidence is not None:
+        record["evidence"] = dict(evidence)
     path = decisions_dir(queue_dir) / f"{when.replace(':', '').replace('-', '')}-{record['decision_id']}.json"
     _write_once_json(path, record)
     return {**record, "_path": str(path)}
@@ -1456,15 +1494,41 @@ def _shadow_acquire_custody_lease(
         result["m7_lease_detail"] = "cannot build CustodyTargetKey from available context"
         return result
 
+    # ── Step 13A: remove synthetic WBC / grant / fence / occurrence defaults ──
+    # A shadow lease must bind *exact* repair identity (occurrence, host/process
+    # birth, grant/fence, WBC attempt, lease, epoch).  Previously this function
+    # fabricated ``repair-run-*``, ``m7-shadow``, ``coord-*``, ``wbc-ref-*`` and
+    # ``grant-*`` placeholders when the caller omitted them, which let a
+    # pre-dispatch enqueue mint a lease whose occurrence/WBC/grant identity did
+    # not correspond to any real dispatched run.  Those synthetic defaults are
+    # removed; when the required identity is absent the request is recorded as
+    # ``pending`` (queued, not yet bound to a dispatched managed run) rather
+    # than authorizing a fabricated lease.
+    required_identity = (
+        run_id,
+        run_revision,
+        coordinator_attempt_id,
+        wbc_attempt_reference,
+        run_authority_grant_id,
+    )
+    if not all(str(value).strip() for value in required_identity):
+        result["m7_lease_status"] = "pending"
+        result["m7_lease_detail"] = (
+            "repair identity incomplete (run_id/run_revision/coordinator_attempt_id/"
+            "wbc_attempt_reference/run_authority_grant_id); lease not bound until "
+            "dispatch supplies exact occurrence, grant/fence, and WBC identity"
+        )
+        return result
+
     try:
-        # Build the RepairOccurrenceKey
+        # Build the RepairOccurrenceKey from the *exact* caller-supplied identity.
         occ_key = build_repair_occurrence_key(
             target=target,
-            run_id=run_id or f"repair-run-{lease_id[:12]}",
-            run_revision=run_revision or "m7-shadow",
-            coordinator_attempt_id=coordinator_attempt_id or f"coord-{lease_id[:12]}",
+            run_id=run_id,
+            run_revision=run_revision,
+            coordinator_attempt_id=coordinator_attempt_id,
             fence_token=coordinator_fence_token,
-            wbc_attempt_reference=wbc_attempt_reference or f"wbc-ref-{lease_id[:12]}",
+            wbc_attempt_reference=wbc_attempt_reference,
         )
         if occ_key is None:
             result["m7_lease_status"] = "error"
@@ -1476,26 +1540,27 @@ def _shadow_acquire_custody_lease(
         if payload_extra:
             payload.update(dict(payload_extra))
 
-        event = CustodyLeaseEvent(
-            event_id=f"acquire-{lease_id[:32]}",
+        # Step 11A: route the lifecycle caller through the blessed lease
+        # helper instead of constructing a raw CustodyLeaseEvent and calling
+        # record_event directly, so owner/process-birth identity, monotonic
+        # epoch, TTL ceiling, terminal rejection, and old-epoch fencing are
+        # enforced at the store boundary.
+        recorded = lease_store.acquire(
             lease_id=lease_id,
-            sequence=1,
-            event_type="acquire",
-            occurred_at=utc_now(),
-            custody_epoch=1,
             owner_host=owner_host or "unknown",
             owner_pid=owner_pid or "0",
             owner_boot_id=owner_boot_id or "",
-            run_authority_grant_id=run_authority_grant_id or f"grant-{lease_id[:12]}",
+            run_authority_grant_id=run_authority_grant_id,
             coordinator_fence_token=coordinator_fence_token,
-            wbc_attempt_reference=wbc_attempt_reference or f"wbc-ref-{lease_id[:12]}",
+            wbc_attempt_reference=wbc_attempt_reference,
             occurrence_digest=occ_key.occurrence_digest,
+            custody_epoch=1,
+            sequence=1,
             idempotency_key=f"idem-{lease_id}",
             causal_predecessor=causal_predecessor,
+            expires_at=expires_at or None,
             payload=payload,
         )
-
-        recorded = lease_store.record_event(event)
         result["m7_lease_status"] = "acquired"
         result["m7_lease_event_id"] = recorded.event_id
         result["m7_lease_epoch"] = recorded.custody_epoch
@@ -1593,9 +1658,88 @@ def _open_custody_lease_store(
         return None
 
 
+# ── Step 15A: Persist classification, launcher, parser, and missing-child failures ──
+
+
+def persist_failure_occurrence(
+    *,
+    queue_dir: str | Path,
+    session: str,
+    failure_kind: str,
+    phase_or_step: str = "",
+    detail: str = "",
+    created_at: str | None = None,
+) -> dict[str, Any]:
+    """Step 15A: Persist a failed occurrence that may later trigger repair.
+
+    Covers parser loss, classification incompatibility, launcher failure,
+    and missing-child failures.  Each persisted occurrence carries exact
+    identity so the six-hour reconciliation backstop and recovery event
+    joins can bind it to a repair request.
+    """
+    from arnold_pipelines.megaplan.cloud.recovery_events import (
+        RecoveryEventBuilder,
+        RecoveryEventKind,
+    )
+
+    ts = created_at or utc_now()
+
+    # Map failure_kind to builder method
+    builders: dict[str, Any] = {
+        "parser_loss": lambda: RecoveryEventBuilder.parser_loss(
+            session=session, phase_or_step=phase_or_step, detail=detail,
+        ),
+        "classification_incompatible": lambda: RecoveryEventBuilder.classification_incompatible(
+            session=session, phase_or_step=phase_or_step, observed=detail,
+        ),
+        "launcher_failure": lambda: RecoveryEventBuilder.launcher_failure(
+            session=session, launcher_name=phase_or_step, detail=detail,
+        ),
+        "missing_child": lambda: RecoveryEventBuilder.missing_child(
+            session=session, child_id=phase_or_step, detail=detail,
+        ),
+    }
+
+    builder = builders.get(failure_kind)
+    if builder is None:
+        raise ValueError(
+            f"Unknown Step 15A failure kind: {failure_kind!r}. "
+            f"Supported: {list(builders.keys())}"
+        )
+
+    event = builder()
+
+    # Write the failure occurrence as a durable decision in the repair queue
+    decision = write_decision(
+        queue_dir,
+        request_id=event.event_id,
+        decision="malformed",
+        reason=f"Step 15A {failure_kind}: {detail}",
+        created_at=ts,
+        evidence={
+            "step_15a": True,
+            "failure_kind": failure_kind,
+            "session": session,
+            "phase_or_step": phase_or_step,
+            "denominator_group": event.denominator_group,
+            "occurred_at": event.occurred_at,
+        },
+    )
+
+    return {
+        "status": "persisted",
+        "event_id": event.event_id,
+        "failure_kind": failure_kind,
+        "denominator_group": event.denominator_group,
+        "decision": decision,
+    }
+
+
 __all__ = [
     "ACTIVE_CLAIMS_DIR_NAME",
     "ATTEMPTS_DIR_NAME",
+    "CURRENT_SCHEMA_VERSION",
+    "DECISIONS_DIR_NAME",
     "PROBLEM_SIGNATURE_FIELDS",
     "QUEUE_DIR_NAME",
     "ActiveRepairClaimResult",
@@ -1614,6 +1758,7 @@ __all__ = [
     "iter_repair_attempts",
     "iter_repair_requests",
     "normalize_problem_signature",
+    "persist_failure_occurrence",
     "problem_signature_key",
     "record_malformed_file",
     "redacted_hint_hash",

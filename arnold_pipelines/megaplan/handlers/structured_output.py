@@ -317,6 +317,7 @@ def build_promotion_evidence(
     phase_identity: str,
     scratch_filename: str,
     worker_payload_used: bool = False,
+    producer_schema_hash: str | None = None,
 ) -> list[dict[str, Any]]:
     """Emit structured evidence records describing the promotion outcome.
 
@@ -586,5 +587,10 @@ def build_promotion_evidence(
                 ),
             },
         })
+
+    # Step 7D: inject producer schema hash into every evidence record
+    if producer_schema_hash is not None:
+        for record in evidence_records:
+            record["producer_schema_hash"] = producer_schema_hash
 
     return evidence_records

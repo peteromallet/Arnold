@@ -508,6 +508,69 @@ def default_m6a_migrations() -> tuple[Migration, ...]:
                 "  VALUES ('synthesize_success', 'forbidden')",
             ),
         ),
+        Migration(
+            version=3,
+            name="m10_global_effect_identity_snapshot",
+            statements=(
+                # Step 8B1: add the global effect reservation table and its
+                # index for joining attempts to global-effect identities.
+                # Idempotent (IF NOT EXISTS) so it is safe on stores that
+                # were created from scratch with the new DDL already in
+                # _init_schema.
+                "CREATE TABLE IF NOT EXISTS global_effect_reservations ("
+                "  attempt_id                  TEXT    NOT NULL,"
+                "  global_logical_effect_key   TEXT    NOT NULL,"
+                "  environment_id              TEXT    NOT NULL,"
+                "  action_target               TEXT    NOT NULL,"
+                "  action_version              TEXT    NOT NULL,"
+                "  effect_family               TEXT    NOT NULL,"
+                "  provider_target             TEXT    NOT NULL,"
+                "  canonical_request_identity  TEXT    NOT NULL,"
+                "  boundary_schema_hash        TEXT    NOT NULL,"
+                "  first_reserved_ns           INTEGER NOT NULL,"
+                "  reservation_count           INTEGER NOT NULL DEFAULT 1,"
+                "  snapshot_json               TEXT    NOT NULL,"
+                "  PRIMARY KEY (attempt_id, global_logical_effect_key)"
+                ")",
+                "CREATE INDEX IF NOT EXISTS idx_global_effect_attempt"
+                "  ON global_effect_reservations(attempt_id)",
+            ),
+        ),
+        Migration(
+            version=4,
+            name="m10_global_effect_outcome_cas",
+            statements=(
+                # Step 8B2: add the global effect outcomes table (terminal
+                # outcome CAS), its unique GLEK index (cross-attempt
+                # exclusivity), the conflict-quarantine table, and its
+                # attempt index. Idempotent (IF NOT EXISTS) so safe on stores
+                # that were created from scratch with the new DDL already in
+                # _init_schema.
+                "CREATE TABLE IF NOT EXISTS global_effect_outcomes ("
+                "  attempt_id                  TEXT    NOT NULL,"
+                "  global_logical_effect_key   TEXT    NOT NULL,"
+                "  outcome_kind                TEXT    NOT NULL,"
+                "  outcome_payload_json        TEXT    NOT NULL,"
+                "  accepted_at_ns              INTEGER NOT NULL,"
+                "  PRIMARY KEY (attempt_id, global_logical_effect_key)"
+                ")",
+                "CREATE UNIQUE INDEX IF NOT EXISTS"
+                "  idx_global_effect_outcome_glek"
+                "  ON global_effect_outcomes(global_logical_effect_key)",
+                "CREATE TABLE IF NOT EXISTS"
+                "  global_effect_conflict_quarantine ("
+                "  conflict_id                 TEXT    NOT NULL PRIMARY KEY,"
+                "  attempt_id                  TEXT    NOT NULL,"
+                "  global_logical_effect_key   TEXT    NOT NULL,"
+                "  conflict_kind               TEXT    NOT NULL,"
+                "  conflict_detail_json        TEXT    NOT NULL,"
+                "  quarantined_at_ns           INTEGER NOT NULL"
+                ")",
+                "CREATE INDEX IF NOT EXISTS"
+                "  idx_global_effect_conflict_attempt"
+                "  ON global_effect_conflict_quarantine(attempt_id)",
+            ),
+        ),
     )
 
 

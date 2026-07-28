@@ -137,6 +137,18 @@ class TemplateRegistration:
     #: enum values (``\"exact_match\"``, ``\"compatible_extension\"``, etc.).
     compatibility: str | None = None
 
+    #: Strict schema hash for this phase's output contract (Step 7F).
+    #: When set, consumers MUST verify that produced output matches this
+    #: exact hash before accepting the phase as complete.  None for
+    #: phases that have no structured-output contract (markdown_exempt,
+    #: subloop_exempt) or whose handler integration is deferred.
+    schema_hash: str | None = None
+
+    #: Whether this phase contributes to supported C01-C04 counts (Step 7G).
+    #: Only file_fill and batch_assembly phases with a non-None schema_hash
+    #: and active handler integration are counted as supported.
+    supported_count: bool = False
+
 
 # ---------------------------------------------------------------------------
 # Registry storage
@@ -371,6 +383,46 @@ def _validate_builder_contracts() -> None:
 _validate_builder_contracts()
 
 
+# ── Step 7F: compute schema hashes for structured-output phases ────────
+def _compute_registry_schema_hashes() -> None:
+    """Compute and attach strict schema hashes to structured-output registrations.
+
+    Runs at import time so that get_supported_schema_phases() and
+    assert_no_bypassable_phases() operate on current data immediately.
+    Only file_fill and batch_assembly phases receive a computed hash;
+    deferred/markdown_exempt/subloop_exempt phases keep schema_hash=None.
+    """
+    import json as _json
+    import hashlib as _hashlib
+    from arnold_pipelines.megaplan.schemas import SCHEMAS as _SCHEMAS
+
+    for phase_id, reg in list(_TEMPLATE_REGISTRY.items()):
+        if reg.mode not in ("file_fill", "batch_assembly"):
+            continue
+        schema_key = f"{phase_id}.json"
+        schema = _SCHEMAS.get(schema_key)
+        if isinstance(schema, dict):
+            raw = _json.dumps(schema, sort_keys=True, separators=(",", ":"))
+            digest = _hashlib.sha256(raw.encode("utf-8")).hexdigest()
+            _TEMPLATE_REGISTRY[phase_id] = TemplateRegistration(
+                phase_identity=reg.phase_identity,
+                mode=reg.mode,
+                scratch_filename=reg.scratch_filename,
+                builder=reg.builder,
+                pre_populated=reg.pre_populated,
+                note=reg.note,
+                boundary_template_id=reg.boundary_template_id,
+                boundary_template_version=reg.boundary_template_version,
+                boundary_contract_ids=reg.boundary_contract_ids,
+                compatibility=reg.compatibility,
+                schema_hash=digest,
+                supported_count=True,
+            )
+
+
+_compute_registry_schema_hashes()
+
+
 # ---------------------------------------------------------------------------
 # Lookup helpers
 # ---------------------------------------------------------------------------
@@ -419,3 +471,59 @@ def get_phases_by_mode(mode: RegistryMode) -> frozenset[str]:
 def is_registered(phase_identity: str) -> bool:
     """Return ``True`` if *phase_identity* has a template registration."""
     return phase_identity in _TEMPLATE_REGISTRY
+
+
+# ── Step 7F / 7G: schema-hash enforcement and C01-C04 counts ────────────
+
+def get_supported_schema_phases() -> "frozenset[str]":
+    """Return the set of phases that contribute to C01-C04 supported counts.
+
+    A phase is supported only when it is registered in file_fill or
+    batch_assembly mode AND has a non-None schema_hash AND is marked
+    supported_count=True.  Deferred, markdown_exempt, and subloop_exempt
+    phases are always excluded.
+    """
+    return frozenset(
+        key
+        for key, reg in _TEMPLATE_REGISTRY.items()
+        if reg.mode in ("file_fill", "batch_assembly")
+        and reg.schema_hash is not None
+        and reg.supported_count
+    )
+
+
+def get_unsupported_deferred_phases() -> "frozenset[str]":
+    """Return the set of deferred phases that are excluded from C01-C04 counts.
+
+    A deferred phase is action-off until a handler integration and strict
+    schema hash exist.
+    """
+    return frozenset(
+        key
+        for key, reg in _TEMPLATE_REGISTRY.items()
+        if reg.mode == "deferred" or (reg.schema_hash is None and reg.mode in ("file_fill", "batch_assembly"))
+    )
+
+
+def get_supported_count() -> int:
+    """Return the count of C01-C04 supported structured-output phases."""
+    return len(get_supported_schema_phases())
+
+
+def assert_no_bypassable_phases() -> None:
+    """Raise ValueError if any file_fill or batch_assembly phase lacks a schema_hash.
+
+    This ensures no phase can bypass strict schema hash enforcement through
+    pre-populated files or undeclared contracts.
+    """
+    missing: list[str] = []
+    for key, reg in _TEMPLATE_REGISTRY.items():
+        if reg.mode in ("file_fill", "batch_assembly") and reg.schema_hash is None:
+            missing.append(key)
+    if missing:
+        raise ValueError(
+            f"Phases missing strict schema hash: {', '.join(sorted(missing))}. "
+            f"All file_fill and batch_assembly phases must declare a schema_hash "
+            f"(Step 7F). Pre-populated files cannot bypass parity."
+        )
+

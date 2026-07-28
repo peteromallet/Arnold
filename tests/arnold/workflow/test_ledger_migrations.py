@@ -151,12 +151,12 @@ class TestEmptyStoreMigrations:
             assert state_before.last_applied_version == 0
 
             result = migrator.migrate()
-            assert tuple(m.version for m in result.applied_now) == (1, 2)
+            assert tuple(m.version for m in result.applied_now) == (1, 2, 3, 4)
             assert result.skipped == ()
-            assert result.final_version == 2
+            assert result.final_version == 4
 
             state_after = migrator.get_state()
-            assert len(state_after.applied) == 2
+            assert len(state_after.applied) == 4
             assert state_after.pending == ()
             assert state_after.is_complete is True
             store.close()
@@ -1571,6 +1571,154 @@ class TestDefaultM6aRegistry:
                 "WHERE key = 'synthesize_success'"
             )
             assert cur.fetchone()[0] == "forbidden"
+            store.close()
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+
+
+# ── Step 8B1: forward / interrupted / rollback migration coverage ─────────
+
+
+class TestM10GlobalEffectMigration:
+    """Forward, interrupted, and rollback coverage for migration v3."""
+
+    def test_forward_migration_creates_glek_table(self):
+        """After applying default migrations, the GLEK tables and indexes exist."""
+        path = _store_path()
+        try:
+            store = SqliteAttemptLedgerStore(path)
+            migrator = SqliteLedgerMigrator(store, default_m6a_migrations())
+            result = migrator.migrate()
+            assert result.final_version == 4
+            conn = store.conn
+            # Step 8B1: reservation table + index.
+            cur = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+                "  AND name='global_effect_reservations'"
+            )
+            assert cur.fetchone() is not None
+            cur = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+                "  AND name='idx_global_effect_attempt'"
+            )
+            assert cur.fetchone() is not None
+            # Step 8B2: outcomes table + unique GLEK index.
+            cur = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+                "  AND name='global_effect_outcomes'"
+            )
+            assert cur.fetchone() is not None
+            cur = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+                "  AND name='idx_global_effect_outcome_glek'"
+            )
+            assert cur.fetchone() is not None
+            # Step 8B2: conflict quarantine table + index.
+            cur = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+                "  AND name='global_effect_conflict_quarantine'"
+            )
+            assert cur.fetchone() is not None
+            cur = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+                "  AND name='idx_global_effect_conflict_attempt'"
+            )
+            assert cur.fetchone() is not None
+            store.close()
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+
+    def test_interrupted_migration_v3_rolls_back(self):
+        """If a migration after v3 fails, v3 stays applied and the bad one
+        rolls back (proving v3 is committed independently)."""
+        path = _store_path()
+        try:
+            store = SqliteAttemptLedgerStore(path)
+            # Custom registry: v1-v3 succeed, v4 fails.
+            bad_reg = (
+                Migration(
+                    1,
+                    "ok1",
+                    ("CREATE TABLE IF NOT EXISTS t1 (id INTEGER)",),
+                ),
+                Migration(
+                    2,
+                    "ok2",
+                    ("CREATE TABLE IF NOT EXISTS t2 (id INTEGER)",),
+                ),
+                Migration(
+                    3,
+                    "ok3_glek",
+                    (
+                        "CREATE TABLE IF NOT EXISTS global_effect_reservations ("
+                        "  attempt_id TEXT NOT NULL,"
+                        "  global_logical_effect_key TEXT NOT NULL,"
+                        "  PRIMARY KEY (attempt_id, global_logical_effect_key)"
+                        ")",
+                        "CREATE INDEX IF NOT EXISTS idx_global_effect_attempt"
+                        "  ON global_effect_reservations(attempt_id)",
+                    ),
+                ),
+                # v4 references a nonexistent table → fails.
+                Migration(
+                    4,
+                    "bad4",
+                    ("CREATE TABLE t_dup AS SELECT * FROM nonexistent_table",),
+                ),
+            )
+            migrator = SqliteLedgerMigrator(store, bad_reg)
+            with pytest.raises(sqlite3.OperationalError):
+                migrator.migrate()
+            state = migrator.get_state()
+            assert tuple(r.version for r in state.applied) == (1, 2, 3)
+            assert state.last_applied_version == 3
+            assert state.is_complete is False
+            store.close()
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+
+    def test_default_migrations_are_forward_compatible(self):
+        """A store created before v3+v4 can be migrated to include v3+v4."""
+        path = _store_path()
+        try:
+            store = SqliteAttemptLedgerStore(path)
+            # Apply only v1 and v2 with statements IDENTICAL to the default
+            # registry so the forward-fix checksum guard is satisfied.
+            default = default_m6a_migrations()
+            partial_reg = tuple(
+                m for m in default if m.version <= 2
+            )
+            migrator = SqliteLedgerMigrator(store, partial_reg)
+            migrator.migrate()
+            assert migrator.get_state().last_applied_version == 2
+            store.close()
+
+            # Reopen and apply the full default registry — v3 and v4 apply.
+            store2 = SqliteAttemptLedgerStore(path)
+            migrator2 = SqliteLedgerMigrator(store2, default_m6a_migrations())
+            result = migrator2.migrate()
+            assert result.final_version == 4
+            assert tuple(m.version for m in result.applied_now) == (3, 4)
+            assert tuple(m.version for m in result.skipped) == (1, 2)
+            store2.close()
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+
+    def test_default_migrations_checksum_stability(self):
+        """Re-running migrations after full apply produces no changes."""
+        path = _store_path()
+        try:
+            store = SqliteAttemptLedgerStore(path)
+            migrator = SqliteLedgerMigrator(store, default_m6a_migrations())
+            migrator.migrate()
+            state = migrator.verify_checksums()
+            assert state == ()
+            result2 = migrator.migrate()
+            assert result2.applied_now == ()
             store.close()
         finally:
             if os.path.exists(path):

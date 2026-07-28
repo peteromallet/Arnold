@@ -703,6 +703,16 @@ def _run_dispatch_one(
     codex.write_text(
         "#!/usr/bin/env bash\n"
         f"printf '%s\\n' \"$@\" > {shlex.quote(str(tmp_path / 'codex.argv'))}\n"
+        "output_path=''\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  if [[ \"$1\" == '--output-last-message' && $# -gt 1 ]]; then\n"
+        "    output_path=\"$2\"\n"
+        "    shift 2\n"
+        "    continue\n"
+        "  fi\n"
+        "  shift\n"
+        "done\n"
+        f"if [[ -n \"$output_path\" ]]; then printf '%s' {shlex.quote(codex_stdout)} > \"$output_path\"; fi\n"
         f"printf '%s' {shlex.quote(codex_stdout)}\n"
         + (
             f"printf '%s' {shlex.quote(codex_stderr)} >&2\n"
@@ -730,6 +740,7 @@ def _run_dispatch_one(
             f"ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
             f"GATHER_DIR={shlex.quote(str(gather_dir))}",
             f"REPORT_DIR={shlex.quote(str(tmp_path / 'reports'))}",
+            f"PATH={shlex.quote(str(tmp_path))}:$PATH",
             "TS=20260713T210000Z",
             "DEEPSEEK_MODEL=deepseek:deepseek-v4-pro",
             "AUDIT_CODEX_MODEL=gpt-5.6-sol",
@@ -745,8 +756,14 @@ def _run_dispatch_one(
     )
     env = dict(os.environ)
     env["PATH"] = f"{tmp_path}:{env.get('PATH', '')}"
-    env.setdefault("ARNOLD_AUTONOMY", "1")
-    env.setdefault("ARNOLD_AUDIT_AUTOFIX_ENABLED", "1")
+    # The extracted wrapper runs from a temporary workspace. Pin its managed
+    # agent subprocess to the same source tree as the wrapper under test,
+    # instead of whichever editable runtime candidate happens to be installed.
+    env["PYTHONPATH"] = str(REPO_ROOT)
+    # Positive dispatch fixtures must not inherit production's deliberate
+    # box-wide pause flags from .cloud-hot-env.
+    env["ARNOLD_AUTONOMY"] = "1"
+    env["ARNOLD_AUDIT_AUTOFIX_ENABLED"] = "1"
     if extra_env:
         env.update(extra_env)
     result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, env=env, check=False)

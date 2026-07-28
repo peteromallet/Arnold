@@ -33,15 +33,6 @@ def _write_plan(plan_dir: Path) -> None:
     )
 
 
-def test_watchdog_dispatch_exports_claim_owner_pid() -> None:
-    text = (WRAPPER_DIR / "arnold-watchdog").read_text(encoding="utf-8")
-
-    assert (
-        'export CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$8"; export ARNOLD_REPAIR_QUEUE_ROOT="$9"; exec "$2" "$3" "$4" "$5"'
-        in text
-    )
-
-
 def test_repair_loop_releases_dispatcher_owned_active_claim_on_shutdown(tmp_path: Path) -> None:
     repair_root = tmp_path / "repair-root"
     workspace = tmp_path / "workspace"

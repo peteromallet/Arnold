@@ -42,6 +42,44 @@ WRAPPER_REPO_ROOT="$(cd "$(dirname "$ARNOLD_REPAIR_LOOP_ORIGIN")/../../../.." &&
 
 MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 MARKER_PATH="$MARKER_DIR/$SESSION.json"
+EARLY_SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
+REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${EARLY_SAFE_SESSION}.repair-loop.pid}"
+REPAIR_PID_FILE_OWNED=0
+
+release_early_repair_pid_claim() {
+  local current_pid=""
+  if [[ "$REPAIR_PID_FILE_OWNED" == "1" && -r "$REPAIR_PID_FILE" ]]; then
+    read -r current_pid < "$REPAIR_PID_FILE" || current_pid=""
+    if [[ "$current_pid" == "$$" ]]; then
+      rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
+    fi
+  fi
+}
+trap 'release_early_repair_pid_claim' EXIT
+trap 'release_early_repair_pid_claim; exit 129' HUP
+trap 'release_early_repair_pid_claim; exit 130' INT
+trap 'release_early_repair_pid_claim; exit 143' TERM
+
+# Process custody must precede interpreter attestation and Python imports.
+# The durable repair lock below upgrades this cheap claim before any mutation.
+mkdir -p "$(dirname "$REPAIR_PID_FILE")"
+early_existing_pid=""
+if [[ -r "$REPAIR_PID_FILE" ]]; then
+  read -r early_existing_pid < "$REPAIR_PID_FILE" || early_existing_pid=""
+  if [[ ! "$early_existing_pid" =~ ^[0-9]+$ ]] \
+    || ! kill -0 "$early_existing_pid" 2>/dev/null; then
+    echo "[repair-loop] stale repair pidfile detected; reclaiming session=$SESSION stale_pid=${early_existing_pid:-unknown} pidfile=$REPAIR_PID_FILE" >&2
+    rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
+  else
+    echo "[repair-loop] another repair loop is already active; exiting session=$SESSION owner_pid=$early_existing_pid pidfile=$REPAIR_PID_FILE" >&2
+    exit 75
+  fi
+fi
+if [[ ! -e "$REPAIR_PID_FILE" ]] \
+  && ( set -o noclobber; printf '%s\n' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then
+  REPAIR_PID_FILE_OWNED=1
+fi
+
 REPAIR_QUEUE_DIR="${CLOUD_WATCHDOG_REPAIR_QUEUE_DIR:-$(dirname "$MARKER_DIR")/repair-queue}"
 ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}}"
 DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
@@ -207,7 +245,7 @@ mkdir -p "$RUN_DIR" "$DATA_DIR"
 CHILD_PIDS=()
 CLEANUP_CHILDREN_RAN=0
 REPAIR_LOCK_DIR_OWNED=0
-REPAIR_PID_FILE_OWNED=0
+REPAIR_PID_FILE_OWNED="${REPAIR_PID_FILE_OWNED:-0}"
 REPAIR_SHUTDOWN_RAN=0
 cleanup_children() {
   local pid pgid
@@ -627,6 +665,22 @@ acquire_repair_lock() {
   local existing_pid="" live_pid="" lock_owner_pid="" lock_status="" stale_lock_json="" repair_lock_output=""
   local -a _repair_lock_result=()
   mkdir -p "$(dirname "$REPAIR_PID_FILE")"
+  # Establish cheap process custody before importing the heavier durable-lock
+  # machinery.  The EXIT/TERM traps above release this provisional claim if the
+  # durable lock later reports a competing owner.
+  if [[ -r "$REPAIR_PID_FILE" ]]; then
+    read -r existing_pid < "$REPAIR_PID_FILE" || existing_pid=""
+    if [[ -n "$existing_pid" ]] && ! kill -0 "$existing_pid" 2>/dev/null; then
+      log "stale repair pidfile detected; reclaiming session=$SESSION stale_pid=$existing_pid pidfile=$REPAIR_PID_FILE"
+      rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
+      existing_pid=""
+    fi
+  fi
+  if [[ ! -e "$REPAIR_PID_FILE" ]] \
+    && ( set -o noclobber; printf '%s\n' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then
+    REPAIR_PID_FILE_OWNED=1
+    log "repair pid provisionally claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"
+  fi
   repair_lock_output="$(
     PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$REPAIR_LOCK_DIR" "$SESSION" "$$" "$WORKSPACE" "$0" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" <<'PY'
 import json
@@ -754,6 +808,10 @@ EOF
       log "stale repair lock reclaimed session=$SESSION lock_dir=$REPAIR_LOCK_DIR"
     fi
   fi
+  if [[ "$REPAIR_PID_FILE_OWNED" == "1" ]]; then
+    log "repair pid claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"
+    return 0
+  fi
   while true; do
     if ( set -o noclobber; printf '%s\n' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then
       REPAIR_PID_FILE_OWNED=1
@@ -765,7 +823,9 @@ EOF
     else
       existing_pid=""
     fi
-    if [[ -n "$existing_pid" && "$existing_pid" != "$$" ]] && repair_loop_pid_matches_session "$existing_pid" "$SESSION"; then
+    if [[ -n "$existing_pid" && "$existing_pid" != "$$" ]] \
+      && kill -0 "$existing_pid" 2>/dev/null \
+      && repair_loop_pid_matches_session "$existing_pid" "$SESSION"; then
       if [[ "$REPAIR_LOCK_DIR_OWNED" == "1" ]]; then
         release_repair_lock
       fi
@@ -1106,8 +1166,23 @@ chain_health_reason = chain_health_block_reason()
 if chain_health_reason:
     print(chain_health_reason)
     raise SystemExit(0)
-workspace = pathlib.Path(str(marker_payload.get("workspace") or ""))
-if workspace.exists():
+current_signature = repair_payload.get("current_signature")
+if not isinstance(current_signature, dict):
+    current_signature = {}
+advancement_snapshot = repair_payload.get("current_advancement_snapshot")
+if not isinstance(advancement_snapshot, dict):
+    advancement_snapshot = {}
+current_state = str(
+    current_signature.get("current_state")
+    or advancement_snapshot.get("current_state")
+    or ""
+).strip()
+if current_state in {"finalized", "awaiting_pr_merge", "done", "complete", "completed"}:
+    raise SystemExit(1)
+
+workspace_text = str(marker_payload.get("workspace") or "").strip()
+workspace = pathlib.Path(workspace_text) if workspace_text else None
+if workspace is not None and workspace.exists():
     chain_files = sorted(
         (workspace / ".megaplan" / "plans" / ".chains").glob("*.json"),
         key=lambda path: path.stat().st_mtime if path.exists() else 0,
@@ -1133,19 +1208,6 @@ if workspace.exists():
             if kind or state.lower() not in {"", "initialized"}:
                 print(f"live_plan_failure:{kind or 'unknown'}:{state or 'unknown'}:{phase or 'unknown'}")
                 raise SystemExit(0)
-current_signature = repair_payload.get("current_signature")
-if not isinstance(current_signature, dict):
-    current_signature = {}
-advancement_snapshot = repair_payload.get("current_advancement_snapshot")
-if not isinstance(advancement_snapshot, dict):
-    advancement_snapshot = {}
-current_state = str(
-    current_signature.get("current_state")
-    or advancement_snapshot.get("current_state")
-    or ""
-).strip()
-if current_state in {"finalized", "awaiting_pr_merge", "done", "complete", "completed"}:
-    raise SystemExit(1)
 failure_context = repair_payload.get("current_failure_context")
 if isinstance(failure_context, dict):
     latest_failure = failure_context.get("plan_latest_failure")

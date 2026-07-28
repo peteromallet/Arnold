@@ -33,7 +33,7 @@ class EngineIsolationProof:
 
 
 def select_provider(env_vars: dict[str, str] | None = None) -> str:
-    env_vars = env_vars or os.environ
+    env_vars = os.environ if env_vars is None else env_vars
     # Canonical spellings use MEGAPLAN_*. Retain the historical misspelled
     # MEGPLAN_* variants as a fallback so existing scripts/tests keep working.
     explicit = (
@@ -125,7 +125,7 @@ def default_provider_for_local_auto(
 ) -> EngineIsolationProof | None:
     """Choose the local auto-driver default only when no operator override exists."""
 
-    env_vars = env_vars or os.environ
+    env_vars = os.environ if env_vars is None else env_vars
     if (
         env_vars.get("MEGAPLAN_ENGINE_ISOLATION_PROVIDER")
         or env_vars.get("MEGPLAN_ENGINE_ISOLATION_PROVIDER")

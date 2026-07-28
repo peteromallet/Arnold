@@ -2133,6 +2133,23 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     explicit_root=plan_dir,
                 ),
             )
+
+            # Step 7B: persist review schema hash
+            from arnold_pipelines.megaplan.handlers.schema_parity import (
+                canonical_schema_hash,
+            )
+            from arnold_pipelines.megaplan.schemas import SCHEMAS as _review_schemas
+
+            _review_contract = _review_schemas.get("review.json")
+            if isinstance(_review_contract, dict):
+                _review_hash = canonical_schema_hash(_review_contract)
+                _review_hash_path = plan_dir / "review_schema_hash.json"
+                atomic_write_json(_review_hash_path, {
+                    "schema_hash": _review_hash,
+                    "phase": "review",
+                    "iteration": state.get("iteration", 0),
+                    "produced_at": now_utc(),
+                })
         else:
             rev_resolved = _pkg.resolve_agent_mode("review", args)
             agent_type, mode, refreshed, model = _agent_mode_parts(rev_resolved)

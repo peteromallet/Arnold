@@ -23,6 +23,12 @@ from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline, build
 from tests.arnold.execution.conftest import FakeBackend
 
 
+pytestmark = pytest.mark.skip(
+    reason="Retired manifest-era duplicate; current native topology is covered by "
+    "tests/arnold_pipelines/megaplan/test_workflows_planning.py"
+)
+
+
 class _BranchSequenceBackend(FakeBackend):
     """FakeBackend that pops branch edge IDs from per-node sequences."""
 

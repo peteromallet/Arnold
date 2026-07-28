@@ -339,25 +339,11 @@ def test_unclaimed_claim_handoff_retries_are_durable_bounded_and_alert_once(
     assert custody["retry_budget"]["claim_alerted"] is True
 
 
-def test_repair_exhaustion_does_not_emit_human_marker_or_notification() -> None:
-    wrapper = (
-        Path(__file__).parents[2]
-        / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
-    ).read_text(encoding="utf-8")
-    terminal = wrapper[wrapper.index('if [[ "${BREAKER_TRIPPED:-0}" == "1" ]]'):]
-
-    assert 'repair_data_set_outcome "repair_exhausted"' in terminal
-    assert "classification=broken_superfixer" in terminal
-    assert "send_discord_escalation" not in terminal
-    assert "write_needs_human_marker" not in terminal
-
-
-def test_repair_loop_shell_quotes_canonical_relaunch_command() -> None:
-    wrapper = (
-        Path(__file__).parents[2]
-        / "arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
-    ).read_text(encoding="utf-8")
-
-    assert "printf -v quoted_command_shell '%q' \"$quoted_command\"" in wrapper
-    assert 'bash -lc $quoted_command_shell' in wrapper
-    assert 'bash -lc "$quoted_command"' not in wrapper
+# Removed legacy shell-layout assertions:
+# - exhausted automatic repair now remains a durable recurring-retry decision,
+#   rather than manufacturing a terminal ``repair_exhausted`` outcome;
+# - canonical relaunch quoting is owned by the watchdog launcher, not the
+#   repair-loop source layout.
+# The decision history tests above preserve the durable retry/alert behavior;
+# exact terminal acceptance and negative controls are covered by the current
+# RecoveryVerifier tests in test_terminal_audit.py.

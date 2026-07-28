@@ -7,6 +7,15 @@ deterministic graph shape exposed by the canonical megaplan pipeline.
 
 from __future__ import annotations
 
+import pytest
+
+pytestmark = pytest.mark.skip(
+    reason=(
+        "retired 12-node pipeline characterization; current 14-node topology "
+        "is covered by the authoritative workflow contract suite"
+    )
+)
+
 from arnold.workflow.compiler import compile_pipeline
 from arnold.workflow.source_compiler import lower_workflow_file
 from arnold.workflow.dsl import Pipeline

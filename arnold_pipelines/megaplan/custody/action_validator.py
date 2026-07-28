@@ -150,6 +150,7 @@ class GateResult(StrEnum):
     BLOCKED_WBC_MISSING = "blocked_wbc_missing"
     BLOCKED_WBC_CONFLICT = "blocked_wbc_conflict"
     BLOCKED_NOT_OWNER = "blocked_not_owner"
+    BLOCKED_RA_UNSATISFIED = "blocked_ra_unsatisfied"
     ERROR = "error"
 
 
@@ -654,6 +655,16 @@ def _compute_gate_result(
     fence = checks_by_source.get("run_authority_fence")
     if fence is not None and fence.outcome == ValidationOutcome.FENCED:
         return GateResult.BLOCKED_FENCE_MISMATCH
+
+    # NSA-M10-GATE-1 / Step 12A: any *other* non-SATISFIED Run Authority
+    # outcome (stale grant, conflicted grant, superseded fence, etc.) must
+    # also block.  The previous code fell through to AUTHORIZED here,
+    # which could authorize a stale or conflicted grant.  Only an exact
+    # SATISFIED on both RA sources allows the run-authority conjunct.
+    for ra_source in ("run_authority_grant", "run_authority_fence"):
+        ra_check = checks_by_source.get(ra_source)
+        if ra_check is not None and ra_check.outcome != ValidationOutcome.SATISFIED:
+            return GateResult.BLOCKED_RA_UNSATISFIED
 
     # Custody lease
     lease = checks_by_source.get("custody_lease")

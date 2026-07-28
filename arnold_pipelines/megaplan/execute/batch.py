@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
@@ -2915,19 +2916,40 @@ def _guard_execute_batch_admission(finalize_data, state, *, plan_dir=None):
     Converts admission failures to a ``CliError`` with
     ``valid_next=['finalize','revise']`` so workers are never dispatched
     against a mutated or inadmissible post-finalize graph.
+
+    M10 Step 7H-b: threads ``config`` (previously omitted — the shadow-feasibility
+    bug) and the gate-step ``seed_epoch`` attestation into the verdict, and
+    blocks v1/``None`` admission escapes so only fully-admitted v2 graphs reach
+    worker dispatch.  The epoch protocol is only activated when the gate step
+    actually produced a ``seed_epoch`` attestation; an absent key preserves
+    backward-compat for pre-M10 plans.
     """
     from arnold_pipelines.megaplan.orchestration.task_feasibility import (
         assert_admitted_task_feasibility,
     )
     config = state.get("config") if isinstance(state, dict) else None
+    epoch_kwargs: dict = {}
+    if isinstance(state, dict) and state.get("seed_epoch") is not None:
+        epoch_kwargs["current_epoch"] = state.get("seed_epoch")
     try:
-        assert_admitted_task_feasibility(finalize_data)
+        admission_report = assert_admitted_task_feasibility(
+            finalize_data, config, **epoch_kwargs
+        )
     except ValueError as exc:
         raise CliError(
             "finalized_task_graph_changed",
             str(exc),
             valid_next=["finalize", "revise"],
         ) from exc
+    # Block v1/None admission escapes in the supported M10 dispatch path so
+    # only fully-admitted v2 graphs reach worker dispatch.
+    if admission_report is None:
+        raise CliError(
+            "finalized_task_graph_changed",
+            "v1 task contract is not admitted by M10 dispatch; "
+            "re-finalize under the v2 task contract before executing",
+            valid_next=["finalize", "revise"],
+        )
 
 
 def _advance_batch_circuit(error, *, task_id="", attempt_id=""):

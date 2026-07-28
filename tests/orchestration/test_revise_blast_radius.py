@@ -7,7 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterator
 
-from arnold_pipelines.megaplan.handlers import critique
+from arnold_pipelines.megaplan.handlers import gate
+from arnold_pipelines.megaplan.orchestration import critique_runtime as critique
 
 
 def test_revise_merge_failure_falls_back_to_prior_floor(
@@ -87,7 +88,7 @@ def test_revise_merge_failure_falls_back_to_prior_floor(
     monkeypatch.setattr(critique, "require_state", lambda *args, **kwargs: None)
     monkeypatch.setattr(critique, "apply_profile_expansion", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        critique,
+        gate,
         "_resolve_revise_transition",
         lambda *args, **kwargs: (False, SimpleNamespace(next_state="critiqued")),
     )
@@ -113,8 +114,8 @@ def test_revise_merge_failure_falls_back_to_prior_floor(
     monkeypatch.setattr(critique, "compute_plan_delta_percent", lambda *args, **kwargs: 0.0)
     monkeypatch.setattr(critique, "_write_plan_version", fake_write_plan_version)
     monkeypatch.setattr(critique, "update_flags_after_revise", lambda *args, **kwargs: None)
-    monkeypatch.setattr(critique, "_next_progress_step", lambda *args, **kwargs: "finalize")
-    monkeypatch.setattr(critique, "_remaining_significant_flags", lambda *args, **kwargs: [])
+    monkeypatch.setattr(gate, "_next_progress_step", lambda *args, **kwargs: "finalize")
+    monkeypatch.setattr(gate, "_remaining_significant_flags", lambda *args, **kwargs: [])
     monkeypatch.setattr(
         critique,
         "_finish_step",
@@ -222,7 +223,7 @@ def test_revise_replaces_stale_prior_full_radius_with_new_scoped_radius(
     monkeypatch.setattr(critique, "require_state", lambda *args, **kwargs: None)
     monkeypatch.setattr(critique, "apply_profile_expansion", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        critique,
+        gate,
         "_resolve_revise_transition",
         lambda *args, **kwargs: (False, SimpleNamespace(next_state="critiqued")),
     )
@@ -243,8 +244,8 @@ def test_revise_replaces_stale_prior_full_radius_with_new_scoped_radius(
     monkeypatch.setattr(critique, "compute_plan_delta_percent", lambda *args, **kwargs: 0.0)
     monkeypatch.setattr(critique, "_write_plan_version", fake_write_plan_version)
     monkeypatch.setattr(critique, "update_flags_after_revise", lambda *args, **kwargs: None)
-    monkeypatch.setattr(critique, "_next_progress_step", lambda *args, **kwargs: "finalize")
-    monkeypatch.setattr(critique, "_remaining_significant_flags", lambda *args, **kwargs: [])
+    monkeypatch.setattr(gate, "_next_progress_step", lambda *args, **kwargs: "finalize")
+    monkeypatch.setattr(gate, "_remaining_significant_flags", lambda *args, **kwargs: [])
     monkeypatch.setattr(
         critique,
         "_finish_step",

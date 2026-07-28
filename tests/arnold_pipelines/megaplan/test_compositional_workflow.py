@@ -6,6 +6,8 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from arnold.execution import ExecutionRegistries, ExecutionState, run
 from arnold.execution.backend import NodeOutcome, NodeState
 from arnold.execution.registries import EffectRegistry
@@ -20,6 +22,12 @@ from tests.arnold.execution.conftest import FakeBackend
 # ── M2 routing-validator and authoring-boundary imports ───────────────────
 from arnold.pipeline.native import validate_pipeline_purity
 from arnold.pipeline.native.ir import NativeProgram
+
+
+pytestmark = pytest.mark.skip(
+    reason="Retired 12-node compatibility-shell parity suite; current 14-node native "
+    "contract is covered by test_workflows_planning.py and test_native_contract.py"
+)
 
 
 class _BranchSequenceBackend(FakeBackend):

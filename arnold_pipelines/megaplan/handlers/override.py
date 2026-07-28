@@ -596,14 +596,33 @@ def _handle_routed_override(
             )
         raise CliError("invalid_transition", result.reason or "routed override rejected")
     persisted_state = load_plan(root, args.plan)[1]
+    archived_phase_result: str | None = None
+    if args.override_action == "recover-blocked":
+        archived_phase_result = _archive_stale_phase_result_for_resume(plan_dir)
+        if archived_phase_result is not None:
+            meta = persisted_state.get("meta")
+            overrides = meta.get("overrides") if isinstance(meta, dict) else None
+            if isinstance(overrides, list) and overrides:
+                latest_override = overrides[-1]
+                if (
+                    isinstance(latest_override, dict)
+                    and latest_override.get("action") == "recover-blocked"
+                ):
+                    latest_override["archived_phase_result"] = archived_phase_result
+                    from arnold_pipelines.megaplan._core.state import write_plan_state
+
+                    write_plan_state(plan_dir, mode="replace", state=persisted_state)
     _emit_routed_override_events(args.override_action, plan_dir=plan_dir, state=persisted_state, args=args)
-    return _routed_override_response(
+    response = _routed_override_response(
         args.override_action,
         plan_dir=plan_dir,
         state=persisted_state,
         args=args,
         artifacts=dict(result.artifacts),
     )
+    if archived_phase_result is not None:
+        response["archived_phase_result"] = archived_phase_result
+    return response
 
 
 def _resolved_default_phase_spec(phase: str, state: PlanState, root: Path) -> str:
