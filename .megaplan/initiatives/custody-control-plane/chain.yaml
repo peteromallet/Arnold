@@ -322,7 +322,7 @@ driver:
   robustness: thorough
   vendor: codex
   execution_binding: required
-  intended_initiative_revision: 581056cacb1acc0654b4b6647c0162010a065c12
+  intended_initiative_revision: c06670a86bc515ed07a45416d5be2b652ed3d248
   initiative_path: .megaplan/initiatives/custody-control-plane
   execution_binding_assets:
   - .megaplan/initiatives/custody-control-plane/decisions/f01-f17-upcoming-milestone-amendment-20260717.md
