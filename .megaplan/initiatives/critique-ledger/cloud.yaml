@@ -2,8 +2,8 @@ provider: ssh
 
 repo:
   url: https://github.com/peteromallet/Arnold.git
-  branch: megaplan/critique-ledger-m9-glm-20260723
-  workspace: /workspace/critique-ledger-m9-glm-20260723/Arnold
+  branch: megaplan/critique-ledger-accountability-v2-20260728
+  workspace: /workspace/critique-ledger-accountability-v2-20260728/Arnold
 
 agents:
   default: codex
@@ -12,11 +12,11 @@ codex:
   model: gpt-5.6-sol
   reasoning: high
 
-chain_session: critique-ledger-m9-glm-20260723
+chain_session: critique-ledger-accountability-v2-20260728
 mode: chain
 
 chain:
-  spec: /workspace/critique-ledger-m9-glm-20260723/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml
+  spec: /workspace/critique-ledger-accountability-v2-20260728/Arnold/.megaplan/initiatives/critique-ledger/chain.yaml
 
 megaplan:
   ref: megaplan/custody-control-plane/m10-safe-retry-recovery-and-effects

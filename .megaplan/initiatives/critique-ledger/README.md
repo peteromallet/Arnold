@@ -8,15 +8,15 @@ replace, or reorder the parent Durable Session Knowledge Compiler chain.
 
 ## Current truth
 
-The locked architecture is one cumulative logical finding ledger with immutable
-per-producer occurrences and bounded per-domain projections. The evaluator
-selects critics and gives every history-aware pass prior instructions, every
-relevant finding and disposition, revision actions, evaluator conclusions,
-evidence, unanswered questions, and reopen conditions. An optional blind pass
-may protect novel discovery, but its output must be reconciled against history
-before revise or gate. Semantic deduplication is model judgment; deterministic
-code owns identity, custody, completeness, freshness, replay, and fail-closed
-admission. `no_additional_findings` is an explicit successful result.
+The locked architecture is one append-only finding history with immutable raw
+occurrences and bounded projections. Raw occurrences never assign semantic
+identity. A stronger evaluator proposes reconciliation; deterministic code owns
+custody, region freshness, sampling, replay, and fail-closed admission; an
+independent audit can dispute or supersede semantic decisions. Every round has
+a mandatory blind discovery floor plus history-aware critics. The same finding
+history records the revision response, independently verified outcome, and
+reopen/staleness conditions, then builds a round accountability receipt showing
+what was found and what actually happened because of it.
 
 Current landed behavior already provides adaptive evaluator-selected lenses,
 per-round producer artifacts, canonical per-occurrence finding IDs, custody
@@ -35,27 +35,29 @@ semantic finding identities, disposition/reopen events, bounded history
 briefings, and rebuildable derived projections. Existing Megaplan components
 retain critic selection, revision, gate, and lifecycle authority.
 
-## Five aggressive sprints
+CL1 contract/oracle work is already landed on this branch. The cancelled
+predecessor's CL2 working tree remains preserved as an audit/source archive but
+is not silently adopted.
+
+## Four remaining sprints
 
 | Order | Sprint | Outcome | Run rubric |
 |---:|---|---|---|
-| 1 | Contract and M6 oracle freeze | Freeze ownership, WBC adapters, schemas, and the content-addressed M6 acceptance corpus | 5/5, `partnered-5/thorough/high +prep` |
-| 2 | Ledger persistence and replay | Add WBC-backed append-only events, one-time legacy import, replay, rebuildable projections, and freshness | 5/5, `partnered-5/thorough/high +prep` |
-| 3 | Evaluator routing and domain briefings | Route evaluator-selected blind/history-aware tasks with bounded, complete briefings | 5/5, `partnered-5/full/medium +prep` |
-| 4 | Reconciliation, reviser, and gate truth | Add semantic reconciliation, explicit dispositions, reopen rules, per-finding revision actions, and honest gate claims | 5/5, `partnered-5/full/medium +prep` |
-| 5 | Coordinated cutover and retirement | Revalidate M6 and the semantic loop, back up custody, switch the complete critique loop once, verify, and retire the replaced path | 5/5, `partnered-5/thorough/high +prep` |
+| 1 | Amended ledger foundation and replay | Version the CL1 contract additively; add WBC-backed events, correction/audit/outcome history, region freshness, bounded projections, import, and replay | 5/5, `partnered-5/thorough/high +prep` |
+| 2 | Evaluator routing and mandatory blind discovery | Enforce the blind floor and route history-aware tasks with bounded, complete briefings | 5/5, `partnered-5/full/medium +prep` |
+| 3 | Reconciliation, accountability, reviser, and gate truth | Add correctable semantic decisions, independent audits, structured response/outcome history, round receipts, and honest gate claims | 5/5, `partnered-5/full/medium +prep` |
+| 4 | Coordinated cutover and retirement | Revalidate M6 and the amended accountability loop, back up custody, switch once, verify, and retire the replaced path | 5/5, `partnered-5/thorough/high +prep` |
 
 Every sprint is bounded to roughly two weeks of skilled human engineering and
 must write the named JSON handoff consumed by the next sprint. Missing,
 unreviewed, stale, or content-mismatched handoff evidence stops the chain.
-The epic is therefore approximately ten weeks of engineering scope; it is
-not constrained to one two-week delivery window, and no contract, migration,
-validation, or custody recovery work is omitted to force such a limit.
+The remaining epic is approximately eight weeks of engineering scope. The
+completed CL1 evidence remains a prerequisite rather than being rerun.
 
 ## Canonical index
 
 - [`NORTHSTAR.md`](NORTHSTAR.md) — scoped durable end state and invariants.
-- [`chain.yaml`](chain.yaml) — five ordered milestones; fail-closed on failure or
+- [`chain.yaml`](chain.yaml) — four ordered remaining milestones; fail-closed on failure or
   escalation and review-gated at authority-changing boundaries.
 - [`cloud.yaml`](cloud.yaml) — canonical on-box workspace/session and exact local
   target source used for a supported cloud-chain launch.
@@ -78,8 +80,8 @@ validation, or custody recovery work is omitted to force such a limit.
 
 ## Epic done boundary
 
-The epic is complete only after all five reviewed handoffs and the M6 acceptance
-evidence exist; WBC and critique-ledger custody, replay, reconstruction, and
+The epic is complete only after the landed CL1 handoff plus all four remaining
+reviewed handoffs and M6 acceptance evidence exist; WBC and critique-ledger custody, replay, reconstruction, and
 fail-closed suites pass; one coordinated cutover switches every critique-loop
 consumer; and the replaced writer/reader path is retired. The cutover retains
 only a content-addressed pre-cutover backup and one bounded whole-cutover restore

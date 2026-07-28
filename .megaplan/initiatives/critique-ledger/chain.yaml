@@ -1,40 +1,22 @@
-base_branch: megaplan/critique-ledger-m9-glm-20260723
+base_branch: megaplan/critique-ledger-accountability-v2-20260728
 
 anchors:
   north_star: NORTHSTAR.md
 
 milestones:
-  - label: cl1-contract-oracle
-    idea: .megaplan/initiatives/critique-ledger/briefs/cl1-contract-and-m6-oracle.md
-    branch: megaplan/critique-ledger-m9-glm/cl1-contract-oracle
-    profile: partnered-5-glm
-    robustness: thorough
-    depth: high
-    with_prep: true
-    prep_direction: >-
-      Revalidate the landed WBC merge and current critique/evaluator/custody/gate
-      contracts, then content-address the preserved M6 corpus before freezing
-      ownership and acceptance schemas. Prove the minimum semantic loop against
-      M6 as an implementation gate; do not mutate M6 or create a shadow path.
-    deepseek_provider: direct
-    notes: >-
-      Overall plan difficulty 5/5; partnered-5-glm/thorough/high. This freezes a
-      cross-boundary public contract and early reconstruction oracle whose
-      omissions could false-green every later sprint.
-
   - label: cl2-ledger-replay
-    depends_on:
-      - cl1-contract-oracle
     idea: .megaplan/initiatives/critique-ledger/briefs/cl2-ledger-persistence-and-replay.md
-    branch: megaplan/critique-ledger-m9-glm/cl2-ledger-replay
+    branch: megaplan/critique-ledger-accountability-v2/cl2-ledger-replay
     profile: partnered-5-glm
     robustness: thorough
     depth: high
     with_prep: true
     prep_direction: >-
-      Consume the reviewed CL1 contract bundle; map current file and Store
-      persistence, WBC durable references, critique custody, and flag registry
-      before implementing append/replay and the one-time migration reader.
+      Consume the landed CL1 contract/oracle and the reviewed 2026-07-28 safety
+      amendment. Additively correct the occurrence/reconciliation contract,
+      then implement append/replay, outcome history, active projections, region
+      freshness, and the one-time migration reader. Preserve and audit the
+      cancelled CL2 archive; never adopt its uncommitted work implicitly.
     deepseek_provider: direct
     notes: >-
       Overall plan difficulty 5/5; partnered-5-glm/thorough/high. Append-only schema
@@ -45,7 +27,7 @@ milestones:
     depends_on:
       - cl2-ledger-replay
     idea: .megaplan/initiatives/critique-ledger/briefs/cl3-evaluator-routing-and-briefings.md
-    branch: megaplan/critique-ledger-m9-glm/cl3-routing-briefings
+    branch: megaplan/critique-ledger-accountability-v2/cl3-routing-briefings
     profile: partnered-5-glm
     robustness: full
     depth: medium
@@ -53,7 +35,8 @@ milestones:
     prep_direction: >-
       Trace current evaluator selection, critique runtime, parallel fanout,
       prompt projection, token budgets, and critic model routing; preserve the
-      CL1/CL2 contracts and prove bounded complete domain briefings.
+      amended CL1/CL2 contracts and prove the mandatory blind floor, prompt
+      isolation, and bounded complete domain briefings.
     deepseek_provider: direct
     notes: >-
       Overall plan difficulty 5/5; partnered-5-glm/full/medium. The architecture is
@@ -64,7 +47,7 @@ milestones:
     depends_on:
       - cl3-routing-briefings
     idea: .megaplan/initiatives/critique-ledger/briefs/cl4-reconciliation-reviser-gate.md
-    branch: megaplan/critique-ledger-m9-glm/cl4-reconcile-role-flow
+    branch: megaplan/critique-ledger-accountability-v2/cl4-reconcile-role-flow
     profile: partnered-5-glm
     robustness: full
     depth: medium
@@ -72,7 +55,9 @@ milestones:
     prep_direction: >-
       Trace evaluator output validation, flag lifecycle, revise metadata, gate
       signals/carry, finalize custody, and WBC boundary receipts before wiring
-      semantic reconciliation and explicit disposition consumption.
+      correctable reconciliation, independent disposition/outcome audit,
+      bounded active work, round accountability, and explicit disposition
+      consumption.
     deepseek_provider: direct
     notes: >-
       Overall plan difficulty 5/5; partnered-5-glm/full/medium. A plausible role-flow
@@ -83,15 +68,16 @@ milestones:
     depends_on:
       - cl4-reconcile-role-flow
     idea: .megaplan/initiatives/critique-ledger/briefs/cl5-big-bang-cutover-and-retirement.md
-    branch: megaplan/critique-ledger-m9-glm/cl5-cutover-retirement
+    branch: megaplan/critique-ledger-accountability-v2/cl5-cutover-retirement
     profile: partnered-5-glm
     robustness: thorough
     depth: high
     with_prep: true
     prep_direction: >-
-      Revalidate the frozen M6 oracle, full semantic loop, WBC custody, exact
-      target revision, one-time import, backup/restore, and operator authority;
-      then prepare one atomic cutover and legacy-path retirement checklist.
+      Revalidate the frozen M6 oracle, amended semantic/accountability loop,
+      mandatory blind and audit floors, WBC custody, exact target revision,
+      one-time import, backup/restore, and operator authority; then prepare one
+      atomic cutover and legacy-path retirement checklist.
     deepseek_provider: direct
     notes: >-
       Overall plan difficulty 5/5; partnered-5-glm/thorough/high. This is the single
@@ -105,7 +91,7 @@ on_escalate:
 merge_policy: auto
 driver:
   execution_binding: required
-  intended_initiative_revision: 1dd6b5bdd1f23de5aa6aac1b2ba4cf458fc9440e
+  intended_initiative_revision: TO_BE_PINNED_AFTER_STAGING_COMMIT
   initiative_path: .megaplan/initiatives/critique-ledger
   robustness: full
   phase_timeout: 10800
