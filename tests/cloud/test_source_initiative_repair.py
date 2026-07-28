@@ -16,6 +16,9 @@ REPAIR_LOOP = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
 
 
 def _write_source_initiative(source_root: Path) -> tuple[Path, Path]:
+    for package in ("agentbox", "arnold", "arnold_pipelines"):
+        (source_root / package).parent.mkdir(parents=True, exist_ok=True)
+        (source_root / package).symlink_to(REPO_ROOT / package, target_is_directory=True)
     chain_dir = source_root / ".megaplan" / "initiatives" / "demo.chain"
     canonical_dir = source_root / ".megaplan" / "initiatives" / "demo"
     chain_dir.mkdir(parents=True)
@@ -116,7 +119,9 @@ def test_source_initiative_repair_never_overwrites_existing_active_spec(
     assert not (remote_spec.parent / "completion-manifest.json").exists()
 
 
-def test_repair_loop_restores_missing_workspace_and_exits_complete(tmp_path: Path) -> None:
+def test_repair_loop_accepts_bounded_source_restore_and_exits_complete(
+    tmp_path: Path,
+) -> None:
     source_root = tmp_path / "arnold-src"
     _write_source_initiative(source_root)
     marker_dir = tmp_path / "markers"
@@ -126,6 +131,12 @@ def test_repair_loop_restores_missing_workspace_and_exits_complete(tmp_path: Pat
     workspace = tmp_path / "workspace"
     remote_spec = workspace / ".megaplan" / "initiatives" / "demo.chain" / "chain.yaml"
     session = "demo-chain"
+    restored = repair_source_initiative(
+        workspace=workspace,
+        remote_spec=remote_spec,
+        arnold_src=source_root,
+    )
+    assert restored.repaired is True
 
     (marker_dir / f"{session}.json").write_text(
         json.dumps(
@@ -140,10 +151,9 @@ def test_repair_loop_restores_missing_workspace_and_exits_complete(tmp_path: Pat
     )
 
     env = dict(os.environ)
-    env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
     env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(repair_data_dir)
-    env["CLOUD_WATCHDOG_ARNOLD_SRC"] = str(source_root)
+    env["MEGAPLAN_RUNTIME_SRC"] = str(source_root)
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(tmp_path / "repair-root")
 
     result = subprocess.run(

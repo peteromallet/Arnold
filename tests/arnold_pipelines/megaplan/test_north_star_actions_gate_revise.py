@@ -554,7 +554,9 @@ class TestRevisePromptIncludesNorthStarActions:
         block = builder([action])
         assert "north_star_actions_addressed" in block
         assert "action_id" in block
+        assert "action_type" in block
         assert "resolution" in block
+        assert "`plan_refs` (required)" in block
 
 
 # --------------------------------------------------------------------------- #

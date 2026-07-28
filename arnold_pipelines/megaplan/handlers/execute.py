@@ -703,14 +703,32 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         # compiler before any approval receipt or mutating preflight so a stale
         # or hand-edited graph cannot bypass the final-stage sense-check.
         finalize_data = read_json(plan_dir / "finalize.json")
+        # M10 Step 7H-b (item 3): thread the gate step's seed_epoch
+        # attestation into the execute-entry admission verdict and block
+        # v1/None admission escapes so only admitted v2 graphs reach
+        # dispatch.  The epoch protocol activates only when the gate step
+        # produced a seed_epoch attestation; an absent key preserves
+        # backward-compat for pre-M10 plans.
+        _epoch_kwargs: dict = {}
+        if isinstance(state, dict) and state.get("seed_epoch") is not None:
+            _epoch_kwargs["current_epoch"] = state.get("seed_epoch")
         try:
-            assert_admitted_task_feasibility(finalize_data, state.get("config", {}))
+            _admission_report = assert_admitted_task_feasibility(
+                finalize_data, state.get("config", {}), **_epoch_kwargs
+            )
         except ValueError as exc:
             raise CliError(
                 "finalized_task_graph_changed",
                 str(exc),
                 valid_next=["finalize", "revise"],
             ) from exc
+        if _admission_report is None:
+            raise CliError(
+                "finalized_task_graph_changed",
+                "v1 task contract is not admitted by M10 dispatch; "
+                "re-finalize under the v2 task contract before executing",
+                valid_next=["finalize", "revise"],
+            )
         try:
             assert_finalize_custody(plan_dir, finalize_data)
         except CritiqueCustodyError as exc:

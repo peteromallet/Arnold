@@ -249,6 +249,16 @@ def test_missing_declared_pytest_selector_forces_full_suite(tmp_path: Path) -> N
     assert radius["missing_test_selectors"] == ["tests/test_missing.py"]
 
 
+def test_root_smoke_script_is_not_classified_as_pytest_test(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo, "_smoke_trace_test.py", "raise SystemExit('script only')\n")
+
+    radius = compute_default_blast_radius(["_smoke_trace_test.py"], repo)
+
+    assert radius["strategy"] == "full"
+    assert radius["selectors"] == []
+
+
 def test_resolve_baseline_test_selection_folds_always_run_into_scoped_command(
     tmp_path: Path,
 ) -> None:

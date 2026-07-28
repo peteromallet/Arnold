@@ -7110,17 +7110,32 @@ def run_chain(
                     plan_name=plan_name,
                 )
                 if use_pr and milestone.branch:
-                    base_ref = _checkout_milestone_branch(
-                        root,
-                        milestone.branch or "",
-                        base_branch=spec.base_branch,
-                        writer=writer,
-                        from_origin=push_enabled and not no_git_refresh,
-                        expected_base_ref=state.target_base_ref,
+                    project_source_binding = state.metadata.get(
+                        "project_source_binding"
                     )
-                    if isinstance(base_ref, str) and base_ref:
-                        state.target_base_ref = base_ref
-                        chain_spec.save_chain_state(spec_path, state)
+                    if isinstance(project_source_binding, Mapping):
+                        from arnold_pipelines.megaplan.chain.target_rebind import (
+                            publish_bound_project_source_branch,
+                        )
+
+                        publish_bound_project_source_branch(
+                            root,
+                            state,
+                            plan_name=plan_name,
+                            milestone_branch=milestone.branch,
+                        )
+                    else:
+                        base_ref = _checkout_milestone_branch(
+                            root,
+                            milestone.branch or "",
+                            base_branch=spec.base_branch,
+                            writer=writer,
+                            from_origin=push_enabled and not no_git_refresh,
+                            expected_base_ref=state.target_base_ref,
+                        )
+                        if isinstance(base_ref, str) and base_ref:
+                            state.target_base_ref = base_ref
+                            chain_spec.save_chain_state(spec_path, state)
                     _capture_sync_state(
                         root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                     )
@@ -7293,6 +7308,17 @@ def run_chain(
                     error=exc,
                 )
             raise
+
+        from arnold_pipelines.megaplan.chain.target_rebind import (
+            assert_chain_project_source_binding,
+        )
+
+        assert_chain_project_source_binding(
+            root,
+            state,
+            plan_name=plan_name,
+            operation=f"resume milestone {milestone.label}",
+        )
 
         def phase_callback(phase: str, _code: int, _out: str, _err: str) -> None:
             if use_pr and milestone.branch:
@@ -7485,6 +7511,14 @@ def run_chain(
                     ),
                 )
         local_commit_sha: str | None = None
+        if decision == "advance" and outcome.status == "done":
+            current_source_state = chain_spec.load_chain_state(spec_path)
+            assert_chain_project_source_binding(
+                root,
+                current_source_state,
+                plan_name=plan_name,
+                operation=f"complete milestone {milestone.label}",
+            )
         if (
             decision == "advance"
             and outcome.status == "done"
@@ -8130,6 +8164,16 @@ def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
             f"expected={str(expected.get('bundle_sha256') or 'missing')[:12]} "
             f"active={str(active.get('bundle_sha256') or 'missing')[:12]}\n"
         )
+        runtime_binding = binding.get("runtime_binding")
+        if isinstance(runtime_binding, dict) and runtime_binding.get("required"):
+            runtime_expected = runtime_binding.get("expected") or {}
+            runtime_active = runtime_binding.get("active") or {}
+            writer(
+                "Runtime binding: "
+                f"{runtime_binding.get('status')} "
+                f"expected={str(runtime_expected.get('content_sha256') or 'missing')[:12]} "
+                f"active={str(runtime_active.get('content_sha256') or 'missing')[:12]}\n"
+            )
     # Sync section (branch/PR sync state)
     sync = summary.get("sync") or {}
     if any(v is not None for v in sync.values()) or sync.get("dirty_flag"):
@@ -8278,6 +8322,125 @@ def build_chain_parser(subparsers: Any) -> None:
     rebind_parser.add_argument("--expected-next-milestone", required=True)
     rebind_parser.add_argument("--reason", required=True)
     rebind_parser.add_argument("--actor", default="operator")
+
+    runtime_rebind_parser = chain_sub.add_parser(
+        "runtime-rebind",
+        help="Guardedly cut over or roll back the bound runtime without changing the chain spec binding",
+    )
+    runtime_rebind_parser.add_argument("--spec", required=True)
+    runtime_rebind_parser.add_argument("--project-dir", required=False)
+    runtime_rebind_parser.add_argument("--from-runtime-sha256", required=True)
+    runtime_rebind_parser.add_argument("--to-runtime-sha256", required=True)
+    runtime_rebind_parser.add_argument("--expected-current-milestone", required=True)
+    runtime_rebind_parser.add_argument(
+        "--expected-current-plan",
+        required=True,
+        help="Exact current plan name, or @none when the cursor has no plan yet.",
+    )
+    runtime_rebind_parser.add_argument("--direction", choices=("cutover", "rollback"), default="cutover")
+    runtime_rebind_parser.add_argument("--reason", required=True)
+    runtime_rebind_parser.add_argument("--actor", default="operator")
+    runtime_rebind_parser.add_argument(
+        "--runtime-identity",
+        help=(
+            "Content-addressed offline runtime identity JSON. Requires "
+            "--runtime-provenance-receipt and is freshly reverified by the "
+            "receipt's independent interpreter."
+        ),
+    )
+    runtime_rebind_parser.add_argument(
+        "--runtime-provenance-receipt",
+        help=(
+            "Digest-bound runtime_provenance receipt emitted by the offline "
+            "runtime's interpreter. Requires --runtime-identity."
+        ),
+    )
+
+    target_rebind_parser = chain_sub.add_parser(
+        "target-rebind",
+        help=(
+            "Guardedly cut over or roll back the paused pre-execute project "
+            "checkout and milestone baseline"
+        ),
+    )
+    target_rebind_parser.add_argument("--spec", required=True)
+    target_rebind_parser.add_argument("--project-dir", required=True)
+    target_rebind_parser.add_argument(
+        "--direction",
+        choices=("cutover", "rollback"),
+        default="cutover",
+    )
+    target_rebind_parser.add_argument("--expected-session-id", required=True)
+    target_rebind_parser.add_argument("--expected-current-milestone", required=True)
+    target_rebind_parser.add_argument("--expected-current-plan", required=True)
+    target_rebind_parser.add_argument("--from-branch", required=True)
+    target_rebind_parser.add_argument("--from-head", required=True)
+    target_rebind_parser.add_argument("--from-milestone-base", required=True)
+    target_rebind_parser.add_argument("--from-ref", required=True)
+    target_rebind_parser.add_argument("--to-branch", required=True)
+    target_rebind_parser.add_argument("--to-head", required=True)
+    target_rebind_parser.add_argument("--to-ref", required=True)
+    target_rebind_parser.add_argument("--expected-spec-sha256", required=True)
+    target_rebind_parser.add_argument(
+        "--expected-target-spec-sha256",
+        required=False,
+        help=(
+            "Exact chain-spec hash after target checkout; defaults to "
+            "--expected-spec-sha256 when the spec is unchanged"
+        ),
+    )
+    target_rebind_parser.add_argument("--expected-chain-state-sha256", required=True)
+    target_rebind_parser.add_argument("--expected-plan-state-sha256", required=True)
+    target_rebind_parser.add_argument("--reason", required=True)
+    target_rebind_parser.add_argument("--actor", default="operator")
+    target_rebind_parser.add_argument(
+        "--runtime-identity",
+        help="Verified external runtime identity used by a newer paused control interpreter",
+    )
+    target_rebind_parser.add_argument(
+        "--runtime-provenance-receipt",
+        help="Independent interpreter receipt paired with --runtime-identity",
+    )
+
+    seed_rematerialize_parser = chain_sub.add_parser(
+        "seed-rematerialize",
+        help=(
+            "Archive a paused pre-execute plan and rematerialize the same "
+            "milestone from an exact seed manifest"
+        ),
+    )
+    seed_rematerialize_parser.add_argument("--spec", required=True)
+    seed_rematerialize_parser.add_argument("--project-dir", required=True)
+    seed_rematerialize_parser.add_argument(
+        "--direction",
+        choices=("cutover", "rollback"),
+        default="cutover",
+    )
+    seed_rematerialize_parser.add_argument("--expected-session-id", required=True)
+    seed_rematerialize_parser.add_argument("--expected-current-milestone", required=True)
+    seed_rematerialize_parser.add_argument("--expected-current-plan", required=True)
+    seed_rematerialize_parser.add_argument("--expected-branch", required=True)
+    seed_rematerialize_parser.add_argument("--expected-head", required=True)
+    seed_rematerialize_parser.add_argument("--expected-spec-sha256", required=True)
+    seed_rematerialize_parser.add_argument("--expected-chain-state-sha256", required=True)
+    seed_rematerialize_parser.add_argument("--expected-plan-state-sha256", required=True)
+    seed_rematerialize_parser.add_argument("--seed-manifest", required=True)
+    seed_rematerialize_parser.add_argument(
+        "--expected-seed-manifest-sha256",
+        required=True,
+    )
+    seed_rematerialize_parser.add_argument("--expected-cutover-event-sha256")
+    seed_rematerialize_parser.add_argument("--expected-archive-manifest-sha256")
+    seed_rematerialize_parser.add_argument("--reason", required=True)
+    seed_rematerialize_parser.add_argument("--actor", default="operator")
+    seed_rematerialize_parser.add_argument(
+        "--runtime-identity",
+        help="Verified external runtime identity used by a newer paused control interpreter",
+    )
+    seed_rematerialize_parser.add_argument(
+        "--runtime-provenance-receipt",
+        help="Independent interpreter receipt paired with --runtime-identity",
+    )
 
     pause_parser = chain_sub.add_parser(
         "pause", help="Durably pause a chain and disable automatic recovery"
@@ -8558,6 +8721,202 @@ def run_chain_cli(
                     "success": True,
                     "spec": str(spec_path),
                     "action": "rebind",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "runtime-rebind":
+        try:
+            chain_state = chain_spec.load_chain_state(
+                spec_path,
+                verify_execution_binding=False,
+            )
+            before = chain_state.to_dict()
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                rebind_runtime_identity,
+                verify_external_runtime_identity,
+            )
+
+            identity_arg = str(getattr(args, "runtime_identity", "") or "").strip()
+            receipt_arg = str(
+                getattr(args, "runtime_provenance_receipt", "") or ""
+            ).strip()
+            if bool(identity_arg) != bool(receipt_arg):
+                raise CliError(
+                    "chain_runtime_binding_drift",
+                    "chain runtime rebind refused: --runtime-identity and "
+                    "--runtime-provenance-receipt must be supplied together",
+                )
+            external_identity = (
+                verify_external_runtime_identity(
+                    Path(identity_arg).expanduser().resolve(strict=False),
+                    Path(receipt_arg).expanduser().resolve(strict=False),
+                )
+                if identity_arg
+                else None
+            )
+            result = rebind_runtime_identity(
+                spec_path,
+                chain_state,
+                expected_previous_runtime_sha256=args.from_runtime_sha256,
+                expected_active_runtime_sha256=args.to_runtime_sha256,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                direction=args.direction,
+                reason=args.reason,
+                actor=args.actor,
+                verified_external_runtime_identity=external_identity,
+            )
+            after = chain_state.to_dict()
+            for field in before:
+                if field != "metadata" and before[field] != after[field]:
+                    raise CliError(
+                        "chain_runtime_binding_drift",
+                        f"chain runtime rebind refused: operational field {field!r} changed",
+                    )
+            chain_spec.save_chain_state(spec_path, chain_state)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "runtime-rebind",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "target-rebind":
+        project_root = Path(args.project_dir).expanduser().resolve()
+        try:
+            from arnold_pipelines.megaplan.chain.target_rebind import target_rebind
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                verify_external_runtime_identity,
+            )
+
+            identity_arg = str(getattr(args, "runtime_identity", "") or "").strip()
+            receipt_arg = str(
+                getattr(args, "runtime_provenance_receipt", "") or ""
+            ).strip()
+            if bool(identity_arg) != bool(receipt_arg):
+                raise CliError(
+                    "project_source_rebind_refused",
+                    "target rebind requires --runtime-identity and "
+                    "--runtime-provenance-receipt together",
+                )
+            external_identity = (
+                verify_external_runtime_identity(
+                    Path(identity_arg).expanduser().resolve(strict=False),
+                    Path(receipt_arg).expanduser().resolve(strict=False),
+                )
+                if identity_arg
+                else None
+            )
+
+            result = target_rebind(
+                spec_path,
+                project_root,
+                direction=args.direction,
+                expected_session_id=args.expected_session_id,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                from_branch=args.from_branch,
+                from_head=args.from_head,
+                from_milestone_base=args.from_milestone_base,
+                from_ref=args.from_ref,
+                to_branch=args.to_branch,
+                to_head=args.to_head,
+                to_ref=args.to_ref,
+                expected_spec_sha256=args.expected_spec_sha256,
+                expected_target_spec_sha256=args.expected_target_spec_sha256,
+                expected_chain_state_sha256=args.expected_chain_state_sha256,
+                expected_plan_state_sha256=args.expected_plan_state_sha256,
+                reason=args.reason,
+                actor=args.actor,
+                verified_external_runtime_identity=external_identity,
+            )
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "target-rebind",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "seed-rematerialize":
+        project_root = Path(args.project_dir).expanduser().resolve()
+        try:
+            from arnold_pipelines.megaplan.chain.seed_rematerialize import (
+                seed_rematerialize,
+            )
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                verify_external_runtime_identity,
+            )
+
+            identity_arg = str(getattr(args, "runtime_identity", "") or "").strip()
+            receipt_arg = str(
+                getattr(args, "runtime_provenance_receipt", "") or ""
+            ).strip()
+            if bool(identity_arg) != bool(receipt_arg):
+                raise CliError(
+                    "seed_rematerialize_refused",
+                    "seed rematerialize requires --runtime-identity and "
+                    "--runtime-provenance-receipt together",
+                )
+            external_identity = (
+                verify_external_runtime_identity(
+                    Path(identity_arg).expanduser().resolve(strict=False),
+                    Path(receipt_arg).expanduser().resolve(strict=False),
+                )
+                if identity_arg
+                else None
+            )
+
+            result = seed_rematerialize(
+                spec_path,
+                project_root,
+                expected_session_id=args.expected_session_id,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                expected_branch=args.expected_branch,
+                expected_head=args.expected_head,
+                expected_spec_sha256=args.expected_spec_sha256,
+                expected_chain_state_sha256=args.expected_chain_state_sha256,
+                expected_plan_state_sha256=args.expected_plan_state_sha256,
+                seed_manifest_path=Path(args.seed_manifest).expanduser().resolve(),
+                expected_seed_manifest_sha256=args.expected_seed_manifest_sha256,
+                direction=args.direction,
+                expected_cutover_event_sha256=args.expected_cutover_event_sha256,
+                expected_archive_manifest_sha256=args.expected_archive_manifest_sha256,
+                reason=args.reason,
+                actor=args.actor,
+                verified_external_runtime_identity=external_identity,
+            )
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "seed-rematerialize",
                     **result,
                 },
                 indent=2,

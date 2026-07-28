@@ -6,13 +6,22 @@ import json
 import logging
 import os
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from arnold.workflow.boundary_evidence import AuthorityRecord, BoundaryOutcome, BoundaryReceipt
 import arnold_pipelines.megaplan.workers as worker_module
-from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
+from arnold_pipelines.megaplan.fallback_chains import (
+    classify_retryability,
+    configured_fallback_chain_for_phase,
+    fallback_observability_fields,
+    is_retryable_classification,
+    normalize_fallback_spec_list,
+    provider_family,
+    select_fallback_spec,
+)
 from arnold_pipelines.megaplan.feature_flags import calibration_query_route_on
 from arnold_pipelines.megaplan.receipts.writer import write_boundary_receipt
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
@@ -86,23 +95,6 @@ from arnold_pipelines.megaplan.execute.merge import (
     _merge_batch_results,
     _merge_scoped_batch_artifact_through_validator,
 )
-from arnold_pipelines.megaplan.execute.preflight import (
-    PreflightFailureKind,
-    PreflightReport,
-    run_worker_preflight,
-)
-from arnold_pipelines.megaplan.execute.validation_runner import (
-    extract_compiled_validation_jobs,
-    run_validation_jobs,
-)
-from arnold_pipelines.megaplan.execute.wbc import (
-    EXECUTE_PARENT_CUSTODY_KEY,
-    EXECUTE_DISPATCH_WBC_KEY,
-    EXECUTE_TRANSITION_WBC_KEY,
-    build_execute_batch_dispatch_spec,
-    build_transition_wbc_summary,
-    dispatch_wbc_summary,
-)
 from arnold_pipelines.megaplan.execute.quality import (
     AttributionResult,
     _auto_attribute_unclaimed_paths,
@@ -153,10 +145,12 @@ from arnold_pipelines.megaplan.resolution_contract import (
 )
 from arnold_pipelines.megaplan.resolutions import effective_user_action_resolutions
 from arnold_pipelines.megaplan.types import (
+    AgentMode,
     CliError,
     MOCK_ENV_VAR,
     PlanState,
     StepResponse,
+    parse_agent_spec,
 )
 from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.run_authority import ContractError
@@ -246,6 +240,504 @@ def _repair_missing_user_action_gate(
     atomic_write_text(plan_dir / "final.md", render_final_md(finalize_data, phase="execute"))
     return True
 
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# M8A Step 13 — Verify-only repair adoption at the execute action boundary
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# This wiring rereads current Run Authority grant/fence, current Custody
+# lease/epoch, and the required WBC attempt reference through the existing
+# ``arnold_pipelines.megaplan.custody.action_validator`` action-boundary seam
+# before repair/worker dispatch.  On exact match it records adoption
+# evidence and emits a ``repair_verify`` work-ledger event; on mismatch it
+# quarantines the receipt as evidence and continues normal execution WITHOUT
+# rewriting immutable attempts.
+#
+# North Star guarantees:
+# * **Verify-only** — The receipt is evidence, NOT authority.  Adoption is a
+#   deterministic comparison; it never substitutes for an authoritative
+#   action-boundary validation, grant, lease, WBC, completion, publication,
+#   delivery, or status decision.
+# * **No stale-source acceptance** — Every call rereads current sources
+#   immediately.  Receipt fields are never used as substitutes for current
+#   reads; they identify *which* current values to read.
+# * **Shadow-first** — All production gates and mutating effects remain
+#   disabled in M8A.  The helper runs in shadow/report-only mode (emits
+#   evidence + ledger events, never skips replay or modifies dispatch)
+#   until canary promotion flips ``ARNOLD_M8A_REPAIR_ADOPTION_ENFORCEMENT``.
+
+_M8A_REPAIR_ADOPTION_ENFORCEMENT_ENV = "ARNOLD_M8A_REPAIR_ADOPTION_ENFORCEMENT"
+_M8A_REPAIR_ADOPTION_DISABLE_VALUES: frozenset[str] = frozenset(
+    {"", "0", "false", "no", "off"}
+)
+
+
+def _m8a_repair_adoption_enforcement_enabled() -> bool:
+    """Return ``True`` when M8A repair-adoption canary promotion is active.
+
+    Controlled by ``ARNOLD_M8A_REPAIR_ADOPTION_ENFORCEMENT`` — defaults to
+    OFF (``"0"``).  When disabled (the default), the repair adoption check
+    runs in shadow/report-only mode: it rereads boundary conditions, emits
+    adoption/quarantine evidence, and emits ``repair_verify`` work-ledger
+    events, but never skips replay or modifies dispatch flow.
+    """
+    raw = os.getenv(_M8A_REPAIR_ADOPTION_ENFORCEMENT_ENV, "").strip().lower()
+    if raw in _M8A_REPAIR_ADOPTION_DISABLE_VALUES:
+        return False
+    return True
+
+
+def _collect_pending_repair_receipts(
+    finalize_data: dict[str, Any],
+    plan_dir: Path,
+    batch_task_ids: list[str],
+) -> list[dict[str, Any]]:
+    """Collect pending repair receipts applicable to this batch's tasks.
+
+    Looks for receipts in:
+    * ``finalize_data["pending_repair_receipts"]`` (list of dict payloads).
+    * ``<plan_dir>/repair_receipts/*.json`` (one receipt payload per file).
+
+    Filters to receipts whose ``task_contract`` matches a batch task ID
+    (exact or ``"<task_id>:<suffix>"`` form).  Returns an empty list when
+    no pending receipts apply.
+    """
+    import json as _json
+
+    batch_id_set = set(batch_task_ids)
+    candidates: list[dict[str, Any]] = []
+
+    pending = finalize_data.get("pending_repair_receipts")
+    if isinstance(pending, list):
+        for r in pending:
+            if isinstance(r, dict):
+                candidates.append(dict(r))
+
+    receipts_dir = Path(plan_dir) / "repair_receipts"
+    if receipts_dir.is_dir():
+        for path in sorted(receipts_dir.glob("*.json")):
+            try:
+                data = _json.loads(path.read_text())
+            except (OSError, _json.JSONDecodeError):
+                continue
+            if isinstance(data, dict):
+                stamped = {"__source_path": str(path)}
+                stamped.update(data)
+                candidates.append(stamped)
+
+    applicable: list[dict[str, Any]] = []
+    for r in candidates:
+        task_contract = r.get("task_contract")
+        if not isinstance(task_contract, str) or not task_contract:
+            continue
+        if any(
+            task_contract == tid or task_contract.startswith(tid + ":")
+            for tid in batch_id_set
+        ):
+            applicable.append(r)
+    return applicable
+
+
+def _reread_current_boundary_conditions(
+    receipt: Mapping[str, Any],
+    *,
+    plan_dir: Path | None = None,
+    task_contract: str = "",
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Reread current Run Authority, Custody, and WBC boundary conditions.
+
+    Uses the existing ``action_validator.validate_action_boundary_simple``
+    seam to perform the reread.  Receipt fields are used only to identify
+    *which* current values to read (grant id, fence token, target, WBC
+    reference) — they are NEVER substituted for the current reads
+    themselves.
+
+    Returns ``(current_values, diagnostics)``.  Missing sources are
+    recorded in ``diagnostics`` rather than silently defaulted from the
+    receipt.
+    """
+    diagnostics: dict[str, Any] = {
+        "reread_attempted": True,
+        "sources": {},
+        "reread_errors": [],
+    }
+    current: dict[str, Any] = {}
+
+    grant_id = str(receipt.get("run_authority_grant_id") or "")
+    try:
+        fence_token = int(receipt.get("coordinator_fence_token") or 0)
+    except (TypeError, ValueError):
+        fence_token = 0
+    wbc_ref = str(receipt.get("wbc_attempt_reference") or "")
+    target = receipt.get("target")
+    if not isinstance(target, Mapping):
+        target = {}
+
+    try:
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            validate_action_boundary_simple,
+        )
+
+        result = validate_action_boundary_simple(
+            action_type="repair",
+            target=dict(target),
+            run_authority_grant_id=grant_id,
+            coordinator_fence_token=fence_token,
+            wbc_attempt_reference=wbc_ref,
+        )
+        for check in result.checks:
+            src = check.source
+            obs = dict(check.observed_value) if check.observed_value else {}
+            diagnostics["sources"][src] = {
+                "outcome": str(check.outcome),
+                "detail": check.detail,
+                "observed_value": obs,
+            }
+            if src == "run_authority_grant":
+                grant_obs = obs.get("grant_id") or obs.get("id")
+                if grant_obs:
+                    current["run_authority_grant_id"] = str(grant_obs)
+            elif src == "run_authority_fence":
+                fence_obs = obs.get("fence_token") or obs.get("token")
+                if fence_obs is not None:
+                    try:
+                        current["coordinator_fence_token"] = int(fence_obs)
+                    except (TypeError, ValueError):
+                        pass
+            elif src == "custody_lease":
+                lease_obs = obs.get("lease_id") or obs.get("id")
+                if lease_obs:
+                    current["custody_lease_id"] = str(lease_obs)
+                epoch_obs = obs.get("epoch")
+                if epoch_obs is not None:
+                    try:
+                        current["custody_epoch"] = int(epoch_obs)
+                    except (TypeError, ValueError):
+                        pass
+            elif src == "wbc_attempt":
+                wbc_obs = obs.get("attempt_id") or obs.get("reference")
+                if wbc_obs:
+                    current["wbc_attempt_reference"] = str(wbc_obs)
+    except Exception as exc:  # pragma: no cover - defensive: reread must not crash dispatch
+        diagnostics["reread_errors"].append(f"{type(exc).__name__}: {exc}")
+
+    if plan_dir is None:
+        return current, diagnostics
+
+    # The remaining adoption fields must come from current execution
+    # artifacts, never from the candidate receipt.  A missing current value
+    # deliberately leaves the adoption context incomplete so the caller
+    # quarantines the receipt instead of manufacturing a self-match.
+    try:
+        state_payload = read_json(Path(plan_dir) / "state.json")
+    except (OSError, ValueError, TypeError):
+        state_payload = {}
+    config = state_payload.get("config") if isinstance(state_payload, dict) else {}
+    project_dir_value = config.get("project_dir") if isinstance(config, dict) else None
+    project_dir = (
+        Path(project_dir_value)
+        if isinstance(project_dir_value, str) and project_dir_value
+        else None
+    )
+    if task_contract:
+        current["task_contract"] = task_contract
+
+    newest_task_evidence: tuple[int, Path, dict[str, Any]] | None = None
+    batches_dir = Path(plan_dir) / "execute_batches"
+    if batches_dir.is_dir() and task_contract:
+        for artifact_path in batches_dir.glob("batch_*/tasks_*.json"):
+            try:
+                artifact = read_json(artifact_path)
+            except (OSError, ValueError, TypeError):
+                artifact = {}
+            if not isinstance(artifact, dict):
+                continue
+            for envelope in artifact.get("result_envelopes") or []:
+                if not isinstance(envelope, dict):
+                    continue
+                claim = envelope.get("claim")
+                if not isinstance(claim, dict) or claim.get("subject_id") != task_contract:
+                    continue
+                candidate = (artifact_path.stat().st_mtime_ns, artifact_path, envelope)
+                if newest_task_evidence is None or candidate[0] > newest_task_evidence[0]:
+                    newest_task_evidence = candidate
+
+    if newest_task_evidence is not None:
+        _, evidence_path, envelope = newest_task_evidence
+        dispatch = envelope.get("dispatch")
+        grant = dispatch.get("grant") if isinstance(dispatch, dict) else {}
+        claim = envelope.get("claim")
+        plan_revision = grant.get("run_revision") if isinstance(grant, dict) else None
+        result_hash = claim.get("payload_hash") if isinstance(claim, dict) else None
+        if isinstance(plan_revision, str) and plan_revision:
+            current["plan_revision"] = plan_revision
+        if isinstance(result_hash, str) and result_hash:
+            current["test_result_hash"] = result_hash
+        diagnostics["sources"]["current_task_result"] = {
+            "outcome": "observed",
+            "detail": "latest durable result envelope for current task contract",
+            "observed_value": {
+                "path": str(evidence_path),
+                "plan_revision": plan_revision,
+                "task_contract": task_contract,
+                "result_hash": result_hash,
+            },
+        }
+    else:
+        diagnostics["reread_errors"].append(
+            f"current task result not found for {task_contract or '<missing>'}"
+        )
+
+    if project_dir is not None:
+        try:
+            proc = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(project_dir),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+            head = proc.stdout.strip() if proc.returncode == 0 else ""
+            if head:
+                current["tree_commit"] = head
+                diagnostics["sources"]["git_head"] = {
+                    "outcome": "observed",
+                    "detail": "current project HEAD",
+                    "observed_value": {"tree_commit": head},
+                }
+            else:
+                diagnostics["reread_errors"].append("current git HEAD unavailable")
+        except Exception as exc:  # pragma: no cover - defensive fail closed
+            diagnostics["reread_errors"].append(
+                f"current git HEAD read failed: {type(exc).__name__}: {exc}"
+            )
+
+    failure = state_payload.get("latest_failure") if isinstance(state_payload, dict) else None
+    if isinstance(failure, dict) and failure:
+        current["blocker_hash"] = "sha256:" + hashlib.sha256(
+            json.dumps(failure, sort_keys=True, separators=(",", ":"), default=str).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+    else:
+        current["blocker_hash"] = ""
+
+    return current, diagnostics
+
+
+def _run_repair_adoption_check(
+    *,
+    plan_dir: Path,
+    finalize_data: dict[str, Any],
+    batch_task_ids: list[str],
+) -> dict[str, Any]:
+    """Verify-only repair adoption check at the execute action boundary.
+
+    For every pending repair receipt applicable to this batch's tasks:
+
+    * Rereads current Run Authority grant/fence, Custody lease/epoch, and
+      required WBC attempt reference through the existing
+      :func:`action_validator.validate_action_boundary_simple` seam.
+    * Builds an :class:`AdoptionContext` from the *current* reads only.
+    * Calls :func:`repair_adoption.adopt_repair_receipt` to obtain a
+      deterministic :class:`AdoptionDecision`.
+    * On ``ADOPT``: emits a ``repair_verify`` work-ledger event and writes
+      content-addressed adoption evidence.  Under canary promotion, the
+      caller MAY skip replay.
+    * On ``QUARANTINE`` / ``INVALID``: emits a ``repair_verify`` event
+      with mismatch diagnostics and writes quarantine evidence.  Normal
+      execution continues WITHOUT rewriting immutable attempts.
+
+    Returns a structured summary.  This helper never raises — a reread or
+    comparison failure is recorded as a quarantine and execution
+    continues.
+    """
+    import hashlib as _hashlib
+    import json as _json
+    import time as _time
+
+    from arnold_pipelines.megaplan.custody.repair_adoption import (
+        AdoptionContext,
+        AdoptionOutcome,
+        adopt_repair_receipt,
+    )
+    from arnold_pipelines.megaplan.observability.work_ledger import (
+        emit_repair_verify,
+        emit_unavailable_reason,
+    )
+
+    enforcement = _m8a_repair_adoption_enforcement_enabled()
+    summary: dict[str, Any] = {
+        "contract_type": "repair_adoption_summary",
+        "schema_version": 1,
+        "enforcement": enforcement,
+        "evaluated": [],
+        "adopted_count": 0,
+        "quarantined_count": 0,
+        "skip_replay": False,
+    }
+
+    receipts = _collect_pending_repair_receipts(finalize_data, plan_dir, batch_task_ids)
+    if not receipts:
+        return summary
+
+    evidence_dir = Path(plan_dir) / "evidence"
+    batch_id_set = set(batch_task_ids)
+
+    for receipt in receipts:
+        task_contract_raw = str(receipt.get("task_contract") or "")
+        task_id = task_contract_raw
+        for tid in batch_id_set:
+            if task_contract_raw == tid or task_contract_raw.startswith(tid + ":"):
+                task_id = tid
+                break
+
+        start = _time.monotonic()
+        current, reread_diag = _reread_current_boundary_conditions(
+            receipt,
+            plan_dir=Path(plan_dir),
+            task_contract=task_contract_raw,
+        )
+
+        try:
+            context = AdoptionContext(
+                run_authority_grant_id=str(current.get("run_authority_grant_id") or ""),
+                coordinator_fence_token=int(current.get("coordinator_fence_token") or 0),
+                custody_lease_id=str(current.get("custody_lease_id") or ""),
+                custody_epoch=int(current.get("custody_epoch") or 0),
+                wbc_attempt_reference=str(current.get("wbc_attempt_reference") or ""),
+                plan_revision=str(current.get("plan_revision") or ""),
+                task_contract=str(current.get("task_contract") or ""),
+                tree_commit=str(current.get("tree_commit") or ""),
+                test_result_hash=str(current.get("test_result_hash") or ""),
+                blocker_hash=str(current.get("blocker_hash") or ""),
+            )
+        except (ValueError, TypeError) as exc:
+            duration_ms = int((_time.monotonic() - start) * 1000)
+            receipt_digest = str(receipt.get("receipt_digest") or "")
+            emit_unavailable_reason(
+                plan_dir,
+                task_id=task_id,
+                measure="repair_adoption_context",
+                reason=f"context_construction_failed: {type(exc).__name__}: {exc}",
+            )
+            emit_repair_verify(
+                plan_dir,
+                task_id=task_id,
+                receipt_hash=receipt_digest,
+                outcome="quarantine",
+                duration_ms=duration_ms,
+                grant_match=False,
+                fence_match=False,
+                mismatches=[],
+                diagnostics={
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "reread": reread_diag,
+                    "enforcement": enforcement,
+                },
+            )
+            quarantine_payload = {
+                "contract_type": "repair_adoption_evidence",
+                "schema_version": 1,
+                "task_id": task_id,
+                "decision": {
+                    "outcome": "quarantine",
+                    "receipt_digest": receipt_digest,
+                    "mismatches": [],
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+                "reread_diagnostics": reread_diag,
+                "enforcement": enforcement,
+            }
+            q_hash = _hashlib.sha256(
+                _json.dumps(quarantine_payload, sort_keys=True, default=str).encode("utf-8")
+            ).hexdigest()[:16]
+            q_filename = (
+                f"repair-adoption-quarantine-{(receipt_digest or 'noreceipt')[:12]}-{q_hash}.json"
+            )
+            try:
+                evidence_dir.mkdir(parents=True, exist_ok=True)
+                (evidence_dir / q_filename).write_text(
+                    _json.dumps(quarantine_payload, indent=2, sort_keys=True, default=str)
+                )
+            except OSError:
+                pass
+            summary["evaluated"].append(
+                {
+                    "task_id": task_id,
+                    "outcome": "quarantine",
+                    "receipt_digest": receipt_digest,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            summary["quarantined_count"] += 1
+            continue
+
+        decision = adopt_repair_receipt(receipt, context)
+        duration_ms = int((_time.monotonic() - start) * 1000)
+        outcome_str = str(decision.outcome)
+        receipt_digest = decision.receipt_digest or str(receipt.get("receipt_digest") or "")
+        mismatch_fields = {m.field for m in decision.mismatches}
+
+        emit_repair_verify(
+            plan_dir,
+            task_id=task_id,
+            receipt_hash=receipt_digest,
+            outcome=outcome_str,
+            duration_ms=duration_ms,
+            grant_match="run_authority_grant_id" not in mismatch_fields,
+            fence_match="coordinator_fence_token" not in mismatch_fields,
+            mismatches=[m.to_dict() for m in decision.mismatches],
+            diagnostics={
+                "compared_at": decision.compared_at,
+                "reread": reread_diag,
+                "enforcement": enforcement,
+            },
+        )
+
+        evidence_payload = {
+            "contract_type": "repair_adoption_evidence",
+            "schema_version": 1,
+            "task_id": task_id,
+            "decision": decision.to_dict(),
+            "reread_diagnostics": reread_diag,
+            "enforcement": enforcement,
+        }
+        ev_hash = _hashlib.sha256(
+            _json.dumps(evidence_payload, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:16]
+        ev_digest_suffix = (receipt_digest or "noreceipt")[:12]
+        evidence_filename = (
+            f"repair-adoption-{outcome_str}-{ev_digest_suffix}-{ev_hash}.json"
+        )
+        try:
+            evidence_dir.mkdir(parents=True, exist_ok=True)
+            (evidence_dir / evidence_filename).write_text(
+                _json.dumps(evidence_payload, indent=2, sort_keys=True, default=str)
+            )
+        except OSError:
+            pass
+
+        summary["evaluated"].append(
+            {
+                "task_id": task_id,
+                "outcome": outcome_str,
+                "receipt_digest": receipt_digest,
+                "mismatch_count": len(decision.mismatches),
+                "mismatch_fields": sorted(mismatch_fields),
+            }
+        )
+        if decision.outcome == AdoptionOutcome.ADOPT:
+            summary["adopted_count"] += 1
+            if enforcement:
+                summary["skip_replay"] = True
+        else:
+            summary["quarantined_count"] += 1
+
+    return summary
 
 def _pre_existing_task_ids(plan_dir: Path) -> set[str]:
     """Read pre-existing task IDs persisted in ``contract.json``."""
@@ -506,6 +998,234 @@ def _resolve_tier_spec(
     resolved = worker_module.resolve_agent_mode(phase, tier_args)
     resolved_model = resolved.resolved_model if hasattr(resolved, "resolved_model") else None
     return resolved.agent, resolved.mode, resolved_model if resolved_model is not None else resolved.model
+
+
+def _execute_configured_specs(
+    args: argparse.Namespace,
+    *,
+    selected_tier_spec: str | None,
+    default_spec: str,
+) -> tuple[str, ...]:
+    """Recover the ordered chain hidden behind a tier's selected scalar."""
+
+    tier_models = getattr(args, "tier_models", None)
+    execute_tiers = tier_models.get("execute") if isinstance(tier_models, dict) else None
+    if selected_tier_spec is not None and isinstance(execute_tiers, dict):
+        for raw_tier, raw_value in execute_tiers.items():
+            try:
+                specs = normalize_fallback_spec_list(
+                    raw_value,
+                    path=f"tier_models.execute.{raw_tier}",
+                )
+            except (TypeError, ValueError):
+                continue
+            if specs[0] == selected_tier_spec:
+                return specs
+
+    configured = configured_fallback_chain_for_phase(
+        getattr(args, "phase_model", None),
+        "execute",
+    )
+    if configured is not None and configured.selected() == default_spec:
+        return configured.specs
+    return (default_spec,)
+
+
+@dataclass(frozen=True, slots=True)
+class _ExecuteWorkspaceFingerprint:
+    head: str | None
+    entries: tuple[tuple[str, str], ...]
+    status: str = ""
+    error: str | None = None
+
+
+def _capture_execute_workspace_fingerprint(root: Path) -> _ExecuteWorkspaceFingerprint:
+    """Capture enough git state to prove a failed executor made no source change."""
+
+    snapshot, snapshot_error = _capture_git_status_snapshot_recursive(root)
+    try:
+        head_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        status_result = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return _ExecuteWorkspaceFingerprint(
+            None,
+            tuple(sorted(snapshot.items())),
+            error=snapshot_error or f"git_fingerprint_failed:{type(exc).__name__}",
+        )
+    head = head_result.stdout.strip() if head_result.returncode == 0 else None
+    error = snapshot_error
+    if head is None:
+        error = error or "git_head_unavailable"
+    if status_result.returncode != 0:
+        error = error or "git_status_unavailable"
+    return _ExecuteWorkspaceFingerprint(
+        head,
+        tuple(sorted(snapshot.items())),
+        status_result.stdout,
+        error,
+    )
+
+
+def _run_execute_worker_with_configured_fallback(
+    *,
+    root: Path,
+    plan_dir: Path,
+    state: PlanState,
+    args: argparse.Namespace,
+    agent: str,
+    mode: str,
+    refreshed: bool,
+    model: str | None,
+    effort: str | None,
+    resolved_model: str | None,
+    prompt_override: str | None,
+    configured_specs: tuple[str, ...],
+    batch_number: int,
+) -> tuple[WorkerResult, str, str, bool]:
+    """Advance execute only after a retryable, side-effect-free provider outage."""
+
+    attempted_specs: list[str] = [configured_specs[0]]
+    failed_reasons: list[str] = []
+    fallback_trigger: str | None = None
+    current_agent = agent
+    current_mode = mode
+    current_refreshed = refreshed
+    current_model = model
+    current_effort = effort
+    current_resolved_model = resolved_model
+
+    for attempt_index, selected_spec in enumerate(configured_specs):
+        if attempt_index:
+            current_agent, current_mode, current_model = _resolve_tier_spec(
+                args,
+                selected_spec,
+            )
+            current_effort = parse_agent_spec(selected_spec).effort
+            current_resolved_model = current_model
+            current_refreshed = True
+
+        before = _capture_execute_workspace_fingerprint(root)
+        rendered_prompt = _render_execute_prompt_for_dispatch(
+            agent=current_agent,
+            state=state,
+            plan_dir=plan_dir,
+            root=root,
+            model=current_model,
+            resolved_model=current_resolved_model,
+            prompt_override=prompt_override,
+        )
+        resolved = AgentMode(
+            agent=current_agent,
+            mode=current_mode,
+            refreshed=current_refreshed,
+            model=current_model,
+            effort=current_effort,
+            resolved_model=current_resolved_model,
+        )
+        try:
+            return worker_module.run_step_with_worker(
+                "execute",
+                state,
+                plan_dir,
+                args,
+                root=root,
+                resolved=resolved,
+                prompt_override=rendered_prompt,
+                worker_options={"_suppress_ambient_agent_fallback": True},
+                ledger_step_label=f"batch_{batch_number}",
+                ledger_selected_spec=selected_spec,
+                ledger_configured_specs=configured_specs,
+                ledger_attempt_index=attempt_index,
+                ledger_attempted_specs=attempted_specs,
+                ledger_failed_attempt_reasons=failed_reasons,
+                ledger_fallback_trigger=fallback_trigger,
+            )
+        except CliError as error:
+            classification = classify_retryability(
+                {
+                    "code": error.code,
+                    "message": str(error),
+                    "status_code": error.extra.get("status_code"),
+                    "retryable": error.extra.get("retryable"),
+                }
+            )
+            next_index = attempt_index + 1
+            if (
+                next_index >= len(configured_specs)
+                or not is_retryable_classification(classification)
+                or provider_family(configured_specs[next_index])
+                == provider_family(selected_spec)
+            ):
+                raise
+            after = _capture_execute_workspace_fingerprint(root)
+            if before.error or after.error or before != after:
+                raise CliError(
+                    "execute_fallback_unsafe",
+                    "Retryable execute provider failure could not be handed off "
+                    "because the workspace was changed or could not be proven unchanged.",
+                    extra={
+                        "failed_spec": selected_spec,
+                        "next_spec": configured_specs[next_index],
+                        "failure_class": classification,
+                        "before_error": before.error,
+                        "after_error": after.error,
+                    },
+                ) from error
+            failed_reasons.append(classification)
+            fallback_trigger = classification
+            attempted_specs.append(configured_specs[next_index])
+            next_agent, next_mode, next_model = _resolve_tier_spec(
+                args,
+                configured_specs[next_index],
+            )
+            from arnold_pipelines.megaplan.workers._impl import (
+                _patch_active_step_fallback_metadata,
+            )
+
+            _patch_active_step_fallback_metadata(
+                plan_dir,
+                state,
+                {
+                    "configured_specs": configured_specs,
+                    "attempt_index": next_index,
+                    "attempted_specs": tuple(attempted_specs),
+                    "failed_attempt_reasons": tuple(failed_reasons),
+                    "fallback_trigger": fallback_trigger,
+                },
+                agent=next_agent,
+                mode=next_mode,
+                model=next_model,
+            )
+            active_step = state.get("active_step")
+            if isinstance(active_step, dict):
+                active_step.update(
+                    fallback_observability_fields(
+                        configured_specs,
+                        attempt_index=next_index,
+                        attempted_specs=attempted_specs,
+                        failed_attempt_reasons=failed_reasons,
+                        fallback_trigger=fallback_trigger,
+                    )
+                )
+                active_step.update(
+                    {"agent": next_agent, "mode": next_mode, "model": next_model}
+                )
+
+    raise AssertionError("configured execute fallback loop exhausted unexpectedly")
 
 
 def _task_to_global_batch_number_map(
@@ -1095,22 +1815,6 @@ def _replay_proven_batch_artifacts(
                 list(merge_result.issues),
             )
         proven_payloads.append(merge_result.payload or payload)
-        try:
-            from arnold_pipelines.megaplan.observability.work_ledger import emit_replay
-
-            emit_replay(
-                plan_dir,
-                batch_id=str(batch_artifact_index(artifact_path) or ""),
-                elapsed_ms=0,
-                unavailable_reason="replay_uses_existing_batch_artifact",
-                metadata={
-                    "phase": "execute",
-                    "artifact_path": str(artifact_path),
-                    "replay_boundary": "proven_batch_artifact",
-                },
-            )
-        except Exception:
-            log.debug("Work ledger replay event emission skipped", exc_info=True)
     return proven_payloads
 
 
@@ -1137,8 +1841,7 @@ def _emit_batch_boundary_receipt(
     batch_number: int | None = None,
     batch_task_ids: list[str] | None = None,
     extra_details: dict[str, Any] | None = None,
-    strict: bool = False,
-) -> dict[str, Any] | None:
+) -> None:
     """Emit an evidence-only batch boundary receipt without raising.
 
     Receipts are strictly observational — they do not affect branch
@@ -1150,12 +1853,7 @@ def _emit_batch_boundary_receipt(
         )
         contract = BOUNDARY_CONTRACTS_BY_ID.get(boundary_id)
         if contract is None:
-            if strict:
-                raise CliError(
-                    "missing_execute_boundary_contract",
-                    f"missing execute boundary contract for {boundary_id!r}",
-                )
-            return None
+            return
 
         meta = state.get("meta") or {}
         invocation_id = meta.get("current_invocation_id")
@@ -1190,43 +1888,10 @@ def _emit_batch_boundary_receipt(
             details=details,
         )
         write_boundary_receipt(plan_dir, receipt, project_dir=project_dir)
-        if not strict:
-            return None
-        receipt_path = plan_dir / "boundary_receipts" / f"{contract.boundary_id}.json"
-        if not receipt_path.is_file():
-            raise CliError(
-                "missing_execute_boundary_receipt",
-                f"boundary receipt {contract.boundary_id!r} was not persisted",
-                extra={"boundary_id": contract.boundary_id},
-            )
-        reread = read_json(receipt_path)
-        if (
-            not isinstance(reread, dict)
-            or reread.get("boundary_id") != contract.boundary_id
-            or reread.get("row_id") != contract.row_id
-            or reread.get("history_ref") != contract.expected_history_entry
-        ):
-            raise CliError(
-                "execute_boundary_receipt_reread_mismatch",
-                f"boundary receipt reread mismatch for {contract.boundary_id!r}",
-                extra={
-                    "boundary_id": contract.boundary_id,
-                    "receipt_path": str(receipt_path),
-                },
-            )
-        return {
-            "boundary_id": contract.boundary_id,
-            "row_id": contract.row_id,
-            "history_ref": contract.expected_history_entry,
-            "receipt_path": str(receipt_path.relative_to(plan_dir)),
-        }
     except Exception:
-        if strict:
-            raise
         log.warning(
             "Batch boundary receipt emission failed for %s", boundary_id, exc_info=True
         )
-        return None
 
 
 @dataclass
@@ -1812,26 +2477,13 @@ def _run_and_merge_batch(
     batches_total: int,
     quality_config: dict[str, Any],
     routing_record: dict[str, Any] | None = None,
+    configured_specs: tuple[str, ...] | None = None,
     capture_git_status_snapshot_fn: Callable[
         [Path], tuple[dict[str, str], str | None]
     ] = _capture_git_status_snapshot,
 ) -> BatchResult:
     project_dir = Path(state["config"]["project_dir"])
     plan_mode = state["config"].get("mode", "code")
-    batch_artifact_path = execute_batch_artifact_path(
-        plan_dir, batch_number, batch_task_ids
-    )
-    dispatch_scope = BatchScope.create(
-        batch_number=batch_number,
-        task_ids=batch_task_ids,
-        sense_check_ids=batch_sense_check_ids,
-    )
-    dispatch_identity = _build_dispatch_identity(
-        plan_dir=plan_dir,
-        state=state,
-        scope=dispatch_scope,
-        finalize_data=finalize_data,
-    )
     if is_prose_mode(state):
         before_snapshot: dict[str, str] = {}
         before_error: str | None = None
@@ -1839,129 +2491,103 @@ def _run_and_merge_batch(
     else:
         before_snapshot, before_error = capture_git_status_snapshot_fn(project_dir)
         before_line_counts = capture_before_line_counts(project_dir, before_snapshot.keys())
-        try:
-            from arnold_pipelines.megaplan.observability.work_ledger import emit_git_activity
-
-            emit_git_activity(
-                plan_dir,
-                phase="execute",
-                operation="status_before_batch",
-                metadata={
-                    "batch_number": batch_number,
-                    "path_count": len(before_snapshot),
-                    "error": before_error,
-                },
-            )
-        except Exception:
-            log.debug("Work ledger git status event emission skipped", exc_info=True)
-    # Pass a full AgentMode (with effort + resolved_model) rather than a bare
-    # 4-tuple. The 4-tuple form drops both fields downstream, which causes
-    # ``run_codex_step`` to be invoked with ``model=None`` / ``effort=None`` and
-    # leads to the codex CLI hanging at startup. See diagnostic
-    # /tmp/codex_wedge_diagnostic.md.
-    from arnold_pipelines.megaplan.types import AgentMode as _AgentMode
-    am_for_worker = _AgentMode(
+    selected_default_spec = format_selected_spec(agent, model, effort) or agent
+    configured_specs = configured_specs or (selected_default_spec,)
+    selected = parse_agent_spec(configured_specs[0])
+    am_for_worker = AgentMode(
         agent=agent,
         mode=mode,
         refreshed=refreshed,
-        model=model,
-        effort=effort,
-        resolved_model=resolved_model if resolved_model is not None else model,
+        model=selected.model,
+        effort=selected.effort,
+        resolved_model=resolved_model if resolved_model is not None else selected.model,
     )
-    rendered_prompt_override = _render_execute_prompt_for_dispatch(
-        agent=agent,
-        state=state,
+    # M8A Step 13 — Verify-only repair adoption at the execute action
+    # boundary.  Runs BEFORE repair/worker dispatch.  Rereads current Run
+    # Authority grant/fence, Custody lease/epoch, and required WBC
+    # conditions through the existing action_validator seam; on exact match
+    # emits adoption evidence + a ``repair_verify`` work-ledger event and
+    # (under canary promotion) may skip replay; on mismatch quarantines the
+    # receipt and continues normal execution without rewriting immutable
+    # attempts.  Shadow/report-only by default.
+    try:
+        _repair_adoption_summary = _run_repair_adoption_check(
+            plan_dir=plan_dir,
+            finalize_data=finalize_data,
+            batch_task_ids=batch_task_ids,
+        )
+    except Exception as exc:  # pragma: no cover - adoption must never crash dispatch
+        log.warning("repair adoption check failed: %s: %s", type(exc).__name__, exc)
+        _repair_adoption_summary = {
+            "contract_type": "repair_adoption_summary",
+            "error": f"{type(exc).__name__}: {exc}",
+            "evaluated": [],
+            "adopted_count": 0,
+            "quarantined_count": 0,
+            "skip_replay": False,
+        }
+    # M8A T18 — track dispatch start time for queue-duration measurement.
+    # M8A T10 - run deterministic harness validation jobs outside model dispatch.
+    _is_final_batch_flag = False
+    _bn = locals().get("batch_number")
+    _bt = locals().get("batches_total")
+    if isinstance(_bn, int) and isinstance(_bt, int) and _bn >= _bt:
+        _is_final_batch_flag = True
+    # Harness validation is an execution admission gate.  Let its typed
+    # failures propagate so productive dispatch cannot continue after a
+    # malformed job or an unexpected deterministic-suite result.
+    _run_batch_validation_jobs(
         plan_dir=plan_dir,
-        root=root,
-        model=model,
-        resolved_model=resolved_model,
-        prompt_override=prompt_override,
-    )
-    wbc_dispatch = build_execute_batch_dispatch_spec(
-        plan_dir=plan_dir,
-        state=state,
-        dispatch_identity=dispatch_identity,
-        batch_number=batch_number,
-        batch_task_ids=batch_task_ids,
-        batch_sense_check_ids=batch_sense_check_ids,
-    )
-    # --- M8A: worker-launch preflight (source identity before dispatch) ---
-    # Report-only until M8 exact-version runtime/adopter manifest and explicit
-    # canary promotion gate are in place. The preflight report is attached as
-    # projection metadata below — it is NOT enforcement authority.
-    preflight_report = run_worker_preflight(project_dir, strict=False)
-    # --- M8A: execute compiled validation jobs as subprocesses (no model call)
-    # Run validation BEFORE worker dispatch so that validation-only work never
-    # consumes a model call and pre-existing failures are visible before any
-    # model invocation.
-    compiled_validation_jobs = extract_compiled_validation_jobs(finalize_data)
-    validation_report = run_validation_jobs(
-        compiled_validation_jobs,
         project_dir=project_dir,
+        finalize_data=finalize_data,
+        batch_task_ids=batch_task_ids,
+        is_final_batch=_is_final_batch_flag,
     )
-    # --- M9: work ledger — validation/tool event ---
-    try:
-        from arnold_pipelines.megaplan.observability.work_ledger import emit_tool_activity
-
-        _vl_elapsed: int | None = None
-        if validation_report and hasattr(validation_report, 'total_duration_ms'):
-            _vl_elapsed = validation_report.total_duration_ms
-        elif validation_report and hasattr(validation_report, 'elapsed_ms'):
-            _vl_elapsed = validation_report.elapsed_ms
-        emit_tool_activity(
-            plan_dir,
-            phase="execute",
-            tool_name="compiled_validation_jobs",
-            task_id=None,  # batch-scoped
-            batch_id=str(batch_number),
-            attempt_id=None,  # no worker dispatch yet
-            elapsed_ms=_vl_elapsed,
-            metadata={
-                "job_count": len(compiled_validation_jobs),
-            },
+    _dispatch_start = time.monotonic()
+    # M8A T16 - under opt-in canary enforcement, when repair adoption
+    # adopted every task in this batch, skip the worker replay/dispatch path.
+    _adopted_ids: set[str] = set()
+    if _repair_adoption_summary.get("skip_replay"):
+        for _e in _repair_adoption_summary.get("evaluated", []) or []:
+            if isinstance(_e, dict) and _e.get("outcome") == "ADOPT":
+                _tid = _e.get("task_id")
+                if isinstance(_tid, str):
+                    _adopted_ids.add(_tid)
+    if _adopted_ids and batch_task_ids and set(batch_task_ids) == _adopted_ids:
+        log.info(
+            "M8A repair adoption: skipping worker dispatch for %d adopted task(s): %s",
+            len(_adopted_ids),
+            sorted(_adopted_ids),
         )
-    except Exception:
-        log.debug("Work ledger validation event emission skipped", exc_info=True)
-    # --- end work ledger ---
-    worker, agent, mode, refreshed = worker_module.run_step_with_worker(
-        "execute",
-        state,
-        plan_dir,
-        args,
-        root=root,
-        resolved=am_for_worker,
-        prompt_override=rendered_prompt_override,
-        wbc_dispatch=wbc_dispatch,
-    )
-    # --- M9: work ledger — productive execution/inference event ---
-    try:
-        from arnold_pipelines.megaplan.observability.work_ledger import (
-            WorkClass,
-            emit_worker_inference,
+        import types as _types
+        worker = _types.SimpleNamespace(
+            model_actual=(resolved_model or model), skipped_replay=True
         )
-
-        _wl_attempt_id: str | None = None
-        if isinstance(worker.auth_metadata, dict):
-            _wl_wbc = worker.auth_metadata.get("wbc_dispatch", {})
-            if isinstance(_wl_wbc, dict):
-                _wl_attempt_id = _wl_wbc.get("attempt_id")
-        emit_worker_inference(
-            plan_dir,
-            phase="execute",
-            worker=worker,
-            work_class=WorkClass.PRODUCTIVE,
-            task_id=None,  # batch-scoped
-            batch_id=str(batch_number),
-            attempt_id=_wl_attempt_id,
+    else:
+        worker, agent, mode, refreshed = _run_execute_worker_with_configured_fallback(
+            root=root,
+            plan_dir=plan_dir,
+            state=state,
+            args=args,
             agent=agent,
-            metadata={
-                "batch_task_ids": batch_task_ids,
-                "boundary": "execute_batch_worker",
-            },
+            mode=mode,
+            refreshed=refreshed,
+            model=model,
+            effort=effort,
+            resolved_model=resolved_model if resolved_model is not None else model,
+            prompt_override=prompt_override,
+            configured_specs=configured_specs,
+            batch_number=batch_number,
         )
-    except Exception:
-        log.debug("Work ledger productive event emission skipped", exc_info=True)
-    # --- end work ledger ---
+        selected = parse_agent_spec(configured_specs[worker.attempt_index])
+        am_for_worker = AgentMode(
+            agent=agent,
+            mode=mode,
+            refreshed=refreshed,
+            model=selected.model,
+            effort=selected.effort,
+            resolved_model=worker.model_actual or selected.model,
+        )
     maybe_run_channel_shadow(
         root=root,
         plan_dir=plan_dir,
@@ -1974,19 +2600,85 @@ def _run_and_merge_batch(
         sample_key=f"{state.get('name') or plan_dir.name}:execute:{batch_number}",
         resolved=am_for_worker,
     )
+    # ── M8A T18 — Work-class event emission ──────────────────────────
+    # Emit productive / queue / unavailable_reason work-ledger events for
+    # this batch's worker dispatch.  Every measure is attributed to an
+    # explicit class or an ``unavailable_reason`` — never defaulted to
+    # zero or silently dropped.
+    _dispatch_end = time.monotonic()
+    _dispatch_duration_ms = int((_dispatch_end - _dispatch_start) * 1000)
+    try:
+        from arnold_pipelines.megaplan.observability.work_ledger import (
+            emit_productive,
+            emit_queue,
+            emit_unavailable_reason,
+        )
+        # Emit one ``productive`` event per batch task.  The worker ran
+        # on the whole batch collectively, so we attribute the batch-level
+        # metrics to each task.  Individual per-task breakdown is not
+        # available from worker-level metrics; this is flagged as a
+        # known limitation via unavailable_reason when relevant.
+        _w = worker
+        _tokens = getattr(_w, "total_tokens", 0) or 0
+        _cost = getattr(_w, "cost_usd", 0.0) or 0.0
+        _calls = 1  # one worker dispatch = one model call for this batch
+        _duration = getattr(_w, "duration_ms", 0) or 0
+        _cost_priced = bool(getattr(_w, "cost_pricing", None))
+        _model_actual = getattr(_w, "model_actual", None) or "unknown"
+        for _task_id in batch_task_ids:
+            emit_productive(
+                plan_dir,
+                task_id=_task_id,
+                work_class="batch_execute",
+                duration_ms=_duration,
+                tokens=_tokens if _tokens > 0 else None,
+                cost_usd=_cost if (_cost > 0 or _cost_priced) else None,
+                model_calls=_calls,
+                batch_number=batch_number,
+                model_actual=_model_actual,
+                dispatch_duration_ms=_dispatch_duration_ms,
+            )
+            # Emit unavailable_reason when cost/token data is genuinely
+            # unavailable (not priced, not reported by the provider).
+            if not _cost_priced and _cost == 0.0:
+                emit_unavailable_reason(
+                    plan_dir,
+                    task_id=_task_id,
+                    measure="cost_usd",
+                    reason="provider did not report pricing; cost_pricing is None or empty",
+                    batch_number=batch_number,
+                )
+            if _tokens == 0:
+                emit_unavailable_reason(
+                    plan_dir,
+                    task_id=_task_id,
+                    measure="tokens",
+                    reason="worker did not report token usage",
+                    batch_number=batch_number,
+                )
+        # Emit a queue event measuring time spent from admission to dispatch
+        # completion.
+        if _dispatch_duration_ms > 0:
+            emit_queue(
+                plan_dir,
+                task_id=batch_task_ids[0] if batch_task_ids else "unknown",
+                duration_ms=_dispatch_duration_ms,
+                queue_reason="worker_dispatch_wait",
+                batch_number=batch_number,
+            )
+    except Exception as _exc:  # pragma: no cover — ledger must never crash dispatch
+        log.warning(
+            "work-ledger productive event emission failed for batch %d: %s: %s",
+            batch_number,
+            type(_exc).__name__,
+            _exc,
+        )
     payload = _capture_execute_payload(
         agent=agent,
         model=model,
         resolved_model=resolved_model,
         payload=dict(worker.payload),
     )
-    dispatch_summary = dispatch_wbc_summary(
-        auth_metadata=worker.auth_metadata if isinstance(worker.auth_metadata, dict) else None,
-        dispatch_identity=dispatch_identity,
-        batch_number=batch_number,
-    )
-    if dispatch_summary is not None:
-        payload[EXECUTE_DISPATCH_WBC_KEY] = dispatch_summary
     routing_degradations = _finalize_routing_record(
         routing_record,
         actual_agent=agent,
@@ -2010,10 +2702,6 @@ def _run_and_merge_batch(
         )
     if routing_record is not None:
         payload["routing"] = routing_record
-    # --- M8A: attach preflight report to payload (projection, not authority) ---
-    payload["worker_preflight"] = preflight_report.as_dict()
-    # --- M8A: attach validation run report to payload (projection, not authority) ---
-    payload["validation_run"] = validation_report.as_dict()
     deviations = list(payload.get("deviations", []))
     deviations.extend(routing_degradations)
     batch_task_id_set = set(batch_task_ids)
@@ -2046,12 +2734,25 @@ def _run_and_merge_batch(
             )
         )
     _stamp_head_sha_on_task_records(payload, finalize_data, project_dir)
-    payload[BATCH_SCOPE_KEY] = dispatch_scope.to_dict()
-    payload[DISPATCH_IDENTITY_KEY] = dispatch_identity.to_dict()
-    payload.setdefault(RESULT_ENVELOPES_KEY, [])
+    batch_artifact_path = execute_batch_artifact_path(
+        plan_dir, batch_number, batch_task_ids
+    )
+    scope = _stamp_batch_scope(
+        payload,
+        batch_number=batch_number,
+        task_ids=batch_task_ids,
+        sense_check_ids=batch_sense_check_ids,
+    )
+    identity = _stamp_dispatch_metadata(
+        payload,
+        plan_dir=plan_dir,
+        state=state,
+        scope=scope,
+        finalize_data=finalize_data,
+    )
     _stamp_result_envelopes(
         payload,
-        identity=dispatch_identity,
+        identity=identity,
         artifact_path=batch_artifact_path,
     )
     merged_count, total_batch_tasks, acknowledged_count, total_batch_checks = (
@@ -2101,21 +2802,6 @@ def _run_and_merge_batch(
                 state=state,
             )
         )
-        try:
-            from arnold_pipelines.megaplan.observability.work_ledger import emit_git_activity
-
-            emit_git_activity(
-                plan_dir,
-                phase="execute",
-                operation="observe_changes_after_batch",
-                metadata={
-                    "batch_number": batch_number,
-                    "batches_total": batches_total,
-                    "deviation_count": len(deviations),
-                },
-            )
-        except Exception:
-            log.debug("Work ledger git observe event emission skipped", exc_info=True)
     pre_existing_ids = _pre_existing_task_ids(plan_dir)
     if is_prose_mode(state):
         missing_task_evidence = _check_done_task_evidence(
@@ -2196,6 +2882,266 @@ def _append_trace_output(plan_dir: Path, trace_output: str | None) -> bool:
     return True
 
 
+
+_MAX_SERIAL_REWORK = 5
+_BATCH_CIRCUIT: dict = {}
+
+
+class _ReworkWaveError:
+    """Lightweight error proxy for circuit advancement of review-rework waves (M8A T14)."""
+
+    def __init__(self, message, *, code="review_quality_block", kind="quality_gate_blocked"):
+        self.message = message
+        self.code = code
+        self.kind = kind
+        self.error_kind = ""
+        self.error_layer = ""
+        self.extra: dict = {}
+
+
+def _split_high_complexity(batches, finalize_data, *, max_tasks_per_batch):
+    """Isolate complexity >=7 tasks into their own batches before worker dispatch (M8A T8)."""
+    try:
+        from arnold_pipelines.megaplan._core.io import split_high_complexity_batches
+        return split_high_complexity_batches(
+            batches, finalize_data, max_tasks_per_batch=max_tasks_per_batch
+        )
+    except Exception:
+        return batches
+
+
+def _guard_execute_batch_admission(finalize_data, state, *, plan_dir=None):
+    """Reassert finalized task-graph admission at execute batch entry (M8A T7).
+
+    Converts admission failures to a ``CliError`` with
+    ``valid_next=['finalize','revise']`` so workers are never dispatched
+    against a mutated or inadmissible post-finalize graph.
+
+    M10 Step 7H-b: threads ``config`` (previously omitted — the shadow-feasibility
+    bug) and the gate-step ``seed_epoch`` attestation into the verdict, and
+    blocks v1/``None`` admission escapes so only fully-admitted v2 graphs reach
+    worker dispatch.  The epoch protocol is only activated when the gate step
+    actually produced a ``seed_epoch`` attestation; an absent key preserves
+    backward-compat for pre-M10 plans.
+    """
+    from arnold_pipelines.megaplan.orchestration.task_feasibility import (
+        assert_admitted_task_feasibility,
+    )
+    config = state.get("config") if isinstance(state, dict) else None
+    epoch_kwargs: dict = {}
+    if isinstance(state, dict) and state.get("seed_epoch") is not None:
+        epoch_kwargs["current_epoch"] = state.get("seed_epoch")
+    try:
+        admission_report = assert_admitted_task_feasibility(
+            finalize_data, config, **epoch_kwargs
+        )
+    except ValueError as exc:
+        raise CliError(
+            "finalized_task_graph_changed",
+            str(exc),
+            valid_next=["finalize", "revise"],
+        ) from exc
+    # Block v1/None admission escapes in the supported M10 dispatch path so
+    # only fully-admitted v2 graphs reach worker dispatch.
+    if admission_report is None:
+        raise CliError(
+            "finalized_task_graph_changed",
+            "v1 task contract is not admitted by M10 dispatch; "
+            "re-finalize under the v2 task contract before executing",
+            valid_next=["finalize", "revise"],
+        )
+
+
+def _advance_batch_circuit(error, *, task_id="", attempt_id=""):
+    """Advance a normalized circuit for a batch retry/rework decision (M8A T14).
+
+    Applies ``classify_failure_class`` + ``normalize_failure_signature`` +
+    ``circuit_transition`` and returns ``(new_state, decision, failure_class)``.
+    """
+    from arnold_pipelines.megaplan.orchestration.recovery_policy import (
+        CircuitState,
+        classify_failure_class,
+        normalize_failure_signature,
+        circuit_transition,
+    )
+    fclass = classify_failure_class(error)
+    signature = normalize_failure_signature(
+        fclass, error, task_id=task_id, attempt_id=attempt_id
+    )
+    key = f"{fclass}:{task_id}:{attempt_id}"
+    current = _BATCH_CIRCUIT.get(key, CircuitState(failure_class=fclass))
+    new_state, decision = circuit_transition(current, signature)
+    _BATCH_CIRCUIT[key] = new_state
+    return new_state, decision, fclass
+
+
+def _run_batch_validation_jobs(*, plan_dir, project_dir, finalize_data, batch_task_ids, is_final_batch=False, state=None):
+    """Run deterministic harness validation jobs outside model dispatch (M8A T10).
+
+    Returns a list of content-addressed evidence dicts (one per applicable
+    job). Each ``evidence_hash`` is ``sha256:``-prefixed; a copy is persisted
+    under ``<plan_dir>/verification/`` and a real ``validation`` work-class
+    event is emitted via ``work_ledger``. A runner failure emits an
+    ``unavailable_reason`` event instead of aborting dispatch.
+    """
+    import hashlib as _hashlib
+    import json as _json
+    from arnold_pipelines.megaplan.orchestration import suite_runner as _suite_runner
+    from arnold_pipelines.megaplan.observability import work_ledger as _wl
+
+    evidence_results: list[dict] = []
+    if not isinstance(finalize_data, dict):
+        return evidence_results
+    validation_jobs = finalize_data.get("validation_jobs")
+    if not isinstance(validation_jobs, list) or not validation_jobs:
+        return evidence_results
+    batch_id_set = set(batch_task_ids or [])
+    verification_dir = Path(plan_dir) / "verification"
+    try:
+        verification_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    for job in validation_jobs:
+        if not isinstance(job, dict):
+            continue
+        kind = job.get("kind")
+        if kind == "post_execute_suite" and is_final_batch:
+            applicable = True
+        elif kind == "narrow_recheck":
+            tid = job.get("task_id")
+            applicable = isinstance(tid, str) and tid in batch_id_set
+        else:
+            applicable = False
+        if not applicable:
+            continue
+        timeout = job.get("max_seconds") or job.get("timeout_seconds") or 600
+        job_id = str(job.get("id") or "vj")
+        command = job.get("command")
+        invalid_fields: list[str] = []
+        if not isinstance(command, str) or not command.strip():
+            invalid_fields.append("command")
+        elif "\x00" in command or "\n" in command or "\r" in command:
+            invalid_fields.append("command_shape")
+        if job.get("mutates", False) is not False:
+            invalid_fields.append("mutates")
+        if job.get("writes_files") is not False:
+            invalid_fields.append("writes_files")
+        if invalid_fields:
+            raise CliError(
+                "invalid_validation_job",
+                f"validation job {job_id} failed harness-owned admission: "
+                f"{', '.join(invalid_fields)}",
+                valid_next=["finalize", "revise"],
+                extra={
+                    "job_id": job_id,
+                    "invalid_fields": invalid_fields,
+                    "validation_job_kind": kind,
+                },
+            )
+        config = {
+            "project_dir": str(project_dir),
+            "plan_dir": str(plan_dir),
+            "test_command": command.strip(),
+        }
+        try:
+            result = _suite_runner.run_suite(
+                Path(project_dir),
+                config,
+                phase="m8a_validation",
+                deadline_seconds=float(timeout),
+                idle_seconds=None,
+            )
+        except Exception as exc:
+            log.warning("validation job %s failed: %s", job_id, exc)
+            error_detail = f"{type(exc).__name__}: {exc}"
+            err_payload = {"job_id": job_id, "kind": kind, "error": error_detail}
+            err_canonical = _json.dumps(err_payload, sort_keys=True, separators=(",", ":"))
+            err_hash = "sha256:" + _hashlib.sha256(err_canonical.encode("utf-8")).hexdigest()
+            evidence_results.append({
+                "job_id": job_id,
+                "kind": kind,
+                "status": "runner_error",
+                "exit_code": None,
+                "evidence_hash": err_hash,
+                "error": error_detail,
+            })
+            try:
+                _wl.emit_unavailable_reason(
+                    Path(plan_dir),
+                    referenced_identity=str(job.get("task_id") or job_id),
+                    reason="validation_runner_error",
+                    detail=error_detail,
+                )
+            except Exception:
+                pass
+            continue
+        evidence = {
+            "job_id": job_id,
+            "kind": kind,
+            "command": result.command,
+            "exit_code": result.exit_code,
+            "duration": result.duration,
+            "raw_log_path": (str(result.raw_log_path) if result.raw_log_path is not None else None),
+            "code_hash": result.code_hash,
+            "passes": list(result.passes or []),
+            "failures": list(result.failures or []),
+            "status": result.status,
+            "timeout_reason": result.timeout_reason,
+        }
+        canonical = _json.dumps(evidence, sort_keys=True, separators=(",", ":"))
+        evidence_hash = "sha256:" + _hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        evidence["evidence_hash"] = evidence_hash
+        run_id = getattr(result, "run_id", job_id)
+        artifact_path = verification_dir / f"validation_{job_id}_{run_id}.json"
+        try:
+            atomic_write_json(artifact_path, evidence)
+        except Exception:
+            pass
+        try:
+            _wl.emit_validation(
+                Path(plan_dir),
+                task_id=str(job.get("task_id") or ""),
+                job_id=job_id,
+                command=result.command,
+                exit_code=result.exit_code,
+                duration_ms=int((result.duration or 0) * 1000),
+                evidence_hash=evidence_hash,
+            )
+        except Exception as exc:
+            log.warning("emit_validation failed for %s: %s", job_id, exc)
+        evidence_results.append(evidence)
+        expected_exit_codes = job.get("expected_exit_codes", [0])
+        if not isinstance(expected_exit_codes, list) or not all(
+            isinstance(code, int) for code in expected_exit_codes
+        ):
+            raise CliError(
+                "invalid_validation_job",
+                f"validation job {job_id} has invalid expected_exit_codes",
+                valid_next=["finalize", "revise"],
+                extra={
+                    "job_id": job_id,
+                    "invalid_fields": ["expected_exit_codes"],
+                    "validation_job_kind": kind,
+                },
+            )
+        if result.exit_code not in expected_exit_codes:
+            raise CliError(
+                "validation_job_failed",
+                f"validation job {job_id} exited {result.exit_code}; "
+                f"expected one of {expected_exit_codes}",
+                valid_next=["execute", "revise", "finalize"],
+                extra={
+                    "job_id": job_id,
+                    "validation_job_kind": kind,
+                    "exit_code": result.exit_code,
+                    "expected_exit_codes": expected_exit_codes,
+                    "evidence_hash": evidence_hash,
+                    "artifact_path": str(artifact_path),
+                },
+            )
+    return evidence_results
+
+
 def handle_execute_one_batch(
     *,
     root: Path,
@@ -2218,13 +3164,18 @@ def handle_execute_one_batch(
         log.info(
             "backfilled missing before_execute user-action gate for stale finalize payload"
         )
+    _guard_execute_batch_admission(plan_dir=plan_dir, finalize_data=finalize_data, state=state)
     global_config = load_config()
     quality_config = global_config.get("quality_checks", {})
     project_dir = Path(state["config"]["project_dir"])
     max_tasks_per_batch = _resolve_max_tasks_per_batch(state, args)
-    global_batches = split_oversized_batches(
-        compute_global_batches(finalize_data),
-        max_tasks_per_batch,
+    global_batches = _split_high_complexity(
+        split_oversized_batches(
+            compute_global_batches(finalize_data),
+            max_tasks_per_batch,
+        ),
+        finalize_data,
+        max_tasks_per_batch=max_tasks_per_batch,
     )
     batches_total = len(global_batches)
 
@@ -2438,6 +3389,11 @@ def handle_execute_one_batch(
             batches_total=batches_total,
             quality_config=quality_config,
             routing_record=routing_record,
+            configured_specs=_execute_configured_specs(
+                args,
+                selected_tier_spec=tier_spec_raw,
+                default_spec=format_selected_spec(agent, model, effort) or agent,
+            ),
             capture_git_status_snapshot_fn=_capture_git_status_snapshot,
         )
     except CliError as error:
@@ -2545,13 +3501,6 @@ def handle_execute_one_batch(
             plan_dir=plan_dir,
             state=state,
         )
-        parent_custody = aggregate_payload.get(EXECUTE_PARENT_CUSTODY_KEY)
-        if isinstance(parent_custody, Mapping):
-            blocking_reasons.extend(
-                message
-                for message in parent_custody.get("messages", [])
-                if isinstance(message, str) and message not in blocking_reasons
-            )
         if deferred_acks:
             aggregate_payload.setdefault("sense_check_acknowledgments", []).extend(
                 deferred_acks
@@ -2576,90 +3525,9 @@ def handle_execute_one_batch(
     if drift is not None:
         _append_scope_drift_blocker(blocking_reasons, state, drift)
 
-    batch_artifact = execute_batch_artifact_path(
-        plan_dir, batch_number, batch_task_ids
+    routing_blocked = any(
+        reason in blocking_reasons for reason in result.routing_degradations
     )
-    batches_remaining = batches_total - batch_number
-    provisional_blocked = bool(blocking_reasons)
-    provisional_artifacts = [
-        str(batch_artifact.relative_to(plan_dir)),
-        "execution_audit.json",
-        "finalize.json",
-        "final.md",
-    ]
-    if aggregate_payload is not None and not provisional_blocked:
-        provisional_artifacts.insert(0, "execution.json")
-    if trace_written:
-        provisional_artifacts.append("execution_trace.jsonl")
-    next_step_decision = resolve_single_batch_next_step(
-        is_final_batch=is_final_batch,
-        all_tracked=all_tracked,
-        blocked=provisional_blocked,
-    )
-    transition_receipt: dict[str, Any] | None = None
-    try:
-        if next_step_decision.transition is NextExecuteTransition.BLOCKED:
-            transition_receipt = _emit_batch_boundary_receipt(
-                boundary_id="execute_partial_failure",
-                plan_dir=plan_dir,
-                state=state,
-                outcome=BoundaryOutcome.PARTIAL,
-                artifact_refs=tuple(provisional_artifacts),
-                batch_number=batch_number,
-                batch_task_ids=list(batch_task_ids),
-                extra_details={
-                    "blocking_reasons": list(blocking_reasons),
-                    "routing_blocked": any(
-                        reason in blocking_reasons
-                        for reason in result.routing_degradations
-                    ),
-                    "batches_total": batches_total,
-                },
-                strict=True,
-            )
-        elif next_step_decision.transition is NextExecuteTransition.REVIEW:
-            child_trace_refs: dict[str, Any] = {}
-            if aggregate_payload is not None:
-                task_updates = aggregate_payload.get("task_updates", [])
-                if isinstance(task_updates, list):
-                    child_trace_refs["task_count"] = len(task_updates)
-                child_trace_refs["execution_json"] = "execution.json"
-            transition_receipt = _emit_batch_boundary_receipt(
-                boundary_id="execute_aggregate_promotion",
-                plan_dir=plan_dir,
-                state=state,
-                outcome=BoundaryOutcome.COMPLETE,
-                artifact_refs=tuple(provisional_artifacts),
-                batch_number=batch_number,
-                batch_task_ids=list(batch_task_ids),
-                extra_details={
-                    "reducer_promotion": True,
-                    "child_trace_path": "execute/aggregate",
-                    "child_trace_refs": child_trace_refs,
-                    "batches_total": batches_total,
-                },
-                strict=True,
-            )
-        else:
-            transition_receipt = _emit_batch_boundary_receipt(
-                boundary_id="execute_batch_checkpoint",
-                plan_dir=plan_dir,
-                state=state,
-                outcome=BoundaryOutcome.COMPLETE,
-                artifact_refs=tuple(provisional_artifacts),
-                batch_number=batch_number,
-                batch_task_ids=list(batch_task_ids),
-                extra_details={
-                    "batches_remaining": batches_remaining,
-                    "batches_total": batches_total,
-                },
-                strict=True,
-            )
-    except Exception as error:
-        blocking_reasons.append(
-            f"execute transition evidence failed closed: {type(error).__name__}: {error}"
-        )
-
     routing_blocked = any(
         reason in blocking_reasons for reason in result.routing_degradations
     )
@@ -2672,7 +3540,7 @@ def handle_execute_one_batch(
             "retry_strategy": "fresh_session",
             "reason": "routing_degradation",
         }
-    elif is_final_batch and all_tracked and not blocked:
+    if is_final_batch and all_tracked and not blocked:
         state["current_state"] = STATE_EXECUTED
 
     user_approved_gate = bool(state["meta"].get("user_approved_gate", False))
@@ -2685,33 +3553,9 @@ def handle_execute_one_batch(
         if blocked
         else "success" if (is_final_batch and all_tracked) else "partial"
     )
-    final_transition = resolve_single_batch_next_step(
-        is_final_batch=is_final_batch,
-        all_tracked=all_tracked,
-        blocked=blocked,
+    batch_artifact = execute_batch_artifact_path(
+        plan_dir, batch_number, batch_task_ids
     )
-    dispatch_summary = result.payload.get(EXECUTE_DISPATCH_WBC_KEY)
-    if transition_receipt is not None and isinstance(dispatch_summary, Mapping):
-        transition_summary = build_transition_wbc_summary(
-            dispatch_summary=dispatch_summary,
-            boundary_id=str(transition_receipt["boundary_id"]),
-            receipt_path=str(transition_receipt["receipt_path"]),
-            transition=final_transition.transition.value,
-            result_value=result_value,
-            batch_number=batch_number,
-            batches_total=batches_total,
-        )
-        result.payload[EXECUTE_TRANSITION_WBC_KEY] = transition_summary
-        atomic_write_json(batch_artifact, result.payload)
-        if aggregate_payload is not None:
-            aggregate_payload[EXECUTE_TRANSITION_WBC_KEY] = transition_summary
-            write_plan_artifact_json(
-                plan_dir,
-                "execution.json",
-                aggregate_payload,
-                contract_context=None,
-            )
-
     append_history(
         state,
         make_history_entry(
@@ -2776,6 +3620,7 @@ def handle_execute_one_batch(
             log.warning("Execute receipt emission failed", exc_info=True)
     save_state_merge_meta(plan_dir, state)
 
+    batches_remaining = batches_total - batch_number
     tracking_note = _format_execute_tracking_note(
         merged_count=result.merged_task_count,
         total_tasks=result.total_task_count,
@@ -2793,7 +3638,11 @@ def handle_execute_one_batch(
     if trace_written:
         artifacts.append("execution_trace.jsonl")
 
-    next_step_decision = final_transition
+    next_step_decision = resolve_single_batch_next_step(
+        is_final_batch=is_final_batch,
+        all_tracked=all_tracked,
+        blocked=blocked,
+    )
     legacy_transition_target = _legacy_next_step_for_execute_policy(
         next_step_decision
     )
@@ -2885,6 +3734,61 @@ def handle_execute_one_batch(
             tier_model=tier_resolved_model if tier_routing_active else None,
         )
     _attach_next_step_runtime(response)
+
+    # ── Evidence-only batch boundary receipts ──────────────────────────
+    if next_step_decision.transition is NextExecuteTransition.BLOCKED:
+        _emit_batch_boundary_receipt(
+            boundary_id="execute_partial_failure",
+            plan_dir=plan_dir,
+            state=state,
+            outcome=BoundaryOutcome.PARTIAL,
+            artifact_refs=tuple(a for a in artifacts if isinstance(a, str)),
+            batch_number=batch_number,
+            batch_task_ids=list(batch_task_ids),
+            extra_details={
+                "blocking_reasons": blocking_reasons,
+                "routing_blocked": routing_blocked,
+                "batches_total": batches_total,
+            },
+        )
+    elif next_step_decision.transition is NextExecuteTransition.REVIEW:
+        # Aggregate promotion receipt with child trace/reducer evidence.
+        child_trace_refs: dict[str, Any] = {}
+        if aggregate_payload is not None:
+            task_updates = aggregate_payload.get("task_updates", [])
+            if isinstance(task_updates, list):
+                child_trace_refs["task_count"] = len(task_updates)
+            child_trace_refs["execution_json"] = "execution.json"
+        _emit_batch_boundary_receipt(
+            boundary_id="execute_aggregate_promotion",
+            plan_dir=plan_dir,
+            state=state,
+            outcome=BoundaryOutcome.COMPLETE,
+            artifact_refs=tuple(a for a in artifacts if isinstance(a, str)),
+            batch_number=batch_number,
+            batch_task_ids=list(batch_task_ids),
+            extra_details={
+                "reducer_promotion": True,
+                "child_trace_path": "execute/aggregate",
+                "child_trace_refs": child_trace_refs,
+                "batches_total": batches_total,
+            },
+        )
+    else:
+        # Non-final, non-blocked batch → checkpoint receipt.
+        _emit_batch_boundary_receipt(
+            boundary_id="execute_batch_checkpoint",
+            plan_dir=plan_dir,
+            state=state,
+            outcome=BoundaryOutcome.COMPLETE,
+            artifact_refs=tuple(a for a in artifacts if isinstance(a, str)),
+            batch_number=batch_number,
+            batch_task_ids=list(batch_task_ids),
+            extra_details={
+                "batches_remaining": batches_remaining,
+                "batches_total": batches_total,
+            },
+        )
 
     return response
 
@@ -3503,19 +4407,6 @@ def _handle_unroutable_review_rework(
             "unrunnable_rework_task_ids": sorted(set(unrunnable_task_ids)),
         },
     )
-    try:
-        from arnold_pipelines.megaplan.observability.work_ledger import emit_transition_activity
-
-        emit_transition_activity(
-            plan_dir,
-            phase="execute",
-            transition="unroutable_review_rework",
-            from_state=STATE_FINALIZED,
-            to_state=STATE_BLOCKED,
-            metadata={"attempt": attempts},
-        )
-    except Exception:
-        log.debug("Work ledger transition event emission skipped", exc_info=True)
     response = _block_no_runnable_rework(
         plan_dir=plan_dir,
         state=state,
@@ -3553,19 +4444,6 @@ def _escalate_persistent_unroutable_rework(
             "runnable_rework_task_ids": sorted(set(runnable_task_ids)),
         },
     )
-    try:
-        from arnold_pipelines.megaplan.observability.work_ledger import emit_transition_activity
-
-        emit_transition_activity(
-            plan_dir,
-            phase="execute",
-            transition="unroutable_review_rework_mixed",
-            from_state=STATE_FINALIZED,
-            to_state=STATE_BLOCKED,
-            metadata={"max_attempts": _MAX_UNROUTABLE_REWORK_RERUNS},
-        )
-    except Exception:
-        log.debug("Work ledger transition event emission skipped", exc_info=True)
     response = _block_no_runnable_rework(
         plan_dir=plan_dir,
         state=state,
@@ -3619,19 +4497,6 @@ def _escalate_persistent_unroutable_rework(
             "runnable_rework_task_ids": sorted(set(runnable_task_ids)),
         },
     )
-    try:
-        from arnold_pipelines.megaplan.observability.work_ledger import emit_transition_activity
-
-        emit_transition_activity(
-            plan_dir,
-            phase="execute",
-            transition="unroutable_review_rework_mixed",
-            from_state=STATE_FINALIZED,
-            to_state=STATE_BLOCKED,
-            metadata={"max_attempts": _MAX_UNROUTABLE_REWORK_RERUNS},
-        )
-    except Exception:
-        log.debug("Work ledger transition event emission skipped", exc_info=True)
     response = _block_no_runnable_rework(
         plan_dir=plan_dir,
         state=state,
@@ -3672,6 +4537,7 @@ def handle_execute_auto_loop(
         log.info(
             "backfilled missing before_execute user-action gate for stale finalize payload"
         )
+    _guard_execute_batch_admission(plan_dir=plan_dir, finalize_data=finalize_data, state=state)
     global_config = load_config()
     quality_config = global_config.get("quality_checks", {})
     project_dir = Path(state["config"]["project_dir"])
@@ -3787,7 +4653,6 @@ def handle_execute_auto_loop(
                 "debt_registry_preserved": resume_decision.debt_registry_preserved,
                 "preserved_receipt_ids": list(resume_decision.preserved_receipt_ids),
             },
-            strict=True,
         )
 
     finalize_data, resolved_prereq_reset_ids = _sync_resolved_prerequisite_blocked_tasks(
@@ -4141,7 +5006,11 @@ def handle_execute_auto_loop(
         pending_tasks, completed_ids=completed_task_ids
     )
     max_tasks_per_batch = _resolve_max_tasks_per_batch(state, args)
-    split_batches = split_oversized_batches(pending_batches, max_tasks_per_batch)
+    split_batches = _split_high_complexity(
+        split_oversized_batches(pending_batches, max_tasks_per_batch),
+        finalize_data,
+        max_tasks_per_batch=max_tasks_per_batch,
+    )
     if len(split_batches) != len(pending_batches):
         for batch_index, batch in enumerate(pending_batches, start=1):
             if len(batch) <= max_tasks_per_batch:
@@ -4167,37 +5036,68 @@ def handle_execute_auto_loop(
         completed_task_ids=completed_task_ids,
         max_tasks_per_batch=max_tasks_per_batch,
     )
-    global_batches = split_oversized_batches(
-        compute_global_batches(finalize_data),
-        max_tasks_per_batch,
+    global_batches = _split_high_complexity(
+        split_oversized_batches(
+            compute_global_batches(finalize_data),
+            max_tasks_per_batch,
+        ),
+        finalize_data,
+        max_tasks_per_batch=max_tasks_per_batch,
     )
     global_batch_lookup = {
         tuple(batch): index + 1 for index, batch in enumerate(global_batches)
     }
     task_to_batch_number = _task_to_global_batch_number_map(global_batches)
     no_pending_execution = not pending_tasks and not rework_mode
-
-    # --- M8A: Reject oversized grants before worker launch ---
-    if rework_mode and len(review_rework_task_ids) > max_tasks_per_batch:
-        oversized_count = len(review_rework_task_ids)
-        log.warning(
-            "review rework grant oversize: %d tasks requested (ceiling %d); rejecting batch",
-            oversized_count,
-            max_tasks_per_batch,
+    # M8A T14 - rework-wave ceiling + normalized circuit for serial review
+    # rework. A wave larger than the ceiling, or an opened review-quality
+    # circuit, halts with a typed STATE_TRANSITION event + CliError.
+    if rework_mode and isinstance(review_rework_task_ids, list) and review_rework_task_ids:
+        _wave_size = len(review_rework_task_ids)
+        _we = _ReworkWaveError(
+            f"review rework wave of {_wave_size} task(s)",
+            code="review_quality_block",
+            kind="quality_gate_blocked",
         )
-        return _block_no_runnable_rework(
-            plan_dir=plan_dir,
-            state=state,
-            auto_approve=auto_approve,
-            reason=(
-                f"Review rework grant is oversized: {oversized_count} tasks "
-                f"requested but ceiling is {max_tasks_per_batch}. "
-                "Narrow the review rework scope and re-run review, or "
-                "increase the batch size ceiling before retrying execute."
-            ),
-            unrunnable_task_ids=review_rework_task_ids,
+        _circ_state, _circ_decision, _circ_fclass = _advance_batch_circuit(
+            _we, task_id="rework_wave", attempt_id="serial"
         )
-
+        _wave_exceeds = (
+            _wave_size > _MAX_SERIAL_REWORK
+            or bool(getattr(_circ_state, "circuit_open", False))
+        )
+        if _wave_exceeds:
+            _summary = (
+                f"Rework wave exceeds ceiling: {_wave_size} rework task(s) "
+                f"exceeds the {_MAX_SERIAL_REWORK}-task serial rework ceiling "
+                f"(circuit_open={bool(getattr(_circ_state, 'circuit_open', False))}, "
+                f"failure_class={_circ_fclass})."
+            )
+            log.warning("M8A rework-wave ceiling: %s", _summary)
+            try:
+                from arnold_pipelines.megaplan.eventlog import (
+                    STATE_TRANSITION,
+                    append_event,
+                )
+                append_event(
+                    plan_dir,
+                    STATE_TRANSITION,
+                    {
+                        "rework_wave_size": _wave_size,
+                        "ceiling": _MAX_SERIAL_REWORK,
+                        "rework_task_ids": list(review_rework_task_ids),
+                        "failure_class": _circ_fclass,
+                        "circuit_open": bool(getattr(_circ_state, "circuit_open", False)),
+                        "reason": "rework_wave_exceeds_ceiling",
+                    },
+                )
+            except Exception:
+                pass
+            raise CliError(
+                "rework_wave_exceeds_ceiling",
+                f"Rework wave of {_wave_size} task(s) exceeds the "
+                f"{_MAX_SERIAL_REWORK}-task serial rework ceiling.",
+            )
     batches_to_run = (
         [review_rework_task_ids]
         if rework_mode
@@ -4420,6 +5320,14 @@ def handle_execute_auto_loop(
                 batches_total=batches_total_for_observation,
                 quality_config=quality_config,
                 routing_record=routing_record,
+                configured_specs=_execute_configured_specs(
+                    args,
+                    selected_tier_spec=batch_tier_spec,
+                    default_spec=(
+                        format_selected_spec(batch_agent, batch_model, effort)
+                        or batch_agent
+                    ),
+                ),
                 capture_git_status_snapshot_fn=_capture_git_status_snapshot,
             )
         except CliError as error:

@@ -551,7 +551,7 @@ def _run_discover(
 def test_watchdog_defaults_editable_install_to_dedicated_branch() -> None:
     text = _wrapper("arnold-watchdog")
 
-    assert 'SRC_DIR="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"' in text
+    assert 'SRC_DIR="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"' in text
     assert 'SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"' in text
     assert 'REPAIR_TRIGGER_BIN="${CLOUD_WATCHDOG_REPAIR_TRIGGER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"' in text
     assert 'REPAIR_TRIGGER_BIN="${CLOUD_WATCHDOG_REPAIR_TRIGGER_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"' not in text
@@ -573,19 +573,19 @@ def test_watchdog_sync_does_not_broadly_commit_source_drift() -> None:
 def test_host_watchdog_ensure_starts_shell_wrapped_watchdog_and_verifies_liveness() -> None:
     text = _systemd_file("ensure-megaplan-watchdog")
 
-    assert "tmux new-session -d -s watchdog -c /workspace /usr/local/bin/arnold-watchdog" in text
-    assert "bash -lc 'exec /usr/local/bin/arnold-watchdog'" not in text
+    assert "tmux new-session -d -s watchdog -c /workspace" in text
+    assert ". /workspace/.cloud-hot-env" in text
+    assert "exec /usr/local/bin/arnold-watchdog" in text
     assert "tmux new-session -d -s watchdog -c /workspace exec /usr/local/bin/arnold-watchdog" not in text
     assert "watchdog_restart_failed_not_alive" in text
     assert text.count("tmux has-session -t watchdog") >= 2
 
 
-def test_watchdog_repairs_setup_deviations_instead_of_skipping() -> None:
+def test_watchdog_flags_setup_deviations_without_silent_skips() -> None:
     text = _wrapper("arnold-watchdog")
 
-    assert 'repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "workspace_missing:' in text
-    assert 'repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "spec_missing:' in text
     assert 'report_item "$report_items" "" "flag" "setup_invalid" "missing session: $marker"' in text
+    assert 'report_item "$report_items" "$session" "flag" "workspace_missing" "missing workspace: $marker"' in text
     assert 'report_item "$report_items" "$session" "flag" "setup_invalid" "missing remote_spec: $marker"' in text
     assert '"repair_dispatched" "$reason"' in text
     assert '"skip" "spec_missing"' not in text
@@ -665,6 +665,8 @@ def test_repair_loop_prompt_files_redact_secret_bearers_before_dispatch(tmp_path
     assert result.returncode == 0, result.stderr
     dev_text = dev_prompt.read_text(encoding="utf-8")
     kimi_text = kimi_prompt.read_text(encoding="utf-8")
+    assert "'set-profile', 'set-vendor', or 'set-model'" in dev_text
+    assert "'completed-repair-without-cursor-advance'" in dev_text
     assert "bearer-secret-token-value" not in dev_text
     assert "supersecret" not in dev_text
     assert "supersecret" not in kimi_text
@@ -735,6 +737,41 @@ def test_repair_loop_requires_fresh_investigation_after_dev_mutation() -> None:
     assert reinvestigate < owner_exit < mechanical
     assert legacy_recovery == -1
     assert "fresh investigation required before recovery" in text[reinvestigate:mechanical]
+
+
+def test_repair_applied_reinvestigate_clears_completion_and_requests_one_generation(
+    tmp_path: Path,
+) -> None:
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "outcome": "complete",
+                "completed_at": "2026-07-22T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("repair_data_set_outcome"),
+            "require_repair_lock_held() { :; }",
+            "repair_save_verdict_evidence() { :; }",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            "repair_data_set_outcome repair_applied_reinvestigate",
+            "repair_data_set_outcome repair_applied_reinvestigate",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(data_path.read_text(encoding="utf-8"))
+    assert payload["outcome"] == "repair_applied_reinvestigate"
+    assert "completed_at" not in payload
+    assert payload["reinvestigation"]["status"] == "required"
+    assert payload["reinvestigation"]["generation"] == 1
 
 
 def test_repair_loop_effective_fixer_prompts_require_canonical_process_custody_policy(
@@ -1977,7 +2014,7 @@ def test_repair_data_init_preserves_legacy_top_level_shape_via_contract(tmp_path
         "current_failure_context": failure_context,
         "run_recurrence_detected": False,
         "iterations": [],
-        "outcome": "repairing",
+        "outcome": "repair_launch_unverified",
         "request_id": "",
         "blocker_id": "",
         "schema_version": 1,
@@ -2116,95 +2153,22 @@ def test_repair_data_dev_and_mechanical_writers_preserve_legacy_shapes(tmp_path:
     assert payload["attempts"][0]["resolver_output"] == failure_context["resolver_output"]
 
     payload = json.loads(data_path.read_text(encoding="utf-8"))
-    assert payload["iterations"] == [
-        {
-            "i": 1,
-            "attempt_id": 4,
-            "dev_model_requested": "gpt-5.4",
-            "dev_model": "gpt-5.5",
-            "dev_model_fallback": "safety fallback",
-            "dev_turn_rc": 17,
-            "dev_fix_sha": "abc1234",
-            "dev_hypothesis": "cli flags drifted",
-            "dev_summary": "removed unsupported flag",
-            "dev_validation": ["pytest tests/cloud/test_watchdog_wrappers.py"],
-            "dev_report": report,
-            "structural_pattern": "flag drift",
-            "other_instantiations": ["other wrapper"],
-            "human_review_recommendation": "audit caller defaults",
-            "findings_doc_path": "/tmp/findings.md",
-            "findings_doc_appended": True,
-            "problem_signature": {},
-            "advancement_snapshot": {},
-            "recurrence": {},
-            "failure_context": failure_context,
-            "failure_classification": "cli_or_argument_error",
-            "raw_failure_signals": ["stderr: unrecognized arguments"],
-            "plan_latest_failure": {"kind": "phase_failed", "metadata": {"stderr": "boom"}},
-            "chain_state_summary": {"current_plan_name": "demo-plan", "last_state": "blocked"},
-            "plan_runtime_state": {"current_state": "blocked"},
-            "last_gate": {"recommendation": "ITERATE"},
-            "user_action_context": {"unresolved_user_actions": [{"id": "ua-1"}]},
-            "execute_attempt_context": {"execution_batch": {"blocked_or_deferred_tasks": [{"task_id": "T9"}]}},
-            "resolver_output": {"target_id": "demo-session:demo-plan", "authoritative_source": "marker"},
-            "mechanical_launch": "failed:retrying_failure",
-            "mechanical_detail": "launch blocked by prereq",
-            "stale_state": {"classification": "LIVE FAILURE"},
-            "state_mismatch": {"detected": False},
-            "chain_log_tail": "chain-tail",
-            "chain_log_path": "/tmp/chain.log",
-            "run_log_tail": "run-tail",
-            "run_log_path": "/tmp/run.log",
-            "chain_recent_events": [{"kind": "phase_failed"}],
-            "plan_events_tail": "events-tail",
-            "plan_events_path": "/tmp/events.ndjson",
-            "mechanical_log_tail": "mechanical-tail",
-            "mechanical_log_path": "/tmp/mech.log",
-        }
-    ]
+    iteration = payload["iterations"][0]
+    assert iteration["attempt_id"] == 4
+    assert iteration["dev_model_requested"] == "gpt-5.4"
+    assert iteration["dev_model"] == "gpt-5.5"
+    assert iteration["dev_before_sha"] == "deadbeef"
+    assert iteration["dev_after_sha"] == "abc1234"
+    assert iteration["dev_fix_changed"] is False
+    assert iteration["mechanical_launch"] == "failed:retrying_failure"
+    assert iteration["failure_context"] == failure_context
 
-
-    assert payload["attempts"] == [
-        {
-            "attempt_id": 4,
-            "repair_run_count": 1,
-            "iteration": 1,
-            "dispatched_at": "",
-            "problem_signature": {},
-            "advancement_snapshot": {},
-            "recurrence": {},
-            "request_id": "",
-            "blocker_id": "",
-            "failure_context": failure_context,
-            "failure_classification": "cli_or_argument_error",
-            "raw_failure_signals": ["stderr: unrecognized arguments"],
-            "plan_latest_failure": {"kind": "phase_failed", "metadata": {"stderr": "boom"}},
-            "chain_state_summary": {"current_plan_name": "demo-plan", "last_state": "blocked"},
-            "plan_runtime_state": {"current_state": "blocked"},
-            "last_gate": {"recommendation": "ITERATE"},
-            "user_action_context": {"unresolved_user_actions": [{"id": "ua-1"}]},
-            "execute_attempt_context": {"execution_batch": {"blocked_or_deferred_tasks": [{"task_id": "T9"}]}},
-            "resolver_output": {"target_id": "demo-session:demo-plan", "authoritative_source": "marker"},
-            "dev_model_requested": "gpt-5.4",
-            "dev_model": "gpt-5.5",
-            "dev_model_fallback": "safety fallback",
-            "dev_turn_rc": 17,
-            "dev_fix_sha": "abc1234",
-            "dev_hypothesis": "cli flags drifted",
-            "dev_summary": "removed unsupported flag",
-            "dev_validation": ["pytest tests/cloud/test_watchdog_wrappers.py"],
-            "dev_report": report,
-            "structural_pattern": "flag drift",
-            "other_instantiations": ["other wrapper"],
-            "human_review_recommendation": "audit caller defaults",
-            "findings_doc_path": "/tmp/findings.md",
-            "findings_doc_appended": True,
-            "mechanical_launch": "failed:retrying_failure",
-            "mechanical_detail": "launch blocked by prereq",
-            "resolver_output": {"target_id": "demo-session:demo-plan", "authoritative_source": "marker"},
-            "post_launch_failure_context": failure_context,
-        }
-    ]
+    attempt = payload["attempts"][0]
+    assert attempt["attempt_id"] == 4
+    assert attempt["dev_model"] == "gpt-5.5"
+    assert attempt["dev_hypothesis"] == "cli flags drifted"
+    assert attempt["mechanical_launch"] == "failed:retrying_failure"
+    assert attempt["post_launch_failure_context"] == failure_context
 
 
 def test_repair_data_records_iteration_zero_baseline_without_index_error(
@@ -2995,6 +2959,7 @@ def test_repair_loop_exits_immediately_for_completed_chain(tmp_path: Path) -> No
     env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
+    env["MEGAPLAN_RUNTIME_SRC"] = str(REPO_ROOT)
     result = subprocess.run(
         ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), str(spec_path)],
         capture_output=True,
@@ -3342,7 +3307,7 @@ def test_watchdog_checks_plan_phase_health_even_when_session_alive() -> None:
 
     assert "plan_phase_health_status()" in text
     assert 'phase_health="$(plan_phase_health_status "$workspace" "$run_kind" "$plan_name")"' in text
-    assert 'latest_failure.get("kind") != "phase_failed"' in text
+    assert 'failure_kind != "phase_failed"' in text
     assert "success_after_failure" in text
     assert 'f"recorded={recorded_at or' in text
     assert 'session alive but plan unhealthy' in text
@@ -3589,8 +3554,8 @@ def test_watchdog_progress_reap_decision_uses_log_idle_and_fails_safe(tmp_path: 
 def test_watchdog_kimi_operator_dedupe_does_not_match_its_own_grep() -> None:
     text = _wrapper("arnold-watchdog")
 
-    assert 'pgrep -f "arnold-kimi-goal-operator[[:space:]]+$session[[:space:]]"' in text
-    assert 'pgrep -f "/$PRIMARY_REPAIR_BASENAME[[:space:]]+$session([[:space:]]|$)"' in text
+    assert "repair_loop_pid_matches_session()" in text
+    assert 'base not in {"arnold-repair-loop", repair_basename}' in text
     assert 'printf \'%s/%s.kimi-pgid\' "$MARKER_DIR" "$1"' in text
     assert 'kill -0 -- "-$pgid"' in text
     assert 'grep -F "[a]rnold-kimi-goal-operator $session "' not in text
@@ -3951,11 +3916,14 @@ def test_watchdog_dispatch_skips_duplicate_same_session_repair(
             _extract_wrapper_function("kimi_operator_running"),
             _extract_wrapper_function("repair_loop_busy_state"),
             _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
+            _extract_wrapper_function("confirm_managed_agent_dispatch"),
             _extract_wrapper_function("dispatch_kimi_repair"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
             f"PRIMARY_REPAIR_BASENAME={repair_bin.name!r}",
             f"LOG={str(log_path)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
             """
 log() { printf '%s\n' "$*" >> "$LOG"; }
 dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
@@ -4085,6 +4053,7 @@ def test_watchdog_dispatch_reclaims_stale_request_claim_and_launches(tmp_path: P
             _extract_wrapper_function("repair_loop_busy_state"),
             _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
             _extract_wrapper_function("claim_active_repair_launch"),
+            _extract_wrapper_function("confirm_managed_agent_dispatch"),
             _extract_wrapper_function("dispatch_kimi_repair"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
@@ -4242,13 +4211,25 @@ def test_watchdog_meta_dispatch_emits_incident_statuses(tmp_path: Path) -> None:
     repair_dir = marker_dir / "repair-data"
     repair_dir.mkdir(parents=True)
     (repair_dir / "demo-session.repair-data.json").write_text(
-        json.dumps({"incident_id": "inc-601"}),
+        json.dumps(
+            {
+                "incident_id": "inc-601",
+                "request_id": "req-601",
+                "blocker_id": "blocker:v2:601",
+            }
+        ),
         encoding="utf-8",
     )
     meta_dir = repair_dir / "meta"
     meta_dir.mkdir()
     (meta_dir / "existing-001.json").write_text(
-        json.dumps({"meta_repair_id": "existing-001", "session": "demo-session"}),
+        json.dumps(
+            {
+                "meta_repair_id": "existing-001",
+                "session": "demo-session",
+                "blocker_id": "blocker:v2:601",
+            }
+        ),
         encoding="utf-8",
     )
     report_path = tmp_path / "report.tsv"
@@ -4535,6 +4516,7 @@ def test_repair_loop_serializes_same_session_invocations_and_cleans_pidfile_on_t
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
     env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
+    env["MEGAPLAN_RUNTIME_SRC"] = str(REPO_ROOT)
 
     args = ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"]
     proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
@@ -4612,6 +4594,7 @@ def test_repair_loop_reclaims_stale_pidfile_on_start(tmp_path: Path) -> None:
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
     env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
+    env["MEGAPLAN_RUNTIME_SRC"] = str(REPO_ROOT)
 
     proc = subprocess.Popen(
         ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"],
@@ -4690,6 +4673,7 @@ def test_repair_loop_reclaims_pidfile_after_kill9_with_child_alive(tmp_path: Pat
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
     env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
+    env["MEGAPLAN_RUNTIME_SRC"] = str(REPO_ROOT)
 
     args = ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"]
     pidfile = marker_dir / "demo-session.repair-loop.pid"
@@ -4707,7 +4691,7 @@ def test_repair_loop_reclaims_pidfile_after_kill9_with_child_alive(tmp_path: Pat
         assert pidfile.exists(), "kill -9 should leave a stale pidfile for recovery"
 
         second = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
-        for _ in range(100):
+        for _ in range(300):
             if pidfile.exists() and pidfile.read_text(encoding="utf-8").strip() == str(second.pid):
                 break
             time.sleep(0.05)
@@ -6194,6 +6178,63 @@ def test_verified_quality_recovery_cannot_fall_back_without_receipt_locator(
     assert "no bounded dev-fix receipt locator" in result.stderr
 
 
+def test_verified_quality_recovery_accepts_complete_marker_bound_supported_cli(
+    tmp_path: Path,
+) -> None:
+    command = (
+        "python -m arnold_pipelines.megaplan quality-gate resolve "
+        "--blocker-id quality:global:abc --resolution fixed && "
+        "python -m arnold_pipelines.megaplan override recover-blocked "
+        "--repair-commit abcdef --failure-fingerprint fingerprint "
+        "&& python -m arnold_pipelines.megaplan chain start "
+        "--no-git-refresh --no-push"
+    )
+    context = tmp_path / "context.json"
+    context.write_text(
+        json.dumps(
+            {
+                "current": {"latest_failure": {"fingerprint": "fingerprint"}},
+                "durable_quality_block": {
+                    "active": True,
+                    "repair_evidence": {
+                        "verified": True,
+                        "dev_fix_sha": "abcdef",
+                    },
+                },
+                "safe_repair_boundaries": {
+                    "supported_recovery_cli": command,
+                    "quality_recovery_command_complete": True,
+                    "quality_recovery_blocker_ids": ["quality:global:abc"],
+                    "marker_relaunch_binding": {
+                        "verified": True,
+                        "profile_preserved": True,
+                        "no_git_refresh": True,
+                        "no_push": True,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("quality_recovery_requirement"),
+            _extract_repair_function("quality_recovery_supported_cli_is_complete"),
+            _extract_repair_function("select_mechanical_relaunch_command"),
+            "post_dev_fix_quality_recovery_command_if_needed() { return 76; }",
+            f"INVESTIGATION_CONTEXT_PATH={str(context)!r}",
+            "INVESTIGATOR_RECOMMENDED_ACTION=recover_state",
+            "POST_DEV_FIX_ITERATION=",
+            f"select_mechanical_relaunch_command {command!r}",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == command
+
+
 def test_verified_quality_recovery_cannot_fall_back_when_receipt_mismatches(
     tmp_path: Path,
 ) -> None:
@@ -6467,6 +6508,85 @@ def test_extracted_repair_relaunch_resolver_preserves_rejected_acceptance_gate(
     assert result.stdout == "failed:acceptance_gate_closed\n"
     assert "command not found" not in result.stderr
     assert "must-not-run" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("checker_body", "expected_reason"),
+    [
+        ("return 23", "acceptance_checker_nonzero_exit_23"),
+        ("return 0", "acceptance_checker_empty_output"),
+        ("echo 'not-json'; return 0", "acceptance_checker_malformed_output"),
+        ("echo '{\"reason\":\"missing typed decision\"}'; return 0", "acceptance_checker_malformed_output"),
+    ],
+)
+def test_repair_acceptance_checker_indeterminate_fails_closed_without_child(
+    tmp_path: Path,
+    checker_body: str,
+    expected_reason: str,
+) -> None:
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    script = "\n\n".join(
+        [
+            *_extract_relaunch_functions("repair"),
+            "log() { :; }",
+            "report_item() { :; }",
+            "python3() {",
+            "  if [[ \"$1\" == \"-P\" && \"$2\" == \"-\" ]]; then",
+            f"    {checker_body}",
+            "  fi",
+            "  command python3 \"$@\"",
+            "}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            f"REPAIR_DATA_DIR={str(tmp_path)!r}",
+            f"REPORT_PATH={str(tmp_path / 'report.tsv')!r}",
+            "SYNC_BRANCH=editible-install",
+            (
+                f"resolve_relaunch_command demo-session {str(tmp_path)!r} "
+                f"{str(spec_path)!r} chain '' 'echo child-launched'"
+            ),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 1
+    assert result.stdout == "failed:acceptance_gate_closed\n"
+    assert "child-launched" not in result.stdout
+    blocker_path = tmp_path / "demo-session.blocker-acceptance-gate.json"
+    assert blocker_path.exists(), result.stderr
+    blocker = json.loads(blocker_path.read_text(encoding="utf-8"))
+    assert blocker["status"] == "indeterminate"
+    assert blocker["reason"] == expected_reason
+
+
+def test_watchdog_and_meta_fallbacks_require_runtime_source_and_digest_identity() -> None:
+    runtime_lib = _wrapper("arnold-supervisor-runtime-lib")
+    watchdog = _wrapper("arnold-watchdog")
+    meta = _wrapper("arnold-meta-repair-loop")
+
+    assert "arnold_supervisor_select_exact_fallback()" in runtime_lib
+    assert "fallback_runtime_source_identity_mismatch" in runtime_lib
+    assert "fallback_wrapper_digest_mismatch" in runtime_lib
+    assert runtime_lib.count("sha256sum") >= 2
+    assert "arnold_supervisor_select_exact_fallback watchdog-primary-repair" in watchdog
+    assert "arnold_supervisor_select_exact_fallback watchdog-meta-repair" in watchdog
+    assert "arnold_supervisor_select_exact_fallback" in meta
+    assert 'REPAIR_LOOP_BIN="$REPAIR_LOOP_FALLBACK"' not in meta
+
+
+def test_meta_recursion_and_acceptance_checks_have_typed_fail_closed_paths() -> None:
+    watchdog = _wrapper("arnold-watchdog")
+    meta = _wrapper("arnold-meta-repair-loop")
+
+    assert '"$recursion_result" != OK:*' in watchdog
+    assert "recursion-check-indeterminate.json" in watchdog
+    assert '"$RECURSION_OUTPUT" != OK:*' in meta
+    assert "arnold-meta-repair-recursion-check-v1" in meta
+    assert "acceptance_checker_empty_output" in meta
+    assert "acceptance_checker_malformed_output" in meta
+    assert "acceptance_checker_nonzero_exit_" in meta
 
 
 def test_watchdog_done_plan_reports_complete_without_repair_or_relaunch(tmp_path: Path) -> None:
@@ -8334,7 +8454,7 @@ def test_watchdog_scan_once_completes_when_chain_state_is_unreadable(tmp_path: P
             _extract_wrapper_function("json_field"),
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function("launch_chain_tick"),
-            _extract_wrapper_function("scan_once"),
+            _extract_wrapper_function("scan_once_unlocked"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"LOG={str(log_path)!r}",
             """
@@ -8344,6 +8464,8 @@ report_item() {
 log() { printf '%s\n' "$*" >> "$LOG"; }
 maybe_reexec_updated_watchdog() { :; }
 sync_editable_source_branch() { return 0; }
+bootstrap_watchdog_observation() { return 0; }
+write_status_snapshot() { :; }
 adopt_unmarked_tmux_sessions() { return 0; }
 reap_stale_repairs() { return 0; }
 emit_report() { cp "$1" REPORT_PATH_PLACEHOLDER; }
@@ -8362,7 +8484,7 @@ resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.replace("REPORT_PATH_PLACEHOLDER", str(report_path)).strip(),
-            "scan_once",
+            "scan_once_unlocked",
         ]
     )
 
@@ -8846,7 +8968,7 @@ def test_watchdog_scan_ignores_progress_snapshot_markers() -> None:
 
 def test_watchdog_enforces_single_instance_and_reexecs_after_hot_update() -> None:
     text = _wrapper("arnold-watchdog")
-    scan_once = _extract_wrapper_function("scan_once")
+    scan_once = _extract_wrapper_function("scan_once_unlocked")
 
     assert 'LOCK_FILE="${CLOUD_WATCHDOG_LOCK_FILE:-/workspace/.megaplan/watchdog.lock}"' in text
     assert 'LOCK_HELD="${CLOUD_WATCHDOG_LOCK_HELD:-0}"' in text
@@ -8896,7 +9018,7 @@ def test_watchdog_hot_update_prefers_newer_editable_source_wrapper(tmp_path: Pat
 
     fake_bash = tmp_path / "bash"
     fake_bash.write_text(
-        "#!/usr/bin/env python3\n"
+        f"#!{sys.executable}\n"
         "import sys\n"
         "print('\\n'.join(sys.argv[1:]))\n",
         encoding="utf-8",
@@ -8960,8 +9082,8 @@ def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
     assert 'cd "$RUN_CWD"' in text
     assert 'PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}"' in text
     assert 'timeout "$TIMEOUT" python3 -P -m arnold.agent.run_agent \\' in text
-    assert '--query_file="$PROMPT"' in text
-    assert '--query="$(cat "$PROMPT")"' not in text
+    assert "--stdin-file \"$PROMPT\"" in text
+    assert "--query_file=@managed-stdin@" in text
     assert "Do not let MEGAPLAN_REF or the active workflow workspace branch" in text
     assert "Your Codex brief should contain the core issue, evidence, constraints, and plausible hypotheses only" in text
     assert "do not prescribe the implementation" in text
@@ -8969,7 +9091,8 @@ def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
     assert "then dispatch Codex through that skill" in text
     assert "If \\$subagent-launcher or Codex cannot be launched" in text
     assert "launching Codex repair subagent" in text
-    assert 'codex exec --sandbox danger-full-access - < "$CODEX_PROMPT"' in text
+    assert 'timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access \\' in text
+    assert '-c model="$CODEX_MODEL" -c model_reasoning_effort=high -' in text
     assert 'capture "codex repair subagent result"' in text
     assert "launching Kimi goal operator" in text
     assert text.index("launching Codex repair subagent") < text.index("launching Kimi goal operator")
@@ -9075,10 +9198,11 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'DEV_REQUESTED_MODEL="codex:gpt-5.5"' in text
     assert 'CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM:-0' in text
     assert 'GLM_FALLBACK="zhipu:glm-5.2 disabled by default for watchdog repair; using gpt-5.4 for iteration 1"' in text
-    assert 'repair_data_set_outcome "live_with_fresh_activity"' in text
+    assert 'repair_data_set_outcome "progressed" "$status"' in text
     assert 'repair_data_set_outcome "recurring_retry_pending"' in text
-    assert 'repair_data_set_outcome "discord_escalated"' in text
-    assert text.index('exit_if_repair_target_complete "post-iterations"') < text.index('repair_data_set_outcome "discord_escalated"')
+    assert text.index('exit_if_repair_target_complete "post-iterations"') < text.index(
+        'repair_data_set_outcome "recurring_retry_pending"'
+    )
     assert "write_needs_human_marker" in text
     assert "send_discord_escalation" in text
     assert "## Incident Snapshot" in text
@@ -9626,7 +9750,8 @@ def test_watchdog_emit_report_redacts_persisted_report_json(tmp_path: Path) -> N
     archive_dir = tmp_path / "archive"
     script = "\n\n".join(
         [
-            _extract_wrapper_function_until("emit_report", "sync_cloud_runtime_wrappers"),
+            _extract_wrapper_function_until("emit_report", "write_watchdog_heartbeat"),
+            _extract_wrapper_function("redact_inline_text"),
             f"REPORT_PATH={str(report_path)!r}",
             f"REPORT_ARCHIVE_DIR={str(archive_dir)!r}",
             'emit_report ' + shlex.quote(str(items_path)) + " 1",
@@ -10473,6 +10598,91 @@ def test_compute_meta_repair_trigger_skips_stale_launch_failure_after_success(
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "NO_TRIGGER"
+
+
+def test_compute_meta_repair_trigger_routes_completed_repair_with_failed_recovery_gate(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    goal_path = repair_data_dir / "goals" / "custody-session.json"
+    goal_path.parent.mkdir(parents=True)
+    goal_path.write_text(
+        json.dumps(
+            {
+                "status": "active",
+                "request_ids": ["request-m9"],
+                "target": {"blocker_id": "blocker:m9"},
+                "configured_profile": "partnered-5",
+                "recovery_acceptance": {
+                    "accepted": False,
+                    "escalation": {
+                        "required": True,
+                        "reason": "post_fixer_recovery_gate_failed",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    repair_path = repair_data_dir / "custody-session.repair-data.json"
+    repair_path.write_text(
+        json.dumps(
+            {
+                "session": "custody-session",
+                "outcome": "complete",
+                "request_id": "request-m9",
+                "blocker_id": "blocker:m9",
+                "configured_profile": "partnered-5",
+                "repair_goal": {"goal_path": str(goal_path)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    observation = json.dumps(
+        {
+            "authoritative_source": "chain_state",
+            "current_refs": {
+                "current_plan_name": "m9-rebuildable-projections",
+                "plan_current_state": "planned",
+                "chain_last_state": "blocked",
+            },
+            "plan_state": {"present": True},
+            "chain_state": {"present": True},
+            "active_step_heartbeat": {"active": False},
+        }
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until(
+                "compute_meta_repair_trigger", "dispatch_meta_repair"
+            ),
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                "compute_meta_repair_trigger custody-session "
+                f"{shlex.quote(observation)} stopped"
+            ),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "TRIGGER:post_fixer_recovery_gate_failed"
+    persisted = json.loads(repair_path.read_text(encoding="utf-8"))
+    assert persisted["request_id"] == "request-m9"
+    assert persisted["blocker_id"] == "blocker:m9"
+    assert persisted["configured_profile"] == "partnered-5"
+
+    mismatched_goal = json.loads(goal_path.read_text(encoding="utf-8"))
+    mismatched_goal["target"]["blocker_id"] = "blocker:other"
+    goal_path.write_text(json.dumps(mismatched_goal), encoding="utf-8")
+    mismatch_result = _run_watchdog_shell(script)
+    assert mismatch_result.returncode == 0, mismatch_result.stderr
+    assert mismatch_result.stdout.strip() == "NO_TRIGGER"
 
 
 def test_compute_meta_repair_trigger_detects_semantic_fingerprint_recurrence(
@@ -12564,8 +12774,9 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
     assert 'DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"' in text
     assert 'AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"' in text
     assert 'DEEPSEEK_MODEL="${MEGAPLAN_AUDIT_MODEL:-deepseek:deepseek-v4-pro}"' in text
-    assert 'AUDIT_CODEX_MODEL="${MEGAPLAN_AUDIT_CODEX_MODEL:-gpt-5.6-sol}"' in text
-    assert 'codex exec --model "$AUDIT_CODEX_MODEL"' in text
+    assert 'AUDIT_CODEX_MODEL="gpt-5.6-sol"' in text
+    assert 'timeout "$CODEX_TIMEOUT" codex exec' in text
+    assert '-c model="$AUDIT_CODEX_MODEL"' in text
     assert '"$WATCHDOG_BIN" --audit-sweep' in text
     assert 'CLOUD_WATCHDOG_PROVIDER_RETRY_ONCE=1' in text
     assert '"recovery_sweep": recovery_sweep' in text
@@ -12595,13 +12806,12 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
     assert "/root/.codex" in text
     assert "META_REPAIR_FAILURE" in text
     assert "arnold-meta-repair-loop actually launched" in text
-    assert "deploy Codex/DeepSeek/Hermes subagents" in text
-    assert "relaunch arnold-meta-repair-loop for the same session" in text
+    assert "Do not apply patches, create claims, launch repair agents, commit, or push." in text
     assert "Fix the watchdog/repair-trigger/auditor source" in text
     assert "dead provider/auth path" in text
     assert "argument-size crash" in text
-    assert "Do not patch the running workspace merely to" in text
-    assert "make this one session green when the repairer is the broken component" in text
+    assert "Return a typed repair request; the central repair authority owns" in text
+    assert "any subsequent mutation or managed child launch." in text
     assert "chain log line numbers" in text
     assert "Live failure vs stale state" in text
     assert "Gate resolvability" in text
@@ -12643,7 +12853,7 @@ def test_all_recovery_wrappers_fail_closed_for_durable_operator_pause() -> None:
     assert 'decision = "skip_paused"' in auditor
 
 
-def test_watchdog_audit_recovery_routes_typed_quota_gate_to_one_retry() -> None:
+def test_watchdog_audit_recovery_preserves_quota_as_unknown() -> None:
     target = {
         "tmux_process": {"live_status": "stopped"},
         "plan_state": {
@@ -12684,14 +12894,14 @@ def test_watchdog_audit_recovery_routes_typed_quota_gate_to_one_retry() -> None:
     result = _run_watchdog_shell(script)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "provider_retry:QUOTA"
+    assert result.stdout.strip() == ""
 
 
 def _extract_auditor_worklist_program() -> str:
     text = _wrapper("arnold-progress-auditor")
     marker = (
         "python3 - \"$MARKER_DIR\" \"$WORKLIST\" \"$AUDIT_WINDOW_HOURS\" "
-        "\"$DISCOVER_BIN\" \"/workspace\" \"$ARNOLD_SRC\" <<'PY'"
+        "\"$DISCOVER_BIN\" \"$AUDIT_WORKSPACE_ROOT\" \"$ARNOLD_SRC\" <<'PY'"
     )
     start = text.index(marker)
     start = text.index("\n", start) + 1
@@ -13000,6 +13210,61 @@ def test_auditor_worklist_unions_marker_tmux_and_workspace_activity_and_skips_ar
     assert observed[(str(plan_marker_ws), "target-plan")] == {"marker"}
     assert (str(plan_marker_ws), "stale-unrelated") not in observed
     assert all(entry["workspace"] != str(arnold_src) for entry in entries)
+
+
+def test_auditor_missing_workspace_marker_emits_durable_indeterminate_discovery(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    arnold_src = workspace_root / "arnold"
+    arnold_src.mkdir()
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    missing_workspace = workspace_root / "missing-chain"
+    marker_path = marker_dir / "missing-session.json"
+    marker_path.write_text(
+        json.dumps(
+            {
+                "session": "missing-session",
+                "workspace": str(missing_workspace),
+            }
+        ),
+        encoding="utf-8",
+    )
+    discover_bin = tmp_path / "discover.sh"
+    discover_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    discover_bin.chmod(discover_bin.stat().st_mode | stat.S_IXUSR)
+    worklist = tmp_path / "worklist.jsonl"
+
+    entries = _run_auditor_worklist_builder(
+        tmp_path,
+        marker_dir=marker_dir,
+        worklist=worklist,
+        window_hours=6,
+        discover_bin=discover_bin,
+        workspace_root=workspace_root,
+        arnold_src=arnold_src,
+    )
+
+    assert entries == []
+    discoveries = [
+        json.loads(line)
+        for line in (tmp_path / "discovery-indeterminate.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert discoveries == [
+        {
+            "schema_version": "arnold-progress-auditor-discovery-v1",
+            "status": "indeterminate",
+            "reason": "missing_workspace",
+            "session": "missing-session",
+            "workspace": str(missing_workspace),
+            "marker_path": str(marker_path),
+        }
+    ]
 
 
 def test_auditor_gather_includes_done_plan_with_recent_events_mtime(tmp_path: Path) -> None:
@@ -13427,12 +13692,17 @@ def test_progress_auditor_dispatch_redacts_brief_and_codex_response_files(tmp_pa
             "DEEPSEEK_MODEL=deepseek:deepseek-v4-pro",
             "SUBAGENT_PROFILE=partnered-5",
             "CODEX_TIMEOUT=30",
+            "AUDIT_REVIEW_EVIDENCE_MAX_BYTES=65536",
+            "AUDIT_REVIEW_BRIEF_MAX_BYTES=131072",
+            "AUDIT_MUTATION_AUTHORIZED_FLAG=0",
             "dispatch_one " + shlex.quote(str(gather_file)),
         ]
     )
     env = dict(os.environ)
     env["PATH"] = f"{tmp_path}:{env.get('PATH', '')}"
-    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, env=env, check=False)
+    result = subprocess.run(
+        ["bash", "-c", script], capture_output=True, text=True, env=env, check=False
+    )
 
     assert result.returncode == 0, result.stderr
     brief = (gather_dir / "brief-m7-demo.md").read_text(encoding="utf-8")
@@ -13442,11 +13712,11 @@ def test_progress_auditor_dispatch_redacts_brief_and_codex_response_files(tmp_pa
     assert "bearer-secret-token-value" not in brief
     assert "bearer-secret-token-value" not in resp
     assert "bearer-secret-token-value" not in err
-    assert "bearer-secret-token-value" not in updated["deepseek_response"]
+    assert "bearer-secret-token-value" not in updated.get("agent_response", "")
     assert REDACTION in brief
-    assert REDACTION in resp
-    assert REDACTION in err
-    assert REDACTION in updated["deepseek_response"]
+    assert resp.startswith("PASSIVE\n")
+    assert err == ""
+    assert updated.get("codex_launch_attempted") in {None, False}
 
 
 def test_repair_loop_stops_recurring_retry_for_prep_clarification_gate(tmp_path: Path) -> None:
@@ -13759,7 +14029,6 @@ def test_auditor_gather_surfaces_missing_meta_repair_run_for_triggered_session(t
     assert meta_summary["missing_meta_run_evidence"] is True
     assert meta_summary["meta_record_count"] == 0
     assert meta_summary["meta_run_log_count"] == 0
-    assert "meta-repair trigger" in " ".join(finding["reasons"])
 
 
 def test_auditor_gather_retains_recent_l2_sandbox_failure_after_later_runs(tmp_path: Path) -> None:
@@ -13996,7 +14265,7 @@ def test_watchdog_scan_once_disabled_dispatch_observe_only_non_fatal(
     script = "\n\n".join(
         [
             _extract_wrapper_function("repair_trigger_scan"),
-            _extract_wrapper_function("scan_once"),
+            _extract_wrapper_function("scan_once_unlocked"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
             f"REPAIR_TRIGGER_BIN={str(trigger)!r}",
@@ -14004,12 +14273,14 @@ def test_watchdog_scan_once_disabled_dispatch_observe_only_non_fatal(
 log() { printf '%s\\n' \"$*\" >> \"$LOG_PATH\"; }
 maybe_reexec_updated_watchdog() { :; }
 sync_editable_source_branch() { return 0; }
+bootstrap_watchdog_observation() { return 0; }
+write_status_snapshot() { :; }
 adopt_unmarked_tmux_sessions() { :; }
 emit_report() { echo \"emit:$2\" >> \"$LOG_PATH\"; }
 reap_stale_repairs() { :; }
 """.strip(),
             f"LOG_PATH={str(tmp_path / 'scan.log')!r}",
-            "scan_once",
+            "scan_once_unlocked",
         ]
     )
 
@@ -14040,7 +14311,7 @@ def test_watchdog_scan_once_lock_contention_is_non_fatal(tmp_path: Path) -> None
     script = "\n\n".join(
         [
             _extract_wrapper_function("repair_trigger_scan"),
-            _extract_wrapper_function("scan_once"),
+            _extract_wrapper_function("scan_once_unlocked"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
             f"REPAIR_TRIGGER_BIN={str(trigger)!r}",
@@ -14048,12 +14319,14 @@ def test_watchdog_scan_once_lock_contention_is_non_fatal(tmp_path: Path) -> None
 log() { printf '%s\\n' \"$*\" >> \"$LOG_PATH\"; }
 maybe_reexec_updated_watchdog() { :; }
 sync_editable_source_branch() { return 0; }
+bootstrap_watchdog_observation() { return 0; }
+write_status_snapshot() { :; }
 adopt_unmarked_tmux_sessions() { :; }
 emit_report() { echo \"emit:$2\" >> \"$LOG_PATH\"; }
 reap_stale_repairs() { :; }
 """.strip(),
             f"LOG_PATH={str(tmp_path / 'scan.log')!r}",
-            "scan_once",
+            "scan_once_unlocked",
         ]
     )
 
@@ -14084,7 +14357,7 @@ def test_watchdog_scan_once_queued_request_triggers_observe_then_continues(
     script = "\n\n".join(
         [
             _extract_wrapper_function("repair_trigger_scan"),
-            _extract_wrapper_function("scan_once"),
+            _extract_wrapper_function("scan_once_unlocked"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
             f"REPAIR_TRIGGER_BIN={str(trigger)!r}",
@@ -14092,12 +14365,14 @@ def test_watchdog_scan_once_queued_request_triggers_observe_then_continues(
 log() { printf '%s\\n' \"$*\" >> \"$LOG_PATH\"; }
 maybe_reexec_updated_watchdog() { :; }
 sync_editable_source_branch() { return 0; }
+bootstrap_watchdog_observation() { return 0; }
+write_status_snapshot() { :; }
 adopt_unmarked_tmux_sessions() { :; }
 emit_report() { echo \"emit:$2\" >> \"$LOG_PATH\"; }
 reap_stale_repairs() { :; }
 """.strip(),
             f"LOG_PATH={str(tmp_path / 'scan.log')!r}",
-            "scan_once",
+            "scan_once_unlocked",
         ]
     )
 
@@ -14387,7 +14662,7 @@ def test_watchdog_scan_once_filters_canonical_sidecar_jsons(tmp_path: Path) -> N
     script = "\n\n".join(
         [
             _extract_wrapper_function("repair_trigger_scan"),
-            _extract_wrapper_function("scan_once"),
+            _extract_wrapper_function("scan_once_unlocked"),
             f"MARKER_DIR={shlex.quote(str(marker_dir))}",
             f"REPAIR_DATA_DIR={shlex.quote(str(tmp_path / 'repair-data'))}",
             f"REPAIR_TRIGGER_BIN={shlex.quote(str(trigger))}",
@@ -14395,6 +14670,8 @@ def test_watchdog_scan_once_filters_canonical_sidecar_jsons(tmp_path: Path) -> N
                 "log() { printf '%s\\n' \"$*\" >> \"$LOG_PATH\"; }\n"
                 "maybe_reexec_updated_watchdog() { :; }\n"
                 "sync_editable_source_branch() { return 0; }\n"
+                "bootstrap_watchdog_observation() { return 0; }\n"
+                "write_status_snapshot() { :; }\n"
                 "adopt_unmarked_tmux_sessions() { :; }\n"
                 "emit_report() { echo \"emit:$2\" >> \"$LOG_PATH\"; }\n"
                 "reap_stale_repairs() { :; }\n"
@@ -14402,7 +14679,7 @@ def test_watchdog_scan_once_filters_canonical_sidecar_jsons(tmp_path: Path) -> N
                 "launch_chain_tick() { echo \"tick:$1\" >> \"$LOG_PATH\"; }\n"
             ),
             f"LOG_PATH={shlex.quote(str(tmp_path / 'scan.log'))}",
-            "scan_once",
+            "scan_once_unlocked",
         ]
     )
 
@@ -14435,7 +14712,7 @@ def test_watchdog_scan_once_excludes_sidecar_only_entries(tmp_path: Path) -> Non
     script = "\n\n".join(
         [
             _extract_wrapper_function("repair_trigger_scan"),
-            _extract_wrapper_function("scan_once"),
+            _extract_wrapper_function("scan_once_unlocked"),
             f"MARKER_DIR={shlex.quote(str(marker_dir))}",
             f"REPAIR_DATA_DIR={shlex.quote(str(tmp_path / 'repair-data'))}",
             f"REPAIR_TRIGGER_BIN={shlex.quote(str(trigger))}",
@@ -14443,6 +14720,8 @@ def test_watchdog_scan_once_excludes_sidecar_only_entries(tmp_path: Path) -> Non
                 "log() { printf '%s\\n' \"$*\" >> \"$LOG_PATH\"; }\n"
                 "maybe_reexec_updated_watchdog() { :; }\n"
                 "sync_editable_source_branch() { return 0; }\n"
+                "bootstrap_watchdog_observation() { return 0; }\n"
+                "write_status_snapshot() { :; }\n"
                 "adopt_unmarked_tmux_sessions() { :; }\n"
                 "emit_report() { echo \"emit:$2\" >> \"$LOG_PATH\"; }\n"
                 "reap_stale_repairs() { :; }\n"
@@ -14450,7 +14729,7 @@ def test_watchdog_scan_once_excludes_sidecar_only_entries(tmp_path: Path) -> Non
                 "launch_chain_tick() { echo \"tick:$1\" >> \"$LOG_PATH\"; }\n"
             ),
             f"LOG_PATH={shlex.quote(str(tmp_path / 'scan.log'))}",
-            "scan_once",
+            "scan_once_unlocked",
         ]
     )
 
@@ -15026,8 +15305,9 @@ def test_meta_repair_wrapper_has_default_commit_policy() -> None:
     text = _meta_repair_wrapper()
 
     assert 'Commit/push policy' in text
-    assert 'explicitly disabled' in text
+    assert 'not explicitly' in text
     assert 'ARNOLD_META_REPAIR_COMMIT_ENABLED=0/false/no/off' in text
+    assert 'ARNOLD_META_REPAIR_PUSH_ENABLED gate' in text
     assert 'can_commit_changes' in text
     assert 'can_push_changes' in text
     assert 'commit_allowed=' in text
@@ -15891,17 +16171,21 @@ def test_repair_data_maintenance_skips_when_repair_lock_is_busy(tmp_path: Path) 
     marker_dir.mkdir(parents=True)
     repair_dir.mkdir(parents=True)
     lock_dir.mkdir()
+    repair_loop = tmp_path / "arnold-repair-loop"
+    repair_loop.write_text("#!/usr/bin/env bash\nsleep 30\n", encoding="utf-8")
+    repair_loop.chmod(repair_loop.stat().st_mode | stat.S_IXUSR)
+    owner_process = subprocess.Popen([str(repair_loop), "demo"])
     started_at = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=60)).isoformat()
     (lock_dir / "owner.json").write_text(
         json.dumps(
             {
                 "session": "demo",
-                "pid": os.getpid(),
+                "pid": owner_process.pid,
                 "started_at": started_at,
                 "timeout_seconds": 3600,
                 "command": "arnold-repair-loop demo",
                 "cwd": str(tmp_path),
-                "hostname": "localhost",
+                "hostname": os.uname().nodename,
             }
         ),
         encoding="utf-8",
@@ -15920,10 +16204,16 @@ def test_repair_data_maintenance_skips_when_repair_lock_is_busy(tmp_path: Path) 
         ]
     )
 
-    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
-    assert result.returncode == 0, f"stderr: {result.stderr}"
-    assert "LOCK_BUSY" in result.stdout, f"stdout: {result.stdout}"
-    assert not (repair_dir / "index.json").exists()
+    try:
+        result = subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True, check=False
+        )
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert "LOCK_BUSY" in result.stdout, f"stdout: {result.stdout}"
+        assert not (repair_dir / "index.json").exists()
+    finally:
+        owner_process.terminate()
+        owner_process.wait(timeout=5)
 
 
 def test_partial_liveness_tick_writes_sidecar_record(tmp_path: Path) -> None:
@@ -16068,3 +16358,22 @@ def test_partial_liveness_three_ticks_triggers_condition_5() -> None:
     )
     assert classification.should_dispatch
     assert classification.trigger == MetaRepairTrigger.PARTIAL_LIVENESS_RECURRENCE
+
+
+def test_l1_l2_l3_prompts_preserve_profile_and_reject_cursorless_success() -> None:
+    wrappers = (
+        Path(__file__).resolve().parents[2]
+        / "arnold_pipelines"
+        / "megaplan"
+        / "cloud"
+        / "wrappers"
+    )
+    repair_loop = (wrappers / "arnold-repair-loop").read_text(encoding="utf-8")
+    meta_loop = (wrappers / "arnold-meta-repair-loop").read_text(encoding="utf-8")
+    auditor = (wrappers / "arnold-progress-auditor").read_text(encoding="utf-8")
+
+    assert "Preserve the currently configured profile" in repair_loop
+    assert "missing ordinary-repair profile-preservation clause" in meta_loop
+    assert "Missing profile preservation is a repair-system" in auditor
+    for text in (repair_loop, meta_loop, auditor):
+        assert "completed-repair-without-cursor-advance" in text

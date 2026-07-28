@@ -8,8 +8,9 @@ from typing import Any, Callable
 
 import pytest
 
-import arnold_pipelines.megaplan as megaplan
+from arnold_pipelines.megaplan._core.io import plans_root
 from arnold_pipelines.megaplan.cli import build_parser
+from arnold_pipelines.megaplan.handlers.init import handle_init
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
@@ -53,27 +54,45 @@ def load_state(plan_dir: Path) -> dict[str, Any]:
     return json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
 
 
-@pytest.fixture
-def plan_fixture(tmp_path: Path) -> PlanFixture:
-    """Create a temporary megaplan plan and expose its directories/args helper."""
-
-    root = tmp_path / "root"
-    root.mkdir()
-    project_dir = tmp_path / "project"
+def _make_plan_fixture_with_robustness(
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    robustness: str,
+) -> PlanFixture:
+    monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
+    project_dir = root / "project"
     project_dir.mkdir()
     make_args = make_args_factory(project_dir)
-    response = megaplan.handle_init(
+    response = handle_init(
         root,
-        make_args(idea="fixture plan", name="fixture-plan", robustness="standard"),
+        make_args(
+            idea="fixture plan",
+            name="fixture-plan",
+            robustness=robustness,
+        ),
     )
     plan_name = response["plan"]
-    plan_dir = megaplan.plans_root(root) / plan_name
     return PlanFixture(
         root=root,
         project_dir=project_dir,
         plan_name=plan_name,
-        plan_dir=plan_dir,
+        plan_dir=plans_root(root) / plan_name,
         make_args=make_args,
+    )
+
+
+@pytest.fixture
+def plan_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PlanFixture:
+    """Create a temporary megaplan plan and expose its directories/args helper."""
+
+    monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
+    root = tmp_path / "root"
+    root.mkdir()
+    return _make_plan_fixture_with_robustness(
+        root,
+        monkeypatch,
+        robustness="standard",
     )
 
 

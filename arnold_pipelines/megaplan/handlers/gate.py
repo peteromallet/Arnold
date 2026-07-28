@@ -403,6 +403,10 @@ def _sync_legacy_last_gate_for_workflow(state: PlanState, gate_summary: dict[str
         "preflight_results": gate_summary["preflight_results"],
         "orchestrator_guidance": gate_summary["orchestrator_guidance"],
     }
+    # This summary came from a genuine gate evaluation.  Any marker recording
+    # recovery of an older completed gate is now stale and must not continue to
+    # project the plan as blocked after a successful gate/revise transition.
+    state.setdefault("meta", {}).pop("gate_artifact_recovery", None)
 
 
 def _critique_cap_key(robustness: str) -> str:
@@ -1184,6 +1188,40 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             )
         except Exception:
             log.debug("Work ledger gate event emission skipped", exc_info=True)
+
+        # ── Step 7A: persist and enforce strict schema hash ─────────
+        from arnold_pipelines.megaplan.handlers.schema_parity import (
+            SchemaParityError,
+            canonical_schema_hash,
+            verify_schema_hash,
+        )
+
+        _gate_schema_hash_path = plan_dir / "gate_schema_hash.json"
+        _gate_schema = SCHEMAS.get("gate.json")
+        if isinstance(_gate_schema, dict):
+            _computed_hash = canonical_schema_hash(_gate_schema)
+            # Persist the schema hash at invocation time
+            atomic_write_json(_gate_schema_hash_path, {
+                "schema_hash": _computed_hash,
+                "phase": "gate",
+                "iteration": iteration,
+                "produced_at": now_utc(),
+            })
+            # Verify the persisted gate artifact matches the declared schema hash
+            try:
+                verify_schema_hash(
+                    _computed_hash, gate_summary, phase="gate"
+                )
+            except SchemaParityError as exc:
+                log.error("gate schema parity failure: %s", exc)
+                # Record the parity error but do not block the gate —
+                # the receipt carries the evidence for finalize to consume.
+                state.setdefault("meta", {}).setdefault("schema_parity_errors", []).append({
+                    "phase": "gate",
+                    "reason": exc.reason,
+                    "detail": exc.detail,
+                    "iteration": iteration,
+                })
 
         # Emit flag_raised / flag_resolved based on delta vs prior gate pass
         raised: set[str] = set()

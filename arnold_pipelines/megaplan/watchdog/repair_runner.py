@@ -1,17 +1,274 @@
-"""Repair-runner adapter with broken-CLI resilience."""
+"""Repair-runner adapter with broken-CLI resilience.
+
+M9: Repair eligibility classification consumes canonical source-cursor
+projections plus exact failure signatures.  Raw labels, mutable markers, or
+stale projections cannot grant repair eligibility — only verify-only
+acceptance against current evidence.
+"""
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shlex
 import shutil
 import subprocess
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Dict, Optional, Sequence, Tuple
 
-from arnold_pipelines.megaplan.cloud.repair_contract import append_attempt_record
+from arnold_pipelines.megaplan.source_cursor_contract import (
+    DimensionCursor,
+    SourceCursorVector,
+)
+from arnold_pipelines.megaplan.run_state.quality_family import (
+    QualityFamily,
+    normalize_quality_family,
+)
+
+
+# ── M9: Repair eligibility classification ──────────────────────────────────
+
+
+class RepairEligibilityVerdict(Enum):
+    """Typed repair eligibility verdict.
+
+    * ELIGIBLE — canonical source-cursor projections + exact failure
+      signatures confirm eligibility.
+    * INELIGIBLE — evidence is insufficient, stale, or blocked by
+      non-authoritative markers.
+    * INDETERMINATE — cannot determine eligibility (missing evidence,
+      contradictory sources, migration gap).
+    """
+
+    ELIGIBLE = "eligible"
+    INELIGIBLE = "ineligible"
+    INDETERMINATE = "indeterminate"
+
+
+@dataclass(frozen=True)
+class RepairFailureSignature:
+    """Exact failure signature for repair eligibility classification.
+
+    Binds a specific failure occurrence to its source evidence so that
+    stale, recycled, or cross-plan occurrences cannot be mistaken for
+    current eligibility.
+    """
+
+    criterion_id: str = ""
+    """Structured criterion identifier (e.g. quality check id, test name)."""
+
+    quality_family: str = ""
+    """Canonical quality family (fail, error, timeout, etc.) from QualityFamily."""
+
+    content_hash: str = ""
+    """sha256 over the original failure evidence (status + command + occurrence)."""
+
+    occurred_at: str = ""
+    """ISO-8601 timestamp when the failure was first observed."""
+
+    exit_code: Optional[int] = None
+    """Process exit code associated with the failure (if any)."""
+
+    detail: str = ""
+    """Human-readable detail from the original failure."""
+
+    evidence_id: str = ""
+    """Content-addressed evidence identifier for this exact signature."""
+
+    def __post_init__(self) -> None:
+        if not self.evidence_id:
+            raw = (
+                f"{self.criterion_id}\\x00{self.quality_family}\\x00"
+                f"{self.content_hash}\\x00{self.occurred_at}"
+            )
+            digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+            object.__setattr__(self, "evidence_id", f"sha256:{digest}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "criterion_id": self.criterion_id,
+            "quality_family": self.quality_family,
+            "content_hash": self.content_hash,
+            "occurred_at": self.occurred_at,
+            "exit_code": self.exit_code,
+            "detail": self.detail,
+            "evidence_id": self.evidence_id,
+        }
+
+    @classmethod
+    def from_failure(
+        cls,
+        *,
+        criterion_id: str = "",
+        original_status: str = "",
+        command: str = "",
+        occurred_at: str = "",
+        exit_code: Optional[int] = None,
+        detail: str = "",
+    ) -> "RepairFailureSignature":
+        """Create a signature from original failure evidence.
+
+        The content_hash is computed over (original_status, command, criterion_id)
+        for deterministic identity.  No mutable marker or label is used for
+        the hash — only the original evidence.
+        """
+        quality_family = normalize_quality_family(original_status).value
+        raw_hash = f"{original_status}\\x00{command}\\x00{criterion_id}"
+        content_hash = "sha256:" + hashlib.sha256(raw_hash.encode("utf-8")).hexdigest()
+        return cls(
+            criterion_id=criterion_id,
+            quality_family=quality_family,
+            content_hash=content_hash,
+            occurred_at=occurred_at,
+            exit_code=exit_code,
+            detail=detail,
+        )
+
+
+@dataclass(frozen=True)
+class RepairEligibility:
+    """Typed repair eligibility — verify-only, never bearer authority.
+
+    Repair eligibility is classified from canonical source-cursor
+    projections plus exact failure signatures.  Raw labels, mutable
+    markers, or stale projections **cannot** grant eligibility.
+
+    This is a verify-only gate: even when ``verdict`` is ELIGIBLE, the
+    caller must still reread current grant/fence, custody lease/epoch,
+    and WBC evidence before any positive repair action.
+    """
+
+    verdict: RepairEligibilityVerdict
+    """ELIGIBLE, INELIGIBLE, or INDETERMINATE."""
+
+    failure_signatures: Tuple[RepairFailureSignature, ...] = ()
+    """Exact failure signatures that were evaluated."""
+
+    source_cursor: Optional[SourceCursorVector] = None
+    """Canonical source-cursor projection used for classification."""
+
+    blocking_reasons: Tuple[str, ...] = ()
+    """Why eligibility was denied or deferred (empty when ELIGIBLE)."""
+
+    evidence_ids: Tuple[str, ...] = ()
+
+    positive_dispatch_requires_reread: bool = True
+
+    _non_authoritative: bool = field(default=True, init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_non_authoritative", True)
+        eids = [sig.evidence_id for sig in self.failure_signatures]
+        if self.source_cursor is not None:
+            eids.append(self.source_cursor.vector_id)
+        object.__setattr__(self, "evidence_ids", tuple(eids))
+
+    @property
+    def is_eligible(self) -> bool:
+        return self.verdict == RepairEligibilityVerdict.ELIGIBLE
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "verdict": self.verdict.value,
+            "failure_signatures": [s.to_dict() for s in self.failure_signatures],
+            "source_cursor": self.source_cursor.to_dict() if self.source_cursor else None,
+            "blocking_reasons": list(self.blocking_reasons),
+            "evidence_ids": list(self.evidence_ids),
+            "positive_dispatch_requires_reread": self.positive_dispatch_requires_reread,
+            "_non_authoritative": self._non_authoritative,
+        }
+
+    @classmethod
+    def classify(
+        cls,
+        *,
+        failure_signatures: Sequence[RepairFailureSignature],
+        source_cursor: Optional[SourceCursorVector] = None,
+    ) -> "RepairEligibility":
+        """Classify repair eligibility from canonical projections + exact signatures.
+
+        Rules (verify-only; none grant authority):
+        1. No failure signatures → INELIGIBLE (nothing to repair)
+        2. Source cursor absent → INDETERMINATE
+        3. Any blocking dimension (stale/unknown/incoherent) → INDETERMINATE
+        4. All failure signatures are quality-family UNKNOWN → INELIGIBLE
+           (cannot classify without recognized failures)
+        5. At least one FAIL/ERROR/TIMEOUT signature with fresh source
+           cursor → ELIGIBLE
+        6. WARN-only → INELIGIBLE (warnings are not repair-triggering)
+        """
+        failure_blocking: list[str] = []
+        cursor_blocking: list[str] = []
+
+        if not failure_signatures:
+            return cls(
+                verdict=RepairEligibilityVerdict.INELIGIBLE,
+                blocking_reasons=("no failure signatures provided",),
+                source_cursor=source_cursor,
+            )
+
+        if source_cursor is None:
+            return cls(
+                verdict=RepairEligibilityVerdict.INDETERMINATE,
+                failure_signatures=tuple(failure_signatures),
+                blocking_reasons=("no source-cursor projection available",),
+            )
+
+        # Check source-cursor dimensions — tracked separately from
+        # failure-based blocking so that actionable failures with a stale
+        # cursor become INDETERMINATE instead of INELIGIBLE.
+        stale_dims = source_cursor.stale_dimensions()
+        if stale_dims:
+            cursor_blocking.append(
+                f"source-cursor has non-fresh dimensions: {', '.join(stale_dims)}"
+            )
+
+        # Classify failure signatures for actionable vs non-actionable
+        actionable_families = {"fail", "error", "timeout"}
+        has_actionable = any(
+            s.quality_family in actionable_families for s in failure_signatures
+        )
+        all_unknown = all(
+            s.quality_family == QualityFamily.UNKNOWN.value
+            for s in failure_signatures
+        )
+
+        if all_unknown:
+            failure_blocking.append("all failure signatures are quality-family unknown")
+        elif not has_actionable:
+            failure_blocking.append(
+                "failure signatures are pass/skip/warn only — no actionable failures"
+            )
+
+        # When failures themselves block eligibility, return INELIGIBLE
+        # regardless of cursor staleness.
+        if failure_blocking:
+            return cls(
+                verdict=RepairEligibilityVerdict.INELIGIBLE,
+                failure_signatures=tuple(failure_signatures),
+                source_cursor=source_cursor,
+                blocking_reasons=tuple(failure_blocking),
+            )
+
+        # Actionable failures exist but cursor has stale/unknown/incoherent
+        # dimensions — cannot confirm eligibility, return INDETERMINATE
+        # with both failure and cursor context.
+        if stale_dims:
+            return cls(
+                verdict=RepairEligibilityVerdict.INDETERMINATE,
+                failure_signatures=tuple(failure_signatures),
+                source_cursor=source_cursor,
+                blocking_reasons=tuple(cursor_blocking),
+            )
+
+        # Actionable failures + fresh cursor → ELIGIBLE
+        return cls(
+            verdict=RepairEligibilityVerdict.ELIGIBLE,
+            failure_signatures=tuple(failure_signatures),
+            source_cursor=source_cursor,
+        )
 
 
 @dataclass(frozen=True)
@@ -44,16 +301,9 @@ class RepairRunner:
         self,
         executable_search_path: Sequence[str] | None = None,
         python_bin: str | None = None,
-        evidence_sidecar_dir: str | None = None,
-        evidence_session: str = "",
     ) -> None:
         self._search_path = executable_search_path
         self._python_bin = python_bin or shutil.which("python3") or shutil.which("python") or "python"
-        self._evidence_sidecar_dir = evidence_sidecar_dir or os.environ.get(
-            "CLOUD_WATCHDOG_REPAIR_SIDECAR_DIR",
-            "",
-        )
-        self._evidence_session = evidence_session or os.environ.get("SESSION", "")
 
     def _is_dry_run(self) -> bool:
         """An empty search path signals dry-run: do not execute anything."""
@@ -114,13 +364,10 @@ class RepairRunner:
     def _megaplan_subcommand_env(self, base: dict[str, str] | None = None) -> dict[str, str]:
         """Anchor Megaplan subprocesses to the editable install engine checkout."""
 
-        from arnold_pipelines.megaplan.runtime.process import (
-            megaplan_engine_env,
-            megaplan_engine_root,
-        )
+        from arnold_pipelines.megaplan.runtime.process import megaplan_engine_env, megaplan_engine_root
 
         env = megaplan_engine_env(base)
-        env.setdefault("MEGAPLAN_ENGINE_ROOT", str(megaplan_engine_root()))
+        env["MEGAPLAN_ENGINE_ROOT"] = str(megaplan_engine_root())
         env["PYTHONSAFEPATH"] = "1"
         # Meta-loop repairs default to the validated partnered-5 profile
         # (arnold_pipelines/megaplan/profiles/partnered-5.toml). Plan configs that
@@ -140,14 +387,12 @@ class RepairRunner:
         """Execute *command* and return a structured result."""
         argv, argv_cwd, is_megaplan_subcommand = self._argv_for_command(command)
         if not argv:
-            result = RepairResult(
+            return RepairResult(
                 status="command_unavailable",
                 stdout="",
                 stderr=f"executable not found or unsupported command: {command!r}",
                 rc=None,
             )
-            self._append_evidence(command, result, project_dir=project_dir, plan_dir=plan_dir)
-            return result
 
         cwd = argv_cwd or project_dir
         if cwd is None and plan_dir is not None:
@@ -177,70 +422,32 @@ class RepairRunner:
                 env=env,
             )
             status = "success" if result.returncode == 0 else "failed"
-            repair_result = RepairResult(
+            return RepairResult(
                 status=status,
                 stdout=result.stdout,
                 stderr=result.stderr,
                 rc=result.returncode,
             )
-            self._append_evidence(command, repair_result, project_dir=cwd, plan_dir=plan_dir)
-            return repair_result
         except (FileNotFoundError, OSError) as exc:
-            result = RepairResult(
+            return RepairResult(
                 status="command_unavailable",
                 stdout="",
                 stderr=f"could not execute {argv!r}: {exc}",
                 rc=None,
             )
-            self._append_evidence(command, result, project_dir=cwd, plan_dir=plan_dir)
-            return result
         except subprocess.TimeoutExpired:
-            result = RepairResult(
+            return RepairResult(
                 status="timeout",
                 stdout="",
                 stderr="command timed out after 300s",
                 rc=None,
             )
-            self._append_evidence(command, result, project_dir=cwd, plan_dir=plan_dir)
-            return result
-
-    def _append_evidence(
-        self,
-        command: str,
-        result: RepairResult,
-        *,
-        project_dir: str | None,
-        plan_dir: str | None,
-    ) -> None:
-        if not self._evidence_sidecar_dir:
-            return
-        recorded_at = datetime.now(timezone.utc).isoformat()
-        append_attempt_record(
-            self._evidence_sidecar_dir,
-            {
-                "session_id": self._evidence_session,
-                "attempt_id": f"repair-runner:{recorded_at}",
-                "actor": "watchdog.repair_runner",
-                "command": command,
-                "state": self._result_state(result.status),
-                "outcome": result.status,
-                "returncode": result.rc,
-                "project_dir": project_dir or "",
-                "plan_dir": plan_dir or "",
-                "recorded_at": recorded_at,
-            },
-        )
-
-    @staticmethod
-    def _result_state(status: str) -> str:
-        if status == "success":
-            return "succeeded"
-        if status == "timeout":
-            return "running"
-        return "failed"
 
 
 __all__ = [
+    "RepairEligibilityVerdict",
+    "RepairFailureSignature",
+    "RepairEligibility",
     "RepairResult",
     "RepairRunner",
 ]

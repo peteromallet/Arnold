@@ -1131,3 +1131,70 @@ class TestCrossModelF01Integrity:
         d1 = occurrence_digest(f01, fence_token=1, chain_identity="cid-a")
         d2 = occurrence_digest(f01, fence_token=1, chain_identity="cid-b")
         assert d1 != d2
+
+
+# ── Timing and recurrence policy constant tests ─────────────────────────
+
+
+class TestLeaseTimingConstants:
+    """Verify lease TTL, grace, and max ceiling constants."""
+
+    def test_default_lease_ttl_is_positive(self) -> None:
+        from arnold_pipelines.megaplan.custody.contracts import DEFAULT_LEASE_TTL_SECONDS
+
+        assert DEFAULT_LEASE_TTL_SECONDS > 0
+        assert isinstance(DEFAULT_LEASE_TTL_SECONDS, int)
+
+    def test_default_lease_grace_is_positive(self) -> None:
+        from arnold_pipelines.megaplan.custody.contracts import DEFAULT_LEASE_GRACE_SECONDS
+
+        assert DEFAULT_LEASE_GRACE_SECONDS > 0
+        assert isinstance(DEFAULT_LEASE_GRACE_SECONDS, int)
+
+    def test_maximum_lease_ttl_exceeds_default(self) -> None:
+        from arnold_pipelines.megaplan.custody.contracts import (
+            DEFAULT_LEASE_TTL_SECONDS,
+            MAXIMUM_LEASE_TTL_SECONDS,
+        )
+
+        assert MAXIMUM_LEASE_TTL_SECONDS >= DEFAULT_LEASE_TTL_SECONDS
+        assert isinstance(MAXIMUM_LEASE_TTL_SECONDS, int)
+
+    def test_maximum_lease_ttl_is_24_hours(self) -> None:
+        from arnold_pipelines.megaplan.custody.contracts import MAXIMUM_LEASE_TTL_SECONDS
+
+        assert MAXIMUM_LEASE_TTL_SECONDS == 86400  # 24 hours
+
+    def test_default_ttl_is_30_minutes(self) -> None:
+        from arnold_pipelines.megaplan.custody.contracts import DEFAULT_LEASE_TTL_SECONDS
+
+        assert DEFAULT_LEASE_TTL_SECONDS == 1800  # 30 minutes
+
+    def test_grace_is_5_minutes(self) -> None:
+        from arnold_pipelines.megaplan.custody.contracts import DEFAULT_LEASE_GRACE_SECONDS
+
+        assert DEFAULT_LEASE_GRACE_SECONDS == 300  # 5 minutes
+
+    def test_recurrence_minimum_interval_is_positive(self) -> None:
+        from arnold_pipelines.megaplan.custody.contracts import (
+            DEFAULT_REPAIR_RECURRENCE_MINIMUM_INTERVAL_SECONDS,
+        )
+
+        assert DEFAULT_REPAIR_RECURRENCE_MINIMUM_INTERVAL_SECONDS > 0
+        assert isinstance(DEFAULT_REPAIR_RECURRENCE_MINIMUM_INTERVAL_SECONDS, int)
+
+    def test_recurrence_minimum_interval_is_2_minutes(self) -> None:
+        from arnold_pipelines.megaplan.custody.contracts import (
+            DEFAULT_REPAIR_RECURRENCE_MINIMUM_INTERVAL_SECONDS,
+        )
+
+        assert DEFAULT_REPAIR_RECURRENCE_MINIMUM_INTERVAL_SECONDS == 120
+
+    def test_total_lease_window_is_ttl_plus_grace(self) -> None:
+        from arnold_pipelines.megaplan.custody.contracts import (
+            DEFAULT_LEASE_GRACE_SECONDS,
+            DEFAULT_LEASE_TTL_SECONDS,
+        )
+
+        total = DEFAULT_LEASE_TTL_SECONDS + DEFAULT_LEASE_GRACE_SECONDS
+        assert total == 2100  # 35 minutes

@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import arnold_pipelines.megaplan.cloud.runtime_provenance as provenance_module
 from arnold_pipelines.megaplan.cloud.runtime_provenance import runtime_provenance
 
 
@@ -25,9 +26,9 @@ def test_runtime_provenance_rejects_wrong_expected_revision() -> None:
     assert "source_revision_mismatch" in payload["errors"]
 
 
-def test_runtime_source_is_valid_when_git_metadata_is_a_worktree_file() -> None:
+def test_runtime_source_has_valid_git_metadata() -> None:
     source = Path(__file__).parents[2].resolve()
-    assert (source / ".git").is_file()
+    assert (source / ".git").is_file() or (source / ".git").is_dir()
     result = subprocess.run(
         ["git", "-C", str(source), "rev-parse", "--git-dir"],
         check=False,
@@ -83,3 +84,42 @@ def test_editable_subprocess_uses_pinned_source_despite_cwd_shadow(tmp_path: Pat
     assert payload["editable_root"] == str(source)
     assert payload["source_revision"] == revision
     assert payload["runtime_revision"] == revision
+    assert payload["pth"]
+    assert {
+        entry
+        for record in payload["pth"]
+        for entry in record["entries"]
+    } == {str(source)}
+
+
+def test_runtime_provenance_rejects_stale_editable_pth(
+    monkeypatch,
+) -> None:
+    source = Path(__file__).parents[2].resolve()
+    revision = subprocess.check_output(
+        ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
+    ).strip()
+    monkeypatch.setattr(
+        provenance_module,
+        "_direct_url_identity",
+        lambda: (source, {"dir_info": {"editable": True}, "url": source.as_uri()}),
+    )
+    monkeypatch.setattr(
+        provenance_module,
+        "_pth_identity",
+        lambda: [
+            {
+                "path": "/venv/site-packages/_editable_impl_arnold.pth",
+                "entries": [str(source), "/workspace/stale-arnold"],
+                "readable": True,
+            }
+        ],
+    )
+
+    payload = runtime_provenance(
+        expected_root=source,
+        expected_revision=revision,
+    )
+
+    assert payload["ok"] is False
+    assert "editable_pth_mismatch" in payload["errors"]

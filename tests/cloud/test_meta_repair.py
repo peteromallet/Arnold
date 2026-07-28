@@ -867,6 +867,28 @@ class TestNonTriggerCases:
         assert result.should_dispatch is False
         assert "terminal success outcome" in result.rationale[0]
 
+    def test_completed_repair_with_failed_recovery_gate_routes_l2_and_preserves_custody(
+        self,
+    ) -> None:
+        evidence = {
+            "repair_request": {
+                "request_id": "request-m9",
+                "blocker_id": "blocker:m9",
+                "configured_profile": "partnered-5",
+            }
+        }
+        result = classify_repair_system_failure(
+            session="custody-control-plane-20260714",
+            evidence=evidence,
+            repair_outcome=COMPLETE,
+            post_fixer_recovery_gate_failed=True,
+        )
+
+        assert result.trigger is MetaRepairTrigger.POST_FIXER_RECOVERY_GATE_FAILED
+        assert result.should_dispatch is True
+        assert result.evidence["repair_request"] == evidence["repair_request"]
+        assert "not canonical cursor advancement" in result.rationale[0]
+
     def test_success_outcome_suppresses_stale_launch_failure(self) -> None:
         result = classify_repair_system_failure(
             session="s19-success-launch",

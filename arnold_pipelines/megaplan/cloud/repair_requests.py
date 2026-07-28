@@ -13,10 +13,6 @@ from pathlib import Path
 from typing import Any, Literal, Mapping
 
 from arnold_pipelines.megaplan.cloud import repair_contract
-from arnold_pipelines.megaplan.custody.contracts import (
-    build_repair_occurrence_key,
-    normalize_repair_occurrence_key,
-)
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
 from arnold_pipelines.megaplan.cloud.repair_lock import (
     RepairLockResult,
@@ -31,7 +27,20 @@ from arnold_pipelines.megaplan.cloud.repair_recurrence import (
     PROBLEM_SIGNATURE_FIELDS,
     build_acceptance_predicate_signature,
 )
-from arnold_pipelines.megaplan.run_state.model import NormalizedFailureToken
+from arnold_pipelines.megaplan.custody.contracts import (
+    CustodyLeaseEvent,
+    CustodyTargetKey,
+    RepairOccurrenceKey,
+    build_custody_target_key,
+    build_repair_occurrence_key,
+    process_birth_identity,
+)
+from arnold_pipelines.megaplan.custody.lease_store import (
+    CustodyLeaseStore,
+    open_lease_store,
+    StaleSequenceError,
+    LeaseIdempotencyConflict,
+)
 
 QUEUE_DIR_NAME = "repair-queue"
 REQUESTS_DIR_NAME = "requests"
@@ -75,542 +84,6 @@ class ActiveRepairClaimResult:
     @property
     def stale(self) -> bool:
         return self.status == "stale"
-
-
-def _mapping(value: Any) -> Mapping[str, Any]:
-    return value if isinstance(value, Mapping) else {}
-
-
-def _text(value: Any) -> str:
-    return str(value or "").strip()
-
-
-def _positive_int(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value if value > 0 else None
-    if isinstance(value, str):
-        try:
-            parsed = int(value.strip())
-        except ValueError:
-            return None
-        return parsed if parsed > 0 else None
-    return None
-
-
-def _first_text(*values: Any) -> str:
-    for value in values:
-        text = _text(value)
-        if text:
-            return text
-    return ""
-
-
-def normalize_repair_identity(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
-    normalized = normalize_repair_occurrence_key(payload)
-    return normalized.to_dict() if normalized is not None else None
-
-
-def repair_identity_key(payload: Mapping[str, Any] | None) -> str:
-    normalized = normalize_repair_occurrence_key(payload)
-    return normalized.key if normalized is not None else ""
-
-
-def derive_repair_identity(
-    *,
-    session: str,
-    problem_signature: Mapping[str, Any] | None = None,
-    target: Mapping[str, Any] | None = None,
-    plan_state: Mapping[str, Any] | None = None,
-    current_target: Mapping[str, Any] | None = None,
-    blocker_id: str = "",
-    blocker_fingerprint: Mapping[str, Any] | None = None,
-    repair_identity: Mapping[str, Any] | None = None,
-) -> dict[str, Any] | None:
-    """Build the exact repair occurrence tuple used to fence repair custody."""
-
-    if repair_identity is not None:
-        return normalize_repair_identity(repair_identity)
-
-    signature = _mapping(problem_signature)
-    target_payload = _mapping(target)
-    state_payload = _mapping(plan_state)
-    current_payload = _mapping(current_target)
-    if not (
-        state_payload
-        or current_payload
-        or any(
-            _text(target_payload.get(field))
-            for field in (
-                "environment_id",
-                "chain_id",
-                "plan_revision",
-                "coordinator_fence_token",
-                "fence_token",
-            )
-        )
-    ):
-        return None
-    current_refs = _mapping(current_payload.get("current_refs"))
-    marker = _mapping(current_payload.get("marker"))
-    current_plan_state = _mapping(current_payload.get("plan_state"))
-    latest_failure = _mapping(state_payload.get("latest_failure"))
-    latest_failure_meta = _mapping(latest_failure.get("metadata"))
-    active_step = _mapping(current_payload.get("active_step_heartbeat"))
-    evidence_cursor = _mapping(
-        latest_failure.get("evidence_cursor")
-        or latest_failure_meta.get("evidence_cursor")
-        or _mapping(state_payload.get("resume_cursor")).get("evidence_cursor")
-        or target_payload.get("evidence_cursor")
-    )
-
-    environment_id = _first_text(
-        target_payload.get("environment_id"),
-        target_payload.get("workspace_path"),
-        current_refs.get("workspace"),
-        marker.get("workspace"),
-        target_payload.get("plan_dir"),
-        marker.get("path"),
-    )
-    session_id = _first_text(
-        session,
-        current_payload.get("target_session"),
-        marker.get("session"),
-    )
-    chain_id = _first_text(
-        target_payload.get("chain_id"),
-        target_payload.get("remote_spec"),
-        current_refs.get("remote_spec"),
-        marker.get("remote_spec"),
-        target_payload.get("plan_dir"),
-        current_refs.get("run_kind"),
-    )
-    plan_revision = _first_text(
-        target_payload.get("plan_revision"),
-        state_payload.get("plan_revision"),
-        _mapping(state_payload.get("meta")).get("plan_revision"),
-        current_refs.get("plan_revision"),
-        current_plan_state.get("fingerprint"),
-        current_payload.get("target_id"),
-        evidence_cursor.get("review_artifact_hash"),
-        signature.get("milestone_or_plan"),
-    )
-    phase = _first_text(
-        target_payload.get("phase"),
-        latest_failure.get("phase"),
-        active_step.get("phase"),
-        signature.get("phase_or_step"),
-        state_payload.get("current_state"),
-    )
-    task_id = _first_text(
-        target_payload.get("task_id"),
-        latest_failure.get("blocked_task_id"),
-        latest_failure.get("task_id"),
-        latest_failure_meta.get("blocked_task_id"),
-        latest_failure_meta.get("task_id"),
-        signature.get("blocked_task_id"),
-        f"phase:{phase}" if phase else "",
-    )
-    attempt_number = (
-        _positive_int(target_payload.get("attempt_number"))
-        or _positive_int(target_payload.get("attempt"))
-        or _positive_int(latest_failure.get("attempt_number"))
-        or _positive_int(latest_failure_meta.get("attempt_number"))
-        or _positive_int(latest_failure_meta.get("attempt"))
-        or _positive_int(active_step.get("attempt"))
-        or 1
-    )
-    failure_kind = _first_text(
-        target_payload.get("failure_kind"),
-        latest_failure.get("kind"),
-        signature.get("failure_kind"),
-        _mapping(current_payload.get("event_cursors")).get("latest_failure_kind"),
-        state_payload.get("current_state"),
-    )
-    blocker_digest = _first_text(
-        target_payload.get("blocker_digest"),
-        blocker_id,
-        repair_contract.blocker_id_for_fingerprint(blocker_fingerprint),
-        problem_signature_key(signature) if signature else "",
-        current_payload.get("target_id"),
-    )
-    coordinator_fence_token = _first_text(
-        target_payload.get("coordinator_fence_token"),
-        target_payload.get("fence_token"),
-        state_payload.get("fence_token"),
-        _mapping(state_payload.get("meta")).get("fence_token"),
-        latest_failure_meta.get("coordinator_fence_token"),
-        latest_failure_meta.get("fence_token"),
-        current_refs.get("fence_token"),
-        current_plan_state.get("fingerprint"),
-        evidence_cursor.get("review_artifact_hash"),
-        blocker_digest,
-    )
-    occurrence = build_repair_occurrence_key(
-        environment_id=environment_id,
-        session_id=session_id,
-        chain_id=chain_id,
-        plan_revision=plan_revision,
-        phase=phase,
-        task_id=task_id,
-        attempt_number=attempt_number,
-        failure_kind=failure_kind,
-        blocker_digest=blocker_digest,
-        coordinator_fence_token=coordinator_fence_token,
-    )
-    return occurrence.to_dict() if occurrence is not None else None
-
-
-def exact_repair_identity_available(
-    *,
-    target: Mapping[str, Any] | None = None,
-    plan_state: Mapping[str, Any] | None = None,
-    current_target: Mapping[str, Any] | None = None,
-) -> bool:
-    """Return true when revision and fence come from explicit current evidence.
-
-    Exact repair custody requires an observed plan revision and current fence
-    token. Compatibility fallbacks such as fingerprints, blocker ids, or target
-    ids are intentionally excluded from this predicate.
-    """
-
-    target_payload = _mapping(target)
-    state_payload = _mapping(plan_state)
-    current_payload = _mapping(current_target)
-    current_refs = _mapping(current_payload.get("current_refs"))
-    latest_failure = _mapping(state_payload.get("latest_failure"))
-    latest_failure_meta = _mapping(latest_failure.get("metadata"))
-
-    plan_revision = _first_text(
-        target_payload.get("plan_revision"),
-        state_payload.get("plan_revision"),
-        _mapping(state_payload.get("meta")).get("plan_revision"),
-        current_refs.get("plan_revision"),
-    )
-    coordinator_fence_token = _first_text(
-        target_payload.get("coordinator_fence_token"),
-        target_payload.get("fence_token"),
-        state_payload.get("fence_token"),
-        _mapping(state_payload.get("meta")).get("fence_token"),
-        latest_failure_meta.get("coordinator_fence_token"),
-        latest_failure_meta.get("fence_token"),
-        current_refs.get("fence_token"),
-    )
-    return bool(plan_revision and coordinator_fence_token)
-
-
-# ──────────────────────────────────────────────────────────────────────
-# T18 / Step 11 — canonical repair dispatch identity contract.
-#
-# Repair dispatch can mutate control flow and external work.  The contract
-# below binds every dispatch decision to the *exact live occurrence tuple*
-# observed at dispatch time, and forces callers to present a fresh source
-# reread before any of the five mutating action kinds (repair / retry /
-# escalation / cancellation / adoption).  Compatibility fallbacks such as
-# plan fingerprints, blocker ids, or target ids are deliberately excluded
-# — only explicit current evidence participates in the canonical tuple.
-# ──────────────────────────────────────────────────────────────────────
-
-# The five dispatch action kinds that may mutate repair control flow.
-REPAIR_ACTION_REPAIR = "repair"
-REPAIR_ACTION_RETRY = "retry"
-REPAIR_ACTION_ESCALATION = "escalation"
-REPAIR_ACTION_CANCELLATION = "cancellation"
-REPAIR_ACTION_ADOPTION = "adoption"
-REPAIR_ACTION_KINDS: frozenset[str] = frozenset(
-    {
-        REPAIR_ACTION_REPAIR,
-        REPAIR_ACTION_RETRY,
-        REPAIR_ACTION_ESCALATION,
-        REPAIR_ACTION_CANCELLATION,
-        REPAIR_ACTION_ADOPTION,
-    }
-)
-
-# When present, a phase-result digest takes precedence over a blocker digest
-# (a task that failed via a phase result rather than a human blocker still
-# needs an exact occurrence anchor).
-_DISPATCH_DIGEST_KIND_BLOCKER = "blocker"
-_DISPATCH_DIGEST_KIND_PHASE_RESULT = "phase_result"
-
-
-@dataclass(frozen=True)
-class RepairDispatchIdentity:
-    """Exact live occurrence tuple for a repair dispatch decision.
-
-    Every mutating repair action (repair / retry / escalation / cancellation /
-    adoption) binds to one of these tuples.  The tuple carries the full
-    occurrence identity observed at dispatch time so a stale attempt, a
-    recycled fence token, or a different plan revision cannot reuse a prior
-    dispatch.
-
-    The tuple is deliberately exact: ``plan_revision`` and
-    ``coordinator_fence_token`` must come from explicit current evidence
-    (no fingerprint / blocker-id fallbacks).  ``normalized_failure_kind``
-    is the canonical token derived via
-    :class:`~arnold_pipelines.megaplan.run_state.model.NormalizedFailureToken`
-    so ``fail`` / ``failed`` / ``failed: <detail>`` / ``error: <detail>``
-    collapse predictably while the raw form is preserved for diagnostics.
-    """
-
-    environment_id: str
-    session_id: str
-    chain_id: str
-    plan_revision: str
-    phase: str
-    task_id: str
-    attempt_number: int
-    normalized_failure_kind: str
-    dispatch_digest_kind: str
-    dispatch_digest: str
-    coordinator_fence_token: str
-    # Provenance — the source reread that produced this tuple.  These fields
-    # are display/diagnostic only; they never grant authority.
-    source_reread_at: str = ""
-    source_digest: str = ""
-    raw_failure_kind: str = ""
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "environment_id": self.environment_id,
-            "session_id": self.session_id,
-            "chain_id": self.chain_id,
-            "plan_revision": self.plan_revision,
-            "phase": self.phase,
-            "task_id": self.task_id,
-            "attempt_number": self.attempt_number,
-            "normalized_failure_kind": self.normalized_failure_kind,
-            "dispatch_digest_kind": self.dispatch_digest_kind,
-            "dispatch_digest": self.dispatch_digest,
-            "coordinator_fence_token": self.coordinator_fence_token,
-            "source_reread_at": self.source_reread_at,
-            "source_digest": self.source_digest,
-            "raw_failure_kind": self.raw_failure_kind,
-            "authority": "evidence_extracted_non_authoritative",
-        }
-
-
-@dataclass(frozen=True)
-class SourceRereadVerdict:
-    """Outcome of :func:`require_source_reread_for_action`.
-
-    ``permitted`` is True only when a fresh source reread was presented whose
-    tuple matches the current observed tuple and whose fence token agrees.
-    Every other outcome sets ``permitted`` to False and supplies a precise
-    ``reason`` the dispatch layer can record.
-    """
-
-    action: str
-    permitted: bool
-    reason: str
-    current_fence_token: str = ""
-    fresh_fence_token: str = ""
-    current_tuple_digest: str = ""
-    fresh_tuple_digest: str = ""
-
-
-def _dispatch_digest(
-    *,
-    blocker_digest: str,
-    phase_result_digest: str,
-) -> tuple[str, str]:
-    """Pick the (kind, digest) anchor for a dispatch tuple.
-
-    A phase-result digest takes precedence over a blocker digest so a task
-    that failed via a phase result rather than a human blocker still gets an
-    exact anchor.  Returns ``("", "")`` when neither is present (the caller
-    treats that as an unverifiable occurrence and refuses dispatch).
-    """
-    if phase_result_digest:
-        return _DISPATCH_DIGEST_KIND_PHASE_RESULT, phase_result_digest
-    if blocker_digest:
-        return _DISPATCH_DIGEST_KIND_BLOCKER, blocker_digest
-    return "", ""
-
-
-def derive_dispatch_identity_from_source_reread(
-    *,
-    environment_id: str,
-    session_id: str,
-    chain_id: str,
-    plan_revision: str,
-    phase: str,
-    task_id: str,
-    attempt_number: int,
-    raw_failure_kind: str,
-    blocker_digest: str = "",
-    phase_result_digest: str = "",
-    coordinator_fence_token: str,
-    source_reread_at: str,
-    source_digest: str,
-) -> RepairDispatchIdentity | None:
-    """Build a canonical :class:`RepairDispatchIdentity` from a fresh reread.
-
-    This is the *only* function permitted to mint a dispatch identity, and it
-    requires explicit provenance: ``source_reread_at`` (an ISO-8601 timestamp
-    of the fresh source read) and ``source_digest`` (a content digest of the
-    source records read).  Returns ``None`` when required exact-evidence
-    fields are missing — callers must treat ``None`` as "refuse dispatch".
-
-    ``plan_revision`` and ``coordinator_fence_token`` must come from explicit
-    current evidence; the caller is responsible for not falling back to
-    fingerprints / blocker ids / target ids before invoking this function
-    (see :func:`exact_repair_identity_available` for the predicate).
-    """
-    if not (environment_id and session_id and chain_id and plan_revision and phase):
-        return None
-    if not coordinator_fence_token:
-        return None
-    if not source_reread_at or not source_digest:
-        return None
-    try:
-        attempt = int(attempt_number)
-    except (TypeError, ValueError):
-        return None
-    if attempt <= 0:
-        return None
-    digest_kind, digest = _dispatch_digest(
-        blocker_digest=blocker_digest,
-        phase_result_digest=phase_result_digest,
-    )
-    if not digest:
-        # No anchor — the occurrence cannot be bound exactly.
-        return None
-    token = NormalizedFailureToken.normalize(raw_failure_kind or "")
-    return RepairDispatchIdentity(
-        environment_id=environment_id,
-        session_id=session_id,
-        chain_id=chain_id,
-        plan_revision=plan_revision,
-        phase=phase,
-        task_id=task_id or "",
-        attempt_number=attempt,
-        normalized_failure_kind=token.canonical,
-        dispatch_digest_kind=digest_kind,
-        dispatch_digest=digest,
-        coordinator_fence_token=coordinator_fence_token,
-        source_reread_at=source_reread_at,
-        source_digest=source_digest,
-        raw_failure_kind=token.raw,
-    )
-
-
-def repair_dispatch_identity_key(identity: RepairDispatchIdentity | None) -> str:
-    """Return a stable digest over the exact occurrence tuple.
-
-    The digest covers every authority-bearing field of the tuple but never
-    the provenance fields (``source_reread_at`` / ``source_digest``).  Two
-    identities with the same occurrence but reread at different times must
-    compare equal.
-    """
-    if identity is None:
-        return ""
-    payload = json.dumps(
-        {
-            "environment_id": identity.environment_id,
-            "session_id": identity.session_id,
-            "chain_id": identity.chain_id,
-            "plan_revision": identity.plan_revision,
-            "phase": identity.phase,
-            "task_id": identity.task_id,
-            "attempt_number": identity.attempt_number,
-            "normalized_failure_kind": identity.normalized_failure_kind,
-            "dispatch_digest_kind": identity.dispatch_digest_kind,
-            "dispatch_digest": identity.dispatch_digest,
-            "coordinator_fence_token": identity.coordinator_fence_token,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
-def require_source_reread_for_action(
-    action: str,
-    *,
-    current_identity: RepairDispatchIdentity | None,
-    fresh_identity: RepairDispatchIdentity | None,
-) -> SourceRereadVerdict:
-    """Gate a mutating repair action on a fresh, agreeing source reread.
-
-    The five mutating action kinds (repair / retry / escalation / cancellation
-    / adoption) must present a ``fresh_identity`` derived from a *new* source
-    reread.  The verdict permits the action only when:
-
-    * both ``current_identity`` and ``fresh_identity`` are present,
-    * the fresh tuple digest equals the current tuple digest (same occurrence),
-    * the fresh fence token equals the current fence token (no fence drift),
-    * the fresh ``source_reread_at`` is not earlier than the current one
-      (the reread is actually fresh).
-
-    Any disagreement quarantines the action with a precise reason.  This is a
-    read-only gate — it never mutates state and never grants authority beyond
-    "the occurrence tuple is still live".
-    """
-    if action not in REPAIR_ACTION_KINDS:
-        return SourceRereadVerdict(
-            action=action,
-            permitted=False,
-            reason=f"unknown repair action kind: {action!r}",
-        )
-    if fresh_identity is None:
-        return SourceRereadVerdict(
-            action=action,
-            permitted=False,
-            reason="no fresh source reread supplied for dispatch action",
-        )
-    if current_identity is None:
-        return SourceRereadVerdict(
-            action=action,
-            permitted=False,
-            reason="no current occurrence tuple to bind dispatch action against",
-        )
-    current_key = repair_dispatch_identity_key(current_identity)
-    fresh_key = repair_dispatch_identity_key(fresh_identity)
-    if current_key != fresh_key:
-        return SourceRereadVerdict(
-            action=action,
-            permitted=False,
-            reason="fresh source reread occurrence tuple disagrees with current tuple",
-            current_fence_token=current_identity.coordinator_fence_token,
-            fresh_fence_token=fresh_identity.coordinator_fence_token,
-            current_tuple_digest=current_key,
-            fresh_tuple_digest=fresh_key,
-        )
-    if current_identity.coordinator_fence_token != fresh_identity.coordinator_fence_token:
-        return SourceRereadVerdict(
-            action=action,
-            permitted=False,
-            reason="coordinator fence token drifted between current and fresh reread",
-            current_fence_token=current_identity.coordinator_fence_token,
-            fresh_fence_token=fresh_identity.coordinator_fence_token,
-            current_tuple_digest=current_key,
-            fresh_tuple_digest=fresh_key,
-        )
-    if (
-        current_identity.source_reread_at
-        and fresh_identity.source_reread_at
-        and fresh_identity.source_reread_at < current_identity.source_reread_at
-    ):
-        return SourceRereadVerdict(
-            action=action,
-            permitted=False,
-            reason="fresh source reread predates the current reread (stale)",
-            current_fence_token=current_identity.coordinator_fence_token,
-            fresh_fence_token=fresh_identity.coordinator_fence_token,
-            current_tuple_digest=current_key,
-            fresh_tuple_digest=fresh_key,
-        )
-    return SourceRereadVerdict(
-        action=action,
-        permitted=True,
-        reason="fresh source reread occurrence tuple matches current tuple",
-        current_fence_token=current_identity.coordinator_fence_token,
-        fresh_fence_token=fresh_identity.coordinator_fence_token,
-        current_tuple_digest=current_key,
-        fresh_tuple_digest=fresh_key,
-    )
 
 
 def utc_now() -> str:
@@ -722,7 +195,6 @@ def request_id_for(
     problem_signature: Mapping[str, Any],
     root_cause_hint: Any = "",
     extra_signature_fields: tuple[str, ...] = (),
-    repair_identity: Mapping[str, Any] | None = None,
 ) -> str:
     """Return a stable request id unaffected by timestamps or raw hint text.
 
@@ -739,9 +211,171 @@ def request_id_for(
                 problem_signature, extra_fields=extra_signature_fields
             ),
             "root_cause_hint_hash": redacted_hint_hash(root_cause_hint),
-            "repair_identity": normalize_repair_identity(repair_identity),
         }
     )
+
+
+def _default_retry_strategy(
+    problem_signature: Mapping[str, Any],
+    target: Mapping[str, Any],
+) -> str:
+    explicit = str(
+        problem_signature.get("retry_strategy")
+        or target.get("retry_strategy")
+        or ""
+    ).strip()
+    if explicit:
+        return explicit
+    return {
+        "deterministic_phase_failure": "repair_phase_contract",
+        "human_gate": "human_decision",
+        "awaiting_pr_merge": "reconcile_pr_merge",
+        "blocked_recovery_not_resolved": "manual_review",
+    }.get(str(problem_signature.get("failure_kind") or "").strip(), "repair_request")
+
+
+def _canonicalize_blocked_task_id(problem_signature: dict[str, Any]) -> None:
+    if str(problem_signature.get("blocked_task_id") or "").strip():
+        return
+    phase = str(problem_signature.get("phase_or_step") or "").strip()
+    milestone = str(problem_signature.get("milestone_or_plan") or "").strip()
+    if phase:
+        problem_signature["blocked_task_id"] = f"phase:{phase}"
+    elif milestone:
+        problem_signature["blocked_task_id"] = f"plan:{milestone}"
+
+
+def _canonical_request_blocker_identity(
+    *,
+    session: str,
+    workspace: str | Path | None,
+    target: Mapping[str, Any],
+    problem_signature: Mapping[str, Any],
+    signature_key: str,
+) -> tuple[dict[str, Any], str]:
+    session_identity = str(session or "").strip()
+    milestone_or_plan = str(
+        problem_signature.get("milestone_or_plan")
+        or target.get("plan_name")
+        or target.get("plan")
+        or target.get("pipeline_name")
+        or session_identity
+    ).strip()
+    required = {
+        "session": session_identity,
+        "current_state": str(problem_signature.get("current_state") or "").strip(),
+        "failure_kind": str(problem_signature.get("failure_kind") or "").strip(),
+        "phase_or_step": str(problem_signature.get("phase_or_step") or "").strip(),
+        "milestone_or_plan": milestone_or_plan,
+        "blocked_task_id": str(problem_signature.get("blocked_task_id") or "").strip(),
+    }
+    missing = [name for name, value in required.items() if not value]
+    if missing:
+        raise ValueError(
+            "repair request cannot allocate canonical blocker identity; missing "
+            + ", ".join(missing)
+        )
+    target_identity = {
+        "session": session_identity,
+        "workspace": str(
+            workspace
+            or target.get("workspace_path")
+            or target.get("workspace")
+            or ""
+        ),
+        "plan": milestone_or_plan,
+        "plan_dir": str(target.get("plan_dir") or ""),
+        "pipeline": str(target.get("pipeline_name") or ""),
+        "problem_signature_key": signature_key,
+    }
+    fingerprint = repair_contract.normalize_blocker_fingerprint_v1(
+        {
+            "schema_version": repair_contract.BLOCKER_FINGERPRINT_VERSION,
+            "current_state": required["current_state"],
+            "retry_strategy": _default_retry_strategy(problem_signature, target),
+            "failure_kind": required["failure_kind"],
+            "phase_or_step": required["phase_or_step"],
+            "milestone_or_plan": milestone_or_plan,
+            "blocked_task_id": required["blocked_task_id"],
+            "target_fingerprint": "repair-target:v1:" + _sha256_json(target_identity),
+        }
+    )
+    blocker_id = repair_contract.blocker_id_for_fingerprint(fingerprint)
+    if fingerprint is None or blocker_id is None:
+        raise ValueError("repair request canonical blocker identity is invalid")
+    return dict(fingerprint), blocker_id
+
+
+def repair_request_contract_violations(request: Mapping[str, Any]) -> list[str]:
+    """Return typed reasons an immutable request is unsafe to claim."""
+
+    violations: list[str] = []
+    raw_fingerprint = request.get("blocker_fingerprint")
+    fingerprint = (
+        repair_contract.normalize_blocker_fingerprint_v1(raw_fingerprint)
+        or repair_contract.normalize_blocker_fingerprint_v2(raw_fingerprint)
+    )
+    if not repair_contract.blocker_id_matches_fingerprint(
+        str(request.get("blocker_id") or ""), fingerprint
+    ):
+        violations.append("invalid_blocker_identity")
+    source = str(request.get("source") or "").strip()
+    session = str(request.get("session") or "").strip()
+    provenance = request.get("provenance")
+    if (
+        not source
+        or not session
+        or not isinstance(provenance, Mapping)
+        or str(provenance.get("producer") or "").strip() != source
+        or str(provenance.get("session") or "").strip() != session
+    ):
+        violations.append("invalid_provenance")
+    problem_signature = request.get("problem_signature")
+    evidence_refs = request.get("evidence_refs")
+    if not isinstance(problem_signature, Mapping) or not isinstance(evidence_refs, list):
+        violations.append("invalid_problem_signature_evidence")
+        problem_signature = {}
+        evidence_refs = []
+    else:
+        expected_digest = _sha256_json(problem_signature)
+        if not any(
+            isinstance(item, Mapping)
+            and item.get("kind") == "problem_signature_digest"
+            and item.get("sha256") == expected_digest
+            for item in evidence_refs
+        ):
+            violations.append("invalid_problem_signature_evidence")
+
+    if (
+        isinstance(problem_signature, Mapping)
+        and problem_signature.get("failure_kind")
+        == "completed_repair_without_cursor_advance"
+    ):
+        target = request.get("target")
+        if not isinstance(target, Mapping):
+            violations.append("missing_recovery_contract")
+        else:
+            recovery = target.get("recovery_contract")
+            if not str(target.get("configured_profile") or "").strip():
+                violations.append("missing_configured_profile")
+            if not isinstance(recovery, Mapping):
+                violations.append("missing_recovery_contract")
+            else:
+                if recovery.get("preserve_configured_profile") is not True:
+                    violations.append("missing_preserve_configured_profile")
+                if recovery.get("required_cursor_advance") is not True:
+                    violations.append("missing_required_cursor_advance")
+                if recovery.get("forbid_standalone_completion") is not True:
+                    violations.append("missing_forbid_standalone_completion")
+                if not str(recovery.get("success_requires") or "").strip():
+                    violations.append("missing_success_requires")
+    return violations
+
+
+def has_claimable_repair_request_contract(request: Mapping[str, Any]) -> bool:
+    """Return whether an immutable request is safe to claim at an effect boundary."""
+
+    return not repair_request_contract_violations(request)
 
 
 def enqueue_repair_request(
@@ -761,9 +395,8 @@ def enqueue_repair_request(
     acceptance_predicate_failure: Mapping[str, Any] | None = None,
     acceptance_transaction_id: str = "",
     acceptance_snapshot_hash: str = "",
+    lease_store_dir: str | Path | None = None,
     repair_identity: Mapping[str, Any] | None = None,
-    plan_state: Mapping[str, Any] | None = None,
-    current_target: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write a request marker once, recording any rejection/coalescing separately.
 
@@ -776,6 +409,9 @@ def enqueue_repair_request(
     """
 
     queue_root = validate_queue_root(queue_root)
+    source_identity = str(source or "").strip()
+    if not source_identity:
+        raise ValueError("repair request provenance source is required")
 
     # ── Merge acceptance predicate fields into the problem signature ──────
     extended_signature = dict(problem_signature)
@@ -813,48 +449,107 @@ def enqueue_repair_request(
             }
         )
 
+    _canonicalize_blocked_task_id(extended_signature)
     normalized_signature = normalize_problem_signature(
         extended_signature, extra_fields=extra_fields
     )
-    normalized_repair_identity = derive_repair_identity(
-        session=session,
-        problem_signature=normalized_signature,
-        target=target,
-        plan_state=plan_state,
-        current_target=current_target,
-        repair_identity=repair_identity,
+    signature_key = problem_signature_key(
+        normalized_signature, extra_fields=extra_fields
     )
-    normalized_repair_identity_key = repair_identity_key(normalized_repair_identity)
+    stable_target = _stable_mapping(target or {})
+    blocker_fingerprint, blocker_id = _canonical_request_blocker_identity(
+        session=session,
+        workspace=workspace,
+        target=stable_target,
+        problem_signature=extended_signature,
+        signature_key=signature_key,
+    )
     hint_hash = redacted_hint_hash(root_cause_hint)
     request_id = request_id_for(
         session=session,
         problem_signature=extended_signature,
         root_cause_hint=root_cause_hint,
         extra_signature_fields=extra_fields,
-        repair_identity=normalized_repair_identity,
     )
     request_path = requests_dir(queue_root) / f"{request_id}.json"
+    predecessor_request_id = ""
+    if request_path.exists():
+        try:
+            existing_request = json.loads(request_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            existing_request = {}
+        if not isinstance(existing_request, Mapping) or not has_claimable_repair_request_contract(
+            existing_request
+        ):
+            predecessor_request_id = request_id
+            request_id = _sha256_json(
+                {
+                    "schema_version": "claimable-repair-request-successor-v1",
+                    "predecessor_request_id": predecessor_request_id,
+                    "blocker_id": blocker_id,
+                }
+            )
+            request_path = requests_dir(queue_root) / f"{request_id}.json"
     record = {
         "schema_version": CURRENT_SCHEMA_VERSION,
         "kind": "repair_request",
         "request_id": request_id,
         "created_at": created_at or utc_now(),
-        "source": str(source or "").strip(),
+        "source": source_identity,
         "session": str(session or "").strip(),
         "workspace": str(workspace or ""),
         "run_kind": str(run_kind or "").strip(),
         "marker_dir": str(Path(marker_dir)) if marker_dir is not None else "",
         "queue_dir": str(queue_root),
-        "target": _stable_mapping(target or {}),
+        "target": stable_target,
         "problem_signature": normalized_signature,
-        "problem_signature_key": problem_signature_key(
-            normalized_signature, extra_fields=extra_fields
-        ),
-        "repair_identity": normalized_repair_identity or {},
-        "repair_identity_key": normalized_repair_identity_key,
+        "problem_signature_key": signature_key,
+        "blocker_fingerprint": blocker_fingerprint,
+        "blocker_id": blocker_id,
+        "predecessor_request_id": predecessor_request_id,
+        "provenance": {
+            "producer": source_identity,
+            "session": str(session or "").strip(),
+            "run_kind": str(run_kind or "").strip(),
+        },
+        "evidence_refs": [
+            {
+                "kind": "problem_signature_digest",
+                "sha256": _sha256_json(normalized_signature),
+            },
+            {
+                "kind": "redacted_root_cause_hint_digest",
+                "sha256": hint_hash,
+            },
+        ],
         "root_cause_hint_hash": hint_hash,
         "root_cause_hint_hash_algorithm": "sha256(redact_payload(root_cause_hint))",
     }
+
+    # ── Step 13A: carry exact repair identity (occurrence, host/process birth,
+    # grant/fence, WBC attempt/global effect, lease, epoch) on the request
+    # record so later recovery joins bind the same tuple.  Additive and
+    # optional: legacy callers omitting it produce an empty identity block and
+    # a ``pending`` shadow lease (see ``_shadow_acquire_custody_lease``).
+    normalized_identity: dict[str, Any] = {}
+    if repair_identity:
+        for identity_field in (
+            "run_id",
+            "run_revision",
+            "coordinator_attempt_id",
+            "run_authority_grant_id",
+            "coordinator_fence_token",
+            "wbc_attempt_reference",
+            "global_logical_effect_key",
+            "lease_id",
+            "custody_epoch",
+            "owner_host",
+            "owner_pid",
+            "owner_boot_id",
+        ):
+            if identity_field in repair_identity:
+                normalized_identity[identity_field] = repair_identity[identity_field]
+    record["repair_identity"] = normalized_identity
 
     if stale_reason:
         _write_once_json(request_path, record)
@@ -881,7 +576,8 @@ def enqueue_repair_request(
         queue_root,
         normalized_signature,
         extra_fields=extra_fields,
-        repair_identity=normalized_repair_identity,
+        session=str(session or "").strip(),
+        blocker_id=blocker_id,
     )
     if existing is not None and existing["request_id"] != request_id:
         decision = write_decision(
@@ -911,7 +607,45 @@ def enqueue_repair_request(
         reason="queued",
         related_request_id="",
     )
-    return {"status": "queued", "request": record, "path": str(request_path), "decision": decision}
+    result: dict[str, Any] = {
+        "status": "queued",
+        "request": record,
+        "path": str(request_path),
+        "decision": decision,
+    }
+    # ── M7: shadow custody lease acquisition ──
+    lease_store = _open_custody_lease_store(lease_store_dir)
+    if lease_store is not None:
+        custody_target = _build_custody_target_from_repair_context(
+            session=session,
+            problem_signature=problem_signature,
+            target=target,
+        )
+        identity = process_birth_identity()
+        _ri = repair_identity or {}
+        lease_result = _shadow_acquire_custody_lease(
+            lease_store=lease_store,
+            lease_id=f"repair-req-{request_id}",
+            target=custody_target,
+            owner_host=_ri.get("owner_host") or identity.get("host", _hostname()),
+            owner_pid=str(_ri.get("owner_pid") or identity.get("pid", os.getpid())),
+            owner_boot_id=_ri.get("owner_boot_id") or identity.get("boot_id", ""),
+            run_id=str(_ri.get("run_id") or ""),
+            run_revision=str(_ri.get("run_revision") or ""),
+            coordinator_attempt_id=str(_ri.get("coordinator_attempt_id") or ""),
+            run_authority_grant_id=str(
+                _ri.get("run_authority_grant_id") or ""
+            ),
+            coordinator_fence_token=int(_ri.get("coordinator_fence_token") or 0),
+            wbc_attempt_reference=str(_ri.get("wbc_attempt_reference") or ""),
+            payload_extra={
+                "source": source,
+                "request_id": request_id,
+                "queue_dir": str(queue_root),
+            },
+        )
+        result["m7_custody_lease"] = lease_result
+    return result
 
 
 def enqueue_human_gate_repair_request(
@@ -1066,18 +800,21 @@ def find_pending_by_signature(
     problem_signature: Mapping[str, Any],
     *,
     extra_fields: tuple[str, ...] = (),
-    repair_identity: Mapping[str, Any] | None = None,
+    session: str = "",
+    blocker_id: str = "",
 ) -> dict[str, Any] | None:
     key = problem_signature_key(problem_signature, extra_fields=extra_fields)
-    identity_key = repair_identity_key(repair_identity)
     decided = _decided_request_ids(queue_dir)
     for record in iter_repair_requests(queue_dir):
         if record.get("request_id") in decided:
             continue
+        if not has_claimable_repair_request_contract(record):
+            continue
+        if session and str(record.get("session") or "").strip() != session:
+            continue
+        if blocker_id and str(record.get("blocker_id") or "").strip() != blocker_id:
+            continue
         if record.get("problem_signature_key") == key:
-            record_identity_key = _text(record.get("repair_identity_key"))
-            if identity_key and record_identity_key != identity_key:
-                continue
             return record
     return None
 
@@ -1090,28 +827,45 @@ def write_decision(
     reason: str,
     related_request_id: str = "",
     created_at: str | None = None,
+    evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write an immutable decision record separate from request markers."""
 
+    if decision == "accepted":
+        request_path = requests_dir(queue_dir) / f"{str(request_id or '').strip()}.json"
+        try:
+            request = json.loads(request_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                "accepted repair request requires persisted canonical blocker identity, provenance, and evidence"
+            ) from exc
+        if not isinstance(request, Mapping) or not has_claimable_repair_request_contract(request):
+            raise ValueError(
+                "accepted repair request requires persisted canonical blocker identity, provenance, and evidence"
+            )
+
     when = created_at or utc_now()
+    decision_identity: dict[str, Any] = {
+        "request_id": request_id,
+        "decision": decision,
+        "reason": reason,
+        "related_request_id": related_request_id,
+        "created_at": when,
+    }
+    if evidence is not None:
+        decision_identity["evidence"] = dict(evidence)
     record = {
         "schema_version": CURRENT_SCHEMA_VERSION,
         "kind": "repair_request_decision",
-        "decision_id": _sha256_json(
-            {
-                "request_id": request_id,
-                "decision": decision,
-                "reason": reason,
-                "related_request_id": related_request_id,
-                "created_at": when,
-            }
-        ),
+        "decision_id": _sha256_json(decision_identity),
         "request_id": str(request_id or "").strip(),
         "decision": decision,
         "reason": str(reason or "").strip(),
         "related_request_id": str(related_request_id or "").strip(),
         "created_at": when,
     }
+    if evidence is not None:
+        record["evidence"] = dict(evidence)
     path = decisions_dir(queue_dir) / f"{when.replace(':', '').replace('-', '')}-{record['decision_id']}.json"
     _write_once_json(path, record)
     return {**record, "_path": str(path)}
@@ -1129,7 +883,6 @@ def write_dispatch_attempt(
     managed_run_id: str,
     managed_manifest_path: str,
     created_at: str | None = None,
-    repair_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write immutable proof that a claimed request launched a managed child."""
 
@@ -1160,8 +913,6 @@ def write_dispatch_attempt(
         "managed_manifest_path": str(managed_manifest_path or "").strip(),
         "status": "launched",
         "created_at": when,
-        "repair_identity": normalize_repair_identity(repair_identity) or {},
-        "repair_identity_key": repair_identity_key(repair_identity),
     }
     for field in (
         "request_id",
@@ -1256,7 +1007,7 @@ def claim_active_repair_request(
     now: datetime | None = None,
     is_pid_live: Any | None = None,
     extra: Mapping[str, Any] | None = None,
-    repair_identity: Mapping[str, Any] | None = None,
+    lease_store_dir: str | Path | None = None,
 ) -> ActiveRepairClaimResult:
     """Atomically claim active repair ownership for one blocker.
 
@@ -1270,8 +1021,6 @@ def claim_active_repair_request(
     normalized_request_id = _normalize_claim_identity(request_id, "request_id")
     normalized_actor = _normalize_claim_identity(actor, "actor")
     normalized_session = _normalize_claim_identity(session, "session")
-    normalized_repair_identity = normalize_repair_identity(repair_identity)
-    normalized_repair_identity_key = repair_identity_key(normalized_repair_identity)
     claim_lock_dir = active_repair_claim_lock_dir(queue_dir, normalized_blocker_id)
     metadata = {
         "kind": "active_repair_request_claim",
@@ -1281,8 +1030,6 @@ def claim_active_repair_request(
         "request_id": normalized_request_id,
         "blocker_id": normalized_blocker_id,
         "blocker_fingerprint": dict(blocker_fingerprint or {}),
-        "repair_identity": normalized_repair_identity or {},
-        "repair_identity_key": normalized_repair_identity_key,
     }
     if extra:
         metadata.update(dict(extra))
@@ -1291,7 +1038,6 @@ def claim_active_repair_request(
         claim_lock_dir,
         session=normalized_session,
         target_id=normalized_blocker_id,
-        repair_identity=normalized_repair_identity,
         pid=pid,
         command=command,
         started_at=started_at,
@@ -1311,12 +1057,40 @@ def claim_active_repair_request(
     # delete another worker's lock and seize it.  PID reuse and delayed writes
     # make automatic reclamation unsafe; a subsequent explicit recovery owns
     # any mutation after evaluating the captured evidence.
-    return _claim_result_from_lock(
+    claim_result = _claim_result_from_lock(
         result,
         blocker_id=normalized_blocker_id,
         request_id=normalized_request_id,
-        repair_identity_key=normalized_repair_identity_key,
     )
+    # ── M7: shadow custody lease acquisition on successful claim ──
+    if claim_result.claimed:
+        lease_store = _open_custody_lease_store(lease_store_dir)
+        if lease_store is not None:
+            custody_target = _build_custody_target_from_repair_context(
+                session=normalized_session,
+                problem_signature=blocker_fingerprint or {},
+            )
+            identity = process_birth_identity()
+            lease_result = _shadow_acquire_custody_lease(
+                lease_store=lease_store,
+                lease_id=f"repair-claim-{normalized_blocker_id}",
+                target=custody_target,
+                run_id=normalized_actor,
+                run_authority_grant_id=normalized_request_id,
+                owner_host=hostname or _hostname(),
+                owner_pid=str(pid) if pid is not None else identity.get("pid", "0"),
+                owner_boot_id=identity.get("boot_id", ""),
+                payload_extra={
+                    "actor": normalized_actor,
+                    "request_id": normalized_request_id,
+                    "blocker_id": normalized_blocker_id,
+                    "queue_dir": str(queue_dir),
+                },
+            )
+            # Store lease result alongside claim (ActiveRepairClaimResult is frozen,
+            # so we cannot attach it directly — callers should read the lease store)
+            object.__setattr__(claim_result, "_m7_custody_lease", lease_result)
+    return claim_result
 
 
 def release_active_repair_request_claim(
@@ -1344,8 +1118,7 @@ def bind_managed_run_to_active_claim(
     managed_manifest_path: str,
     expected_owner_pid: int | None,
     new_owner_pid: int,
-    repair_identity: Mapping[str, Any] | None = None,
-    expected_repair_identity_key: str = "",
+    lease_store_dir: str | Path | None = None,
 ) -> bool:
     """Fence an already-authorized claim to the process that really executes it.
 
@@ -1359,10 +1132,6 @@ def bind_managed_run_to_active_claim(
     normalized_blocker_id = _normalize_claim_identity(blocker_id, "blocker_id")
     normalized_request_id = _normalize_claim_identity(request_id, "request_id")
     normalized_run_id = _normalize_claim_identity(managed_run_id, "managed_run_id")
-    normalized_repair_identity_key = (
-        str(expected_repair_identity_key or "").strip()
-        or repair_identity_key(repair_identity)
-    )
     lock_dir = active_repair_claim_lock_dir(queue_dir, normalized_blocker_id)
     owner_path = owner_metadata_path(lock_dir)
     bind_lock = lock_dir.with_name(lock_dir.name + ".managed-run-bind")
@@ -1380,9 +1149,6 @@ def bind_managed_run_to_active_claim(
         if str(owner.get("request_id") or "") != normalized_request_id:
             return False
         if str(owner.get("blocker_id") or "") != normalized_blocker_id:
-            return False
-        owner_identity_key = str(owner.get("repair_identity_key") or "")
-        if normalized_repair_identity_key and owner_identity_key != normalized_repair_identity_key:
             return False
         owner_run_id = str(owner.get("managed_agent_run_id") or "")
         if owner_run_id and owner_run_id != normalized_run_id:
@@ -1405,6 +1171,32 @@ def bind_managed_run_to_active_claim(
             owner,
             include_resident_provenance=False,
         )
+        # ── M7: shadow custody lease record on successful bind ──
+        lease_store = _open_custody_lease_store(lease_store_dir)
+        if lease_store is not None:
+            custody_target = _build_custody_target_from_repair_context(
+                session=str(owner.get("session", "")),
+                problem_signature=owner.get("blocker_fingerprint"),
+            )
+            identity = process_birth_identity()
+            _shadow_acquire_custody_lease(
+                lease_store=lease_store,
+                lease_id=f"repair-bind-{normalized_blocker_id}",
+                target=custody_target,
+                run_id=normalized_run_id,
+                run_authority_grant_id=normalized_request_id,
+                coordinator_fence_token=owner.get("fence_token", 0),
+                owner_host=_hostname(),
+                owner_pid=str(new_owner_pid),
+                owner_boot_id=identity.get("boot_id", ""),
+                payload_extra={
+                    "managed_run_id": normalized_run_id,
+                    "managed_manifest_path": str(managed_manifest_path),
+                    "request_id": normalized_request_id,
+                    "blocker_id": normalized_blocker_id,
+                    "queue_dir": str(queue_dir),
+                },
+            )
         return True
     finally:
         handle.close()
@@ -1430,7 +1222,7 @@ def _decided_request_ids(queue_dir: str | Path) -> set[str]:
         if not isinstance(payload, dict):
             continue
         decision = payload.get("decision")
-        if decision in {"stale", "superseded", "dispatched"}:
+        if decision in {"stale", "superseded"}:
             request_id = payload.get("request_id")
             if isinstance(request_id, str) and request_id:
                 decided.add(request_id)
@@ -1462,7 +1254,6 @@ def _claim_result_from_lock(
     *,
     blocker_id: str,
     request_id: str,
-    repair_identity_key: str,
 ) -> ActiveRepairClaimResult:
     if result.acquired:
         return ActiveRepairClaimResult(status="claimed", lock_dir=result.lock_dir, owner=result.owner)
@@ -1478,13 +1269,11 @@ def _claim_result_from_lock(
                 "lock_status": result.status,
                 "stale_evidence": result.stale_evidence or {},
                 "owner": result.owner or {},
-                "repair_identity_key": repair_identity_key,
             },
         )
 
     owner = result.owner or {}
     owner_request_id = str(owner.get("request_id") or "")
-    owner_repair_identity_key = str(owner.get("repair_identity_key") or "")
     status: ActiveRepairClaimStatus = "already_claimed" if owner_request_id == request_id else "busy"
     return ActiveRepairClaimResult(
         status=status,
@@ -1500,8 +1289,6 @@ def _claim_result_from_lock(
             "owner_actor": str(owner.get("actor") or ""),
             "owner_session": str(owner.get("session") or ""),
             "owner_pid": owner.get("pid"),
-            "owner_repair_identity_key": owner_repair_identity_key,
-            "repair_identity_key": repair_identity_key,
             "owner": owner,
         },
     )
@@ -1658,9 +1445,301 @@ def write_repair_verdict_decision(
     )
 
 
+# ── M7 Custody lease shadow integration ────────────────────────────────────
+
+
+def _shadow_acquire_custody_lease(
+    *,
+    lease_store: CustodyLeaseStore | None,
+    lease_id: str,
+    target: CustodyTargetKey | None,
+    run_authority_grant_id: str = "",
+    coordinator_fence_token: int = 0,
+    wbc_attempt_reference: str = "",
+    run_id: str = "",
+    run_revision: str = "",
+    coordinator_attempt_id: str = "",
+    owner_host: str = "",
+    owner_pid: str = "",
+    owner_boot_id: str = "",
+    causal_predecessor: str = "",
+    expires_at: str = "",
+    payload_extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Attempt to shadow-acquire a Custody lease for a repair operation.
+
+    In M7 shadow mode, this records a CustodyLeaseEvent (acquire) in the
+    lease store alongside the existing mkdir/PID lock mechanism.  The lease
+    store becomes the authoritative source of truth; the mkdir lock is
+    admission/projection evidence only.
+
+    Returns a dict with ``m7_lease_status`` (``'acquired'``, ``'not_owner'``,
+    ``'idempotent'``, ``'unavailable'``, ``'error'``) and diagnostic fields.
+    Failures never block the existing repair flow — they are captured as
+    typed non-owner outcomes.
+    """
+    result: dict[str, Any] = {
+        "m7_lease_status": "unavailable",
+        "m7_lease_event_id": "",
+        "m7_lease_epoch": 0,
+    }
+
+    if lease_store is None:
+        result["m7_lease_status"] = "unavailable"
+        result["m7_lease_detail"] = "no lease store provided"
+        return result
+
+    if target is None:
+        result["m7_lease_status"] = "error"
+        result["m7_lease_detail"] = "cannot build CustodyTargetKey from available context"
+        return result
+
+    # ── Step 13A: remove synthetic WBC / grant / fence / occurrence defaults ──
+    # A shadow lease must bind *exact* repair identity (occurrence, host/process
+    # birth, grant/fence, WBC attempt, lease, epoch).  Previously this function
+    # fabricated ``repair-run-*``, ``m7-shadow``, ``coord-*``, ``wbc-ref-*`` and
+    # ``grant-*`` placeholders when the caller omitted them, which let a
+    # pre-dispatch enqueue mint a lease whose occurrence/WBC/grant identity did
+    # not correspond to any real dispatched run.  Those synthetic defaults are
+    # removed; when the required identity is absent the request is recorded as
+    # ``pending`` (queued, not yet bound to a dispatched managed run) rather
+    # than authorizing a fabricated lease.
+    required_identity = (
+        run_id,
+        run_revision,
+        coordinator_attempt_id,
+        wbc_attempt_reference,
+        run_authority_grant_id,
+    )
+    if not all(str(value).strip() for value in required_identity):
+        result["m7_lease_status"] = "pending"
+        result["m7_lease_detail"] = (
+            "repair identity incomplete (run_id/run_revision/coordinator_attempt_id/"
+            "wbc_attempt_reference/run_authority_grant_id); lease not bound until "
+            "dispatch supplies exact occurrence, grant/fence, and WBC identity"
+        )
+        return result
+
+    try:
+        # Build the RepairOccurrenceKey from the *exact* caller-supplied identity.
+        occ_key = build_repair_occurrence_key(
+            target=target,
+            run_id=run_id,
+            run_revision=run_revision,
+            coordinator_attempt_id=coordinator_attempt_id,
+            fence_token=coordinator_fence_token,
+            wbc_attempt_reference=wbc_attempt_reference,
+        )
+        if occ_key is None:
+            result["m7_lease_status"] = "error"
+            result["m7_lease_detail"] = "failed to construct RepairOccurrenceKey"
+            return result
+
+        # Build the event payload
+        payload: dict[str, Any] = {"m7_shadow": True}
+        if payload_extra:
+            payload.update(dict(payload_extra))
+
+        # Step 11A: route the lifecycle caller through the blessed lease
+        # helper instead of constructing a raw CustodyLeaseEvent and calling
+        # record_event directly, so owner/process-birth identity, monotonic
+        # epoch, TTL ceiling, terminal rejection, and old-epoch fencing are
+        # enforced at the store boundary.
+        recorded = lease_store.acquire(
+            lease_id=lease_id,
+            owner_host=owner_host or "unknown",
+            owner_pid=owner_pid or "0",
+            owner_boot_id=owner_boot_id or "",
+            run_authority_grant_id=run_authority_grant_id,
+            coordinator_fence_token=coordinator_fence_token,
+            wbc_attempt_reference=wbc_attempt_reference,
+            occurrence_digest=occ_key.occurrence_digest,
+            custody_epoch=1,
+            sequence=1,
+            idempotency_key=f"idem-{lease_id}",
+            causal_predecessor=causal_predecessor,
+            expires_at=expires_at or None,
+            payload=payload,
+        )
+        result["m7_lease_status"] = "acquired"
+        result["m7_lease_event_id"] = recorded.event_id
+        result["m7_lease_epoch"] = recorded.custody_epoch
+        result["m7_lease_digest"] = recorded.occurrence_digest
+        return result
+
+    except LeaseIdempotencyConflict:
+        result["m7_lease_status"] = "idempotent"
+        result["m7_lease_detail"] = "lease already exists with matching idempotency key"
+        return result
+    except StaleSequenceError:
+        result["m7_lease_status"] = "not_owner"
+        result["m7_lease_detail"] = "lease sequence conflict — another owner holds the lease"
+        return result
+    except Exception as exc:
+        result["m7_lease_status"] = "error"
+        result["m7_lease_detail"] = f"{type(exc).__name__}: {exc}"
+        return result
+
+
+def _build_custody_target_from_repair_context(
+    *,
+    session: str = "",
+    problem_signature: Mapping[str, Any] | None = None,
+    target: Mapping[str, Any] | None = None,
+) -> CustodyTargetKey | None:
+    """Build a CustodyTargetKey from repair request context fields.
+
+    Extracts F01 tuple fields from problem_signature and target dicts
+    where available.  Returns None when insufficient fields are present.
+    """
+    sig = dict(problem_signature or {})
+    tgt = dict(target or {})
+
+    environment = _as_text(
+        tgt.get("environment") or sig.get("environment") or ""
+    )
+    session_val = _as_text(session or sig.get("session") or "")
+    chain = _as_text(
+        tgt.get("chain") or sig.get("chain") or ""
+    )
+    plan_revision = _as_text(
+        tgt.get("plan_revision") or sig.get("plan_revision") or ""
+    )
+    phase = _as_text(
+        tgt.get("phase") or sig.get("phase_or_step") or sig.get("phase") or ""
+    )
+    task = _as_text(
+        tgt.get("task") or sig.get("blocked_task_id") or sig.get("task") or ""
+    )
+    attempt = _as_text(
+        tgt.get("attempt") or sig.get("attempt") or ""
+    )
+    normalized_failure_kind = _as_text(
+        tgt.get("failure_kind") or sig.get("failure_kind") or ""
+    )
+    blocker_or_phase_result_hash = _as_text(
+        tgt.get("blocker_hash") or sig.get("target_fingerprint") or ""
+    )
+    fence = _as_text(
+        tgt.get("fence") or sig.get("fence") or ""
+    )
+
+    return build_custody_target_key(
+        environment=environment or "unknown",
+        session=session_val or "unknown",
+        chain=chain or "unknown",
+        plan_revision=plan_revision or "unknown",
+        phase=phase or "unknown",
+        task=task or "unknown",
+        attempt=attempt or "1",
+        normalized_failure_kind=normalized_failure_kind or "unknown",
+        blocker_or_phase_result_hash=blocker_or_phase_result_hash or "unknown",
+        fence=fence or "0",
+        chain_identity="",
+    )
+
+
+def _as_text(value: Any) -> str:
+    """Coerce a value to stripped text or return empty string."""
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _open_custody_lease_store(
+    lease_store_dir: str | Path | None,
+) -> CustodyLeaseStore | None:
+    """Open a custody lease store from a directory path, or return None."""
+    if lease_store_dir is None:
+        return None
+    try:
+        return open_lease_store(Path(lease_store_dir), flock=False)
+    except Exception:
+        return None
+
+
+# ── Step 15A: Persist classification, launcher, parser, and missing-child failures ──
+
+
+def persist_failure_occurrence(
+    *,
+    queue_dir: str | Path,
+    session: str,
+    failure_kind: str,
+    phase_or_step: str = "",
+    detail: str = "",
+    created_at: str | None = None,
+) -> dict[str, Any]:
+    """Step 15A: Persist a failed occurrence that may later trigger repair.
+
+    Covers parser loss, classification incompatibility, launcher failure,
+    and missing-child failures.  Each persisted occurrence carries exact
+    identity so the six-hour reconciliation backstop and recovery event
+    joins can bind it to a repair request.
+    """
+    from arnold_pipelines.megaplan.cloud.recovery_events import (
+        RecoveryEventBuilder,
+        RecoveryEventKind,
+    )
+
+    ts = created_at or utc_now()
+
+    # Map failure_kind to builder method
+    builders: dict[str, Any] = {
+        "parser_loss": lambda: RecoveryEventBuilder.parser_loss(
+            session=session, phase_or_step=phase_or_step, detail=detail,
+        ),
+        "classification_incompatible": lambda: RecoveryEventBuilder.classification_incompatible(
+            session=session, phase_or_step=phase_or_step, observed=detail,
+        ),
+        "launcher_failure": lambda: RecoveryEventBuilder.launcher_failure(
+            session=session, launcher_name=phase_or_step, detail=detail,
+        ),
+        "missing_child": lambda: RecoveryEventBuilder.missing_child(
+            session=session, child_id=phase_or_step, detail=detail,
+        ),
+    }
+
+    builder = builders.get(failure_kind)
+    if builder is None:
+        raise ValueError(
+            f"Unknown Step 15A failure kind: {failure_kind!r}. "
+            f"Supported: {list(builders.keys())}"
+        )
+
+    event = builder()
+
+    # Write the failure occurrence as a durable decision in the repair queue
+    decision = write_decision(
+        queue_dir,
+        request_id=event.event_id,
+        decision="malformed",
+        reason=f"Step 15A {failure_kind}: {detail}",
+        created_at=ts,
+        evidence={
+            "step_15a": True,
+            "failure_kind": failure_kind,
+            "session": session,
+            "phase_or_step": phase_or_step,
+            "denominator_group": event.denominator_group,
+            "occurred_at": event.occurred_at,
+        },
+    )
+
+    return {
+        "status": "persisted",
+        "event_id": event.event_id,
+        "failure_kind": failure_kind,
+        "denominator_group": event.denominator_group,
+        "decision": decision,
+    }
+
+
 __all__ = [
     "ACTIVE_CLAIMS_DIR_NAME",
     "ATTEMPTS_DIR_NAME",
+    "CURRENT_SCHEMA_VERSION",
+    "DECISIONS_DIR_NAME",
     "PROBLEM_SIGNATURE_FIELDS",
     "QUEUE_DIR_NAME",
     "ActiveRepairClaimResult",
@@ -1671,22 +1750,22 @@ __all__ = [
     "attempts_dir",
     "claim_active_repair_request",
     "bind_managed_run_to_active_claim",
-    "derive_repair_identity",
     "enqueue_human_gate_repair_request",
     "enqueue_repair_request",
     "find_pending_by_signature",
+    "has_claimable_repair_request_contract",
     "iter_repair_decisions",
     "iter_repair_attempts",
     "iter_repair_requests",
     "normalize_problem_signature",
+    "persist_failure_occurrence",
     "problem_signature_key",
-    "repair_identity_key",
     "record_malformed_file",
     "redacted_hint_hash",
     "repair_queue_dir",
-    "normalize_repair_identity",
     "record_unclaimed_request_failure",
     "release_active_repair_request_claim",
+    "repair_request_contract_violations",
     "request_id_for",
     "validate_queue_root",
     "write_decision",

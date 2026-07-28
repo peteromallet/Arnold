@@ -46,8 +46,25 @@ def _fixture_has_m4_amendment() -> bool:
     return "## M4 Megaplan Product Migration" in text
 
 
+def _normalize_source_span_paths(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_normalize_source_span_paths(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    normalized = {
+        key: _normalize_source_span_paths(item)
+        for key, item in value.items()
+    }
+    if "path" in normalized and isinstance(normalized["path"], str):
+        parts = Path(normalized["path"]).parts
+        if "arnold_pipelines" in parts:
+            normalized["path"] = "/".join(parts[parts.index("arnold_pipelines"):])
+    return normalized
+
+
 def _canonical_manifest_json_bytes(manifest: Any) -> bytes:
     payload = json.loads(manifest.to_json())
+    payload = _normalize_source_span_paths(payload)
     return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 

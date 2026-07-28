@@ -43,6 +43,7 @@ except ImportError:
 RECEIPT_SCHEMA = "arnold-manual-repair-trigger-v1"
 RECEIPT_DIR_NAME = "manual-triggers"
 ALLOWED_PLAN_STATES = frozenset({"blocked", "failed"})
+ALLOWED_HISTORY_FAILURE_RESULTS = frozenset({"blocked", "error", "failed"})
 
 
 class ManualRepairTriggerError(RuntimeError):
@@ -98,45 +99,36 @@ def _evidence_cursor(state: Mapping[str, Any], failure: Mapping[str, Any]) -> di
     for candidate in candidates:
         if isinstance(candidate, Mapping):
             return dict(candidate)
-    return {}
+    history = state.get("history")
+    if not isinstance(history, Sequence) or isinstance(history, (str, bytes)) or not history:
+        return {}
+    latest = history[-1]
+    if not isinstance(latest, Mapping):
+        return {}
+    failure_phase = _text(failure.get("phase"))
+    history_phase = _text(latest.get("step"))
+    history_result = _text(latest.get("result"))
+    artifact_hash = _text(latest.get("artifact_hash"))
+    if (
+        not failure_phase
+        or history_phase != failure_phase
+        or history_result not in ALLOWED_HISTORY_FAILURE_RESULTS
+        or not artifact_hash
+    ):
+        return {}
+    return {
+        "history_index": len(history) - 1,
+        "review_artifact_hash": artifact_hash,
+    }
 
 
-def _receipt_id(
-    *,
-    session: str,
-    plan: str,
-    history_index: int,
-    artifact_hash: str,
-    repair_identity_key: str = "",
-) -> str:
+def _receipt_id(*, session: str, plan: str, history_index: int, artifact_hash: str) -> str:
     encoded = json.dumps(
-        [session, plan, history_index, artifact_hash, repair_identity_key],
+        [session, plan, history_index, artifact_hash],
         separators=(",", ":"),
         ensure_ascii=True,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
-
-
-def _quarantine_receipt(
-    *,
-    receipt_path: Path,
-    receipt: dict[str, Any],
-    reason: str,
-    observed_repair_identity: Mapping[str, Any] | None = None,
-) -> Path:
-    quarantine_dir = receipt_path.parent / "quarantine"
-    quarantine_path = quarantine_dir / receipt_path.name
-    quarantined = dict(receipt)
-    quarantined["status"] = "quarantined"
-    quarantined["completed_at"] = _utc_now()
-    quarantined["quarantine_reason"] = reason
-    quarantined["observed_repair_identity"] = dict(observed_repair_identity or {})
-    _write_json_atomic(quarantine_path, quarantined)
-    try:
-        receipt_path.unlink()
-    except FileNotFoundError:
-        pass
-    return quarantine_path
 
 
 def _write_json_atomic(path: Path, payload: Mapping[str, Any], *, exclusive: bool = False) -> None:
@@ -290,7 +282,6 @@ def trigger_once(
     trigger_bin: Path = Path("/usr/local/bin/arnold-repair-trigger"),
     target_resolver: Callable[..., dict[str, Any]] = resolve_current_target,
     command_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-    repair_requests_enqueue: Callable[..., dict[str, Any]] = repair_requests.enqueue_repair_request,
 ) -> dict[str, Any]:
     """Validate, enqueue, and dispatch one exact canonical repair request."""
 
@@ -356,43 +347,27 @@ def trigger_once(
     if not workspace.is_absolute() or not workspace.is_dir():
         raise ManualRepairTriggerError("resolver workspace is unavailable")
     metadata = _mapping(failure.get("metadata"))
+    configured_profile = _text(_mapping(state.get("config")).get("profile"))
+    phase_or_step = _text(failure.get("phase"))
     problem_signature = {
         "failure_kind": _text(failure.get("kind")) or "terminal_blocked",
         "current_state": current_state,
-        "phase_or_step": _text(failure.get("phase")),
+        "phase_or_step": phase_or_step,
         "milestone_or_plan": plan,
         "gate_recommendation": _text(failure.get("suggested_action")),
-        "blocked_task_id": _blocked_task_id(metadata),
+        "blocked_task_id": _blocked_task_id(metadata) or f"phase:{phase_or_step}",
     }
     root_cause_hint = _text(failure.get("message")) or "plan entered a blocked terminal state"
-    repair_identity = repair_requests.derive_repair_identity(
-        session=session,
-        problem_signature=problem_signature,
-        target={
-            "plan_dir": str(plan_path.parent),
-            "plan_name": plan,
-            "workspace_path": str(workspace),
-            "remote_spec": remote_spec,
-            "evidence_cursor": dict(cursor),
-            "phase": _text(failure.get("phase")),
-            "task_id": _blocked_task_id(metadata),
-        },
-        plan_state=state,
-        current_target=target,
-    )
-    repair_identity_key = repair_requests.repair_identity_key(repair_identity)
     request_id = repair_requests.request_id_for(
         session=session,
         problem_signature=problem_signature,
         root_cause_hint=root_cause_hint,
-        repair_identity=repair_identity,
     )
     receipt_id = _receipt_id(
         session=session,
         plan=plan,
         history_index=expected_history_index,
         artifact_hash=artifact_hash,
-        repair_identity_key=repair_identity_key,
     )
     receipt_path = queue_root / RECEIPT_DIR_NAME / f"{receipt_id}.json"
     started_at = _utc_now()
@@ -408,50 +383,43 @@ def trigger_once(
         },
         "plan_state_fingerprint": _text(plan_summary.get("fingerprint")),
         "request_id": request_id,
-        "repair_identity": repair_identity or {},
-        "repair_identity_key": repair_identity_key,
         "queue_root": str(queue_root),
         "trigger_bin": str(trigger_bin),
     }
     _write_json_atomic(receipt_path, receipt, exclusive=True)
 
     try:
-        queued = repair_requests_enqueue(
+        repair_target = {
+            "plan_dir": str(plan_path.parent),
+            "plan_name": plan,
+            "workspace_path": str(workspace),
+            "remote_spec": remote_spec,
+            "evidence_cursor": dict(cursor),
+            "recovery_contract": {
+                "preserve_configured_profile": True,
+                "required_cursor_advance": True,
+                "forbid_standalone_completion": True,
+                "success_requires": (
+                    "the canonical plan must advance beyond the frozen evidence cursor"
+                ),
+            },
+        }
+        if configured_profile:
+            repair_target["configured_profile"] = configured_profile
+        queued = repair_requests.enqueue_repair_request(
             queue_root=queue_root,
             marker_dir=marker_dir,
             session=session,
             source="manual_terminal_failure_retrigger",
             workspace=workspace,
             run_kind=run_kind,
-            target={
-                "plan_dir": str(plan_path.parent),
-                "plan_name": plan,
-                "workspace_path": str(workspace),
-                "remote_spec": remote_spec,
-                "evidence_cursor": dict(cursor),
-                "phase": _text(failure.get("phase")),
-                "task_id": _blocked_task_id(metadata),
-            },
+            target=repair_target,
             problem_signature=problem_signature,
             root_cause_hint=root_cause_hint,
-            repair_identity=repair_identity,
-            plan_state=state,
-            current_target=target,
         )
         queued_request = _mapping(queued.get("request"))
         if _text(queued_request.get("request_id")) != request_id:
             raise ManualRepairTriggerError("canonical queue returned a different request identity")
-        queued_identity_key = _text(queued_request.get("repair_identity_key"))
-        if repair_identity_key and queued_identity_key != repair_identity_key:
-            quarantine_path = _quarantine_receipt(
-                receipt_path=receipt_path,
-                receipt=receipt,
-                reason="manual trigger repair identity mismatched the queued request",
-                observed_repair_identity=_mapping(queued_request.get("repair_identity")),
-            )
-            raise ManualRepairTriggerError(
-                f"manual trigger receipt quarantined due to repair identity mismatch: {quarantine_path}"
-            )
         if queued.get("status") not in {"queued", "coalesced"}:
             raise ManualRepairTriggerError(f"repair request was not accepted: {queued.get('status')}")
 

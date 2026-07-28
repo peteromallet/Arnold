@@ -145,10 +145,16 @@ def spawn(*args: Any, **kw: Any) -> subprocess.Popen:
 
 
 def megaplan_engine_root() -> Path:
-    """Return the source root for the currently running Arnold package."""
-    import arnold
+    """Return the import root for the currently running Megaplan package.
 
-    return Path(arnold.__file__).resolve().parent.parent
+    Megaplan can drive a target checkout that also provides an ``arnold``
+    package.  Deriving the engine root from that sibling package lets the
+    target checkout replace the pinned Megaplan runtime in child processes.
+    Anchor the root to this module instead so subprocesses inherit the same
+    Megaplan implementation as their parent.
+    """
+
+    return Path(__file__).resolve().parents[3]
 
 
 def megaplan_engine_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
@@ -158,6 +164,7 @@ def megaplan_engine_env(base_env: dict[str, str] | None = None) -> dict[str, str
     current = env.get("PYTHONPATH")
     parts = [part for part in (current or "").split(os.pathsep) if part]
     env["PYTHONPATH"] = os.pathsep.join([root, *[part for part in parts if part != root]])
+    env["MEGAPLAN_ENGINE_ROOT"] = root
     return env
 
 

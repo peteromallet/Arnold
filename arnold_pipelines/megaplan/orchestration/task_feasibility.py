@@ -89,8 +89,44 @@ def _stable_contract(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def task_contract_hash(payload: Mapping[str, Any]) -> str:
+    """Stable hash of the structural task contract.
+
+    Intentionally excludes ``seed_epoch`` and ``source`` so that epoch and
+    source binding (added in Step 7H-a) do not perturb the structural identity
+    relied upon by m8a_report, critique_custody, and other existing consumers.
+    """
     encoded = json.dumps(
         _stable_contract(payload),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _plan_identity_inputs(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Identity inputs for the additive ``plan_hash`` receipt field.
+
+    Distinct from ``_stable_contract``: binds ``seed_epoch`` and ``source``
+    so dispatch identity is traceable to its materialized seed and source
+    provenance without changing ``task_contract_hash``.
+    """
+    return {
+        "task_contract": _stable_contract(payload),
+        "source": payload.get("source"),
+        "seed_epoch": payload.get("seed_epoch"),
+    }
+
+
+def plan_hash(payload: Mapping[str, Any]) -> str:
+    """Content hash binding source, seed_epoch, and the structural contract.
+
+    Additive identity receipt field (Step 7H-a).  Changes when the structural
+    contract, source, or seed epoch changes, but does not affect
+    ``task_contract_hash``.
+    """
+    encoded = json.dumps(
+        _plan_identity_inputs(payload),
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
@@ -335,6 +371,8 @@ def compile_task_feasibility(
     report = {
         "schema_version": "megaplan-task-feasibility-v2",
         "task_contract_hash": task_contract_hash(payload),
+        "plan_hash": plan_hash(payload),
+        "seed_epoch": payload.get("seed_epoch"),
         "task_count": task_count,
         "edge_count": edge_count,
         "root_count": len(batches[0]) if batches else 0,
@@ -353,15 +391,48 @@ def compile_task_feasibility(
     return report
 
 
+# Sentinel distinguishing "caller has not adopted the epoch protocol" from
+# an explicitly-absent attestation (``current_epoch=None``).  Callers that
+# have not been wired in Step 7H-b leave the parameter unset and preserve
+# the prior backward-compatible behavior; callers that explicitly pass
+# ``current_epoch=None`` for a v2 plan trigger the fail-closed rejection.
+_EPOCH_UNSET: Any = object()
+
+
 def assert_admitted_task_feasibility(
     payload: Mapping[str, Any],
     config: Mapping[str, Any] | None = None,
+    current_epoch: Any = _EPOCH_UNSET,
 ) -> dict[str, Any] | None:
-    """Revalidate v2 graphs at execute entry; leave stored v1 plans readable."""
+    """Revalidate v2 graphs at execute entry; leave stored v1 plans readable.
+
+    For v2 plans (``task_contract_version == TASK_CONTRACT_VERSION``):
+
+    * **v1 escape** — non-v2 payloads return ``None`` immediately so stored
+      legacy plans remain readable.
+    * **v2 + missing-epoch rejection** — when ``current_epoch`` is explicitly
+      ``None`` (the attestation is absent) the function raises
+      ``ValueError("seed_epoch attestation required for v2 plans")``.
+    * **Stale-epoch fencing** — when ``current_epoch`` is provided and
+      non-``None``, it is compared against the receipt's embedded
+      ``seed_epoch``; a mismatch raises ``ValueError``.
+    * **Backward-compat** — when ``current_epoch`` is left unset
+      (``_EPOCH_UNSET``), the caller has not yet adopted the epoch protocol
+      (Step 7H-b wiring is pending) and the prior behavior is preserved.
+    """
 
     if payload.get("task_contract_version") != TASK_CONTRACT_VERSION:
         return None
+    if current_epoch is None:
+        raise ValueError("seed_epoch attestation required for v2 plans")
     report = compile_task_feasibility(payload, config)
+    if (
+        current_epoch is not _EPOCH_UNSET
+        and report.get("seed_epoch") != current_epoch
+    ):
+        raise ValueError(
+            "seed_epoch mismatch: stale or conflicted epoch at execute entry"
+        )
     admitted = payload.get("graph_report")
     admitted_hash = admitted.get("task_contract_hash") if isinstance(admitted, Mapping) else None
     if not report["admitted"]:
@@ -376,5 +447,6 @@ __all__ = [
     "TASK_CONTRACT_VERSION",
     "assert_admitted_task_feasibility",
     "compile_task_feasibility",
+    "plan_hash",
     "task_contract_hash",
 ]

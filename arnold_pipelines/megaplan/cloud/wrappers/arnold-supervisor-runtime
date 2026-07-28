@@ -20,14 +20,53 @@ runtime_ready() {
     >/dev/null 2>&1
 }
 
+receipt_ready() {
+  local python="$1"
+  [[ -f "$RECEIPT" ]] || return 1
+  PYTHONSAFEPATH=1 "$python" -P - "$RECEIPT" "$SOURCE" <<'PY'
+import json
+import pathlib
+import subprocess
+import sys
+
+receipt_path, source = map(pathlib.Path, sys.argv[1:])
+receipt = json.loads(receipt_path.read_text())
+if pathlib.Path(receipt.get("source", "")).resolve() != source.resolve():
+    raise SystemExit("supervisor receipt source mismatch")
+revision = subprocess.run(
+    ["git", "-C", str(source), "rev-parse", "HEAD"],
+    check=False, capture_output=True, text=True,
+).stdout.strip()
+if revision != receipt.get("source_revision"):
+    raise SystemExit("supervisor source revision changed")
+runtime = pathlib.Path(receipt["runtime"]).resolve()
+if pathlib.Path(sys.prefix).resolve() != runtime:
+    raise SystemExit("supervisor receipt runtime mismatch")
+import arnold
+import arnold_pipelines
+import arnold_pipelines.megaplan
+imports = {
+    "arnold": str(pathlib.Path(arnold.__file__).resolve()),
+    "arnold_pipelines": str(pathlib.Path(arnold_pipelines.__file__).resolve()),
+    "megaplan": str(pathlib.Path(arnold_pipelines.megaplan.__file__).resolve()),
+}
+if imports != receipt.get("imports"):
+    raise SystemExit("supervisor import receipt mismatch")
+if any(not pathlib.Path(value).is_relative_to(runtime) for value in imports.values()):
+    raise SystemExit("supervisor import escaped runtime")
+PY
+}
+
 case "$ACTION" in
   --check)
     runtime_ready "$CURRENT/bin/python3"
+    receipt_ready "$CURRENT/bin/python3"
     printf '%s\n' "$(readlink -f "$CURRENT/bin/python3")"
     exit 0
     ;;
   --python)
     runtime_ready "$CURRENT/bin/python3"
+    receipt_ready "$CURRENT/bin/python3"
     readlink -f "$CURRENT/bin/python3"
     exit 0
     ;;
@@ -47,6 +86,7 @@ fingerprint="$({
   git -C "$SOURCE" rev-parse HEAD 2>/dev/null || true
   git -C "$SOURCE" diff --no-ext-diff --binary HEAD 2>/dev/null | sha256sum
 } | sha256sum | cut -d' ' -f1)"
+source_revision="$(git -C "$SOURCE" rev-parse HEAD)"
 runtime="$ROOT/runtimes/$fingerprint"
 if ! runtime_ready "$runtime/bin/python3"; then
   stage="$(mktemp -d "$ROOT/.staging.XXXXXX")"
@@ -66,7 +106,7 @@ link_tmp="$ROOT/.current.$$.tmp"
 ln -s "$runtime" "$link_tmp"
 mv -Tf "$link_tmp" "$CURRENT"
 
-"$CURRENT/bin/python3" - "$RECEIPT" "$runtime" "$SOURCE" "$BASE_PYTHON" "$fingerprint" <<'PY'
+"$CURRENT/bin/python3" - "$RECEIPT" "$runtime" "$SOURCE" "$BASE_PYTHON" "$fingerprint" "$source_revision" <<'PY'
 import datetime as dt
 import json
 import os
@@ -74,8 +114,19 @@ import pathlib
 import sys
 import tempfile
 
-path, runtime, source, base_python, fingerprint = sys.argv[1:]
+path, runtime, source, base_python, fingerprint, source_revision = sys.argv[1:]
 target = pathlib.Path(path)
+runtime_path = pathlib.Path(runtime).resolve()
+import arnold
+import arnold_pipelines
+import arnold_pipelines.megaplan
+imports = {
+    "arnold": str(pathlib.Path(arnold.__file__).resolve()),
+    "arnold_pipelines": str(pathlib.Path(arnold_pipelines.__file__).resolve()),
+    "megaplan": str(pathlib.Path(arnold_pipelines.megaplan.__file__).resolve()),
+}
+if any(not pathlib.Path(value).is_relative_to(runtime_path) for value in imports.values()):
+    raise SystemExit("prepared supervisor runtime imported outside its immutable venv")
 payload = {
     "base_python": base_python,
     "fingerprint": fingerprint,
@@ -83,6 +134,8 @@ payload = {
     "runtime": runtime,
     "schema_version": "arnold-supervisor-runtime-receipt-v1",
     "source": source,
+    "source_revision": source_revision,
+    "imports": imports,
     "status": "ready",
 }
 fd, tmp = tempfile.mkstemp(prefix=target.name + ".", dir=str(target.parent))
@@ -92,3 +145,4 @@ with os.fdopen(fd, "w", encoding="utf-8") as handle:
 os.replace(tmp, target)
 print(json.dumps(payload, sort_keys=True))
 PY
+receipt_ready "$CURRENT/bin/python3"

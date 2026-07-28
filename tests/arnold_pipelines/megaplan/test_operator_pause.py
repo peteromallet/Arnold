@@ -84,6 +84,30 @@ def test_pause_is_idempotent_and_completed_chain_is_excluded(tmp_path: Path) -> 
         pause_chain(complete_spec, other, reason="must refuse")
 
 
+def test_resume_reconciles_plan_authority_when_exiting_runner_overwrites_chain_pause(
+    tmp_path: Path,
+) -> None:
+    spec, plan = _chain(tmp_path)
+    pause_chain(spec, tmp_path, reason="manual repair")
+
+    # Model the exact race: an already-exiting runner saves its stale chain
+    # metadata after pause_chain(), while the CAS-written plan authority stays.
+    raced = load_chain_state(spec)
+    raced.metadata.pop("operator_pause", None)
+    save_chain_state(spec, raced)
+
+    resumed = resume_chain(spec, tmp_path, actor="repair-owner")
+
+    restored = json.loads((plan / "state.json").read_text())
+    chain_state = load_chain_state(spec)
+    assert resumed["changed"] is True
+    assert resumed["restored_plan_state"] == "blocked"
+    assert restored["current_state"] == "blocked"
+    assert "operator_pause" not in restored["meta"]
+    assert chain_state.last_state == "blocked"
+    assert chain_state.metadata["operator_resume"]["actor"] == "repair-owner"
+
+
 def test_cloud_session_pause_stops_only_owned_runner_and_repair(tmp_path: Path, monkeypatch) -> None:
     from arnold_pipelines.megaplan.cloud import operator_control
 

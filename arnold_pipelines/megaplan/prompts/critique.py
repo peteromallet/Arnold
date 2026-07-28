@@ -22,7 +22,6 @@ from arnold_pipelines.megaplan._core import (
 )
 from arnold_pipelines.megaplan.north_star_actions import (
     NORTH_STAR_ACTION_TYPES,
-    SEVERITY_BLOCKING,
     read_carried_north_star_actions,
 )
 from arnold_pipelines.megaplan.schema_projection import schema_template_payload
@@ -151,6 +150,10 @@ def _build_north_star_actions_block(actions: list[dict[str, Any]]) -> str:
         "  - `action_id`: the action `id` from the carried list above"
     )
     lines.append(
+        "  - `action_type`: the exact `action_type` from the carried action "
+        "(this is a required structural marker)"
+    )
+    lines.append(
         "  - `resolution`: `\"addressed\"` (mapped to a plan change), "
         "`\"rejected\"` (action is invalid/out-of-scope), or "
         "`\"halted\"` (cannot be mapped — see `add_human_halt` above)"
@@ -161,7 +164,8 @@ def _build_north_star_actions_block(actions: list[dict[str, Any]]) -> str:
         '(e.g. "Phase 2 — Step 3", "gate.json section preflight")'
     )
     lines.append(
-        "  - `plan_refs` (optional): concrete file paths this resolution touches"
+        "  - `plan_refs` (required): a non-empty list of concrete plan section "
+        "references and/or repo-relative file paths this resolution touches"
     )
 
     return "\n".join(lines)
@@ -187,6 +191,31 @@ def _plan_version_unified_diff(plan_dir: Path, iteration: int) -> str:
         tofile=f"plan_v{iteration}.md",
     )
     return "".join(diff)
+
+
+def _revise_retry_feedback(state: PlanState) -> str:
+    """Return actionable feedback for the most recent failed revise attempt."""
+    history = state.get("history")
+    if not isinstance(history, list):
+        return ""
+    for entry in reversed(history):
+        if not isinstance(entry, dict) or entry.get("step") != "revise":
+            continue
+        if entry.get("result") != "error":
+            return ""
+        message = entry.get("message")
+        if not isinstance(message, str) or "structural validation" not in message:
+            return ""
+        return textwrap.dedent(
+            f"""
+            PRIOR REVISE ATTEMPT FAILED STRUCTURAL VALIDATION:
+            {message}
+            Correct that exact failure in this retry. The `plan` field must contain
+            at least one concrete numbered step heading, for example:
+            `## Step 1: Implement and verify the scoped change`.
+            """
+        ).strip()
+    return ""
 
 
 def _build_verification_delta_block(
@@ -299,6 +328,29 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         elif isinstance(decisions_data, dict):
             settled_decisions = decisions_data.get("decisions", [])
     settled_block = _settled_decisions_block(settled_decisions)
+    load_bearing_imported_decisions = [
+        decision
+        for decision in state["meta"].get("imported_decisions", [])
+        if isinstance(decision, dict)
+        and bool(decision.get("load_bearing"))
+        and isinstance(decision.get("id"), str)
+        and decision.get("id")
+    ]
+    if load_bearing_imported_decisions:
+        imported_decision_block = "\n".join(
+            [
+                "Load-bearing imported-decision success-criteria contract:",
+                *[
+                    f"- {decision['id']}: {decision.get('decision', '')}"
+                    for decision in load_bearing_imported_decisions
+                ],
+                "- Every ID above must appear literally in at least one `criterion`.",
+                "- Each bound criterion must use `priority: \"must\"` and a non-empty `requires` containing at least one container-verifiable capability (`run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, or `run_linter`).",
+                "- Do not replace these bindings with `subjective_judgment`-only criteria; missing mechanical bindings make the revision invalid.",
+            ]
+        )
+    else:
+        imported_decision_block = ""
 
     # Build the mechanical verification delta block from the completion
     # verdict (if present).  The raw log path is used internally for
@@ -313,6 +365,7 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
     # carried form). Fall back to gate.json when no carry file exists.
     north_star_actions = read_carried_north_star_actions(plan_dir)
     north_star_block = _build_north_star_actions_block(north_star_actions)
+    retry_feedback = _revise_retry_feedback(state)
 
     return textwrap.dedent(
         f"""
@@ -337,9 +390,13 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
 
         {settled_block}
 
+        {imported_decision_block}
+
         {delta_block}
 
         {north_star_block}
+
+        {retry_feedback}
 
         Requirements:
         - Before addressing individual flags, check: does any flag suggest the plan is targeting the wrong code or the wrong root cause? If so, consider whether the plan needs a new approach rather than adjustments. Explain your reasoning.

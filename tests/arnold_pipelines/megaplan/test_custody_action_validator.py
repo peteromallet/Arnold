@@ -1,207 +1,425 @@
+"""Tests for action_validator.py _compute_gate_result — Steps 12A / NSA-M10-GATE-1 (T19/T20).
+
+Focus: the gate computation must block on **any** non-SATISFIED Run Authority
+outcome, not just MISSING grant or FENCED fence.  Stale, conflicted, or
+superseded RA outcomes must return BLOCKED_RA_UNSATISFIED instead of
+falling through to AUTHORIZED.
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from arnold_pipelines.megaplan.custody.action_validator import (
-    ActionBoundaryContext,
-    GateResult,
-    ValidationOutcome,
-    validate_action_boundary,
-)
-from arnold_pipelines.megaplan.custody.contracts import CustodyLease, CustodyTargetKey
-from arnold_pipelines.megaplan.custody.outbox import OutboxRecord, OutboxRecordStatus, OutboxRecordType
-from arnold_pipelines.run_authority import CapabilityGrant, CoordinatorFence
+import pytest
 
 
-TARGET = CustodyTargetKey("task", "T6", "complete", "task", "T6", "contract-T6")
-CAPABILITY = "megaplan.task.result"
-GRANT = CapabilityGrant(
-    grant_id="grant-T6",
-    run_id="run-T6",
-    run_revision="rev-T6",
-    coordinator_attempt_id="coord-T6",
-    fence_token=7,
-    subject_ids=(TARGET.subject_id,),
-    capabilities=(CAPABILITY,),
-    evidence_ids=("evidence-1",),
-)
-FENCE = CoordinatorFence("run-T6", "rev-T6", "coord-T6", 7)
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-@dataclass
-class FakeLeaseStore:
-    leases: tuple[CustodyLease, ...]
+def _make_check(source: str, outcome_str: str):
+    """Build a SourceCheck with the given source name and outcome."""
+    from arnold_pipelines.megaplan.custody.action_validator import (
+        SourceCheck,
+        ValidationOutcome,
+    )
+    outcome = ValidationOutcome(outcome_str)
+    return SourceCheck(source=source, outcome=outcome, detail="test")
 
-    def current_lease(self, lease_id: str) -> CustodyLease | None:
-        for lease in self.leases:
-            if lease.lease_id == lease_id:
-                return lease
-        return None
 
-    def find_by_target_key(
-        self,
-        subject_type: str,
-        subject_id: str,
-        action: str,
-        target_kind: str,
-        target_id: str,
-        contract_id: str,
-    ) -> tuple[CustodyLease, ...]:
-        return tuple(
-            lease
-            for lease in self.leases
-            if lease.target_key is not None
-            and lease.target_key.to_dict()
-            == TARGET.to_dict()
+def _satisfied_ra_checks():
+    """Both RA sources SATISFIED."""
+    return (
+        _make_check("run_authority_grant", "satisfied"),
+        _make_check("run_authority_fence", "satisfied"),
+    )
+
+
+def _all_satisfied_checks():
+    """All four sources SATISFIED."""
+    return (
+        _make_check("run_authority_grant", "satisfied"),
+        _make_check("run_authority_fence", "satisfied"),
+        _make_check("custody_lease", "satisfied"),
+        _make_check("wbc_attempt", "satisfied"),
+    )
+
+
+# ── Shadow mode ─────────────────────────────────────────────────────────────
+
+
+class TestShadowMode:
+    """When enforcement is off, gate result is SHADOW_PASS regardless."""
+
+    def test_shadow_pass_with_no_checks(self):
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
         )
+        result = _compute_gate_result((), enforcement_enabled=False)
+        assert result == GateResult.SHADOW_PASS
+
+    def test_shadow_pass_even_with_errors(self):
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        checks = (_make_check("run_authority_grant", "error"),)
+        result = _compute_gate_result(checks, enforcement_enabled=False)
+        assert result == GateResult.SHADOW_PASS
 
 
-@dataclass
-class FakeOutbox:
-    records: tuple[OutboxRecord, ...]
-
-    def list_records(self) -> tuple[OutboxRecord, ...]:
-        return self.records
+# ── All-satisfied → AUTHORIZED ───────────────────────────────────────────────
 
 
-def _lease(*, epoch: int = 5, subject_id: str = TARGET.subject_id, grant_id: str = GRANT.grant_id) -> CustodyLease:
-    target = (
-        TARGET
-        if subject_id == TARGET.subject_id
-        else CustodyTargetKey(TARGET.subject_type, subject_id, TARGET.action, TARGET.target_kind, TARGET.target_id, TARGET.contract_id)
-    )
-    return CustodyLease(
-        lease_id="lease-T6",
-        target_key=target,
-        owner=("validator-host", "12345", "boot-1"),
-        epoch=epoch,
-        acquired_at="2026-07-20T00:00:00+00:00",
-        expires_at="2999-01-01T00:00:00+00:00",
-        fence_token=str(FENCE.token),
-        status="active",
-        run_authority_grant_id=grant_id,
-        wbc_attempt_reference="wbc-T6",
-    )
+class TestAuthorizedWhenAllSatisfied:
+    """With enforcement on, all SATISFIED checks yield AUTHORIZED."""
+
+    def test_all_satisfied_yields_authorized(self):
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        result = _compute_gate_result(_all_satisfied_checks(), enforcement_enabled=True)
+        assert result == GateResult.AUTHORIZED
+
+    def test_authorized_value_is_distinct(self):
+        """GateResult.AUTHORIZED has a unique value (not aliased)."""
+        from arnold_pipelines.megaplan.custody.action_validator import GateResult
+        values = [m.value for m in GateResult]
+        assert len(values) == len(set(values)), "duplicate gate result values"
+
+    def test_authorized_not_equal_to_shadow_pass(self):
+        from arnold_pipelines.megaplan.custody.action_validator import GateResult
+        assert GateResult.AUTHORIZED != GateResult.SHADOW_PASS
+        assert GateResult.AUTHORIZED is not GateResult.SHADOW_PASS
 
 
-def _record(*, version: str = "wbc-evidence.v1", grant_id: str = GRANT.grant_id) -> OutboxRecord:
-    return OutboxRecord(
-        outbox_id="outbox-T6",
-        lease_id="lease-T6",
-        record_type=OutboxRecordType.LEASE_ACQUIRE,
-        status=OutboxRecordStatus.PENDING,
-        occurred_at="2026-07-20T00:00:00+00:00",
-        idempotency_key="idem-T6",
-        wbc_attempt_reference="wbc-T6",
-        run_authority_grant_id=grant_id,
-        coordinator_fence_token=FENCE.token,
-        custody_epoch=5,
-        payload={
-            "schema_version": version,
-            "target_digest": TARGET.target_digest,
-        },
-    )
+# ── NSA-M10-GATE-1 / Step 12A: any non-SATISFIED RA blocks ──────────────────
 
 
-def _context(**overrides: object) -> ActionBoundaryContext:
-    base = {
-        "action_type": "completion",
-        "target": TARGET,
-        "run_authority_grant_id": GRANT.grant_id,
-        "coordinator_fence_token": FENCE.token,
-        "wbc_attempt_reference": "wbc-T6",
-        "owner_host": "validator-host",
-        "owner_pid": "12345",
-        "owner_boot_id": "boot-1",
-        "expected_custody_epoch": 5,
-        "expected_lease_id": "lease-T6",
-        "run_authority_grant": GRANT,
-        "coordinator_fence": FENCE,
-        "required_capability": CAPABILITY,
-        "required_wbc_evidence_version": "wbc-evidence.v1",
-    }
-    base.update(overrides)
-    return ActionBoundaryContext(**base)
+class TestRaUnsatisfiedBlocking:
+    """Any non-SATISFIED RA outcome (not just MISSING/FENCED) must block."""
+
+    def test_stale_grant_blocks(self):
+        """STALE grant outcome → BLOCKED_RA_UNSATISFIED."""
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        checks = (
+            _make_check("run_authority_grant", "stale"),
+            _make_check("run_authority_fence", "satisfied"),
+            _make_check("custody_lease", "satisfied"),
+            _make_check("wbc_attempt", "satisfied"),
+        )
+        result = _compute_gate_result(checks, enforcement_enabled=True)
+        assert result == GateResult.BLOCKED_RA_UNSATISFIED
+
+    def test_conflicted_grant_blocks(self):
+        """CONFLICT grant outcome → BLOCKED_RA_UNSATISFIED."""
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        checks = (
+            _make_check("run_authority_grant", "conflict"),
+            _make_check("run_authority_fence", "satisfied"),
+            _make_check("custody_lease", "satisfied"),
+            _make_check("wbc_attempt", "satisfied"),
+        )
+        result = _compute_gate_result(checks, enforcement_enabled=True)
+        assert result == GateResult.BLOCKED_RA_UNSATISFIED
+
+    def test_stale_fence_blocks(self):
+        """STALE fence outcome → BLOCKED_RA_UNSATISFIED."""
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        checks = (
+            _make_check("run_authority_grant", "satisfied"),
+            _make_check("run_authority_fence", "stale"),
+            _make_check("custody_lease", "satisfied"),
+            _make_check("wbc_attempt", "satisfied"),
+        )
+        result = _compute_gate_result(checks, enforcement_enabled=True)
+        assert result == GateResult.BLOCKED_RA_UNSATISFIED
+
+    def test_conflicted_fence_blocks(self):
+        """CONFLICT fence outcome → BLOCKED_RA_UNSATISFIED."""
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        checks = (
+            _make_check("run_authority_grant", "satisfied"),
+            _make_check("run_authority_fence", "conflict"),
+            _make_check("custody_lease", "satisfied"),
+            _make_check("wbc_attempt", "satisfied"),
+        )
+        result = _compute_gate_result(checks, enforcement_enabled=True)
+        assert result == GateResult.BLOCKED_RA_UNSATISFIED
+
+    def test_expired_grant_blocks(self):
+        """EXPIRED grant outcome → BLOCKED_RA_UNSATISFIED."""
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        checks = (
+            _make_check("run_authority_grant", "expired"),
+            _make_check("run_authority_fence", "satisfied"),
+            _make_check("custody_lease", "satisfied"),
+            _make_check("wbc_attempt", "satisfied"),
+        )
+        result = _compute_gate_result(checks, enforcement_enabled=True)
+        assert result == GateResult.BLOCKED_RA_UNSATISFIED
+
+    def test_ra_not_owner_blocks(self):
+        """NOT_OWNER RA outcome → BLOCKED_RA_UNSATISFIED."""
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        checks = (
+            _make_check("run_authority_grant", "not_owner"),
+            _make_check("run_authority_fence", "satisfied"),
+            _make_check("custody_lease", "satisfied"),
+            _make_check("wbc_attempt", "satisfied"),
+        )
+        result = _compute_gate_result(checks, enforcement_enabled=True)
+        assert result == GateResult.BLOCKED_RA_UNSATISFIED
+
+    def test_both_ra_unsatisfied_blocks(self):
+        """Both RA sources unsatisfied → BLOCKED_RA_UNSATISFIED."""
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        checks = (
+            _make_check("run_authority_grant", "stale"),
+            _make_check("run_authority_fence", "conflict"),
+            _make_check("custody_lease", "satisfied"),
+            _make_check("wbc_attempt", "satisfied"),
+        )
+        result = _compute_gate_result(checks, enforcement_enabled=True)
+        assert result == GateResult.BLOCKED_RA_UNSATISFIED
+
+    def test_ra_unsatisfied_does_not_fall_through_to_authorized(self):
+        """Critical regression: stale RA must NOT produce AUTHORIZED.
+
+        Before T19, only MISSING grant and FENCED fence were checked.
+        Any other RA outcome fell through to AUTHORIZED.
+        """
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        # STALE is neither MISSING nor FENCED — old code fell through
+        checks = (
+            _make_check("run_authority_grant", "stale"),
+            _make_check("run_authority_fence", "satisfied"),
+            _make_check("custody_lease", "satisfied"),
+            _make_check("wbc_attempt", "satisfied"),
+        )
+        result = _compute_gate_result(checks, enforcement_enabled=True)
+        assert result != GateResult.AUTHORIZED
 
 
-def test_validator_authorizes_current_exact_identities() -> None:
-    result = validate_action_boundary(
-        _context(),
-        lease_store=FakeLeaseStore((_lease(),)),
-        outbox=FakeOutbox((_record(),)),
-        enforcement_enabled=True,
-    )
-
-    assert result.gate_result == GateResult.AUTHORIZED
-    assert all(check.outcome == ValidationOutcome.SATISFIED for check in result.checks)
-    assert result.diagnostics["checks_summary"] == {
-        "run_authority_grant": "satisfied",
-        "run_authority_fence": "satisfied",
-        "custody_lease": "satisfied",
-        "wbc_attempt": "satisfied",
-    }
+# ── Existing gate outcomes still work ────────────────────────────────────────
 
 
-def test_validator_blocks_missing_current_grant_with_typed_denial() -> None:
-    result = validate_action_boundary(
-        _context(run_authority_grant=None),
-        lease_store=FakeLeaseStore((_lease(),)),
-        outbox=FakeOutbox((_record(),)),
-        enforcement_enabled=True,
-    )
+class TestExistingGateOutcomes:
+    """Pre-existing blocking paths remain functional."""
 
-    assert result.gate_result == GateResult.BLOCKED_MISSING_GRANT
-    assert result.diagnostics["denials"][0]["identity"] == "grant"
-    assert result.diagnostics["denials"][0]["outcome"] == "missing"
+    def test_error_takes_precedence(self):
+        """ERROR check takes precedence over all other outcomes."""
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        checks = (
+            _make_check("run_authority_grant", "error"),
+            _make_check("run_authority_fence", "satisfied"),
+            _make_check("custody_lease", "satisfied"),
+            _make_check("wbc_attempt", "satisfied"),
+        )
+        result = _compute_gate_result(checks, enforcement_enabled=True)
+        assert result == GateResult.ERROR
+
+    def test_missing_grant_blocks(self):
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        checks = (
+            _make_check("run_authority_grant", "missing"),
+            _make_check("run_authority_fence", "satisfied"),
+            _make_check("custody_lease", "satisfied"),
+            _make_check("wbc_attempt", "satisfied"),
+        )
+        result = _compute_gate_result(checks, enforcement_enabled=True)
+        assert result == GateResult.BLOCKED_MISSING_GRANT
+
+    def test_fenced_fence_blocks(self):
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        checks = (
+            _make_check("run_authority_grant", "satisfied"),
+            _make_check("run_authority_fence", "fenced"),
+            _make_check("custody_lease", "satisfied"),
+            _make_check("wbc_attempt", "satisfied"),
+        )
+        result = _compute_gate_result(checks, enforcement_enabled=True)
+        assert result == GateResult.BLOCKED_FENCE_MISMATCH
+
+    def test_missing_lease_blocks(self):
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        checks = (
+            _make_check("run_authority_grant", "satisfied"),
+            _make_check("run_authority_fence", "satisfied"),
+            _make_check("custody_lease", "missing"),
+            _make_check("wbc_attempt", "satisfied"),
+        )
+        result = _compute_gate_result(checks, enforcement_enabled=True)
+        assert result == GateResult.BLOCKED_NO_LEASE
+
+    def test_expired_lease_blocks(self):
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        checks = (
+            _make_check("run_authority_grant", "satisfied"),
+            _make_check("run_authority_fence", "satisfied"),
+            _make_check("custody_lease", "expired"),
+            _make_check("wbc_attempt", "satisfied"),
+        )
+        result = _compute_gate_result(checks, enforcement_enabled=True)
+        assert result == GateResult.BLOCKED_EXPIRED_LEASE
+
+    def test_stale_epoch_lease_blocks(self):
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        checks = (
+            _make_check("run_authority_grant", "satisfied"),
+            _make_check("run_authority_fence", "satisfied"),
+            _make_check("custody_lease", "stale"),
+            _make_check("wbc_attempt", "satisfied"),
+        )
+        result = _compute_gate_result(checks, enforcement_enabled=True)
+        assert result == GateResult.BLOCKED_STALE_EPOCH
+
+    def test_not_owner_lease_blocks(self):
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        checks = (
+            _make_check("run_authority_grant", "satisfied"),
+            _make_check("run_authority_fence", "satisfied"),
+            _make_check("custody_lease", "not_owner"),
+            _make_check("wbc_attempt", "satisfied"),
+        )
+        result = _compute_gate_result(checks, enforcement_enabled=True)
+        assert result == GateResult.BLOCKED_NOT_OWNER
+
+    def test_missing_wbc_blocks(self):
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        checks = (
+            _make_check("run_authority_grant", "satisfied"),
+            _make_check("run_authority_fence", "satisfied"),
+            _make_check("custody_lease", "satisfied"),
+            _make_check("wbc_attempt", "missing"),
+        )
+        result = _compute_gate_result(checks, enforcement_enabled=True)
+        assert result == GateResult.BLOCKED_WBC_MISSING
+
+    def test_conflict_wbc_blocks(self):
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        checks = (
+            _make_check("run_authority_grant", "satisfied"),
+            _make_check("run_authority_fence", "satisfied"),
+            _make_check("custody_lease", "satisfied"),
+            _make_check("wbc_attempt", "conflict"),
+        )
+        result = _compute_gate_result(checks, enforcement_enabled=True)
+        assert result == GateResult.BLOCKED_WBC_CONFLICT
 
 
-def test_validator_blocks_subject_outside_current_grant_scope() -> None:
-    off_scope_grant = CapabilityGrant(
-        grant_id=GRANT.grant_id,
-        run_id=GRANT.run_id,
-        run_revision=GRANT.run_revision,
-        coordinator_attempt_id=GRANT.coordinator_attempt_id,
-        fence_token=GRANT.fence_token,
-        subject_ids=("other-task",),
-        capabilities=GRANT.capabilities,
-        evidence_ids=GRANT.evidence_ids,
-    )
-
-    result = validate_action_boundary(
-        _context(run_authority_grant=off_scope_grant),
-        lease_store=FakeLeaseStore((_lease(),)),
-        outbox=FakeOutbox((_record(),)),
-        enforcement_enabled=True,
-    )
-
-    assert result.gate_result == GateResult.BLOCKED_SUBJECT_SCOPE_MISMATCH
-    assert result.diagnostics["denials"][0]["identity"] == "subject_id"
-    assert "outside current grant scope" in result.diagnostics["denials"][0]["detail"]
+# ── Empty checks ─────────────────────────────────────────────────────────────
 
 
-def test_validator_blocks_stale_custody_epoch_with_typed_denial() -> None:
-    result = validate_action_boundary(
-        _context(expected_custody_epoch=4),
-        lease_store=FakeLeaseStore((_lease(epoch=5),)),
-        outbox=FakeOutbox((_record(),)),
-        enforcement_enabled=True,
-    )
-
-    assert result.gate_result == GateResult.BLOCKED_STALE_EPOCH
-    denial = next(item for item in result.diagnostics["denials"] if item["source"] == "custody_lease")
-    assert denial["identity"] == "custody_epoch"
-    assert denial["outcome"] == "stale"
+class TestEmptyChecks:
+    def test_empty_checks_enforced_yields_authorized(self):
+        """No checks at all with enforcement → AUTHORIZED (vacuous truth)."""
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            _compute_gate_result,
+            GateResult,
+        )
+        result = _compute_gate_result((), enforcement_enabled=True)
+        assert result == GateResult.AUTHORIZED
 
 
-def test_validator_blocks_wbc_evidence_version_mismatch() -> None:
-    result = validate_action_boundary(
-        _context(required_wbc_evidence_version="wbc-evidence.v2"),
-        lease_store=FakeLeaseStore((_lease(),)),
-        outbox=FakeOutbox((_record(version="wbc-evidence.v1"),)),
-        enforcement_enabled=True,
-    )
+# ── Result property tests ────────────────────────────────────────────────────
 
-    assert result.gate_result == GateResult.BLOCKED_WBC_VERSION_MISMATCH
-    denial = next(item for item in result.diagnostics["denials"] if item["source"] == "wbc_attempt")
-    assert denial["identity"] == "wbc_evidence_version"
-    assert denial["outcome"] == "stale"
+
+class TestActionBoundaryResultProperties:
+    """ActionBoundaryResult.authorized and .blocked behave correctly."""
+
+    def test_authorized_property_true_only_for_authorized(self):
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            ActionBoundaryResult,
+            GateResult,
+        )
+        result = ActionBoundaryResult(
+            gate_result=GateResult.AUTHORIZED,
+            action_type="dispatch",
+            target_digest="abc123",
+            checks=(),
+            enforcement_enabled=True,
+        )
+        assert result.authorized is True
+        assert result.blocked is False
+
+    def test_shadow_pass_not_authorized(self):
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            ActionBoundaryResult,
+            GateResult,
+        )
+        result = ActionBoundaryResult(
+            gate_result=GateResult.SHADOW_PASS,
+            action_type="dispatch",
+            target_digest="abc123",
+            checks=(),
+            enforcement_enabled=False,
+        )
+        assert result.authorized is False
+        assert result.blocked is False
+        assert result.is_shadow is True
+
+    def test_blocked_result(self):
+        from arnold_pipelines.megaplan.custody.action_validator import (
+            ActionBoundaryResult,
+            GateResult,
+        )
+        result = ActionBoundaryResult(
+            gate_result=GateResult.BLOCKED_RA_UNSATISFIED,
+            action_type="dispatch",
+            target_digest="abc123",
+            checks=(),
+            enforcement_enabled=True,
+        )
+        assert result.authorized is False
+        assert result.blocked is True

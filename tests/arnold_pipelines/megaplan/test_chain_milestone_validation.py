@@ -454,6 +454,7 @@ def test_final_milestone_manifest_failure_rolls_back_done_state(
 def test_auto_merge_waits_for_merged_pr_before_appending_completion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chain_driver_monkeypatch: None
 ) -> None:
+    monkeypatch.delenv("MEGAPLAN_CHAIN_NO_PUSH", raising=False)
     spec_path = _write_validation_fixture(tmp_path, validator_exit=0)
     spec_path.write_text(
         """
@@ -567,6 +568,7 @@ def test_chain_state_carries_pr_evidence_metadata_for_auto_merge_milestone(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chain_driver_monkeypatch: None
 ) -> None:
     """Chain state after auto-merge-driven milestone carries PR number and state."""
+    monkeypatch.delenv("MEGAPLAN_CHAIN_NO_PUSH", raising=False)
     spec_path = _write_validation_fixture(tmp_path, validator_exit=0)
     spec_path.write_text(
         """

@@ -1,0 +1,120 @@
+{
+  "_non_authoritative": true,
+  "comparison": {
+    "all_deterministic": true,
+    "cursor_agreement": "100% — all dimensions use content-addressed deterministic cursors",
+    "dimensions": {
+      "custody": {
+        "cursor_type": "lease_epoch + fence_digest",
+        "deterministic": true,
+        "evidence_ids": [
+          "sc:custody:lease_epoch",
+          "sc:custody:fence_digest"
+        ],
+        "stale_threshold_ms": 120000,
+        "version_source": "Custody lease store epoch + grant fence digest"
+      },
+      "lifecycle": {
+        "cursor_type": "state_hash",
+        "deterministic": true,
+        "evidence_ids": [
+          "sc:lifecycle:state_hash"
+        ],
+        "stale_threshold_ms": 300000,
+        "version_source": "plan state.json content hash"
+      },
+      "process_correlation": {
+        "cursor_type": "worker_identity_digest + heartbeat_seq",
+        "deterministic": true,
+        "evidence_ids": [
+          "sc:process_correlation:identity_digest",
+          "sc:process_correlation:heartbeat_seq"
+        ],
+        "stale_threshold_ms": 120000,
+        "version_source": "WorkerIdentity digest + heartbeat sequence number"
+      },
+      "run_authority": {
+        "cursor_type": "grant_digest + fence_digest",
+        "deterministic": true,
+        "evidence_ids": [
+          "sc:run_authority:grant_digest",
+          "sc:run_authority:fence_digest"
+        ],
+        "stale_threshold_ms": 120000,
+        "version_source": "Run Authority grant/fence digest"
+      },
+      "wbc": {
+        "cursor_type": "boundary_evidence_id",
+        "deterministic": true,
+        "evidence_ids": [
+          "sc:wbc:boundary_evidence_id"
+        ],
+        "note": "Exact-version WbcAttemptRef; implicit-latest forbidden",
+        "stale_threshold_ms": 120000,
+        "version_source": "WBC adapter boundary evidence digest"
+      },
+      "work_ledger": {
+        "cursor_type": "event_count + last_event_id",
+        "deterministic": true,
+        "evidence_ids": [
+          "sc:work_ledger:event_count",
+          "sc:work_ledger:last_event_id"
+        ],
+        "stale_threshold_ms": 600000,
+        "version_source": "Work ledger event count + last appended event_id"
+      }
+    },
+    "reducer_count": 6,
+    "reducer_proofs": [
+      {
+        "deterministic": true,
+        "input_shape": "(phase_state, progress, source_cursor, lifecycle_cursor, observed_at)",
+        "proof": "Same inputs → same output dict including projection_digest. Backward-compatible bare dict when M9 params absent.",
+        "reducer": "plan_status_presentation (status_projection.py)",
+        "test_reference": "test_status_projection.py — TestM9MetadataEnrichment, TestStrategyReviewReworkReplayProofs"
+      },
+      {
+        "deterministic": true,
+        "input_shape": "(status_snapshot, attention_metadata)",
+        "proof": "Same snapshot + same attention → identical context root with identical source_cursor_summary.",
+        "reducer": "build_context_root (context_tree.py)",
+        "test_reference": "test_context_tree.py — M9 staleness/uncertainty surface tests"
+      },
+      {
+        "deterministic": true,
+        "input_shape": "(plan_dir, wbc_query_fn?)",
+        "proof": "Same plan_dir + same wbc_query_fn → identical payload including source_cursor vector_id.",
+        "reducer": "build_introspect_payload (introspect.py)",
+        "test_reference": "introspect.py — _build_introspect_source_cursor"
+      },
+      {
+        "deterministic": true,
+        "input_shape": "(snapshot_sessions, limit)",
+        "proof": "Same sessions + same limit → identical compact tree including source_cursor_aggregate.",
+        "reducer": "compact_cloud_status_snapshot (status_tree.py)",
+        "test_reference": "test_status_tree.py — source_cursor_aggregate presence tests"
+      },
+      {
+        "deterministic": true,
+        "input_shape": "(plan_dir)",
+        "proof": "Same ledger → identical 9-category aggregate with exact event_ids per category.",
+        "reducer": "aggregate_by_category (work_ledger.py)",
+        "test_reference": "test_work_ledger.py — aggregate_by_category tests"
+      },
+      {
+        "deterministic": true,
+        "input_shape": "(plan_dir)",
+        "proof": "Same ledger → identical summary including by_category, identity_joins, unavailable denominators.",
+        "reducer": "build_work_class_summary (work_ledger.py)",
+        "test_reference": "test_work_ledger.py — build_work_class_summary tests"
+      }
+    ],
+    "schema_version": "1.0.0",
+    "total_dimensions": 6
+  },
+  "description": "M9 cutover evidence artifact. Projections are evidence identifiers only — never bearer authority for dispatch, repair, retry, completion, cancellation, or publication.",
+  "generated_by": "M9 T64 — execute_batch_14",
+  "plan_ref": "m9-rebuildable-projections-20260722-0431",
+  "schema": "m9.cutover-evidence.v1.evidence.m9-reducer-cursor-comparison",
+  "timestamp_utc": "2026-07-23T03:46:00.000000+00:00"
+}

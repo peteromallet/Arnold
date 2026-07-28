@@ -23,6 +23,8 @@ from .auth import AuthorizationSubject
 from .currently_running import (
     CURRENTLY_RUNNING_COMMAND,
     CURRENTLY_RUNNING_DESCRIPTION,
+    CurrentlyRunningReport,
+    _safe_label,
     collect_currently_running,
     render_currently_running,
 )
@@ -32,6 +34,14 @@ from .dropped_threads import (
     InvalidLookback,
     dropped_threads_prompt,
     parse_dropped_threads_lookback,
+)
+from .discord_follow_up import (
+    DiscordFollowUpError,
+    FOLLOW_UP_COMMAND,
+    FOLLOW_UP_DESCRIPTION,
+    command_control_provenance,
+    render_follow_up_receipt,
+    resolve_live_managed_agent,
 )
 from .discord_reactions import DiscordReactionEffectLedger, ReactionEffectSweepResult
 from .runtime import InboundEvent, OutboundMessage, OutboundSink, ResidentRuntime
@@ -47,7 +57,12 @@ from .restart_resident import (
     restart_discord_resident,
 )
 from .scheduler import ScheduledJobWorker
-from .subagent import reconcile_managed_subagent_queues, sweep_managed_agent_deliveries
+from .subagent import (
+    SubagentFollowupError,
+    follow_up_managed_subagent,
+    reconcile_managed_subagent_queues,
+    sweep_managed_agent_deliveries,
+)
 from .transcription import AudioTranscriptionError, OpenAICompatibleAudioTranscriber
 from .timezone import InvalidTimezone, TimezoneService
 
@@ -106,6 +121,7 @@ class DiscordApplicationCommand:
     description: str
     handler_name: str
     has_lookback_option: bool = False
+    has_follow_up_options: bool = False
 
 
 DISCORD_APPLICATION_COMMANDS = (
@@ -125,6 +141,12 @@ DISCORD_APPLICATION_COMMANDS = (
         handler_name="handle_dropped_threads_interaction",
         has_lookback_option=True,
     ),
+    DiscordApplicationCommand(
+        name=FOLLOW_UP_COMMAND,
+        description=FOLLOW_UP_DESCRIPTION,
+        handler_name="handle_follow_up_interaction",
+        has_follow_up_options=True,
+    ),
 )
 
 
@@ -136,6 +158,15 @@ def register_discord_application_commands(tree: Any, service: Any) -> tuple[str,
         if command.has_lookback_option:
             async def callback(interaction: Any, lookback: str | None = None) -> None:
                 await handler(interaction, lookback=lookback)
+
+            callback.__name__ = callback_name
+            return callback
+
+        if command.has_follow_up_options:
+            async def callback(
+                interaction: Any, agent: str, message: str
+            ) -> None:
+                await handler(interaction, agent=agent, message=message)
 
             callback.__name__ = callback_name
             return callback
@@ -323,7 +354,12 @@ class DiscordInboundMessage:
 
 
 class DiscordOutboundSink(OutboundSink):
-    """Deliver resident outbound messages to Discord using durable targets."""
+    """Deliver resident outbound messages to Discord using durable targets.
+
+    Step 13H: When *delivery_effects* is provided, outbound delivery is
+    routed through the durable WBC delivery effects adapter with stable
+    global-effect keys. Real Discord stays action-off in M10 (SD3).
+    """
 
     def __init__(
         self,
@@ -332,10 +368,12 @@ class DiscordOutboundSink(OutboundSink):
         delivery_environment: str = "test",
         bot_role: str = "test",
         reaction_effect_root: Path | None = None,
+        delivery_effects: Any | None = None,
     ) -> None:
         self.client = client
         self.delivery_environment = str(delivery_environment).strip().lower()
         self.bot_role = str(bot_role).strip().lower()
+        self._delivery_effects = delivery_effects
         self.reaction_effects = (
             DiscordReactionEffectLedger(reaction_effect_root)
             if reaction_effect_root is not None
@@ -355,6 +393,15 @@ class DiscordOutboundSink(OutboundSink):
             )
         if self.client is None:
             raise RuntimeError("Discord client is not bound")
+
+        # Step 13H: route through durable delivery effects when configured.
+        # If the adapter accepts the delivery, we're done. Otherwise fall
+        # through to the direct Discord send path.
+        if self._delivery_effects is not None:
+            routed = await self._send_via_delivery_effects(message)
+            if routed:
+                return
+
         target = DiscordDeliveryTarget.from_conversation_key(message.conversation_key)
         channel_target = target
         fallback_reason: str | None = None
@@ -506,6 +553,71 @@ class DiscordOutboundSink(OutboundSink):
                     "Discord terminal reaction intent could not be committed message_id=%s",
                     reply_to_message_id,
                 )
+
+    # ── Step 13H: delivery-effects routing ────────────────────────────────
+
+    async def _send_via_delivery_effects(self, message: OutboundMessage) -> bool:
+        """Route outbound delivery through the WBC delivery effects adapter.
+
+        Step 13H: Uses stable parent/target/channel global-effect keys.
+        Reclaim, duplicate scheduling, child aggregation, lost ACK, and
+        completion sweep delivery are all handled through the adapter's
+        durable intent contracts.
+
+        Returns:
+            True if the delivery was accepted by the WBC adapter and no
+            further action is needed. False if the caller should fall
+            through to the direct Discord send path.
+        """
+        try:
+            from arnold_pipelines.megaplan.resident.delivery_effects import (
+                DeliveryChannel,
+                DeliveryTarget,
+            )
+
+            target = DeliveryTarget(
+                channel=DeliveryChannel.RESIDENT,
+                parent_id=getattr(message, 'conversation_key', 'unknown'),
+                target_id=message.idempotency_key or 'unknown',
+                action="send",
+            )
+
+            intent = {
+                "content": message.content,
+                "conversation_key": getattr(message, 'conversation_key', ''),
+                "idempotency_key": getattr(message, 'idempotency_key', ''),
+            }
+            if isinstance(message.metadata, dict):
+                intent["metadata"] = dict(message.metadata)
+
+            outcome = self._delivery_effects.deliver(
+                target=target,
+                intent_payload=intent,
+                apply_fn=lambda payload: {"delivered": True, "channel": "resident"},
+            )
+
+            if outcome.ok:
+                if isinstance(message.metadata, dict):
+                    message.metadata["delivery_effects_routed"] = True
+                    message.metadata["delivery_glek"] = outcome.glek
+                LOGGER.info(
+                    "Resident delivery routed through WBC: glek=%s channel=%s",
+                    outcome.glek,
+                    outcome.channel,
+                )
+                return True
+
+            LOGGER.warning(
+                "Delivery effects routing blocked: %s — falling through to direct",
+                outcome.error,
+            )
+            return False
+        except Exception as exc:
+            LOGGER.warning(
+                "Delivery effects routing unavailable (%s) — falling through to direct",
+                exc,
+            )
+            return False
 
     async def _queue_terminal_reactions(
         self, message: OutboundMessage, reply_to_message_id: str
@@ -1445,7 +1557,15 @@ class ResidentDiscordService:
         await client.start(self.token)
 
     async def handle_currently_running_interaction(self, interaction: Any) -> None:
-        """Serve ``/whats-cooking`` without invoking the resident model."""
+        """Serve ``/whats-cooking`` without invoking the resident model.
+
+        M9 (T25): Non-authoritative metadata and degraded states are preserved
+        independently per source.  Status-node and managed-agent inventory
+        degrade independently — a failure in one source does not invent
+        activity for the other.  Source-cursor metadata is surfaced as a
+        non-authoritative footer so operators can distinguish fresh, stale,
+        and unknown dimensional evidence.
+        """
 
         user_id = _optional_snowflake(
             getattr(getattr(interaction, "user", None), "id", None)
@@ -1473,15 +1593,43 @@ class ResidentDiscordService:
             return
 
         await interaction.response.defer(thinking=True, ephemeral=True)
+
+        # ── M9: independent degradation per source ──
+        report: CurrentlyRunningReport | None = None
+        collection_failed = False
         try:
+            timezone_name = TimezoneService(
+                getattr(self.runtime, "store", None),
+                getattr(self.runtime, "config", None),
+            ).resolve(user_id=user_id, guild_id=guild_id).name
             report = await collect_currently_running(self.runtime)
-            rendered = render_currently_running(report)
         except Exception:
-            LOGGER.exception("Resident whats-cooking command failed")
+            LOGGER.exception("Resident whats-cooking collect phase failed")
+            collection_failed = True
+
+        if collection_failed or report is None:
+            # ── M9: no invented activity — both sources unavailable ──
             rendered = (
                 "# Currently running\n"
-                "⚠️ Canonical status is temporarily unavailable; no running-state claims were made."
+                "⚠️ Canonical status is temporarily unavailable; "
+                "no running-state claims were made.\n"
+                "\n"
+                "## ⛓️ Epics & chains\n"
+                "⚠️ Status-node collection failed — no chain state available.\n"
+                "\n"
+                "## 🤖 Managed agents\n"
+                "⚠️ Managed-agent inventory collection failed — no agent state available.\n"
+                "\n"
+                "> ⚠️ _non-authoritative — this report is a projection, not source authority._"
             )
+        else:
+            rendered = render_currently_running(
+                report,
+                timezone_name=timezone_name,
+            )
+            # ── M9: attach non-authoritative source-cursor metadata footer ──
+            rendered = _attach_m9_whats_cooking_metadata(report, rendered)
+
         for chunk in split_discord_message(rendered):
             await interaction.followup.send(chunk, ephemeral=True)
 
@@ -1577,6 +1725,121 @@ class ResidentDiscordService:
         # Best effort: the acknowledgement is already visible, and the resident
         # may be replaced before this edit reaches Discord.
         await interaction.edit_original_response(content=message)
+
+    async def handle_follow_up_interaction(
+        self, interaction: Any, *, agent: str, message: str
+    ) -> None:
+        """Attach an exact instruction to one live managed provider thread."""
+
+        user_id = _optional_snowflake(
+            getattr(getattr(interaction, "user", None), "id", None)
+        )
+        guild_id = _optional_snowflake(getattr(interaction, "guild_id", None))
+        channel = getattr(interaction, "channel", None)
+        parent = getattr(channel, "parent", None)
+        parent_id = _optional_snowflake(getattr(parent, "id", None))
+        interaction_channel_id = _optional_snowflake(
+            getattr(interaction, "channel_id", None)
+        )
+        channel_id = parent_id or interaction_channel_id
+        thread_id = interaction_channel_id if parent_id is not None else None
+        subject = AuthorizationSubject(
+            user_id=user_id or "",
+            guild_id=guild_id,
+            channel_id=channel_id,
+        )
+        authorizer = getattr(self.runtime, "authorizer", None)
+        decision = (
+            authorizer.authorize_inbound(subject)
+            if authorizer is not None and user_id
+            else None
+        )
+        if (
+            not user_id
+            or not channel_id
+            or (decision is not None and not decision.allowed)
+        ):
+            await interaction.response.send_message(
+                "This command is not authorized in this Discord context.",
+                ephemeral=True,
+            )
+            return
+        if not str(agent or "").strip():
+            await interaction.response.send_message(
+                "Follow-up rejected: agent is required. No instruction was attached.",
+                ephemeral=True,
+            )
+            return
+        if not isinstance(message, str) or not message.strip():
+            await interaction.response.send_message(
+                "Follow-up rejected: message must not be empty. No instruction was attached.",
+                ephemeral=True,
+            )
+            return
+        interaction_id = _optional_snowflake(getattr(interaction, "id", None))
+        if not interaction_id:
+            await interaction.response.send_message(
+                "Follow-up rejected: Discord supplied no stable interaction ID. "
+                "No instruction was attached.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        project_root = Path(
+            getattr(self.runtime, "project_root", Path.cwd())
+        ).resolve()
+        try:
+            target = await asyncio.to_thread(
+                resolve_live_managed_agent,
+                agent,
+                project_root=project_root,
+            )
+            delivery_target = DiscordDeliveryTarget(
+                guild_id=guild_id,
+                channel_id=channel_id,
+                thread_id=thread_id,
+                dm_user_id=user_id if guild_id is None else None,
+            )
+            caller_provenance = command_control_provenance(
+                target,
+                interaction_id=interaction_id,
+                operator_user_id=user_id,
+                conversation_key=delivery_target.conversation_key,
+            )
+        except (DiscordFollowUpError, ValueError, OSError) as exc:
+            await interaction.followup.send(
+                "Follow-up rejected: "
+                f"{redact_text(str(exc))}. No instruction was attached.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            result = await asyncio.to_thread(
+                follow_up_managed_subagent,
+                run_id=target.run_id,
+                message=message,
+                project_dir=project_root,
+                workspace_root="/workspace",
+                idempotency_key=f"discord-interaction:{interaction_id}",
+                caller_provenance=caller_provenance,
+                require_live=True,
+            )
+            rendered = render_follow_up_receipt(result)
+        except (DiscordFollowUpError, SubagentFollowupError, ValueError, OSError) as exc:
+            rendered = (
+                "Follow-up did not return a confirmed interrupting continuation: "
+                f"{redact_text(str(exc))}. No acceptance or completion is being claimed; "
+                "inspect durable managed-run status before retrying."
+            )
+        except Exception:
+            LOGGER.exception("Resident Discord follow-up command failed")
+            rendered = (
+                "Follow-up failed before a confirmed receipt was returned. "
+                "No acceptance or completion is being claimed; inspect durable managed-run status."
+            )
+        await interaction.followup.send(rendered, ephemeral=True)
 
     async def handle_dropped_threads_interaction(
         self, interaction: Any, *, lookback: str | None = None
@@ -1947,6 +2210,67 @@ class ResidentDiscordService:
 def discord_token_from_env(env_name: str) -> str | None:
     token = os.environ.get(env_name)
     return token.strip() if token and token.strip() else None
+
+
+def _attach_m9_whats_cooking_metadata(
+    report: CurrentlyRunningReport,
+    rendered: str,
+) -> str:
+    """Attach non-authoritative source-cursor metadata footer to the report.
+
+    M9 (T25): The footer surfaces source-cursor freshness per dimension
+    and independently marks the status-node and managed-agent inventory
+    degradation states.  No activity is invented — when a source is
+    unavailable, its degradation is stated explicitly rather than
+    defaulting to an optimistic label.
+    """
+    lines: list[str] = [rendered, ""]
+
+    # ── Per-source degradation status ──
+    degradation_parts: list[str] = []
+    if report.status_error:
+        degradation_parts.append(
+            f"⛓️ Epics & chains: degraded — {_safe_label(report.status_error)}"
+        )
+    if report.managed_agents_error:
+        degradation_parts.append(
+            f"🤖 Managed agents: degraded — {_safe_label(report.managed_agents_error)}"
+        )
+    if degradation_parts:
+        lines.append("### ⚠️ Source degradation")
+        for part in degradation_parts:
+            lines.append(f"- {part}")
+        lines.append("")
+
+    # ── Source-cursor metadata from status_node ──
+    status_node = report.status_node
+    if isinstance(status_node, Mapping):
+        source_cursor = status_node.get("source_cursor_aggregate")
+        if isinstance(source_cursor, Mapping):
+            lines.append("### 📊 Source-cursor evidence")
+            non_fresh = source_cursor.get("non_fresh_count", 0)
+            dims = source_cursor.get("dimensions")
+            lines.append(f"- Non-fresh dimensions: {non_fresh}")
+            if isinstance(dims, list):
+                for dim in dims:
+                    if isinstance(dim, Mapping):
+                        d_name = dim.get("dimension", "?")
+                        d_state = dim.get("state", "?")
+                        lines.append(f"  - `{d_name}`: {d_state}")
+            vector_id = source_cursor.get("vector_id", "")
+            if vector_id:
+                lines.append(f"- Vector ID: `{vector_id[:24]}...`")
+            lines.append("")
+
+    # ── Non-authoritative footer ──
+    lines.append(
+        "> ⚠️ _non-authoritative — this report is a projection, "
+        "not source authority.  Source-cursor dimensions may be "
+        "stale or unknown; no running-state claims are invented "
+        "from missing evidence._"
+    )
+
+    return "\n".join(lines)
 
 
 def _optional_snowflake(value: object) -> str | None:

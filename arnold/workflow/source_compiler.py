@@ -2341,7 +2341,10 @@ def _literal_string_set_keyword(call: ast.Call, name: str) -> tuple[str, ...]:
 
 
 def _source_module_for_local_component(source_path: str) -> str:
-    return Path(source_path).with_suffix("").as_posix().replace("/", ".").replace("-", "_")
+    path_parts = Path(source_path).with_suffix("").parts
+    return ".".join(
+        _module_path_part(part) for part in path_parts if part != "."
+    )
 
 
 def _parse_workflow_declaration(
@@ -5777,6 +5780,7 @@ def _bind_route_metadata(
     diagnostics: list[AuthoringDiagnostic],
 ) -> tuple[Route, ...]:
     step_calls = _step_calls_by_id(block)
+    route_target_refs = _route_target_refs_by_id(block)
     routes_by_visible_key: dict[tuple[str, str, str], list[Route]] = {}
     for route in routes:
         routes_by_visible_key.setdefault((route.source, route.target, route.label), []).append(route)
@@ -5826,8 +5830,20 @@ def _bind_route_metadata(
                 )
                 continue
 
-            visible_key = (step_id, target_ref, label)
-            matching_routes = routes_by_visible_key.get(visible_key, [])
+            authored_key = (step_id, target_ref, label)
+            matching_routes = routes_by_visible_key.get(authored_key, [])
+            if not matching_routes:
+                matching_routes = [
+                    route
+                    for route in routes
+                    if route.source == step_id
+                    and route.label == label
+                    and route_target_refs.get(route.target) == target_ref
+                ]
+            visible_keys = {
+                (route.source, route.target, route.label) for route in matching_routes
+            }
+            visible_key = next(iter(visible_keys), authored_key)
             if visible_key in seen_keys or len(matching_routes) > 1:
                 diagnostics.append(
                     _route_metadata_diagnostic(
@@ -5878,6 +5894,24 @@ def _step_calls_by_id(block: ParsedSourceBlock) -> dict[str, ParsedStepCall]:
         elif isinstance(statement, ParsedLoopBlock):
             step_calls.update(_step_calls_by_id(statement.body))
     return step_calls
+
+
+def _route_target_refs_by_id(block: ParsedSourceBlock) -> dict[str, str]:
+    """Map lowered target ids to their authored component/reducer export names."""
+    target_refs: dict[str, str] = {}
+    for statement in block.statements:
+        if isinstance(statement, ParsedStepCall):
+            target_refs[statement.id] = (
+                statement.component.provenance.export_name or statement.local_name
+            )
+        elif isinstance(statement, ParsedParallelMapCall):
+            target_refs[statement.id] = statement.reducer_ref.rsplit(":", 1)[-1]
+        elif isinstance(statement, ParsedBranchBlock):
+            for arm in statement.arms:
+                target_refs.update(_route_target_refs_by_id(arm.body))
+        elif isinstance(statement, ParsedLoopBlock):
+            target_refs.update(_route_target_refs_by_id(statement.body))
+    return target_refs
 
 
 def _route_metadata_diagnostic(step: ParsedStepCall, message: str) -> AuthoringDiagnostic:
@@ -6126,7 +6160,7 @@ def _absolute_module_name(statement: ast.ImportFrom, source_path: str) -> str:
     package_parts = _package_parts_for_source_path(source_path)
     if statement.level > 1:
         package_parts = package_parts[: 1 - statement.level]
-    module_parts = tuple(part for part in package_parts if part not in {"", "."})
+    module_parts = tuple(_module_path_part(part) for part in package_parts if part != ".")
     if statement.module:
         module_parts = (*module_parts, *statement.module.split("."))
     return ".".join(module_parts)
@@ -6145,6 +6179,14 @@ def _package_parts_for_source_path(source_path: str) -> tuple[str, ...]:
             continue
         return relative.parts[:-1]
     return resolved.with_suffix("").parts[:-1]
+
+
+def _module_path_part(part: str) -> str:
+    """Normalize a filesystem path segment into a valid Python module segment."""
+    normalized = re.sub(r"\W", "_", part)
+    if not normalized or normalized[0].isdigit():
+        normalized = f"_{normalized}"
+    return normalized
 
 
 def _coerce_source_path(source_path: str | Path | None) -> str:

@@ -34,6 +34,7 @@ from arnold.adapters.ledger_store_adapter import (
 from arnold.workflow.attempt_ledger_store import (
     AppendResult,
     AttemptReservation,
+    DivergentDuplicateError,
     GateStatus,
     MonotonicSequenceError,
     PostTerminalAppendError,
@@ -835,8 +836,8 @@ class TestDelegationCorrectness:
 class TestIdempotencyThroughAdapter:
     """Idempotency-key dedup works through the adapter layer."""
 
-    def test_duplicate_idempotency_key_returns_existing(self):
-        """Same idempotency key returns existing event with is_duplicate=True."""
+    def test_divergent_duplicate_idempotency_key_is_rejected(self):
+        """Same key with different event content is rejected as divergent."""
         db_path = _temp_db_path()
         with LedgerStoreAdapter(db_path) as adapter:
             aid = _aid()
@@ -850,19 +851,20 @@ class TestIdempotencyThroughAdapter:
             r1 = adapter.append_started(aid, ev)
             assert r1.is_duplicate is False
 
-            # Same key — should dedup.
+            # Same key with different event content must not silently dedup.
             ev2 = _make_event(
                 attempt_id=aid, sequence=2,
                 event_type=AttemptEventType.COMPLETED,
                 idempotency_key="my-key",  # same key
                 outcome=AttemptOutcome.SUCCEEDED,
             )
-            r2 = adapter.append_event(aid, ev2)
-            assert r2.is_duplicate is True
-            # The returned event is the original (STARTED), not the new
-            # (COMPLETED) one.
-            assert r2.event.event_type == AttemptEventType.STARTED
-            assert r2.sequence == 1
+            with pytest.raises(DivergentDuplicateError):
+                adapter.append_event(aid, ev2)
+
+            persisted = adapter.read_events(aid)
+            assert len(persisted) == 1
+            assert persisted[0].event_type == AttemptEventType.STARTED
+            assert persisted[0].idempotency_key == "my-key"
 
 
 # ── Concurrent adapter instances (separate connections) ───────────────────
