@@ -19,6 +19,7 @@ from arnold.pipeline.native.hooks import (
 from arnold.pipeline.native.checkpoint import read_native_cursor
 from arnold.pipeline.native.trace import NativeTraceHooks
 from arnold.runtime.envelope import RunEnvelope
+from arnold.workflow.native_wbc import native_wbc_dir
 
 
 class _StepResult:
@@ -155,6 +156,36 @@ def test_effect_ledger_hooks_marks_side_effect_fulfilled() -> None:
         "effect_class": "filesystem_mutation",
         "duplicate_action": None,
     }
+
+
+def test_effect_ledger_hooks_emit_wbc_effect_and_reconciliation_evidence(tmp_path: Path) -> None:
+    hooks = EffectLedgerHooks(artifact_root=tmp_path, program_name="hook-demo")
+
+    @phase(operation="file_write", target="out/report.json", effect_class="filesystem_mutation")
+    def write_report(ctx: dict) -> dict:
+        return {"attempt": ctx["attempt"]}
+
+    @pipeline
+    def my_pipe(ctx: dict) -> dict:
+        state = yield write_report(ctx)
+        return state
+
+    prog = compile_pipeline(my_pipe)
+    run_native_pipeline(prog, hooks=hooks, artifact_root=tmp_path)
+    run_native_pipeline(prog, hooks=hooks, artifact_root=tmp_path)
+
+    path = native_wbc_dir(
+        tmp_path,
+        producer_family="arnold_native",
+        surface="effect_ledger_hooks",
+    ) / "events.ndjson"
+    events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+    assert "effect_intent" in [event["event"] for event in events]
+    assert "effect_outcome" in [event["event"] for event in events]
+    assert "reconciliation" in [event["event"] for event in events]
+    assert all(event["authority"]["grants_authority"] is False for event in events)
+    assert all(event["authority"]["leases_authority"] is False for event in events)
 
 
 def test_effect_ledger_hooks_marks_side_effect_failed() -> None:

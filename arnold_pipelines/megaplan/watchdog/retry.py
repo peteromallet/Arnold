@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
+
+from arnold_pipelines.megaplan.cloud.repair_contract import append_repair_event
 
 
 class RetryOutcome(str, Enum):
@@ -153,6 +156,9 @@ class RetryLoop:
 
     max_attempts: int = 3
     attempt_count: int = field(default=0, init=False)
+    sidecar_dir: str = ""
+    session_id: str = ""
+    loop_id: str = ""
 
     # ── M9: exact identity fields ──
     identity: RetryIdentity = field(default_factory=RetryIdentity)
@@ -205,12 +211,15 @@ class RetryLoop:
         self.attempt_count += 1
 
         if outcome is RetryOutcome.RESOLVED:
-            return RetryOutcome.RESOLVED, True
-        if outcome is RetryOutcome.TERMINAL:
-            return RetryOutcome.TERMINAL, True
-        if self.attempt_count >= self.max_attempts:
-            return RetryOutcome.UNRESOLVED, True
-        return RetryOutcome.UNRESOLVED, False
+            result = (RetryOutcome.RESOLVED, True)
+        elif outcome is RetryOutcome.TERMINAL:
+            result = (RetryOutcome.TERMINAL, True)
+        elif self.attempt_count >= self.max_attempts:
+            result = (RetryOutcome.UNRESOLVED, True)
+        else:
+            result = (RetryOutcome.UNRESOLVED, False)
+        self._append_evidence(outcome, result[1])
+        return result
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -221,6 +230,23 @@ class RetryLoop:
             "evidence_id": self.evidence_id,
             "_non_authoritative": self._non_authoritative,
         }
+
+    def _append_evidence(self, outcome: RetryOutcome, done: bool) -> None:
+        if not self.sidecar_dir:
+            return
+        append_repair_event(
+            self.sidecar_dir,
+            {
+                "session_id": self.session_id,
+                "attempt_id": self.loop_id or f"retry-loop:{id(self)}",
+                "actor": "watchdog.retry",
+                "attempt_number": self.attempt_count,
+                "max_attempts": self.max_attempts,
+                "outcome": outcome.value,
+                "done": done,
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
 
 
 def _detect_retry_drift(

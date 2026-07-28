@@ -24,6 +24,7 @@ from arnold_pipelines.megaplan.execute.merge import (
     _merge_batch_results,
     reconcile_latest_execution_batch,
 )
+from arnold_pipelines.megaplan.execute.wbc import EXECUTE_DISPATCH_WBC_KEY
 from arnold_pipelines.run_authority import EvidenceEnvelope
 from arnold_pipelines.megaplan.workers._impl import WorkerResult
 
@@ -264,6 +265,23 @@ def _payload_with_task_envelopes(
     return {
         DISPATCH_IDENTITY_KEY: envelopes[0].dispatch.to_dict(),
         RESULT_ENVELOPES_KEY: [envelope.to_dict() for envelope in envelopes],
+        EXECUTE_DISPATCH_WBC_KEY: {
+            "schema_version": 1,
+            "attempt_id": "execute-dispatch-attempt",
+            "writer_id": "megaplan.execute.dispatch_wbc",
+            "surface_name": "megaplan.execute.dispatch_wbc",
+            "dispatch_id": envelopes[0].dispatch.dispatch_id,
+            "plan_revision": envelopes[0].dispatch.plan_revision,
+            "fence_token": envelopes[0].dispatch.fence_token,
+            "prerequisite_digest": envelopes[0].dispatch.prerequisite_digest,
+            "worker_id": envelopes[0].dispatch.worker_id,
+            "expected_source_version": "source.v1",
+            "start_source_lookup_key": "execute-batch:1:start",
+            "terminal_source_lookup_key": "execute-batch:1:complete",
+            "verified_start_sequence": 1,
+            "verified_terminal_sequence": 2,
+            "verified_reread": True,
+        },
         "task_updates": entries,
         "sense_check_acknowledgments": [],
     }
@@ -427,6 +445,15 @@ def test_normal_execute_batch_stamps_authority_before_merge(
         raw_output="",
         duration_ms=1,
         cost_usd=0.0,
+        auth_metadata={
+            "wbc_dispatch": {
+                "attempt_id": "attempt-normal",
+                "writer_id": "megaplan.execute.dispatch_wbc",
+                "surface_name": "megaplan.execute.dispatch_wbc",
+                "start_event_sequence": 1,
+                "terminal_event_sequence": 2,
+            }
+        },
     )
 
     monkeypatch.setattr(
@@ -494,6 +521,7 @@ def test_normal_execute_batch_stamps_authority_before_merge(
     assert check_validation["outcome"] == "accepted"
     assert check_validation["reason"] == "sense_check_acknowledgment_authority_valid"
     assert finalize_data["tasks"][0]["status"] == "done"
+    assert artifact[EXECUTE_DISPATCH_WBC_KEY]["verified_reread"] is True
     assert artifact[DISPATCH_IDENTITY_KEY]["grant"]["grant_id"].endswith(
         ":execute:batch:1:1f93603db53b"
     )
@@ -557,6 +585,15 @@ def test_review_rework_creative_batch_quarantines_cross_task_update(
         raw_output="",
         duration_ms=1,
         cost_usd=0.0,
+        auth_metadata={
+            "wbc_dispatch": {
+                "attempt_id": "attempt-creative",
+                "writer_id": "megaplan.execute.dispatch_wbc",
+                "surface_name": "megaplan.execute.dispatch_wbc",
+                "start_event_sequence": 1,
+                "terminal_event_sequence": 2,
+            }
+        },
     )
     state = {
         "name": "run-1",
@@ -677,6 +714,35 @@ def test_grant_aware_merge_reports_malformed_authority_source_path() -> None:
     assert tasks["T1"]["status"] == "pending"
     assert any("malformed_dispatch_identity" in issue for issue in issues)
     assert any(source_path in issue for issue in issues)
+
+
+def test_grant_aware_merge_blocks_missing_execute_dispatch_wbc() -> None:
+    finalize_data = _finalize_payload()
+    entry = {
+        "task_id": "T1",
+        "status": "done",
+        "executor_notes": "missing execute dispatch proof",
+        "files_changed": [],
+        "commands_run": [],
+    }
+    envelope = _task_envelope(entry)
+    payload = _payload_with_task_envelopes([entry], [envelope])
+    payload.pop(EXECUTE_DISPATCH_WBC_KEY, None)
+    issues: list[str] = []
+
+    merged = _merge_batch_results(
+        finalize_data=finalize_data,
+        payload=payload,
+        batch_task_ids=["T1"],
+        batch_sense_check_ids=[],
+        issues=issues,
+        mode="code",
+    )
+
+    tasks = {task["id"]: task for task in finalize_data["tasks"]}
+    assert merged == (0, 1, 0, 0)
+    assert tasks["T1"]["status"] == "pending"
+    assert any("missing_execute_dispatch_wbc" in issue for issue in issues)
 
 
 def test_grant_aware_merge_ignores_duplicate_idempotent_result() -> None:

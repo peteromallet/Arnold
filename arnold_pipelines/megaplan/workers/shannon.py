@@ -2415,6 +2415,9 @@ def run_shannon_step(
     auth_metadata = {
         "worker_channel": "tmux",
         "auth_channel": "subscription",
+        "provider": "claude",
+        "resolved_model": model,
+        "session_agent": session_agent,
     }
     session_key = session_key_for(
         step,
@@ -2994,6 +2997,7 @@ def run_shannon_step(
     if not read_only:
         _verify_engine_after_mutating_worker(step, state, root, execution_env)
 
+    auth_metadata["session_strategy"] = plan.kind
     shannon_plan = _serialize_session_plan(plan)
     shannon_plan["worker_channel"] = auth_metadata["worker_channel"]
     shannon_plan["auth_channel"] = auth_metadata["auth_channel"]

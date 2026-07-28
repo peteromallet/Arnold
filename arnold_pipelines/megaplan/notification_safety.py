@@ -48,6 +48,39 @@ class NotificationSafetyDecision:
     reason: str = ""
 
 
+@dataclass(frozen=True)
+class FixtureSafetyDecision:
+    authorized: bool
+    reason: str = ""
+
+
+def classify_fixture_safety(
+    *,
+    payload: Mapping[str, Any] | None = None,
+    workspace: str | os.PathLike[str] | None = None,
+    env: Mapping[str, str] | None = None,
+) -> FixtureSafetyDecision:
+    """Return whether fixture/test safety policy explicitly authorizes action."""
+
+    environment = os.environ if env is None else env
+    if environment.get("PYTEST_CURRENT_TEST"):
+        return FixtureSafetyDecision(True, "pytest_environment")
+    for key in ("MEGAPLAN_TEST_EXECUTION", "ARNOLD_TEST_EXECUTION"):
+        if str(environment.get(key) or "").strip().lower() in _TRUE:
+            return FixtureSafetyDecision(True, f"test_environment:{key}")
+
+    candidate = str(workspace or "").strip()
+    if candidate and _is_pytest_workspace(candidate):
+        return FixtureSafetyDecision(True, "pytest_workspace")
+
+    if isinstance(payload, Mapping):
+        found = _classify_mapping(payload)
+        if found:
+            return FixtureSafetyDecision(True, found)
+
+    return FixtureSafetyDecision(False)
+
+
 def classify_user_notification(
     *,
     payload: Mapping[str, Any] | None = None,
@@ -138,6 +171,8 @@ def _is_pytest_workspace(value: str) -> bool:
 
 
 __all__ = [
+    "FixtureSafetyDecision",
+    "classify_fixture_safety",
     "NotificationSafetyDecision",
     "classify_user_notification",
     "notification_context_for_current_execution",

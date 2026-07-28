@@ -22,6 +22,7 @@ from arnold.workflow.boundary_evidence import BoundaryContract
 from arnold_pipelines.megaplan.handlers.shared import (
     _BOUNDARY_EXPECTED_NEXT_STEP_BY_ID,
     _boundary_contract_for_response,
+    _emit_named_boundary_receipt,
 )
 from arnold_pipelines.megaplan.workers import WorkerResult
 from arnold_pipelines.megaplan.workflows.boundary_contracts import (
@@ -137,6 +138,20 @@ def test_boundary_contract_for_response_returns_none_for_missing_next_step() -> 
     assert contract is None
 
 
+@pytest.mark.parametrize("next_step,expected_boundary_id", [
+    ("execute", "finalize_artifacts"),
+    ("revise", "finalize_fallback"),
+])
+def test_boundary_contract_for_response_maps_finalize_routes(
+    next_step: str,
+    expected_boundary_id: str,
+) -> None:
+    response: dict[str, Any] = {"next_step": next_step}
+    contract = _boundary_contract_for_response("finalize", response)
+    assert contract is not None
+    assert contract.boundary_id == expected_boundary_id
+
+
 # ── _emit_boundary_receipt: emission proof ──────────────────────────────────
 
 
@@ -231,6 +246,80 @@ def test_emit_boundary_receipt_does_not_call_writer_for_mismatched(
     )
 
     mock_write.assert_not_called()
+
+
+def test_emit_named_boundary_receipt_writes_finalize_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import arnold_pipelines.megaplan.handlers.shared as shared_mod
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    (plan_dir / "finalize.json").write_text("{}", encoding="utf-8")
+
+    state = _make_state(config={"project_dir": str(project_dir)})
+    worker = _make_worker()
+    response: dict[str, Any] = {"next_step": "execute", "state": "finalized"}
+
+    mock_write = mock.MagicMock()
+    monkeypatch.setattr(shared_mod, "write_boundary_receipt", mock_write)
+
+    _emit_named_boundary_receipt(
+        boundary_id="final_projection",
+        plan_dir=plan_dir,
+        state=state,
+        step="finalize",
+        worker=worker,
+        agent="test-agent",
+        mode="test",
+        artifacts=["finalize.json"],
+        output_file="finalize.json",
+        artifact_hash="abc123",
+        response=response,
+        strict=False,
+    )
+
+    mock_write.assert_called_once()
+    receipt = mock_write.call_args[0][1]
+    assert receipt.boundary_id == "final_projection"
+
+
+def test_emit_named_boundary_receipt_fails_closed_when_review_rework_receipt_not_persisted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import arnold_pipelines.megaplan.handlers.shared as shared_mod
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    (plan_dir / "review.json").write_text("{}", encoding="utf-8")
+
+    state = _make_state(config={"project_dir": str(project_dir)})
+    worker = _make_worker()
+    response: dict[str, Any] = {"next_step": "execute", "state": "finalized"}
+
+    monkeypatch.setattr(shared_mod, "write_boundary_receipt", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(RuntimeError, match="was not durably persisted"):
+        _emit_named_boundary_receipt(
+            boundary_id="review_rework_effects",
+            plan_dir=plan_dir,
+            state=state,
+            step="review",
+            worker=worker,
+            agent="test-agent",
+            mode="test",
+            artifacts=["review.json"],
+            output_file="review.json",
+            artifact_hash="abc123",
+            response=response,
+            strict=True,
+        )
 
 
 def test_emit_boundary_receipt_handles_write_failure_gracefully(

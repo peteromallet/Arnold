@@ -26,6 +26,7 @@ from arnold.control.interface import (
     RunStateView,
 )
 from arnold_pipelines.megaplan._core.state import write_plan_state
+from arnold_pipelines.megaplan.custody.override_wbc import validate_override_wbc_transition
 from arnold_pipelines.megaplan.orchestration.override_authority import (
     OverrideAuthorityError,
     build_override_authority_record,
@@ -40,7 +41,16 @@ from arnold.runtime.outcome import RunOutcome
 
 _MISSING_BINDING = object()
 _OVERRIDE_AUTHORITY_TRANSITIONS = frozenset(
-    {"adopt-execution", "recover-blocked", "resume-clarify"}
+    {
+        "abort",
+        "adopt-execution",
+        "force-proceed",
+        "human-gate",
+        "recover-blocked",
+        "replan",
+        "resume-clarify",
+        "suspension-waiver",
+    }
 )
 log = logging.getLogger(__name__)
 
@@ -149,79 +159,86 @@ def emit_override_authority_receipt(
 ) -> None:
     if action not in _OVERRIDE_AUTHORITY_TRANSITIONS:
         return
+    contract = override_authority_contract_for_transition(action)
+    freshness_token = current_freshness_token(state, transition=action)
+
+    declared_target = DECLARED_OVERRIDE_POLICY_TARGETS.get(action, {})
+    receipt_details: dict[str, Any] = {
+        "dispatch_surface": "workflow.native_policy",
+    }
+    record_details: dict[str, Any] = {
+        **(dict(details) if details else {}),
+    }
+    route_signal = declared_target.get("route_signal")
+    if isinstance(route_signal, str) and route_signal:
+        receipt_details["route_signal"] = route_signal
+        record_details["route_signal"] = route_signal
+    declared_target_ref = declared_target.get("target_ref")
+    if isinstance(declared_target_ref, str) and declared_target_ref:
+        receipt_details["declared_target_ref"] = declared_target_ref
+        record_details["declared_target_ref"] = declared_target_ref
+    policy_route_ref = declared_target.get("policy_route_ref")
+    if isinstance(policy_route_ref, str) and policy_route_ref:
+        receipt_details["policy_route_ref"] = policy_route_ref
+        record_details["policy_route_ref"] = policy_route_ref
+    if source_view_hash is not None:
+        receipt_details["source_view_hash"] = source_view_hash
+        record_details["source_view_hash"] = source_view_hash
+    if source_view_revision is not None:
+        receipt_details["source_view_revision"] = source_view_revision
+
     try:
-        contract = override_authority_contract_for_transition(action)
-        freshness_token = current_freshness_token(state, transition=action)
-
-        # --- assemble receipt details with optional source-view binding ----------
-        receipt_details: dict[str, Any] = {
-            "dispatch_surface": "workflow.native_policy",
-            "declared_target_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["target_ref"],
-            "policy_route_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["policy_route_ref"],
-        }
-        if source_view_hash is not None:
-            receipt_details["source_view_hash"] = source_view_hash
-        if source_view_revision is not None:
-            receipt_details["source_view_revision"] = source_view_revision
-
-        record_details: dict[str, Any] = {
-            "route_signal": DECLARED_OVERRIDE_POLICY_TARGETS[action]["route_signal"],
-            "declared_target_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["target_ref"],
-            "policy_route_ref": DECLARED_OVERRIDE_POLICY_TARGETS[action]["policy_route_ref"],
-            **(dict(details) if details else {}),
-        }
-        if source_view_hash is not None:
-            record_details["source_view_hash"] = source_view_hash
-
-        record = build_override_authority_record(
-            action,
+        wbc_evidence = validate_override_wbc_transition(
+            transition=action,
             plan_dir=plan_dir,
-            actor=actor,
-            role=role,
-            freshness_token=freshness_token,
-            expected_freshness_token=freshness_token,
+            state=state,
             details=record_details,
         )
-        config = state.get("config")
-        project_dir = (
-            config.get("project_dir")
-            if isinstance(config, Mapping)
-            and isinstance(config.get("project_dir"), str)
-            and config.get("project_dir")
-            else None
-        )
-        receipt = BoundaryReceipt(
-            boundary_id=contract.boundary_id,
-            workflow_id=contract.workflow_id,
-            row_id=contract.row_id,
-            invocation_id=freshness_token,
-            artifact_refs=record.evidence_refs,
-            state_observation={
-                "current_state": state.get("current_state"),
-                "override_action": action,
-                "route_signal": DECLARED_OVERRIDE_POLICY_TARGETS[action]["route_signal"],
-            },
-            outcome=BoundaryOutcome.COMPLETE,
-            authority_records=(record,),
-            details=receipt_details,
-        )
-        write_boundary_receipt(
-            plan_dir,
-            receipt,
-            project_dir=project_dir,
-        )
-    except OverrideAuthorityError:
-        log.warning(
-            "override authority record build failed for %s",
-            action,
-            exc_info=True,
-        )
-    except Exception:
-        log.warning(
-            "override authority receipt emission failed for %s",
-            action,
-            exc_info=True,
-        )
+    except Exception as exc:  # pragma: no cover - failure path exercised via callers
+        raise OverrideAuthorityError(
+            f"override WBC validation failed for {action}: {exc}"
+        ) from exc
+
+    receipt_details["wbc_transition_evidence"] = wbc_evidence
+    record_details["wbc_transition_evidence"] = wbc_evidence
+
+    record = build_override_authority_record(
+        action,
+        plan_dir=plan_dir,
+        actor=actor,
+        role=role,
+        freshness_token=freshness_token,
+        expected_freshness_token=freshness_token,
+        details=record_details,
+    )
+    config = state.get("config")
+    project_dir = (
+        config.get("project_dir")
+        if isinstance(config, Mapping)
+        and isinstance(config.get("project_dir"), str)
+        and config.get("project_dir")
+        else None
+    )
+    receipt = BoundaryReceipt(
+        boundary_id=contract.boundary_id,
+        workflow_id=contract.workflow_id,
+        row_id=contract.row_id,
+        invocation_id=freshness_token,
+        artifact_refs=record.evidence_refs,
+        state_observation={
+            "current_state": state.get("current_state"),
+            "override_action": action,
+            "route_signal": route_signal,
+        },
+        outcome=BoundaryOutcome.COMPLETE,
+        authority_records=(record,),
+        details=receipt_details,
+    )
+    write_boundary_receipt(
+        plan_dir,
+        receipt,
+        project_dir=project_dir,
+    )
 
 
 def _event_payload(

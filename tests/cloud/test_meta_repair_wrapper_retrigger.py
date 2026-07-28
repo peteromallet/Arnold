@@ -67,7 +67,10 @@ def test_unrecordable_codex_response_dispatches_direct_hermes() -> None:
     text = _meta_repair_wrapper()
 
     assert 'if ! has_recordable_verdict "$RESP_PATH"; then' in text
-    assert "run_direct_hermes_fallback || true" in text
+    assert (
+        'run_direct_hermes_fallback || authority_gap_continue "T29-BYPASS-040"'
+        in text
+    )
     assert '--query-file "$FALLBACK_BRIEF_PATH"' in text
     assert '--project-dir /workspace' in text
     assert 'cd /workspace || exit 1' in text
