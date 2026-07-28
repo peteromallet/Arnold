@@ -91,7 +91,7 @@ on_escalate:
 merge_policy: auto
 driver:
   execution_binding: required
-  intended_initiative_revision: TO_BE_PINNED_AFTER_GLM_PROFILE_COMMIT
+  intended_initiative_revision: 6f147dd9de
   initiative_path: .megaplan/initiatives/critique-ledger
   robustness: full
   phase_timeout: 10800
