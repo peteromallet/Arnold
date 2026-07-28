@@ -28,6 +28,13 @@ from arnold_pipelines.megaplan.custody.contracts import (
     F01_REPAIR_OCCURRENCE_FIELDS as _F01_REPAIR_OCCURRENCE_FIELDS,
 )
 
+# ── M10 repair effect allowlist gate ─────────────────────────────────────
+from arnold_pipelines.megaplan.cloud.repair_effect_allowlist import (
+    AllowlistVerdict,
+    RepairEffectClass,
+    check_effect_class,
+)
+
 CURRENT_SCHEMA_VERSION = 1
 
 ADDITIVE_FIELD_DEFAULTS: dict[str, Any] = {
@@ -1689,6 +1696,33 @@ def classify_repair_dispatch(
         terminal_outcomes=terminal_outcomes,
         semantic_findings=semantic_findings,
     )
+
+
+def admit_repair_effect_class(
+    effect_class: str | RepairEffectClass,
+    *,
+    source: str = "",
+) -> tuple[bool, str]:
+    """Gate repair admission on the effect-class allowlist.
+
+    Unknown, non-queryable, or non-idempotent ambiguous effect classes
+    remain action-off and produce typed escalation.
+
+    Returns:
+        A ``(admitted, reason)`` tuple.  *admitted* is ``True`` only when
+        the effect class is approved for repair via the allowlist.
+    """
+    result = check_effect_class(effect_class)
+    if result.verdict == AllowlistVerdict.APPROVED:
+        return True, result.reason
+    reason = (
+        f"Repair not admitted for effect class "
+        f"{result.effect_class.value!r}"
+    )
+    if source:
+        reason += f" (source: {source})"
+    reason += f": {result.reason}"
+    return False, reason
 
 
 def _make_dispatch_decision(

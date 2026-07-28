@@ -339,13 +339,41 @@ class LocalJournalBackend:
             key_template=idempotency.key_template if idempotency else None,
             key_ref=idempotency.key_ref if idempotency else None,
         )
-        return self._registries.effects.execute(
+        # Step 9B: route through durable WBC protocol when attached.
+        protocol = self._wbc_effect_protocol()
+        if protocol is not None:
+            protocol.persist_durable_intent(
+                idempotency_key=key,
+                intent_payload={
+                    "effect_id": effect_ref.effect_id,
+                    "route": str(effect_ref.route),
+                    "coordinate": str(context.coordinate),
+                    "run_id": self._run_id,
+                },
+            )
+        result = self._registries.effects.execute(
             effect_ref.effect_id,
             route=effect_ref.route,
             payload={"coordinate": str(context.coordinate)},
             idempotency_key=key,
             context={"run_id": self._run_id},
         )
+        if protocol is not None:
+            protocol.record_outcome(
+                idempotency_key=key, outcome="COMPLETED",
+            )
+        return result
+
+    def _wbc_effect_protocol(self):
+        """Step 9B/9C: override to inject a WBC effect-protocol adapter.
+
+        When non-None, every effect dispatch (``_execute_effect``,
+        ``_run_effect``, ``_execute_compensation_effect``) routes
+        through the durable WBC protocol: durable intent is persisted
+        before dispatch, outcomes are accepted through CAS, and there
+        is no blind (journal-only) compensation path.
+        """
+        return None
 
     def _select_branch(
         self,

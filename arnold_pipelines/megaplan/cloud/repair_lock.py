@@ -78,9 +78,16 @@ def build_owner_metadata(
     cwd: str | None = None,
     timeout_seconds: float | None = None,
     hostname: str | None = None,
+    boot_id: str | None = None,
     extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build normalized owner metadata for a repair lock holder."""
+    """Build normalized owner metadata for a repair lock holder.
+
+    *boot_id* carries the host/process-birth identity (machine boot time /
+    kernel identifier) so that PID reuse across reboots cannot spoof a live
+    lock holder (Step 13A).  When omitted it falls back to the current
+    process-birth identity reported by :func:`process_birth_identity`.
+    """
 
     metadata: dict[str, Any] = {
         "session": session,
@@ -92,6 +99,16 @@ def build_owner_metadata(
         "timeout_seconds": timeout_seconds,
         "hostname": _default_hostname() if hostname is None else hostname,
     }
+    if boot_id is None:
+        try:
+            from arnold_pipelines.megaplan.custody.contracts import (
+                process_birth_identity,
+            )
+
+            boot_id = str(process_birth_identity().get("boot_id") or "")
+        except Exception:
+            boot_id = ""
+    metadata["boot_id"] = boot_id or ""
     if extra:
         metadata.update(dict(extra))
     return metadata
@@ -184,6 +201,7 @@ def acquire_repair_lock(
     cwd: str | None = None,
     timeout_seconds: float | None = None,
     hostname: str | None = None,
+    boot_id: str | None = None,
     extra: Mapping[str, Any] | None = None,
     now: datetime | None = None,
     is_pid_live: PidLivenessProbe | None = None,
@@ -200,6 +218,7 @@ def acquire_repair_lock(
         cwd=cwd,
         timeout_seconds=timeout_seconds,
         hostname=hostname,
+        boot_id=boot_id,
         extra=extra,
     )
     lock_path.parent.mkdir(parents=True, exist_ok=True)

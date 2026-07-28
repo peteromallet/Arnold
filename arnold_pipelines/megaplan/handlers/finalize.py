@@ -1983,6 +1983,15 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
     )
     payload["validation_jobs"] = compile_validation_jobs(payload)
     # ───────────────────────────────────────────────────────────────────
+    # ── M10 Step 7H-b (item 1): thread the gate step's seed_epoch
+    # attestation into the payload before compile_task_feasibility so the
+    # finalized receipt binds the launch-seed epoch (plan_hash) and persists
+    # it into finalize.json for execute-entry epoch fencing.  When the
+    # attestation is absent (pre-M10 gate) the payload is left untouched so
+    # prior behavior is preserved.
+    _seed_epoch = state.get("seed_epoch")
+    if _seed_epoch is not None:
+        payload["seed_epoch"] = _seed_epoch
     if state["config"].get("mode", "code") == "code":
         feasibility = compile_task_feasibility(payload, state.get("config", {}))
         atomic_write_json(plan_dir / "task_feasibility.json", feasibility)
@@ -2172,12 +2181,24 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
         worker.payload = promoted_payload
 
         # ── T9: Structured promotion evidence ────────────────────
+        # Step 7C: compute and carry the finalize schema hash
+        from arnold_pipelines.megaplan.handlers.schema_parity import canonical_schema_hash
+        from arnold_pipelines.megaplan.schemas import SCHEMAS as _schemas
+
+        _finalize_schema = _schemas.get("finalize.json")
+        _finalize_schema_hash = (
+            canonical_schema_hash(_finalize_schema)
+            if isinstance(_finalize_schema, dict)
+            else None
+        )
+
         promotion_evidence = build_promotion_evidence(
             plan_dir,
             scratch_status,
             phase_identity="finalize",
             scratch_filename=scratch_filename,
             worker_payload_used=scratch_status in ("missing", "unmodified"),
+            producer_schema_hash=_finalize_schema_hash,
         )
         if promotion_evidence:
             LOGGER.debug(

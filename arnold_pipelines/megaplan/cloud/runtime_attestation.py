@@ -106,6 +106,53 @@ def _git_revision(root: Path) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+def _git_branch(root: Path) -> str:
+    """Return the current branch name, or empty string on failure."""
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _git_ancestry(root: Path, ancestor: str, descendant: str) -> bool:
+    """Return True if *ancestor* is reachable from *descendant* (i.e., descendant contains ancestor)."""
+    if not ancestor or not descendant:
+        return False
+    result = subprocess.run(
+        ["git", "-C", str(root), "merge-base", "--is-ancestor", ancestor, descendant],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def _git_remote_origin(root: Path) -> str:
+    """Return the origin remote URL, or empty string."""
+    result = subprocess.run(
+        ["git", "-C", str(root), "remote", "get-url", "origin"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _collect_revision_components(root: Path) -> dict[str, Any]:
+    """Collect complete revision identity: branch, HEAD, ancestry base, and remote origin."""
+    head = _git_revision(root)
+    branch = _git_branch(root)
+    remote = _git_remote_origin(root)
+    return {
+        "branch": branch,
+        "head": head,
+        "remote_origin": remote,
+    }
+
+
 def _module_vector(expected_root: Path) -> tuple[list[dict[str, str]], list[str]]:
     entries: list[dict[str, str]] = []
     errors: list[str] = []
@@ -475,8 +522,16 @@ def build_runtime_launch_seed(
     marker_path: Path,
     chain_spec_path: Path,
     seed_doc_paths: Iterable[Path] = (),
+    expected_branch: str | None = None,
+    expected_ancestry_base: str | None = None,
 ) -> dict[str, Any]:
-    """Build one strict release seed from current runtime and durable inputs."""
+    """Build one strict release seed from current runtime and durable inputs.
+
+    When *expected_branch* is provided, the current branch must match exactly.
+    When *expected_ancestry_base* is provided, the current HEAD must descend
+    from it (ancestry check).  Mixed-revision modules — where any loaded
+    Arnold module originates from a different root — are always blocked.
+    """
 
     root = expected_root.resolve(strict=False)
     seed_doc_paths = tuple(seed_doc_paths)
@@ -495,6 +550,8 @@ def build_runtime_launch_seed(
     marker = _json_file(marker_path, label="cloud session marker")
     chain_binding = _chain_binding(chain_spec_path)
     hot_selectors = _parse_hot_env(hot_env_path)
+    # ── Step 5A: collect revision components (branch, HEAD, origin) ────
+    revision_components = _collect_revision_components(root)
     document_paths = {
         supervisor_receipt_path,
         hot_env_path,
@@ -555,10 +612,32 @@ def build_runtime_launch_seed(
         errors.append("chain_runtime_revision_mismatch")
     if dict(marker_identity) != dict(chain_identity):
         errors.append("marker_chain_runtime_identity_mismatch")
+    # ── Step 5A: branch binding ─────────────────────────────────────────
+    if expected_branch is not None:
+        current_branch = revision_components["branch"]
+        if current_branch != expected_branch:
+            errors.append(
+                f"branch_mismatch:expected={expected_branch},actual={current_branch}"
+            )
+    # ── Step 5A: ancestry binding ───────────────────────────────────────
+    if expected_ancestry_base is not None:
+        current_head = revision_components["head"]
+        if not _git_ancestry(root, expected_ancestry_base, current_head):
+            errors.append(
+                f"ancestry_mismatch:base={expected_ancestry_base},head={current_head}"
+            )
+    # ── Step 5A: mixed-revision blocking ────────────────────────────────
+    for mod in modules:
+        mod_root = mod.get("root", "")
+        if mod_root and mod_root != str(root):
+            errors.append(f"mixed_revision_module:{mod.get('module')}")
     core = {
         "schema": RUNTIME_LAUNCH_SEED_SCHEMA,
         "expected_root": str(root),
         "expected_revision": expected_revision,
+        "revision_components": revision_components,
+        "expected_branch": expected_branch,
+        "expected_ancestry_base": expected_ancestry_base,
         "runtime_provenance": provenance,
         "loaded_modules": modules,
         "interpreter": _interpreter_vector(

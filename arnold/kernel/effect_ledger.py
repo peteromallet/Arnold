@@ -4,6 +4,11 @@ Every external effect is pre-recorded as an intent event before execution.
 Fulfillment, receipt, and compensation events update the ledger. Effects
 without an idempotency policy are rejected, and duplicate idempotency keys are
 executed at most once.
+
+Terminal states (FULFILLED, RECEIVED, COMPENSATED, FAILED, INDETERMINATE)
+cannot be transitioned away from — any attempt raises a TerminalStateError.
+INDETERMINATE is the catch-all terminal state for effects whose outcome
+cannot be determined and must not be blindly retried without reconciliation.
 """
 
 from __future__ import annotations
@@ -16,6 +21,12 @@ from arnold.kernel.effect import EffectDescriptor, EffectKind
 from arnold.kernel.events import EventEnvelope
 from arnold.kernel.ids import derive_idempotency_key
 
+# ── Terminal states (cannot be transitioned away from) ────────────────────
+
+_TERMINAL_STATES: frozenset[str] = frozenset(
+    {"fulfilled", "received", "compensated", "failed", "indeterminate"}
+)
+
 
 class EffectRecordState(StrEnum):
     """Lifecycle state of an effect in the ledger."""
@@ -25,6 +36,16 @@ class EffectRecordState(StrEnum):
     RECEIVED = "received"
     COMPENSATED = "compensated"
     FAILED = "failed"
+    INDETERMINATE = "indeterminate"
+
+
+class TerminalStateError(Exception):
+    """Raised when attempting to transition an effect already in a terminal state."""
+
+
+def _is_terminal(state: EffectRecordState | str) -> bool:
+    """Return True if *state* is a terminal effect state."""
+    return (state.value if isinstance(state, EffectRecordState) else str(state)) in _TERMINAL_STATES
 
 
 @dataclass(frozen=True)
@@ -60,8 +81,17 @@ class EffectLedger:
         )
         return True
 
+    def _guard_terminal(self, record: EffectRecord | None, target: str) -> None:
+        """Raise TerminalStateError if *record* is already in a terminal state."""
+        if record is not None and _is_terminal(record.state):
+            raise TerminalStateError(
+                f"effect {target!r} is already in terminal state "
+                f"{record.state.value!r} and cannot be transitioned"
+            )
+
     def mark_fulfilled(self, idempotency_key: str) -> None:
         record = self._records.get(idempotency_key)
+        self._guard_terminal(record, idempotency_key)
         if record is not None:
             self._records[idempotency_key] = EffectRecord(
                 descriptor=record.descriptor,
@@ -70,6 +100,7 @@ class EffectLedger:
 
     def mark_received(self, idempotency_key: str) -> None:
         record = self._records.get(idempotency_key)
+        self._guard_terminal(record, idempotency_key)
         if record is not None:
             self._records[idempotency_key] = EffectRecord(
                 descriptor=record.descriptor,
@@ -78,6 +109,7 @@ class EffectLedger:
 
     def mark_compensated(self, idempotency_key: str) -> None:
         record = self._records.get(idempotency_key)
+        self._guard_terminal(record, idempotency_key)
         if record is not None:
             self._records[idempotency_key] = EffectRecord(
                 descriptor=record.descriptor,
@@ -86,10 +118,26 @@ class EffectLedger:
 
     def mark_failed(self, idempotency_key: str) -> None:
         record = self._records.get(idempotency_key)
+        self._guard_terminal(record, idempotency_key)
         if record is not None:
             self._records[idempotency_key] = EffectRecord(
                 descriptor=record.descriptor,
                 state=EffectRecordState.FAILED,
+            )
+
+    def mark_indeterminate(self, idempotency_key: str) -> None:
+        """Mark an effect as INDETERMINATE — terminal, cannot be retried blindly.
+
+        INDETERMINATE is the catch-all state for effects whose outcome cannot
+        be determined.  No blind retry is authorized; a reconciliation step
+        must resolve the effect before any further action.
+        """
+        record = self._records.get(idempotency_key)
+        self._guard_terminal(record, idempotency_key)
+        if record is not None:
+            self._records[idempotency_key] = EffectRecord(
+                descriptor=record.descriptor,
+                state=EffectRecordState.INDETERMINATE,
             )
 
     def get(self, idempotency_key: str) -> EffectDescriptor | None:
@@ -117,6 +165,7 @@ EFFECT_EVENT_KINDS = frozenset({
     "effect_receipt",
     "effect_compensation",
     "effect_failure",
+    "effect_indeterminate",
 })
 
 
@@ -151,6 +200,20 @@ def receipt_payload(
 
     payload = intent_payload(descriptor)
     payload["receipt"] = dict(receipt) if receipt is not None else {}
+    return payload
+
+
+def indeterminate_payload(
+    descriptor: EffectDescriptor,
+    reason: str = "",
+) -> Mapping[str, Any]:
+    """Build an event payload for an effect indeterminate outcome.
+
+    Includes an optional *reason* explaining why the outcome could not be
+    determined (e.g. timeout, partial failure, missing provider status).
+    """
+    payload = intent_payload(descriptor)
+    payload["reason"] = reason
     return payload
 
 
@@ -231,6 +294,9 @@ def fold_effect_ledger(events: tuple[EventEnvelope, ...]) -> EffectLedger:
         elif event.kind == "effect_failure":
             ledger.prerecord(descriptor)
             ledger.mark_failed(idempotency_key)
+        elif event.kind == "effect_indeterminate":
+            ledger.prerecord(descriptor)
+            ledger.mark_indeterminate(idempotency_key)
     return ledger
 
 
@@ -239,9 +305,11 @@ __all__ = [
     "EffectRecord",
     "EffectRecordState",
     "MissingIdempotencyPolicyError",
+    "TerminalStateError",
     "derive_effect_idempotency_key",
     "fold_effect_ledger",
     "fulfillment_payload",
+    "indeterminate_payload",
     "intent_payload",
     "receipt_payload",
     "require_idempotency_policy",

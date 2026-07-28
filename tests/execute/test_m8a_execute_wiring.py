@@ -1219,3 +1219,87 @@ def test_failure_signature_distinguishes_validation_commands() -> None:
     assert normalize_failure_signature("review_quality_block", first) != (
         normalize_failure_signature("review_quality_block", second)
     )
+
+
+# ---------------------------------------------------------------------------
+# M10 Step 7H-b: seed_epoch epoch-fencing, config threading, and v1/None
+# admission blocking at the dispatch guard.
+# ---------------------------------------------------------------------------
+
+
+def test_guard_threads_seed_epoch_when_state_attests_and_graph_matches() -> None:
+    """When state carries seed_epoch and the finalized graph echoes it, the
+    guard admits dispatch without error."""
+    tasks = [_task("T1")]
+    finalize_data = _payload(tasks)
+    finalize_data["seed_epoch"] = "epoch-current"
+    finalize_data["graph_report"] = compile_task_feasibility(finalize_data)
+    state = _make_state()
+    state["seed_epoch"] = "epoch-current"
+
+    # Must not raise — matching epoch, valid v2 graph.
+    _guard_execute_batch_admission(finalize_data, state)
+
+
+def test_guard_rejects_stale_seed_epoch_as_cli_error() -> None:
+    """A stale/conflicted seed_epoch in state vs the finalized receipt is
+    blocked at the dispatch guard before any worker is launched."""
+    tasks = [_task("T1")]
+    finalize_data = _payload(tasks)
+    finalize_data["seed_epoch"] = "epoch-finalized"
+    finalize_data["graph_report"] = compile_task_feasibility(finalize_data)
+    state = _make_state()
+    state["seed_epoch"] = "epoch-stale"
+
+    with pytest.raises(CliError, match="seed_epoch mismatch"):
+        _guard_execute_batch_admission(finalize_data, state)
+
+
+def test_guard_blocks_v1_none_admission_escape() -> None:
+    """A v1 payload (no task_contract_version=2) is blocked by the guard so
+    only fully-admitted v2 graphs reach worker dispatch."""
+    finalize_data = {"task_contract_version": 1, "tasks": [], "validation_jobs": []}
+    state = _make_state()
+
+    with pytest.raises(CliError, match="v1 task contract is not admitted") as caught:
+        _guard_execute_batch_admission(finalize_data, state)
+    assert caught.value.code == "finalized_task_graph_changed"
+    assert "finalize" in caught.value.valid_next
+    assert "revise" in caught.value.valid_next
+
+
+def test_guard_threads_config_phase_timeout_into_admission() -> None:
+    """The guard threads state config into the feasibility verdict — a short
+    phase_timeout_seconds that makes the critical path infeasible is respected.
+
+    This guards against the pre-M10 shadow-feasibility bug where config was
+    computed but never passed to assert_admitted_task_feasibility.
+    """
+    # Single task with 5 estimated minutes.
+    tasks = [_task("T1", minutes=5)]
+    finalize_data = _payload(tasks)
+    finalize_data["graph_report"] = compile_task_feasibility(finalize_data)
+
+    # With the default 3600s timeout (60 min), 5 min critical path is fine.
+    state_default = _make_state()
+    _guard_execute_batch_admission(finalize_data, state_default)
+
+    # With a 240s phase timeout, 5 min critical path > 80% of 4 min → rejected.
+    state_short = _make_state()
+    state_short["config"]["phase_timeout_seconds"] = 240
+
+    with pytest.raises(CliError, match="critical_path_infeasible"):
+        _guard_execute_batch_admission(finalize_data, state_short)
+
+
+def test_guard_preserves_backward_compat_without_seed_epoch_in_state() -> None:
+    """When state has no seed_epoch key, the epoch protocol is not activated
+    and a valid v2 graph is admitted (backward-compat for pre-M10 plans)."""
+    tasks = [_task("T1"), _task("T2", depends_on=["T1"])]
+    finalize_data = _payload(tasks)
+    finalize_data["graph_report"] = compile_task_feasibility(finalize_data)
+    state = _make_state()
+    assert "seed_epoch" not in state
+
+    # Must not raise even though finalize_data has no seed_epoch either.
+    _guard_execute_batch_admission(finalize_data, state)

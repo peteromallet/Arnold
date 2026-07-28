@@ -53,6 +53,10 @@ __all__ = [
     "REPAIR_OCCURRENCE_KEY_VERSION",
     "CUSTODY_LEASE_VERSION",
     "CUSTODY_LEASE_EVENT_VERSION",
+    "DEFAULT_LEASE_TTL_SECONDS",
+    "DEFAULT_LEASE_GRACE_SECONDS",
+    "MAXIMUM_LEASE_TTL_SECONDS",
+    "DEFAULT_REPAIR_RECURRENCE_MINIMUM_INTERVAL_SECONDS",
 ]
 
 # ── Schema version constants ─────────────────────────────────────────────
@@ -60,6 +64,26 @@ CUSTODY_TARGET_KEY_VERSION = 1
 REPAIR_OCCURRENCE_KEY_VERSION = 1
 CUSTODY_LEASE_VERSION = 1
 CUSTODY_LEASE_EVENT_VERSION = 1
+
+# ── Lease timing policy constants ────────────────────────────────────────
+
+#: Default lease TTL in seconds (30 minutes).
+DEFAULT_LEASE_TTL_SECONDS: int = 1800
+
+#: Default grace period in seconds (5 minutes).
+#: A lease is considered expired after TTL + grace.
+DEFAULT_LEASE_GRACE_SECONDS: int = 300
+
+#: Absolute maximum lease TTL in seconds (24 hours).
+#: No lease may have a TTL exceeding this ceiling.
+MAXIMUM_LEASE_TTL_SECONDS: int = 86400
+
+# ── Repair recurrence policy constants ────────────────────────────────────
+
+#: Minimum interval between consecutive repair dispatches for the same
+#: recurrence identity in seconds (2 minutes).  The repair loop must not
+#: dispatch the same problem signature more often than this floor.
+DEFAULT_REPAIR_RECURRENCE_MINIMUM_INTERVAL_SECONDS: int = 120
 
 # ── F01 repair-occurrence tuple (mirrored from writer_map for schema use) ─
 F01_REPAIR_OCCURRENCE_FIELDS: tuple[str, ...] = (

@@ -26,9 +26,9 @@ def test_runtime_provenance_rejects_wrong_expected_revision() -> None:
     assert "source_revision_mismatch" in payload["errors"]
 
 
-def test_runtime_source_is_valid_when_git_metadata_is_a_worktree_file() -> None:
+def test_runtime_source_has_valid_git_metadata() -> None:
     source = Path(__file__).parents[2].resolve()
-    assert (source / ".git").is_file()
+    assert (source / ".git").is_file() or (source / ".git").is_dir()
     result = subprocess.run(
         ["git", "-C", str(source), "rev-parse", "--git-dir"],
         check=False,

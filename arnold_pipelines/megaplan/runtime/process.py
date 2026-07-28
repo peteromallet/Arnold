@@ -164,6 +164,7 @@ def megaplan_engine_env(base_env: dict[str, str] | None = None) -> dict[str, str
     current = env.get("PYTHONPATH")
     parts = [part for part in (current or "").split(os.pathsep) if part]
     env["PYTHONPATH"] = os.pathsep.join([root, *[part for part in parts if part != root]])
+    env["MEGAPLAN_ENGINE_ROOT"] = root
     return env
 
 

@@ -426,12 +426,12 @@ class TestReducerRenew:
         store = store_with_acquire
         evt = _make_event("evt-002", "lease-001", 2, "renew",
                           custody_epoch=5,
-                          payload={"expires_at": "2025-06-01T00:00:00Z"})
+                          payload={"expires_at": "2025-01-01T02:00:00Z"})
         store.record_event(evt)
         lease = store.replay_history("lease-001")
         assert lease is not None
         assert lease.custody_epoch == 5
-        assert lease.expires_at == "2025-06-01T00:00:00Z"
+        assert lease.expires_at == "2025-01-01T02:00:00Z"
 
     def test_renew_does_not_lower_epoch(
         self, store_with_acquire: CustodyLeaseStore
@@ -764,15 +764,15 @@ class TestConsecutiveSameTypeEvents:
     def test_multiple_renews(self, store_with_acquire: CustodyLeaseStore) -> None:
         store = store_with_acquire
         r1 = _make_event("evt-002", "lease-001", 2, "renew",
-                         custody_epoch=5, payload={"expires_at": "2025-02-01T00:00:00Z"})
+                         custody_epoch=5, payload={"expires_at": "2025-01-01T02:00:00Z"})
         r2 = _make_event("evt-003", "lease-001", 3, "renew",
-                         custody_epoch=10, payload={"expires_at": "2025-03-01T00:00:00Z"})
+                         custody_epoch=10, payload={"expires_at": "2025-01-01T04:00:00Z"})
         store.record_event(r1)
         store.record_event(r2)
         lease = store.replay_history("lease-001")
         assert lease is not None
         assert lease.custody_epoch == 10
-        assert lease.expires_at == "2025-03-01T00:00:00Z"
+        assert lease.expires_at == "2025-01-01T04:00:00Z"
         assert len(store.load_history("lease-001")) == 3
 
     def test_multiple_transfers(self, store_with_acquire: CustodyLeaseStore) -> None:

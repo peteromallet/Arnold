@@ -4847,8 +4847,14 @@ async def sweep_managed_agent_deliveries(
     completion_turn_handler: Callable[
         [Path, Mapping[str, Any]], Awaitable[ManagedCompletionTurnResult]
     ] | None = None,
+    delivery_effects: Any | None = None,
 ) -> ManagedAgentDeliverySweepResult:
-    """Reply with terminal managed-agent results and persist retry-safe evidence."""
+    """Reply with terminal managed-agent results and persist retry-safe evidence.
+
+    Step 13H: When *delivery_effects* is provided, completion sweep delivery
+    is routed through the durable WBC delivery effects adapter with stable
+    global-effect keys.  Real Discord stays action-off in M10 (SD3).
+    """
 
     from .runtime import OutboundMessage
 
@@ -5011,6 +5017,48 @@ async def sweep_managed_agent_deliveries(
                 continue
         try:
             run_id = manifest.get("run_id") or manifest_path.parent.name
+
+            # Step 13H: route completion sweep delivery through WBC when configured.
+            # If delivery_effects is provided directly or via the outbound sink,
+            # the delivery is routed through durable global-effect keys.
+            if delivery_effects is not None:
+                try:
+                    from arnold_pipelines.megaplan.resident.delivery_effects import (
+                        DeliveryChannel,
+                        DeliveryTarget,
+                    )
+
+                    sweep_target = DeliveryTarget(
+                        channel=DeliveryChannel.RESIDENT,
+                        parent_id=str(origin.get("conversation_key", "")),
+                        target_id=f"resident-subagent-completion:{run_id}",
+                        action="completion_sweep",
+                    )
+                    sweep_intent = {
+                        "content": content,
+                        "run_id": run_id,
+                        "result_kind": result_kind,
+                        "conversation_key": str(origin.get("conversation_key", "")),
+                    }
+                    if isinstance(metadata, dict):
+                        sweep_intent["metadata"] = dict(metadata)
+
+                    sweep_outcome = delivery_effects.deliver(
+                        target=sweep_target,
+                        intent_payload=sweep_intent,
+                        apply_fn=lambda p: {"delivered": True},
+                    )
+                    if not sweep_outcome.ok:
+                        LOGGER.warning(
+                            "Completion sweep delivery blocked by WBC: %s",
+                            sweep_outcome.error,
+                        )
+                except Exception as delivery_route_exc:
+                    LOGGER.warning(
+                        "Completion sweep delivery routing error: %s",
+                        delivery_route_exc,
+                    )
+
             await outbound.send(
                 OutboundMessage(
                     conversation_key=str(origin["conversation_key"]),

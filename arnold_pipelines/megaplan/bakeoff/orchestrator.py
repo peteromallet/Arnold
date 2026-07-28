@@ -172,8 +172,6 @@ async def _init_profile(
         str(idea),
         "--profile",
         profile,
-        "--mode",
-        mode,
     ]
     if mode == "doc":
         if not output:
@@ -183,7 +181,7 @@ async def _init_profile(
                 "invalid_args",
                 "doc-mode bake-off requires --output to thread into each profile's init.",
             )
-        cmd.extend(["--output", output])
+        cmd.extend(["--mode", "doc", "--output", output])
     if robustness is not None:
         cmd.extend(["--robustness", robustness])
     init_log = profile_archive / "init.log"

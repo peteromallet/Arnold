@@ -8,6 +8,8 @@ import pytest
 from arnold_pipelines.megaplan.orchestration.task_feasibility import (
     assert_admitted_task_feasibility,
     compile_task_feasibility,
+    plan_hash,
+    task_contract_hash,
 )
 
 
@@ -514,3 +516,124 @@ def test_post_finalize_complexity_change_prevents_dispatch() -> None:
     mutated["tasks"][0]["complexity"] = 7
     with pytest.raises(ValueError, match="no longer passes feasibility"):
         assert_admitted_task_feasibility(mutated)
+
+
+# ---------------------------------------------------------------------------
+# Step 7H-a: additive seed_epoch / plan_hash fields and epoch fencing
+# ---------------------------------------------------------------------------
+
+
+def test_compile_emits_additive_seed_epoch_and_plan_hash() -> None:
+    """seed_epoch and plan_hash are additive receipt fields in the report."""
+    payload = _payload([_task("T1")])
+    payload["seed_epoch"] = "epoch-abc-123"
+    payload["source"] = {"kind": "git", "head": "deadbeef"}
+    report = compile_task_feasibility(payload)
+    assert report["seed_epoch"] == "epoch-abc-123"
+    assert isinstance(report["plan_hash"], str)
+    assert report["plan_hash"].startswith("sha256:")
+
+
+def test_seed_epoch_defaults_to_none_when_absent() -> None:
+    """Without seed_epoch in the payload the report field is None."""
+    report = compile_task_feasibility(_payload([_task("T1")]))
+    assert report["seed_epoch"] is None
+    # plan_hash is still emitted (binds None seed_epoch)
+    assert report["plan_hash"].startswith("sha256:")
+
+
+def test_plan_hash_binds_seed_epoch_while_contract_hash_does_not() -> None:
+    """Changing seed_epoch changes plan_hash but NOT task_contract_hash."""
+    base = _payload([_task("T1")])
+    base["seed_epoch"] = "epoch-v1"
+    with_epoch_v2 = deepcopy(base)
+    with_epoch_v2["seed_epoch"] = "epoch-v2"
+
+    assert task_contract_hash(base) == task_contract_hash(with_epoch_v2)
+    assert plan_hash(base) != plan_hash(with_epoch_v2)
+
+
+def test_plan_hash_binds_source_while_contract_hash_does_not() -> None:
+    """Changing source changes plan_hash but NOT task_contract_hash."""
+    base = _payload([_task("T1")])
+    base["seed_epoch"] = "epoch-1"
+    base["source"] = {"kind": "git", "head": "aaa"}
+    with_source_b = deepcopy(base)
+    with_source_b["source"] = {"kind": "git", "head": "bbb"}
+
+    assert task_contract_hash(base) == task_contract_hash(with_source_b)
+    assert plan_hash(base) != plan_hash(with_source_b)
+
+
+def test_assert_admitted_matched_epoch_is_accepted() -> None:
+    """A matching current_epoch passes through without error."""
+    payload = _payload([_task("T1")])
+    payload["seed_epoch"] = "epoch-current"
+    payload["graph_report"] = compile_task_feasibility(payload)
+    report = assert_admitted_task_feasibility(payload, current_epoch="epoch-current")
+    assert report is not None
+    assert report["seed_epoch"] == "epoch-current"
+
+
+def test_assert_admitted_stale_epoch_is_rejected() -> None:
+    """A mismatched current_epoch (stale/conflicted) raises ValueError."""
+    payload = _payload([_task("T1")])
+    payload["seed_epoch"] = "epoch-current"
+    payload["graph_report"] = compile_task_feasibility(payload)
+    with pytest.raises(ValueError, match="seed_epoch mismatch"):
+        assert_admitted_task_feasibility(payload, current_epoch="epoch-stale")
+
+
+def test_assert_admitted_v2_with_none_epoch_is_rejected() -> None:
+    """v2 + explicitly absent attestation (current_epoch=None) is rejected."""
+    payload = _payload([_task("T1")])
+    payload["seed_epoch"] = "epoch-current"
+    payload["graph_report"] = compile_task_feasibility(payload)
+    with pytest.raises(ValueError, match="seed_epoch attestation required"):
+        assert_admitted_task_feasibility(payload, current_epoch=None)
+
+
+def test_assert_admitted_v1_with_none_epoch_escapes() -> None:
+    """v1 + current_epoch=None returns None (escape hatch regardless of epoch)."""
+    payload = {"task_contract_version": 1, "tasks": [], "validation_jobs": []}
+    assert assert_admitted_task_feasibility(payload, current_epoch=None) is None
+
+
+def test_assert_admitted_unset_epoch_is_backward_compatible() -> None:
+    """Unset current_epoch (sentinel) preserves prior behavior for v2 plans."""
+    payload = _payload([_task("T1")])
+    payload["seed_epoch"] = "epoch-current"
+    payload["graph_report"] = compile_task_feasibility(payload)
+    # No current_epoch passed — must not raise even though seed_epoch is present.
+    report = assert_admitted_task_feasibility(payload)
+    assert report is not None
+
+
+def test_m8a_report_backward_compat_task_contract_hash_stable() -> None:
+    """m8a_report reads task_contract_hash from compile output; it is stable."""
+    # Simulate the m8a_report consumption pattern:
+    # feasibility = compile_task_feasibility(payload, config)
+    # feasibility.get("task_contract_hash")
+    payload_a = _payload([_task("T1")])
+    payload_a["seed_epoch"] = "epoch-x"
+    payload_b = _payload([_task("T1")])
+    # No seed_epoch
+    report_a = compile_task_feasibility(payload_a)
+    report_b = compile_task_feasibility(payload_b)
+    # task_contract_hash must be identical (additive fields don't perturb it)
+    assert report_a["task_contract_hash"] == report_b["task_contract_hash"]
+    # But plan_hash and seed_epoch differ
+    assert report_a["plan_hash"] != report_b["plan_hash"]
+    assert report_a["seed_epoch"] == "epoch-x"
+    assert report_b["seed_epoch"] is None
+
+
+def test_critique_custody_backward_compat_hash_stable() -> None:
+    """critique_custody uses task_contract_hash(payload); it is stable."""
+    # Simulate the critique_custody consumption pattern:
+    # task_contract_hash(payload)
+    payload_a = _payload([_task("T1")])
+    payload_a["seed_epoch"] = "epoch-y"
+    payload_b = _payload([_task("T1")])
+    # Adding seed_epoch must not change task_contract_hash
+    assert task_contract_hash(payload_a) == task_contract_hash(payload_b)

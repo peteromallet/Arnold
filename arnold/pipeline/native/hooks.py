@@ -300,15 +300,6 @@ class NullNativeRuntimeHooks:
     ) -> None:
         pass
 
-    def record_cancellation(
-        self,
-        cancellation: dict[str, Any],
-        *,
-        state: dict[str, Any] | None = None,
-    ) -> None:
-        del cancellation, state
-        return None
-
 
 class EffectLedgerHooks:
     """Hook wrapper that tracks side-effect lifecycle in an EffectLedger."""
@@ -320,6 +311,7 @@ class EffectLedgerHooks:
         inner: NativeRuntimeHooks | None = None,
         *,
         duplicate_fulfilled_action: DuplicateFulfilledAction = "skip",
+        effect_protocol: Any = None,
     ) -> None:
         if duplicate_fulfilled_action not in _VALID_DUPLICATE_ACTIONS:
             raise ValueError(
@@ -333,6 +325,13 @@ class EffectLedgerHooks:
         self._active_effect_metadata: dict[str, Any] | None = None
         self._last_effect_metadata: dict[str, Any] | None = None
         self.halt_reason = None
+        # Step 9A: optional WBC effect-protocol adapter for durable
+        # intent persistence and gated dispatch.
+        self._effect_protocol = effect_protocol
+        # Tracking counters for test verification (Step 9A).
+        self.wbc_intents_persisted: int = 0
+        self.wbc_dispatches: int = 0
+        self.wbc_zero_call_blocks: int = 0
 
     def _build_effect_descriptor(self, instr: NativeInstruction) -> EffectDescriptor | None:
         if not instr.operation or not instr.idempotency_key:
@@ -371,6 +370,39 @@ class EffectLedgerHooks:
             return None
         return dict(self._last_effect_metadata)
 
+    def _persist_wbc_durable_intent(
+        self,
+        instr: NativeInstruction,
+        descriptor: EffectDescriptor,
+        ctx: dict[str, Any],
+    ) -> None:
+        """Step 9A: persist durable intent through the WBC protocol.
+
+        Called from ``on_step_start`` when a protocol is attached.
+        If this raises, the caller propagates the error — the inner
+        handler and instruction func are never invoked (zero-call-on-
+        failure).
+        """
+        if self._effect_protocol is None:
+            return
+        intent_payload = {
+            "effect_id": descriptor.effect_id,
+            "kind": descriptor.kind.value,
+            "target": descriptor.target,
+            "idempotency_key": descriptor.idempotency_key,
+            "step_path": ctx.get("step_path"),
+            "operation": instr.operation,
+        }
+        try:
+            self._effect_protocol.persist_durable_intent(
+                idempotency_key=descriptor.idempotency_key,
+                intent_payload=intent_payload,
+            )
+            self.wbc_intents_persisted += 1
+        except Exception:
+            self.wbc_zero_call_blocks += 1
+            raise
+
     def on_step_start(
         self,
         instr: NativeInstruction,
@@ -381,6 +413,11 @@ class EffectLedgerHooks:
         if descriptor is None:
             self._active_effect_metadata = None
             return ctx
+
+        # Step 9A: persist durable intent through the WBC protocol before
+        # the step executes.  If this raises, the inner handler and the
+        # instruction func are never invoked (zero-call-on-failure).
+        self._persist_wbc_durable_intent(instr, descriptor, ctx)
 
         prerecorded = self._ledger.prerecord(descriptor)
         record = self._ledger.get_record(descriptor.idempotency_key)
@@ -413,6 +450,12 @@ class EffectLedgerHooks:
         result: Any,
     ) -> Any:
         result = self._inner.on_step_end(instr, ctx, result)
+        effect_ctx = ctx.get("effect")
+        if isinstance(effect_ctx, dict) and effect_ctx.get("duplicate_action") is not None:
+            if self._active_effect_metadata is not None:
+                self._last_effect_metadata = dict(self._active_effect_metadata)
+            self._active_effect_metadata = None
+            return result
         if self._active_effect_metadata is not None and instr.idempotency_key:
             self._ledger.mark_fulfilled(instr.idempotency_key)
             self._active_effect_metadata["lifecycle_state"] = (
@@ -420,6 +463,13 @@ class EffectLedgerHooks:
             )
             self._last_effect_metadata = dict(self._active_effect_metadata)
             self._active_effect_metadata = None
+            # Step 9A: record COMPLETED outcome through protocol if attached.
+            if self._effect_protocol is not None:
+                self.wbc_dispatches += 1
+                self._effect_protocol.record_outcome(
+                    idempotency_key=instr.idempotency_key,
+                    outcome="COMPLETED",
+                )
         return result
 
     def on_step_error(
@@ -429,6 +479,12 @@ class EffectLedgerHooks:
         exc: BaseException,
     ) -> None:
         self._inner.on_step_error(instr, ctx, exc)
+        effect_ctx = ctx.get("effect")
+        if isinstance(effect_ctx, dict) and effect_ctx.get("duplicate_action") is not None:
+            if self._active_effect_metadata is not None:
+                self._last_effect_metadata = dict(self._active_effect_metadata)
+            self._active_effect_metadata = None
+            return
         if self._active_effect_metadata is not None and instr.idempotency_key:
             self._ledger.mark_failed(instr.idempotency_key)
             self._active_effect_metadata["lifecycle_state"] = (
@@ -436,6 +492,13 @@ class EffectLedgerHooks:
             )
             self._last_effect_metadata = dict(self._active_effect_metadata)
             self._active_effect_metadata = None
+            # Step 9A: record FAILED outcome through protocol if attached.
+            if self._effect_protocol is not None:
+                self._effect_protocol.record_outcome(
+                    idempotency_key=instr.idempotency_key,
+                    outcome="FAILED",
+                    detail={"error": str(exc)},
+                )
 
     def merge_state(
         self,

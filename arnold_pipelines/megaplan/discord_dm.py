@@ -65,8 +65,16 @@ def send_discord_dm(
     *,
     env: Mapping[str, str] | None = None,
     opener: Any | None = None,
+    delivery_effects: Any | None = None,
 ) -> dict[str, Any]:
-    """Send a structured payload as one or more Discord bot DMs."""
+    """Send a structured payload as one or more Discord bot DMs.
+
+    When *delivery_effects* is provided (Step 13G2), the outbound
+    Discord DM call is routed through the durable WBC delivery effects
+    adapter with stable parent/target/channel global-effect keys.
+    Real Discord is action-off in M10 (SD3); the delivery adapter's
+    apply_fn must be a fake transport.
+    """
 
     environment = env if env is not None else os.environ
     payload = redact_payload(payload, env=environment)
@@ -102,6 +110,75 @@ def send_discord_dm(
             "missing": missing,
             "message_count": 0,
         }
+
+    # Step 13G2: route through delivery effects when adapter is provided
+    if delivery_effects is not None:
+        try:
+            from arnold_pipelines.megaplan.resident.delivery_effects import (
+                DeliveryChannel,
+                DeliveryTarget,
+            )
+
+            target = DeliveryTarget(
+                channel=DeliveryChannel.DISCORD_DM,
+                parent_id=user_id,
+                target_id=user_id,
+                action="send_dm",
+            )
+
+            def _fake_transport(intent: dict[str, Any]) -> dict[str, Any]:
+                urlopen_fn = opener or request.urlopen
+                ch = _discord_api_request(
+                    "/users/@me/channels",
+                    {"recipient_id": user_id},
+                    token=token,
+                    opener=urlopen_fn,
+                )
+                ch_id = str(ch["id"])
+                mids: list[str] = []
+                for content_item in messages:
+                    d = _discord_api_request(
+                        f"/channels/{ch_id}/messages",
+                        {"content": content_item},
+                        token=token,
+                        opener=urlopen_fn,
+                    )
+                    mid = d.get("id")
+                    if mid is not None:
+                        mids.append(str(mid))
+                return {
+                    "ok": True,
+                    "channel_id": ch_id,
+                    "message_ids": mids,
+                    "message_count": len(messages),
+                }
+
+            outcome = delivery_effects.deliver(
+                target=target,
+                intent_payload=dict(payload),
+                apply_fn=_fake_transport,
+            )
+            if outcome.ok:
+                return {
+                    "ok": True,
+                    "channel_id": outcome.evidence.get("channel_id", ""),
+                    "message_ids": outcome.evidence.get("message_ids", []),
+                    "message_count": len(messages),
+                    "glek": outcome.glek,
+                }
+            return {
+                "ok": False,
+                "reason": "delivery_adapter_blocked",
+                "error": outcome.error,
+                "message_count": 0,
+                "glek": outcome.glek,
+            }
+        except Exception as delivery_exc:
+            LOGGER.warning(
+                "Delivery effects routing failed for user %s: %s",
+                user_id, delivery_exc,
+            )
+            # Fall through to direct delivery path
 
     urlopen = opener or request.urlopen
     try:

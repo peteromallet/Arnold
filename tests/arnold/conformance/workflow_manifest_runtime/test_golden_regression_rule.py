@@ -165,6 +165,7 @@ def _make_native_trace_dir(
         "stages.json": [{"name": "prep"}],
         "artifacts.json": {"artifact.txt": "sha256:abc"},
         "checkpoint.json": {"status": "done"},
+        "tree.json": {"root": {"name": "prep"}},
     }
     for filename, value in (mutate or {}).items():
         payloads[filename] = value

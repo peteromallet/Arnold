@@ -6,6 +6,8 @@ from pathlib import Path
 from unittest import mock
 from unittest.mock import patch
 
+import pytest
+
 import arnold_pipelines.megaplan.chain as chain_module
 from arnold_pipelines.megaplan.chain import (
     _append_completed_with_guard,
@@ -27,6 +29,12 @@ from arnold_pipelines.megaplan.orchestration.completion_io import (
     store_acceptance_snapshot,
 )
 from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_PR_MERGE
+
+
+@pytest.fixture(autouse=True)
+def _ignore_ambient_chain_no_push(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise the completion guard independently of cloud runner policy."""
+    monkeypatch.delenv("MEGAPLAN_CHAIN_NO_PUSH", raising=False)
 
 
 def _git(root: Path, *args: str) -> str:

@@ -1450,9 +1450,6 @@ class MegaplanResidentProfile:
 
     def _load_local_epic_chain_state_context(self) -> dict[str, Any]:
         roots: list[Path] = [Path.cwd()]
-        workspace = Path("/workspace")
-        if workspace.exists() and workspace not in roots:
-            roots.append(workspace)
         epic_paths = _recent_state_paths(roots, ".epic_chains", limit=8)
         chain_paths = _recent_state_paths(roots, ".chains", limit=12)
         epic_states = [_summarize_epic_chain_state(path) for path in epic_paths]

@@ -100,6 +100,72 @@ roots:
     required: true
     description: "Control-plane modules: package boundary, import boundary."
 
+  - path: "arnold_pipelines/megaplan/cloud"
+    category: "cloud"
+    file_patterns: ["*.py"]
+    required: true
+    description: "Cloud providers, repair machinery, runtime deployment, Git/SSH operations, and GitHub issue publication."
+
+  - path: "arnold_pipelines/megaplan/chain"
+    category: "chain"
+    file_patterns: ["*.py"]
+    required: true
+    description: "Chain lifecycle, Git/PR publication, worktrees, and milestone execution."
+
+  - path: "arnold_pipelines/megaplan/custody"
+    category: "custody"
+    file_patterns: ["*.py"]
+    required: true
+    description: "Custody leases, claims, validation, and transfer/reclaim surfaces."
+
+  - path: "arnold_pipelines/megaplan/loop"
+    category: "loop"
+    file_patterns: ["*.py"]
+    required: true
+    description: "MegaLoop Git and user-command subprocess surfaces, including monitored shell execution."
+
+  - path: "arnold_pipelines/megaplan/resident"
+    category: "resident"
+    file_patterns: ["*.py"]
+    required: true
+    description: "Resident Discord delivery, subagent process, Git-custody, and external-send surfaces."
+
+  - path: "arnold_pipelines/megaplan/bakeoff"
+    category: "bakeoff"
+    file_patterns: ["*.py"]
+    required: true
+    description: "Bakeoff worktree, merge, provider, and command execution surfaces."
+
+  - path: "arnold_pipelines/megaplan/cli"
+    category: "cli"
+    file_patterns: ["*.py"]
+    required: true
+    description: "CLI entry points and editor/command execution surfaces."
+
+  - path: "arnold_pipelines/megaplan/skills"
+    category: "skills"
+    file_patterns: ["*.py"]
+    required: true
+    description: "Skill helpers, including Claude and Hermes subagent-launcher subprocess calls."
+
+  - path: "arnold_pipelines/megaplan/discord_dm.py"
+    category: "discord_delivery"
+    file_patterns: ["*.py"]
+    required: true
+    description: "Standalone Discord DM external-send surface."
+
+  - path: "arnold_pipelines/megaplan/agentbox_adapter.py"
+    category: "agentbox"
+    file_patterns: ["*.py"]
+    required: true
+    description: "Standalone agentbox provider and command boundary."
+
+  - path: "arnold_pipelines/megaplan/auto.py"
+    category: "auto_runtime"
+    file_patterns: ["*.py"]
+    required: true
+    description: "Standalone auto-runner subprocess and Git boundary."
+
   - path: "arnold_pipelines/megaplan"
     category: "megaplan_shell_wrappers"
     file_patterns:

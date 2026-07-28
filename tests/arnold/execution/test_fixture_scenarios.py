@@ -433,6 +433,10 @@ def test_escalation_fixture_routes_after_retry_exhaustion(
         ),
     ],
 )
+@pytest.mark.skip(
+    reason="Retired Megaplan compatibility-shell scenarios; current native topology "
+    "is covered by tests/arnold_pipelines/megaplan/test_workflows_planning.py"
+)
 def test_megaplan_gate_routing_family(
     tmp_path: Path,
     fake_backend_factory,
@@ -460,6 +464,10 @@ def test_megaplan_gate_routing_family(
     assert expected_nodes <= completed
 
 
+@pytest.mark.skip(
+    reason="Retired Megaplan compatibility-shell scenario; current native suspension "
+    "is covered by tests/arnold_pipelines/megaplan/test_workflows_planning.py"
+)
 def test_megaplan_human_gate_suspends(tmp_path: Path, fake_backend_factory) -> None:
     manifest = build_and_compile_pipeline()
     backend = fake_backend_factory(

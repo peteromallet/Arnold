@@ -9015,7 +9015,7 @@ def test_watchdog_hot_update_prefers_newer_editable_source_wrapper(tmp_path: Pat
 
     fake_bash = tmp_path / "bash"
     fake_bash.write_text(
-        "#!/usr/bin/env python3\n"
+        f"#!{sys.executable}\n"
         "import sys\n"
         "print('\\n'.join(sys.argv[1:]))\n",
         encoding="utf-8",

@@ -233,11 +233,13 @@ class TestModelRouteExposure:
             o for o in config["topology_overlays"]
             if o["overlay_id"] == "model-routing:phase"
         )
-        # The phase model overlay covers all 10 planning/intelligence phases
+        # Retain legacy aliases during cutover and cover expanded phases.
         expected_phases = {
             "prep", "plan", "critique", "gate", "revise",
             "tiebreaker_run", "tiebreaker_decide", "finalize",
             "execute", "review",
+            "tiebreaker_researcher", "tiebreaker_challenger",
+            "tiebreaker_synthesis", "tiebreaker_decision",
         }
         assert set(phase_overlay["target_refs"]) == expected_phases, (
             f"Phase model overlay targets mismatch: "
@@ -398,7 +400,15 @@ class TestPolicyAuthorityChain:
         # The routing topology must carry routes matching the authored DSL
         source_nodes = {r["source"] for r in routes}
         assert "gate" in source_nodes, "routing topology must include gate routes"
-        assert "review" in source_nodes, "routing topology must include review routes"
+        review = next(node for node in shell.manifest.nodes if node.id == "review")
+        review_transitions = {
+            transition.transition_id
+            for transition in review.policy.control_transitions
+        }
+        assert {
+            "review:rework", "review:done", "review:blocked",
+            "review:force_proceeded", "review:deferred_human",
+        } <= review_transitions
 
     def test_authored_pipeline_and_compiled_manifest_agree_on_policy_count(self) -> None:
         """Policy surfaces declared in the authored source must be carried

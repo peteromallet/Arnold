@@ -354,7 +354,12 @@ class DiscordInboundMessage:
 
 
 class DiscordOutboundSink(OutboundSink):
-    """Deliver resident outbound messages to Discord using durable targets."""
+    """Deliver resident outbound messages to Discord using durable targets.
+
+    Step 13H: When *delivery_effects* is provided, outbound delivery is
+    routed through the durable WBC delivery effects adapter with stable
+    global-effect keys. Real Discord stays action-off in M10 (SD3).
+    """
 
     def __init__(
         self,
@@ -363,10 +368,12 @@ class DiscordOutboundSink(OutboundSink):
         delivery_environment: str = "test",
         bot_role: str = "test",
         reaction_effect_root: Path | None = None,
+        delivery_effects: Any | None = None,
     ) -> None:
         self.client = client
         self.delivery_environment = str(delivery_environment).strip().lower()
         self.bot_role = str(bot_role).strip().lower()
+        self._delivery_effects = delivery_effects
         self.reaction_effects = (
             DiscordReactionEffectLedger(reaction_effect_root)
             if reaction_effect_root is not None
@@ -386,6 +393,15 @@ class DiscordOutboundSink(OutboundSink):
             )
         if self.client is None:
             raise RuntimeError("Discord client is not bound")
+
+        # Step 13H: route through durable delivery effects when configured.
+        # If the adapter accepts the delivery, we're done. Otherwise fall
+        # through to the direct Discord send path.
+        if self._delivery_effects is not None:
+            routed = await self._send_via_delivery_effects(message)
+            if routed:
+                return
+
         target = DiscordDeliveryTarget.from_conversation_key(message.conversation_key)
         channel_target = target
         fallback_reason: str | None = None
@@ -537,6 +553,71 @@ class DiscordOutboundSink(OutboundSink):
                     "Discord terminal reaction intent could not be committed message_id=%s",
                     reply_to_message_id,
                 )
+
+    # ── Step 13H: delivery-effects routing ────────────────────────────────
+
+    async def _send_via_delivery_effects(self, message: OutboundMessage) -> bool:
+        """Route outbound delivery through the WBC delivery effects adapter.
+
+        Step 13H: Uses stable parent/target/channel global-effect keys.
+        Reclaim, duplicate scheduling, child aggregation, lost ACK, and
+        completion sweep delivery are all handled through the adapter's
+        durable intent contracts.
+
+        Returns:
+            True if the delivery was accepted by the WBC adapter and no
+            further action is needed. False if the caller should fall
+            through to the direct Discord send path.
+        """
+        try:
+            from arnold_pipelines.megaplan.resident.delivery_effects import (
+                DeliveryChannel,
+                DeliveryTarget,
+            )
+
+            target = DeliveryTarget(
+                channel=DeliveryChannel.RESIDENT,
+                parent_id=getattr(message, 'conversation_key', 'unknown'),
+                target_id=message.idempotency_key or 'unknown',
+                action="send",
+            )
+
+            intent = {
+                "content": message.content,
+                "conversation_key": getattr(message, 'conversation_key', ''),
+                "idempotency_key": getattr(message, 'idempotency_key', ''),
+            }
+            if isinstance(message.metadata, dict):
+                intent["metadata"] = dict(message.metadata)
+
+            outcome = self._delivery_effects.deliver(
+                target=target,
+                intent_payload=intent,
+                apply_fn=lambda payload: {"delivered": True, "channel": "resident"},
+            )
+
+            if outcome.ok:
+                if isinstance(message.metadata, dict):
+                    message.metadata["delivery_effects_routed"] = True
+                    message.metadata["delivery_glek"] = outcome.glek
+                LOGGER.info(
+                    "Resident delivery routed through WBC: glek=%s channel=%s",
+                    outcome.glek,
+                    outcome.channel,
+                )
+                return True
+
+            LOGGER.warning(
+                "Delivery effects routing blocked: %s — falling through to direct",
+                outcome.error,
+            )
+            return False
+        except Exception as exc:
+            LOGGER.warning(
+                "Delivery effects routing unavailable (%s) — falling through to direct",
+                exc,
+            )
+            return False
 
     async def _queue_terminal_reactions(
         self, message: OutboundMessage, reply_to_message_id: str

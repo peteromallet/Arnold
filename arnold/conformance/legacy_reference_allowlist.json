@@ -529,6 +529,12 @@
       "reason": "Golden legacy baseline inventory records pre-migration source paths."
     },
     {
+      "path": "tests/arnold/agent/test_import_boundaries.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "Neutral agent import-boundary test intentionally names the deleted legacy package root as a negative assertion."
+    },
+    {
       "path": "tests/arnold_pipelines/megaplan/test_import_boundaries.py",
       "pattern": "arnold.pipelines.megaplan",
       "category": "scanner-target",
@@ -695,6 +701,12 @@
       "pattern": "arnold.pipelines.megaplan",
       "category": "historical-non-shipped",
       "reason": "Skill documentation references the legacy package path as historical compatibility context."
+    },
+    {
+      "path": "arnold_pipelines/megaplan/data/_codex_skills/megaplan-cloud/SKILL.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Generated Codex skill bundle preserves the canonical skill's historical package-migration context."
     },
     {
       "path": "docs/arnold/megaplan-source-path-reconciliation.md",

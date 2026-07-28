@@ -1146,3 +1146,155 @@ def test_write_repair_verdict_decision_minimal_fields(tmp_path: Path) -> None:
     # No blocker/path fields when not provided
     assert "blocker=" not in decision["reason"]
     assert "path=" not in decision["reason"]
+
+
+# ---------------------------------------------------------------------------
+# Step 13A — exact repair identity, removed synthetic WBC defaults, pending
+# and escalation coverage.
+# ---------------------------------------------------------------------------
+
+
+def test_enqueue_without_repair_identity_records_pending_shadow_lease(
+    tmp_path: Path,
+) -> None:
+    """Enqueueing without repair identity yields a *pending* shadow lease.
+
+    Step 13A removed the synthetic ``repair-run-*``/``wbc-ref-*``/``grant-*``
+    placeholders.  A pre-dispatch enqueue must not mint a lease whose
+    occurrence/WBC/grant identity does not correspond to a real dispatched run;
+    instead the lease is recorded ``pending`` until dispatch supplies exact
+    identity.
+    """
+
+    queue_dir = _queue_root(tmp_path)
+    lease_dir = tmp_path / ".megaplan" / "custody-leases"
+    result = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo-session",
+        problem_signature=_signature(),
+        source="execute",
+        workspace=str(tmp_path),
+        lease_store_dir=str(lease_dir),
+    )
+    assert result["status"] == "queued"
+    shadow = result["m7_custody_lease"]
+    assert shadow["m7_lease_status"] == "pending"
+    assert "incomplete" in shadow["m7_lease_detail"]
+    # No synthetic occurrence/epoch was fabricated.
+    assert shadow["m7_lease_event_id"] == ""
+    assert shadow["m7_lease_epoch"] == 0
+    # The request record carries an (empty) repair_identity block.
+    request = result["request"]
+    assert request["repair_identity"] == {}
+
+
+def test_enqueue_with_full_repair_identity_binds_shadow_lease(tmp_path: Path) -> None:
+    """A full repair-identity tuple binds a real (non-synthetic) shadow lease."""
+
+    queue_dir = _queue_root(tmp_path)
+    lease_dir = tmp_path / ".megaplan" / "custody-leases"
+    identity = {
+        "run_id": "run-abc",
+        "run_revision": "rev-001",
+        "coordinator_attempt_id": "coord-7",
+        "run_authority_grant_id": "grant-9",
+        "coordinator_fence_token": 5,
+        "wbc_attempt_reference": "wbc-real-1",
+        "global_logical_effect_key": "glek-xyz",
+        "lease_id": "repair-req-special",
+        "custody_epoch": 2,
+        "owner_host": "worker-host",
+        "owner_pid": 4242,
+        "owner_boot_id": "boot-aa",
+    }
+    result = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo-session",
+        problem_signature=_signature(),
+        source="execute",
+        workspace=str(tmp_path),
+        lease_store_dir=str(lease_dir),
+        repair_identity=identity,
+    )
+    assert result["status"] == "queued"
+    request = result["request"]
+    # All supplied identity fields are carried on the record.
+    for field, expected in identity.items():
+        assert request["repair_identity"][field] == expected
+    shadow = result["m7_custody_lease"]
+    assert shadow["m7_lease_status"] == "acquired"
+    assert shadow["m7_lease_epoch"] == 1
+    assert shadow["m7_lease_event_id"]
+
+
+def test_shadow_acquire_pending_when_wbc_attempt_reference_missing(
+    tmp_path: Path,
+) -> None:
+    """A partial identity tuple (missing wbc_attempt_reference) is pending."""
+
+    from arnold_pipelines.megaplan.custody.lease_store import CustodyLeaseStore
+    from arnold_pipelines.megaplan.custody.contracts import CustodyTargetKey
+
+    lease_dir = tmp_path / ".megaplan" / "custody-leases"
+    store = CustodyLeaseStore(lease_dir)
+    target = CustodyTargetKey(
+        environment="dev",
+        session="demo-session",
+        chain="m3",
+        plan_revision="rev-1",
+        phase="execute",
+        task="T1",
+        attempt="1",
+        normalized_failure_kind="execute_failed",
+        blocker_or_phase_result_hash="h",
+        fence="fence-1",
+    )
+    result = repair_requests._shadow_acquire_custody_lease(
+        lease_store=store,
+        lease_id="repair-req-partial",
+        target=target,
+        owner_host="worker-host",
+        owner_pid="100",
+        owner_boot_id="boot-1",
+        run_id="run-1",
+        run_revision="rev-1",
+        coordinator_attempt_id="coord-1",
+        run_authority_grant_id="grant-1",
+        coordinator_fence_token=3,
+        # wbc_attempt_reference intentionally omitted
+    )
+    assert result["m7_lease_status"] == "pending"
+    assert "incomplete" in result["m7_lease_detail"]
+
+
+def test_pending_request_then_escalates_after_unclaimed_handoffs(tmp_path: Path) -> None:
+    """A pending (identity-incomplete) request escalates if never claimed."""
+
+    queue_dir = _queue_root(tmp_path)
+    result = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo-session",
+        problem_signature=_signature(),
+        source="execute",
+        workspace=str(tmp_path),
+    )
+    assert result["status"] == "queued"
+    request_id = result["request"]["request_id"]
+
+    escalated = repair_requests.record_unclaimed_request_failure(
+        queue_dir,
+        request_id=request_id,
+        reason="no worker bound repair identity",
+        max_retries=2,
+    )
+    assert escalated["status"] == "retryable"
+    assert escalated["retry_count"] == 1
+
+    final = repair_requests.record_unclaimed_request_failure(
+        queue_dir,
+        request_id=request_id,
+        reason="no worker bound repair identity",
+        max_retries=2,
+    )
+    assert final["status"] == "alerted"
+    assert final["alert"]["decision"] == "claim_alert"

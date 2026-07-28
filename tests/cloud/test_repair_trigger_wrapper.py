@@ -160,6 +160,10 @@ def _run_trigger(
         env.pop("ARNOLD_AUTONOMY", None)
     else:
         env["ARNOLD_AUTONOMY"] = "1" if (enabled if autonomy is None else autonomy) else "0"
+    if enabled:
+        # L3 dispatch requires both autonomy and the audit-autofix authority
+        # bit; isolate positive tests from a paused production cloud env.
+        env["ARNOLD_AUDIT_AUTOFIX_ENABLED"] = "1"
     cmd = [
         sys.executable,
         str(TRIGGER),

@@ -36,6 +36,11 @@ from arnold_pipelines.megaplan.cli import _reset_chain_worktree_target
 from arnold_pipelines.megaplan.types import CliError
 
 
+@pytest.fixture(autouse=True)
+def _ignore_ambient_chain_no_push(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MEGAPLAN_CHAIN_NO_PUSH", raising=False)
+
+
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     proc = subprocess.run(
         ["git", *args],

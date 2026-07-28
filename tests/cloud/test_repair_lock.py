@@ -109,6 +109,7 @@ def test_acquire_repair_lock_claims_owner_metadata_and_reports_busy_without_muta
         cwd="/workspace/project",
         timeout_seconds=300,
         hostname="worker-a",
+        boot_id="boot-1",
         is_pid_live=lambda pid: pid in live_pids,
     )
 
@@ -124,6 +125,7 @@ def test_acquire_repair_lock_claims_owner_metadata_and_reports_busy_without_muta
         "cwd": "/workspace/project",
         "timeout_seconds": 300,
         "hostname": "worker-a",
+        "boot_id": "boot-1",
     }
 
     second = repair_lock.acquire_repair_lock(
@@ -962,3 +964,55 @@ class TestAdmissionProjectionUnchanged:
         assert not result.acquired
         assert not result.busy
         assert not result.stale
+
+
+def test_build_owner_metadata_carries_process_birth_identity() -> None:
+    """Step 13A: owner metadata carries host/process-birth boot_id identity."""
+
+    from arnold_pipelines.megaplan.cloud import repair_lock
+
+    owner = repair_lock.build_owner_metadata(
+        session="demo-session",
+        target_id="blocker:v1:birth",
+        pid=12345,
+        hostname="worker-host",
+        boot_id="boot-abc",
+    )
+    assert owner["boot_id"] == "boot-abc"
+    assert owner["hostname"] == "worker-host"
+    assert owner["pid"] == 12345
+
+
+def test_build_owner_metadata_defaults_boot_id_to_current_process_birth() -> None:
+    """When boot_id is omitted it falls back to the live process-birth identity."""
+
+    from arnold_pipelines.megaplan.cloud import repair_lock
+    from arnold_pipelines.megaplan.custody.contracts import process_birth_identity
+
+    owner = repair_lock.build_owner_metadata(
+        session="demo-session",
+        pid=999,
+    )
+    expected = str(process_birth_identity().get("boot_id") or "")
+    assert owner["boot_id"] == expected
+
+
+def test_acquire_repair_lock_records_boot_id_in_owner_metadata(tmp_path) -> None:
+    """Acquiring a lock persists the host/process-birth boot_id (Step 13A)."""
+
+    from arnold_pipelines.megaplan.cloud import repair_lock
+
+    lock_dir = tmp_path / ".megaplan" / "repair-locks" / "birth-lock"
+    result = repair_lock.acquire_repair_lock(
+        lock_dir,
+        session="demo-session",
+        target_id="blocker:v1:birth",
+        pid=777,
+        hostname="worker-host",
+        boot_id="boot-xyz",
+    )
+    assert result.acquired
+    assert result.owner["boot_id"] == "boot-xyz"
+    owner_path = repair_lock.owner_metadata_path(result.lock_dir)
+    persisted = json.loads(owner_path.read_text(encoding="utf-8"))
+    assert persisted["boot_id"] == "boot-xyz"

@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "step": "24",
+  "milestone": "M10",
+  "generated_at": "2026-07-27T19:30:00+00:00",
+  "description": "M11 genuine-block candidate package. All production effects and mutating repair remain action-off in M10. This manifest declares the candidate boundary, kill switch, rollback, runtime provenance, and independent verifier schedule required for M11 controlled execution and acceptance. No mocked status is accepted as evidence.",
+  "candidate_boundary": {
+    "identity": "bc:execute_approval",
+    "workflow_id": "megaplan-review",
+    "phase": "execute",
+    "producer_path": "arnold_pipelines/megaplan/handlers/execute.py",
+    "owner": "wbc",
+    "action_off_in_m10": true,
+    "fault_matrix_coverage": ["F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F09", "F10", "F11", "F12", "F13", "F14", "F15", "F16"],
+    "reconciliation_note": "Each F01-F16 scenario references bc:execute_approval; F17 references bc:gate_to_revise. Join enforced by validate_inventory_coverage."
+  },
+  "kill_switch": {
+    "type": "ActionGateConfig.enforced_families",
+    "default_state": "shadow_mode_empty",
+    "description": "ActionGate defaults to shadow mode (enforced_families empty set). Production effect dispatch is gated on production_enabled=False in ProviderCapability declarations. Enabling requires explicit ActionGateConfig configuration to add the family to enforced_families AND setting production_enabled=True on the target provider capability.",
+    "disable_command": "Set ActionGateConfig.enforced_families = set() and all ProviderCapability.production_enabled = False",
+    "fail_closed": true
+  },
+  "rollback": {
+    "mechanism": "seed_rematerialize._rollback_seed_epoch",
+    "description": "Seed epoch rollback restores the predecessor archived epoch. The plan archive is restored via _restore_plan_archive and the seed epoch is rolled back via _rollback_seed_epoch. This reverts the checkout to the content-addressed predecessor revision.",
+    "tested_in_m10": true,
+    "archive_predecessor": true,
+    "fresh_epoch_required_after_rollback": true
+  },
+  "runtime_provenance": {
+    "source_bound": "runtime_attestation.build_runtime_launch_seed",
+    "seed_bound": "seed_rematerialize.seed_rematerialize",
+    "content_addressed": true,
+    "mixed_revision_blocking": true,
+    "branch_attested": true,
+    "ancestry_attested": true,
+    "remote_origin_attested": true,
+    "revision_components": ["git_branch", "git_ancestry", "git_remote_origin", "python_executable", "platform_info"]
+  },
+  "verifier_schedule": {
+    "independent_verifier_required": true,
+    "negative_control_required": true,
+    "current_rereads_required": true,
+    "verifier_class": "RecoveryVerifier",
+    "schedule": {
+      "five_minute": {
+        "check": "process_liveness_and_lease_validity",
+        "verifier": "RecoveryVerifier with current RA/Custody/WBC rereads",
+        "scope": "active occurrences"
+      },
+      "one_hour": {
+        "check": "slo_p95_and_repair_progress",
+        "verifier": "RecoveryVerifier with negative control",
+        "scope": "denominated recovery events"
+      },
+      "six_hour": {
+        "check": "missed_event_backstop_and_malformed_evidence",
+        "verifier": "SixHourAuditor (non-primary mutator)",
+        "scope": "full event log reconciliation"
+      }
+    },
+    "verifier_separation": "The verifier that closes recovery must declare its provenance and must not be the same process that produced the failure.",
+    "no_mocked_status_as_evidence": true
+  },
+  "acceptance_prerequisites_for_m11": {
+    "conformance_receipt": "evidence/m10-c01-c20-conformance.json must have conformance_pass=true",
+    "fault_matrix": "All F01-F17 scenarios must be reconciled and executable",
+    "inventory_join": "Every supported mutating/provider row must have executable fault/replay coverage",
+    "deferred_rows": "All deferred rows must be durably action-off with owner, expiry, source hash, and bypass evidence",
+    "recovery_slo": "evidence/m10-recovery-slo-receipt.json must report p95 below 300s or typed escalation",
+    "independent_verification": "Recovery closure requires independent verifier with negative control",
+    "action_gate_in_shadow": "ActionGate must remain in shadow mode (enforced_families empty) for M10 acceptance"
+  },
+  "left_to_m11": [
+    "Controlled execution enablement",
+    "Production effect enablement (set production_enabled=True)",
+    "Action family enforcement configuration",
+    "Acceptance decision"
+  ]
+}

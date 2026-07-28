@@ -3,7 +3,8 @@
 
 Joins three WBC declaration inputs into a deterministic inventory, then
 extends it with static AST discovery over handler, runtime, kernel,
-supervisor, execution, and orchestration source trees.
+supervisor, execution, orchestration, cloud, chain, custody, loop, resident,
+bakeoff, CLI, skills, and standalone delivery/runner source roots.
 
 Input sources (T4):
 1. ``arnold_pipelines/megaplan/workflows/boundary_contracts.py``
@@ -271,7 +272,174 @@ DISCOVERY_ROOTS: list[dict[str, Any]] = [
         "file_patterns": ["*.py"],
         "description": "Orchestration: authority readers, critique runtime, chain execution, evidence, gate checks.",
     },
+    {
+        "path": "arnold_pipelines/megaplan/cloud",
+        "category": "cloud",
+        "file_patterns": ["*.py"],
+        "description": "Cloud providers, repair machinery, runtime deployment, Git/SSH operations, and publication.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/chain",
+        "category": "chain",
+        "file_patterns": ["*.py"],
+        "description": "Chain lifecycle, Git/PR publication, worktrees, and milestone execution.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/custody",
+        "category": "custody",
+        "file_patterns": ["*.py"],
+        "description": "Custody leases, claims, action validation, and transfer/reclaim surfaces.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/loop",
+        "category": "loop",
+        "file_patterns": ["*.py"],
+        "description": "MegaLoop user-command and Git execution surfaces.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/resident",
+        "category": "resident",
+        "file_patterns": ["*.py"],
+        "description": "Resident delivery, Discord, subprocess, and Git-custody surfaces.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/bakeoff",
+        "category": "bakeoff",
+        "file_patterns": ["*.py"],
+        "description": "Bakeoff worktree, merge, provider, and command execution surfaces.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/cli",
+        "category": "cli",
+        "file_patterns": ["*.py"],
+        "description": "CLI entry points and editor/command execution surfaces.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/skills",
+        "category": "skills",
+        "file_patterns": ["*.py"],
+        "description": "Packaged skill helpers, including subagent launcher subprocess boundaries.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/discord_dm.py",
+        "category": "discord_delivery",
+        "file_patterns": ["*.py"],
+        "description": "Standalone Discord DM external-send surface.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/agentbox_adapter.py",
+        "category": "agentbox",
+        "file_patterns": ["*.py"],
+        "description": "Standalone agentbox provider and command boundary.",
+    },
+    {
+        "path": "arnold_pipelines/megaplan/auto.py",
+        "category": "auto_runtime",
+        "file_patterns": ["*.py"],
+        "description": "Standalone auto-runner process and Git execution boundary.",
+    },
 ]
+
+
+def _discovery_roots() -> list[dict[str, Any]]:
+    """Return fallback roots merged with the declarative YAML roots.
+
+    The checked-in list remains sufficient when PyYAML is unavailable.  When
+    the rules artifact is readable, its entries add coverage and metadata
+    without narrowing a fallback ``*.py`` scan.  Root paths are unique and
+    retain deterministic order.
+    """
+    merged: dict[str, dict[str, Any]] = {
+        str(root["path"]): dict(root) for root in DISCOVERY_ROOTS
+    }
+    if _HAS_YAML and DISCOVERY_RULES_PATH.is_file():
+        try:
+            loaded = yaml.safe_load(DISCOVERY_RULES_PATH.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+            loaded = None
+        roots = loaded.get("roots", []) if isinstance(loaded, dict) else []
+        for candidate in roots:
+            if not isinstance(candidate, dict) or not candidate.get("path"):
+                continue
+            path = str(candidate["path"])
+            if path not in merged:
+                merged[path] = dict(candidate)
+                continue
+            current = merged[path]
+            yaml_patterns = candidate.get("file_patterns", [])
+            fallback_patterns = current.get("file_patterns", [])
+            current.update({
+                key: value
+                for key, value in candidate.items()
+                if key != "file_patterns"
+            })
+            current["file_patterns"] = list(dict.fromkeys([
+                *fallback_patterns,
+                *yaml_patterns,
+            ]))
+    return list(merged.values())
+
+
+def _call_name(node: ast.expr) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _call_name(node.value)
+        return f"{parent}.{node.attr}" if parent else node.attr
+    return ""
+
+
+def _literal_command_hint(node: ast.Call) -> str:
+    if not node.args:
+        return ""
+    first = node.args[0]
+    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+        return first.value.split(maxsplit=1)[0]
+    if isinstance(first, (ast.List, ast.Tuple)) and first.elts:
+        head = first.elts[0]
+        if isinstance(head, ast.Constant) and isinstance(head.value, str):
+            return head.value
+    return ""
+
+
+def _external_mutation_kind(call_name: str) -> str:
+    lowered = call_name.lower()
+    terminal = lowered.rsplit(".", 1)[-1]
+    if "subprocess" in lowered or lowered == "os.system" or terminal in {
+        "popen", "check_call", "check_output",
+    }:
+        return "command_execution"
+    if terminal in {"send", "send_message", "publish", "deliver", "reply"}:
+        return "external_send"
+    if any(token in lowered for token in {
+        "requests.", "httpx.", "urllib.", "provider.", "client.post",
+        "client.put", "client.delete",
+    }):
+        return "network_or_provider"
+    return ""
+
+
+def _mutation_disposition(module_path: str, kind: str) -> dict[str, str]:
+    action_off_prefixes = (
+        "arnold_pipelines/megaplan/loop/",
+        "arnold_pipelines/megaplan/skills/subagent-launcher/",
+    )
+    if module_path.startswith(action_off_prefixes) and kind == "command_execution":
+        return {
+            "disposition": "action_off",
+            "owner": "run_authority",
+            "reason": (
+                "Command execution is outside M10's WBC repair-effect scope and "
+                "must not authorize or close a repair occurrence."
+            ),
+            "expiry": "M11 boundary-retirement decision",
+        }
+    return {
+        "disposition": "inventory_only",
+        "owner": "run_authority",
+        "reason": "Discovered external mutation boundary; policy is owned by its implementing milestone.",
+        "expiry": "M11 conformance review",
+    }
 
 
 def _classify_module_surfaces(
@@ -441,6 +609,7 @@ def _parse_module_ast(source: str) -> dict[str, Any]:
         "functions": [],
         "imports": [],
         "docstring": "",
+        "external_mutations": [],
     }
     try:
         tree = ast.parse(source)
@@ -464,6 +633,20 @@ def _parse_module_ast(source: str) -> dict[str, Any]:
             mod = node.module or ""
             for alias in node.names:
                 result["imports"].append(f"{mod}.{alias.name}")
+        elif isinstance(node, ast.Call):
+            call_name = _call_name(node.func)
+            mutation_kind = _external_mutation_kind(call_name)
+            if mutation_kind:
+                result["external_mutations"].append({
+                    "kind": mutation_kind,
+                    "call": call_name,
+                    "line": node.lineno,
+                    "command_hint": _literal_command_hint(node),
+                })
+
+    result["external_mutations"].sort(
+        key=lambda item: (item["line"], item["kind"], item["call"])
+    )
 
     return result
 
@@ -477,9 +660,11 @@ def _scan_discovery_roots() -> dict[str, Any]:
     modules: list[dict[str, Any]] = []
     handler_funcs: list[dict[str, Any]] = []
 
-    for root_cfg in DISCOVERY_ROOTS:
+    seen_module_paths: set[str] = set()
+    roots = _discovery_roots()
+    for root_cfg in roots:
         root_path = REPO_ROOT / root_cfg["path"]
-        if not root_path.is_dir():
+        if not root_path.exists():
             continue
 
         category = root_cfg["category"]
@@ -487,10 +672,16 @@ def _scan_discovery_roots() -> dict[str, Any]:
 
         # Collect all matching files
         py_files: list[Path] = []
-        for pattern in patterns:
-            for fpath in root_path.rglob(pattern):
-                if fpath.is_file() and fpath.suffix == ".py":
-                    py_files.append(fpath)
+        if root_path.is_file():
+            if root_path.suffix == ".py" and any(
+                fnmatch.fnmatch(root_path.name, pattern) for pattern in patterns
+            ):
+                py_files.append(root_path)
+        else:
+            for pattern in patterns:
+                for fpath in root_path.rglob(pattern):
+                    if fpath.is_file() and fpath.suffix == ".py":
+                        py_files.append(fpath)
 
         # Deduplicate
         py_files = sorted(set(py_files))
@@ -498,6 +689,9 @@ def _scan_discovery_roots() -> dict[str, Any]:
         for fpath in py_files:
             rel = fpath.relative_to(REPO_ROOT)
             rel_str = str(rel).replace("\\", "/")
+            if rel_str in seen_module_paths:
+                continue
+            seen_module_paths.add(rel_str)
 
             try:
                 source = fpath.read_text(encoding="utf-8")
@@ -509,11 +703,24 @@ def _scan_discovery_roots() -> dict[str, Any]:
             functions = ast_info["functions"]
             imports = ast_info["imports"]
             docstring = ast_info["docstring"]
+            external_mutations = [
+                {
+                    **mutation,
+                    **_mutation_disposition(rel_str, mutation["kind"]),
+                }
+                for mutation in ast_info["external_mutations"]
+            ]
 
             # Classify surface types
             surface_types = _classify_module_surfaces(
                 rel_str, classes, functions, imports, docstring
             )
+            if external_mutations and SURFACE_PRODUCER not in surface_types:
+                surface_types = [
+                    surface for surface in surface_types
+                    if surface != SURFACE_UNKNOWN
+                ]
+                surface_types.append(SURFACE_PRODUCER)
 
             # Determine owner: WBC owns arnold/workflow and boundary runtime;
             # Run Authority owns kernel/execution/supervisor/handlers.
@@ -536,6 +743,7 @@ def _scan_discovery_roots() -> dict[str, Any]:
                 "function_count": len(functions),
                 "classes": sorted(classes),
                 "functions": sorted(functions),
+                "external_mutations": external_mutations,
                 "docstring_summary": (docstring[:200] + "…") if len(docstring) > 200 else docstring,
             }
             modules.append(module_row)
@@ -847,7 +1055,7 @@ def _build_inventory(
         "support_manifest": str(SUPPORT_MANIFEST_PATH.relative_to(REPO_ROOT)),
     }
     if discovery:
-        input_sources["static_discovery_roots"] = len(DISCOVERY_ROOTS)
+        input_sources["static_discovery_roots"] = len(_discovery_roots())
 
     inventory: dict[str, Any] = {
         "meta": {
