@@ -5,8 +5,9 @@
 Every Megaplan critique loop preserves what every selected critic found, what
 the evaluator concluded, what revision action followed, and why a finding is
 open, resolved, rejected, deferred, duplicated, accepted as risk, or unknown.
-Later rounds receive bounded domain context without erasing raw evidence or
-pressuring critics to invent novelty.
+Later rounds combine a mandatory blind discovery lane with bounded domain
+context, without erasing raw evidence or pressuring history-aware critics to
+invent novelty.
 
 The evaluator remains the semantic routing and reconciliation authority. WBC
 and Megaplan custody mechanisms provide durable attempt/evidence boundaries;
@@ -22,22 +23,26 @@ repair queue, or substitute for raw producer artifacts.
 3. Each known finding has an explicit current disposition representing
    acted-on, ignored/non-action, deferred, rejected, duplicate, accepted-risk,
    unknown, or resolved semantics, with rationale and evidence limits.
-4. Resolution and non-action include explicit reopen conditions. Relevant plan,
-   evidence, contract, or repository changes make stale closure fail visible.
+4. Resolution and non-action include explicit reopen conditions and plan-region
+   plus dependency anchors. Relevant region, evidence, contract, or repository
+   changes deterministically make stale closure fail visible.
 5. Semantic equivalence, refinement, regression, split, and reopen decisions
-   are model judgments preserved as append-only reconciliation events.
+   are model judgments preserved as append-only, independently auditable,
+   supersedable reconciliation events.
 6. Deterministic machinery proves custody, completeness, freshness,
    idempotency, schema/version compatibility, and exact input/output hashes.
 7. The evaluator selects domain critics. Each history-aware pass receives all
    relevant findings—including non-blocking and cross-domain findings—within a
    declared budget and with explicit overflow behavior.
-8. Blind discovery is optional; history-aware reconciliation is mandatory
-   before revise/gate consumption.
+8. Every critique round includes a non-zero, evaluator-independent blind
+   discovery lane; history-aware reconciliation remains mandatory before
+   revise/gate consumption.
 9. `no_additional_findings`, `no_open_blocking_findings`, `no_known_findings`,
    and `no_adjacent_text_matches` remain distinct claims.
-10. The reviser records one action or explicit non-action per requested finding;
-    the gate sees complete cumulative truth and cannot infer absence from an
-    omitted prompt row.
+10. The cumulative ledger is distinct from the bounded active-action
+    projection. The reviser records one action or structured non-action per
+    active requested finding; the gate sees complete cumulative truth and
+    cannot infer absence from an omitted prompt row.
 11. WBC owns supported-runtime attempt/effect evidence, durable payload
     references, receipts, persistence, and compatibility boundaries. The
     critique ledger owns immutable critic occurrences, semantic finding
@@ -47,6 +52,20 @@ repair queue, or substitute for raw producer artifacts.
     lifecycle authority. The migration switches the complete critique loop at
     one coordinated cutover and then retires the replaced path; custody failure
     stops admission rather than falling back silently or declaring convergence.
+13. Deterministic region-staleness, evidence-change, near-match, and audit-
+    disagreement tripwires trigger re-review but never make semantic merge,
+    closure, or suppression decisions.
+14. Dispositions that remove findings from the active set receive risk-based,
+    non-zero independent audit. Audit disagreements and later corrections are
+    durable events and replay never rewrites the original judgment.
+15. One append-only finding history links critic occurrence, reconciliation,
+    revision response or non-action, independent verified outcome, rationale,
+    and reopen conditions. Per-round accountability receipts are rebuildable
+    projections, never a second authority.
+16. Raw occurrences never author semantic finding identity. Reconciliation
+    proposes semantic identity through auditable decisions whose derived state
+    is accepted, review-required, disputed, or superseded; gate projections may
+    rely only on current accepted decisions.
 
 ## Success measures
 
@@ -56,6 +75,15 @@ repair queue, or substitute for raw producer artifacts.
 - At least 50% fewer duplicate revision actions than control.
 - No more than a five-percentage-point loss in independent new-family recall.
 - At least 95% of closure/non-action dispositions cite adequate evidence.
+- Every round proves a non-zero blind lane; all configured mandatory and sampled
+  closure audits are accounted for.
+- Region-only edits deterministically stale affected findings without forcing
+  unrelated findings through full semantic re-adjudication.
+- The active-action projection remains bounded as closed history grows, and
+  boilerplate or unauditable non-action cannot remove a finding from it.
+- Every critique round can prove, for every occurrence and active finding, what
+  response followed, whether it was independently dealt with, and why it
+  remains open, partial, unknown, or stale.
 - Stale briefings, missing occurrences, invalid schemas, unsupported closures,
   and incomplete WBC custody fail closed before revise/gate behavior changes.
 - Minimum cutover evidence is durable and attributable to exact source,
@@ -70,7 +98,8 @@ repair queue, or substitute for raw producer artifacts.
 - No parallel execution ledger, authority plane, transition writer, repair
   queue, or lifecycle state.
 - No silent truncation, historical backfill that invents semantic relations,
-  automatic closure from wording similarity, or severity/disposition collapse.
+  automatic merge/closure from wording similarity, or severity/disposition
+  collapse. Similarity may only trigger re-review.
 - No canary, prolonged shadow authority, dual-write period, broad mixed-version
   support, per-boundary rollback, or rollout dashboard program.
 - No deployment, restart, chain launch, or runtime mutation by these planning

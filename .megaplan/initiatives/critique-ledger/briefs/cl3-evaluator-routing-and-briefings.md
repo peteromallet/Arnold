@@ -3,9 +3,9 @@
 ## Outcome
 
 Extend adaptive critique so the evaluator records domain/mode/budget decisions
-and dispatches selected critics with complete, fresh, bounded briefings. Preserve
-independent discovery through an optional blind pass and always produce inputs
-for mandatory reconciliation.
+and dispatches selected critics with complete, fresh, bounded briefings.
+Preserve independent discovery through a mandatory non-zero blind lane in every
+round and always produce inputs for mandatory reconciliation.
 
 ## In scope
 
@@ -17,8 +17,10 @@ for mandatory reconciliation.
   evidence, questions, reopen conditions, and cross-domain findings.
 - Add explicit `no_additional_findings`, overflow/split, stale/rebuild, and
   evidence-unavailable contracts.
-- Wire optional blind then history-aware fanout while preserving model/profile,
+- Wire mandatory blind and history-aware fanout while preserving model/profile,
   per-unit routing, raw outputs, attempt custody, and mandatory floors.
+- Prove blind prompt isolation: no prior finding identities, dispositions,
+  reconciliation conclusions, or revision rationales may enter the blind lane.
 - Record included/excluded finding reasons and full input-set hashes.
 
 ## Out of scope
@@ -31,7 +33,9 @@ new domain ontology.
 
 - Evaluator selects critics; no permanent always-on roster beyond approved
   deterministic safety/correctness floors.
-- Blind is optional and can never bypass history-aware reconciliation.
+- Blind discovery defaults to
+  `max(1, ceil(total_selected_slots * 0.20))`; profiles may increase but the
+  evaluator cannot disable the floor or bypass history-aware reconciliation.
 - Every history-aware briefing carries all materially relevant findings,
   including rejected/deferred/accepted/resolved/unknown and cross-domain rows.
 - Overflow is explicit split or evidence-linked hierarchy, never silent omission.
@@ -39,7 +43,7 @@ new domain ontology.
 
 ## Open questions
 
-- What default/floor domains and blind capacity apply per robustness profile?
+- What exact non-zero blind capacity applies per robustness profile?
 - Is briefing synthesis performed by the evaluator or a bounded curator call?
 - What token/latency budget triggers compression versus split?
 - How are cross-domain inclusion/exclusion explanations checked in the frozen
@@ -58,6 +62,8 @@ Keep implementation, tests, review, and handoff within roughly two weeks.
   unknown ledger revision, bad budget, and incomplete selection/skip accounting.
 - Every selected history-aware critic receives the exact accepted briefing hash;
   blind critics receive no finding history and are marked blind in custody.
+- Every round accounts for its configured blind floor, and adversarial prompt
+  fixtures prove no ledger history leaks into blind inputs.
 - Fixtures cover all dispositions, cross-domain inclusion, overflow/split,
   unavailable evidence, no-additional result, retries, and model/profile routes.
 - Token/latency accounting is durable; no input is silently truncated.

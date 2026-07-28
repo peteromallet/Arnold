@@ -20,6 +20,10 @@ a content-addressed backup and one bounded whole-cutover recovery procedure.
 - Run the minimum fixed-corpus and new-run smoke checks, resume admission only
   after fail-closed custody checks pass, then remove/disable replaced writers,
   readers, flags, and fallback routing while retaining immutable evidence.
+- Verify mandatory blind-lane prompt isolation, independent disposition-audit
+  coverage, correction replay, bounded active-action load, structured
+  non-action rejection, round-accountability receipts, and region-scoped
+  staleness before admission resumes.
 - Write the final cutover receipt and retirement proof.
 
 ## Cutover checklist
@@ -33,7 +37,10 @@ a content-addressed backup and one bounded whole-cutover recovery procedure.
    negative-authority tests against the exact cutover build.
 6. Switch the whole critique loop once; run a bounded healthy and failure smoke
    case; keep admission closed on any missing, stale, or corrupt custody.
-7. Retire the replaced path and record the sole supported architecture.
+7. Exercise one challenged duplicate correction, one boilerplate non-action
+   rejection, one incomplete round-accountability receipt, and one region-only
+   stale/reopen scenario on the exact build.
+8. Retire the replaced path and record the sole supported architecture.
 
 ## Bounded recovery procedure
 
@@ -87,6 +94,10 @@ as one atomic operational change and must not create a standing legacy route.
   limitation; replay/projection hashes are deterministic on the cutover build.
 - Every accepted critic attempt/occurrence has WBC evidence or an explicit
   indeterminate/unavailable result; false clean completion is impossible.
+- Every round satisfies its blind floor; mandatory and sampled independent
+  audits are accounted for; audit disagreement cannot remain silently closed.
+- The active-action projection stays within its declared bound as historical
+  closed findings grow, and region-only edits stale the correct scoped rows.
 - One cutover receipt binds source/target/schema/corpus hashes, backup identity,
   import counts, smoke results, WBC receipts, operator/reviewer, and timestamp.
 - Replaced writers/readers/flags/fallbacks are absent or hard-disabled, and one
@@ -105,5 +116,7 @@ cutover configuration; focused corpus, replay, fault, and authority tests.
 Write and review `docs/critique-ledger/handoffs/cl5-cutover-completion.json` with
 all milestone/handoff/source hashes, M6 and semantic-loop results, backup and
 isolated-restore proof, WBC receipts, import/coverage counts, cutover and smoke
-receipts, retired-path inventory, unresolved operational facts, and an explicit
+receipts, blind/audit/correction/action-bound/region-staleness evidence,
+round-accountability evidence, retired-path inventory, unresolved operational
+facts, and an explicit
 `single_target_architecture_active: true`. This is the epic completion evidence.
