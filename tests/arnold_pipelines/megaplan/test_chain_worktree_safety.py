@@ -36,6 +36,11 @@ from arnold_pipelines.megaplan.cli import _reset_chain_worktree_target
 from arnold_pipelines.megaplan.types import CliError
 
 
+@pytest.fixture(autouse=True)
+def _ignore_ambient_chain_no_push(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MEGAPLAN_CHAIN_NO_PUSH", raising=False)
+
+
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     proc = subprocess.run(
         ["git", *args],
@@ -592,7 +597,10 @@ def test_checkout_existing_milestone_skips_rebase_when_remote_base_rewrites_away
     assert _git(runner, "branch", "--show-current").stdout.strip() == "cloud/m1"
     assert _git(runner, "rev-parse", "HEAD").stdout.strip() == milestone_sha
     assert (runner / "milestone.txt").read_text(encoding="utf-8") == "m1\n"
-    assert any("skipping automatic rebase for existing milestone branch cloud/m1" in m for m in messages)
+    assert any(
+        "no common ancestor with existing milestone branch cloud/m1" in m
+        for m in messages
+    )
     assert not any("git rebase origin/main" in m for m in messages)
 
 
@@ -1253,7 +1261,70 @@ def test_run_chain_resume_refreshes_milestone_branch_and_pr_context(
     assert saved.pr_state == "merged"
 
 
-def test_run_chain_resume_without_pr_creates_init_anchor_before_pr(
+def test_run_chain_no_push_resume_does_not_checkout_milestone_branch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    spec_path = _write_chain_spec(root)
+    plan_dir = root / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        '{"name":"plan-m1","current_state":"planned"}\n',
+        encoding="utf-8",
+    )
+    save_chain_state(
+        spec_path,
+        chain_module.ChainState(
+            current_milestone_index=0,
+            current_plan_name="plan-m1",
+            last_state="failed",
+        ),
+    )
+    dirty_path = root / "retained-wip.txt"
+    dirty_path.write_text("must survive resume\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._preflight_agent_backends",
+        lambda spec, *, writer: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.resolve_execution_environment",
+        lambda **_kwargs: SimpleNamespace(to_dict=lambda: {}),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._plan_state",
+        lambda *_args, **_kwargs: "planned",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("no-push resume must not prepare the PR branch")
+        ),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        lambda *args, **kwargs: SimpleNamespace(status="blocked", reason="stop"),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._handle_outcome",
+        lambda *args, **kwargs: "stop",
+    )
+
+    result = run_chain(
+        spec_path,
+        root,
+        writer=lambda _message: None,
+        no_push=True,
+        no_git_refresh=True,
+    )
+
+    assert result["status"] == "stopped"
+    assert dirty_path.read_text(encoding="utf-8") == "must survive resume\n"
+
+
+def test_run_chain_resume_without_pr_opens_pr_before_resuming_plan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1277,7 +1348,6 @@ def test_run_chain_resume_without_pr_creates_init_anchor_before_pr(
         ),
     )
 
-    commit_calls: list[tuple[str, str, str]] = []
     ensure_calls: list[str] = []
 
     monkeypatch.setattr(
@@ -1301,12 +1371,10 @@ def test_run_chain_resume_without_pr_creates_init_anchor_before_pr(
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "arnold_pipelines.megaplan.chain._resume_needs_init_anchor",
-        lambda *_args, **_kwargs: True,
-    )
-    monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._commit_and_push_phase",
-        lambda _root, branch, plan, phase, **_kwargs: commit_calls.append((branch, plan, phase)),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("resuming an existing plan must not recreate its init anchor")
+        ),
     )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._ensure_milestone_pr",
@@ -1328,14 +1396,13 @@ def test_run_chain_resume_without_pr_creates_init_anchor_before_pr(
     result = run_chain(spec_path, root, writer=lambda _message: None)
 
     assert result["status"] == "stopped"
-    assert commit_calls == [("test/m1", "plan-m1", "init")]
     assert ensure_calls == ["m1"]
     saved = load_chain_state(spec_path)
     assert saved.pr_number == 81
     assert saved.pr_state == "open"
 
 
-def test_run_chain_retries_deferred_pr_creation_after_phase_commit(
+def test_run_chain_creates_pr_once_before_phase_commits(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1386,7 +1453,7 @@ def test_run_chain_retries_deferred_pr_creation_after_phase_commit(
 
     def fake_ensure(*_args, **_kwargs):
         ensure_calls.append("ensure")
-        return None if len(ensure_calls) == 1 else 80
+        return 80
 
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._ensure_milestone_pr",
@@ -1420,7 +1487,7 @@ def test_run_chain_retries_deferred_pr_creation_after_phase_commit(
     run_chain(spec_path, root, writer=lambda _message: None)
 
     saved = load_chain_state(spec_path)
-    assert ensure_calls == ["ensure", "ensure"]
+    assert ensure_calls == ["ensure"]
     assert saved.pr_number == 80
     assert saved.pr_state == "open"
 

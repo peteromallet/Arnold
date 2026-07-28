@@ -15,7 +15,6 @@ from typing import Any
 
 from agentbox.redaction import redact_text
 
-from .status_tree import MAX_NODE_LIMIT
 from .subagent import list_managed_resident_agents
 from .timezone import format_timestamp
 
@@ -24,6 +23,7 @@ CURRENTLY_RUNNING_COMMAND = "whats-cooking"
 CURRENTLY_RUNNING_DESCRIPTION = "Show running Megaplan epics, chains, and resident subagents."
 _RUNNING_SESSION_STATUSES = frozenset({"running", "repairing"})
 _ATTENTION_SESSION_STATUS = "attention"
+_NON_EXECUTION_SERVICE_SESSIONS = frozenset({"megaplan-resident-discord"})
 _ATTENTION_WINDOW = timedelta(hours=12)
 _TERMINAL_AGENT_STATUSES = frozenset(
     {"completed", "failed", "interrupted", "cancelled", "superseded", "unknown"}
@@ -69,34 +69,22 @@ class _ManagedAgentTree:
 
 
 async def collect_currently_running(runtime: Any) -> CurrentlyRunningReport:
-    """Read only the bounded status root and the managed-agent inventory.
-
-    The status read deliberately goes through the resident's typed
-    ``read_cloud_status_node`` registration.  Discord must not know the path or
-    schema of the complete watchdog JSON.
-    """
+    """Collect a fresh bounded status root and the managed-agent inventory."""
 
     async def read_status_node() -> tuple[Mapping[str, Any] | None, str | None]:
         try:
-            registration = runtime.profile.tools().get("read_cloud_status_node")
-            payload = registration.input_model(
-                node_id="root", cursor=0, limit=MAX_NODE_LIMIT
-            )
-            if inspect.iscoroutinefunction(registration.handler):
-                result = await registration.handler(payload)
+            collector = runtime.profile.collect_fresh_cloud_status_root
+            if inspect.iscoroutinefunction(collector):
+                node = await collector()
             else:
-                result = await asyncio.to_thread(registration.handler, payload)
-            if inspect.isawaitable(result):
-                result = await result
-            if not getattr(result, "ok", False):
-                return None, "canonical status node is unavailable"
-            data = getattr(result, "data", None)
-            node = data.get("node") if isinstance(data, Mapping) else None
+                node = await asyncio.to_thread(collector)
+            if inspect.isawaitable(node):
+                node = await node
             if not isinstance(node, Mapping):
-                return None, "canonical status node returned no bounded root"
+                return None, "fresh canonical status collection returned no bounded root"
             return node, None
         except Exception as exc:  # command must degrade independently by source
-            return None, f"canonical status node read failed ({exc.__class__.__name__})"
+            return None, f"fresh canonical status collection failed ({exc.__class__.__name__})"
 
     async def read_managed_agents() -> tuple[Mapping[str, Any] | None, str | None]:
         project_root = Path(getattr(runtime, "project_root", Path.cwd()))
@@ -126,7 +114,15 @@ async def collect_currently_running(runtime: Any) -> CurrentlyRunningReport:
 
 
 def discover_running_sessions(status_node: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
-    """Return sessions with active execution, preserving attention overlays."""
+    """Return sessions with active execution, preserving attention overlays.
+
+    M9 (T23): Consumes source-cursor-aware session rows.  Sessions whose
+    source_cursor shows all-unknown or all-stale lifecycle/process_correlation
+    dimensions without live process/tmux signals are rejected — unknown cannot
+    be reported as running.  Attention overlays are preserved only when backed
+    by execution truth (live process or repair), never from stale projection
+    metadata alone.
+    """
 
     if not isinstance(status_node, Mapping) or status_node.get("stale_banner"):
         return []
@@ -137,8 +133,22 @@ def discover_running_sessions(status_node: Mapping[str, Any] | None) -> list[Map
     for row in sessions:
         if not isinstance(row, Mapping):
             continue
+        session = str(row.get("session") or "").strip().casefold()
+        if session in _NON_EXECUTION_SERVICE_SESSIONS:
+            continue
+        # A live runner is useful liveness evidence, but canonical plan state
+        # owns the presentation bucket. Blocked work belongs under attention.
+        if (_canonical_progress_state(row) or "").casefold() == "blocked":
+            continue
         status = str(row.get("status") or "").casefold()
         if status in _RUNNING_SESSION_STATUSES or row.get("repairing") is True:
+            # ── M9: running/repairing truth preserved; source-cursor staleness
+            #      does NOT demote a live execution signal, but sessions with
+            #      missing timestamps are failed to unknown/no-active-authority.
+            if _m9_session_has_authoritative_timestamps(row) is False:
+                # Missing timestamps = cannot confirm execution progress →
+                # fail to unknown, do not report as running.
+                continue
             discovered.append(row)
             continue
         # ``attention`` is an operator overlay, not an execution state.  Keep
@@ -147,39 +157,122 @@ def discover_running_sessions(status_node: Mapping[str, Any] | None) -> list[Map
         if status == _ATTENTION_SESSION_STATUS and (
             row.get("process") is True or row.get("repairing") is True
         ):
-            discovered.append(row)
+            # ── M9: attention overlay preserved only with execution truth ──
+            if _m9_session_has_authoritative_timestamps(row) is not False:
+                discovered.append(row)
     return discovered
+
+
+def _m9_session_has_authoritative_timestamps(
+    row: Mapping[str, Any],
+) -> bool | None:
+    """Check that a session row has authoritative timestamp evidence.
+
+    Returns:
+        ``True`` when timestamps are present and usable.
+        ``False`` when timestamps are missing — session should fail to unknown.
+        ``None`` when source_cursor shows all unknown (no authority to confirm).
+    """
+    # Check for source-cursor metadata
+    source_cursor = row.get("source_cursor") if isinstance(row, Mapping) else None
+    if isinstance(source_cursor, Mapping):
+        dims = source_cursor.get("dimensions")
+        if isinstance(dims, list):
+            lifecycle_states = [
+                d.get("state") for d in dims
+                if isinstance(d, Mapping) and d.get("dimension") == "lifecycle"
+            ]
+            pc_states = [
+                d.get("state") for d in dims
+                if isinstance(d, Mapping) and d.get("dimension") == "process_correlation"
+            ]
+            # All-unknown lifecycle + process_correlation → no authority
+            all_lc_unknown = lifecycle_states and all(s == "unknown" for s in lifecycle_states)
+            all_pc_unknown = pc_states and all(s == "unknown" for s in pc_states)
+            if all_lc_unknown and all_pc_unknown:
+                return None
+
+    # Check for essential timestamp fields
+    latest_activity = row.get("latest_activity")
+    generated_at = row.get("generated_at")
+    if latest_activity is None and generated_at is None:
+        return False
+    return True
 
 
 def discover_attention_sessions(
     status_node: Mapping[str, Any] | None,
 ) -> list[Mapping[str, Any]]:
-    """Return recently active canonical attention/blocked non-live chains.
+    """Return canonical blocked/attention chains that remain useful to show.
 
     ``latest_activity`` is the status projection's authoritative activity
     timestamp.  The snapshot observation clock is deliberately used as the
     reference, so replayed snapshots preserve their truthful rolling window.
-    The boundary is inclusive: activity exactly twelve hours before the
-    snapshot is shown.
+    The boundary is inclusive. Canonically blocked chains with a live runner
+    remain visible regardless of the rolling window: liveness is detail, not a
+    reason to misclassify the plan as running.
+
+    M9 (T23): Sessions with missing timestamps are failed to unknown /
+    no-active-authority and excluded from the attention listing.  Stale
+    banners suppress the entire listing.
     """
 
     if not isinstance(status_node, Mapping) or status_node.get("stale_banner"):
         return []
     snapshot_time = _parse_utc_timestamp(status_node.get("generated_at"))
     if snapshot_time is None:
+        # ── M9: missing snapshot timestamp → no active authority, return empty ──
         return []
     sessions = status_node.get("sessions")
     if not isinstance(sessions, list):
         return []
     running = {id(row) for row in discover_running_sessions(status_node)}
-    return [
-        row for row in sessions
-        if isinstance(row, Mapping)
-        and id(row) not in running
-        and str(row.get("status") or "").casefold()
-        in {_ATTENTION_SESSION_STATUS, "blocked"}
-        and _is_within_attention_window(row, snapshot_time)
-    ]
+    discovered: list[Mapping[str, Any]] = []
+    for row in sessions:
+        if not isinstance(row, Mapping) or id(row) in running:
+            continue
+        if (
+            str(row.get("session") or "").strip().casefold()
+            in _NON_EXECUTION_SERVICE_SESSIONS
+        ):
+            continue
+        if _m9_session_has_authoritative_timestamps(row) is False:
+            continue
+        canonical_blocked = (
+            (_canonical_progress_state(row) or "").casefold() == "blocked"
+        )
+        session_attention = str(row.get("status") or "").casefold() in {
+            _ATTENTION_SESSION_STATUS,
+            "blocked",
+        }
+        if not (canonical_blocked or session_attention):
+            continue
+        if canonical_blocked and _runner_is_live(row):
+            discovered.append(row)
+        elif _is_within_attention_window(row, snapshot_time):
+            discovered.append(row)
+    return discovered
+
+
+def _canonical_progress_state(row: Mapping[str, Any]) -> str | None:
+    """Return canonical presentation state with the required fallback order."""
+
+    progress = row.get("progress")
+    if not isinstance(progress, Mapping):
+        return None
+    return _optional_label(progress.get("display_state")) or _optional_label(
+        progress.get("plan_state")
+    )
+
+
+def _runner_is_live(row: Mapping[str, Any]) -> bool:
+    """Keep process/session liveness distinct from canonical display state."""
+
+    return (
+        str(row.get("status") or "").casefold() in _RUNNING_SESSION_STATUSES
+        or row.get("process") is True
+        or row.get("repairing") is True
+    )
 
 
 def _is_within_attention_window(
@@ -396,6 +489,9 @@ def discover_recently_completed_sessions(
     The root's ``recently_completed`` list is a recency-sorted projection of
     all canonical completed sessions.  The legacy three-row preview is only a
     compatibility fallback, never a source of completion inference.
+
+    M9 (T23): Sessions with missing timestamps are excluded — completion
+    cannot be confirmed without authoritative timestamp evidence.
     """
 
     if not isinstance(status_node, Mapping) or status_node.get("stale_banner"):
@@ -411,11 +507,16 @@ def discover_recently_completed_sessions(
         if isinstance(row, Mapping)
         and str(row.get("status") or "").casefold()
         in {"complete", "completed", "finished", "success", "succeeded"}
+        # ── M9: exclude completions without authoritative timestamps ──
+        and _m9_session_has_authoritative_timestamps(row) is not False
     ]
 
 
 def render_currently_running(
-    report: CurrentlyRunningReport, *, now: datetime | None = None
+    report: CurrentlyRunningReport,
+    *,
+    now: datetime | None = None,
+    timezone_name: str = "UTC",
 ) -> str:
     """Render a compact, truthful status card using Discord markdown."""
 
@@ -430,7 +531,7 @@ def render_currently_running(
         # This canonical banner is intentionally verbatim and must be first.
         lines = [stale_banner, "", *lines]
     if isinstance(status_node, Mapping):
-        snapshot = _snapshot_label(status_node)
+        snapshot = _snapshot_label(status_node, timezone_name=timezone_name)
         if snapshot:
             lines.extend((snapshot, ""))
 
@@ -562,6 +663,7 @@ def _render_session(row: Mapping[str, Any]) -> str:
         name_label = f"{name_label} · `{_safe_label(current_plan)}`"
 
     display_state = _optional_label(progress.get("display_state"))
+    canonical_progress_state = _canonical_progress_state(row)
     active_phase = progress.get("active_phase")
     if active_phase is None:
         active_phase = row.get("active_phase")
@@ -570,8 +672,21 @@ def _render_session(row: Mapping[str, Any]) -> str:
         effective_session_status == "repairing" and display_state.casefold() == "failed"
     ):
         status = display_state
+    elif (
+        canonical_progress_state
+        and canonical_progress_state.casefold() == "blocked"
+    ):
+        status = canonical_progress_state
     elif _phase_name(active_phase) == "execute":
         status = "executing"
+    elif effective_session_status == _ATTENTION_SESSION_STATUS:
+        # ── M9 (T29): attention is an overlay, never the primary execution label.
+        #      When a session has live process/repair evidence but an attention
+        #      status, the main label must reflect execution truth, not the
+        #      attention overlay.
+        status = _first_label(
+            progress.get("plan_state"), progress.get("display_state"), "active"
+        )
     else:
         status = _first_label(
             progress.get("plan_state"), effective_session_status, "status unavailable"
@@ -591,13 +706,31 @@ def _render_session(row: Mapping[str, Any]) -> str:
     plan_percent = _percent(progress.get("plan_percent"))
     if plan_percent is not None:
         details.append(f"{plan_percent}% plan bookkeeping (not acceptance)")
-    session_status = effective_session_status
-    if session_status and session_status.casefold() == _ATTENTION_SESSION_STATUS:
+    blocked_with_live_runner = status.casefold() == "blocked" and _runner_is_live(row)
+    if blocked_with_live_runner:
+        if row.get("process") is True:
+            details.append("runner process alive")
+        elif effective_session_status:
+            details.append(f"runner {effective_session_status}")
+    # ── M9 (T29): attention is an overlay, never the primary execution label.
+    #      Check the raw session status for attention reasons separately from
+    #      effective_session_status so that attention reasons remain visible
+    #      even when repair overrides the effective status to "repairing".
+    raw_status = _optional_label(row.get("status"))
+    attention_shown = False
+    if raw_status and raw_status.casefold() == _ATTENTION_SESSION_STATUS:
         details.append("⚠️ attention")
+        attention_shown = True
         operator_next = _optional_label(row.get("operator_next"))
         if operator_next:
             details.append(_safe_label(operator_next))
-    elif session_status and session_status.casefold() != status.casefold():
+    session_status = effective_session_status
+    # Show chain status only when it differs from the primary label AND
+    # attention has not already been shown (avoids redundant "chain attention").
+    if (not attention_shown
+            and session_status
+            and session_status.casefold() != status.casefold()
+            and not blocked_with_live_runner):
         details.append(f"chain {session_status}")
     return f"• {name_label}\n  `{_safe_label(status)}` · {' · '.join(details)}"
 
@@ -902,8 +1035,10 @@ def _source_record_label(record: Mapping[str, Any]) -> str | None:
     return content
 
 
-def _snapshot_label(status_node: Mapping[str, Any]) -> str | None:
-    """Return an honest UTC-formatted freshness line when the root supplies it."""
+def _snapshot_label(
+    status_node: Mapping[str, Any], *, timezone_name: str = "UTC"
+) -> str | None:
+    """Return an honest user-local freshness line when the root supplies it."""
 
     generated_at = status_node.get("generated_at") or status_node.get(
         "watchdog_generated_at"
@@ -911,7 +1046,7 @@ def _snapshot_label(status_node: Mapping[str, Any]) -> str | None:
     if not generated_at:
         return None
     try:
-        rendered = format_timestamp(generated_at, "UTC")
+        rendered = format_timestamp(generated_at, timezone_name)
     except (TypeError, ValueError):
         return "_Snapshot time unavailable._"
     return f"_Snapshot generated {rendered}_"

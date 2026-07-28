@@ -43,7 +43,9 @@ if docker exec "$CONTAINER" bash -lc "tmux has-session -t watchdog" >/dev/null 2
 fi
 
 log "watchdog_missing restarting container=$CONTAINER"
-if ! docker exec "$CONTAINER" bash -lc "tmux new-session -d -s watchdog -c /workspace /usr/local/bin/arnold-watchdog" >> "$LOG" 2>&1; then
+if ! docker exec "$CONTAINER" tmux new-session -d -s watchdog -c /workspace \
+  bash -lc 'set -a; [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env; set +a; exec /usr/local/bin/arnold-watchdog' \
+  >> "$LOG" 2>&1; then
   log "watchdog_restart_failed container=$CONTAINER"
   exit 1
 fi

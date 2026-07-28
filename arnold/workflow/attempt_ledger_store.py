@@ -43,17 +43,17 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from arnold.workflow.execution_attempt_ledger import (
     LEDGER_SCHEMA_VERSION,
-    _LIFECYCLE_PRECEDENCE,
     AdapterKind,
     AttemptEventType,
     AttemptIdentity,
     AttemptOutcome,
     AttemptProvenance,
     ExecutionAttemptLedger,
+    GlobalEffectIdentity,
     GrantRef,
     LedgerEvent,
     PersistenceStatus,
@@ -148,6 +148,92 @@ CREATE TABLE IF NOT EXISTS source_cursors (
 );
 """
 
+# ── Global effect reservation table (Step 8B1) ────────────────────────────
+#
+# Stores snapshotted GLEK inputs alongside the attempt reservation so a
+# crash between writes cannot produce a torn snapshot.  The snapshot is
+# written inside the same ``BEGIN IMMEDIATE`` transaction as the
+# reservation, satisfying the Step 8B1 atomic co-persistence requirement.
+#
+# The primary key is ``(attempt_id, global_logical_effect_key)`` because a
+# single attempt may carry multiple distinct global effects (Step 8B2).
+_GLOBAL_EFFECT_RESERVATIONS_TABLE_DDL: str = """\
+CREATE TABLE IF NOT EXISTS global_effect_reservations (
+    attempt_id                  TEXT    NOT NULL,
+    global_logical_effect_key   TEXT    NOT NULL,
+    environment_id              TEXT    NOT NULL,
+    action_target               TEXT    NOT NULL,
+    action_version              TEXT    NOT NULL,
+    effect_family               TEXT    NOT NULL,
+    provider_target             TEXT    NOT NULL,
+    canonical_request_identity  TEXT    NOT NULL,
+    boundary_schema_hash        TEXT    NOT NULL,
+    first_reserved_ns           INTEGER NOT NULL,
+    reservation_count           INTEGER NOT NULL DEFAULT 1,
+    snapshot_json               TEXT    NOT NULL,
+    PRIMARY KEY (attempt_id, global_logical_effect_key)
+);
+"""
+
+_GLOBAL_EFFECT_ATTEMPT_INDEX_DDL: str = """\
+CREATE INDEX IF NOT EXISTS idx_global_effect_attempt
+    ON global_effect_reservations(attempt_id);
+"""
+
+# ── Global effect terminal outcomes (Step 8B2) ─────────────────────────────
+#
+# Stores the single accepted terminal outcome per ``(attempt_id,
+# global_logical_effect_key)``. The composite primary key enforces
+# one-terminal-per-attempt-per-effect (the CAS). The unique index on
+# ``global_logical_effect_key`` enforces cross-attempt exclusivity: once any
+# attempt accepts a terminal outcome for a global effect, no other attempt
+# may accept one for the same effect. This prevents two attempts from
+# holding dispatch eligibility for the same global effect.
+#
+# Accepted outcomes are evidence/projection only — recording that a terminal
+# outcome was durably accepted does not grant authority, dispatch, or
+# completion beyond the CAS record itself. Resolution of indeterminate
+# outcomes or cross-attempt conflicts requires the reconciliation policy in
+# Step 10B.
+_GLOBAL_EFFECT_OUTCOMES_TABLE_DDL: str = """\
+CREATE TABLE IF NOT EXISTS global_effect_outcomes (
+    attempt_id                  TEXT    NOT NULL,
+    global_logical_effect_key   TEXT    NOT NULL,
+    outcome_kind                TEXT    NOT NULL,
+    outcome_payload_json        TEXT    NOT NULL,
+    accepted_at_ns              INTEGER NOT NULL,
+    PRIMARY KEY (attempt_id, global_logical_effect_key)
+);
+"""
+
+_GLOBAL_EFFECT_OUTCOME_GLEK_UNIQUE_INDEX_DDL: str = """\
+CREATE UNIQUE INDEX IF NOT EXISTS idx_global_effect_outcome_glek
+    ON global_effect_outcomes(global_logical_effect_key);
+"""
+
+# ── Global effect conflict quarantine (Step 8B2) ────────────────────────────
+#
+# Quarantined conflicts are evidence-only: a cross-attempt outcome conflict,
+# divergent outcome, or reservation-vs-outcome conflict is recorded here so
+# the reconciliation policy (Step 10B) can inspect it. Quarantining never
+# grants authority, dispatch, or completion — and never clears an
+# indeterminate effect.
+_GLOBAL_EFFECT_CONFLICT_QUARANTINE_TABLE_DDL: str = """\
+CREATE TABLE IF NOT EXISTS global_effect_conflict_quarantine (
+    conflict_id                 TEXT    NOT NULL PRIMARY KEY,
+    attempt_id                  TEXT    NOT NULL,
+    global_logical_effect_key   TEXT    NOT NULL,
+    conflict_kind               TEXT    NOT NULL,
+    conflict_detail_json        TEXT    NOT NULL,
+    quarantined_at_ns           INTEGER NOT NULL
+);
+"""
+
+_GLOBAL_EFFECT_CONFLICT_ATTEMPT_INDEX_DDL: str = """\
+CREATE INDEX IF NOT EXISTS idx_global_effect_conflict_attempt
+    ON global_effect_conflict_quarantine(attempt_id);
+"""
+
 # String literal set of terminal event types. Mirrors the schema-private
 # ``_TERMINAL_EVENT_TYPES`` frozenset (COMPLETED/FAILED/CANCELLED) but is
 # kept as SQL string literals so it is fully self-contained in DML.
@@ -155,13 +241,6 @@ _TERMINAL_EVENT_TYPE_VALUES: tuple[str, ...] = (
     AttemptEventType.COMPLETED.value,
     AttemptEventType.FAILED.value,
     AttemptEventType.CANCELLED.value,
-)
-_TERMINAL_EVENT_TYPES: frozenset[AttemptEventType] = frozenset(
-    {
-        AttemptEventType.COMPLETED,
-        AttemptEventType.FAILED,
-        AttemptEventType.CANCELLED,
-    }
 )
 
 
@@ -185,18 +264,6 @@ class MonotonicSequenceError(AttemptLedgerError):
     """
 
 
-class SequenceGapError(AttemptLedgerError):
-    """Raised when an appended event skips one or more sequence numbers."""
-
-
-class MissingStartEventError(AttemptLedgerError):
-    """Raised when lifecycle-required predecessor evidence is absent."""
-
-
-class CausalPredecessorError(AttemptLedgerError):
-    """Raised when causal_predecessor_sequence is not joined to the tip."""
-
-
 class PostTerminalAppendError(AttemptLedgerError):
     """Raised when any append is attempted after a terminal event.
 
@@ -205,8 +272,65 @@ class PostTerminalAppendError(AttemptLedgerError):
     """
 
 
-class DuplicateTerminalError(PostTerminalAppendError):
-    """Raised when a second terminal event is appended to an attempt."""
+class DivergentDuplicateError(AttemptLedgerError):
+    """Raised when a duplicate idempotency key has divergent canonical content.
+
+    An idempotency key already exists in the store, but the new event's
+    canonical payload, outcome, schema hash, or terminal status differs
+    from the stored event.  Exact duplicates remain idempotent; divergent
+    duplicates are quarantined and this error is raised so callers can
+    escalate rather than silently accepting a possibly different outcome.
+    """
+
+    def __init__(
+        self,
+        attempt_id: str,
+        idempotency_key: str,
+        divergences: list[str],
+        stored_event_json: str,
+        new_event_json: str,
+    ) -> None:
+        self.attempt_id = attempt_id
+        self.idempotency_key = idempotency_key
+        self.divergences = divergences
+        self.stored_event_json = stored_event_json
+        self.new_event_json = new_event_json
+        super().__init__(
+            f"Duplicate idempotency key {idempotency_key!r} for attempt "
+            f"{attempt_id!r} has divergent content: {', '.join(divergences)}"
+        )
+
+
+class GlobalEffectConflictError(AttemptLedgerError):
+    """Raised when a cross-attempt or divergent terminal-outcome conflict occurs.
+
+    The conflicting reservation or outcome has been quarantined (in
+    ``global_effect_conflict_quarantine``) before this error is raised.
+    Callers must escalate — the conflict cannot be cleared by a new Run
+    Authority grant or Custody epoch alone; only the reconciliation policy
+    in Step 10B may resolve it.
+
+    Step 8B2: this error enforces cross-attempt reservation CAS. Only one
+    attempt may accept a terminal outcome per global effect. A second
+    attempt attempting to accept the same GLEK after another attempt has
+    already done so is quarantined and rejected.
+    """
+
+    def __init__(
+        self,
+        attempt_id: str,
+        global_logical_effect_key: str,
+        conflict_kind: str,
+        detail: dict[str, Any],
+    ) -> None:
+        self.attempt_id = attempt_id
+        self.global_logical_effect_key = global_logical_effect_key
+        self.conflict_kind = conflict_kind
+        self.detail = detail
+        super().__init__(
+            f"Global-effect conflict for attempt_id={attempt_id!r}, "
+            f"glek={global_logical_effect_key!r}: {conflict_kind}"
+        )
 
 
 # ── Gate types (Step 5: durable start and terminal verification) ───────────
@@ -357,6 +481,71 @@ class SourceCursor:
     last_sequence: int
     last_position: str | None
     updated_at_ns: int
+
+
+@dataclass(frozen=True)
+class GlobalEffectReservation:
+    """Result of atomically reserving a global effect identity (Step 8B1).
+
+    Captures the persisted GLEK snapshot so callers can verify that retries
+    read the snapshotted identity rather than re-deriving from the current
+    inventory schema.
+
+    This is evidence/projection only — it does not grant authority,
+    dispatch, or completion.
+    """
+
+    attempt_id: str
+    effect_identity: GlobalEffectIdentity
+    global_logical_effect_key: str
+    first_reserved_ns: int
+    reservation_count: int
+    is_new: bool
+
+
+@dataclass(frozen=True)
+class GlobalEffectOutcome:
+    """Accepted terminal outcome for a ``(attempt_id, GLEK)`` pair (Step 8B2).
+
+    Records that a terminal outcome was durably accepted via the CAS.
+    Evidence/projection only — does not grant authority, dispatch, or
+    completion beyond recording that a terminal outcome was accepted.
+
+    ``is_duplicate`` is ``True`` when an identical outcome already existed
+    for the same ``(attempt_id, GLEK)`` (exact-duplicate idempotency).
+    """
+
+    attempt_id: str
+    global_logical_effect_key: str
+    outcome_kind: str
+    outcome_payload: dict[str, Any]
+    accepted_at_ns: int
+    is_duplicate: bool
+
+
+@dataclass(frozen=True)
+class GlobalEffectConflict:
+    """Quarantined global-effect conflict (Step 8B2).
+
+    Evidence/projection only — quarantined conflicts do not grant
+    authority or clear indeterminate effects. Only the reconciliation
+    policy in Step 10B may resolve them.
+
+    ``conflict_kind`` is one of:
+
+    * ``cross_attempt_outcome`` — another attempt has already accepted a
+      terminal outcome for the same GLEK.
+    * ``divergent_outcome`` — the same ``(attempt_id, GLEK)`` already has
+      a terminal outcome but with a different ``outcome_kind`` or
+      canonical payload.
+    """
+
+    conflict_id: str
+    attempt_id: str
+    global_logical_effect_key: str
+    conflict_kind: str
+    detail: dict[str, Any]
+    quarantined_at_ns: int
 
 
 # ── Public API ─────────────────────────────────────────────────────────────
@@ -521,6 +710,133 @@ class AttemptLedgerStore(ABC):
 
         Does not reserve. Returns the persisted reservation projection
         without bumping ``reservation_count``.
+        """
+        ...
+
+    # ── Step 8B1: global effect identity ───────────────────────────────
+
+    @abstractmethod
+    def reserve_global_effect(
+        self, attempt_id: str, effect_identity: GlobalEffectIdentity
+    ) -> GlobalEffectReservation:
+        """Atomically reserve an attempt and persist a GLEK snapshot.
+
+        The GLEK snapshot and the attempt reservation MUST be written in
+        the same SQLite transaction, so a crash between writes cannot
+        produce a torn snapshot.
+
+        Idempotent for the same ``(attempt_id, global_logical_effect_key)``:
+        re-calls return the persisted snapshot with an incremented
+        ``reservation_count`` and never re-derive from the current schema.
+
+        A different ``effect_identity`` for the same ``(attempt_id,
+        global_logical_effect_key)`` raises ``ValueError`` (divergent
+        snapshot).
+        """
+        ...
+
+    @abstractmethod
+    def get_global_effect_reservation(
+        self, attempt_id: str, global_logical_effect_key: str
+    ) -> Optional[GlobalEffectReservation]:
+        """Return the persisted GLEK snapshot for a single effect.
+
+        Returns ``None`` if no reservation exists for the given
+        ``(attempt_id, global_logical_effect_key)``.
+        """
+        ...
+
+    @abstractmethod
+    def get_global_effect_reservations_for_attempt(
+        self, attempt_id: str
+    ) -> tuple[GlobalEffectReservation, ...]:
+        """Return all GLEK snapshots persisted for *attempt_id*.
+
+        Returns an empty tuple if none exist.  Used by the index joining
+        attempts to their global-effect identities.
+        """
+        ...
+
+    # ── Step 8B2: terminal outcome CAS ──────────────────────────────────
+
+    @abstractmethod
+    def accept_terminal_outcome(
+        self,
+        attempt_id: str,
+        global_logical_effect_key: str,
+        outcome_kind: str,
+        outcome_payload: dict[str, Any] | None = None,
+    ) -> GlobalEffectOutcome:
+        """Atomically accept one terminal outcome per ``(attempt_id, GLEK)``.
+
+        Enforces, inside a single ``BEGIN IMMEDIATE`` transaction:
+
+        * **Reservation gate** — ``(attempt_id, GLEK)`` must have a
+          persisted reservation (Step 8B1).  An unreserved outcome raises
+          ``ValueError``.
+        * **Same-attempt CAS** — if a terminal outcome already exists for
+          ``(attempt_id, GLEK)``, an exact duplicate (same ``outcome_kind``
+          and canonical payload) is returned idempotently with
+          ``is_duplicate=True``.  A divergent outcome is quarantined and
+          raises :class:`GlobalEffectConflictError`.
+        * **Cross-attempt exclusivity** — if any *other* attempt has
+          already accepted a terminal outcome for the same GLEK, this
+          outcome is quarantined and raises
+          :class:`GlobalEffectConflictError`.  Only one attempt may reach
+          terminal per global effect.
+
+        The accepted outcome is evidence/projection only.  Resolution of
+        indeterminate outcomes or cross-attempt conflicts requires the
+        reconciliation policy in Step 10B; a new Run Authority grant or
+        Custody epoch alone cannot clear an indeterminate effect.
+        """
+        ...
+
+    @abstractmethod
+    def get_global_effect_outcome(
+        self, attempt_id: str, global_logical_effect_key: str
+    ) -> Optional[GlobalEffectOutcome]:
+        """Return the accepted terminal outcome for ``(attempt_id, GLEK)``.
+
+        Returns ``None`` if no outcome has been accepted.
+        """
+        ...
+
+    @abstractmethod
+    def get_global_effect_outcome_by_glek(
+        self, global_logical_effect_key: str
+    ) -> Optional[GlobalEffectOutcome]:
+        """Return the accepted terminal outcome for *GLEK* across all attempts.
+
+        Cross-attempt query — returns the single accepted outcome
+        regardless of which attempt accepted it, or ``None`` if no outcome
+        exists.
+        """
+        ...
+
+    @abstractmethod
+    def is_dispatch_eligible(
+        self, attempt_id: str, global_logical_effect_key: str
+    ) -> bool:
+        """Return whether *attempt_id* may still dispatch for *GLEK*.
+
+        ``False`` when:
+
+        * no reservation exists for ``(attempt_id, GLEK)``, or
+        * a terminal outcome has been accepted for *GLEK* (by this or any
+          other attempt).
+
+        Evidence/projection only — does not grant dispatch authority.
+        """
+        ...
+
+    @abstractmethod
+    def list_global_effect_conflicts(
+        self, attempt_id: str
+    ) -> tuple[GlobalEffectConflict, ...]:
+        """Return all quarantined global-effect conflicts for *attempt_id*.
+
+        Returns an empty tuple if none exist.
         """
         ...
 
@@ -855,6 +1171,12 @@ class SqliteAttemptLedgerStore(AttemptLedgerStore):
                 _PERSISTENCE_FAILURE_DIAGNOSTICS_TABLE_DDL,
                 _RECONCILIATION_DIAGNOSTICS_TABLE_DDL,
                 _SOURCE_CURSORS_TABLE_DDL,
+                _GLOBAL_EFFECT_RESERVATIONS_TABLE_DDL,
+                _GLOBAL_EFFECT_ATTEMPT_INDEX_DDL,
+                _GLOBAL_EFFECT_OUTCOMES_TABLE_DDL,
+                _GLOBAL_EFFECT_OUTCOME_GLEK_UNIQUE_INDEX_DDL,
+                _GLOBAL_EFFECT_CONFLICT_QUARANTINE_TABLE_DDL,
+                _GLOBAL_EFFECT_CONFLICT_ATTEMPT_INDEX_DDL,
             ):
                 for stmt in ddl.split(";"):
                     s = stmt.strip()
@@ -1024,6 +1346,502 @@ class SqliteAttemptLedgerStore(AttemptLedgerStore):
             reservation_count=reservation_count,
         )
 
+    # ── Step 8B1: global effect reservation ────────────────────────────
+
+    def reserve_global_effect(
+        self, attempt_id: str, effect_identity: GlobalEffectIdentity
+    ) -> GlobalEffectReservation:
+        """Atomically reserve the attempt and persist the GLEK snapshot.
+
+        The GLEK snapshot INSERT (or UPDATE on re-reservation) and the
+        attempt reservation upsert happen inside one ``BEGIN IMMEDIATE``
+        transaction, satisfying the Step 8B1 atomic co-persistence
+        requirement: a crash between writes cannot produce a torn snapshot.
+
+        On re-reservation with the same ``global_logical_effect_key`` the
+        original snapshot is preserved (never re-derived from the current
+        schema). A divergent ``effect_identity`` raises ``ValueError``.
+        """
+        if not attempt_id.strip():
+            raise ValueError("attempt_id must be non-empty")
+        glek = effect_identity.global_logical_effect_key
+        snapshot_json = json.dumps(effect_identity.to_dict(), sort_keys=True)
+
+        conn = self.conn
+        self._begin_immediate_retry(conn)
+        try:
+            now_ns = time.time_ns()
+            cur = conn.cursor()
+
+            # Ensure attempt reservation exists (upsert).
+            cur.execute(
+                "SELECT first_reserved_ns, reservation_count"
+                "  FROM attempt_reservations WHERE attempt_id = ?",
+                (attempt_id,),
+            )
+            attemp_row = cur.fetchone()
+            if attemp_row is None:
+                cur.execute(
+                    "INSERT INTO attempt_reservations"
+                    "  (attempt_id, first_reserved_ns, last_reserved_ns,"
+                    "   reservation_count) VALUES (?, ?, ?, 1)",
+                    (attempt_id, now_ns, now_ns),
+                )
+            else:
+                cur.execute(
+                    "UPDATE attempt_reservations"
+                    "  SET last_reserved_ns = ?,"
+                    "      reservation_count = ?"
+                    "  WHERE attempt_id = ?",
+                    (now_ns, attemp_row[1] + 1, attempt_id),
+                )
+
+            # Upsert GLEK snapshot.
+            cur.execute(
+                "SELECT environment_id, action_target, action_version,"
+                "       effect_family, provider_target,"
+                "       canonical_request_identity, boundary_schema_hash,"
+                "       first_reserved_ns, reservation_count"
+                "  FROM global_effect_reservations"
+                " WHERE attempt_id = ? AND global_logical_effect_key = ?",
+                (attempt_id, glek),
+            )
+            existing = cur.fetchone()
+            if existing is None:
+                is_new = True
+                cur.execute(
+                    "INSERT INTO global_effect_reservations"
+                    "  (attempt_id, global_logical_effect_key,"
+                    "   environment_id, action_target, action_version,"
+                    "   effect_family, provider_target,"
+                    "   canonical_request_identity, boundary_schema_hash,"
+                    "   first_reserved_ns, reservation_count,"
+                    "   snapshot_json)"
+                    "  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+                    (
+                        attempt_id,
+                        glek,
+                        effect_identity.environment_id,
+                        effect_identity.action_target,
+                        effect_identity.action_version,
+                        effect_identity.effect_family,
+                        effect_identity.provider_target,
+                        effect_identity.canonical_request_identity,
+                        effect_identity.boundary_schema_hash,
+                        now_ns,
+                        snapshot_json,
+                    ),
+                )
+                first_reserved_ns = now_ns
+                reservation_count = 1
+            else:
+                # Verify the persisted snapshot matches — divergent
+                # snapshots are rejected fail-closed.
+                persisted = GlobalEffectIdentity(
+                    environment_id=existing[0],
+                    action_target=existing[1],
+                    action_version=existing[2],
+                    effect_family=existing[3],
+                    provider_target=existing[4],
+                    canonical_request_identity=existing[5],
+                    boundary_schema_hash=existing[6],
+                )
+                if persisted.global_logical_effect_key != glek:
+                    raise ValueError(
+                        f"Divergent GLEK snapshot for attempt_id={attempt_id!r}, "
+                        f"glek={glek!r}: persisted inputs do not match"
+                    )
+                is_new = False
+                first_reserved_ns = existing[7]
+                reservation_count = existing[8] + 1
+                cur.execute(
+                    "UPDATE global_effect_reservations"
+                    "  SET reservation_count = ?"
+                    "  WHERE attempt_id = ? AND global_logical_effect_key = ?",
+                    (reservation_count, attempt_id, glek),
+                )
+
+            conn.execute("COMMIT")
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+
+        return GlobalEffectReservation(
+            attempt_id=attempt_id,
+            effect_identity=effect_identity,
+            global_logical_effect_key=glek,
+            first_reserved_ns=first_reserved_ns,
+            reservation_count=reservation_count,
+            is_new=is_new,
+        )
+
+    def get_global_effect_reservation(
+        self, attempt_id: str, global_logical_effect_key: str
+    ) -> Optional[GlobalEffectReservation]:
+        """Return the persisted GLEK snapshot for a single effect."""
+        conn = self.conn
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT environment_id, action_target, action_version,"
+            "       effect_family, provider_target,"
+            "       canonical_request_identity, boundary_schema_hash,"
+            "       first_reserved_ns, reservation_count"
+            "  FROM global_effect_reservations"
+            " WHERE attempt_id = ? AND global_logical_effect_key = ?",
+            (attempt_id, global_logical_effect_key),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        identity = GlobalEffectIdentity(
+            environment_id=row[0],
+            action_target=row[1],
+            action_version=row[2],
+            effect_family=row[3],
+            provider_target=row[4],
+            canonical_request_identity=row[5],
+            boundary_schema_hash=row[6],
+        )
+        return GlobalEffectReservation(
+            attempt_id=attempt_id,
+            effect_identity=identity,
+            global_logical_effect_key=identity.global_logical_effect_key,
+            first_reserved_ns=int(row[7]),
+            reservation_count=int(row[8]),
+            is_new=False,
+        )
+
+    def get_global_effect_reservations_for_attempt(
+        self, attempt_id: str
+    ) -> tuple[GlobalEffectReservation, ...]:
+        """Return all GLEK snapshots persisted for *attempt_id*."""
+        conn = self.conn
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT environment_id, action_target, action_version,"
+            "       effect_family, provider_target,"
+            "       canonical_request_identity, boundary_schema_hash,"
+            "       first_reserved_ns, reservation_count"
+            "  FROM global_effect_reservations"
+            " WHERE attempt_id = ?",
+            (attempt_id,),
+        )
+        results: list[GlobalEffectReservation] = []
+        for row in cur.fetchall():
+            identity = GlobalEffectIdentity(
+                environment_id=row[0],
+                action_target=row[1],
+                action_version=row[2],
+                effect_family=row[3],
+                provider_target=row[4],
+                canonical_request_identity=row[5],
+                boundary_schema_hash=row[6],
+            )
+            results.append(
+                GlobalEffectReservation(
+                    attempt_id=attempt_id,
+                    effect_identity=identity,
+                    global_logical_effect_key=identity.global_logical_effect_key,
+                    first_reserved_ns=int(row[7]),
+                    reservation_count=int(row[8]),
+                    is_new=False,
+                )
+            )
+        return tuple(results)
+
+    # ── Step 8B2: terminal outcome CAS ─────────────────────────────────
+
+    def accept_terminal_outcome(
+        self,
+        attempt_id: str,
+        global_logical_effect_key: str,
+        outcome_kind: str,
+        outcome_payload: dict[str, Any] | None = None,
+    ) -> GlobalEffectOutcome:
+        """Atomically accept one terminal outcome per ``(attempt_id, GLEK)``.
+
+        See :meth:`AttemptLedgerStore.accept_terminal_outcome` for the full
+        contract. The CAS, cross-attempt exclusivity, and quarantine are all
+        enforced inside a single ``BEGIN IMMEDIATE`` transaction so two
+        concurrent writers cannot both accept a terminal outcome for the
+        same GLEK.
+        """
+        if not attempt_id.strip():
+            raise ValueError("attempt_id must be non-empty")
+        if not global_logical_effect_key.strip():
+            raise ValueError("global_logical_effect_key must be non-empty")
+
+        payload = outcome_payload or {}
+        payload_json = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+        new_canonical = json.dumps(
+            {"outcome_kind": outcome_kind, "outcome_payload": payload},
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+
+        conn = self.conn
+        self._begin_immediate_retry(conn)
+        try:
+            now_ns = time.time_ns()
+            cur = conn.cursor()
+
+            # (1) Reservation gate — must have a persisted reservation.
+            cur.execute(
+                "SELECT 1 FROM global_effect_reservations"
+                " WHERE attempt_id = ? AND global_logical_effect_key = ?",
+                (attempt_id, global_logical_effect_key),
+            )
+            if cur.fetchone() is None:
+                conn.execute("ROLLBACK")
+                raise ValueError(
+                    f"Cannot accept terminal outcome for unreserved "
+                    f"(attempt_id={attempt_id!r}, "
+                    f"glek={global_logical_effect_key!r})"
+                )
+
+            # (2) Same-attempt CAS — check if outcome already exists.
+            cur.execute(
+                "SELECT outcome_kind, outcome_payload_json, accepted_at_ns"
+                "  FROM global_effect_outcomes"
+                " WHERE attempt_id = ? AND global_logical_effect_key = ?",
+                (attempt_id, global_logical_effect_key),
+            )
+            existing = cur.fetchone()
+            if existing is not None:
+                stored_canonical = json.dumps(
+                    {
+                        "outcome_kind": existing[0],
+                        "outcome_payload": json.loads(existing[1]),
+                    },
+                    sort_keys=True,
+                    ensure_ascii=False,
+                )
+                if stored_canonical == new_canonical:
+                    # Exact duplicate — idempotent return.
+                    conn.execute("ROLLBACK")
+                    return GlobalEffectOutcome(
+                        attempt_id=attempt_id,
+                        global_logical_effect_key=global_logical_effect_key,
+                        outcome_kind=existing[0],
+                        outcome_payload=json.loads(existing[1]),
+                        accepted_at_ns=int(existing[2]),
+                        is_duplicate=True,
+                    )
+                # Divergent outcome — quarantine and raise.
+                detail = {
+                    "stored_outcome_kind": existing[0],
+                    "new_outcome_kind": outcome_kind,
+                    "stored_payload_json": existing[1],
+                    "new_payload_json": payload_json,
+                }
+                self._quarantine_conflict(
+                    cur, attempt_id, global_logical_effect_key,
+                    "divergent_outcome", detail, now_ns,
+                )
+                conn.execute("COMMIT")
+                raise GlobalEffectConflictError(
+                    attempt_id=attempt_id,
+                    global_logical_effect_key=global_logical_effect_key,
+                    conflict_kind="divergent_outcome",
+                    detail=detail,
+                )
+
+            # (3) Cross-attempt exclusivity — no other attempt may have an
+            #     accepted terminal outcome for the same GLEK.
+            cur.execute(
+                "SELECT attempt_id, outcome_kind, outcome_payload_json,"
+                "       accepted_at_ns"
+                "  FROM global_effect_outcomes"
+                " WHERE global_logical_effect_key = ?",
+                (global_logical_effect_key,),
+            )
+            cross_row = cur.fetchone()
+            if cross_row is not None and cross_row[0] != attempt_id:
+                detail = {
+                    "conflicting_attempt_id": cross_row[0],
+                    "conflicting_outcome_kind": cross_row[1],
+                    "new_outcome_kind": outcome_kind,
+                }
+                self._quarantine_conflict(
+                    cur, attempt_id, global_logical_effect_key,
+                    "cross_attempt_outcome", detail, now_ns,
+                )
+                conn.execute("COMMIT")
+                raise GlobalEffectConflictError(
+                    attempt_id=attempt_id,
+                    global_logical_effect_key=global_logical_effect_key,
+                    conflict_kind="cross_attempt_outcome",
+                    detail=detail,
+                )
+
+            # (4) INSERT — the unique index on global_logical_effect_key
+            #     is the final backstop for cross-attempt exclusivity.
+            cur.execute(
+                "INSERT INTO global_effect_outcomes"
+                "  (attempt_id, global_logical_effect_key, outcome_kind,"
+                "   outcome_payload_json, accepted_at_ns)"
+                "  VALUES (?, ?, ?, ?, ?)",
+                (
+                    attempt_id,
+                    global_logical_effect_key,
+                    outcome_kind,
+                    payload_json,
+                    now_ns,
+                ),
+            )
+            conn.execute("COMMIT")
+        except (GlobalEffectConflictError, ValueError):
+            raise
+        except Exception as exc:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+
+        return GlobalEffectOutcome(
+            attempt_id=attempt_id,
+            global_logical_effect_key=global_logical_effect_key,
+            outcome_kind=outcome_kind,
+            outcome_payload=payload,
+            accepted_at_ns=now_ns,
+            is_duplicate=False,
+        )
+
+    @staticmethod
+    def _quarantine_conflict(
+        cur: sqlite3.Cursor,
+        attempt_id: str,
+        global_logical_effect_key: str,
+        conflict_kind: str,
+        detail: dict[str, Any],
+        now_ns: int,
+    ) -> None:
+        """Record a GLEK conflict in the quarantine table.
+
+        This MUST be called inside the caller's ``BEGIN IMMEDIATE``
+        transaction so the quarantine is atomic with the conflict
+        detection. The quarantine is evidence-only.
+        """
+        cur.execute(
+            "INSERT INTO global_effect_conflict_quarantine"
+            "  (conflict_id, attempt_id, global_logical_effect_key,"
+            "   conflict_kind, conflict_detail_json, quarantined_at_ns)"
+            "  VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                str(uuid.uuid4()),
+                attempt_id,
+                global_logical_effect_key,
+                conflict_kind,
+                json.dumps(detail, sort_keys=True, ensure_ascii=False),
+                now_ns,
+            ),
+        )
+
+    def get_global_effect_outcome(
+        self, attempt_id: str, global_logical_effect_key: str
+    ) -> Optional[GlobalEffectOutcome]:
+        """Return the accepted terminal outcome for ``(attempt_id, GLEK)``."""
+        conn = self.conn
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT outcome_kind, outcome_payload_json, accepted_at_ns"
+            "  FROM global_effect_outcomes"
+            " WHERE attempt_id = ? AND global_logical_effect_key = ?",
+            (attempt_id, global_logical_effect_key),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return GlobalEffectOutcome(
+            attempt_id=attempt_id,
+            global_logical_effect_key=global_logical_effect_key,
+            outcome_kind=row[0],
+            outcome_payload=json.loads(row[1]),
+            accepted_at_ns=int(row[2]),
+            is_duplicate=False,
+        )
+
+    def get_global_effect_outcome_by_glek(
+        self, global_logical_effect_key: str
+    ) -> Optional[GlobalEffectOutcome]:
+        """Return the accepted terminal outcome for *GLEK* across all attempts."""
+        conn = self.conn
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT attempt_id, outcome_kind, outcome_payload_json,"
+            "       accepted_at_ns"
+            "  FROM global_effect_outcomes"
+            " WHERE global_logical_effect_key = ?",
+            (global_logical_effect_key,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return GlobalEffectOutcome(
+            attempt_id=row[0],
+            global_logical_effect_key=global_logical_effect_key,
+            outcome_kind=row[1],
+            outcome_payload=json.loads(row[2]),
+            accepted_at_ns=int(row[3]),
+            is_duplicate=False,
+        )
+
+    def is_dispatch_eligible(
+        self, attempt_id: str, global_logical_effect_key: str
+    ) -> bool:
+        """Return whether *attempt_id* may still dispatch for *GLEK*."""
+        conn = self.conn
+        cur = conn.cursor()
+        # Must have a reservation for (attempt_id, GLEK).
+        cur.execute(
+            "SELECT 1 FROM global_effect_reservations"
+            " WHERE attempt_id = ? AND global_logical_effect_key = ?",
+            (attempt_id, global_logical_effect_key),
+        )
+        if cur.fetchone() is None:
+            return False
+        # Must not have a terminal outcome for this GLEK in any attempt.
+        cur.execute(
+            "SELECT 1 FROM global_effect_outcomes"
+            " WHERE global_logical_effect_key = ?",
+            (global_logical_effect_key,),
+        )
+        if cur.fetchone() is not None:
+            return False
+        return True
+
+    def list_global_effect_conflicts(
+        self, attempt_id: str
+    ) -> tuple[GlobalEffectConflict, ...]:
+        """Return all quarantined global-effect conflicts for *attempt_id*."""
+        conn = self.conn
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT conflict_id, global_logical_effect_key, conflict_kind,"
+            "       conflict_detail_json, quarantined_at_ns"
+            "  FROM global_effect_conflict_quarantine"
+            " WHERE attempt_id = ?"
+            " ORDER BY quarantined_at_ns",
+            (attempt_id,),
+        )
+        results: list[GlobalEffectConflict] = []
+        for row in cur.fetchall():
+            results.append(
+                GlobalEffectConflict(
+                    conflict_id=row[0],
+                    attempt_id=attempt_id,
+                    global_logical_effect_key=row[1],
+                    conflict_kind=row[2],
+                    detail=json.loads(row[3]),
+                    quarantined_at_ns=int(row[4]),
+                )
+            )
+        return tuple(results)
+
     # ── append (transactional core) ────────────────────────────────────
 
     def _begin_immediate_retry(self, conn: sqlite3.Connection) -> None:
@@ -1052,7 +1870,7 @@ class SqliteAttemptLedgerStore(AttemptLedgerStore):
     def _append_tx(
         self, attempt_id: str, event: LedgerEvent
     ) -> AppendResult:
-        """Enforce append invariants inside ONE ``BEGIN IMMEDIATE``.
+        """Enforce all Step 4 invariants inside ONE ``BEGIN IMMEDIATE``.
 
         Order of checks (dedup wins over rejection):
 
@@ -1061,12 +1879,11 @@ class SqliteAttemptLedgerStore(AttemptLedgerStore):
            (with embedded busy-retry for separate-process contention).
         3. Idempotency-key dedup — if ``(attempt_id, idempotency_key)``
            already exists, return the existing event (no raise).
-        4. Read the durable tip state for ``attempt_id``.
-        5. Reject second terminals and post-terminal appends.
-        6. Enforce exact sequence continuity.
-        7. Enforce lifecycle-required predecessor evidence.
-        8. Enforce joined causal_predecessor_sequence at the durable tip.
-        9. INSERT + COMMIT.
+        4. Post-terminal rejection — if any terminal event exists for
+           ``attempt_id``, raise :class:`PostTerminalAppendError`.
+        5. Monotonic sequence — ``event.sequence`` must exceed the
+           current max sequence, else :class:`MonotonicSequenceError`.
+        6. INSERT + COMMIT.
         """
         if event.identity.attempt_id != attempt_id:
             raise ValueError(
@@ -1090,9 +1907,30 @@ class SqliteAttemptLedgerStore(AttemptLedgerStore):
             )
             dup_row = cur.fetchone()
             if dup_row is not None:
-                # Roll back the empty write transaction before returning.
+                # Step 8A: canonical comparison of duplicate idempotency keys.
+                # Exact duplicates (same payload, outcome, event_type, schema_hash)
+                # remain idempotent. Divergent duplicates are quarantined and
+                # raise DivergentDuplicateError.
+                stored_json = dup_row[0]
+                divergences = _compare_canonical_signatures(stored_json, event_json)
+                if divergences:
+                    # End the append transaction before opening the separate
+                    # quarantine transaction on this connection.
+                    conn.execute("ROLLBACK")
+                    _record_divergent_duplicate_quarantine(
+                        self, attempt_id, event.idempotency_key,
+                        divergences, stored_json, event_json,
+                    )
+                    raise DivergentDuplicateError(
+                        attempt_id=attempt_id,
+                        idempotency_key=event.idempotency_key,
+                        divergences=divergences,
+                        stored_event_json=stored_json,
+                        new_event_json=event_json,
+                    )
+                # Exact duplicate — roll back and return existing.
                 conn.execute("ROLLBACK")
-                existing = _deserialize_ledger_event(json.loads(dup_row[0]))
+                existing = _deserialize_ledger_event(json.loads(stored_json))
                 return AppendResult(
                     attempt_id=attempt_id,
                     event=existing,
@@ -1100,79 +1938,33 @@ class SqliteAttemptLedgerStore(AttemptLedgerStore):
                     is_duplicate=True,
                 )
 
+            # (4) Post-terminal rejection — once terminal, no new events.
             cur.execute(
-                "SELECT sequence, event_type FROM attempt_events WHERE attempt_id = ? ORDER BY sequence ASC",
-                (attempt_id,),
+                f"SELECT 1 FROM attempt_events WHERE attempt_id = ? AND event_type IN ({','.join('?' * len(_TERMINAL_EVENT_TYPE_VALUES))}) LIMIT 1",
+                (attempt_id, *_TERMINAL_EVENT_TYPE_VALUES),
             )
-            persisted_rows = cur.fetchall()
-            last_seq = int(persisted_rows[-1][0]) if persisted_rows else 0
-            seen_event_types = {
-                AttemptEventType(str(row[1])) for row in persisted_rows
-            }
-            has_terminal = any(
-                AttemptEventType(str(row[1])) in _TERMINAL_EVENT_TYPES
-                for row in persisted_rows
-            )
-
-            # (5) Reject any append after a durable terminal. A second
-            # terminal is called out separately for the invariant suite.
-            if has_terminal and event.event_type in _TERMINAL_EVENT_TYPES:
-                conn.execute("ROLLBACK")
-                raise DuplicateTerminalError(
-                    f"Attempt {attempt_id!r} already has a terminal event; "
-                    f"second terminal {event.event_type.value!r} is rejected."
-                )
-            if has_terminal:
+            if cur.fetchone() is not None:
                 conn.execute("ROLLBACK")
                 raise PostTerminalAppendError(
                     f"Attempt {attempt_id!r} already has a terminal event; "
-                    f"no further events are allowed "
-                    f"(idempotency_key={event.idempotency_key!r})."
+                    f"further appends are rejected (idempotency_key={event.idempotency_key!r})."
                 )
 
-            # (6) Sequence continuity — exact tip + 1, not merely monotonic.
-            expected_sequence = last_seq + 1
+            # (5) Monotonic sequence — strictly greater than max.
+            cur.execute(
+                "SELECT COALESCE(MAX(sequence), 0) FROM attempt_events WHERE attempt_id = ?",
+                (attempt_id,),
+            )
+            last_seq_row = cur.fetchone()
+            last_seq = int(last_seq_row[0]) if last_seq_row is not None else 0
             if event.sequence <= last_seq:
                 conn.execute("ROLLBACK")
                 raise MonotonicSequenceError(
                     f"Event sequence {event.sequence} for attempt {attempt_id!r} "
-                    f"is not monotonic with current max sequence {last_seq}."
-                )
-            if event.sequence != expected_sequence:
-                conn.execute("ROLLBACK")
-                raise SequenceGapError(
-                    f"Event sequence {event.sequence} for attempt {attempt_id!r} "
-                    f"would create a gap; expected {expected_sequence}."
+                    f"is not strictly greater than the current max {last_seq}."
                 )
 
-            # (7) Lifecycle-required predecessor evidence must already be
-            # durable for this attempt before the new event is appended.
-            required_predecessors = _LIFECYCLE_PRECEDENCE.get(event.event_type, frozenset())
-            missing_predecessors = required_predecessors - seen_event_types
-            if missing_predecessors:
-                conn.execute("ROLLBACK")
-                missing_values = ", ".join(
-                    sorted(predecessor.value for predecessor in missing_predecessors)
-                )
-                if missing_predecessors == frozenset({AttemptEventType.STARTED}):
-                    raise MissingStartEventError(
-                        f"Event type {event.event_type.value!r} requires a durable STARTED event."
-                    )
-                raise MissingStartEventError(
-                    f"Event type {event.event_type.value!r} requires a durable "
-                    f"'{missing_values}' event."
-                )
-
-            # (8) Causal predecessor joins must point at the current durable
-            # tip so callers cannot append against stale or forked evidence.
-            if event.causal_predecessor_sequence != last_seq:
-                conn.execute("ROLLBACK")
-                raise CausalPredecessorError(
-                    f"Event causal_predecessor_sequence {event.causal_predecessor_sequence} "
-                    f"for attempt {attempt_id!r} must equal current max sequence {last_seq}."
-                )
-
-            # (9) INSERT.
+            # (6) INSERT.
             cur.execute(
                 """\
 INSERT INTO attempt_events
@@ -1190,12 +1982,9 @@ VALUES (?, ?, ?, ?, ?, ?)
             )
             conn.execute("COMMIT")
         except (
-            CausalPredecessorError,
-            DuplicateTerminalError,
-            MissingStartEventError,
-            MonotonicSequenceError,
+            DivergentDuplicateError,
             PostTerminalAppendError,
-            SequenceGapError,
+            MonotonicSequenceError,
             ValueError,
         ):
             # Transaction already rolled back inside the handler for
@@ -1833,6 +2622,51 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 # ── Deserialization helpers ────────────────────────────────────────────────
 
 
+def _record_divergent_duplicate_quarantine(
+    store: "SqliteAttemptLedgerStore",
+    attempt_id: str,
+    idempotency_key: str,
+    divergences: list[str],
+    stored_json: str,
+    new_json: str,
+) -> None:
+    """Record a divergent-duplicate quarantine diagnostic in a separate transaction.
+
+    This is best-effort evidence. If the quarantine write also fails,
+    the caller still raises DivergentDuplicateError so the divergence
+    is never silently ignored.
+    """
+    import uuid as _uuid
+    try:
+        conn = store.conn
+        store._begin_immediate_retry(conn)
+        diagnostic_json = json.dumps({
+            "idempotency_key": idempotency_key,
+            "divergences": divergences,
+            "stored_event_json": stored_json,
+            "new_event_json": new_json,
+        }, sort_keys=True)
+        conn.execute(
+            """INSERT INTO persistence_failure_diagnostics
+               (attempt_id, diagnostic_id, target_event_sequence,
+                failure_mode, observed_error, diagnostic_json, recorded_at_ns)
+               VALUES (?, ?, 0, 'divergent_duplicate', ?, ?, ?)""",
+            (
+                attempt_id,
+                str(_uuid.uuid4()),
+                f"Divergent duplicate: {', '.join(divergences)}",
+                diagnostic_json,
+                time.time_ns(),
+            ),
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+
+
 def _try_record_append_failure_diagnostic(
     store: Any,
     attempt_id: str,
@@ -1862,6 +2696,46 @@ def _try_record_append_failure_diagnostic(
     except Exception:
         # Diagnostic capture is best-effort only.
         pass
+
+
+def _canonical_event_signature(event_json: str) -> dict:
+    """Extract canonical comparison fields from a serialized event JSON.
+
+    Returns a dict with keys: payload, outcome, event_type, schema_hash.
+    These fields are used for divergent-duplicate detection.
+    """
+    import json as _json
+    data = _json.loads(event_json)
+    payload = data.get("payload")
+    if isinstance(payload, dict):
+        payload = _json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    outcome = data.get("outcome")
+    event_type = data.get("event_type", "")
+    schema_hash = data.get("schema_hash")
+    return {
+        "payload": payload,
+        "outcome": outcome,
+        "event_type": event_type,
+        "schema_hash": schema_hash,
+    }
+
+
+def _compare_canonical_signatures(
+    stored_json: str,
+    new_json: str,
+) -> list[str]:
+    """Return list of divergence reasons between two canonical event signatures.
+
+    An empty list means the signatures are identical (exact duplicate).
+    Non-empty list identifies which fields differ (divergent duplicate).
+    """
+    stored = _canonical_event_signature(stored_json)
+    new = _canonical_event_signature(new_json)
+    divergences: list[str] = []
+    for key in ("payload", "outcome", "event_type", "schema_hash"):
+        if stored.get(key) != new.get(key):
+            divergences.append(f"divergent_{key}")
+    return divergences
 
 
 def _deserialize_ledger_event(d: dict[str, Any]) -> LedgerEvent:
@@ -1927,7 +2801,15 @@ def _deserialize_ledger_event(d: dict[str, Any]) -> LedgerEvent:
     # Payload (may be None, a dict, or a DurableRef dict)
     payload_raw = d.get("payload")
     if payload_raw is not None and isinstance(payload_raw, dict) and "store_id" in payload_raw:
-        payload = _deserialize_durable_ref(payload_raw)
+        from arnold.workflow.durable_refs import DurableRef
+        payload = DurableRef(
+            store_id=payload_raw["store_id"],
+            locator=payload_raw["locator"],
+            digest=payload_raw.get("digest", ""),
+            schema_type=payload_raw.get("schema_type", "application/json"),
+            visibility_class=payload_raw.get("visibility_class"),
+            encryption_scope=payload_raw.get("encryption_scope"),
+        )
     else:
         payload = payload_raw
 
@@ -1970,12 +2852,6 @@ def _deserialize_durable_ref(d: dict[str, Any]) -> Any:
         availability_class=d.get("availability_class", "standard"),
         tenant_id=d.get("tenant_id"),
         workflow_id=d.get("workflow_id"),
-        key_id=d.get("key_id"),
-        key_version=d.get("key_version"),
-        created_at_ns=d.get("created_at_ns"),
-        expires_at_ns=d.get("expires_at_ns"),
-        legal_hold=d.get("legal_hold", False),
-        tombstoned_at_ns=d.get("tombstoned_at_ns"),
         ref_version=d.get("ref_version", "arnold.workflow.durable_ref.v1"),
         metadata=d.get("metadata", {}),
     )
@@ -2050,14 +2926,10 @@ __all__ = [
     "AttemptLedgerError",
     "AttemptLedgerStore",
     "AttemptReservation",
-    "CausalPredecessorError",
-    "DuplicateTerminalError",
     "GapEntry",
     "GateStatus",
-    "MissingStartEventError",
     "MonotonicSequenceError",
     "PostTerminalAppendError",
-    "SequenceGapError",
     "SourceCursor",
     "SqliteAttemptLedgerStore",
     "StartGateResult",

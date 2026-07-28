@@ -20,13 +20,29 @@ def test_neutral_manifest_workflow_and_kernel_do_not_import_product_modules() ->
 
 
 def test_manifest_import_does_not_load_workflow_package() -> None:
-    for module_name in list(sys.modules):
-        if module_name.startswith("arnold.workflow"):
-            del sys.modules[module_name]
+    # Collection imports workflow classes that later tests and fixtures retain.
+    # Restore those exact module objects after this isolation check so a fresh
+    # import cannot split class identity for the remainder of the test process.
+    saved_modules = {
+        module_name: module
+        for module_name, module in tuple(sys.modules.items())
+        if module_name.startswith("arnold.workflow")
+    }
+    for module_name in saved_modules:
+        sys.modules.pop(module_name, None)
 
-    import arnold.manifest  # noqa: F401
+    try:
+        import arnold.manifest  # noqa: F401
 
-    assert not any(module_name.startswith("arnold.workflow") for module_name in sys.modules)
+        assert not any(
+            module_name.startswith("arnold.workflow")
+            for module_name in sys.modules
+        )
+    finally:
+        for module_name in tuple(sys.modules):
+            if module_name.startswith("arnold.workflow"):
+                sys.modules.pop(module_name, None)
+        sys.modules.update(saved_modules)
 
 
 def test_workflow_manifest_exports_preserve_neutral_type_identity() -> None:

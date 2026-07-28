@@ -273,7 +273,13 @@ def test_all_repair_producers_share_explicit_central_queue(tmp_path: Path) -> No
         session="generic",
         source="m1_acceptance",
         workspace=workspace,
-        problem_signature={"failure_kind": "execute_failed", "blocked_task_id": "T1"},
+        problem_signature={
+            "failure_kind": "execute_failed",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "m1",
+            "blocked_task_id": "T1",
+        },
     )
     human = repair_requests.enqueue_human_gate_repair_request(
         queue_root=queue_root,

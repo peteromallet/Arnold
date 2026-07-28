@@ -1,974 +1,1097 @@
-"""M9 work-class ledger for task/batch/attempt resource accounting.
+"""Full rebuildable append-only work-ledger for M8A executor observability.
 
-Each event classifies elapsed time, model calls, tokens, and cost into
-an explicit :class:`WorkClass`.  Missing measures are recorded with an
-``unavailable_reason`` — they are **never** silently emitted as zero or
-``waste``.
+This module is explicitly NON-AUTHORITATIVE.  Events are evidence only — they
+do not substitute for any grant, lease, WBC, completion, publication, delivery,
+or status authority.  The work ledger records *what happened* for later
+telemetry reconciliation; it never drives control flow, admission, or repair
+decisions.
 
-Write path: ``emit_work_ledger_event()`` → ``work_ledger.jsonl``
+Event vocabulary (stable — do not rename without a coordinated migration):
+- ``validation``        — deterministic harness validation job completed
+- ``repair_verify``     — verify-only repair receipt adoption completed
+- ``productive``        — productive work (model inference) completed
+- ``unavailable_reason`` — a specific telemetry measure is unavailable and why
+- ``review_proof``      — review/proof work (code review, quality assessment)
+- ``queue``             — queue wait time before worker dispatch
+- ``retry_wait``        — wait time between retry attempts (backoff/cooldown)
+- ``compaction``        — context compaction time for budget management
+- ``replay``            — deterministic replay of captured fixtures
+- ``tool``              — tool execution time (shell, file ops, API calls)
+- ``git``               — Git operation time (commits, diffs, status)
+- ``transition``        — lifecycle state transition time
+
+Every event carries:
+- ``event_id``          — stable sha256 hex digest (deterministic from content)
+- ``event_class``       — one of the twelve vocabulary entries above
+- ``referenced_identity`` — what this event is about (task_id, batch_id, …)
+- ``content_hash``      — sha256 of the canonical JSON payload (integrity check)
+- ``timestamp``         — UTC ISO‑8601 at append time
+- ``payload``           — event‑specific structured data
+- ``_non_authoritative`` — always ``true``; lint/audit marker
+
+Reconciliation primitives
+--------------------------
+:func:`aggregate_by_class` groups and sums ledger events by event class.
+:func:`aggregate_by_task` groups events by referenced identity.
+:func:`build_work_class_summary` produces a rebuildable aggregate summary
+with total durations per class, unavailable measure catalogue, and cost
+attribution gaps.  Every summary field that cannot be computed is explicitly
+``null`` (UNKNOWN), never defaulted to zero or labelled as success evidence.
+
+Storage
+-------
+Each plan directory gets one ``work_ledger.ndjson`` file.  Every call to
+:func:`append_work_ledger_event` appends exactly one JSON line.  The file is
+never truncated and never used for control flow.
 """
 
 from __future__ import annotations
 
-import enum
-import fcntl
+import hashlib
 import json
-import logging
-from dataclasses import dataclass, field
+import os
+import uuid
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
-log = logging.getLogger("megaplan")
+# ═══════════════════════════════════════════════════════════════════════════
+# Stable event vocabulary
+# ═══════════════════════════════════════════════════════════════════════════
 
-LEDGER_FILE = "work_ledger.jsonl"
-_LOCK_FILE = ".work_ledger.lock"
+WORK_LEDGER_EVENT_CLASSES: FrozenSet[str] = frozenset(
+    {
+        "validation",
+        "repair_verify",
+        "productive",
+        "unavailable_reason",
+        "review_proof",
+        "queue",
+        "retry_wait",
+        "compaction",
+        "replay",
+        "tool",
+        "git",
+        "transition",
+    }
+)
 
+# ── Per‑event‑class required payload keys ──────────────────────────────────
 
-# ---------------------------------------------------------------------------
-# Work classes
-# ---------------------------------------------------------------------------
+_VALIDATION_REQUIRED = frozenset({"task_id", "job_id", "command", "exit_code", "duration_ms"})
+_REPAIR_VERIFY_REQUIRED = frozenset({"task_id", "receipt_hash", "outcome", "duration_ms"})
+_PRODUCTIVE_REQUIRED = frozenset({"task_id", "work_class", "duration_ms"})
+_UNAVAILABLE_REASON_REQUIRED = frozenset({"task_id", "measure", "reason"})
+_REVIEW_PROOF_REQUIRED = frozenset({"task_id", "review_kind", "duration_ms"})
+_QUEUE_REQUIRED = frozenset({"task_id", "duration_ms"})
+_RETRY_WAIT_REQUIRED = frozenset({"task_id", "duration_ms", "attempt_number"})
+_COMPACTION_REQUIRED = frozenset({"task_id", "duration_ms"})
+_REPLAY_REQUIRED = frozenset({"task_id", "duration_ms"})
+_TOOL_REQUIRED = frozenset({"task_id", "tool_name", "duration_ms"})
+_GIT_REQUIRED = frozenset({"task_id", "operation", "duration_ms"})
+_TRANSITION_REQUIRED = frozenset({"task_id", "from_state", "to_state", "duration_ms"})
 
-
-class WorkClass(str, enum.Enum):
-    """Explicit classification for every ledger event."""
-
-    PRODUCTIVE = "productive"
-    """Task execution that produced an output (code, doc, artifact)."""
-
-    REVIEW_PROOF = "review_proof"
-    """Review / proof task that produced a verdict or evidence check."""
-
-    QUEUE_IDLE = "queue_idle"
-    """Time spent waiting in queue before a worker picked up the task."""
-
-    RETRY_WAIT = "retry_wait"
-    """Time spent between retry attempts (backoff / circuit wait)."""
-
-    COMPACTION = "compaction"
-    """Session compaction (context window management, summarisation)."""
-
-    VALIDATION = "validation"
-    """Deterministic (subprocess, no-model) validation job execution."""
-
-    REPAIR_VERIFICATION = "repair_verification"
-    """Read-only repair receipt verification against current custody state."""
-
-    REPLAY = "replay"
-    """Replay / rerun of previously executed work for audit or canary."""
-
-
-# ---------------------------------------------------------------------------
-# Ledger event
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class WorkLedgerEvent:
-    """One row in the work ledger.
-
-    Every numeric measure is optional; when ``None`` the event **must**
-    carry an ``unavailable_reason``.  Zero is never used as a sentinel
-    for missing data.
-    """
-
-    work_class: WorkClass
-    """Explicit work classification."""
-
-    task_id: str | None = None
-    """The task this event is scoped to, if any."""
-
-    batch_id: str | None = None
-    """The batch this event is scoped to, if any."""
-
-    attempt_id: str | None = None
-    """The attempt (invocation / run) this event is scoped to, if any."""
-
-    # -- resource measures ---------------------------------------------------
-
-    elapsed_ms: int | None = None
-    """Wall-clock elapsed time in milliseconds."""
-
-    model_calls: int | None = None
-    """Number of model (LLM) calls made."""
-
-    prompt_tokens: int | None = None
-    """Prompt / input token count."""
-
-    completion_tokens: int | None = None
-    """Completion / output token count."""
-
-    total_tokens: int | None = None
-    """Total token count (prompt + completion)."""
-
-    cost_usd: float | None = None
-    """Cost in USD (provider-reported or computed)."""
-
-    accepted_output_delta: int | None = None
-    """Delta in accepted-output bytes (or lines) produced by this event."""
-
-    # -- availability --------------------------------------------------------
-
-    unavailable_reason: str | None = None
-    """When any resource measure is ``None``, this explains why.
-
-    Examples: ``"worker_did_not_report_tokens"``,
-    ``"subprocess_validation_no_model"``, ``"provider_api_did_not_return_usage"``.
-    """
-
-    # -- metadata ------------------------------------------------------------
-
-    metadata: dict[str, Any] = field(default_factory=dict)
-    """Arbitrary extra context (provider, model, phase, …)."""
-
-    ts: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize to a plain dict (suitable for JSONL write)."""
-        d: dict[str, Any] = {
-            "ts": self.ts,
-            "work_class": self.work_class.value,
-        }
-        if self.task_id is not None:
-            d["task_id"] = self.task_id
-        if self.batch_id is not None:
-            d["batch_id"] = self.batch_id
-        if self.attempt_id is not None:
-            d["attempt_id"] = self.attempt_id
-
-        # Resource measures — preserve None so the reader can distinguish
-        # "explicitly zero" from "unavailable".
-        d["elapsed_ms"] = self.elapsed_ms
-        d["model_calls"] = self.model_calls
-        d["prompt_tokens"] = self.prompt_tokens
-        d["completion_tokens"] = self.completion_tokens
-        d["total_tokens"] = self.total_tokens
-        d["cost_usd"] = self.cost_usd
-        d["accepted_output_delta"] = self.accepted_output_delta
-
-        if self.unavailable_reason is not None:
-            d["unavailable_reason"] = self.unavailable_reason
-        if self.metadata:
-            d["metadata"] = self.metadata
-
-        return d
-
-    def validate(self) -> list[str]:
-        """Return a list of validation issues (empty = valid).
-
-        Rules enforced:
-        - ``unavailable_reason`` must be set when any measure is ``None``.
-        - Zero values for measures are allowed but must be intentional
-          (caller's responsibility — we only warn in log).
-        """
-        issues: list[str] = []
-        measures: dict[str, Any] = {
-            "elapsed_ms": self.elapsed_ms,
-            "model_calls": self.model_calls,
-            "prompt_tokens": self.prompt_tokens,
-            "completion_tokens": self.completion_tokens,
-            "total_tokens": self.total_tokens,
-            "cost_usd": self.cost_usd,
-            "accepted_output_delta": self.accepted_output_delta,
-        }
-        missing = [k for k, v in measures.items() if v is None]
-        if missing and not self.unavailable_reason:
-            issues.append(
-                f"WorkLedgerEvent measures {missing} are None but "
-                f"unavailable_reason is not set"
-            )
-        return issues
-
-
-# ---------------------------------------------------------------------------
-# Emission helpers
-# ---------------------------------------------------------------------------
-
-
-def _ensure_plan_dir(plan_dir: Path) -> None:
-    """No-op guard — write will fail gracefully if dir missing."""
-    if not plan_dir.is_dir():
-        log.debug(
-            "Skipping work ledger write: plan directory %s does not exist",
-            plan_dir,
-        )
-
-
-def _write_ledger_line(plan_dir: Path, event: WorkLedgerEvent) -> None:
-    """Append one event to the work ledger JSONL, best-effort."""
-    try:
-        issues = event.validate()
-        contract_issues = validate_producer_contract(event)
-        if contract_issues:
-            issues.extend(contract_issues)
-        if issues:
-            log.warning("Work ledger event validation issues: %s", issues)
-
-        lock_path = plan_dir / _LOCK_FILE
-        ledger_path = plan_dir / LEDGER_FILE
-        if not plan_dir.is_dir():
-            return
-        line = json.dumps(event.to_dict(), sort_keys=True, separators=(",", ":")) + "\n"
-        with lock_path.open("a+", encoding="utf-8") as lock:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            try:
-                with ledger_path.open("a", encoding="utf-8") as ledger:
-                    ledger.write(line)
-            finally:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
-    except Exception:
-        log.warning(
-            "Work ledger write failed for class=%s task=%s batch=%s",
-            event.work_class.value,
-            event.task_id,
-            event.batch_id,
-            exc_info=True,
-        )
-
-
-def emit_work_ledger_event(plan_dir: Path, event: WorkLedgerEvent) -> None:
-    """Emit a single work ledger event.
-
-    Never raises — a failure to write the ledger must not affect the
-    control flow of the plan.
-    """
-    _ensure_plan_dir(plan_dir)
-    _write_ledger_line(plan_dir, event)
-
-
-# ---------------------------------------------------------------------------
-# Producer contracts
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ProducerContract:
-    """Concrete producer contract for a work class.
-
-    Every work class must have at least one producer contract specifying:
-    - which module/function emits it
-    - what measures are expected (and which are always unavailable)
-    - the required unavailable_reason when measures are missing
-    """
-
-    work_class: WorkClass
-    producer_module: str
-    producer_function: str
-    always_unavailable: tuple[str, ...] = ()
-    """Measures that are always unavailable for this work class."""
-    required_measures: tuple[str, ...] = ()
-    """Measures that MUST be present (not None) for this contract."""
-
-
-PRODUCER_CONTRACTS: dict[WorkClass, ProducerContract] = {
-    WorkClass.PRODUCTIVE: ProducerContract(
-        work_class=WorkClass.PRODUCTIVE,
-        producer_module="arnold_pipelines.megaplan.observability.work_ledger",
-        producer_function="emit_productive",
-        always_unavailable=(),
-        required_measures=(),
-    ),
-    WorkClass.REVIEW_PROOF: ProducerContract(
-        work_class=WorkClass.REVIEW_PROOF,
-        producer_module="arnold_pipelines.megaplan.observability.work_ledger",
-        producer_function="emit_review_proof",
-        always_unavailable=(),
-        required_measures=(),
-    ),
-    WorkClass.QUEUE_IDLE: ProducerContract(
-        work_class=WorkClass.QUEUE_IDLE,
-        producer_module="arnold_pipelines.megaplan.observability.work_ledger",
-        producer_function="emit_queue_idle",
-        always_unavailable=(),
-        required_measures=("elapsed_ms",),
-    ),
-    WorkClass.RETRY_WAIT: ProducerContract(
-        work_class=WorkClass.RETRY_WAIT,
-        producer_module="arnold_pipelines.megaplan.observability.work_ledger",
-        producer_function="emit_retry_wait",
-        always_unavailable=(),
-        required_measures=("elapsed_ms",),
-    ),
-    WorkClass.COMPACTION: ProducerContract(
-        work_class=WorkClass.COMPACTION,
-        producer_module="arnold_pipelines.megaplan.observability.work_ledger",
-        producer_function="emit_compaction",
-        always_unavailable=(),
-        required_measures=(),
-    ),
-    WorkClass.VALIDATION: ProducerContract(
-        work_class=WorkClass.VALIDATION,
-        producer_module="arnold_pipelines.megaplan.observability.work_ledger",
-        producer_function="emit_validation",
-        always_unavailable=(),
-        required_measures=("elapsed_ms",),
-    ),
-    WorkClass.REPAIR_VERIFICATION: ProducerContract(
-        work_class=WorkClass.REPAIR_VERIFICATION,
-        producer_module="arnold_pipelines.megaplan.observability.work_ledger",
-        producer_function="emit_repair_verification",
-        always_unavailable=(),
-        required_measures=("elapsed_ms",),
-    ),
-    WorkClass.REPLAY: ProducerContract(
-        work_class=WorkClass.REPLAY,
-        producer_module="arnold_pipelines.megaplan.observability.work_ledger",
-        producer_function="emit_replay",
-        always_unavailable=(),
-        required_measures=(),
-    ),
+_REQUIRED_BY_CLASS: Dict[str, FrozenSet[str]] = {
+    "validation": _VALIDATION_REQUIRED,
+    "repair_verify": _REPAIR_VERIFY_REQUIRED,
+    "productive": _PRODUCTIVE_REQUIRED,
+    "unavailable_reason": _UNAVAILABLE_REASON_REQUIRED,
+    "review_proof": _REVIEW_PROOF_REQUIRED,
+    "queue": _QUEUE_REQUIRED,
+    "retry_wait": _RETRY_WAIT_REQUIRED,
+    "compaction": _COMPACTION_REQUIRED,
+    "replay": _REPLAY_REQUIRED,
+    "tool": _TOOL_REQUIRED,
+    "git": _GIT_REQUIRED,
+    "transition": _TRANSITION_REQUIRED,
 }
 
+# ── Work‑class category mapping (for aggregation) ───────────────────────────
 
-def validate_producer_contract(event: WorkLedgerEvent) -> list[str]:
-    """Validate that *event* satisfies its producer contract.
+# Legitimate value-producing work — never waste.
+_VALUE_WORK_CLASSES: FrozenSet[str] = frozenset({
+    "productive",
+    "replay",
+    "tool",
+    "validation",
+    "repair_verify",
+    "review_proof",  # code review, quality check, proof generation are all legitimate
+})
 
-    Returns a list of issues (empty = valid).  A missing contract is a
-    warning, not a failure — unregistered work classes are still emitted.
+# Non-value work (retry, queue, compaction, git, transition overhead).
+_NON_VALUE_WORK_CLASSES: FrozenSet[str] = frozenset({
+    "retry_wait",
+    "queue",
+    "compaction",
+    "git",
+    "transition",
+})
+
+# Gap — telemetry that is explicitly unavailable (not waste, just missing data).
+_GAP_CLASSES: FrozenSet[str] = frozenset({
+    "unavailable_reason",
+})
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Helpers
+# ═══════════════════════════════════════════════════════════════════════════
+
+_WORK_LEDGER_FILE = "work_ledger.ndjson"
+
+
+def _ledger_path(plan_dir: Path) -> Path:
+    return Path(plan_dir) / _WORK_LEDGER_FILE
+
+
+def _canonical_json_bytes(payload: Dict[str, Any]) -> bytes:
+    """Deterministic JSON serialisation used for both event- and content-hash."""
+    return json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+
+
+def _content_hash(payload: Dict[str, Any]) -> str:
+    """sha256 of the canonical JSON payload (integrity verification)."""
+    return hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
+
+
+def _stable_event_id(
+    event_class: str,
+    referenced_identity: str,
+    payload_bytes: bytes,
+) -> str:
+    """Content‑addressed event id — same inputs ⇒ same id (deterministic)."""
+    raw = f"{event_class}\x00{referenced_identity}\x00"
+    return hashlib.sha256(raw.encode("utf-8") + payload_bytes).hexdigest()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Public API
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def append_work_ledger_event(
+    plan_dir: Path,
+    *,
+    event_class: str,
+    referenced_identity: str,
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Append one non‑authoritative work‑ledger event.
+
+    Args:
+        plan_dir: Plan directory (ledger file written as ``work_ledger.ndjson``).
+        event_class: One of ``validation``, ``repair_verify``, ``productive``,
+                     ``unavailable_reason``.
+        referenced_identity: What this event is about (``task_id``, ``batch_id``, …).
+        payload: Event‑specific structured data.  Required keys depend on
+                 ``event_class`` (see event‑class docstrings).
+
+    Returns:
+        The full event dict (evidence only; never authority).
+
+    Raises:
+        ValueError: If *event_class* is unknown or required payload keys are missing.
     """
-    issues: list[str] = []
-    contract = PRODUCER_CONTRACTS.get(event.work_class)
-    if contract is None:
-        return issues  # no contract = no extra validation
+    if event_class not in WORK_LEDGER_EVENT_CLASSES:
+        raise ValueError(
+            f"Unknown work-ledger event class: {event_class!r}. "
+            f"Must be one of: {', '.join(sorted(WORK_LEDGER_EVENT_CLASSES))}"
+        )
 
-    for measure_name in contract.always_unavailable:
-        value = getattr(event, measure_name, None)
-        if value is not None:
-            issues.append(
-                f"WorkLedgerEvent {event.work_class.value}: "
-                f"{measure_name}={value} but contract declares it always_unavailable"
-            )
+    # Fail loudly when a required key is missing — the vocabulary is the
+    # contract and callers must satisfy it.
+    required = _REQUIRED_BY_CLASS[event_class]
+    missing = required - payload.keys()
+    if missing:
+        raise ValueError(
+            f"work-ledger event_class={event_class!r} missing required payload "
+            f"keys: {sorted(missing)}"
+        )
 
-    for measure_name in contract.required_measures:
-        value = getattr(event, measure_name, None)
-        if value is None:
-            issues.append(
-                f"WorkLedgerEvent {event.work_class.value}: "
-                f"{measure_name} is None but contract requires it"
-            )
+    timestamp = datetime.now(timezone.utc).isoformat()
+    payload_bytes = _canonical_json_bytes(payload)
+    content_hash = _content_hash(payload)
+    event_id = _stable_event_id(event_class, referenced_identity, payload_bytes)
 
-    return issues
+    event: Dict[str, Any] = {
+        "event_id": event_id,
+        "event_class": event_class,
+        "referenced_identity": referenced_identity,
+        "content_hash": content_hash,
+        "timestamp": timestamp,
+        "payload": payload,
+        "_non_authoritative": True,
+    }
 
+    # Append‑only write — no locking needed for the minimal vocabulary
+    # because this file is evidence‑only and concurrent write interleaving
+    # is acceptable (each line is self‑contained JSON).
+    path = _ledger_path(plan_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event, ensure_ascii=False) + "\n")
 
-# ---------------------------------------------------------------------------
-# Convenience builders
-# ---------------------------------------------------------------------------
-
-
-def emit_productive(
-    plan_dir: Path,
-    *,
-    task_id: str | None = None,
-    batch_id: str | None = None,
-    attempt_id: str | None = None,
-    elapsed_ms: int | None = None,
-    model_calls: int | None = None,
-    prompt_tokens: int | None = None,
-    completion_tokens: int | None = None,
-    total_tokens: int | None = None,
-    cost_usd: float | None = None,
-    accepted_output_delta: int | None = None,
-    unavailable_reason: str | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    """Emit a *productive* work ledger event (task execution)."""
-    event = WorkLedgerEvent(
-        work_class=WorkClass.PRODUCTIVE,
-        task_id=task_id,
-        batch_id=batch_id,
-        attempt_id=attempt_id,
-        elapsed_ms=elapsed_ms,
-        model_calls=model_calls,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=total_tokens,
-        cost_usd=cost_usd,
-        accepted_output_delta=accepted_output_delta,
-        unavailable_reason=unavailable_reason,
-        metadata=dict(metadata or {}),
-    )
-    emit_work_ledger_event(plan_dir, event)
+    return event
 
 
-def emit_review_proof(
-    plan_dir: Path,
-    *,
-    task_id: str | None = None,
-    batch_id: str | None = None,
-    attempt_id: str | None = None,
-    elapsed_ms: int | None = None,
-    model_calls: int | None = None,
-    prompt_tokens: int | None = None,
-    completion_tokens: int | None = None,
-    total_tokens: int | None = None,
-    cost_usd: float | None = None,
-    accepted_output_delta: int | None = None,
-    unavailable_reason: str | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    """Emit a *review/proof* work ledger event."""
-    event = WorkLedgerEvent(
-        work_class=WorkClass.REVIEW_PROOF,
-        task_id=task_id,
-        batch_id=batch_id,
-        attempt_id=attempt_id,
-        elapsed_ms=elapsed_ms,
-        model_calls=model_calls,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=total_tokens,
-        cost_usd=cost_usd,
-        accepted_output_delta=accepted_output_delta,
-        unavailable_reason=unavailable_reason,
-        metadata=dict(metadata or {}),
-    )
-    emit_work_ledger_event(plan_dir, event)
+def read_work_ledger(plan_dir: Path) -> List[Dict[str, Any]]:
+    """Read all work‑ledger events (read‑only, non‑authoritative)."""
+    path = _ledger_path(plan_dir)
+    if not path.exists():
+        return []
+    events: List[Dict[str, Any]] = []
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return events
 
 
-def emit_queue_idle(
-    plan_dir: Path,
-    *,
-    elapsed_ms: int | None = None,
-    task_id: str | None = None,
-    batch_id: str | None = None,
-    attempt_id: str | None = None,
-    unavailable_reason: str | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    """Emit a *queue/idle* work ledger event."""
-    event = WorkLedgerEvent(
-        work_class=WorkClass.QUEUE_IDLE,
-        task_id=task_id,
-        batch_id=batch_id,
-        attempt_id=attempt_id,
-        elapsed_ms=elapsed_ms,
-        model_calls=0,
-        prompt_tokens=0,
-        completion_tokens=0,
-        total_tokens=0,
-        cost_usd=0.0,
-        unavailable_reason=unavailable_reason or "queue_idle_no_model_no_output_delta",
-        metadata=dict(metadata or {}),
-    )
-    emit_work_ledger_event(plan_dir, event)
-
-
-def emit_retry_wait(
-    plan_dir: Path,
-    *,
-    elapsed_ms: int | None = None,
-    task_id: str | None = None,
-    batch_id: str | None = None,
-    attempt_id: str | None = None,
-    unavailable_reason: str | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    """Emit a *retry wait* work ledger event."""
-    event = WorkLedgerEvent(
-        work_class=WorkClass.RETRY_WAIT,
-        task_id=task_id,
-        batch_id=batch_id,
-        attempt_id=attempt_id,
-        elapsed_ms=elapsed_ms,
-        model_calls=0,
-        prompt_tokens=0,
-        completion_tokens=0,
-        total_tokens=0,
-        cost_usd=0.0,
-        unavailable_reason=unavailable_reason or "retry_wait_no_model_no_output_delta",
-        metadata=dict(metadata or {}),
-    )
-    emit_work_ledger_event(plan_dir, event)
-
-
-def emit_compaction(
-    plan_dir: Path,
-    *,
-    elapsed_ms: int | None = None,
-    task_id: str | None = None,
-    batch_id: str | None = None,
-    attempt_id: str | None = None,
-    model_calls: int | None = None,
-    prompt_tokens: int | None = None,
-    completion_tokens: int | None = None,
-    total_tokens: int | None = None,
-    cost_usd: float | None = None,
-    accepted_output_delta: int | None = None,
-    unavailable_reason: str | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    """Emit a *compaction* work ledger event."""
-    event = WorkLedgerEvent(
-        work_class=WorkClass.COMPACTION,
-        task_id=task_id,
-        batch_id=batch_id,
-        attempt_id=attempt_id,
-        elapsed_ms=elapsed_ms,
-        model_calls=model_calls,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=total_tokens,
-        cost_usd=cost_usd,
-        accepted_output_delta=accepted_output_delta,
-        unavailable_reason=unavailable_reason,
-        metadata=dict(metadata or {}),
-    )
-    emit_work_ledger_event(plan_dir, event)
+# ═══════════════════════════════════════════════════════════════════════════
+# Convenience emitters (one per event class)
+# ═══════════════════════════════════════════════════════════════════════════
 
 
 def emit_validation(
     plan_dir: Path,
     *,
-    task_id: str | None = None,
-    batch_id: str | None = None,
-    attempt_id: str | None = None,
-    elapsed_ms: int | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    """Emit a *validation* work ledger event (deterministic, no model)."""
-    event = WorkLedgerEvent(
-        work_class=WorkClass.VALIDATION,
-        task_id=task_id,
-        batch_id=batch_id,
-        attempt_id=attempt_id,
-        elapsed_ms=elapsed_ms,
-        model_calls=0,
-        prompt_tokens=0,
-        completion_tokens=0,
-        total_tokens=0,
-        cost_usd=0.0,
-        unavailable_reason="subprocess_validation_no_model",
-        metadata=dict(metadata or {}),
+    task_id: str,
+    job_id: str,
+    command: str,
+    exit_code: int,
+    duration_ms: int,
+    evidence_hash: str = "",
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Emit a ``validation`` work‑ledger event.
+
+    Records the outcome of a deterministic harness validation job — no model
+    call was consumed.  The *evidence_hash* should be the content hash of the
+    validation output artifact.
+    """
+    payload: Dict[str, Any] = {
+        "task_id": task_id,
+        "job_id": job_id,
+        "command": command,
+        "exit_code": exit_code,
+        "duration_ms": duration_ms,
+        "evidence_hash": evidence_hash,
+    }
+    payload.update(extra)
+    return append_work_ledger_event(
+        plan_dir,
+        event_class="validation",
+        referenced_identity=task_id,
+        payload=payload,
     )
-    emit_work_ledger_event(plan_dir, event)
 
 
-def emit_repair_verification(
+def emit_repair_verify(
     plan_dir: Path,
     *,
-    task_id: str | None = None,
-    batch_id: str | None = None,
-    attempt_id: str | None = None,
-    elapsed_ms: int | None = None,
-    unavailable_reason: str | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    """Emit a *repair/verification* work ledger event."""
-    event = WorkLedgerEvent(
-        work_class=WorkClass.REPAIR_VERIFICATION,
-        task_id=task_id,
-        batch_id=batch_id,
-        attempt_id=attempt_id,
-        elapsed_ms=elapsed_ms,
-        model_calls=0,
-        prompt_tokens=0,
-        completion_tokens=0,
-        total_tokens=0,
-        cost_usd=0.0,
-        unavailable_reason=unavailable_reason or "read_only_verification_no_model",
-        metadata=dict(metadata or {}),
+    task_id: str,
+    receipt_hash: str,
+    outcome: str,
+    duration_ms: int,
+    grant_match: bool = True,
+    fence_match: bool = True,
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Emit a ``repair_verify`` work‑ledger event.
+
+    Records verify‑only repair receipt adoption.  *grant_match* and
+    *fence_match* indicate whether the current Run Authority grant / fence
+    matched the receipt's expectations.  Mismatch quarantines the receipt
+    without adopting it.
+    """
+    payload: Dict[str, Any] = {
+        "task_id": task_id,
+        "receipt_hash": receipt_hash,
+        "outcome": outcome,
+        "duration_ms": duration_ms,
+        "grant_match": grant_match,
+        "fence_match": fence_match,
+    }
+    payload.update(extra)
+    return append_work_ledger_event(
+        plan_dir,
+        event_class="repair_verify",
+        referenced_identity=task_id,
+        payload=payload,
     )
-    emit_work_ledger_event(plan_dir, event)
+
+
+def emit_productive(
+    plan_dir: Path,
+    *,
+    task_id: str,
+    work_class: str,
+    duration_ms: int,
+    tokens: Optional[int] = None,
+    cost_usd: Optional[float] = None,
+    model_calls: Optional[int] = None,
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Emit a ``productive`` work‑ledger event.
+
+    Records productive implementation work (model inference, tool execution,
+    or other value‑generating activity).  Optional *tokens*, *cost_usd*, and
+    *model_calls* provide per‑event cost attribution.
+    """
+    payload: Dict[str, Any] = {
+        "task_id": task_id,
+        "work_class": work_class,
+        "duration_ms": duration_ms,
+    }
+    if tokens is not None:
+        payload["tokens"] = tokens
+    if cost_usd is not None:
+        payload["cost_usd"] = cost_usd
+    if model_calls is not None:
+        payload["model_calls"] = model_calls
+    payload.update(extra)
+    return append_work_ledger_event(
+        plan_dir,
+        event_class="productive",
+        referenced_identity=task_id,
+        payload=payload,
+    )
+
+
+def emit_unavailable_reason(
+    plan_dir: Path,
+    *,
+    task_id: str,
+    measure: str,
+    reason: str,
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Emit an ``unavailable_reason`` work‑ledger event.
+
+    Records *why* a specific telemetry measure is unavailable.  The absence
+    is explicit — never defaulted to zero or labelled as success evidence.
+
+    Example *measure* values: ``"tokens"``, ``"cost_usd"``, ``"duration_ms"``,
+    ``"model_calls"``.
+    """
+    payload: Dict[str, Any] = {
+        "task_id": task_id,
+        "measure": measure,
+        "reason": reason,
+    }
+    payload.update(extra)
+    return append_work_ledger_event(
+        plan_dir,
+        event_class="unavailable_reason",
+        referenced_identity=task_id,
+        payload=payload,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Extended event‑class emitters (review_proof, queue, retry_wait, compaction,
+# replay, tool, git, transition)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def emit_review_proof(
+    plan_dir: Path,
+    *,
+    task_id: str,
+    review_kind: str,
+    duration_ms: int,
+    verdict: str = "",
+    reviewer_id: str = "",
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Emit a ``review_proof`` work‑ledger event.
+
+    Records time spent on review/proof work — code review, quality
+    assessment, or proof generation.  *review_kind* should be one of
+    ``"code_review"``, ``"quality_check"``, or ``"proof_generation"``.
+    """
+    payload: Dict[str, Any] = {
+        "task_id": task_id,
+        "review_kind": review_kind,
+        "duration_ms": duration_ms,
+    }
+    if verdict:
+        payload["verdict"] = verdict
+    if reviewer_id:
+        payload["reviewer_id"] = reviewer_id
+    payload.update(extra)
+    return append_work_ledger_event(
+        plan_dir,
+        event_class="review_proof",
+        referenced_identity=task_id,
+        payload=payload,
+    )
+
+
+def emit_queue(
+    plan_dir: Path,
+    *,
+    task_id: str,
+    duration_ms: int,
+    queue_reason: str = "",
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Emit a ``queue`` work‑ledger event.
+
+    Records time spent waiting for a worker slot after admission.
+    *queue_reason* describes why the task was queued (e.g. ``"slot_wait"``,
+    ``"worker_unavailable"``, ``"scheduling"``).
+    """
+    payload: Dict[str, Any] = {
+        "task_id": task_id,
+        "duration_ms": duration_ms,
+    }
+    if queue_reason:
+        payload["queue_reason"] = queue_reason
+    payload.update(extra)
+    return append_work_ledger_event(
+        plan_dir,
+        event_class="queue",
+        referenced_identity=task_id,
+        payload=payload,
+    )
+
+
+def emit_retry_wait(
+    plan_dir: Path,
+    *,
+    task_id: str,
+    duration_ms: int,
+    attempt_number: int,
+    wait_reason: str = "",
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Emit a ``retry_wait`` work‑ledger event.
+
+    Records time spent waiting between retry attempts (backoff, provider
+    cooldown, circuit delay).  *attempt_number* is the retry attempt that
+    was waiting (1‑indexed).
+    """
+    payload: Dict[str, Any] = {
+        "task_id": task_id,
+        "duration_ms": duration_ms,
+        "attempt_number": attempt_number,
+    }
+    if wait_reason:
+        payload["wait_reason"] = wait_reason
+    payload.update(extra)
+    return append_work_ledger_event(
+        plan_dir,
+        event_class="retry_wait",
+        referenced_identity=task_id,
+        payload=payload,
+    )
+
+
+def emit_compaction(
+    plan_dir: Path,
+    *,
+    task_id: str,
+    duration_ms: int,
+    compacted_tokens: Optional[int] = None,
+    strategy: str = "",
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Emit a ``compaction`` work‑ledger event.
+
+    Records time spent compacting conversation context for budget
+    management.  *compacted_tokens* is the number of tokens removed;
+    *strategy* describes the compaction method (e.g. ``"summary"``,
+    ``"truncation"``).
+    """
+    payload: Dict[str, Any] = {
+        "task_id": task_id,
+        "duration_ms": duration_ms,
+    }
+    if compacted_tokens is not None:
+        payload["compacted_tokens"] = compacted_tokens
+    if strategy:
+        payload["strategy"] = strategy
+    payload.update(extra)
+    return append_work_ledger_event(
+        plan_dir,
+        event_class="compaction",
+        referenced_identity=task_id,
+        payload=payload,
+    )
 
 
 def emit_replay(
     plan_dir: Path,
     *,
-    task_id: str | None = None,
-    batch_id: str | None = None,
-    attempt_id: str | None = None,
-    elapsed_ms: int | None = None,
-    model_calls: int | None = None,
-    prompt_tokens: int | None = None,
-    completion_tokens: int | None = None,
-    total_tokens: int | None = None,
-    cost_usd: float | None = None,
-    accepted_output_delta: int | None = None,
-    unavailable_reason: str | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    """Emit a *replay* work ledger event."""
-    event = WorkLedgerEvent(
-        work_class=WorkClass.REPLAY,
-        task_id=task_id,
-        batch_id=batch_id,
-        attempt_id=attempt_id,
-        elapsed_ms=elapsed_ms,
-        model_calls=model_calls,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=total_tokens,
-        cost_usd=cost_usd,
-        accepted_output_delta=accepted_output_delta,
-        unavailable_reason=unavailable_reason,
-        metadata=dict(metadata or {}),
-    )
-    emit_work_ledger_event(plan_dir, event)
+    task_id: str,
+    duration_ms: int,
+    fixture_path: str = "",
+    exit_code: Optional[int] = None,
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Emit a ``replay`` work‑ledger event.
 
-
-# ---------------------------------------------------------------------------
-# Natural-boundary producers
-# ---------------------------------------------------------------------------
-
-
-def _positive_int(value: Any) -> int | None:
-    try:
-        coerced = int(value)
-    except (TypeError, ValueError):
-        return None
-    return coerced if coerced > 0 else None
-
-
-def _nonnegative_int(value: Any) -> int | None:
-    try:
-        coerced = int(value)
-    except (TypeError, ValueError):
-        return None
-    return coerced if coerced >= 0 else None
-
-
-def _positive_float(value: Any) -> float | None:
-    try:
-        coerced = float(value)
-    except (TypeError, ValueError):
-        return None
-    return coerced if coerced > 0 else None
-
-
-def _emit_event(plan_dir: Path, kind: str, *, phase: str | None, payload: dict[str, Any]) -> None:
-    try:
-        from arnold_pipelines.megaplan.observability.events import emit
-
-        emit(kind, plan_dir=plan_dir, phase=phase, payload=payload)
-    except Exception:
-        log.debug("Work ledger companion event emission skipped", exc_info=True)
-
-
-def _missing_reason(measures: dict[str, Any], fallback: str) -> str | None:
-    missing = [name for name, value in measures.items() if value is None]
-    if not missing:
-        return None
-    return f"{fallback}: {','.join(missing)}"
-
-
-def _duration_seconds(elapsed_ms: int | None) -> float | None:
-    if elapsed_ms is None:
-        return None
-    return elapsed_ms / 1000.0
-
-
-def _attempt_id_from_worker(worker: Any, fallback: str | None = None) -> str | None:
-    auth_metadata = getattr(worker, "auth_metadata", None)
-    if isinstance(auth_metadata, dict):
-        wbc_dispatch = auth_metadata.get("wbc_dispatch")
-        if isinstance(wbc_dispatch, dict):
-            attempt_id = wbc_dispatch.get("attempt_id")
-            if isinstance(attempt_id, str) and attempt_id:
-                return attempt_id
-    return fallback
-
-
-def _worker_measurements(
-    worker: Any,
-    *,
-    model_calls: int,
-    accepted_output_delta: int | None,
-) -> dict[str, Any]:
-    return {
-        "elapsed_ms": _positive_int(getattr(worker, "duration_ms", None)),
-        "model_calls": model_calls,
-        "prompt_tokens": _positive_int(getattr(worker, "prompt_tokens", None)),
-        "completion_tokens": _positive_int(getattr(worker, "completion_tokens", None)),
-        "total_tokens": _positive_int(getattr(worker, "total_tokens", None)),
-        "cost_usd": _positive_float(getattr(worker, "cost_usd", None)),
-        "accepted_output_delta": accepted_output_delta,
-    }
-
-
-def emit_session_start(
-    plan_dir: Path,
-    *,
-    phase: str | None,
-    session_id: str | None,
-    agent: str | None = None,
-    model: str | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    """Emit the companion session-start event for work-ledger joins."""
-
-    if not session_id:
-        return
-    try:
-        from arnold_pipelines.megaplan.observability.events import EventKind
-    except Exception:
-        return
-    payload = {
-        "session_id": session_id,
-        "agent": agent,
-        "model": model,
-    }
-    payload.update(dict(metadata or {}))
-    _emit_event(plan_dir, EventKind.SESSION_START, phase=phase, payload=payload)
-
-
-def emit_worker_inference(
-    plan_dir: Path,
-    *,
-    phase: str,
-    worker: Any,
-    work_class: WorkClass,
-    task_id: str | None = None,
-    batch_id: str | None = None,
-    attempt_id: str | None = None,
-    agent: str | None = None,
-    model_calls: int = 1,
-    accepted_output_delta: int | None = None,
-    unavailable_reason: str | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    """Emit joined session, inference, and work-ledger rows for a worker call."""
-
-    resolved_attempt_id = _attempt_id_from_worker(worker, attempt_id)
-    model_actual = getattr(worker, "model_actual", None)
-    session_id = getattr(worker, "session_id", None)
-    emit_session_start(
-        plan_dir,
-        phase=phase,
-        session_id=session_id,
-        agent=agent,
-        model=model_actual,
-        metadata={"attempt_id": resolved_attempt_id},
-    )
-    measures = _worker_measurements(
-        worker,
-        model_calls=model_calls,
-        accepted_output_delta=accepted_output_delta,
-    )
-    reason = unavailable_reason or _missing_reason(
-        measures,
-        "worker_measurement_unavailable",
-    )
-    companion_payload = {
-        "phase": phase,
+    Records time spent on deterministic replay of captured fixtures for
+    proof generation.  *fixture_path* identifies the replayed fixture;
+    *exit_code* is the replay subprocess exit code.
+    """
+    payload: Dict[str, Any] = {
         "task_id": task_id,
-        "batch_id": batch_id,
-        "attempt_id": resolved_attempt_id,
-        "session_id": session_id,
-        "agent": agent,
-        "model": model_actual,
-        "model_calls": model_calls,
-        "tokens_in": measures["prompt_tokens"],
-        "tokens_out": measures["completion_tokens"],
-        "total_tokens": measures["total_tokens"],
-        "cost_usd": measures["cost_usd"],
-        "duration_ms": measures["elapsed_ms"],
-        "duration_s": _duration_seconds(measures["elapsed_ms"]),
-        "accepted_output_delta": accepted_output_delta,
-        "unavailable_reason": reason,
+        "duration_ms": duration_ms,
     }
-    companion_payload.update(dict(metadata or {}))
-    try:
-        from arnold_pipelines.megaplan.observability.events import EventKind
-
-        _emit_event(plan_dir, EventKind.INFERENCE, phase=phase, payload=companion_payload)
-    except Exception:
-        log.debug("Work ledger inference companion event skipped", exc_info=True)
-
-    emit_fn = emit_productive if work_class is WorkClass.PRODUCTIVE else emit_review_proof
-    emit_fn(
+    if fixture_path:
+        payload["fixture_path"] = fixture_path
+    if exit_code is not None:
+        payload["exit_code"] = exit_code
+    payload.update(extra)
+    return append_work_ledger_event(
         plan_dir,
-        task_id=task_id,
-        batch_id=batch_id,
-        attempt_id=resolved_attempt_id,
-        elapsed_ms=measures["elapsed_ms"],
-        model_calls=model_calls,
-        prompt_tokens=measures["prompt_tokens"],
-        completion_tokens=measures["completion_tokens"],
-        total_tokens=measures["total_tokens"],
-        cost_usd=measures["cost_usd"],
-        accepted_output_delta=accepted_output_delta,
-        unavailable_reason=reason,
-        metadata=companion_payload,
+        event_class="replay",
+        referenced_identity=task_id,
+        payload=payload,
     )
 
 
-def emit_tool_activity(
+def emit_tool(
     plan_dir: Path,
     *,
-    phase: str,
+    task_id: str,
     tool_name: str,
-    work_class: WorkClass = WorkClass.VALIDATION,
-    elapsed_ms: int | None = None,
-    task_id: str | None = None,
-    batch_id: str | None = None,
-    attempt_id: str | None = None,
-    unavailable_reason: str | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    """Emit a non-model tool boundary as an event plus ledger row."""
+    duration_ms: int,
+    exit_code: Optional[int] = None,
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Emit a ``tool`` work‑ledger event.
 
-    try:
-        from arnold_pipelines.megaplan.observability.events import EventKind
-
-        _emit_event(
-            plan_dir,
-            EventKind.TOOL,
-            phase=phase,
-            payload={
-                "phase": phase,
-                "tool_name": tool_name,
-                "work_class": work_class.value,
-                "elapsed_ms": elapsed_ms,
-                "duration_s": _duration_seconds(elapsed_ms),
-                "task_id": task_id,
-                "batch_id": batch_id,
-                "attempt_id": attempt_id,
-                **dict(metadata or {}),
-            },
-        )
-    except Exception:
-        log.debug("Work ledger tool companion event skipped", exc_info=True)
-
-    if work_class is WorkClass.REPAIR_VERIFICATION:
-        emit_repair_verification(
-            plan_dir,
-            task_id=task_id,
-            batch_id=batch_id,
-            attempt_id=attempt_id,
-            elapsed_ms=elapsed_ms,
-            unavailable_reason=unavailable_reason,
-            metadata={"phase": phase, "tool_name": tool_name, **dict(metadata or {})},
-        )
-    else:
-        emit_validation(
-            plan_dir,
-            task_id=task_id,
-            batch_id=batch_id,
-            attempt_id=attempt_id,
-            elapsed_ms=elapsed_ms,
-            metadata={"phase": phase, "tool_name": tool_name, **dict(metadata or {})},
-        )
+    Records time spent executing tool calls (shell, file operations,
+    API calls).  *tool_name* identifies the tool (e.g. ``"terminal"``,
+    ``"read_file"``, ``"search_files"``).
+    """
+    payload: Dict[str, Any] = {
+        "task_id": task_id,
+        "tool_name": tool_name,
+        "duration_ms": duration_ms,
+    }
+    if exit_code is not None:
+        payload["exit_code"] = exit_code
+    payload.update(extra)
+    return append_work_ledger_event(
+        plan_dir,
+        event_class="tool",
+        referenced_identity=task_id,
+        payload=payload,
+    )
 
 
-def emit_git_activity(
+def emit_git(
     plan_dir: Path,
     *,
-    phase: str,
+    task_id: str,
     operation: str,
-    argv: list[str] | tuple[str, ...] | None = None,
-    elapsed_ms: int | None = None,
-    returncode: int | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    """Emit a Git boundary without making Git output authoritative."""
+    duration_ms: int,
+    exit_code: Optional[int] = None,
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Emit a ``git`` work‑ledger event.
 
-    payload = {
-        "phase": phase,
+    Records time spent on Git operations (commits, diffs, status checks).
+    *operation* identifies the Git command (e.g. ``"commit"``, ``"diff"``,
+    ``"status"``, ``"checkout"``).
+    """
+    payload: Dict[str, Any] = {
+        "task_id": task_id,
         "operation": operation,
-        "argv": list(argv or ()),
-        "elapsed_ms": elapsed_ms,
-        "duration_s": _duration_seconds(elapsed_ms),
-        "returncode": returncode,
-        **dict(metadata or {}),
+        "duration_ms": duration_ms,
     }
-    try:
-        from arnold_pipelines.megaplan.observability.events import EventKind
-
-        _emit_event(plan_dir, EventKind.GIT, phase=phase, payload=payload)
-    except Exception:
-        log.debug("Work ledger git companion event skipped", exc_info=True)
-    emit_tool_activity(
+    if exit_code is not None:
+        payload["exit_code"] = exit_code
+    payload.update(extra)
+    return append_work_ledger_event(
         plan_dir,
-        phase=phase,
-        tool_name=f"git:{operation}",
-        elapsed_ms=elapsed_ms,
-        metadata=payload,
+        event_class="git",
+        referenced_identity=task_id,
+        payload=payload,
     )
 
 
-def emit_transition_activity(
+def emit_transition(
     plan_dir: Path,
     *,
-    phase: str | None,
-    transition: str,
-    from_state: str | None = None,
-    to_state: str | None = None,
-    elapsed_ms: int | None = 0,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    """Emit a workflow transition companion event and zero-model ledger row."""
+    task_id: str,
+    from_state: str,
+    to_state: str,
+    duration_ms: int,
+    **extra: Any,
+) -> Dict[str, Any]:
+    """Emit a ``transition`` work‑ledger event.
 
-    payload = {
-        "transition": transition,
-        "from": from_state,
-        "to": to_state,
-        "elapsed_ms": elapsed_ms,
-        "duration_s": _duration_seconds(elapsed_ms),
-        **dict(metadata or {}),
+    Records time spent on lifecycle state transitions (plan/chain/task
+    phase changes).  *from_state* and *to_state* capture the transition
+    endpoints.
+    """
+    payload: Dict[str, Any] = {
+        "task_id": task_id,
+        "from_state": from_state,
+        "to_state": to_state,
+        "duration_ms": duration_ms,
     }
-    try:
-        from arnold_pipelines.megaplan.observability.events import EventKind
-
-        _emit_event(plan_dir, EventKind.TRANSITION, phase=phase, payload=payload)
-    except Exception:
-        log.debug("Work ledger transition companion event skipped", exc_info=True)
-    emit_tool_activity(
+    payload.update(extra)
+    return append_work_ledger_event(
         plan_dir,
-        phase=phase or "transition",
-        tool_name=f"transition:{transition}",
-        elapsed_ms=elapsed_ms,
-        metadata=payload,
+        event_class="transition",
+        referenced_identity=task_id,
+        payload=payload,
     )
 
 
-def emit_strategy_m4_baseline_events(plan_dir: Path) -> None:
-    """Preserve the known Strategy M4 work split as productive/proof evidence."""
+# ═══════════════════════════════════════════════════════════════════════════
+# Reconciliation primitives — rebuildable aggregation from ledger events
+# ═══════════════════════════════════════════════════════════════════════════
+# These functions read the ledger and produce aggregate summaries.  Every
+# measure that cannot be computed is explicitly ``null`` (UNKNOWN), never
+# defaulted to zero or labelled as success evidence.
 
-    emit_productive(
-        plan_dir,
-        elapsed_ms=7_397_000,
-        unavailable_reason="strategy_m4_historical_usage_unavailable",
-        metadata={
-            "phase": "execute",
-            "boundary": "strategy_m4_historical_baseline",
-            "duration_label": "2h03m17s",
-            "classification_guard": "productive_implementation_not_waste",
+
+def _safe_sum_duration_ms(events: List[Dict[str, Any]]) -> Optional[int]:
+    """Sum ``duration_ms`` across events, returning None if no event has it."""
+    total = 0
+    found = False
+    for e in events:
+        d = e.get("payload", {}).get("duration_ms")
+        if isinstance(d, (int, float)):
+            total += int(d)
+            found = True
+    return total if found else None
+
+
+def aggregate_by_class(
+    plan_dir: Path,
+) -> Dict[str, Dict[str, Any]]:
+    """Group ledger events by event class with aggregated statistics.
+
+    Returns a dict mapping each event class to:
+    - ``count``: number of events
+    - ``total_duration_ms``: summed duration (null when unavailable)
+    - ``task_ids``: deduplicated set of referenced identities
+    - ``category``: ``"productive"`` or ``"overhead"``
+
+    This is a rebuildable function — same ledger → same output (deterministic
+    aside from timestamp-dependent fields, which are excluded from the
+    aggregate).
+    """
+    events = read_work_ledger(plan_dir)
+    by_class: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for e in events:
+        by_class[e["event_class"]].append(e)
+
+    result: Dict[str, Dict[str, Any]] = {}
+    for cls in sorted(WORK_LEDGER_EVENT_CLASSES):
+        group = by_class.get(cls, [])
+        task_ids = sorted({e["referenced_identity"] for e in group})
+        total_duration = _safe_sum_duration_ms(group)
+        category = (
+            "value_work" if cls in _VALUE_WORK_CLASSES
+            else "non_value_work" if cls in _NON_VALUE_WORK_CLASSES
+            else "gap" if cls in _GAP_CLASSES
+            else "other"
+        )
+        result[cls] = {
+            "count": len(group),
+            "total_duration_ms": total_duration,
+            "task_ids": task_ids,
+            "category": category,
+        }
+    return result
+
+
+def aggregate_by_task(
+    plan_dir: Path,
+) -> Dict[str, Dict[str, Any]]:
+    """Group ledger events by referenced identity with per‑class breakdown.
+
+    Returns a dict mapping each referenced identity to:
+    - ``event_classes``: dict of event_class → count
+    - ``total_duration_ms``: summed duration (null when unavailable)
+    - ``unavailable_measures``: list of (measure, reason) pairs
+
+    This is a rebuildable function — same ledger → same output.
+    """
+    events = read_work_ledger(plan_dir)
+    by_task: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for e in events:
+        by_task[e["referenced_identity"]].append(e)
+
+    result: Dict[str, Dict[str, Any]] = {}
+    for task_id in sorted(by_task):
+        group = by_task[task_id]
+        class_counts: Dict[str, int] = defaultdict(int)
+        unavailable: List[Tuple[str, str]] = []
+        for e in group:
+            class_counts[e["event_class"]] += 1
+            if e["event_class"] == "unavailable_reason":
+                m = e.get("payload", {}).get("measure", "")
+                r = e.get("payload", {}).get("reason", "")
+                unavailable.append((m, r))
+
+        total_duration = _safe_sum_duration_ms(group)
+        result[task_id] = {
+            "event_classes": dict(sorted(class_counts.items())),
+            "total_duration_ms": total_duration,
+            "unavailable_measures": unavailable,
+        }
+    return result
+
+
+def reconcile_unavailable_measures(
+    plan_dir: Path,
+) -> List[Dict[str, str]]:
+    """Return every unavailable measure with its reason from the ledger.
+
+    Each entry: ``{"task_id": …, "measure": …, "reason": …}``.
+    The absence of a measure is explicit; missing cost/tokens/calls are
+    never defaulted to zero.
+    """
+    events = read_work_ledger(plan_dir)
+    result: List[Dict[str, str]] = []
+    for e in events:
+        if e["event_class"] != "unavailable_reason":
+            continue
+        result.append({
+            "task_id": e["referenced_identity"],
+            "measure": e.get("payload", {}).get("measure", ""),
+            "reason": e.get("payload", {}).get("reason", ""),
+        })
+    return result
+
+
+# ── M9: Fine-grained projection categories ──────────────────────────────────
+
+
+# Base category mapping (static — event classes that map without inspection).
+_CATEGORY_MAP: Dict[str, str] = {
+    "productive": "productive",
+    "replay": "replayed",
+    "validation": "validation_only",
+    "repair_verify": "repair_verify",
+    "retry_wait": "retry_rework",
+    "compaction": "queue_compaction",
+    "git": "git",
+    "transition": "transition",
+    "unavailable_reason": "unavailable",
+    "tool": "legitimate_implementation",
+    "queue": "queue_compaction",
+    # review_proof is resolved dynamically based on review_kind
+}
+
+
+def _resolve_category(event: Dict[str, Any]) -> str:
+    """Resolve the M9 projection category for a single ledger event.
+
+    Most event classes map statically via ``_CATEGORY_MAP``.
+    ``review_proof`` events are split dynamically based on
+    ``review_kind`` to distinguish review from proof work.
+    """
+    cls = event["event_class"]
+
+    if cls == "review_proof":
+        review_kind = event.get("payload", {}).get("review_kind", "")
+        if review_kind == "proof_generation":
+            return "proof"
+        # code_review, quality_check, or unknown → review
+        return "review"
+
+    return _CATEGORY_MAP.get(cls, cls)
+
+
+# All M9 projection categories (deterministic sorted order for rebuild stability).
+_PROJECTION_CATEGORIES: FrozenSet[str] = frozenset({
+    "productive",
+    "replayed",
+    "retry_rework",
+    "queue_compaction",
+    "validation_only",
+    "unavailable",
+    "legitimate_implementation",
+    "review",
+    "proof",
+})
+
+# Categories that represent legitimate value-producing work.
+_VALUE_CATEGORIES: FrozenSet[str] = frozenset({
+    "productive",
+    "replayed",
+    "validation_only",
+    "repair_verify",
+    "legitimate_implementation",
+    "review",
+    "proof",
+})
+
+# Categories that represent non-value overhead.
+_NON_VALUE_CATEGORIES: FrozenSet[str] = frozenset({
+    "retry_rework",
+    "queue_compaction",
+    "git",
+    "transition",
+})
+
+
+def aggregate_by_category(
+    plan_dir: Path,
+) -> Dict[str, Dict[str, Any]]:
+    """Group ledger events by M9 projection category with exact identity joins.
+
+    Maps the 12 event classes into 9 projection categories:
+    productive, replayed, retry_rework, queue_compaction, validation_only,
+    unavailable, legitimate_implementation, review, proof.
+
+    ``review_proof`` events are split dynamically:
+    - ``code_review`` / ``quality_check`` → ``review``
+    - ``proof_generation`` → ``proof``
+
+    Each category entry carries:
+    - ``count``: total events in this category
+    - ``total_duration_ms``: summed duration (null when unavailable)
+    - ``event_ids``: exact event IDs contributing to this category
+    - ``task_ids``: deduplicated referenced identities
+    - ``source_classes``: which event classes feed this category
+    - ``classification``: ``value_work``, ``non_value_work``, or ``gap``
+    - ``_non_authoritative``: always True
+
+    This is a rebuildable function — same ledger → same output.
+    """
+    events = read_work_ledger(plan_dir)
+    by_category: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for e in events:
+        cat = _resolve_category(e)
+        by_category[cat].append(e)
+
+    result: Dict[str, Dict[str, Any]] = {}
+    for cat in sorted(_PROJECTION_CATEGORIES):
+        group = by_category.get(cat, [])
+        event_ids = sorted({e["event_id"] for e in group})
+        task_ids = sorted({e["referenced_identity"] for e in group})
+        source_classes = sorted({e["event_class"] for e in group})
+        total_duration = _safe_sum_duration_ms(group)
+        classification = (
+            "value_work" if cat in _VALUE_CATEGORIES
+            else "non_value_work" if cat in _NON_VALUE_CATEGORIES
+            else "gap"
+        )
+        result[cat] = {
+            "count": len(group),
+            "total_duration_ms": total_duration,
+            "event_ids": event_ids,
+            "task_ids": task_ids,
+            "source_classes": source_classes,
+            "classification": classification,
+            "_non_authoritative": True,
+        }
+    return result
+
+
+def build_category_identity_joins(
+    plan_dir: Path,
+) -> Dict[str, Dict[str, Any]]:
+    """Expose exact identity joins per category: which event IDs belong where.
+
+    Returns a dict mapping each category to:
+    - ``event_ids``: exact event IDs in this category
+    - ``event_id_count``: cardinality
+    - ``by_class``: event IDs grouped by source event class
+    - ``unavailable_denominator``: (unavailable_count, total_event_count)
+      indicating what fraction of category-relevant events lack telemetry
+
+    The unavailable denominator is computed per category: for each category,
+    ``unavailable_count`` is the number of ``unavailable_reason`` events that
+    reference tasks appearing in that category.  It is never defaulted to
+    zero when no unavailable events exist — it is simply zero for categories
+    with no unavailable evidence.
+    """
+    events = read_work_ledger(plan_dir)
+    by_category: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    unavailable_events: List[Dict[str, Any]] = []
+    for e in events:
+        if e["event_class"] == "unavailable_reason":
+            unavailable_events.append(e)
+        cat = _resolve_category(e)
+        by_category[cat].append(e)
+
+    # Build task_id → category mapping for unavailable denominator
+    task_categories: Dict[str, set] = defaultdict(set)
+    for cat, group in by_category.items():
+        if cat == "unavailable":
+            continue
+        for e in group:
+            task_categories[e["referenced_identity"]].add(cat)
+
+    total_events = len(events)
+    result: Dict[str, Dict[str, Any]] = {}
+    for cat in sorted(_PROJECTION_CATEGORIES):
+        group = by_category.get(cat, [])
+        event_ids = sorted({e["event_id"] for e in group})
+
+        # Group by source class
+        by_class: Dict[str, List[str]] = defaultdict(list)
+        for e in group:
+            by_class[e["event_class"]].append(e["event_id"])
+
+        # Unavailable denominator: for non-unavailable categories,
+        # count how many unavailable_reason events reference tasks in this category
+        unavailable_count = 0
+        if cat != "unavailable":
+            cat_task_ids = {e["referenced_identity"] for e in group}
+            for ue in unavailable_events:
+                if ue["referenced_identity"] in cat_task_ids:
+                    unavailable_count += 1
+
+        classification = (
+            "value_work" if cat in _VALUE_CATEGORIES
+            else "non_value_work" if cat in _NON_VALUE_CATEGORIES
+            else "gap"
+        )
+
+        result[cat] = {
+            "event_ids": event_ids,
+            "event_id_count": len(event_ids),
+            "by_class": {cls: sorted(ids) for cls, ids in sorted(by_class.items())},
+            "unavailable_denominator": {
+                "unavailable_count": unavailable_count,
+                "category_event_count": len(group),
+                "total_event_count": total_events,
+            },
+            "classification": classification,
+            "_non_authoritative": True,
+        }
+    return result
+
+
+def serialize_work_ledger_summary(
+    plan_dir: Path,
+    *,
+    indent: Optional[int] = None,
+) -> str:
+    """Serialize the full work-ledger summary to deterministic JSON.
+
+    This is a consumer-facing serializer that produces a deterministic,
+    rebuildable JSON representation of the work ledger.  The output
+    includes category breakdown, identity joins, per-task aggregation,
+    and totals with explicit classification so consumers can distinguish:
+
+    - ``productive`` — model inference work
+    - ``replayed`` — deterministic fixture replay
+    - ``retry_rework`` — retry wait and rework overhead
+    - ``queue_compaction`` — queue latency and context compaction
+    - ``validation_only`` — harness validation (not review)
+    - ``unavailable`` — telemetry gaps (not waste)
+    - ``legitimate_implementation`` — tool execution (not waste)
+    - ``review`` — code review and quality check (required, not waste)
+    - ``proof`` — proof generation work
+
+    Args:
+        plan_dir: Plan directory with ``work_ledger.ndjson``.
+        indent: JSON indentation (None = compact).
+
+    Returns:
+        Deterministic JSON string (sorted keys, stable ordering).
+    """
+    summary = build_work_class_summary(plan_dir)
+    return json.dumps(summary, sort_keys=True, indent=indent, ensure_ascii=False)
+
+
+def build_work_class_summary(
+    plan_dir: Path,
+) -> Dict[str, Any]:
+    """Produce a rebuildable aggregate summary from the work ledger.
+
+    The summary includes:
+    - ``by_class``: per‑event‑class aggregation (count, total_duration_ms,
+      category)
+    - ``by_category``: fine-grained M9 projection categories with exact
+      identity joins (event_ids, task_ids, source_classes, classification)
+    - ``identity_joins``: exact event-id-to-category mapping with unavailable
+      denominators
+    - ``by_task``: per‑task aggregation with class breakdown and unavailable
+      measures
+    - ``totals``: value_work duration, non_value_work duration, gap count
+    - ``_non_authoritative``: always ``true``
+    - ``_rebuildable``: always ``true`` (deterministic from ledger)
+
+    Every measure that cannot be computed is ``null``, never zero.
+    """
+    by_class = aggregate_by_class(plan_dir)
+    by_category = aggregate_by_category(plan_dir)
+    identity_joins = build_category_identity_joins(plan_dir)
+    by_task = aggregate_by_task(plan_dir)
+    unavailable = reconcile_unavailable_measures(plan_dir)
+
+    value_work_duration_ms: Optional[int] = None
+    non_value_work_duration_ms: Optional[int] = None
+
+    value_total = 0
+    value_found = False
+    non_value_total = 0
+    non_value_found = False
+    for cls, agg in by_class.items():
+        d = agg.get("total_duration_ms")
+        if d is None:
+            continue
+        if cls in _VALUE_WORK_CLASSES:
+            value_total += d
+            value_found = True
+        elif cls in _NON_VALUE_WORK_CLASSES:
+            non_value_total += d
+            non_value_found = True
+
+    if value_found:
+        value_work_duration_ms = value_total
+    if non_value_found:
+        non_value_work_duration_ms = non_value_total
+
+    return {
+        "by_class": by_class,
+        "by_category": by_category,
+        "identity_joins": identity_joins,
+        "by_task": by_task,
+        "totals": {
+            "value_work_duration_ms": value_work_duration_ms,
+            "non_value_work_duration_ms": non_value_work_duration_ms,
+            "gap_count": len(unavailable),
         },
-    )
-    emit_review_proof(
-        plan_dir,
-        unavailable_reason="strategy_m4_historical_review_usage_unavailable",
-        metadata={
-            "phase": "review",
-            "boundary": "strategy_m4_historical_baseline",
-            "classification_guard": "required_review_not_waste",
-        },
-    )
+        "unavailable_measures": unavailable,
+        "_non_authoritative": True,
+        "_rebuildable": True,
+    }
 
-
-# ---------------------------------------------------------------------------
-# Re-export for convenience
-# ---------------------------------------------------------------------------
 
 __all__ = [
-    "WorkClass",
-    "WorkLedgerEvent",
-    "ProducerContract",
-    "PRODUCER_CONTRACTS",
-    "validate_producer_contract",
-    "emit_work_ledger_event",
+    "WORK_LEDGER_EVENT_CLASSES",
+    "append_work_ledger_event",
+    "read_work_ledger",
+    "emit_validation",
+    "emit_repair_verify",
     "emit_productive",
+    "emit_unavailable_reason",
     "emit_review_proof",
-    "emit_queue_idle",
+    "emit_queue",
     "emit_retry_wait",
     "emit_compaction",
-    "emit_validation",
-    "emit_repair_verification",
     "emit_replay",
-    "emit_session_start",
-    "emit_worker_inference",
-    "emit_tool_activity",
-    "emit_git_activity",
-    "emit_transition_activity",
-    "emit_strategy_m4_baseline_events",
+    "emit_tool",
+    "emit_git",
+    "emit_transition",
+    "aggregate_by_class",
+    "aggregate_by_category",
+    "build_category_identity_joins",
+    "aggregate_by_task",
+    "reconcile_unavailable_measures",
+    "build_work_class_summary",
+    "serialize_work_ledger_summary",
+    "_resolve_category",
 ]

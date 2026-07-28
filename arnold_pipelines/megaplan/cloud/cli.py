@@ -455,6 +455,11 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         "resume-chain", parents=[shared], help="Explicitly resume a durably paused chain"
     )
     resume_chain_parser.add_argument("--actor", default="operator")
+    resume_chain_parser.add_argument(
+        "--no-start",
+        action="store_true",
+        help="clear pause authority without starting the remote chain runner",
+    )
 
     retire_chain_parser = cloud_sub.add_parser(
         "retire-chain",
@@ -676,6 +681,8 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             ]
             if action == "pause-chain":
                 argv.extend(["--reason", str(args.reason)])
+            elif bool(getattr(args, "no_start", False)):
+                argv.append("--no-start")
             result = provider.ssh_exec(shlex.join(argv))
             _relay_output(result, secret_names=spec.secrets, env=os.environ)
             return result.returncode

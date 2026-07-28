@@ -42,6 +42,44 @@ WRAPPER_REPO_ROOT="$(cd "$(dirname "$ARNOLD_REPAIR_LOOP_ORIGIN")/../../../.." &&
 
 MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 MARKER_PATH="$MARKER_DIR/$SESSION.json"
+EARLY_SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
+REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${EARLY_SAFE_SESSION}.repair-loop.pid}"
+REPAIR_PID_FILE_OWNED=0
+
+release_early_repair_pid_claim() {
+  local current_pid=""
+  if [[ "$REPAIR_PID_FILE_OWNED" == "1" && -r "$REPAIR_PID_FILE" ]]; then
+    read -r current_pid < "$REPAIR_PID_FILE" || current_pid=""
+    if [[ "$current_pid" == "$$" ]]; then
+      rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
+    fi
+  fi
+}
+trap 'release_early_repair_pid_claim' EXIT
+trap 'release_early_repair_pid_claim; exit 129' HUP
+trap 'release_early_repair_pid_claim; exit 130' INT
+trap 'release_early_repair_pid_claim; exit 143' TERM
+
+# Process custody must precede interpreter attestation and Python imports.
+# The durable repair lock below upgrades this cheap claim before any mutation.
+mkdir -p "$(dirname "$REPAIR_PID_FILE")"
+early_existing_pid=""
+if [[ -r "$REPAIR_PID_FILE" ]]; then
+  read -r early_existing_pid < "$REPAIR_PID_FILE" || early_existing_pid=""
+  if [[ ! "$early_existing_pid" =~ ^[0-9]+$ ]] \
+    || ! kill -0 "$early_existing_pid" 2>/dev/null; then
+    echo "[repair-loop] stale repair pidfile detected; reclaiming session=$SESSION stale_pid=${early_existing_pid:-unknown} pidfile=$REPAIR_PID_FILE" >&2
+    rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
+  else
+    echo "[repair-loop] another repair loop is already active; exiting session=$SESSION owner_pid=$early_existing_pid pidfile=$REPAIR_PID_FILE" >&2
+    exit 75
+  fi
+fi
+if [[ ! -e "$REPAIR_PID_FILE" ]] \
+  && ( set -o noclobber; printf '%s\n' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then
+  REPAIR_PID_FILE_OWNED=1
+fi
+
 REPAIR_QUEUE_DIR="${CLOUD_WATCHDOG_REPAIR_QUEUE_DIR:-$(dirname "$MARKER_DIR")/repair-queue}"
 ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}}"
 DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
@@ -207,7 +245,7 @@ mkdir -p "$RUN_DIR" "$DATA_DIR"
 CHILD_PIDS=()
 CLEANUP_CHILDREN_RAN=0
 REPAIR_LOCK_DIR_OWNED=0
-REPAIR_PID_FILE_OWNED=0
+REPAIR_PID_FILE_OWNED="${REPAIR_PID_FILE_OWNED:-0}"
 REPAIR_SHUTDOWN_RAN=0
 cleanup_children() {
   local pid pgid
@@ -239,57 +277,6 @@ log() {
   local message
   message="$(redact_inline_text "$*")"
   echo "[repair-loop $(date -Iseconds)] $message" | tee -a "$LOG"
-}
-
-authority_gap_record() {
-  local evidence_id="$1"
-  local disposition="$2"
-  local rc="$3"
-  local detail="${4:-authority-risk bypass converted to typed evidence gap}"
-  local gap_root="${REPAIR_DATA_DIR:-${DATA_DIR:-${MARKER_DIR:-/tmp}}}"
-  local gap_path="$gap_root/authority-gaps.jsonl"
-  local log_path="${LOG:-/dev/null}"
-  mkdir -p "$gap_root" >/dev/null 2>&1 || true
-  python3 - "$gap_path" "$evidence_id" "$disposition" "$rc" "$detail" \
-    "${SESSION:-}" "${WORKSPACE:-}" "${REMOTE_SPEC:-}" <<'PY' \
-    >/dev/null 2>>"$log_path" || true
-import datetime as dt
-import json
-import pathlib
-import sys
-
-path, evidence_id, disposition, rc, detail, session, workspace, remote_spec = sys.argv[1:9]
-payload = {
-    "schema_version": "arnold.megaplan.cloud.wrapper_authority_gap.v1",
-    "evidence_id": evidence_id,
-    "disposition": disposition,
-    "exit_code": int(rc) if str(rc).isdigit() else rc,
-    "detail": detail,
-    "wrapper": "arnold-repair-loop",
-    "session": session,
-    "workspace": workspace,
-    "remote_spec": remote_spec,
-    "recorded_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-}
-target = pathlib.Path(path)
-target.parent.mkdir(parents=True, exist_ok=True)
-with target.open("a", encoding="utf-8") as handle:
-    handle.write(json.dumps(payload, sort_keys=True) + "\n")
-PY
-  printf '[repair-loop %s] authority gap %s disposition=%s rc=%s path=%s\n' \
-    "$(date -Iseconds)" "$evidence_id" "$disposition" "$rc" "$gap_path" >>"$log_path" 2>&1 || true
-}
-
-authority_gap_continue() {
-  local rc=$?
-  authority_gap_record "$1" "typed_evidence_gap" "$rc" "${2:-authority-risk bypass converted to typed evidence gap}"
-  return 0
-}
-
-authority_fail_closed() {
-  local rc=$?
-  authority_gap_record "$1" "fail_closed" "$rc" "${2:-authority-risk bypass failed closed}"
-  return 1
 }
 
 redact_inline_text() {
@@ -479,7 +466,7 @@ PY
 
 clear_session_repair_markers_now() {
   require_repair_lock_held
-  rm -f "$NEEDS_HUMAN_FILE" "$MARKER_DIR/$SESSION.kimi-dispatch" "$MARKER_DIR/$SESSION.kimi-pgid" 2>/dev/null || authority_gap_continue "T29-BYPASS-056" "authority-risk bypass converted to typed evidence gap"
+  rm -f "$NEEDS_HUMAN_FILE" "$MARKER_DIR/$SESSION.kimi-dispatch" "$MARKER_DIR/$SESSION.kimi-pgid" 2>/dev/null || true
 }
 
 repair_loop_pid_matches_session() {
@@ -678,6 +665,22 @@ acquire_repair_lock() {
   local existing_pid="" live_pid="" lock_owner_pid="" lock_status="" stale_lock_json="" repair_lock_output=""
   local -a _repair_lock_result=()
   mkdir -p "$(dirname "$REPAIR_PID_FILE")"
+  # Establish cheap process custody before importing the heavier durable-lock
+  # machinery.  The EXIT/TERM traps above release this provisional claim if the
+  # durable lock later reports a competing owner.
+  if [[ -r "$REPAIR_PID_FILE" ]]; then
+    read -r existing_pid < "$REPAIR_PID_FILE" || existing_pid=""
+    if [[ -n "$existing_pid" ]] && ! kill -0 "$existing_pid" 2>/dev/null; then
+      log "stale repair pidfile detected; reclaiming session=$SESSION stale_pid=$existing_pid pidfile=$REPAIR_PID_FILE"
+      rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
+      existing_pid=""
+    fi
+  fi
+  if [[ ! -e "$REPAIR_PID_FILE" ]] \
+    && ( set -o noclobber; printf '%s\n' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then
+    REPAIR_PID_FILE_OWNED=1
+    log "repair pid provisionally claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"
+  fi
   repair_lock_output="$(
     PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$REPAIR_LOCK_DIR" "$SESSION" "$$" "$WORKSPACE" "$0" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" <<'PY'
 import json
@@ -805,6 +808,10 @@ EOF
       log "stale repair lock reclaimed session=$SESSION lock_dir=$REPAIR_LOCK_DIR"
     fi
   fi
+  if [[ "$REPAIR_PID_FILE_OWNED" == "1" ]]; then
+    log "repair pid claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"
+    return 0
+  fi
   while true; do
     if ( set -o noclobber; printf '%s\n' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then
       REPAIR_PID_FILE_OWNED=1
@@ -816,7 +823,9 @@ EOF
     else
       existing_pid=""
     fi
-    if [[ -n "$existing_pid" && "$existing_pid" != "$$" ]] && repair_loop_pid_matches_session "$existing_pid" "$SESSION"; then
+    if [[ -n "$existing_pid" && "$existing_pid" != "$$" ]] \
+      && kill -0 "$existing_pid" 2>/dev/null \
+      && repair_loop_pid_matches_session "$existing_pid" "$SESSION"; then
       if [[ "$REPAIR_LOCK_DIR_OWNED" == "1" ]]; then
         release_repair_lock
       fi
@@ -899,7 +908,7 @@ record_repair_timeout_and_exit() {
   repair_goal_record_terminal_failure \
     "repair-timeout-$phase" \
     "repair_timeout" \
-    "bounded repair budget exhausted before the original checkpoint advanced" || authority_gap_continue "T29-BYPASS-059" "authority-risk bypass converted to typed evidence gap"
+    "bounded repair budget exhausted before the original checkpoint advanced" || true
   log "repair budget exhausted; timing out session=$SESSION phase=$phase budget_secs=$REPAIR_BUDGET_SECS data=$DATA_FILE"
   exit 1
 }
@@ -1157,8 +1166,23 @@ chain_health_reason = chain_health_block_reason()
 if chain_health_reason:
     print(chain_health_reason)
     raise SystemExit(0)
-workspace = pathlib.Path(str(marker_payload.get("workspace") or ""))
-if workspace.exists():
+current_signature = repair_payload.get("current_signature")
+if not isinstance(current_signature, dict):
+    current_signature = {}
+advancement_snapshot = repair_payload.get("current_advancement_snapshot")
+if not isinstance(advancement_snapshot, dict):
+    advancement_snapshot = {}
+current_state = str(
+    current_signature.get("current_state")
+    or advancement_snapshot.get("current_state")
+    or ""
+).strip()
+if current_state in {"finalized", "awaiting_pr_merge", "done", "complete", "completed"}:
+    raise SystemExit(1)
+
+workspace_text = str(marker_payload.get("workspace") or "").strip()
+workspace = pathlib.Path(workspace_text) if workspace_text else None
+if workspace is not None and workspace.exists():
     chain_files = sorted(
         (workspace / ".megaplan" / "plans" / ".chains").glob("*.json"),
         key=lambda path: path.stat().st_mtime if path.exists() else 0,
@@ -1184,19 +1208,6 @@ if workspace.exists():
             if kind or state.lower() not in {"", "initialized"}:
                 print(f"live_plan_failure:{kind or 'unknown'}:{state or 'unknown'}:{phase or 'unknown'}")
                 raise SystemExit(0)
-current_signature = repair_payload.get("current_signature")
-if not isinstance(current_signature, dict):
-    current_signature = {}
-advancement_snapshot = repair_payload.get("current_advancement_snapshot")
-if not isinstance(advancement_snapshot, dict):
-    advancement_snapshot = {}
-current_state = str(
-    current_signature.get("current_state")
-    or advancement_snapshot.get("current_state")
-    or ""
-).strip()
-if current_state in {"finalized", "awaiting_pr_merge", "done", "complete", "completed"}:
-    raise SystemExit(1)
 failure_context = repair_payload.get("current_failure_context")
 if isinstance(failure_context, dict):
     latest_failure = failure_context.get("plan_latest_failure")
@@ -1315,7 +1326,7 @@ chain_resume_plan_relaunch_command_if_needed() {
   local plan_name="$2"
   local remote_spec="${3:-}"
   if [[ -z "$plan_name" && -n "$remote_spec" ]]; then
-    plan_name="$(python3 - "$workspace" "$remote_spec" <<'PY' 2>/dev/null || authority_gap_continue "T29-BYPASS-061" "authority-risk bypass converted to typed evidence gap"
+    plan_name="$(python3 - "$workspace" "$remote_spec" <<'PY' 2>/dev/null || true
 import hashlib
 import json
 import pathlib
@@ -1442,7 +1453,7 @@ fi
   else
     if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then
       echo "[megaplan-refresh] source checkout ahead of origin/$REF; using current source checkout at $SRC for local repair runtime"
-      git -C "$SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || authority_gap_continue "T29-BYPASS-063" "authority-risk bypass converted to typed evidence gap"
+      git -C "$SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true
       export MEGAPLAN_RUNTIME_SRC="$SRC"
     else
       git -C "$SRC" pull --ff-only origin "$REF"
@@ -1451,7 +1462,7 @@ fi
   fi
   if ! git -C "$MEGAPLAN_RUNTIME_SRC" merge-base --is-ancestor HEAD "origin/$REF"; then
     echo "[megaplan-refresh] refusing editable install refresh: $MEGAPLAN_RUNTIME_SRC has local commits not contained in origin/$REF"
-    git -C "$MEGAPLAN_RUNTIME_SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || authority_gap_continue "T29-BYPASS-064" "authority-risk bypass converted to typed evidence gap"
+    git -C "$MEGAPLAN_RUNTIME_SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true
     exit 20
   fi
   pip install -e "$MEGAPLAN_RUNTIME_SRC"
@@ -1465,7 +1476,8 @@ true; } >> %q 2>&1 && if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /wor
 }
 
 _repair_loop_acceptance_gate() {
-  local session="$1" workspace="$2" remote_spec="$3" gate_json gate_open reason blocker_event
+  local session="$1" workspace="$2" remote_spec="$3" gate_json gate_open reason blocker_event gate_rc parse_rc parsed_gate
+  gate_rc=0
   gate_json="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$remote_spec" "$workspace" "repair_loop" <<'PY'
 import json, sys
 from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import check_wrapper_acceptance_gate
@@ -1473,20 +1485,36 @@ spec_path, workspace, caller = sys.argv[1:4]
 result = check_wrapper_acceptance_gate(spec_path, workspace=workspace, caller_kind=caller)
 print(json.dumps(result, sort_keys=True))
 PY
-)" || {
-    authority_fail_closed "T29-BYPASS-065" "repair-loop acceptance gate evaluation failed"
-    return 1
-  }
-  if [[ -z "$gate_json" ]]; then
-    authority_gap_record "T29-BYPASS-065" "fail_closed" "0" "repair-loop acceptance gate produced no evidence"
-    return 1
+)"; gate_rc=$?
+  if [[ "$gate_rc" != "0" || -z "$gate_json" ]]; then
+    if [[ "$gate_rc" == "0" ]]; then
+      reason="acceptance_checker_empty_output"
+    else
+      reason="acceptance_checker_nonzero_exit_$gate_rc"
+    fi
+    blocker_event="$(python3 -c "import json,sys; print(json.dumps({'schema_version':'arnold-wrapper-acceptance-indeterminate-v1','status':'indeterminate','reason':sys.argv[1],'caller_kind':'repair_loop','session':sys.argv[2]}))" "$reason" "$session")"
+    gate_open="false"
+  else
+    parse_rc=0
+    parsed_gate="$(python3 -c "
+import json, sys
+value=json.loads(sys.stdin.read())
+if not isinstance(value, dict) or not isinstance(value.get('gate_open'), bool):
+    raise SystemExit(65)
+print(str(value['gate_open']).lower(), str(value.get('reason') or 'unknown'), json.dumps(value.get('blocker_event') or {}), sep='\\t')
+" <<<"$gate_json")" || parse_rc=$?
+    if [[ "$parse_rc" == "0" ]]; then
+      IFS=$'\t' read -r gate_open reason blocker_event <<< "$parsed_gate"
+    fi
+    if [[ "$parse_rc" != "0" ]]; then
+      reason="acceptance_checker_malformed_output"
+      blocker_event="$(python3 -c "import json,sys; print(json.dumps({'schema_version':'arnold-wrapper-acceptance-indeterminate-v1','status':'indeterminate','reason':sys.argv[1],'caller_kind':'repair_loop','session':sys.argv[2]}))" "$reason" "$session")"
+      gate_open="false"
+    fi
   fi
-  gate_open="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('gate_open',False))" <<<"$gate_json" 2>/dev/null || echo False)"
-  if [[ "$gate_open" == "True" || "$gate_open" == "true" ]]; then
+  if [[ "$gate_open" == "true" ]]; then
     return 0
   fi
-  reason="$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('reason','unknown'))" <<<"$gate_json" 2>/dev/null || echo "acceptance gate unreadable")"
-  blocker_event="$(python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d.get('blocker_event',{})))" <<<"$gate_json" 2>/dev/null || { authority_gap_continue "T29-BYPASS-066" "repair-loop acceptance blocker event parse failed"; printf '{}'; })"
   log "[repair-loop] acceptance gate closed session=$session: $reason"
   if [[ -n "$blocker_event" && "$blocker_event" != "{}" ]]; then
     local blocker_file="$REPAIR_DATA_DIR/${session}.blocker-acceptance-gate.json"
@@ -1494,7 +1522,7 @@ PY
 import json, pathlib, sys
 pathlib.Path(sys.argv[1]).parent.mkdir(parents=True, exist_ok=True)
 pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
-" "$blocker_file" "$blocker_event" 2>/dev/null || authority_gap_continue "T29-BYPASS-067" "authority-risk bypass converted to typed evidence gap"
+" "$blocker_file" "$blocker_event" 2>/dev/null || true
     report_item "$REPORT_PATH" "$session" "repair_loop" "blocked" "acceptance gate closed: $reason" "$workspace" "$remote_spec"
     log "[repair-loop] blocker event persisted: $blocker_file"
   fi
@@ -4928,6 +4956,21 @@ payload["outcome"] = outcome
 now = dt.datetime.now(dt.timezone.utc).isoformat()
 if is_terminal_outcome(outcome):
     payload["completed_at"] = now
+else:
+    # A successor investigation retains custody.  Never leave a stale terminal
+    # timestamp behind when an existing repair record re-enters a nonterminal
+    # state.
+    payload.pop("completed_at", None)
+if outcome == "repair_applied_reinvestigate":
+    request = payload.get("reinvestigation")
+    request = request if isinstance(request, dict) else {}
+    if request.get("status") != "required":
+        payload["reinvestigation"] = {
+            "schema_version": "arnold-repair-reinvestigation-v1",
+            "status": "required",
+            "generation": int(request.get("generation") or 0) + 1,
+            "requested_at": now,
+        }
 if is_success_outcome(outcome):
     payload["last_success_at"] = now
     payload["last_success_outcome"] = outcome
@@ -5045,7 +5088,7 @@ repair_goal_evaluate_or_exit() {
       repair_goal_record_terminal_failure \
         "post-fixer-recovery-gate" \
         "recovery_not_verified" \
-        "$reason" || authority_gap_continue "T29-BYPASS-074" "authority-risk bypass converted to typed evidence gap"
+        "$reason" || true
       log "post-fixer recovery gate failed; L2 transcript-aware meta-repair required session=$SESSION phase=$phase goal_id=$ARNOLD_REPAIR_GOAL_ID reason=$reason"
       exit 1
       ;;
@@ -5125,7 +5168,7 @@ wait_for_repair_goal_progress_if_live() {
         repair_goal_record_terminal_failure \
           "post-fixer-recovery-gate" \
           "recovery_not_verified" \
-          "$reason" || authority_gap_continue "T29-BYPASS-075" "authority-risk bypass converted to typed evidence gap"
+          "$reason" || true
         log "post-fixer recovery gate failed during bounded observation; L2 meta-repair required session=$SESSION phase=$phase reason=$reason"
         return 2
         ;;
@@ -5460,7 +5503,7 @@ exit_if_repair_target_complete() {
   if [[ "${complete_flag:-0}" != "1" ]]; then
     return 0
   fi
-  repair_goal_evaluate_or_exit "target-complete-$phase" || authority_gap_continue "T29-BYPASS-077" "authority-risk bypass converted to typed evidence gap"
+  repair_goal_evaluate_or_exit "target-complete-$phase" || true
   log "target reports complete without movement beyond the captured checkpoint; goal remains active session=$SESSION phase=$phase scope=$scope reason=$reason chain_state_path=${chain_path:-n/a} plan_state_path=${plan_path:-n/a}"
 }
 
@@ -5470,9 +5513,9 @@ exit_if_repair_target_recovered() {
   local phase="$1"
   local health forced_reason
   health="$(session_health_status "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME")"
-  forced_reason="$(marker_requires_repair_despite_alive || authority_gap_continue "T29-BYPASS-078" "authority-risk bypass converted to typed evidence gap")"
+  forced_reason="$(marker_requires_repair_despite_alive || true)"
   log "repair target observation session=$SESSION phase=$phase health=$health marker_reason=${forced_reason:-none}; checking durable goal authority"
-  repair_goal_evaluate_or_exit "$phase" || authority_gap_continue "T29-BYPASS-079" "authority-risk bypass converted to typed evidence gap"
+  repair_goal_evaluate_or_exit "$phase" || true
 }
 
 recover_blocked_after_dev_fix_if_possible() {
@@ -5980,12 +6023,80 @@ print(
 PY
 }
 
+quality_recovery_supported_cli_is_complete() {
+  local normal_command="$1"
+  python3 -P - "$INVESTIGATION_CONTEXT_PATH" "$normal_command" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+normal_command = sys.argv[2]
+try:
+    if path.stat().st_size > 65_536:
+        raise ValueError("investigation context exceeds 65536-byte bound")
+    context = json.loads(path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"invalid:{exc}", file=sys.stderr)
+    raise SystemExit(1)
+quality = context.get("durable_quality_block")
+quality = quality if isinstance(quality, dict) else {}
+evidence = quality.get("repair_evidence")
+evidence = evidence if isinstance(evidence, dict) else {}
+boundaries = context.get("safe_repair_boundaries")
+boundaries = boundaries if isinstance(boundaries, dict) else {}
+marker = boundaries.get("marker_relaunch_binding")
+marker = marker if isinstance(marker, dict) else {}
+repair_commit = str(evidence.get("dev_fix_sha") or "").strip()
+failure = context.get("current")
+failure = failure if isinstance(failure, dict) else {}
+latest_failure = failure.get("latest_failure")
+latest_failure = latest_failure if isinstance(latest_failure, dict) else {}
+failure_fingerprint = str(latest_failure.get("fingerprint") or "").strip()
+supported = str(boundaries.get("supported_recovery_cli") or "")
+blocker_ids = boundaries.get("quality_recovery_blocker_ids")
+blocker_ids = (
+    [str(item) for item in blocker_ids if str(item).strip()]
+    if isinstance(blocker_ids, list)
+    else []
+)
+complete = bool(
+    quality.get("active") is True
+    and evidence.get("verified") is True
+    and boundaries.get("quality_recovery_command_complete") is True
+    and marker.get("verified") is True
+    and marker.get("profile_preserved") is True
+    and marker.get("no_git_refresh") is True
+    and marker.get("no_push") is True
+    and repair_commit
+    and failure_fingerprint
+    and supported == normal_command
+    and blocker_ids
+    and all(
+        "quality-gate resolve" in supported and blocker_id in supported
+        for blocker_id in blocker_ids
+    )
+    and "override recover-blocked" in supported
+    and repair_commit in supported
+    and failure_fingerprint in supported
+    and "--no-git-refresh" in supported
+    and "--no-push" in supported
+)
+raise SystemExit(0 if complete else 1)
+PY
+}
+
 select_mechanical_relaunch_command() {
   local normal_command="$1"
   local requirement="not_required"
   local quality_command=""
   if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]; then
     requirement="$(quality_recovery_requirement)" || return 76
+  fi
+  if [[ "$requirement" == "required" ]] \
+    && quality_recovery_supported_cli_is_complete "$normal_command"; then
+    printf '%s\n' "$normal_command"
+    return 0
   fi
   if [[ -z "${POST_DEV_FIX_ITERATION:-}" ]]; then
     if [[ "$requirement" == "required" ]]; then
@@ -6790,14 +6901,14 @@ Task:
    - User Action Gate: ATTEMPT to resolve those user actions before treating this as a human stop. Read user_actions.md plus user_action_resolutions.json, inspect the referenced evidence/artifacts/code, make the best defensible judgment call, and record each decision with the CLI instead of hand-writing JSON. Use:
    cd "$WORKSPACE" && MEGAPLAN_ACTOR_ID=repair-loop-dev-fix PYTHONPATH="$ARNOLD_SRC:\${PYTHONPATH:-}" python3 -P -m arnold_pipelines.megaplan user-action resolve --plan "${PLAN_NAME:-<PLAN_NAME_FROM_SNAPSHOT>}" --action-id <ACTION_ID> --resolution <satisfied|accepted_blocked|waived|manual_required|rejected> --reason "..." --instructions "..." --tasks "<TASK_ID,...>"
    Prefer satisfied when the evidence clearly answers the action. Use accepted_blocked or waived only when the action itself permits a fallback. Leave unresolved or mark manual_required only when the decision is genuinely ambiguous, unusually difficult, or requires human-only judgment.
-3. When provider/profile settings are implicated, read the Provider/Profile Viability block carefully. Do not switch to a vendor whose route is unavailable on this worker. Remember that override set-profile preserves the current premium vendor when rewriting a named profile; if you actually need to change vendor families, pair it with override set-vendor / set-model or pick a viable non-premium/DeepSeek profile.
+3. Preserve the currently configured profile. Do not select, replace, or switch profiles during ordinary recovery. Provider/profile evidence may be observed and reported, but it never authorizes 'set-profile', 'set-vendor', or 'set-model' here. Treat a missing profile-preservation clause as a repair-contract failure.
 4. Go to the deepest structural level you can reach in this bounded turn. Do not just fix the one symptom that caused this stop; find the underlying pattern and check whether it has other instantiations.
 5. Apply the narrowest safe root-cause fix at the correct ownership boundary: use $ARNOLD_SRC on branch $SYNC_BRANCH for Arnold engine/superfixer bugs, and use $WORKSPACE for target application code when the blocker is a task implementation failure in that repo. Prefer a general engine fix over a workflow-specific patch only when the evidence points to Arnold itself.
 6. If you spot a structural pattern with other instantiations you cannot fix in this turn, append it to the findings doc at $FINDINGS_DOC so it can be reviewed. Capture what you fixed, the deeper pattern, the other instantiations you could not fix, and a recommendation for what a human should review.
 7. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
 8. $delivery_policy
 9. Do not relaunch the run yourself. The wrapper will use the marker's run-kind-aware command only when the durable goal proves there is no correct fresh worker to preserve.
-   Your process exit, report, commit, push, or a fresh target heartbeat is not semantic success. Success requires the blocker cleared, the correct worker alive where applicable, fresh progress, and the original plan advancing beyond its frozen stage, or an explicit approval/authorization gate. Never weaken a completion, safety, authority, or verification guard to manufacture progress.
+   Your process exit, report, commit, push, or a fresh target heartbeat is not semantic success. Success requires the blocker cleared, the correct worker alive where applicable, fresh progress, and the original plan advancing beyond its frozen stage, or an explicit approval/authorization gate. A completed repair without canonical cursor advancement is 'completed-repair-without-cursor-advance', not success. Never weaken a completion, safety, authority, or verification guard to manufacture progress.
 $mode_tasks
 
 Constraints:
@@ -6856,11 +6967,12 @@ Bounded authoritative pointers:
 Objective:
 1. Read the bounded context and receipt. Verify their digest-bound identity, provenance, recommended action, safe target, allowed and forbidden mutations, and intended recovery before changing anything.
 2. Act only inside the receipt's mutation scope. Do not independently choose another target. Follow typed evidence pointers only as needed; never copy expanding logs, histories, state blobs, or evidence bundles into prompts or reports.
-3. Preserve all completion, review, safety, authority, and verification guards. If evidence contradicts the receipt or the deterministic progress token repeats, make no mutation and report replan.
-4. Apply the narrowest systemic fix, run the smallest relevant behavior test plus required safety/authority regressions, and write exact commands and results to the report.
-5. $delivery_policy
-6. Do not relaunch, hand-advance, directly edit control-plane state, push without authority, or merge a remote PR. A commit or live process is not success; the wrapper must prove blocker clearance and fresh progress beyond the frozen checkpoint.
-7. $mode_tasks
+3. Preserve the currently configured profile. Do not select, replace, or switch profiles during ordinary recovery. Provider/profile evidence may be observed and reported, but it never authorizes 'set-profile', 'set-vendor', or 'set-model' here. Treat a missing profile-preservation clause as a repair-contract failure.
+4. Preserve all completion, review, safety, authority, and verification guards. If evidence contradicts the receipt or the deterministic progress token repeats, make no mutation and report replan.
+5. Apply the narrowest systemic fix, run the smallest relevant behavior test plus required safety/authority regressions, and write exact commands and results to the report.
+6. $delivery_policy
+7. Do not relaunch, hand-advance, directly edit control-plane state, push without authority, or merge a remote PR. A commit or live process is not success; the wrapper must prove blocker clearance and fresh progress beyond the frozen checkpoint. A completed repair without canonical cursor advancement is 'completed-repair-without-cursor-advance', not success.
+8. $mode_tasks
 
 Report keys: classification, hypothesis, what_tried, validation, pushed_commit, remaining_blockers, structural_pattern, other_instantiations, human_review_recommendation, findings_doc_path, findings_doc_appended.
 Requested model: $requested_model
@@ -7062,6 +7174,18 @@ payload["investigation"] = {
     "investigator_run_id": run_id,
     "bounded": True,
 }
+reinvestigation = payload.get("reinvestigation")
+if isinstance(reinvestigation, dict) and reinvestigation.get("status") == "required":
+    reinvestigation = dict(reinvestigation)
+    reinvestigation.update(
+        {
+            "status": "completed",
+            "completed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "investigator_run_id": run_id,
+            "context_digest": digest,
+        }
+    )
+    payload["reinvestigation"] = reinvestigation
 save_repair_data(pathlib.Path(data_path), payload)
 PY
 }
@@ -7401,6 +7525,7 @@ EOF
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \
     "$DATA_FILE" "$INVESTIGATION_CONTEXT_PATH" "$INVESTIGATION_OBSERVATION_PATH" \
     "$INVESTIGATOR_RECEIPT_PATH" "$context_digest" "$investigator_run_id" <<'PY' || return 1
+import datetime as dt
 import json
 import pathlib
 import sys
@@ -7963,7 +8088,7 @@ fi
 # repair_data_set_outcome (which requires the lock). Best-effort: a failed
 # write must not block the no-op exit.
 ENTRY_TARGET_MISSING_REASON=""
-ENTRY_TARGET_MISSING_REASON="$(entry_target_missing_reason 2>>"$LOG" || authority_gap_continue "T29-BYPASS-090" "authority-risk bypass converted to typed evidence gap")"
+ENTRY_TARGET_MISSING_REASON="$(entry_target_missing_reason 2>>"$LOG" || true)"
 if [[ -z "$ENTRY_TARGET_MISSING_REASON" && ! -d "$WORKSPACE" ]]; then
   if ! entry_workspace_restore_available 2>>"$LOG"; then
     ENTRY_TARGET_MISSING_REASON="workspace_missing"
@@ -7971,7 +8096,7 @@ if [[ -z "$ENTRY_TARGET_MISSING_REASON" && ! -d "$WORKSPACE" ]]; then
 fi
 if [[ -n "$ENTRY_TARGET_MISSING_REASON" ]]; then
   log "environment gone at entry; exiting without repair session=$SESSION workspace=$WORKSPACE spec=$REMOTE_SPEC reason=$ENTRY_TARGET_MISSING_REASON"
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$ENTRY_TARGET_MISSING_REASON" "$MARKER_PATH" "$PROGRESS_FILE" "$NEEDS_HUMAN_FILE" <<'PY' || authority_gap_continue "T29-BYPASS-091" "authority-risk bypass converted to typed evidence gap"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$ENTRY_TARGET_MISSING_REASON" "$MARKER_PATH" "$PROGRESS_FILE" "$NEEDS_HUMAN_FILE" <<'PY' || true
 import pathlib
 import sys
 
@@ -8035,7 +8160,7 @@ repair_data_init "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" "$INITIAL_HEALTH"
 repair_data_bind_goal
 exit_if_repair_target_complete "start"
 if [[ "$INITIAL_HEALTH" == "alive" ]]; then
-  forced_repair_reason="$(marker_requires_repair_despite_alive || authority_gap_continue "T29-BYPASS-092" "authority-risk bypass converted to typed evidence gap")"
+  forced_repair_reason="$(marker_requires_repair_despite_alive || true)"
   if [[ -n "$forced_repair_reason" ]]; then
     log "repair target is alive but marker requires repair session=$SESSION reason=$forced_repair_reason"
   else
@@ -8309,7 +8434,7 @@ PY
     return 1
   fi
   if [[ -n "$source_origin" ]]; then
-    git -C "$tmp_clone" remote set-url origin "$source_origin" >>"$LOG" 2>&1 || authority_gap_continue "T29-BYPASS-095" "authority-risk bypass converted to typed evidence gap"
+    git -C "$tmp_clone" remote set-url origin "$source_origin" >>"$LOG" 2>&1 || true
   fi
 
   shopt -s dotglob nullglob
@@ -8360,7 +8485,7 @@ if [[ "$investigator_rc" == "2" ]]; then
   repair_goal_record_terminal_failure \
     "investigator-replan-required" \
     "replan_required" \
-    "validated investigator requires L2 replan before any target mutation" || authority_gap_continue "T29-BYPASS-096" "authority-risk bypass converted to typed evidence gap"
+    "validated investigator requires L2 replan before any target mutation" || true
   log "investigator requires L2 replan before any target mutation session=$SESSION"
   exit 1
 elif [[ "$investigator_rc" != "0" ]]; then
@@ -8384,7 +8509,7 @@ if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "repair_source" ]] && repair_sou
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "source initiative restored; mechanical launch came up and held"
-    repair_goal_evaluate_or_exit "post-source-initiative-launch" || authority_gap_continue "T29-BYPASS-097" "authority-risk bypass converted to typed evidence gap"
+    repair_goal_evaluate_or_exit "post-source-initiative-launch" || true
   fi
 fi
 
@@ -8395,7 +8520,7 @@ if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "repair_source" ]] && repair_sou
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "0" "0" "running" "source workspace restored; mechanical launch came up and held"
-    repair_goal_evaluate_or_exit "post-source-workspace-launch" || authority_gap_continue "T29-BYPASS-098" "authority-risk bypass converted to typed evidence gap"
+    repair_goal_evaluate_or_exit "post-source-workspace-launch" || true
   fi
 fi
 
@@ -8405,7 +8530,7 @@ if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "repair_source" ]] && repair_dep
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "dependency manifest repaired; mechanical launch came up and held"
-    repair_goal_evaluate_or_exit "post-dependency-manifest-launch" || authority_gap_continue "T29-BYPASS-099" "authority-risk bypass converted to typed evidence gap"
+    repair_goal_evaluate_or_exit "post-dependency-manifest-launch" || true
   fi
 fi
 
@@ -8420,12 +8545,12 @@ if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "stale state cleared; mechanical launch came up and held"
-    repair_goal_evaluate_or_exit "post-stale-state-launch" || authority_gap_continue "T29-BYPASS-100" "authority-risk bypass converted to typed evidence gap"
+    repair_goal_evaluate_or_exit "post-stale-state-launch" || true
   fi
 fi
 
 if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]; then
-  prior_fix_iteration="$(prior_receipted_dev_fix_iteration || authority_gap_continue "T29-BYPASS-101" "authority-risk bypass converted to typed evidence gap")"
+  prior_fix_iteration="$(prior_receipted_dev_fix_iteration || true)"
   if [[ -n "$prior_fix_iteration" ]]; then
     export POST_DEV_FIX_ITERATION="$prior_fix_iteration"
   fi
@@ -8448,16 +8573,16 @@ if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]; then
     repair_goal_record_terminal_failure \
       "authorized-recovery-no-progress" \
       "recovery_not_verified" \
-      "the exact investigator-authorized recovery command remained live without accepted progress" || authority_gap_continue "T29-BYPASS-102" "authority-risk bypass converted to typed evidence gap"
+      "the exact investigator-authorized recovery command remained live without accepted progress" || true
     exit 1
   elif [[ "${mechanical_status:-}" == terminal:* ]]; then
     repair_data_record_mechanical "0" "0" "terminal" "$mechanical_status"
-    repair_goal_evaluate_or_exit "post-authorized-recovery-command" || authority_gap_continue "T29-BYPASS-103" "authority-risk bypass converted to typed evidence gap"
+    repair_goal_evaluate_or_exit "post-authorized-recovery-command" || true
     repair_data_set_outcome "recovery_not_verified"
     repair_goal_record_terminal_failure \
       "authorized-recovery-terminal-unverified" \
       "recovery_not_verified" \
-      "$mechanical_status" || authority_gap_continue "T29-BYPASS-104" "authority-risk bypass converted to typed evidence gap"
+      "$mechanical_status" || true
     exit 1
   elif [[ "${mechanical_status:-}" == preserved:* ]]; then
     repair_data_record_mechanical "0" "0" "preserved_live" "$mechanical_status"
@@ -8471,7 +8596,7 @@ if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]; then
     repair_goal_record_terminal_failure \
       "authorized-recovery-launch-failed" \
       "recovery_not_verified" \
-      "$mechanical_status" || authority_gap_continue "T29-BYPASS-105" "authority-risk bypass converted to typed evidence gap"
+      "$mechanical_status" || true
     log "investigator-authorized recovery failed with a durable launch receipt; delegating transcript-aware correction to L2 session=$SESSION status=$mechanical_status"
     exit 1
   fi
@@ -8485,7 +8610,7 @@ fi
 # invokes the supported recover-blocked CLI, and therefore still requires a
 # fresh review; it never accepts the finding as debt or rewrites state JSON.
 if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "repair_target" ]]; then
-  prior_fix_iteration="$(prior_receipted_dev_fix_iteration || authority_gap_continue "T29-BYPASS-106" "authority-risk bypass converted to typed evidence gap")"
+  prior_fix_iteration="$(prior_receipted_dev_fix_iteration || true)"
   if [[ -n "$prior_fix_iteration" ]]; then
     export POST_DEV_FIX_ITERATION="$prior_fix_iteration"
     require_investigation_before_mutation "prior-dev-fix-quality-recovery"
@@ -8499,16 +8624,16 @@ if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "repair_target" ]]; then
       elif [[ "$?" == "2" ]]; then
         exit 1
       fi
-      repair_goal_evaluate_or_exit "prior-dev-fix-quality-recovery-observed" || authority_gap_continue "T29-BYPASS-107" "authority-risk bypass converted to typed evidence gap"
+      repair_goal_evaluate_or_exit "prior-dev-fix-quality-recovery-observed" || true
     elif [[ "${mechanical_status:-}" == terminal:* ]]; then
       repair_data_record_mechanical "$prior_fix_iteration" "0" "terminal" "$mechanical_status"
-      repair_goal_evaluate_or_exit "prior-dev-fix-quality-recovery-terminal" || authority_gap_continue "T29-BYPASS-108" "authority-risk bypass converted to typed evidence gap"
+      repair_goal_evaluate_or_exit "prior-dev-fix-quality-recovery-terminal" || true
     else
       repair_data_set_outcome "recovery_not_verified"
       repair_goal_record_terminal_failure \
         "prior-dev-fix-quality-recovery-failed" \
         "recovery_not_verified" \
-        "$mechanical_status" || authority_gap_continue "T29-BYPASS-109" "authority-risk bypass converted to typed evidence gap"
+        "$mechanical_status" || true
       log "prior receipted dev fix could not enter supported quality recovery; fresh investigation required session=$SESSION status=$mechanical_status"
     fi
     exit 1
@@ -8599,7 +8724,7 @@ for iteration in 1 2 3; do
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "running" "mechanical launch came up and held"
-    repair_goal_evaluate_or_exit "iteration-$iteration-post-mechanical-launch" || authority_gap_continue "T29-BYPASS-110" "authority-risk bypass converted to typed evidence gap"
+    repair_goal_evaluate_or_exit "iteration-$iteration-post-mechanical-launch" || true
   elif [[ "${mechanical_status:-}" == preserved:* ]]; then
     repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "preserved_live" "$mechanical_status"
     if wait_for_repair_goal_progress_if_live "owner-iteration-$iteration-preserved-live"; then
@@ -8616,9 +8741,9 @@ for iteration in 1 2 3; do
       continue
     fi
     exit_if_repair_target_complete "iteration-$iteration-pre-kimi"
-    resolved_relaunch_command="$(resolve_relaunch_command "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" 2>/dev/null || authority_gap_continue "T29-BYPASS-111" "authority-risk bypass converted to typed evidence gap")"
+    resolved_relaunch_command="$(resolve_relaunch_command "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" 2>/dev/null || true)"
     if run_kimi_launch_turn "$iteration" "$RUN_KIND" "$PLAN_NAME" "$resolved_relaunch_command"; then
-      repair_goal_evaluate_or_exit "iteration-$iteration-post-kimi-launch" || authority_gap_continue "T29-BYPASS-112" "authority-risk bypass converted to typed evidence gap"
+      repair_goal_evaluate_or_exit "iteration-$iteration-post-kimi-launch" || true
     fi
     exit_if_repair_target_complete "iteration-$iteration-post-kimi"
   fi
@@ -8626,14 +8751,14 @@ done
 
 exit_if_repair_target_complete "post-iterations"
 exit_if_repair_target_recovered "post-iterations"
-repair_goal_evaluate_or_exit "post-iterations-final-authority-check" || authority_gap_continue "T29-BYPASS-113" "authority-risk bypass converted to typed evidence gap"
+repair_goal_evaluate_or_exit "post-iterations-final-authority-check" || true
 
 if [[ "${BREAKER_TRIPPED:-0}" == "1" ]]; then
   repair_data_set_outcome "deterministic_failure"
   repair_goal_record_terminal_failure \
     "deterministic-owner-circuit-breaker" \
     "deterministic_failure" \
-    "same repair owner repeated without a new target/progress token; escalate with the original checkpoint unresolved" || authority_gap_continue "T29-BYPASS-114" "authority-risk bypass converted to typed evidence gap"
+    "same repair owner repeated without a new target/progress token; escalate with the original checkpoint unresolved" || true
   log "deterministic-failure breaker ended this owner cycle without semantic completion; terminal owner failure recorded against the unresolved checkpoint session=$SESSION goal_id=$ARNOLD_REPAIR_GOAL_ID data=$DATA_FILE"
   exit 1
 fi

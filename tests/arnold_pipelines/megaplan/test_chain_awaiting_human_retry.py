@@ -563,7 +563,10 @@ def test_record_chain_last_state_after_plan_run_keeps_execute_phase_visible(
     assert any("blocked -> execute" in message for message in messages)
 
 
-def test_run_chain_syncs_last_state_after_each_child_phase(tmp_path: Path) -> None:
+def test_run_chain_syncs_last_state_after_each_child_phase(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("MEGAPLAN_CHAIN_NO_PUSH", raising=False)
     spec_path = _write_chain_spec(tmp_path)
     _write_plan_state(tmp_path, current_state="initialized", active_step=None)
     messages: list[str] = []

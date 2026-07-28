@@ -52,6 +52,29 @@ def test_resume_clarify_projection_uses_declared_policy_target() -> None:
     assert targets[0].metadata["target_state"] == "prepped"
 
 
+def test_blocked_iterate_gate_projects_replan_without_resume_cursor() -> None:
+    state = {
+        "name": "demo",
+        "current_state": "blocked",
+        "config": {},
+        "last_gate": {"recommendation": "ITERATE", "passed": False},
+        "meta": {},
+    }
+
+    targets = planning_control_binding().recover_targets(planning_run_state_view(state))
+
+    assert [target.id for target in targets] == ["replan"]
+    assert targets[0].metadata == {
+        "kind": "workflow_step",
+        "step": "replan",
+        "direction": "recovery",
+        "actionable": True,
+        "target_state": "planned",
+        "source": "last_gate.recommendation",
+        "operator_action": "replan",
+    }
+
+
 def test_control_interface_declares_native_policy_targets_without_cursor_authority() -> None:
     assert DECLARED_OVERRIDE_POLICY_TARGETS == {
         "adopt-execution": {
@@ -290,3 +313,58 @@ def test_replan_transition_clears_stale_loop_state_and_records_latest_plan(monke
     assert meta_delta.value["notes"][-1]["note"] == "preserve current plan"
     assert "tiebreaker_count" not in meta_delta.value
     assert "user_approved_gate" not in meta_delta.value
+
+
+def test_replan_transition_allows_blocked_iterate_gate(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.planning.control_binding.latest_plan_path",
+        lambda plan_dir, state: plan_dir / "plan_v7.md",
+    )
+    state = {
+        "name": "demo",
+        "current_state": "blocked",
+        "config": {},
+        "iteration": 7,
+        "plan_versions": [{"version": 7, "file": "plan_v7.md"}],
+        "meta": {},
+        "last_gate": {"recommendation": "ITERATE", "passed": False},
+    }
+
+    result = planning_control_binding().apply_transition(
+        planning_run_state_view(state),
+        ControlTransition(
+            op="override",
+            target_id="replan",
+            payload={"plan_dir": str(Path.cwd()), "reason": "apply narrow gate fixes"},
+        ),
+    )
+
+    assert result.accepted is True
+    current_state_delta = next(delta for delta in result.state_deltas if delta.key == "current_state")
+    meta_delta = next(delta for delta in result.state_deltas if delta.key == "meta")
+    assert current_state_delta.value == "planned"
+    assert meta_delta.value["overrides"][-1]["from_state"] == "blocked"
+
+
+def test_replan_transition_rejects_unrelated_blocked_state() -> None:
+    state = {
+        "name": "demo",
+        "current_state": "blocked",
+        "config": {},
+        "iteration": 1,
+        "meta": {},
+        "last_gate": {"recommendation": "PROCEED", "passed": False},
+    }
+
+    import pytest
+    from arnold_pipelines.megaplan.types import CliError
+
+    with pytest.raises(CliError, match="replan requires state"):
+        planning_control_binding().apply_transition(
+            planning_run_state_view(state),
+            ControlTransition(
+                op="override",
+                target_id="replan",
+                payload={"plan_dir": str(Path.cwd()), "reason": "unsafe bypass"},
+            ),
+        )

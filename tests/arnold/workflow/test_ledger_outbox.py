@@ -24,6 +24,7 @@ import pytest
 
 from arnold.workflow.attempt_ledger_store import (
     AppendResult,
+    DivergentDuplicateError,
     MonotonicSequenceError,
     PostTerminalAppendError,
     SqliteAttemptLedgerStore,
@@ -534,6 +535,48 @@ class TestOutboxAtomicity:
             records = outbox.get_records_for_attempt(aid)
             assert len(records) == 1
             assert records[0].destination == "topic.a"
+
+            store.close()
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_divergent_duplicate_raises_typed_error(self):
+        """A divergent duplicate is quarantined without masking its error."""
+        path = _store_path()
+        try:
+            store = SqliteAttemptLedgerStore(path)
+            outbox = SqliteLedgerOutbox(store)
+            aid = _aid()
+            idempotency_key = "divergent-key"
+
+            original = _make_event(
+                attempt_id=aid,
+                sequence=1,
+                idempotency_key=idempotency_key,
+            )
+            outbox.append_event_with_outbox(
+                aid, original, _make_outbox_payloads(["topic.original"])
+            )
+            divergent = _make_completed_event(
+                attempt_id=aid,
+                sequence=2,
+                idempotency_key=idempotency_key,
+            )
+
+            with pytest.raises(DivergentDuplicateError):
+                outbox.append_event_with_outbox(
+                    aid, divergent, _make_outbox_payloads(["topic.divergent"])
+                )
+
+            assert store.event_count(aid) == 1
+            assert len(outbox.get_records_for_attempt(aid)) == 1
+            quarantine_count = store.conn.execute(
+                "SELECT COUNT(*) FROM persistence_failure_diagnostics"
+                " WHERE attempt_id = ? AND failure_mode = 'divergent_duplicate'",
+                (aid,),
+            ).fetchone()[0]
+            assert quarantine_count == 1
 
             store.close()
         finally:

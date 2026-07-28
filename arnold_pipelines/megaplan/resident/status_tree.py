@@ -36,6 +36,7 @@ def compact_cloud_status_snapshot(snapshot: Mapping[str, Any] | None) -> dict[st
     ]
     active = [item for item in sessions if _root_session_needs_detail(item)]
     completed = [item for item in sessions if _is_completed_session(item)]
+    indeterminate = [item for item in sessions if _is_indeterminate_completion(item)]
     # Completion is a terminal canonical status, not an inference from an idle
     # process.  Sort by terminal receipt time so a watchdog refresh cannot make
     # an old completion eligible for the bounded resident card.
@@ -51,6 +52,18 @@ def compact_cloud_status_snapshot(snapshot: Mapping[str, Any] | None) -> dict[st
         key=_completion_sort_key,
         reverse=True,
     )[:_RECENT_COMPLETED_LIMIT]
+    # M9/T44: Indeterminate completions — surface typed evidence gaps
+    indeterminate_preview = [
+        {
+            key: item.get(key)
+            for key in ("node_id", "session", "display_name", "status", "completed_at")
+            if item.get(key) is not None
+        }
+        for item in indeterminate[:3]
+    ]
+    # ── M9: aggregate source-cursor state from all sessions ──
+    source_cursor_aggregate = _aggregate_source_cursor_state(sessions)
+
     return {
         "schema_version": STATUS_TREE_SCHEMA,
         "node_id": "root",
@@ -66,6 +79,10 @@ def compact_cloud_status_snapshot(snapshot: Mapping[str, Any] | None) -> dict[st
         # sessions are represented by a tiny preview and remain navigable.
         "sessions": active,
         "completed_session_count": len(completed),
+        # M9/T44: Indeterminate completion count — sessions that claim
+        # completion but have insufficient evidence to verify
+        "indeterminate_completion_count": len(indeterminate),
+        "indeterminate_completions_preview": indeterminate_preview,
         "recently_completed": recent_completed,
         "recently_completed_omitted_count": max(0, len(recent_candidates) - len(recent_completed)),
         # Kept for compatibility with existing hot-context consumers. New
@@ -78,6 +95,8 @@ def compact_cloud_status_snapshot(snapshot: Mapping[str, Any] | None) -> dict[st
             }
             for item in recent_completed[:3]
         ],
+        # ── M9: aggregate source-cursor state for all active sessions ──
+        "source_cursor_aggregate": source_cursor_aggregate,
         "navigation": {
             "cli": (
                 "python -P -m arnold_pipelines.megaplan resident status-tree "
@@ -102,16 +121,71 @@ def _root_session_needs_detail(session: Mapping[str, Any]) -> bool:
     )
 
 
-def _is_completed_session(session: Mapping[str, Any]) -> bool:
-    """Return only canonical terminal-success session classifications."""
+# ── M9/T44: Completion state classification ─────────────────────────────────
 
-    return str(session.get("status") or "").casefold() in {
-        "complete",
-        "completed",
-        "finished",
-        "success",
-        "succeeded",
-    }
+_TERMINAL_STATUSES: frozenset[str] = frozenset({
+    "complete", "completed", "finished", "success", "succeeded",
+})
+
+
+def _classify_completion_state(
+    session: Mapping[str, Any],
+) -> str:
+    """Classify session completion as ``complete``, ``indeterminate``, or ``idle``.
+
+    M9/T44: Completion classification surfaces typed indeterminate results
+    instead of collapsing to complete or idle.  When source-cursor metadata
+    is present but the WBC dimension is unknown/stale/incoherent, the
+    session is ``indeterminate`` — it MAY be complete but the evidence
+    cannot be verified through the adapter.
+
+    Returns:
+        ``complete`` — terminal success status confirmed.
+        ``indeterminate`` — status suggests completion but source-cursor
+            evidence is insufficient to verify (e.g. WBC unknown/stale).
+        ``idle`` — not a completion state; session is active/blocked/paused.
+    """
+    status = str(session.get("status") or "").casefold()
+    is_terminal = status in _TERMINAL_STATUSES
+
+    if not is_terminal:
+        return "idle"
+
+    # Check source-cursor metadata for indeterminate evidence
+    source_cursor = session.get("source_cursor")
+    if isinstance(source_cursor, Mapping):
+        cursors = source_cursor.get("cursors")
+        if isinstance(cursors, (list, tuple)):
+            for c in cursors:
+                if not isinstance(c, Mapping):
+                    continue
+                dim = c.get("dimension", "")
+                state = c.get("state", "")
+                # WBC, custody, or run_authority in non-fresh state
+                # makes the completion indeterminate — the terminal
+                # status claim cannot be verified against live evidence.
+                if dim in {"wbc", "custody", "run_authority"} and state != "fresh":
+                    return "indeterminate"
+
+    return "complete"
+
+
+def _is_completed_session(session: Mapping[str, Any]) -> bool:
+    """Return canonical terminal-success session classifications.
+
+    M9/T44: Uses ``_classify_completion_state`` so that indeterminate
+    evidence is not silently collapsed to ``complete``.
+    """
+    return _classify_completion_state(session) == "complete"
+
+
+def _is_indeterminate_completion(session: Mapping[str, Any]) -> bool:
+    """Return True when session claims completion but evidence is indeterminate.
+
+    M9/T44: Surfaces typed indeterminate results from adapter-backed
+    projections instead of collapsing to complete or idle.
+    """
+    return _classify_completion_state(session) == "indeterminate"
 
 
 def _completion_sort_key(session: Mapping[str, Any]) -> str:
@@ -213,6 +287,8 @@ def read_cloud_status_node(
             cursor=cursor,
             limit=limit,
         )
+    if section == "source_cursor":
+        return _node(normalized, _safe_value(session.get("source_cursor"), depth=3))
     return _error(normalized, f"unknown session branch {section!r}")
 
 
@@ -254,6 +330,17 @@ def _compact_session(session: Mapping[str, Any]) -> dict[str, Any]:
         if full_repair
         else None
     )
+    # ── M9: bounded source-cursor projection metadata ──
+    source_cursor_compact = _compact_source_cursor(session.get("source_cursor"))
+
+    children = [
+        f"session/{quote(session_name, safe='')}/{name}"
+        for name in ("progress", "runtime", "failure", "repair", "publication", "events")
+    ]
+    # M9: add source-cursor child node when metadata is available
+    if source_cursor_compact is not None:
+        children.append(f"session/{quote(session_name, safe='')}/source_cursor")
+
     return {
         "node_id": f"session/{quote(session_name, safe='')}",
         "session": session_name,
@@ -274,10 +361,84 @@ def _compact_session(session: Mapping[str, Any]) -> dict[str, Any]:
         "operator_next": _bounded_text(session.get("operator_next")),
         "progress": progress,
         "repair": repair,
-        "children": [
-            f"session/{quote(session_name, safe='')}/{name}"
-            for name in ("progress", "runtime", "failure", "repair", "publication", "events")
-        ],
+        # ── M9: source-cursor projection metadata (bounded) ──
+        "source_cursor": source_cursor_compact,
+        "children": children,
+    }
+
+
+def _compact_source_cursor(source_cursor: Any) -> dict[str, Any] | None:
+    """Build a bounded projection of source-cursor metadata.
+
+    Keeps raw full watchdog JSON opaque while exposing typed uncertainty
+    per dimension with evidence IDs.  Fresh dimensions are preserved for
+    complete projection fidelity; stale/unknown/incoherent are highlighted.
+    """
+    if not isinstance(source_cursor, Mapping):
+        return None
+    cursors = source_cursor.get("cursors")
+    if not isinstance(cursors, (list, tuple)):
+        return None
+
+    dimensions: list[dict[str, Any]] = []
+    for c in cursors:
+        if not isinstance(c, Mapping):
+            continue
+        dim_entry = {
+            "dimension": c.get("dimension"),
+            "state": c.get("state"),
+            "evidence_id": c.get("evidence_id"),
+        }
+        detail = c.get("detail")
+        if detail:
+            dim_entry["detail"] = _bounded_text(detail)
+        dimensions.append(dim_entry)
+
+    if not dimensions:
+        return None
+
+    return {
+        "vector_id": source_cursor.get("vector_id"),
+        "_non_authoritative": source_cursor.get("_non_authoritative", True),
+        "dimensions": dimensions,
+        "non_fresh_count": sum(
+            1 for d in dimensions if d.get("state") not in ("fresh", "")
+        ),
+    }
+
+
+def _aggregate_source_cursor_state(
+    sessions: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Aggregate source-cursor states across sessions for bounded disclosure.
+
+    Produces a summary of how many sessions have source-cursor metadata and
+    a count of non-fresh dimensions across the active set.  Raw watchdog JSON
+    remains opaque — only projection metadata is surfaced.
+    """
+    session_cursors: list[dict[str, Any]] = []
+    for s in sessions:
+        sc = s.get("source_cursor") if isinstance(s, Mapping) else None
+        if isinstance(sc, Mapping):
+            session_cursors.append({
+                "session": s.get("session"),
+                "vector_id": sc.get("vector_id"),
+                "non_fresh_dimensions": [
+                    c.get("dimension") for c in (sc.get("cursors") or [])
+                    if isinstance(c, Mapping) and c.get("state") not in ("fresh", "")
+                ],
+            })
+
+    if not session_cursors:
+        return None
+
+    total_non_fresh = sum(len(sc["non_fresh_dimensions"]) for sc in session_cursors)
+    return {
+        "sessions_with_cursor": len(session_cursors),
+        "total_sessions": len(sessions),
+        "total_non_fresh_dimensions": total_non_fresh,
+        # Bounded disclosure: just vector IDs and non-fresh dimensions per session
+        "session_cursors": session_cursors[:MAX_NODE_LIMIT],
     }
 
 

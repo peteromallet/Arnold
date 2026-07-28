@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import shlex
 import shutil
@@ -9,23 +10,31 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec, SshSpec
 from arnold_pipelines.megaplan.types import CliError
 
 from .base import Provider, _logs_follow, _missing_cli_error, _write_redacted_output
 
+LOGGER = logging.getLogger(__name__)
 
 INSTALL_LINK = "Install: https://www.openssh.com/"
 
 
 class SshProvider(Provider):
-    def __init__(self, spec: CloudSpec) -> None:
+    def __init__(
+        self,
+        spec: CloudSpec,
+        *,
+        ssh_effect_adapter: Any | None = None,
+    ) -> None:
         self._spec = spec
         self._ssh = spec.ssh or SshSpec(host="localhost")
         self._ssh_binary = shutil.which("ssh")
         self._scp_binary = shutil.which("scp")
         self._rsync_binary = shutil.which("rsync")
+        self._ssh_effect_adapter = ssh_effect_adapter
         if self._ssh_binary is None:
             _missing_cli_error("ssh", INSTALL_LINK.removeprefix("Install: "))
         if self._scp_binary is None and self._rsync_binary is None:
@@ -145,7 +154,61 @@ class SshProvider(Provider):
             surface="sync_scp",
         )
 
+    # ── Step 13F: WBC routing integration ─────────────────────────────────
+
+    def _maybe_route_through_wbc(
+        self,
+        shard: str,
+        intent_payload: dict[str, Any],
+        apply_fn: Any,
+    ) -> int:
+        """Route an SSH mutation through the WBC adapter if configured.
+
+        Step 13F: When the ssh_effect_adapter is provided, route build/deploy/
+        destroy through the WBC protocol.  Returns 0 on success, raises on
+        failure (matching existing SshProvider semantics).
+        """
+        adapter = self._ssh_effect_adapter
+        if adapter is None:
+            # No adapter configured — run directly (backward compat)
+            return apply_fn(intent_payload) or 0
+
+        from arnold_pipelines.megaplan.cloud.ssh_effect_adapter import (
+            SshEffectShard,
+            SshTarget,
+        )
+
+        target = SshTarget(
+            shard=SshEffectShard(shard),
+            host=self._ssh.host,
+            container=self._ssh.container,
+            operation=shard,
+        )
+
+        outcome = adapter.route(
+            target=target,
+            intent_payload=intent_payload,
+            apply_fn=lambda _: apply_fn(intent_payload),
+        )
+
+        if not outcome.ok:
+            raise CliError(
+                "provider_failed",
+                outcome.error or f"WBC gate blocked SSH {shard}",
+            )
+        return 0
+
     def build(self, deploy_dir: Path) -> int:
+        # Step 13F: route through WBC when adapter is configured
+        if self._ssh_effect_adapter is not None:
+            return self._maybe_route_through_wbc(
+                "build",
+                {"deploy_dir": str(deploy_dir), "container": self._ssh.container},
+                lambda _: self._build_direct(deploy_dir),
+            )
+        return self._build_direct(deploy_dir)
+
+    def _build_direct(self, deploy_dir: Path) -> int:
         self._sync_deploy_dir(deploy_dir)
         self._remote_run(
             f"docker build -t {shlex.quote(self._ssh.container)} {shlex.quote(self._ssh.remote_dir)}",
@@ -154,6 +217,20 @@ class SshProvider(Provider):
         return 0
 
     def deploy(self, deploy_dir: Path, *, secrets: dict[str, str]) -> int:
+        # Step 13F: route through WBC when adapter is configured
+        if self._ssh_effect_adapter is not None:
+            return self._maybe_route_through_wbc(
+                "deploy",
+                {
+                    "deploy_dir": str(deploy_dir),
+                    "container": self._ssh.container,
+                    "port": self._spec.resources.port,
+                },
+                lambda _: self._deploy_direct(deploy_dir, secrets=secrets),
+            )
+        return self._deploy_direct(deploy_dir, secrets=secrets)
+
+    def _deploy_direct(self, deploy_dir: Path, *, secrets: dict[str, str]) -> int:
         del deploy_dir
         env_path = f"{self._ssh.remote_dir}/.env"
         env_lines = [f"PORT={self._spec.resources.port}"]
@@ -260,6 +337,16 @@ class SshProvider(Provider):
         return 0
 
     def destroy(self, *, volume: str | None = None) -> int:
+        # Step 13F: route through WBC when adapter is configured
+        if self._ssh_effect_adapter is not None:
+            return self._maybe_route_through_wbc(
+                "destroy",
+                {"container": self._ssh.container, "remote_dir": self._ssh.remote_dir},
+                lambda _: self._destroy_direct(volume=volume),
+            )
+        return self._destroy_direct(volume=volume)
+
+    def _destroy_direct(self, *, volume: str | None = None) -> int:
         del volume
         self._remote_run(
             f"docker rm -f {shlex.quote(self._ssh.container)} >/dev/null 2>&1 || true && rm -rf {shlex.quote(self._ssh.remote_dir)}",

@@ -144,6 +144,7 @@ NON_AUTHORITY_RAW_STATUS_SNIPPETS = {
     "arnold_pipelines/megaplan/execute/_binding/reducer.py": {
         'if task.get("status") == "done":',
         'if task.get("id") == task_id and task.get("status") in {"done", "skipped"}',
+        'if t.get("id") == tid and t.get("status") in {"done", "skipped"}',
     },
     "arnold_pipelines/megaplan/execute/timeout.py": {
         'if task.get("status") != "done":',

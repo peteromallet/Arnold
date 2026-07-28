@@ -19,8 +19,24 @@ addressed completion evidence. Completion also requires installed-runtime
 canary/live proof and one genuine eligible blocked-run recovery; local tests and
 nominal manifests cannot substitute. Scope is no more than two weeks.
 
+M11 closes C01–C20 from
+`decisions/m10-m11-structural-conformance-closure-20260723.md`. It consumes the
+exact accepted M10 launch/effect/replay handoff and revalidates it byte-for-byte
+before initialization, canary, or retirement eligibility.
+
 ## In scope
 
+- Revalidate the exact M10 source/seed/runtime/process launch manifest,
+  materialized M10 snapshot, accepted transaction, and handoff before creating
+  M11. Any changed, missing, ambiguous, or unpublished identity is a stop.
+- Execute every C01–C20 negative control, including missing/ambiguous chain
+  binding, mixed loaded modules, executable/unowned `.pth`, stale selector-bound
+  process, wrapper/supervisor drift, fabricated schema fields, request marker
+  without decision, syntactic authority, lease/cache/history corruption,
+  activity-only recurrence, failed guard output, unregistered repair outcome,
+  stale status/review/watchdog evidence, and source-shadowed installed tests.
+- Enforce version-gated WBC store/outbox expand/contract, contiguous migration
+  checksums, explicit legacy/unknown semantics, and zero old-writer authority.
 - Close every residual migration-matrix row with exact prerequisite and M6-M10
   proof, machine-verifiable owner contract, source/runtime/contract hashes, rollback result, and
   retirement evidence.
@@ -130,6 +146,16 @@ and may not restore legacy write authority.
 
 ## Done criteria
 
+- One integrated launch/cutover test joins source and seed binding, target
+  checkout/HEAD, runtime vector, marker CAS, supervisor receipt, resident and
+  watchdog process identity, worker preflight, fresh gate, A→B, and independently
+  verified B→A. Component-only helper tests cannot satisfy this case.
+- One canonical acceptance adapter and target-bound chain loader drive status,
+  watchdog, advancement, successor admission, resident, and Discord; all C16
+  contradictions remain visible and cannot render `done` or accepted progress.
+- Static call-site equality and runtime traces prove every provider/effect path
+  uses C13's WBC protocol; all C20 retirement predicates pass per path before a
+  generated deletion disposition exists.
 - Every residual matrix row is canonical or retired with proof; zero unowned,
   unexplained, warn-only, or authority-increasing compatibility exemption remains.
 - Every WBC row is `conformant` or a validated read-only `retired` adapter with
@@ -213,6 +239,8 @@ verify predecessor evidence; it may not re-implement or silently waive a row.
 - **Prerequisite:** complete M10 evidence bundle, unchanged protected M5/M5A/M6
   definitions, exact M6A–M10 handoffs, and one clean source/install/wrapper/
   config/contract/process vector.
+- **Structural amendment:** the complete C01–C20 decision and exact M10 launch
+  manifest are predecessor contracts, not optional evidence attachments.
 - **First safe action:** from the clean pin, revalidate every manifest,
   recommendation allocation, inventory row, artifact digest, dependency, and
   compatibility expiry before running a canary or marking deletion eligible.

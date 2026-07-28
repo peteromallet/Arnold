@@ -1408,6 +1408,7 @@ def test_resident_runtime_injects_conversation_history_before_current_burst(
         conversation_id=conversation.id,
         direction="inbound",
         content="earlier user message",
+        discord_message_id="earlier-user-message",
     )
     store.create_message(
         epic_id=None,

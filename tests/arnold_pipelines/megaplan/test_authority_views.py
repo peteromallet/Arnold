@@ -31,6 +31,7 @@ from arnold_pipelines.megaplan.orchestration.authority_readers import (
 from arnold_pipelines.megaplan.orchestration.authority_readers import AuthorityDecision
 from arnold_pipelines.megaplan.orchestration.evidence_contract import EvidenceStatus
 from arnold_pipelines.run_authority import (
+    CASExpectation,
     ContractError,
     CoordinatorFence,
     EvidenceEnvelope,
@@ -93,6 +94,7 @@ def _write_validated_attempt_artifact(
     task_id: str,
     outcome: str = "accepted",
     batch_number: int = 1,
+    with_cas: bool = False,
 ) -> ResultEnvelope:
     evidence, fence, grant, attempt, _claim_key, claim, *_ = _records(task_id)
     dispatch = DispatchIdentity.from_records(
@@ -100,6 +102,11 @@ def _write_validated_attempt_artifact(
         fence,
         prerequisite_digest="digest-1",
         worker_id="worker-1",
+        cas_expectation=(
+            CASExpectation(RUN, REVISION, 3)
+            if with_cas
+            else None
+        ),
     )
     envelope = ResultEnvelope(
         dispatch=dispatch,
@@ -355,6 +362,28 @@ def test_execute_scheduler_prefers_accepted_attempt_projection(tmp_path) -> None
     assert projection.view.next_ready_wave == ("T2",)
     assert projection.view.accepted_task_attempts[0].attempt_id == envelope.attempt.attempt_id
     assert completed == {"T1"}
+
+
+def test_accepted_attempt_projection_treats_cas_as_dispatch_precondition(
+    tmp_path,
+) -> None:
+    envelope = _write_validated_attempt_artifact(
+        tmp_path,
+        task_id="T1",
+        with_cas=True,
+    )
+    tasks = [
+        {"id": "T1", "status": "pending", "depends_on": []},
+        {"id": "T2", "status": "pending", "depends_on": ["T1"]},
+    ]
+
+    projection = accepted_attempt_execution_projection(tasks, plan_dir=tmp_path)
+
+    assert projection is not None
+    assert projection.view.accepted_task_ids == ("T1",)
+    assert projection.view.dependency_closed_completed_task_ids == ("T1",)
+    assert projection.view.next_ready_wave == ("T2",)
+    assert projection.view.accepted_task_attempts[0].attempt_id == envelope.attempt.attempt_id
 
 
 def test_execute_scheduler_rejected_projection_prevents_raw_done_fallback(tmp_path) -> None:

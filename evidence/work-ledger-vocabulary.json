@@ -1,12 +1,109 @@
 {
-  "schema": "m6.work-ledger-vocabulary.v1",
-  "generated_at": "2026-07-19T22:34:46.984042+00:00",
-  "generator": "tools/generate_m6_rollout_register.py",
+  "schema": "m6.work-ledger-vocabulary.v2",
+  "generated_at": "2026-07-21T23:36:18.348830+00:00",
+  "generator": "arnold_pipelines/megaplan/observability/work_ledger.py",
   "source_evidence": {
     "unified_authority_research": "/workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/custody-control-plane/research/unified-authority-efficiency-prevention-20260714.md",
     "finding_F14": "Productive and replayed time/tokens/cost were not authoritative"
   },
-  "north_star_guard": "All baseline denominators are preserved as UNKNOWN. No field is defaulted to zero or labeled success evidence. Missing cost has an explicit reason. The prevention target is avoidable overhead, reported separately from productive implementation and necessary proof/review.",
+  "north_star_guard": "All baseline denominators are preserved as UNKNOWN. No field is defaulted to zero or labelled success evidence. Missing cost has an explicit reason. The prevention target is avoidable overhead, reported separately from productive implementation and necessary proof/review.",
+  "event_class_count": 12,
+  "reconciliation_primitives": [
+    "aggregate_by_class",
+    "aggregate_by_task",
+    "reconcile_unavailable_measures",
+    "build_work_class_summary"
+  ],
+  "event_classes": {
+    "validation": {
+      "description": "Deterministic harness validation job completed — no model call consumed.",
+      "category": "productive",
+      "required_payload_keys": ["task_id", "job_id", "command", "exit_code", "duration_ms"],
+      "optional_payload_keys": ["evidence_hash"],
+      "unit": "milliseconds"
+    },
+    "repair_verify": {
+      "description": "Verify-only repair receipt adoption completed — grant/fence match recorded.",
+      "category": "productive",
+      "required_payload_keys": ["task_id", "receipt_hash", "outcome", "duration_ms"],
+      "optional_payload_keys": ["grant_match", "fence_match"],
+      "unit": "milliseconds"
+    },
+    "productive": {
+      "description": "Productive work (model inference) completed — value-generating activity.",
+      "category": "productive",
+      "required_payload_keys": ["task_id", "work_class", "duration_ms"],
+      "optional_payload_keys": ["tokens", "cost_usd", "model_calls"],
+      "unit": "milliseconds"
+    },
+    "unavailable_reason": {
+      "description": "A specific telemetry measure is unavailable and here is why — never default to zero.",
+      "category": "evidence_gap",
+      "required_payload_keys": ["task_id", "measure", "reason"],
+      "unit": "n/a"
+    },
+    "review_proof": {
+      "description": "Review/proof work — code review, quality assessment, or proof generation.",
+      "category": "overhead",
+      "required_payload_keys": ["task_id", "review_kind", "duration_ms"],
+      "optional_payload_keys": ["verdict", "reviewer_id"],
+      "review_kind_enum": ["code_review", "quality_check", "proof_generation"],
+      "unit": "milliseconds"
+    },
+    "queue": {
+      "description": "Queue wait time — time spent waiting for a worker slot after admission.",
+      "category": "overhead",
+      "required_payload_keys": ["task_id", "duration_ms"],
+      "optional_payload_keys": ["queue_reason"],
+      "queue_reason_enum": ["slot_wait", "worker_unavailable", "scheduling"],
+      "unit": "milliseconds"
+    },
+    "retry_wait": {
+      "description": "Retry-wait time — time spent waiting between retry attempts (backoff, provider cooldown, circuit delay).",
+      "category": "overhead",
+      "required_payload_keys": ["task_id", "duration_ms", "attempt_number"],
+      "optional_payload_keys": ["wait_reason"],
+      "wait_reason_enum": ["backoff", "provider_cooldown", "circuit_delay"],
+      "unit": "milliseconds"
+    },
+    "compaction": {
+      "description": "Context compaction time — time spent compacting conversation context for budget management.",
+      "category": "overhead",
+      "required_payload_keys": ["task_id", "duration_ms"],
+      "optional_payload_keys": ["compacted_tokens", "strategy"],
+      "strategy_enum": ["summary", "truncation"],
+      "unit": "milliseconds"
+    },
+    "replay": {
+      "description": "Deterministic replay time — time spent replaying captured fixtures for proof generation.",
+      "category": "productive",
+      "required_payload_keys": ["task_id", "duration_ms"],
+      "optional_payload_keys": ["fixture_path", "exit_code"],
+      "unit": "milliseconds"
+    },
+    "tool": {
+      "description": "Tool execution time — time spent executing tool calls (shell, file operations, API calls).",
+      "category": "productive",
+      "required_payload_keys": ["task_id", "tool_name", "duration_ms"],
+      "optional_payload_keys": ["exit_code"],
+      "tool_name_examples": ["terminal", "read_file", "search_files", "write_file", "patch"],
+      "unit": "milliseconds"
+    },
+    "git": {
+      "description": "Git operation time — time spent on Git operations (commits, diffs, status checks).",
+      "category": "overhead",
+      "required_payload_keys": ["task_id", "operation", "duration_ms"],
+      "optional_payload_keys": ["exit_code"],
+      "operation_enum": ["commit", "diff", "status", "checkout", "add", "push", "pull"],
+      "unit": "milliseconds"
+    },
+    "transition": {
+      "description": "Lifecycle state transition time — time spent on plan/chain/task phase changes.",
+      "category": "overhead",
+      "required_payload_keys": ["task_id", "from_state", "to_state", "duration_ms"],
+      "unit": "milliseconds"
+    }
+  },
   "stage_count": 12,
   "cost_dimension_count": 3,
   "stages": [

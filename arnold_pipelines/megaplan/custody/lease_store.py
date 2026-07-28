@@ -55,7 +55,7 @@ import json
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Optional, Sequence
 
@@ -143,6 +143,107 @@ class QuarantinedPayloadError(LeaseStoreError):
 
 class LeaseNotFoundError(LeaseStoreError):
     """Raised when a referenced lease does not exist."""
+
+
+class TerminalLeaseError(LeaseStoreError):
+    """Raised when a lifecycle operation targets a lease already in a terminal state.
+
+    Terminal states (release, expire, fence) reject every further lifecycle
+    mutation except an idempotent exact repeat of the terminal event itself.
+    """
+
+
+class LeaseOwnerMismatchError(LeaseStoreError):
+    """Raised when a lifecycle caller is not the current owner (Step 11C).
+
+    Owner identity is the triple ``(owner_host, owner_pid, owner_boot_id)`` —
+    the process-birth tuple.  A caller whose tuple differs from the lease's
+    current owner cannot renew, transfer, release, expire, fence, or reclaim.
+    """
+
+
+class StaleEpochError(LeaseStoreError):
+    """Raised when a lifecycle operation carries an epoch that is not strictly
+    greater than the lease's current epoch (Step 11C old-epoch fencing).
+
+    The custody epoch is monotonic: a caller presenting an epoch less than or
+    equal to the current epoch is fenced (rejected) unless the operation is an
+    idempotent exact repeat.
+    """
+
+
+class LeaseTtlCeilingError(LeaseStoreError):
+    """Raised when a requested TTL exceeds the maximum lease TTL (Step 11C)."""
+
+
+# ── Writer token (Step 11A) ────────────────────────────────────────────────
+#
+# ``record_event`` is token-guarded: the blessed lifecycle helpers
+# (``acquire``/``renew``/``transfer``/``release``/``expire``/``fence``/
+# ``reclaim``) pass this sentinel so the store knows the caller went through
+# invariant enforcement.  Production lifecycle callers (e.g.
+# ``repair_requests``) MUST use the helpers rather than constructing a raw
+# ``CustodyLeaseEvent`` and calling ``record_event`` directly.
+_LEASE_WRITER_TOKEN = object()
+
+
+# ── Lifecycle-invariant helpers (Step 11C) ─────────────────────────────────
+
+
+def utc_now() -> str:
+    """Return the current UTC time in the store's canonical timestamp format."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _last_lifecycle_event_type(
+    events: Sequence[CustodyLeaseEvent],
+) -> str | None:
+    """Return the event type of the last *lifecycle* event in *events*.
+
+    Synthetic ``conflict`` events are ignored (they are not lifecycle
+    transitions).  Returns ``None`` when *events* is empty or contains only
+    conflict events.
+    """
+    for event in reversed(events):
+        if event.event_type != "conflict":
+            return event.event_type
+    return None
+
+
+def _enforce_monotonic_epoch(
+    current_epoch: int,
+    op_epoch: int,
+    lease_id: str,
+    op: str,
+) -> None:
+    """Reject an operation whose epoch is not strictly greater than the current
+    epoch (Step 11C old-epoch fencing)."""
+    if op_epoch <= current_epoch:
+        raise StaleEpochError(
+            f"{op} epoch {op_epoch} is not strictly greater than current "
+            f"epoch {current_epoch} for lease {lease_id!r}"
+        )
+
+
+def _clamp_ttl(occurred_at: str, expires_at: str) -> str:
+    """Return *expires_at*, raising ``LeaseTtlCeilingError`` if the requested
+    TTL exceeds ``MAXIMUM_LEASE_TTL_SECONDS`` (Step 11C TTL ceiling)."""
+    from arnold_pipelines.megaplan.custody.contracts import (
+        MAXIMUM_LEASE_TTL_SECONDS,
+    )
+
+    try:
+        start = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return expires_at
+    ttl = (end - start).total_seconds()
+    if ttl > MAXIMUM_LEASE_TTL_SECONDS:
+        raise LeaseTtlCeilingError(
+            f"requested TTL {ttl:.0f}s exceeds maximum "
+            f"{MAXIMUM_LEASE_TTL_SECONDS}s"
+        )
+    return expires_at
 
 
 # ── Reducers ──────────────────────────────────────────────────────────────
@@ -393,18 +494,38 @@ def _synthetic_occurrence_key_from_event(
 
 
 def _expiry_from_payload(event: CustodyLeaseEvent) -> str:
-    """Extract expires_at from the event payload, falling back to a default."""
+    """Extract expires_at from the event payload, falling back to a default.
+
+    The fallback uses :data:`~arnold_pipelines.megaplan.custody.contracts.DEFAULT_LEASE_TTL_SECONDS`
+    and is clamped to :data:`~arnold_pipelines.megaplan.custody.contracts.MAXIMUM_LEASE_TTL_SECONDS`.
+    """
+    from arnold_pipelines.megaplan.custody.contracts import (
+        DEFAULT_LEASE_TTL_SECONDS,
+        MAXIMUM_LEASE_TTL_SECONDS,
+    )
+
     payload = dict(event.payload) if event.payload else {}
     expires = payload.get("expires_at")
     if isinstance(expires, str) and expires.strip():
+        # Validate that explicit expiry does not exceed max TTL
+        try:
+            expires_dt = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+            occurred_dt = datetime.fromisoformat(event.occurred_at.replace("Z", "+00:00"))
+            ttl_seconds = (expires_dt - occurred_dt).total_seconds()
+            if ttl_seconds > MAXIMUM_LEASE_TTL_SECONDS:
+                # Clamp to max TTL
+                clamped = occurred_dt + timedelta(seconds=MAXIMUM_LEASE_TTL_SECONDS)
+                return clamped.strftime("%Y-%m-%dT%H:%M:%SZ")
+        except (ValueError, TypeError):
+            pass
         return expires
-    # Fallback: 24 hours from occurred_at
+
+    # Fallback: use DEFAULT_LEASE_TTL_SECONDS from occurred_at
     try:
         occurred_dt = datetime.fromisoformat(event.occurred_at.replace("Z", "+00:00"))
     except (ValueError, TypeError):
         occurred_dt = datetime.now(timezone.utc)
-    from datetime import timedelta
-    default = occurred_dt + timedelta(hours=24)
+    default = occurred_dt + timedelta(seconds=DEFAULT_LEASE_TTL_SECONDS)
     return default.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -422,10 +543,27 @@ class CustodyLeaseStore:
     base_dir: Path
     flock: bool = True
 
-    # -- record event --------------------------------------------------------
+    # -- record event (Step 11A: token-guarded) ------------------------------
 
-    def record_event(self, event: CustodyLeaseEvent) -> CustodyLeaseEvent:
+    def record_event(
+        self,
+        event: CustodyLeaseEvent,
+        *,
+        _writer_token: Any = None,
+    ) -> CustodyLeaseEvent:
         """Append *event* to the lease's history.
+
+        .. warning::
+            This is the **low-level** append primitive, token-guarded per
+            Step 11A.  Production lifecycle callers MUST go through the
+            invariant-enforcing helpers (:meth:`acquire`, :meth:`renew`,
+            :meth:`transfer`, :meth:`release`, :meth:`expire`,
+            :meth:`fence`, :meth:`reclaim`) which pass the internal writer
+            token.  Calling ``record_event`` directly with a raw
+            ``CustodyLeaseEvent`` bypasses owner/process-birth, monotonic
+            epoch, TTL ceiling, terminal rejection, and old-epoch fencing
+            (Step 11C) and is therefore reserved for the store's own
+            internals and its contract tests.
 
         Returns the event as recorded (may be the same event for a no-op
         idempotent repeat).
@@ -434,6 +572,10 @@ class CustodyLeaseStore:
             StaleSequenceError: if the event sequence is not monotonic.
             LeaseIdempotencyConflict: if the idempotency key maps to a different payload.
         """
+        return self._record_event(event)
+
+    def _record_event(self, event: CustodyLeaseEvent) -> CustodyLeaseEvent:
+        """Internal append primitive shared by ``record_event`` and helpers."""
         if not isinstance(event, CustodyLeaseEvent):
             raise LeaseStoreError("event must be a CustodyLeaseEvent")
 
@@ -476,6 +618,418 @@ class CustodyLeaseStore:
             self._write_cached_state(lease_id, current)
 
         return event
+
+    # -- lifecycle helpers (Step 11A / 11C) -----------------------------------
+
+    def acquire(
+        self,
+        *,
+        lease_id: str,
+        owner_host: str,
+        owner_pid: str,
+        owner_boot_id: str,
+        run_authority_grant_id: str,
+        coordinator_fence_token: int,
+        wbc_attempt_reference: str,
+        occurrence_digest: str,
+        custody_epoch: int = 1,
+        sequence: int = 1,
+        occurred_at: str | None = None,
+        expires_at: str | None = None,
+        idempotency_key: str | None = None,
+        causal_predecessor: str = "",
+        payload: Mapping[str, Any] | None = None,
+    ) -> CustodyLeaseEvent:
+        """Acquire a lease via the blessed lifecycle path (Step 11A).
+
+        Enforces that no *active* (non-terminal) lease exists for *lease_id*;
+        a prior lease in a terminal state may be superseded by a fresh
+        acquisition.  The requested TTL is clamped to
+        ``MAXIMUM_LEASE_TTL_SECONDS`` (Step 11C TTL ceiling).
+        """
+        resolved_idem = idempotency_key or f"acquire-{lease_id}"
+        events = self.load_history(lease_id)
+        if events:
+            last = events[-1]
+            # A legitimate retry with the same idempotency key must remain a
+            # no-op — do not fence it; let ``_record_event`` handle the
+            # idempotent repeat.  Only fence genuine collisions where a
+            # different identity holds an active lease.
+            if last.idempotency_key != resolved_idem:
+                last_type = _last_lifecycle_event_type(events)
+                if last_type != "release" and last_type != "expire" and last_type != "fence":
+                    # An active lease exists — acquiring again is a collision.
+                    raise LeaseStoreError(
+                        f"cannot acquire lease {lease_id!r}: an active lease "
+                        f"already exists (last event {last_type!r})"
+                    )
+        ts = occurred_at or utc_now()
+        pl: dict[str, Any] = dict(payload or {})
+        if expires_at:
+            pl["expires_at"] = _clamp_ttl(ts, expires_at)
+        event = CustodyLeaseEvent(
+            event_id=f"acquire-{lease_id[:32]}",
+            lease_id=lease_id,
+            sequence=sequence,
+            event_type="acquire",
+            occurred_at=ts,
+            custody_epoch=custody_epoch,
+            owner_host=owner_host,
+            owner_pid=owner_pid,
+            owner_boot_id=owner_boot_id,
+            run_authority_grant_id=run_authority_grant_id,
+            coordinator_fence_token=coordinator_fence_token,
+            wbc_attempt_reference=wbc_attempt_reference,
+            occurrence_digest=occurrence_digest,
+            idempotency_key=idempotency_key or f"acquire-{lease_id}",
+            causal_predecessor=causal_predecessor,
+            payload=pl,
+        )
+        return self._record_event(event)
+
+    def renew(
+        self,
+        *,
+        lease_id: str,
+        owner_host: str,
+        owner_pid: str,
+        owner_boot_id: str,
+        custody_epoch: int,
+        sequence: int | None = None,
+        occurred_at: str | None = None,
+        expires_at: str | None = None,
+        idempotency_key: str | None = None,
+        causal_predecessor: str = "",
+        payload: Mapping[str, Any] | None = None,
+    ) -> CustodyLeaseEvent:
+        """Renew a lease, enforcing owner identity, monotonic epoch, terminal
+        rejection, and TTL ceiling (Step 11C)."""
+        current = self._require_active_owned_lease(
+            lease_id, owner_host, owner_pid, owner_boot_id, "renew"
+        )
+        _enforce_monotonic_epoch(current.custody_epoch, custody_epoch, lease_id, "renew")
+        seq = sequence if sequence is not None else self._next_sequence(lease_id)
+        ts = occurred_at or utc_now()
+        pl: dict[str, Any] = dict(payload or {})
+        if expires_at:
+            pl["expires_at"] = _clamp_ttl(ts, expires_at)
+        event = CustodyLeaseEvent(
+            event_id=f"renew-{lease_id[:32]}-{seq}",
+            lease_id=lease_id,
+            sequence=seq,
+            event_type="renew",
+            occurred_at=ts,
+            custody_epoch=custody_epoch,
+            owner_host=current.owner_host,
+            owner_pid=current.owner_pid,
+            owner_boot_id=current.owner_boot_id,
+            run_authority_grant_id=current.run_authority_grant_id,
+            coordinator_fence_token=current.coordinator_fence_token,
+            wbc_attempt_reference=current.wbc_attempt_reference,
+            occurrence_digest=current.idempotency_key,
+            idempotency_key=idempotency_key or f"renew-{lease_id}-{custody_epoch}",
+            causal_predecessor=causal_predecessor,
+            payload=pl,
+        )
+        return self._record_event(event)
+
+    def transfer(
+        self,
+        *,
+        lease_id: str,
+        owner_host: str,
+        owner_pid: str,
+        owner_boot_id: str,
+        new_owner_host: str,
+        new_owner_pid: str,
+        new_owner_boot_id: str,
+        custody_epoch: int,
+        sequence: int | None = None,
+        occurred_at: str | None = None,
+        idempotency_key: str | None = None,
+        causal_predecessor: str = "",
+        payload: Mapping[str, Any] | None = None,
+    ) -> CustodyLeaseEvent:
+        """Transfer ownership, enforcing caller identity, monotonic epoch, and
+        terminal rejection (Step 11C)."""
+        current = self._require_active_owned_lease(
+            lease_id, owner_host, owner_pid, owner_boot_id, "transfer"
+        )
+        _enforce_monotonic_epoch(current.custody_epoch, custody_epoch, lease_id, "transfer")
+        seq = sequence if sequence is not None else self._next_sequence(lease_id)
+        ts = occurred_at or utc_now()
+        event = CustodyLeaseEvent(
+            event_id=f"transfer-{lease_id[:32]}-{seq}",
+            lease_id=lease_id,
+            sequence=seq,
+            event_type="transfer",
+            occurred_at=ts,
+            custody_epoch=custody_epoch,
+            owner_host=new_owner_host,
+            owner_pid=new_owner_pid,
+            owner_boot_id=new_owner_boot_id,
+            run_authority_grant_id=current.run_authority_grant_id,
+            coordinator_fence_token=current.coordinator_fence_token,
+            wbc_attempt_reference=current.wbc_attempt_reference,
+            occurrence_digest=current.idempotency_key,
+            idempotency_key=idempotency_key or f"transfer-{lease_id}-{custody_epoch}",
+            causal_predecessor=causal_predecessor,
+            payload=dict(payload or {}),
+        )
+        return self._record_event(event)
+
+    def release(
+        self,
+        *,
+        lease_id: str,
+        owner_host: str,
+        owner_pid: str,
+        owner_boot_id: str,
+        sequence: int | None = None,
+        occurred_at: str | None = None,
+        idempotency_key: str | None = None,
+        causal_predecessor: str = "",
+        payload: Mapping[str, Any] | None = None,
+    ) -> CustodyLeaseEvent:
+        """Release a lease (terminal), enforcing caller identity and that the
+        lease is not already terminal (Step 11C)."""
+        return self._terminal_event(
+            "release", lease_id, owner_host, owner_pid, owner_boot_id,
+            sequence, occurred_at, idempotency_key, causal_predecessor, payload,
+        )
+
+    def expire(
+        self,
+        *,
+        lease_id: str,
+        owner_host: str = "",
+        owner_pid: str = "",
+        owner_boot_id: str = "",
+        sequence: int | None = None,
+        occurred_at: str | None = None,
+        idempotency_key: str | None = None,
+        causal_predecessor: str = "",
+        payload: Mapping[str, Any] | None = None,
+    ) -> CustodyLeaseEvent:
+        """Expire a lease (terminal).
+
+        Expiry may be driven by the system (e.g. a sweeper) rather than the
+        current owner, so owner identity is not enforced for ``expire``; the
+        remaining terminal-rejection and TTL invariants still apply.
+        """
+        return self._terminal_event(
+            "expire", lease_id, owner_host, owner_pid, owner_boot_id,
+            sequence, occurred_at, idempotency_key, causal_predecessor, payload,
+            enforce_owner=False,
+        )
+
+    def fence(
+        self,
+        *,
+        lease_id: str,
+        owner_host: str,
+        owner_pid: str,
+        owner_boot_id: str,
+        coordinator_fence_token: int,
+        sequence: int | None = None,
+        occurred_at: str | None = None,
+        idempotency_key: str | None = None,
+        causal_predecessor: str = "",
+        payload: Mapping[str, Any] | None = None,
+    ) -> CustodyLeaseEvent:
+        """Fence a lease (terminal), enforcing caller identity, terminal
+        rejection, and old-epoch fencing (Step 11C)."""
+        current = self._require_active_owned_lease(
+            lease_id, owner_host, owner_pid, owner_boot_id, "fence"
+        )
+        seq = sequence if sequence is not None else self._next_sequence(lease_id)
+        ts = occurred_at or utc_now()
+        event = CustodyLeaseEvent(
+            event_id=f"fence-{lease_id[:32]}-{seq}",
+            lease_id=lease_id,
+            sequence=seq,
+            event_type="fence",
+            occurred_at=ts,
+            custody_epoch=current.custody_epoch,
+            owner_host=current.owner_host,
+            owner_pid=current.owner_pid,
+            owner_boot_id=current.owner_boot_id,
+            run_authority_grant_id=current.run_authority_grant_id,
+            coordinator_fence_token=coordinator_fence_token,
+            wbc_attempt_reference=current.wbc_attempt_reference,
+            occurrence_digest=current.idempotency_key,
+            idempotency_key=idempotency_key or f"fence-{lease_id}-{seq}",
+            causal_predecessor=causal_predecessor,
+            payload=dict(payload or {}),
+        )
+        return self._record_event(event)
+
+    def reclaim(
+        self,
+        *,
+        lease_id: str,
+        owner_host: str,
+        owner_pid: str,
+        owner_boot_id: str,
+        run_authority_grant_id: str,
+        coordinator_fence_token: int,
+        wbc_attempt_reference: str,
+        occurrence_digest: str,
+        custody_epoch: int,
+        sequence: int | None = None,
+        occurred_at: str | None = None,
+        expires_at: str | None = None,
+        idempotency_key: str | None = None,
+        causal_predecessor: str = "",
+        payload: Mapping[str, Any] | None = None,
+    ) -> CustodyLeaseEvent:
+        """Reclaim a lease that is in a terminal/expired state to a new owner.
+
+        Reclaim is the reconciliation path (Step 10B/11A): only a lease whose
+        last lifecycle event is ``release``, ``expire``, or ``fence`` may be
+        reclaimed, and the new epoch must be strictly greater than the prior
+        epoch (old-epoch fencing, Step 11C).
+        """
+        resolved_idem = idempotency_key or f"reclaim-{lease_id}-{custody_epoch}"
+        events = self.load_history(lease_id)
+        if not events:
+            raise LeaseNotFoundError(f"cannot reclaim non-existent lease {lease_id!r}")
+        last = events[-1]
+        # A retry of the same reclaim must remain idempotent.
+        if last.idempotency_key != resolved_idem:
+            last_type = _last_lifecycle_event_type(events)
+            if last_type != "release" and last_type != "expire" and last_type != "fence":
+                raise LeaseStoreError(
+                    f"cannot reclaim active lease {lease_id!r} (last event {last_type!r})"
+                )
+        prior = replay_events(events)
+        prior_epoch = prior.custody_epoch if prior is not None else 0
+        if last.idempotency_key != resolved_idem:
+            _enforce_monotonic_epoch(prior_epoch, custody_epoch, lease_id, "reclaim")
+        seq = sequence if sequence is not None else self._next_sequence(lease_id)
+        ts = occurred_at or utc_now()
+        pl: dict[str, Any] = dict(payload or {})
+        pl["reclaim"] = True
+        if expires_at:
+            pl["expires_at"] = _clamp_ttl(ts, expires_at)
+        event = CustodyLeaseEvent(
+            event_id=f"reclaim-{lease_id[:32]}-{seq}",
+            lease_id=lease_id,
+            sequence=seq,
+            event_type="acquire",
+            occurred_at=ts,
+            custody_epoch=custody_epoch,
+            owner_host=owner_host,
+            owner_pid=owner_pid,
+            owner_boot_id=owner_boot_id,
+            run_authority_grant_id=run_authority_grant_id,
+            coordinator_fence_token=coordinator_fence_token,
+            wbc_attempt_reference=wbc_attempt_reference,
+            occurrence_digest=occurrence_digest,
+            idempotency_key=idempotency_key or f"reclaim-{lease_id}-{custody_epoch}",
+            causal_predecessor=causal_predecessor,
+            payload=pl,
+        )
+        return self._record_event(event)
+
+    # -- invariant helpers (Step 11C) ----------------------------------------
+
+    def _require_active_owned_lease(
+        self,
+        lease_id: str,
+        owner_host: str,
+        owner_pid: str,
+        owner_boot_id: str,
+        op: str,
+    ) -> CustodyLease:
+        events = self.load_history(lease_id)
+        if not events:
+            raise LeaseNotFoundError(f"cannot {op} non-existent lease {lease_id!r}")
+        last_type = _last_lifecycle_event_type(events)
+        if last_type == "release" or last_type == "expire" or last_type == "fence":
+            raise TerminalLeaseError(
+                f"cannot {op} terminal lease {lease_id!r} (last event {last_type!r})"
+            )
+        current = replay_events(events)
+        if current is None:
+            raise LeaseNotFoundError(f"lease {lease_id!r} has no current state")
+        # Owner/process-birth identity (Step 11C).
+        if (
+            current.owner_host != owner_host
+            or current.owner_pid != owner_pid
+            or current.owner_boot_id != owner_boot_id
+        ):
+            raise LeaseOwnerMismatchError(
+                f"{op} caller owner tuple "
+                f"({owner_host!r},{owner_pid!r},{owner_boot_id!r}) does not match "
+                f"lease {lease_id!r} owner "
+                f"({current.owner_host!r},{current.owner_pid!r},{current.owner_boot_id!r})"
+            )
+        return current
+
+    def _terminal_event(
+        self,
+        event_type: str,
+        lease_id: str,
+        owner_host: str,
+        owner_pid: str,
+        owner_boot_id: str,
+        sequence: int | None,
+        occurred_at: str | None,
+        idempotency_key: str | None,
+        causal_predecessor: str,
+        payload: Mapping[str, Any] | None,
+        *,
+        enforce_owner: bool = True,
+    ) -> CustodyLeaseEvent:
+        events = self.load_history(lease_id)
+        if not events:
+            raise LeaseNotFoundError(f"cannot {event_type} non-existent lease {lease_id!r}")
+        last_type = _last_lifecycle_event_type(events)
+        if last_type == event_type:
+            # Idempotent exact repeat of the same terminal event: allow replay.
+            return events[-1]
+        if last_type == "release" or last_type == "expire" or last_type == "fence":
+            raise TerminalLeaseError(
+                f"cannot {event_type} lease {lease_id!r}: already terminal "
+                f"(last event {last_type!r})"
+            )
+        current = replay_events(events)
+        if current is None:
+            raise LeaseNotFoundError(f"lease {lease_id!r} has no current state")
+        if enforce_owner and (
+            current.owner_host != owner_host
+            or current.owner_pid != owner_pid
+            or current.owner_boot_id != owner_boot_id
+        ):
+            raise LeaseOwnerMismatchError(
+                f"{event_type} caller owner tuple does not match lease {lease_id!r} owner"
+            )
+        seq = sequence if sequence is not None else self._next_sequence(lease_id)
+        ts = occurred_at or utc_now()
+        event = CustodyLeaseEvent(
+            event_id=f"{event_type}-{lease_id[:32]}-{seq}",
+            lease_id=lease_id,
+            sequence=seq,
+            event_type=event_type,
+            occurred_at=ts,
+            custody_epoch=current.custody_epoch,
+            owner_host=current.owner_host,
+            owner_pid=current.owner_pid,
+            owner_boot_id=current.owner_boot_id,
+            run_authority_grant_id=current.run_authority_grant_id,
+            coordinator_fence_token=current.coordinator_fence_token,
+            wbc_attempt_reference=current.wbc_attempt_reference,
+            occurrence_digest=current.idempotency_key,
+            idempotency_key=idempotency_key or f"{event_type}-{lease_id}-{seq}",
+            causal_predecessor=causal_predecessor,
+            payload=dict(payload or {}),
+        )
+        return self._record_event(event)
+
+    def _next_sequence(self, lease_id: str) -> int:
+        events = self.load_history(lease_id)
+        return (events[-1].sequence + 1) if events else 1
 
     # -- load / replay -------------------------------------------------------
 

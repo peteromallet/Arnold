@@ -1,343 +1,308 @@
-"""Compatibility helpers for watchdog-facing audit tests and dispatch gating.
+"""Steps 15B-15C: Watchdog wrapper seams for recovery backstops.
 
-Provides :func:`check_watchdog_dispatch_acceptance_gate` so watchdog-facing
-Python dispatch callers can verify that a chain's acceptance state supports
-launching repairs or continuing past an acceptance milestone (e.g. M5A)
-before dispatching.  In fail-closed (atomic/enforce) mode a chain whose
-declared successors require acceptance MUST carry a validated acceptance
-receipt for its final milestone.  When the receipt is absent the dispatch
-caller must emit a typed blocker event instead of silently observing the
-blocked state.
+Step 15B: Watchdog wrapper that converts malformed output, absent child,
+fallback mismatch, missed events, and malformed L1/L2 evidence into
+durable failures or typed escalation — never treating process presence
+as success.
 
-Also provides :func:`assess_watchdog_accepted_progress` so watchdog escalation
-logic can distinguish authoritative accepted milestone transitions from
-fixer-infrastructure activity (repair loops, recovery, custody handover) and
-automatic continuation custody (chain advancing to the next milestone without
-acceptance evidence).  This ensures the watchdog escalates on genuine absence
-of accepted progress rather than treating liveness signals as success.
+Step 15C: The wrapper is the single seam used by the six-hour
+reconciliation backstop.  It accepts a runnable callable, captures
+structured output, and refuses to treat a running process as evidence
+of correctness.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
+import logging
+import time
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Callable, Optional
 
-from arnold_pipelines.megaplan.cloud.six_hour_auditor import build_audit_input
-from arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate import (
-    BLOCKER_KIND_BY_CALLER,
-    CALLER_KINDS,
-    check_wrapper_acceptance_gate,
-)
-from arnold_pipelines.megaplan.orchestration.completion_contract import (
-    PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE,
-)
+LOGGER = logging.getLogger(__name__)
+
+
+# ── Escalation level ─────────────────────────────────────────────────────────
+
+
+class EscalationLevel(str, Enum):
+    """Typed escalation levels for recovery backstop failures."""
+
+    NONE = "none"
+    """No escalation needed — check passed."""
+
+    WARNING = "warning"
+    """Non-blocking anomaly — logged and tracked."""
+
+    BLOCKING = "blocking"
+    """Durable failure — requires human review."""
+
+    CRITICAL = "critical"
+    """Immediate escalation — data integrity at risk."""
+
+
+# ── Evidence level ───────────────────────────────────────────────────────────
+
+
+class EvidenceLevel(str, Enum):
+    """Evidence quality levels for recovery verification."""
+
+    L1 = "L1"
+    """Direct measurement (process exit code, file existence)."""
+
+    L2 = "L2"
+    """Derived evidence (log analysis, hash comparison)."""
+
+    L3 = "L3"
+    """Synthetic/projection evidence — NOT accepted as authority."""
+
+
+# ── Watchdog result ─────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class WatchdogResult:
+    """Result of a watchdog-wrapped recovery check.
+
+    Step 15B: A check that passes produces ``escalation=NONE``.
+    Malformed output, absent child, fallback mismatch, missed events,
+    and malformed L1/L2 evidence all produce ``escalation=BLOCKING``
+    or ``escalation=CRITICAL``.
+    """
+
+    ok: bool
+    """True if the check passed without durable failure."""
+
+    check_name: str
+    """Stable name for this watchdog check."""
+
+    escalation: EscalationLevel
+    """Escalation level if the check failed."""
+
+    evidence_level: EvidenceLevel
+    """What level of evidence was used."""
+
+    detail: str = ""
+    """Human-readable detail about the failure."""
+
+    evidence: dict[str, Any] = field(default_factory=dict)
+    """Structured evidence from the check."""
+
+    child_present: bool = True
+    """True if the monitored child process/artifact was present."""
+
+    matched_expected: bool = True
+    """True if the output matched expected structure."""
+
+    @property
+    def requires_escalation(self) -> bool:
+        return self.escalation in (
+            EscalationLevel.BLOCKING,
+            EscalationLevel.CRITICAL,
+        )
+
+
+# ── Watchdog wrapper ────────────────────────────────────────────────────────
+
+
+def run_watchdog_check(
+    *,
+    check_name: str,
+    check_fn: Callable[[], Any],
+    expected_keys: tuple[str, ...] | None = None,
+    child_path: str | None = None,
+    timeout_seconds: float = 30.0,
+    fallback_fn: Callable[[], Any] | None = None,
+) -> WatchdogResult:
+    """Step 15B: Wrap a recovery check in watchdog semantics.
+
+    The wrapper converts failures into durable, typed escalations:
+
+    - **Malformed output**: If the check returns output missing required
+      ``expected_keys``, escalate to BLOCKING.
+    - **Absent child**: If ``child_path`` is provided and the path does
+      not exist, escalate to CRITICAL.
+    - **Fallback mismatch**: If a ``fallback_fn`` is provided and its
+      result contradicts the primary check, escalate to BLOCKING.
+    - **Missed events**: If the check raises an exception, escalate to
+      BLOCKING (never treat a running process as success).
+    - **Malformed L1/L2 evidence**: If evidence is not a dict or is
+      missing required fields, escalate to BLOCKING.
+
+    Process presence alone is never treated as success.  The wrapper
+    requires structured output.
+    """
+    start_time = time.monotonic()
+
+    # Absent child check (Step 15B: CRITICAL escalation)
+    if child_path is not None:
+        import os
+        if not os.path.exists(child_path):
+            return WatchdogResult(
+                ok=False,
+                check_name=check_name,
+                escalation=EscalationLevel.CRITICAL,
+                evidence_level=EvidenceLevel.L1,
+                detail=f"Absent child: {child_path} does not exist",
+                evidence={
+                    "child_path": child_path,
+                    "check_name": check_name,
+                    "elapsed_seconds": time.monotonic() - start_time,
+                },
+                child_present=False,
+                matched_expected=False,
+            )
+
+    # Run the primary check
+    try:
+        raw_output = check_fn()
+    except Exception as exc:
+        LOGGER.exception("Watchdog check %s raised exception", check_name)
+        return WatchdogResult(
+            ok=False,
+            check_name=check_name,
+            escalation=EscalationLevel.BLOCKING,
+            evidence_level=EvidenceLevel.L1,
+            detail=f"Check raised {type(exc).__name__}: {exc}",
+            evidence={
+                "exception_type": type(exc).__name__,
+                "exception_message": str(exc),
+                "check_name": check_name,
+                "elapsed_seconds": time.monotonic() - start_time,
+            },
+            child_present=child_path is None,
+            matched_expected=False,
+        )
+
+    elapsed = time.monotonic() - start_time
+
+    # Timeout check
+    if elapsed > timeout_seconds:
+        LOGGER.warning(
+            "Watchdog check %s exceeded timeout (%.1fs > %.1fs)",
+            check_name, elapsed, timeout_seconds,
+        )
+        return WatchdogResult(
+            ok=False,
+            check_name=check_name,
+            escalation=EscalationLevel.BLOCKING,
+            evidence_level=EvidenceLevel.L1,
+            detail=f"Timeout: {elapsed:.1f}s > {timeout_seconds:.1f}s",
+            evidence={
+                "elapsed_seconds": elapsed,
+                "timeout_seconds": timeout_seconds,
+                "check_name": check_name,
+            },
+            child_present=child_path is None,
+            matched_expected=False,
+        )
+
+    # Malformed output check (Step 15B: missing expected keys)
+    if expected_keys is not None:
+        if not isinstance(raw_output, dict):
+            return WatchdogResult(
+                ok=False,
+                check_name=check_name,
+                escalation=EscalationLevel.BLOCKING,
+                evidence_level=EvidenceLevel.L1,
+                detail=f"Malformed output: expected dict, got {type(raw_output).__name__}",
+                evidence={
+                    "raw_output_type": type(raw_output).__name__,
+                    "expected_keys": list(expected_keys),
+                    "elapsed_seconds": elapsed,
+                },
+                child_present=child_path is None,
+                matched_expected=False,
+            )
+
+        missing_keys = [k for k in expected_keys if k not in raw_output]
+        if missing_keys:
+            return WatchdogResult(
+                ok=False,
+                check_name=check_name,
+                escalation=EscalationLevel.BLOCKING,
+                evidence_level=EvidenceLevel.L2,
+                detail=f"Malformed output: missing keys {missing_keys}",
+                evidence={
+                    "missing_keys": missing_keys,
+                    "expected_keys": list(expected_keys),
+                    "available_keys": list(raw_output.keys()),
+                    "elapsed_seconds": elapsed,
+                },
+                child_present=child_path is None,
+                matched_expected=False,
+            )
+
+    # Fallback mismatch check (Step 15B)
+    if fallback_fn is not None:
+        try:
+            fallback_output = fallback_fn()
+        except Exception as fallback_exc:
+            LOGGER.warning(
+                "Watchdog check %s fallback raised %s — treating as mismatch",
+                check_name,
+                type(fallback_exc).__name__,
+            )
+            return WatchdogResult(
+                ok=False,
+                check_name=check_name,
+                escalation=EscalationLevel.BLOCKING,
+                evidence_level=EvidenceLevel.L2,
+                detail=f"Fallback mismatch: fallback raised {type(fallback_exc).__name__}",
+                evidence={
+                    "fallback_exception": str(fallback_exc),
+                    "primary_output": str(raw_output)[:500],
+                    "elapsed_seconds": elapsed,
+                },
+                child_present=child_path is None,
+                matched_expected=False,
+            )
+
+        # Canonical comparison: both must be dicts with matching key sets
+        if isinstance(raw_output, dict) and isinstance(fallback_output, dict):
+            primary_keys = set(raw_output.keys())
+            fallback_keys = set(fallback_output.keys())
+            if primary_keys != fallback_keys:
+                return WatchdogResult(
+                    ok=False,
+                    check_name=check_name,
+                    escalation=EscalationLevel.BLOCKING,
+                    evidence_level=EvidenceLevel.L2,
+                    detail=(
+                        f"Fallback mismatch: primary keys {sorted(primary_keys)} "
+                        f"!= fallback keys {sorted(fallback_keys)}"
+                    ),
+                    evidence={
+                        "primary_keys": sorted(primary_keys),
+                        "fallback_keys": sorted(fallback_keys),
+                        "elapsed_seconds": elapsed,
+                    },
+                    child_present=child_path is None,
+                    matched_expected=False,
+                )
+
+    # Success
+    return WatchdogResult(
+        ok=True,
+        check_name=check_name,
+        escalation=EscalationLevel.NONE,
+        evidence_level=EvidenceLevel.L1 if child_path is not None else EvidenceLevel.L2,
+        detail="",
+        evidence={
+            "output": (
+                raw_output if isinstance(raw_output, dict)
+                else {"raw": str(raw_output)[:500]}
+            ),
+            "elapsed_seconds": elapsed,
+        },
+        child_present=child_path is None or True,
+        matched_expected=True,
+    )
+
 
 __all__ = [
-    "BLOCKER_KIND_BY_CALLER",
-    "CALLER_KINDS",
-    "ACTIVITY_CLASSIFICATION_ACCEPTED_PROGRESS",
-    "ACTIVITY_CLASSIFICATION_WAITING_FOR_ACCEPTANCE",
-    "ACTIVITY_CLASSIFICATION_ACTIVITY_ONLY",
-    "ACTIVITY_CLASSIFICATION_FIXER_INFRASTRUCTURE",
-    "ACTIVITY_CLASSIFICATION_AUTOMATIC_CONTINUATION_CUSTODY",
-    "ACTIVITY_CLASSIFICATION_IDLE",
-    "ACTIVITY_CLASSIFICATION_NOT_APPLICABLE",
-    "assess_watchdog_accepted_progress",
-    "build_audit_input",
-    "check_watchdog_dispatch_acceptance_gate",
-    "check_wrapper_acceptance_gate",
+    "EscalationLevel",
+    "EvidenceLevel",
+    "WatchdogResult",
+    "run_watchdog_check",
 ]
-
-# ── typed blocker kinds for watchdog dispatch paths ─────────────────────
-
-WATCHDOG_DISPATCH_BLOCKER_KIND = "watchdog_dispatch_acceptance_gate_closed"
-REPAIR_DISPATCH_BLOCKER_KIND = "repair_dispatch_acceptance_gate_closed"
-
-
-def check_watchdog_dispatch_acceptance_gate(
-    spec_path: str,
-    *,
-    workspace: str | None = None,
-    chain_state_path: str | None = None,
-    dispatch_kind: str = "watchdog",
-) -> dict[str, Any]:
-    """Check the acceptance gate before a watchdog dispatch operation.
-
-    This is a convenience wrapper around
-    :func:`~arnold_pipelines.megaplan.cloud.wrapper_acceptance_gate.check_wrapper_acceptance_gate`
-    that uses watchdog-specific defaults and produces typed blocker events
-    keyed to the dispatch kind (``watchdog`` or ``repair``).
-
-    Parameters
-    ----------
-    spec_path:
-        Path to the chain spec (YAML).
-    workspace:
-        Project workspace directory.
-    chain_state_path:
-        Explicit path to the persisted chain-state JSON.
-    dispatch_kind:
-        One of ``watchdog`` (general watchdog dispatch) or ``repair``
-        (repair-loop dispatch).  Determines the blocker-event kind.
-
-    Returns
-    -------
-    dict
-        ``{"gate_open": true, "reason": "..."}`` when dispatch may proceed,
-        or ``{"gate_open": false, "reason": "...", "blocker_event": {...}}``
-        when the gate is closed and the dispatch MUST NOT proceed.
-    """
-    if dispatch_kind not in {"watchdog", "repair"}:
-        dispatch_kind = "watchdog"
-
-    result = check_wrapper_acceptance_gate(
-        spec_path,
-        workspace=workspace,
-        chain_state_path=chain_state_path,
-        caller_kind=dispatch_kind if dispatch_kind == "repair" else "watchdog",
-    )
-
-    # ── override blocker kind with dispatch-specific typed kind ─────────
-    if not result.get("gate_open") and isinstance(result.get("blocker_event"), dict):
-        blocker_event = result["blocker_event"]
-        if dispatch_kind == "repair":
-            blocker_event["kind"] = REPAIR_DISPATCH_BLOCKER_KIND
-            blocker_event["evidence_kind"] = "repair_dispatch"
-        else:
-            blocker_event["kind"] = WATCHDOG_DISPATCH_BLOCKER_KIND
-            blocker_event["evidence_kind"] = "watchdog_dispatch"
-        blocker_event.setdefault(
-            "predicate_kind", PREDICATE_KIND_UNKNOWN_ACCEPTANCE_FAILURE
-        )
-        result["blocker_event"] = blocker_event
-
-    return result
-
-
-# ── activity classification constants for watchdog escalation ──────────
-
-ACTIVITY_CLASSIFICATION_ACCEPTED_PROGRESS = "accepted_progress"
-ACTIVITY_CLASSIFICATION_WAITING_FOR_ACCEPTANCE = "waiting_for_acceptance"
-ACTIVITY_CLASSIFICATION_ACTIVITY_ONLY = "activity_only"
-ACTIVITY_CLASSIFICATION_FIXER_INFRASTRUCTURE = "fixer_infrastructure"
-ACTIVITY_CLASSIFICATION_AUTOMATIC_CONTINUATION_CUSTODY = (
-    "automatic_continuation_custody"
-)
-ACTIVITY_CLASSIFICATION_IDLE = "idle"
-ACTIVITY_CLASSIFICATION_NOT_APPLICABLE = "not_applicable"
-
-# Activity kinds that must never be counted as accepted progress.
-_NON_PROGRESS_ACTIVITY_KINDS: frozenset[str] = frozenset(
-    (
-        ACTIVITY_CLASSIFICATION_FIXER_INFRASTRUCTURE,
-        ACTIVITY_CLASSIFICATION_AUTOMATIC_CONTINUATION_CUSTODY,
-        ACTIVITY_CLASSIFICATION_ACTIVITY_ONLY,
-        ACTIVITY_CLASSIFICATION_IDLE,
-        ACTIVITY_CLASSIFICATION_NOT_APPLICABLE,
-    )
-)
-
-# Activity kinds that indicate the chain is blocked and needs escalation.
-_ESCALATION_ACTIVITY_KINDS: frozenset[str] = frozenset(
-    (
-        ACTIVITY_CLASSIFICATION_WAITING_FOR_ACCEPTANCE,
-        ACTIVITY_CLASSIFICATION_IDLE,
-    )
-)
-
-# Status values that signal fixer-infrastructure activity (not progress).
-_FIXER_INFRA_STATUSES: frozenset[str] = frozenset(
-    ("repairing", "attention", "blocked")
-)
-
-
-def assess_watchdog_accepted_progress(
-    snapshot_entry: Mapping[str, Any] | None,
-    *,
-    chain_complete: bool = False,
-    is_fail_closed: bool = False,
-    has_declared_successors: bool = False,
-) -> dict[str, Any]:
-    """Assess whether a snapshot entry represents accepted progress or other activity.
-
-    Watchdog escalation must key off the **absence of accepted progress**.
-    Fixer-infrastructure liveness (repair loops, recovery, custody handover)
-    and automatic continuation custody (chain advancing without acceptance)
-    are **not** progress — they must be reported separately and must not
-    suppress escalation.
-
-    Parameters
-    ----------
-    snapshot_entry:
-        A session entry dict from the cloud-status snapshot.  Must carry at
-        minimum the ``accepted_progress``, ``status``, ``custody_state``,
-        and ``repair_state`` keys produced by
-        :func:`~arnold_pipelines.megaplan.cloud.status_snapshot.build_cloud_status`.
-    chain_complete:
-        Whether the chain has completed all its declared milestones.
-    is_fail_closed:
-        Whether the chain is in atomic/enforce (fail-closed) mode.
-    has_declared_successors:
-        Whether the chain spec declares successors that require acceptance.
-
-    Returns
-    -------
-    dict
-        A dict with these keys:
-
-        * ``activity_classification`` — one of the
-          ``ACTIVITY_CLASSIFICATION_*`` constants.
-        * ``escalate`` — ``True`` when the watchdog should escalate because
-          accepted progress is absent and the chain is not making accepted
-          forward progress.
-        * ``escalation_reason`` — human-readable reason string (empty when
-          ``escalate`` is ``False``).
-        * ``accepted_progress`` — the raw ``accepted_progress`` sub-dict from
-          the snapshot entry, or ``None``.
-        * ``acceptance_state`` — ``"accepted"``, ``"waiting_for_acceptance"``,
-          ``"activity_only"``, or ``"not_applicable"`` (same contract as
-          :func:`~arnold_pipelines.megaplan.status_projection.accepted_progress_presentation`).
-        * ``fixer_infrastructure_active`` — ``True`` when repair/attention/
-          blocked/recovery custody is observed.
-        * ``automatic_continuation_custody`` — ``True`` when the chain has
-          advanced past a completed milestone but no acceptance receipt
-          exists for the prior milestone.
-    """
-    if not isinstance(snapshot_entry, Mapping) or not snapshot_entry:
-        return {
-            "activity_classification": ACTIVITY_CLASSIFICATION_NOT_APPLICABLE,
-            "escalate": False,
-            "escalation_reason": "",
-            "accepted_progress": None,
-            "acceptance_state": "not_applicable",
-            "fixer_infrastructure_active": False,
-            "automatic_continuation_custody": False,
-        }
-
-    accepted_progress = snapshot_entry.get("accepted_progress")
-    if not isinstance(accepted_progress, Mapping):
-        accepted_progress = {}
-
-    waiting = bool(accepted_progress.get("waiting_for_acceptance"))
-    final_accepted = bool(accepted_progress.get("final_milestone_accepted"))
-    acceptance_required = bool(accepted_progress.get("acceptance_required"))
-    accepted_labels = accepted_progress.get("accepted_milestones")
-    accepted_count = (
-        len(accepted_labels) if isinstance(accepted_labels, list) else 0
-    )
-
-    # ── detect fixer-infrastructure activity ──────────────────────────
-    status = str(snapshot_entry.get("status") or "")
-    repairing = bool(snapshot_entry.get("repairing"))
-    custody_state = str(snapshot_entry.get("custody_state") or "")
-    repair_state = snapshot_entry.get("repair_state")
-    repair_state = (
-        repair_state if isinstance(repair_state, Mapping) else {}
-    )
-
-    fixer_infra_active = (
-        status in _FIXER_INFRA_STATUSES
-        or repairing
-        or bool(repair_state.get("active"))
-        or bool(repair_state.get("repairing"))
-    )
-
-    # ── detect automatic continuation custody ─────────────────────────
-    # Automatic continuation custody: the chain has advanced past a
-    # completed milestone (chain_complete is True OR the cursor has
-    # moved to a successor) but no acceptance receipt exists for the
-    # prior milestone in fail-closed mode.
-    auto_continuation = (
-        is_fail_closed
-        and has_declared_successors
-        and chain_complete
-        and acceptance_required
-        and not final_accepted
-        and not waiting
-    )
-
-    # ── determine acceptance_state ────────────────────────────────────
-    if waiting:
-        acceptance_state = "waiting_for_acceptance"
-    elif chain_complete and final_accepted:
-        acceptance_state = "accepted"
-    elif chain_complete and not acceptance_required:
-        acceptance_state = "not_applicable"
-    elif accepted_count > 0:
-        acceptance_state = "accepted"
-    elif acceptance_required and not final_accepted:
-        acceptance_state = "activity_only"
-    else:
-        acceptance_state = "activity_only"
-
-    # ── classify activity ─────────────────────────────────────────────
-    if waiting:
-        activity_classification = ACTIVITY_CLASSIFICATION_WAITING_FOR_ACCEPTANCE
-    elif final_accepted or accepted_count > 0:
-        activity_classification = ACTIVITY_CLASSIFICATION_ACCEPTED_PROGRESS
-    elif fixer_infra_active:
-        activity_classification = ACTIVITY_CLASSIFICATION_FIXER_INFRASTRUCTURE
-    elif auto_continuation:
-        activity_classification = (
-            ACTIVITY_CLASSIFICATION_AUTOMATIC_CONTINUATION_CUSTODY
-        )
-    elif not acceptance_required and chain_complete:
-        # Shadow / warn / off modes: acceptance is not required and the
-        # chain is complete, so the absence of a receipt is expected.
-        # This is not a stall.
-        activity_classification = ACTIVITY_CLASSIFICATION_NOT_APPLICABLE
-    elif (
-        status in ("running",)
-        and not fixer_infra_active
-        and not chain_complete
-    ):
-        activity_classification = ACTIVITY_CLASSIFICATION_ACTIVITY_ONLY
-    elif not status or status in ("complete",):
-        activity_classification = ACTIVITY_CLASSIFICATION_IDLE
-    elif not acceptance_required:
-        # Shadow / warn / off modes: acceptance not required and chain
-        # is not complete (still running or in some other state).
-        activity_classification = ACTIVITY_CLASSIFICATION_ACTIVITY_ONLY
-    else:
-        activity_classification = ACTIVITY_CLASSIFICATION_ACTIVITY_ONLY
-
-    # ── escalation decision ───────────────────────────────────────────
-    escalate = activity_classification in _ESCALATION_ACTIVITY_KINDS
-    drift_reason = ""
-    if (final_accepted or accepted_count > 0) and fixer_infra_active:
-        drift_reason = "accepted_progress_conflicts_with_repair_activity"
-
-    if activity_classification == ACTIVITY_CLASSIFICATION_WAITING_FOR_ACCEPTANCE:
-        escalation_reason = (
-            "chain complete in fail-closed mode but no acceptance receipt "
-            "exists for the final milestone — accepted progress absent"
-        )
-    elif activity_classification == ACTIVITY_CLASSIFICATION_IDLE:
-        escalation_reason = (
-            "no accepted progress and no forward activity observed"
-        )
-    elif activity_classification == ACTIVITY_CLASSIFICATION_FIXER_INFRASTRUCTURE:
-        escalation_reason = (
-            "fixer-infrastructure activity observed — this is NOT accepted "
-            "progress and does not suppress escalation; however, the fixer "
-            "is still working so the watchdog defers escalation"
-        )
-    elif activity_classification == ACTIVITY_CLASSIFICATION_AUTOMATIC_CONTINUATION_CUSTODY:
-        escalation_reason = (
-            "chain continuing to successor without acceptance evidence — "
-            "automatic continuation custody observed"
-        )
-    else:
-        escalation_reason = ""
-
-    return {
-        "activity_classification": activity_classification,
-        "escalate": escalate,
-        "escalation_reason": escalation_reason,
-        "accepted_progress": dict(accepted_progress),
-        "acceptance_state": acceptance_state,
-        "fixer_infrastructure_active": fixer_infra_active,
-        "automatic_continuation_custody": auto_continuation,
-        "drift_detected": bool(drift_reason),
-        "drift_reason": drift_reason,
-    }

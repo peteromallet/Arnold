@@ -40,6 +40,8 @@ arnold_supervisor_runtime_init() {
   local component="${1:-unknown}"
   local source_root="${2:-/workspace/arnold}"
   local preferred="${MEGAPLAN_SUPERVISOR_PYTHON:-/workspace/.megaplan/supervisor-python/current/bin/python3}"
+  local runtime_root="${MEGAPLAN_SUPERVISOR_RUNTIME_ROOT:-/workspace/.megaplan/supervisor-python}"
+  local runtime_receipt="${MEGAPLAN_SUPERVISOR_RUNTIME_RECEIPT:-$runtime_root/last-prepare.json}"
   local required="${MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED:-0}"
   local resolved=""
 
@@ -60,7 +62,63 @@ arnold_supervisor_runtime_init() {
     return 78
   fi
 
-  if ! PYTHONSAFEPATH=1 PYTHONPATH="$source_root:${PYTHONPATH:-}" \
+  local isolated=0
+  # A system/control interpreter may also contain a noneditable Arnold wheel.
+  # It is the dedicated supervisor only when the durable prepare receipt binds
+  # this exact prefix, source, and import vector.
+  if env -u PYTHONPATH PYTHONSAFEPATH=1 "$resolved" -P - \
+    "$runtime_receipt" "$source_root" <<'PY' \
+    >/dev/null 2>&1; then
+import importlib.metadata
+import json
+import pathlib
+import sys
+import urllib.parse
+
+receipt_path, source = map(pathlib.Path, sys.argv[1:])
+receipt = json.loads(receipt_path.read_text())
+direct_url = json.loads(
+    importlib.metadata.distribution("arnold").read_text("direct_url.json") or "{}"
+)
+runtime = pathlib.Path(receipt.get("runtime", "")).resolve()
+if bool((direct_url.get("dir_info") or {}).get("editable")):
+    raise SystemExit(1)
+parsed_source = urllib.parse.urlparse(str(direct_url.get("url") or ""))
+if parsed_source.scheme != "file":
+    raise SystemExit(1)
+installed_source = pathlib.Path(
+    urllib.parse.unquote(parsed_source.path)
+).resolve()
+if installed_source != source.resolve():
+    raise SystemExit(1)
+if runtime != pathlib.Path(sys.prefix).resolve():
+    raise SystemExit(1)
+if pathlib.Path(receipt.get("source", "")).resolve() != source.resolve():
+    raise SystemExit(1)
+import arnold
+import arnold_pipelines
+import arnold_pipelines.megaplan
+imports = {
+    "arnold": str(pathlib.Path(arnold.__file__).resolve()),
+    "arnold_pipelines": str(pathlib.Path(arnold_pipelines.__file__).resolve()),
+    "megaplan": str(pathlib.Path(arnold_pipelines.megaplan.__file__).resolve()),
+}
+if imports != receipt.get("imports"):
+    raise SystemExit(1)
+if any(not pathlib.Path(value).is_relative_to(runtime) for value in imports.values()):
+    raise SystemExit(1)
+PY
+    isolated=1
+  fi
+  if [[ "$isolated" == "1" ]]; then
+    if ! env -u PYTHONPATH PYTHONSAFEPATH=1 "$resolved" -P -c \
+      'import yaml; import arnold_pipelines.megaplan.cloud.cli; import arnold_pipelines.megaplan.cloud.repair_contract' \
+      >/dev/null 2>&1; then
+      arnold_supervisor_failure_artifact "$component" "readiness_import_failed"
+      printf '%s\n' "$component: supervisor interpreter readiness import failed: $resolved" >&2
+      return 78
+    fi
+  elif ! PYTHONSAFEPATH=1 PYTHONPATH="$source_root" \
     "$resolved" -P -c 'import yaml; import arnold_pipelines.megaplan.cloud.cli; import arnold_pipelines.megaplan.cloud.repair_contract' \
     >/dev/null 2>&1; then
     arnold_supervisor_failure_artifact "$component" "readiness_import_failed"
@@ -70,6 +128,7 @@ arnold_supervisor_runtime_init() {
 
   export MEGAPLAN_SUPERVISOR_PYTHON="$resolved"
   export MEGAPLAN_SUPERVISOR_SOURCE_ROOT="$source_root"
+  export MEGAPLAN_SUPERVISOR_ISOLATED="$isolated"
   arnold_supervisor_python() {
     local need_safe_path=1
     local arg
@@ -89,13 +148,19 @@ arnold_supervisor_runtime_init() {
           ;;
       esac
     done
-    if [[ "$need_safe_path" == "1" ]]; then
+    if [[ "$MEGAPLAN_SUPERVISOR_ISOLATED" == "1" && "$need_safe_path" == "1" ]]; then
+      env -u PYTHONPATH PYTHONSAFEPATH=1 \
+        "$MEGAPLAN_SUPERVISOR_PYTHON" -P "$@"
+    elif [[ "$MEGAPLAN_SUPERVISOR_ISOLATED" == "1" ]]; then
+      env -u PYTHONPATH PYTHONSAFEPATH=1 \
+        "$MEGAPLAN_SUPERVISOR_PYTHON" "$@"
+    elif [[ "$need_safe_path" == "1" ]]; then
       PYTHONSAFEPATH=1 \
-        PYTHONPATH="$MEGAPLAN_SUPERVISOR_SOURCE_ROOT:${PYTHONPATH:-}" \
+        PYTHONPATH="$MEGAPLAN_SUPERVISOR_SOURCE_ROOT" \
         "$MEGAPLAN_SUPERVISOR_PYTHON" -P "$@"
     else
       PYTHONSAFEPATH=1 \
-        PYTHONPATH="$MEGAPLAN_SUPERVISOR_SOURCE_ROOT:${PYTHONPATH:-}" \
+        PYTHONPATH="$MEGAPLAN_SUPERVISOR_SOURCE_ROOT" \
         "$MEGAPLAN_SUPERVISOR_PYTHON" "$@"
     fi
   }
@@ -107,5 +172,58 @@ arnold_supervisor_runtime_init() {
     arnold_supervisor_python "$@"
   }
   export -f python3
+  arnold_runtime_attestation_start() {
+    local attestation_component="${1:-$component}"
+    if [[ -z "${MEGAPLAN_RUNTIME_LAUNCH_SEED:-}" \
+      && "${MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED:-0}" != "1" ]]; then
+      return 0
+    fi
+    ARNOLD_RUNTIME_PROCESS_ATTESTATION_PATH="${MEGAPLAN_RUNTIME_PROCESS_ATTESTATION:-${MEGAPLAN_SUPERVISOR_STATUS_DIR:-${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}}/${attestation_component}.runtime-process-attestation.json}"
+    MEGAPLAN_RUNTIME_PROCESS_ATTESTATION="$ARNOLD_RUNTIME_PROCESS_ATTESTATION_PATH" \
+      arnold_supervisor_python -m arnold_pipelines.megaplan.cloud.runtime_attestation \
+      startup --component "$attestation_component" --target-pid "$$"
+  }
+  arnold_runtime_attestation_check() {
+    local attestation_component="${1:-$component}"
+    if [[ -z "${MEGAPLAN_RUNTIME_LAUNCH_SEED:-}" \
+      && "${MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED:-0}" != "1" ]]; then
+      return 0
+    fi
+    MEGAPLAN_RUNTIME_PROCESS_ATTESTATION="$ARNOLD_RUNTIME_PROCESS_ATTESTATION_PATH" \
+      arnold_supervisor_python -m arnold_pipelines.megaplan.cloud.runtime_attestation \
+      verify-process --component "$attestation_component" --target-pid "$$"
+  }
+  export -f arnold_runtime_attestation_start arnold_runtime_attestation_check
+  if ! arnold_runtime_attestation_start "$component"; then
+    arnold_supervisor_failure_artifact "$component" "runtime_attestation_failed"
+    printf '%s\n' "$component: runtime launch attestation failed" >&2
+    return 78
+  fi
   return 0
+}
+
+arnold_supervisor_select_exact_fallback() {
+  local component="${1:-unknown}"
+  local source_path="${2:-}"
+  local fallback_path="${3:-}"
+  local expected_source_root="${4:-}"
+  local runtime_root source_root source_sha fallback_sha
+
+  runtime_root="$(readlink -f "${MEGAPLAN_SUPERVISOR_SOURCE_ROOT:-}" 2>/dev/null || true)"
+  source_root="$(readlink -f "$expected_source_root" 2>/dev/null || true)"
+  if [[ -z "$runtime_root" || -z "$source_root" || "$runtime_root" != "$source_root" ]]; then
+    arnold_supervisor_failure_artifact "$component" "fallback_runtime_source_identity_mismatch"
+    return 78
+  fi
+  if [[ ! -f "$source_path" || ! -x "$fallback_path" ]]; then
+    arnold_supervisor_failure_artifact "$component" "fallback_source_or_runtime_missing"
+    return 78
+  fi
+  source_sha="$(sha256sum "$source_path" 2>/dev/null | awk '{print $1}')"
+  fallback_sha="$(sha256sum "$fallback_path" 2>/dev/null | awk '{print $1}')"
+  if [[ ! "$source_sha" =~ ^[0-9a-f]{64}$ || "$source_sha" != "$fallback_sha" ]]; then
+    arnold_supervisor_failure_artifact "$component" "fallback_wrapper_digest_mismatch"
+    return 78
+  fi
+  printf '%s\n' "$fallback_path"
 }

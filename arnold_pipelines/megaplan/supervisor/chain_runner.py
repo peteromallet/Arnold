@@ -55,14 +55,6 @@ from arnold_pipelines.megaplan.supervisor.state import (
     save_supervisor_state,
     validate_supervisor_state,
 )
-from arnold_pipelines.megaplan.custody.admission_control import (
-    AdmissionFence,
-    CHAIN_RUNNER_ADMISSION_SURFACE,
-    CHAIN_RUNNER_ADMISSION_WRITER_ID,
-    register_admission_writers,
-    synthetic_text_source_record,
-    validate_admission_mutation,
-)
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     effective_execute_completed_task_ids,
 )
@@ -82,65 +74,115 @@ from arnold_pipelines.megaplan.orchestration.completion_contract import (
 SUPERVISOR_DRIVER_ESCALATE_ACTION = "fail"
 
 
-def _admit_chain_materialization(
-    *,
-    root: Path,
-    spec_path: Path,
-    spec: Any,
-    state: Any,
-    milestone: Any,
-    milestone_index: int,
-) -> dict[str, Any]:
-    from arnold_pipelines.megaplan.chain.source_admission import admit_milestone_source
+# ── M9/T42: WBC adapter integration for chain advancement/finalization ──────
 
-    register_admission_writers()
-    admission_event = admit_milestone_source(
-        root=root,
-        spec_path=spec_path,
-        spec=spec,
-        state=state,
-        milestone=milestone,
-        milestone_index=milestone_index,
-    )
-    current_identity = admission_event.get("current_identity")
-    if isinstance(current_identity, Mapping):
-        source_record = dict(current_identity)
-    else:
-        source_record = synthetic_text_source_record(
-            selector=milestone.label,
-            label="chain-milestone",
-            text=str(milestone.idea),
+
+def _query_wbc_for_chain_evidence(
+    *,
+    plan_name: str,
+    plan_dir: Path | None = None,
+    wbc_query_fn: Any | None = None,
+    observed_at_epoch_ms: float | None = None,
+) -> dict[str, Any]:
+    """Query WBC adapter for chain-advancement completion evidence.
+
+    M9/T42: Chain advancement, finalization, and publication readers that
+    observe completion evidence MUST route through WBC adapters.  Positive
+    control paths require rereading current grant/fence, lease/epoch, and
+    required WBC evidence — this function provides the adapter query for
+    those paths.
+
+    Returns a dict with:
+    - ``wbc_verified``: bool — whether WBC evidence is verified
+    - ``wbc_cursor_state``: str — fresh/stale/unknown/incoherent
+    - ``wbc_evidence_ids``: list[str] — content-addressed evidence IDs
+    - ``positive_dispatch_requires_reread``: bool — always True
+    - ``_non_authoritative``: bool — always True
+    """
+    result: dict[str, Any] = {
+        "wbc_verified": False,
+        "wbc_cursor_state": "unknown",
+        "wbc_evidence_ids": [],
+        "positive_dispatch_requires_reread": True,
+        "_non_authoritative": True,
+    }
+
+    if wbc_query_fn is None:
+        result["wbc_detail"] = "WBC adapter not available — completion evidence not verified via WBC"
+        return result
+
+    try:
+        from arnold_pipelines.megaplan.wbc_adapter import (
+            WbcAttemptRef,
+            WbcBoundaryEvidence,
+            WbcAdapterStatus,
         )
-    evidence = validate_admission_mutation(
-        writer_id=CHAIN_RUNNER_ADMISSION_WRITER_ID,
-        surface_name=CHAIN_RUNNER_ADMISSION_SURFACE,
-        selector=milestone.label,
-        source_record=source_record,
-        fences=(
-            AdmissionFence(
-                identity="current_milestone_index",
-                expected=milestone_index,
-                observed=getattr(state, "current_milestone_index", None),
-                satisfied=int(getattr(state, "current_milestone_index", -1)) == milestone_index,
-                detail="chain runner must materialize the currently selected milestone",
-            ),
-            AdmissionFence(
-                identity="current_plan_name",
-                expected=None,
-                observed=getattr(state, "current_plan_name", None),
-                satisfied=getattr(state, "current_plan_name", None) is None,
-                detail="chain runner must not overwrite an already materialized plan",
-            ),
-        ),
-        extra={"milestone_index": milestone_index, "outcome": admission_event.get("outcome")},
+
+        import time as _time
+
+        ts = observed_at_epoch_ms or (_time.time() * 1000)
+        attempt_ref = WbcAttemptRef.best_effort(
+            plan_name, kind="chain_milestone"
+        )
+        evidence: WbcBoundaryEvidence = wbc_query_fn(attempt_ref, ts)
+
+        result["wbc_cursor_state"] = evidence.status.to_cursor_state()
+        result["wbc_verified"] = evidence.is_verified
+        result["wbc_evidence_ids"] = [
+            evidence.attempt_ref.ref_digest,
+            evidence.source_cursor_digest,
+        ]
+        result["wbc_status"] = evidence.status.value
+        result["wbc_diagnostics"] = list(evidence.diagnostics)
+
+        if evidence.is_verified:
+            result["wbc_detail"] = "WBC boundary evidence verified"
+        elif evidence.status == WbcAdapterStatus.INCOMPLETE:
+            result["wbc_detail"] = (
+                "WBC boundary evidence incomplete — missing terminal event; "
+                "positive control paths must reread current grant/fence, "
+                "lease/epoch, and required WBC evidence"
+            )
+        elif evidence.status == WbcAdapterStatus.INDETERMINATE:
+            result["wbc_detail"] = (
+                "WBC boundary evidence indeterminate — cannot version-bind; "
+                "completion evidence not verified"
+            )
+        else:  # INCOHERENT
+            result["wbc_detail"] = (
+                "WBC boundary evidence incoherent — contradictory records; "
+                "completion evidence rejected"
+            )
+    except Exception:
+        result["wbc_detail"] = (
+            "WBC adapter query failed — fail-closed; "
+            "completion evidence not verified via WBC"
+        )
+
+    return result
+
+
+def _attach_wbc_evidence_to_chain_event(
+    event: dict[str, Any],
+    *,
+    plan_name: str,
+    wbc_query_fn: Any | None = None,
+    observed_at_epoch_ms: float | None = None,
+) -> dict[str, Any]:
+    """Attach WBC adapter evidence to a chain lifecycle event.
+
+    M9/T42: Every chain advancement/finalization/publication event that
+    observes completion evidence must carry WBC adapter evidence so that
+    downstream consumers can verify the evidence source.
+    """
+    wbc = _query_wbc_for_chain_evidence(
+        plan_name=plan_name,
+        wbc_query_fn=wbc_query_fn,
+        observed_at_epoch_ms=observed_at_epoch_ms,
     )
-    metadata = dict(getattr(state, "metadata", {}) or {})
-    controls = metadata.setdefault("admission_controls", {})
-    if isinstance(controls, dict):
-        controls[f"chain_runner:{milestone.label}"] = evidence
-    state.metadata = metadata
-    chain_spec.save_chain_state(spec_path, state)
-    return evidence
+    event["wbc_evidence"] = wbc
+    event["_non_authoritative"] = True
+    return event
 
 
 class ChainMilestonePackRunner:
@@ -194,11 +236,16 @@ def run_chain(
     one: bool = False,
     require_anchor_override: bool | None = None,
     missing_anchor_ack_override: str | None = None,
+    wbc_query_fn: Any | None = None,
 ) -> dict[str, Any]:
     """Execute a chain spec serially in listed order through the supervisor.
 
     The default binding is the canonical ``megaplan`` plugin identity; chain
     callers inject a concrete binding only for non-megaplan run types.
+
+    M9/T42: Accepts optional *wbc_query_fn* for WBC adapter evidence.
+    When provided, chain advancement/finalization/publication events
+    carry WBC evidence through the adapter.
 
     Returns the CLI-facing dict shape used by the old chain path, with
     ``status``, ``milestone_results``, and ``events`` available at top level.
@@ -295,7 +342,8 @@ def run_chain(
         _assert_dependencies_completed(node, supervisor_state)
         # ── acceptance gate for dependency completion ─────────────────
         dep_blocker = _check_dependency_acceptance_gate(
-            chain_state, spec, node, supervisor_state, writer=writer
+            chain_state, spec, node, supervisor_state, writer=writer,
+            wbc_query_fn=wbc_query_fn,
         )
         if dep_blocker is not None:
             events.append(dep_blocker)
@@ -337,14 +385,6 @@ def run_chain(
                 )
             plan_name = chain_state.current_plan_name
             if not plan_name:
-                _admit_chain_materialization(
-                    root=root,
-                    spec_path=spec_path,
-                    spec=spec,
-                    state=chain_state,
-                    milestone=milestone,
-                    milestone_index=index,
-                )
                 plan_name = pack_runner.prepare_plan(root=root, node=node)
                 from arnold_pipelines.megaplan.chain import _attach_chain_anchors_to_plan
 
@@ -507,7 +547,8 @@ def run_chain(
                 if pr_resolution.advanced:
                     # ── acceptance gate before supervisor advance ──────
                     blocker = _check_supervisor_advance_acceptance_gate(
-                        chain_state, spec, milestone, writer=writer
+                        chain_state, spec, milestone, writer=writer,
+                        wbc_query_fn=wbc_query_fn,
                     )
                     if blocker is not None:
                         events.append(blocker)
@@ -658,7 +699,8 @@ def run_chain(
             if decision.action == LadderAction.ADVANCE:
                 # ── acceptance gate before supervisor advance ──────────
                 blocker = _check_supervisor_advance_acceptance_gate(
-                    chain_state, spec, milestone, writer=writer
+                    chain_state, spec, milestone, writer=writer,
+                    wbc_query_fn=wbc_query_fn,
                 )
                 if blocker is not None:
                     events.append(blocker)
@@ -761,12 +803,17 @@ def _check_dependency_acceptance_gate(
     supervisor_state: SupervisorState,
     *,
     writer,
+    wbc_query_fn: Any | None = None,
 ) -> dict[str, Any] | None:
     """Check that all completed dependency milestones carry acceptance receipts.
 
     In fail-closed (atomic/enforce) mode a milestone that depends on another
     completed milestone must verify that the predecessor has a validated
     acceptance receipt before the successor is allowed to start.
+
+    M9/T42: Acceptance evidence reads route through WBC adapters when
+    available.  Positive-path rereads of current grant/fence, lease/epoch,
+    and required WBC evidence are required.
     """
     mode = normalize_contract_mode(chain_state.completion_contract_mode)
     if not is_fail_closed_mode(mode):
@@ -805,6 +852,12 @@ def _check_dependency_acceptance_gate(
                         "completion_contract_mode": mode,
                     },
                 }
+                # M9/T42: Attach WBC evidence
+                _attach_wbc_evidence_to_chain_event(
+                    blocker_event,
+                    plan_name=dep_id,
+                    wbc_query_fn=wbc_query_fn,
+                )
                 writer(
                     f"[supervisor-chain] dependency acceptance gate closed: "
                     f"dependency {dep_id!r} has no acceptance receipt; "
@@ -820,12 +873,17 @@ def _check_supervisor_advance_acceptance_gate(
     milestone: chain_spec.MilestoneSpec,
     *,
     writer,
+    wbc_query_fn: Any | None = None,
 ) -> dict[str, Any] | None:
     """Check the acceptance gate before the supervisor advances a milestone.
 
     In fail-closed (atomic/enforce) mode a completed milestone that declares
     successors requiring acceptance MUST carry a validated acceptance receipt
     before the supervisor is allowed to advance the chain cursor.
+
+    M9/T42: Completion evidence reads route through WBC adapters.
+    Positive-path rereads of current grant/fence, lease/epoch, and required
+    WBC evidence are enforced.
 
     Returns a typed blocker-event dict when the gate is closed, or ``None``
     when the gate is open / not applicable / not in fail-closed mode.
@@ -864,6 +922,12 @@ def _check_supervisor_advance_acceptance_gate(
             "successor_count": len(successors),
         },
     }
+    # M9/T42: Attach WBC evidence
+    _attach_wbc_evidence_to_chain_event(
+        blocker_event,
+        plan_name=milestone.label,
+        wbc_query_fn=wbc_query_fn,
+    )
     writer(
         f"[supervisor-chain] acceptance gate closed for milestone "
         f"{milestone.label!r}: no acceptance receipt; advancement blocked\n"

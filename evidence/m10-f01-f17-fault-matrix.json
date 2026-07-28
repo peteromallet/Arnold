@@ -1,0 +1,268 @@
+{
+  "schema_version": 1,
+  "description": "M10 provisional fault-matrix baseline (F01-F17).  Action-off; final reconciliation in Step 18A.",
+  "status": "reconciled",
+  "scenarios": [
+    {
+      "id": "F01",
+      "label": "effect-intent-persistence-failure",
+      "injection_edge": "prerecord",
+      "expected_assertion": "no provider call when intent is not durable",
+      "provider_behavior": "storage_full",
+      "query_behavior": "not_applied",
+      "custody_precondition": "lease_active",
+      "replay_expectation": "indeterminate",
+      "inventory_row_refs": [
+        "bc:execute_approval"
+      ],
+      "action_off": true,
+      "note": "Intent failure before dispatch must produce zero provider calls. M10 action-off."
+    },
+    {
+      "id": "F02",
+      "label": "effect-fulfillment-persistence-failure",
+      "injection_edge": "mark_fulfilled",
+      "expected_assertion": "provider call succeeded but ledger update failed -> indeterminated",
+      "provider_behavior": "applied",
+      "query_behavior": "applied",
+      "custody_precondition": "lease_active",
+      "replay_expectation": "indeterminate",
+      "inventory_row_refs": [
+        "bc:execute_approval"
+      ],
+      "action_off": true,
+      "note": "Post-apply crash produces indeterminate, not false success. M10 action-off."
+    },
+    {
+      "id": "F03",
+      "label": "provider-lost-ack",
+      "injection_edge": "dispatch",
+      "expected_assertion": "provider applied but ack lost -> query confirms, no redispatch",
+      "provider_behavior": "applied_then_kill",
+      "query_behavior": "applied",
+      "custody_precondition": "lease_active",
+      "replay_expectation": "fulfilled",
+      "inventory_row_refs": [
+        "bc:execute_approval"
+      ],
+      "action_off": true,
+      "note": "Lost ACK resolved via provider query; retry must not double-apply. M10 action-off."
+    },
+    {
+      "id": "F04",
+      "label": "provider-query-failure",
+      "injection_edge": "query",
+      "expected_assertion": "provider unreachable for query -> indeterminate, no blind retry",
+      "provider_behavior": "applied",
+      "query_behavior": "query_failure",
+      "custody_precondition": "lease_active",
+      "replay_expectation": "indeterminate",
+      "inventory_row_refs": [
+        "bc:execute_approval"
+      ],
+      "action_off": true,
+      "note": "Query failure after dispatch must not authorize blind retry. M10 action-off."
+    },
+    {
+      "id": "F05",
+      "label": "duplicate-idempotency-key-conflict",
+      "injection_edge": "prerecord",
+      "expected_assertion": "divergent duplicate raises conflict, not silent overwrite",
+      "provider_behavior": "not_called",
+      "query_behavior": "not_applied",
+      "custody_precondition": "lease_active",
+      "replay_expectation": "conflict_quarantined",
+      "inventory_row_refs": [
+        "bc:execute_approval"
+      ],
+      "action_off": true,
+      "note": "Duplicate idempotency key with different payload must quarantine. M10 action-off."
+    },
+    {
+      "id": "F06",
+      "label": "terminal-state-transition-guard",
+      "injection_edge": "mark_fulfilled",
+      "expected_assertion": "mark_fulfilled after mark_indeterminate raises TerminalStateError",
+      "provider_behavior": "not_called",
+      "query_behavior": "not_applied",
+      "custody_precondition": "lease_active",
+      "replay_expectation": "terminal_state_error",
+      "inventory_row_refs": [
+        "bc:execute_approval"
+      ],
+      "action_off": true,
+      "note": "Cannot transition from indeterminate to fulfilled. M10 action-off."
+    },
+    {
+      "id": "F07",
+      "label": "lease-expiry-during-effect",
+      "injection_edge": "dispatch",
+      "expected_assertion": "expired lease prevents provider dispatch",
+      "provider_behavior": "not_called",
+      "query_behavior": "not_applied",
+      "custody_precondition": "lease_expired",
+      "replay_expectation": "indeterminate",
+      "inventory_row_refs": [
+        "bc:execute_approval"
+      ],
+      "action_off": true,
+      "note": "Lease expiry must fence the provider call. M10 action-off."
+    },
+    {
+      "id": "F08",
+      "label": "lease-ttl-ceiling-enforcement",
+      "injection_edge": "acquire",
+      "expected_assertion": "TTL exceeding MAXIMUM_LEASE_TTL_SECONDS is clamped",
+      "provider_behavior": "not_called",
+      "query_behavior": "not_applied",
+      "custody_precondition": "lease_active",
+      "replay_expectation": "ttl_clamped",
+      "inventory_row_refs": [
+        "bc:execute_approval"
+      ],
+      "action_off": true,
+      "note": "Max TTL ceiling enforced on lease acquisition and renew. M10 action-off."
+    },
+    {
+      "id": "F09",
+      "label": "repair-recurrence-minimum-interval",
+      "injection_edge": "dispatch",
+      "expected_assertion": "same-signature recurrence within minimum interval is suppressed",
+      "provider_behavior": "not_called",
+      "query_behavior": "not_applied",
+      "custody_precondition": "lease_active",
+      "replay_expectation": "suppressed",
+      "inventory_row_refs": [
+        "bc:execute_approval"
+      ],
+      "action_off": true,
+      "note": "Recurrence floor prevents repair-loop thrashing. M10 action-off."
+    },
+    {
+      "id": "F10",
+      "label": "unknown-effect-class-escalation",
+      "injection_edge": "admit",
+      "expected_assertion": "unknown effect class produces action-off with typed escalation",
+      "provider_behavior": "not_called",
+      "query_behavior": "not_applied",
+      "custody_precondition": "lease_active",
+      "replay_expectation": "action_off",
+      "inventory_row_refs": [
+        "bc:execute_approval"
+      ],
+      "action_off": true,
+      "note": "Unknown effect classes remain action-off. M10 action-off."
+    },
+    {
+      "id": "F11",
+      "label": "non-queryable-effect-class-action-off",
+      "injection_edge": "admit",
+      "expected_assertion": "non-queryable effect class (DELETE) is action-off",
+      "provider_behavior": "not_called",
+      "query_behavior": "not_applied",
+      "custody_precondition": "lease_active",
+      "replay_expectation": "action_off",
+      "inventory_row_refs": [
+        "bc:execute_approval"
+      ],
+      "action_off": true,
+      "note": "Non-queryable effects cannot be reconciled; must remain action-off. M10 action-off."
+    },
+    {
+      "id": "F12",
+      "label": "non-idempotent-effect-class-action-off",
+      "injection_edge": "admit",
+      "expected_assertion": "non-idempotent ambiguous class cannot be safely retried",
+      "provider_behavior": "not_called",
+      "query_behavior": "not_applied",
+      "custody_precondition": "lease_active",
+      "replay_expectation": "action_off",
+      "inventory_row_refs": [
+        "bc:execute_approval"
+      ],
+      "action_off": true,
+      "note": "Non-idempotent effects cannot be safely retried. M10 action-off."
+    },
+    {
+      "id": "F13",
+      "label": "custody-epoch-staleness-rejection",
+      "injection_edge": "dispatch",
+      "expected_assertion": "stale custody epoch prevents effect dispatch",
+      "provider_behavior": "not_called",
+      "query_behavior": "not_applied",
+      "custody_precondition": "stale_epoch",
+      "replay_expectation": "fenced",
+      "inventory_row_refs": [
+        "bc:execute_approval"
+      ],
+      "action_off": true,
+      "note": "Stale epoch must fence before provider call. M10 action-off."
+    },
+    {
+      "id": "F14",
+      "label": "run-authority-fence-rejection",
+      "injection_edge": "dispatch",
+      "expected_assertion": "missing or stale Run Authority grant prevents dispatch",
+      "provider_behavior": "not_called",
+      "query_behavior": "not_applied",
+      "custody_precondition": "lease_active",
+      "replay_expectation": "fenced",
+      "inventory_row_refs": [
+        "bc:execute_approval"
+      ],
+      "action_off": true,
+      "note": "Run Authority must be current at dispatch time. M10 action-off."
+    },
+    {
+      "id": "F15",
+      "label": "wbc-evidence-missing-rejection",
+      "injection_edge": "dispatch",
+      "expected_assertion": "missing WBC attempt evidence prevents dispatch",
+      "provider_behavior": "not_called",
+      "query_behavior": "not_applied",
+      "custody_precondition": "lease_active",
+      "replay_expectation": "fenced",
+      "inventory_row_refs": [
+        "bc:execute_approval"
+      ],
+      "action_off": true,
+      "note": "WBC evidence (not projection) must authorize dispatch. M10 action-off."
+    },
+    {
+      "id": "F16",
+      "label": "first-terminal-folding",
+      "injection_edge": "fold",
+      "expected_assertion": "first terminal state preserved when duplicate terminal events appear",
+      "provider_behavior": "not_called",
+      "query_behavior": "not_applied",
+      "custody_precondition": "lease_active",
+      "replay_expectation": "first_terminal_preserved",
+      "inventory_row_refs": [
+        "bc:execute_approval"
+      ],
+      "action_off": true,
+      "note": "Journal fold preserves first terminal state. M10 action-off."
+    },
+    {
+      "id": "F17",
+      "label": "subjective-only-criteria-rejection",
+      "injection_edge": "gate",
+      "expected_assertion": "subjective-only must criteria are rejected before dispatch",
+      "provider_behavior": "not_called",
+      "query_behavior": "not_applied",
+      "custody_precondition": "n/a",
+      "replay_expectation": "rejected",
+      "inventory_row_refs": [
+        "bc:gate_to_revise"
+      ],
+      "action_off": true,
+      "note": "Criteria verifiability gate blocks subjective-only acceptance criteria. M10 action-off."
+    }
+  ],
+  "reconciliation": {
+    "step": "18A",
+    "inventory_artifact": "evidence/wbc-boundary-inventory.json",
+    "supported_artifact": "evidence/m10-supported-boundaries.json",
+    "note": "Each F01-F16 scenario references bc:execute_approval; F17 references bc:gate_to_revise. Join enforced by validate_inventory_coverage."
+  }
+}

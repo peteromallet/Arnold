@@ -2444,3 +2444,50 @@ def test_recovery_view_empty_does_not_trigger_recovery_path() -> None:
     )
     assert decision.decision == repair_contract.DISPATCH_DECISION_L1
     assert any("known repairable" in r for r in decision.rationale)
+
+
+def test_repair_applied_reinvestigate_is_explicitly_nonterminal() -> None:
+    outcome = repair_contract.REPAIR_APPLIED_REINVESTIGATE
+
+    assert outcome in repair_contract.ALL_OUTCOMES
+    assert outcome in repair_contract.NON_TERMINAL_OUTCOMES
+    assert repair_contract.is_terminal_outcome(outcome) is False
+    assert repair_contract.is_success_outcome(outcome) is False
+
+
+# ── M10 repair effect allowlist integration tests ──────────────────────────
+
+
+def test_admit_repair_effect_class_rejects_unknown() -> None:
+    """admit_repair_effect_class rejects unknown effect classes."""
+    admitted, reason = repair_contract.admit_repair_effect_class("nonexistent")
+    assert not admitted
+    assert "Repair not admitted" in reason
+
+
+def test_admit_repair_effect_class_rejects_delete() -> None:
+    """admit_repair_effect_class rejects DELETE (non-queryable)."""
+    admitted, reason = repair_contract.admit_repair_effect_class("delete")
+    assert not admitted
+
+
+def test_admit_repair_effect_class_rejects_write_in_m10() -> None:
+    """admit_repair_effect_class rejects WRITE in M10 (action-off)."""
+    admitted, reason = repair_contract.admit_repair_effect_class("write")
+    assert not admitted
+    assert "Repair not admitted" in reason
+
+
+def test_admit_repair_effect_class_includes_source() -> None:
+    """admit_repair_effect_class includes source in rejection reason."""
+    _, reason = repair_contract.admit_repair_effect_class(
+        "mutate", source="repair_requests.py:120"
+    )
+    assert "repair_requests.py:120" in reason
+
+
+def test_admit_repair_effect_class_all_known_rejected() -> None:
+    """In M10, all known effect classes are rejected for repair."""
+    for ec in ("write", "mutate", "delete", "publish", "deliver", "compensate", "revert"):
+        admitted, _ = repair_contract.admit_repair_effect_class(ec)
+        assert not admitted, f"Effect class {ec!r} should be rejected in M10"

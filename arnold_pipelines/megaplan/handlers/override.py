@@ -66,7 +66,11 @@ from arnold_pipelines.megaplan.control_interface import (
     apply_transition,
     emit_override_authority_receipt,
 )
-from arnold_pipelines.megaplan.blocker_recovery import command_blocker_details, evaluate_blocker_recovery
+from arnold_pipelines.megaplan.blocker_recovery import (
+    command_blocker_details,
+    evaluate_blocker_recovery,
+    recoverable_contract_failure_without_phase_result,
+)
 from arnold_pipelines.megaplan.orchestration.gate_checks import (
     build_gate_artifact,
     failed_preflight_checks,
@@ -82,7 +86,11 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
     atomic_write_phase_result,
     read_phase_result,
 )
-from arnold_pipelines.megaplan.replan_state import reset_replan_loop_state
+from arnold_pipelines.megaplan.replan_state import (
+    blocked_iterate_gate_replan_allowed,
+    invalidate_replan_derived_artifacts,
+    reset_replan_loop_state,
+)
 from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effort_emit_failure, _write_gate_json
 
 
@@ -588,14 +596,33 @@ def _handle_routed_override(
             )
         raise CliError("invalid_transition", result.reason or "routed override rejected")
     persisted_state = load_plan(root, args.plan)[1]
+    archived_phase_result: str | None = None
+    if args.override_action == "recover-blocked":
+        archived_phase_result = _archive_stale_phase_result_for_resume(plan_dir)
+        if archived_phase_result is not None:
+            meta = persisted_state.get("meta")
+            overrides = meta.get("overrides") if isinstance(meta, dict) else None
+            if isinstance(overrides, list) and overrides:
+                latest_override = overrides[-1]
+                if (
+                    isinstance(latest_override, dict)
+                    and latest_override.get("action") == "recover-blocked"
+                ):
+                    latest_override["archived_phase_result"] = archived_phase_result
+                    from arnold_pipelines.megaplan._core.state import write_plan_state
+
+                    write_plan_state(plan_dir, mode="replace", state=persisted_state)
     _emit_routed_override_events(args.override_action, plan_dir=plan_dir, state=persisted_state, args=args)
-    return _routed_override_response(
+    response = _routed_override_response(
         args.override_action,
         plan_dir=plan_dir,
         state=persisted_state,
         args=args,
         artifacts=dict(result.artifacts),
     )
+    if archived_phase_result is not None:
+        response["archived_phase_result"] = archived_phase_result
+    return response
 
 
 def _resolved_default_phase_spec(phase: str, state: PlanState, root: Path) -> str:
@@ -1132,7 +1159,8 @@ def _override_replan(
 ) -> StepResponse:
     allowed = {STATE_GATED, STATE_FINALIZED, STATE_CRITIQUED, STATE_FAILED}
     previous_state = state["current_state"]
-    if previous_state not in allowed:
+    blocked_gate_replan = blocked_iterate_gate_replan_allowed(state)
+    if previous_state not in allowed and not blocked_gate_replan:
         raise CliError(
             "invalid_transition",
             f"replan requires state {', '.join(sorted(allowed))}, got '{previous_state}'",
@@ -1163,6 +1191,10 @@ def _override_replan(
         state,
         reason=reason,
     )
+    artifact_invalidation = invalidate_replan_derived_artifacts(
+        plan_dir,
+        timestamp=timestamp,
+    )
     reset_replan_loop_state(state, target_state=STATE_PLANNED)
     save_state_merge_meta(plan_dir, state)
     try:
@@ -1185,6 +1217,8 @@ def _override_replan(
     }
     if source_reconciliation is not None:
         response["canonical_source_binding"] = source_reconciliation
+    if artifact_invalidation is not None:
+        response["artifact_invalidation"] = artifact_invalidation
     return response
 
 
@@ -1358,7 +1392,11 @@ def _override_recover_blocked(
                 "suggested_recovery_commands": [resume_command],
             },
         )
-    if phase_result is None:
+    contract_failure_without_result = (
+        phase_result is None
+        and recoverable_contract_failure_without_phase_result(state, resume_cursor)
+    )
+    if phase_result is None and not contract_failure_without_result:
         raise CliError(
             "missing_phase_result",
             "recover-blocked requires phase_result.json with current blocker details",
@@ -1368,8 +1406,8 @@ def _override_recover_blocked(
         finalize_data,
         state,
         plan_dir=plan_dir,
-        blocked_tasks=phase_result.blocked_tasks,
-        deviations=phase_result.deviations,
+        blocked_tasks=phase_result.blocked_tasks if phase_result is not None else (),
+        deviations=phase_result.deviations if phase_result is not None else (),
     )
     blocker_details = command_blocker_details(evaluation)
     if not evaluation.can_continue:
@@ -1383,7 +1421,9 @@ def _override_recover_blocked(
             "recover-blocked requires every current blocker to be explicitly resolved as non-terminal",
             extra={
                 "resume_cursor": resume_cursor,
-                "phase_result_exit_kind": phase_result.exit_kind,
+                "phase_result_exit_kind": (
+                    phase_result.exit_kind if phase_result is not None else None
+                ),
                 "blocker_ids": [
                     blocker["blocker_id"] for blocker in unresolved_blockers
                 ],

@@ -31,8 +31,6 @@ class NativeTarget:
 # core Arnold packages live under ``arnold.pipelines.*``.  Archived or
 # graph-marked packages (e.g. epic_blitz) are intentionally excluded.
 ACTIVE_NATIVE_TARGETS: tuple[NativeTarget, ...] = (
-    NativeTarget("arnold.pipelines.folder_audit", "folder-audit"),
-    NativeTarget("arnold.pipelines.deliberation", "deliberation"),
     NativeTarget("arnold_pipelines.megaplan.pipelines.creative", "creative"),
     NativeTarget("arnold_pipelines.megaplan.pipelines.doc", "doc"),
     NativeTarget("arnold_pipelines.megaplan.pipelines.jokes", "jokes"),
@@ -150,8 +148,6 @@ def test_contract_target_sets_are_staged_explicitly() -> None:
     deferred_names = {target.pipeline_name for target in DEFERRED_NATIVE_TARGETS}
 
     assert active_names == {
-        "folder-audit",
-        "deliberation",
         "creative",
         "doc",
         "jokes",
@@ -197,11 +193,11 @@ def test_epic_blitz_is_documented_as_not_migrated() -> None:
         pass
 
 
-def test_workflow_first_template_contrasts_with_native_targets() -> None:
-    """The canonical scaffold is workflow-first, not native-backed."""
+def test_template_is_native_backed_like_active_targets() -> None:
+    """The canonical scaffold now builds the same native pipeline contract."""
     from arnold_pipelines._template import build_pipeline as template_build
 
     pipeline = template_build()
-    assert type(pipeline).__module__ == "arnold.workflow.dsl"
-    assert type(pipeline).__name__ == "Pipeline"
-    assert not hasattr(pipeline, "native_program")
+    assert isinstance(pipeline, Pipeline)
+    assert isinstance(pipeline.native_program, NativeProgram)
+    assert pipeline.native_program.name == "my-pipeline"

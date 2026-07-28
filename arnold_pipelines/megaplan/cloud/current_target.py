@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time as _time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -14,6 +16,10 @@ from arnold_pipelines.megaplan.cloud.feature_flags import resolver_observe_enabl
 from arnold_pipelines.megaplan.cloud.session_markers import (
     canonical_sidecar_suffix,
     is_canonical_session_marker_path,
+)
+from arnold_pipelines.megaplan.source_cursor_contract import (
+    DimensionCursor,
+    SourceCursorVector,
 )
 
 _FINGERPRINT_ALGORITHM = "sha256"
@@ -77,7 +83,6 @@ def resolve_current_target(
     workspace_hint: str | Path | None = None,
     session_is_live: SessionLiveProbe | None = None,
     pid_is_live: PidLiveProbe | None = None,
-    source_cursor_vector: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a stable evidence record for the current repair target.
 
@@ -85,20 +90,25 @@ def resolve_current_target(
     etc.) this function returns a minimal stub record without inspecting any
     filesystem artifacts.  The stub is safe to persist and consumers already
     handle missing evidence gracefully.
-
-    *source_cursor_vector* is an optional M9 canonical projection cursor
-    recording which source files were read.  When supplied it is attached as
-    ``source_cursor_vector`` in the returned record — display-only, never
-    authority.
     """
 
     if not resolver_observe_enabled():
+        _stub_cursor = SourceCursorVector.all_unknown(
+            observed_at=datetime.now(timezone.utc).isoformat()
+        )
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "session": session,
             "target_id": f"{session}:unknown",
             "authoritative_source": "resolver_observe_disabled",
             "target_session": session,
+            "_non_authoritative": True,
+            "source_cursor": _stub_cursor.to_dict(),
+            "positive_dispatch_requires_reread": {
+                "run_authority": {"grant_id": "disabled", "fence_token": "disabled"},
+                "custody": {"lease_epoch": "disabled", "lease_digest": "disabled"},
+                "wbc_evidence": {"attempt_ref": "disabled", "boundary_evidence": "disabled"},
+            },
             "current_refs": {},
             "marker": {},
             "plan_state": {},
@@ -115,8 +125,6 @@ def resolve_current_target(
             "stale_evidence": [],
             "evidence_state": _evidence_state("missing", ["resolver_observe_disabled"]),
             "rationale": ["resolver observe disabled via ARNOLD_RESOLVER_OBSERVE"],
-            "source_cursor_vector": _format_source_cursor(source_cursor_vector),
-            "evidence_gaps": _collect_target_evidence_gaps({}, stale_evidence=[], marker_present=False),
         }
 
     markers_root = Path(marker_dir)
@@ -301,21 +309,57 @@ def resolve_current_target(
     if not rationale:
         rationale.append("marker is the only available evidence")
 
-    sorted_evidence = sorted(stale_evidence, key=_artifact_sort_key)
-    evidence_gaps = _collect_target_evidence_gaps(
-        marker,
-        stale_evidence=sorted_evidence,
-        marker_present=marker_path.exists(),
-        plan_state_present=bool(plan_state_path and plan_state_path.exists()),
-        chain_state_present=bool(chain_state_path and chain_state_path.exists()),
-        tmux_live=tmux_process.get("live_status"),
+    # ── M9: source-cursor metadata ──
+    _observed_at_epoch_ms = _time.time() * 1000
+    _source_cursor = _build_target_source_cursor(
+        session=session,
+        plan_state=plan_state,
+        chain_state=chain_state,
+        tmux_process=tmux_process,
+        marker_path=marker_path,
+        observed_at_epoch_ms=_observed_at_epoch_ms,
     )
+
+    # ── M9: evidence IDs for rejections and drift ──
+    def _evidence_id_for_artifact(item: dict[str, Any]) -> str:
+        kind = str(item.get("kind") or "")
+        path_val = str(item.get("path") or "")
+        raw = f"{kind}\x00{path_val}".encode("utf-8")
+        return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+    sorted_evidence = sorted(stale_evidence, key=_artifact_sort_key)
+    for item in sorted_evidence:
+        if "evidence_id" not in item:
+            item["evidence_id"] = _evidence_id_for_artifact(item)
+
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "session": session,
         "target_id": f"{target_session}:{plan_name or chain_current_plan or run_kind}",
         "authoritative_source": authoritative_source,
         "target_session": target_session,
+        # ── M9: non-authoritative marker and source cursor ──
+        "_non_authoritative": True,
+        "source_cursor": _source_cursor.to_dict(),
+        # ── M9: positive dispatch requires rereading live source authority ──
+        # Projections may deny, block, or diagnose eligibility.  Any positive
+        # dispatch path MUST reread the current Run Authority grant/fence,
+        # Custody lease/epoch, and WBC evidence — projections alone cannot
+        # authorize dispatch, repair, retry, completion, or publication.
+        "positive_dispatch_requires_reread": {
+            "run_authority": {
+                "grant_id": "must be reread from live source",
+                "fence_token": "must be reread from live source",
+            },
+            "custody": {
+                "lease_epoch": "must be reread from live source",
+                "lease_digest": "must be reread from live source",
+            },
+            "wbc_evidence": {
+                "attempt_ref": "must be reread from live source",
+                "boundary_evidence": "must be reread from live source",
+            },
+        },
         "current_refs": {
             "workspace": str(workspace) if workspace is not None else "",
             "run_kind": run_kind,
@@ -373,8 +417,6 @@ def resolve_current_target(
         "stale_evidence": sorted_evidence,
         "evidence_state": _classify_evidence_state(sorted_evidence),
         "rationale": sorted(set(rationale)),
-        "source_cursor_vector": _format_source_cursor(source_cursor_vector),
-        "evidence_gaps": evidence_gaps,
     }
 
 
@@ -394,6 +436,92 @@ def _evidence_state(unknown_type: str, issue_kinds: list[str]) -> dict[str, Any]
         # a green health result on its own.
         "green": False,
     }
+
+
+def _build_target_source_cursor(
+    *,
+    session: str,
+    plan_state: Mapping[str, Any],
+    chain_state: Mapping[str, Any],
+    tmux_process: Mapping[str, Any],
+    marker_path: Path,
+    observed_at_epoch_ms: float,
+) -> SourceCursorVector:
+    """Build a source-cursor vector from current-target evidence.
+
+    This cursor is non-authoritative projection metadata — it describes which
+    source records were observed and their freshness, but does NOT authorize
+    dispatch, repair, retry, completion, cancellation, publication, or delivery.
+    """
+    now_iso = datetime.fromtimestamp(
+        observed_at_epoch_ms / 1000, tz=timezone.utc
+    ).isoformat()
+
+    # Lifecycle: from plan state + chain state
+    plan_state_name = _safe_text(plan_state.get("name")) if isinstance(plan_state, Mapping) else ""
+    chain_plan_name = _safe_text(chain_state.get("current_plan_name")) if isinstance(chain_state, Mapping) else ""
+    plan_current_state = _safe_text(plan_state.get("current_state")) if isinstance(plan_state, Mapping) else ""
+    lifecycle_version = "sha256:" + hashlib.sha256(
+        f"{session}:{plan_state_name}:{chain_plan_name}:{plan_current_state}".encode("utf-8")
+    ).hexdigest()
+    lifecycle_cursor = DimensionCursor.fresh(
+        "lifecycle", lifecycle_version, now_iso,
+        detail=f"session={session} plan={plan_state_name or chain_plan_name} state={plan_current_state or 'unknown'}",
+    )
+
+    # Process-correlation: from tmux/process evidence
+    if isinstance(tmux_process, Mapping):
+        pid = tmux_process.get("pid")
+        live_status = tmux_process.get("live_status", "unknown")
+        if live_status == "alive":
+            pc_version = f"session:{session}:pid:{pid}:live_status:{live_status}"
+            pc_cursor = DimensionCursor.fresh(
+                "process_correlation", pc_version, now_iso,
+                detail=f"liveness={live_status} pid={pid}",
+            )
+        else:
+            pc_cursor = DimensionCursor.unknown(
+                "process_correlation", observed_at=now_iso,
+                detail=f"liveness={live_status} (not alive)",
+            )
+    else:
+        pc_cursor = DimensionCursor.unknown(
+            "process_correlation", observed_at=now_iso,
+            detail="no tmux/process evidence available",
+        )
+
+    # Custody: unavailable from current-target observer
+    custody_cursor = DimensionCursor.unknown(
+        "custody", observed_at=now_iso,
+        detail="custody lease/epoch unavailable from current-target observer",
+    )
+
+    # Run Authority: unavailable from current-target observer
+    ra_cursor = DimensionCursor.unknown(
+        "run_authority", observed_at=now_iso,
+        detail="run authority grant/fence unavailable from current-target observer",
+    )
+
+    # Work ledger: unavailable from current-target observer
+    wl_cursor = DimensionCursor.unknown(
+        "work_ledger", observed_at=now_iso,
+        detail="work ledger unavailable from current-target observer",
+    )
+
+    # WBC: unavailable from current-target observer
+    wbc_cursor = DimensionCursor.unknown(
+        "wbc", observed_at=now_iso,
+        detail="WBC boundary evidence unavailable from current-target observer",
+    )
+
+    return SourceCursorVector.from_cursors(
+        lifecycle_cursor,
+        wbc_cursor,
+        custody_cursor,
+        ra_cursor,
+        wl_cursor,
+        pc_cursor,
+    )
 
 
 def _classify_evidence_state(evidence: list[dict[str, Any]]) -> dict[str, Any]:
@@ -817,158 +945,6 @@ def _collect_active_step_heartbeat(
         "started_at": _safe_text(active_step.get("started_at")),
         "pid_live": pid_live,
     }
-
-# ── M9: canonical projection helpers ────────────────────────────────────────
-
-
-def _format_source_cursor(
-    cursor_vector: Mapping[str, Any] | None,
-) -> dict[str, Any]:
-    """Format a source cursor vector for the target record, never granting authority.
-
-    When no cursor vector is supplied the field is an explicit ``absent``
-    sentinel so consumers never mistake a missing cursor for a verified read.
-    """
-    if isinstance(cursor_vector, Mapping) and cursor_vector:
-        return {
-            "authority": "evidence_extracted_display_only",
-            "value": dict(cursor_vector),
-        }
-    return {
-        "authority": "absent",
-        "reason": "no_source_cursor_vector_provided",
-    }
-
-
-def _collect_target_evidence_gaps(
-    marker: Mapping[str, Any],
-    *,
-    stale_evidence: list[dict[str, Any]] | None = None,
-    marker_present: bool = False,
-    plan_state_present: bool = False,
-    chain_state_present: bool = False,
-    tmux_live: str = "",
-) -> dict[str, Any]:
-    """Collect structured evidence gaps for the current-target record.
-
-    Returns a dict whose keys name degraded dimensions and whose values are
-    ``{gap, reason, evidence_status}`` triples.  Gaps are pure display
-    annotations — they never feed dispatch, completion, cancellation,
-    publication, or delivery.
-    """
-    gaps: dict[str, Any] = {}
-    stale_kinds = {e.get("kind") for e in (stale_evidence or []) if isinstance(e, dict)}
-
-    # --- marker gap ---
-    if not marker_present:
-        gaps["marker"] = {
-            "gap": "marker_unavailable",
-            "reason": "session marker file missing or unreadable",
-            "evidence_status": "missing",
-        }
-    elif "invalid_marker_json" in stale_kinds:
-        gaps["marker"] = {
-            "gap": "marker_invalid",
-            "reason": "session marker JSON is unreadable; continuing with partial evidence",
-            "evidence_status": "degraded",
-        }
-
-    # --- workspace gap ---
-    workspace = _safe_text(marker.get("workspace"))
-    if not workspace:
-        gaps["workspace"] = {
-            "gap": "workspace_unknown",
-            "reason": "marker did not provide a usable workspace",
-            "evidence_status": "missing",
-        }
-
-    # --- plan state gap ---
-    if "missing_plan_state" in stale_kinds:
-        gaps["plan_state"] = {
-            "gap": "plan_state_unavailable",
-            "reason": "plan state file missing or unreadable",
-            "evidence_status": "missing",
-        }
-    elif not plan_state_present:
-        gaps["plan_state"] = {
-            "gap": "plan_state_unavailable",
-            "reason": "no plan state file found for resolved plan name",
-            "evidence_status": "missing",
-        }
-
-    # --- chain state gap ---
-    if "missing_chain_state" in stale_kinds:
-        gaps["chain_state"] = {
-            "gap": "chain_state_unavailable",
-            "reason": "chain state file missing or unreadable",
-            "evidence_status": "missing",
-        }
-    elif not chain_state_present:
-        if any(k in stale_kinds for k in ("missing_chain_state",)):
-            gaps["chain_state"] = {
-                "gap": "chain_state_unavailable",
-                "reason": "no chain state file found",
-                "evidence_status": "missing",
-            }
-
-    # --- contradictory identity ---
-    if "contradictory_plan_identity" in stale_kinds:
-        gaps["plan_identity"] = {
-            "gap": "contradictory_plan_identity",
-            "reason": "chain and plan state identify different current plans",
-            "evidence_status": "degraded",
-        }
-
-    # --- stale marker plan ref ---
-    if "stale_marker_plan_ref" in stale_kinds:
-        gaps["marker_plan_ref"] = {
-            "gap": "stale_marker_plan_ref",
-            "reason": "marker plan reference is older than chain state",
-            "evidence_status": "stale",
-        }
-
-    # --- stale needs human plan ref ---
-    if "stale_needs_human_plan_ref" in stale_kinds:
-        gaps["needs_human_plan_ref"] = {
-            "gap": "stale_needs_human_plan_ref",
-            "reason": "needs-human sidecar references an older plan",
-            "evidence_status": "stale",
-        }
-
-    # --- stale chain state after terminal plan ---
-    if "stale_chain_state_after_terminal_plan" in stale_kinds:
-        gaps["chain_state_terminal"] = {
-            "gap": "stale_chain_state_after_terminal_plan",
-            "reason": "terminal plan state supersedes stale chain state",
-            "evidence_status": "stale",
-        }
-
-    # --- superseded by live sibling ---
-    if "superseded_by_live_sibling" in stale_kinds:
-        gaps["superseded_by_sibling"] = {
-            "gap": "session_superseded_by_live_sibling",
-            "reason": "live sibling session supersedes current marker",
-            "evidence_status": "superseded",
-        }
-
-    # --- tmux liveness gap ---
-    if not tmux_live:
-        gaps["tmux_liveness"] = {
-            "gap": "tmux_liveness_unknown",
-            "reason": "no tmux/process liveness probe result",
-            "evidence_status": "missing",
-        }
-
-    # --- stale active step dead pid ---
-    if "stale_active_step_dead_pid" in stale_kinds:
-        gaps["active_step"] = {
-            "gap": "stale_active_step_dead_pid",
-            "reason": "active_step worker PID is not live",
-            "evidence_status": "stale",
-        }
-
-    return gaps
-
 
 def _artifact_sort_key(item: Mapping[str, Any]) -> tuple[str, str, str]:
     return (

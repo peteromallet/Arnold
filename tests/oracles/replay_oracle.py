@@ -16,7 +16,8 @@ from typing import Any
 
 import pytest
 
-import arnold_pipelines.megaplan as megaplan
+from arnold_pipelines.megaplan.handlers.override import handle_override
+from arnold_pipelines.megaplan.types import CliError
 from tests.conftest import PlanFixture, load_state
 
 
@@ -73,8 +74,8 @@ def capture_legacy_action(
     accepted = True
 
     try:
-        response = megaplan.handle_override(plan_fixture.root, invoke(plan_fixture))
-    except megaplan.CliError as exc:
+        response = handle_override(plan_fixture.root, invoke(plan_fixture))
+    except CliError as exc:
         accepted = False
         exception = {
             "code": exc.code,
@@ -181,6 +182,13 @@ def _normalized_state(state: Mapping[str, Any]) -> dict[str, Any]:
     meta = dict(raw_meta) if isinstance(raw_meta, Mapping) else raw_meta
     if isinstance(meta, dict):
         meta.pop("current_invocation_id", None)
+        raw_environment = meta.get("execution_environment")
+        if isinstance(raw_environment, Mapping):
+            environment = dict(raw_environment)
+            for path_key in ("project_root", "target_root", "work_dir"):
+                if path_key in environment:
+                    environment[path_key] = f"{{{{{path_key}}}}}"
+            meta["execution_environment"] = environment
     return {
         "current_state": state.get("current_state"),
         "config": config,

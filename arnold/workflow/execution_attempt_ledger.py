@@ -666,6 +666,95 @@ class GrantRef:
         return payload
 
 
+# ── Global logical-effect identity (Step 8B1) ─────────────────────────────
+
+
+@dataclass(frozen=True)
+class GlobalEffectIdentity:
+    """Stable global logical-effect identity for cross-attempt dedup.
+
+    The inputs are snapshotted at first reservation time and reused for all
+    subsequent attempts of the same logical effect. A mid-flight inventory
+    regeneration (e.g., Step 13J) must not change the GLEK for an
+    already-reserved effect — retries read the persisted snapshot, not the
+    current inventory schema.
+
+    The ``global_logical_effect_key`` is a deterministic SHA-256 of the
+    canonical input tuple. Two identities with identical inputs produce the
+    same key; any change to any input field produces a different key.
+    """
+
+    environment_id: str
+    """Environment / session identifier."""
+
+    action_target: str
+    """Action target (e.g., boundary, effect sink)."""
+
+    action_version: str
+    """Action target version at reservation time."""
+
+    effect_family: str
+    """Effect family (e.g., git, cloud, custody)."""
+
+    provider_target: str
+    """Provider target (e.g., repository URL, cloud account)."""
+
+    canonical_request_identity: str
+    """Canonical request identity (canonicalised payload digest)."""
+
+    boundary_schema_hash: str
+    """Boundary schema hash snapshotted at first reservation time."""
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "environment_id",
+            "action_target",
+            "action_version",
+            "effect_family",
+            "provider_target",
+            "canonical_request_identity",
+            "boundary_schema_hash",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"GlobalEffectIdentity.{field_name} must be a non-empty str"
+                )
+
+    @property
+    def global_logical_effect_key(self) -> str:
+        """Deterministic SHA-256 of the canonical input tuple.
+
+        The delimiter ``\\x1f`` (ASCII unit separator) is used so that
+        field boundaries are unambiguous even if a field value contains
+        ``|`` or other common delimiters.
+        """
+        parts = (
+            self.environment_id,
+            self.action_target,
+            self.action_version,
+            self.effect_family,
+            self.provider_target,
+            self.canonical_request_identity,
+            self.boundary_schema_hash,
+        )
+        raw = "\x1f".join(parts).encode("utf-8")
+        return "glek:" + hashlib.sha256(raw).hexdigest()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a sidecar-safe payload with primitive values."""
+        return {
+            "environment_id": self.environment_id,
+            "action_target": self.action_target,
+            "action_version": self.action_version,
+            "effect_family": self.effect_family,
+            "provider_target": self.provider_target,
+            "canonical_request_identity": self.canonical_request_identity,
+            "boundary_schema_hash": self.boundary_schema_hash,
+            "global_logical_effect_key": self.global_logical_effect_key,
+        }
+
+
 # ── Ledger position ──────────────────────────────────────────────────────
 
 
@@ -1431,6 +1520,7 @@ __all__ = [
     "CheckpointPayload",
     "ExecutionAttemptLedger",
     "ExternalEffectPayload",
+    "GlobalEffectIdentity",
     "GrantRef",
     "InputPayload",
     "LEDGER_SCHEMA_VERSION",
