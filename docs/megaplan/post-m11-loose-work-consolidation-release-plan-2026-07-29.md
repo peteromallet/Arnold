@@ -120,20 +120,22 @@ runtime-fixer payload
         |
         v
 custody integration base <--- updated and reaccepted M11 milestone
-
+        |
+        +-----------------------------+
+                                      |
 current origin/main ---> release/post-m11-consolidation-20260729
-                              |
-                              +--- merge finished custody integration FIRST
-        |
-        +--- reviewed local completed payloads
-        +--- reviewed cloud completed payloads
-        +--- durable plans, tickets, tests, and evidence
-        |
-        v
-main
-        |
-        v
-content-addressed runtime promotion and resident cutover
+                                      |
+                                      +--- merge custody integration FIRST
+                                      +--- reviewed local completed payloads
+                                      +--- reviewed cloud completed payloads
+                                      +--- durable plans, tickets, tests, evidence
+                                      |
+                                      v
+                                    main
+                                      |
+                                      v
+                     content-addressed runtime promotion
+                              and resident cutover
 ```
 
 Individual custody milestone branches must not be cherry-picked directly to
@@ -185,8 +187,11 @@ has changed.
 
 Before merging or deleting anything:
 
-1. checkpoint the M11 payload without calling it accepted or complete;
-2. checkpoint the runtime-fixer payload on
+1. after byte-identical checkpoint verification, create and push an explicitly
+   nonterminal, nonaccepted candidate commit on the existing M11 milestone
+   branch; its commit message and ledger row must say that it cannot satisfy
+   completion;
+2. create and push an actual commit for the runtime-fixer payload on
    `fix/simple-fixer-durable-runner-exit-20260729`;
 3. preserve each dirty local worktree independently;
 4. preserve each dirty cloud workspace independently;
@@ -219,7 +224,8 @@ must still receive a land-or-delete verdict.
 6. generate the authoritative M11 completion manifest, proof map, receipts, and
    runtime/source identity from that post-fixer SHA/runtime;
 7. reject any pre-fixer manifest as completion evidence;
-8. commit and push the exact accepted M11 payload;
+8. commit and push the final acceptance artifacts as a later acceptance commit
+   on top of the explicitly nonaccepted candidate commit;
 9. open and merge the M11 milestone PR back to the custody integration branch;
 10. verify that no accepted live-runtime change exists only on the Hetzner
     volume.
@@ -243,7 +249,7 @@ Import completed valuable work in this order:
 5. coherent local commits and dirty source/test units;
 6. coherent cloud-only commits and dirty source/test units;
 7. durable initiative specs, tickets, plans, skills, documentation, fixtures,
-   and non-reproducible evidence;
+   and small redacted Git-suitable evidence;
 8. generated artifacts only when they are intentional repository assets.
 
 For overlapping branches:
