@@ -62,6 +62,42 @@ def _extract_gather_function(name: str, next_name: str) -> str:
     return text[start:end]
 
 
+def test_event_loader_reads_only_bounded_recent_tail(tmp_path: Path) -> None:
+    program = _extract_gather_program()
+    constants_start = program.index("EVENT_TAIL_MAX_BYTES =")
+    function_end = program.index("\ndef _event_timestamp(", constants_start)
+    namespace = {"json": json, "os": os}
+    old_bytes = os.environ.get("MEGAPLAN_AUDIT_EVENT_TAIL_MAX_BYTES")
+    old_lines = os.environ.get("MEGAPLAN_AUDIT_EVENT_TAIL_MAX_LINES")
+    os.environ["MEGAPLAN_AUDIT_EVENT_TAIL_MAX_BYTES"] = "1024"
+    os.environ["MEGAPLAN_AUDIT_EVENT_TAIL_MAX_LINES"] = "3"
+    try:
+        exec(program[constants_start:function_end], namespace)
+    finally:
+        if old_bytes is None:
+            os.environ.pop("MEGAPLAN_AUDIT_EVENT_TAIL_MAX_BYTES", None)
+        else:
+            os.environ["MEGAPLAN_AUDIT_EVENT_TAIL_MAX_BYTES"] = old_bytes
+        if old_lines is None:
+            os.environ.pop("MEGAPLAN_AUDIT_EVENT_TAIL_MAX_LINES", None)
+        else:
+            os.environ["MEGAPLAN_AUDIT_EVENT_TAIL_MAX_LINES"] = old_lines
+
+    events_path = tmp_path / "events.ndjson"
+    events = [
+        {"seq": seq, "kind": "phase_start", "padding": "x" * 180}
+        for seq in range(12)
+    ]
+    events_path.write_text(
+        "".join(json.dumps(event) + "\n" for event in events),
+        encoding="utf-8",
+    )
+
+    loaded = namespace["_load_events"](events_path)
+
+    assert [event["seq"] for event in loaded] == [9, 10, 11]
+
+
 def _extract_auditor_function(name: str) -> str:
     text = _wrapper("arnold-progress-auditor")
     start = text.index(f"{name}() {{")
