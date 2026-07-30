@@ -7,6 +7,8 @@ launch_preconditions:
   kind: chain_completed
   chain: .megaplan/initiatives/megaplan-chain-milestone-gates/chain.yaml
   require_manifest: true
+- name: bootstrap produced launch-ready downstream chain specifications
+  path: .megaplan/initiatives/megaplan-chain-milestone-gates/downstream-spec-readiness.json
 - name: custody control plane M11 is completed with content-addressed proof
   kind: chain_completed
   chain: .megaplan/initiatives/custody-control-plane/chain.yaml

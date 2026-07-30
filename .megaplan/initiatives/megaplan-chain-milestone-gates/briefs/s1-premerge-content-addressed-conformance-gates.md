@@ -2,7 +2,7 @@
 
 ## Objective
 
-Certify an externally implemented generic `conformance_gate`, exact
+Implement and certify a generic `conformance_gate`, exact
 predecessor-artifact assertion, and receipt-consuming transition phase. The
 gate runs against exact proposed source before PR readiness/auto-merge and
 again after merge. A declared transition runs only after the post-merge
@@ -15,23 +15,23 @@ arbitrary command hook.
 ## Bootstrap safety
 
 This milestone cannot use the behavior it is certifying to authorize its own
-implementation merge. Before this chain launches, its implementation PR must:
+implementation. Bootstrap authority therefore remains with the existing
+Megaplan execute → independent review → final-conformance path:
 
-- run the complete bootstrap contract suite as required external PR CI against
-  the exact proposed tree;
-- receive independent review of the chain ordering, unsafe-input negatives,
-  and auto-merge-blocking mutations before manual merge; and
-- emit a trusted, content-addressed
-  `.megaplan/initiatives/megaplan-chain-milestone-gates/.megaplan/evidence/bootstrap-pr-attestation.json`
-  binding PR/head/merge commit and tree, CI check identity/result/suite digest,
-  reviewer/approval identity, and the implementation diff.
+- execute must run the complete bootstrap contract suite against the exact
+  proposed tree;
+- the ordinary independent review phase must inspect the implementation,
+  ordering, unsafe-input negatives, and auto-merge-blocking mutations before
+  the milestone can pass;
+- the existing final-only conformance gate must rebind the merged tree and
+  complete proof map before the bootstrap chain can complete; and
+- the newly implemented intermediate gate/transition machinery first becomes
+  authoritative for the downstream Native Parity chain, never retroactively
+  for this bootstrap milestone.
 
-The bootstrap validator verifies that attestation against the configured
-trusted CI/reviewer authority and current merge tree. A missing, forged, stale,
-wrong-tree, non-green, or self-approved attestation fails. This closes the
-current runner's local/no-PR bypass: local certification is allowed only after
-the externally reviewed PR has already landed. A green post-merge result cannot
-excuse missing pre-merge CI or independent review.
+No external PR attestation or human merge gate is required. A green post-merge
+result still cannot excuse missing pre-merge tests or an adverse independent
+review verdict.
 
 ## Required behavior
 
@@ -85,6 +85,11 @@ excuse missing pre-merge CI or independent review.
     after-state evidence. Missing/skipped/partial/red/stale/unbound/replayed
     transitions block completion. Validators cannot mutate product authority;
     transition handlers cannot declare their own verification green.
+13. Migrate the prepared Native Parity and Platformization `chain.yaml` files
+    to the newly supported validation and transition fields. Preserve their
+    exact milestone order, dependencies, briefs, North Stars, and semantic
+    gates. Run parser, local preflight, and cloud-shaped preflight using the
+    installed implementation; do not launch either downstream chain.
 
 ## Required tests
 
@@ -126,15 +131,20 @@ excuse missing pre-merge CI or independent review.
 
 Produce and certify the schema/runtime implementation, source-ordering tests,
 receipt, transition and `required_proof_artifacts` schemas, validator fixtures,
-conformance and traceability indexes, proof map, and
-content-addressed completion manifest. The manifest must bind the external
-pre-merge CI run, independent review disposition, and post-merge backstop
-receipt. The handoff must name the exact
-`conformance_gate` schema/version that downstream chain specs may use.
+conformance and traceability indexes, proof map, and content-addressed
+completion manifest. The manifest must bind the exact bootstrap test run,
+independent review disposition, and post-merge backstop receipt.
 
-Do not close if a failing gate can be merged, if validation first occurs after
-auto-merge, if the bootstrap itself was auto-merged or lacked its required
-external pre-merge verification, if the merged tree is not rebound, or if a
-declared transition can be skipped/partially applied/self-verified, local
-execution can fabricate or omit the trusted PR attestation, or a product
-cutover could claim temporal ordering solely from milestone completion.
+Also emit
+`.megaplan/initiatives/megaplan-chain-milestone-gates/downstream-spec-readiness.json`.
+It must content-address both migrated downstream chain specs, every referenced
+milestone brief, both North Stars, and the parser/driver implementation commit.
+The handoff must name the exact `conformance_gate` and transition
+schema/versions that downstream chain specs use.
+
+Do not close if a failing downstream gate can be merged, if the bootstrap lacks
+green exact-tree tests or independent review, if the merged tree is not rebound,
+if a declared transition can be skipped/partially applied/self-verified, if
+either downstream spec remains unparsable or unbound by the readiness manifest,
+or if a product cutover could claim temporal ordering solely from milestone
+completion.
