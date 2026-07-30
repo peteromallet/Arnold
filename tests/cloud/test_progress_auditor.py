@@ -498,6 +498,20 @@ def test_global_watchdog_sweep_is_default_off_before_targeted_recovery() -> None
     assert guard < targeted < snapshot < watchdog
 
 
+def test_auditor_worklist_supports_explicit_session_scope() -> None:
+    wrapper = _wrapper("arnold-progress-auditor")
+
+    assert 'AUDIT_SESSION_ALLOWLIST="${MEGAPLAN_AUDIT_SESSION_ALLOWLIST:-}"' in wrapper
+    assert (
+        'os.environ.get("MEGAPLAN_AUDIT_SESSION_ALLOWLIST", "").split(",")'
+        in wrapper
+    )
+    assert (
+        "if session_allowlist and entry.get(\"session\") not in session_allowlist:"
+        in wrapper
+    )
+
+
 def _extract_auditor_function(name: str) -> str:
     text = _wrapper("arnold-progress-auditor")
     start = text.index(f"{name}() {{")
