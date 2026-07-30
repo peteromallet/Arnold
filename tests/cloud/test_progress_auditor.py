@@ -98,6 +98,18 @@ def test_event_loader_reads_only_bounded_recent_tail(tmp_path: Path) -> None:
     assert [event["seq"] for event in loaded] == [9, 10, 11]
 
 
+def test_auditor_worklist_supports_exact_session_and_plan_scope() -> None:
+    wrapper = _wrapper("arnold-progress-auditor")
+
+    assert 'AUDIT_SESSION_ALLOWLIST="${MEGAPLAN_AUDIT_SESSION_ALLOWLIST:-}"' in wrapper
+    assert 'AUDIT_PLAN_ALLOWLIST="${MEGAPLAN_AUDIT_PLAN_ALLOWLIST:-}"' in wrapper
+    assert (
+        "if session_allowlist and entry.get(\"session\") not in session_allowlist:"
+        in wrapper
+    )
+    assert "if plan_allowlist and entry.get(\"plan\") not in plan_allowlist:" in wrapper
+
+
 def _extract_auditor_function(name: str) -> str:
     text = _wrapper("arnold-progress-auditor")
     start = text.index(f"{name}() {{")
