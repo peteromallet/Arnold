@@ -347,6 +347,9 @@ def test_auditor_worklist_supports_explicit_session_scope() -> None:
         "if session_allowlist and entry.get(\"session\") not in session_allowlist:"
         in wrapper
     )
+    assert 'AUDIT_PLAN_ALLOWLIST="${MEGAPLAN_AUDIT_PLAN_ALLOWLIST:-}"' in wrapper
+    assert 'os.environ.get("MEGAPLAN_AUDIT_PLAN_ALLOWLIST", "").split(",")' in wrapper
+    assert "if plan_allowlist and entry.get(\"plan\") not in plan_allowlist:" in wrapper
 
 
 def _extract_auditor_function(name: str) -> str:
