@@ -72,6 +72,13 @@ around it in an editor adapter or CLI translation layer.
    Completion inspection must show exact spec/binding/verdict/obligation
    identities, evidence scope, proof mode, waiver taint, decoder version,
    acceptance receipt and current divergence-ledger hash.
+   Generated machine and Markdown completion views must also expose UTC
+   start/end timestamps and duration, attempt/generation history, every failure
+   and rework transition, verifier identity, waiver or justified-non-action
+   rationale plus its independent quality disposition, and final resolution.
+   Missing timing, failure, justification-quality, or resolution fields fail
+   the projection acceptance fixture; all views remain disposable and
+   non-authoritative.
 2. Ship formatting and linting for the restricted Python profile. Format-twice
    is stable; formatting, comments, and source-location changes preserve the
    pinned executable digest; every other canonical-envelope change is visible.

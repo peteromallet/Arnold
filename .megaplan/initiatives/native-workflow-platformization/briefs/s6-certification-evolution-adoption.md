@@ -1,5 +1,11 @@
 # S6 — Certification, evolution, and adoption
 
+Rerun the mechanical completion-crosswalk validator and require exact equality
+across every requirement/constraint ID, canonical owner milestone, proof rule,
+and accepted proof artifact. Consume the final historical-evidence disposition
+ledger and prove every required missing/drifted `native-platform-followup`
+artifact was recovered or explicitly re-proved before public certification.
+
 ## Objective
 
 Incorporate the S5 adversarial findings, freeze only the versions whose complete
@@ -67,6 +73,11 @@ recomputes the stable state before S6 or the epic can complete.
 - Registry states are `experimental`, `stable`, `deprecated`, and `withdrawn`,
   with evidence-backed transitions, migration/deprecation windows, retained
   artifact promises and safe GC.
+- `withdrawn` is the canonical Platform term for the old completion proposal's
+  `tombstoned` API state: the version remains historically addressable and
+  non-reusable, cannot be newly selected or admitted, and retains the promised
+  evidence/migration metadata. This is a terminology mapping, not a weaker
+  lifecycle state.
 - Product variability stays in typed bindings. Unproven abstractions, product
   semantics and internal compiler APIs do not become stable by proximity.
 - The one machine `docs/arnold/workflow-execution-mode-dispositions.yaml`

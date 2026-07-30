@@ -1,5 +1,11 @@
 # Native Workflow Platformization North Star
 
+Platformization consumes the exact completion supersession crosswalk and the
+bootstrap's accepted mechanical-traceability receipt. Every row assigned to a
+Platform milestone must resolve to a real conformance/proof rule and be
+revalidated at S6; free-text ownership or nominal milestone completion is not
+evidence.
+
 ## Destination
 
 Arnold becomes a workflow-component platform, not a Megaplan helper library and

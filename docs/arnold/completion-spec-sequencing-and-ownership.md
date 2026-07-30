@@ -1,5 +1,65 @@
 # Completion Specifications: Ownership, Sequencing, and Oracle Review Brief
 
+## Current operational strategy
+
+This document now governs three prepared, ordered initiatives:
+
+1. **Milestone-gate bootstrap** —
+   `.megaplan/initiatives/megaplan-chain-milestone-gates/chain.yaml`.
+   One sprint adds generic per-milestone pre/post-merge conformance gates,
+   exact predecessor-proof assertions, and typed receipt-consuming
+   transitions. It also migrates and preflights the two downstream chain specs
+   under that newly installed schema, then emits a content-addressed
+   `downstream-spec-readiness.json`. It does not launch them.
+2. **Megaplan Native Parity Corrective** —
+   `.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml`.
+   Twelve milestones run in this exact order:
+   `S1 -> S2F -> C1 -> C2 -> S2R -> S3A -> S3B -> S4 -> S5A -> S5B -> S6 -> S7`.
+   C1/C2 are the completion kernel; the standalone completion initiative is
+   normative source and traceability, not a competing launch target.
+3. **Native Workflow Platformization** —
+   `.megaplan/initiatives/native-workflow-platformization/chain.yaml`.
+   Seven milestones run only after Native Parity:
+   `S1 -> S2A -> S2B -> S3 -> S4 -> S5 -> S6`.
+
+The production order is therefore:
+
+```text
+Custody M11 accepted and manifested
+  -> milestone-gate bootstrap accepted and manifested
+  -> Native Parity with Completion C1/C2
+  -> Native Workflow Platformization
+```
+
+The bootstrap comes first for a concrete reason: the current chain driver can
+enforce only its final conformance gate. The downstream plans require
+intermediate gates and atomic receipt-consuming authority transitions. Writing
+those fields into a chain before the parser/driver supports them produces a
+design-shaped but invalid artifact; omitting them lets authority-changing
+milestones rely on narrative completion. The bootstrap closes that
+orchestration gap once, generically, before either downstream program runs.
+
+The bootstrap is deliberately the one human-reviewed exception to unattended
+auto-merge. It cannot safely use the new gate to certify the implementation of
+that same gate. Its exact proposed tree therefore requires external CI,
+independent review, manual merge, and a content-addressed attestation; the
+existing final gate then certifies the landed tree. This is a bootstrap trust
+boundary, not a general preference for PR ceremony. Native Parity and
+Platformization remain unattended/auto-merge once that capability is installed.
+
+All three cloud configurations intentionally target the existing Custody
+checkout **sequentially**, after M11. `chain_completed` state and completion
+manifests are checkout-local; using unrelated workspaces would make a genuinely
+completed predecessor invisible to its successor. Distinct chain sessions
+remain named separately, but they must not run concurrently against the shared
+checkout.
+
+The durable source is the `editible-install` branch. Before each launch, refresh
+from that branch and verify the exact initiative/spec hashes. Never replace
+these sources with older same-named files already present on the machine, never
+use generated `.megaplan/plans/` state as initiative source, and never reset or
+sync-clean the active M11 checkout while M11 is running.
+
 ## Decision in one paragraph
 
 Do **not** launch the prepared five-milestone
@@ -9,15 +69,18 @@ introduced *inside* the Native Parity migration rather than before or after the
 whole thing:
 
 1. Custody M11 finishes and publishes its exact completion manifest.
-2. Native Parity establishes canonical `.pype` source identity, lowering, and
+2. The milestone-gate bootstrap installs and certifies the generic chain
+   enforcement needed by the downstream authority transitions, migrates both
+   downstream specs, and emits their readiness manifest.
+3. Native Parity establishes canonical `.pype` source identity, lowering, and
    durable-subject identity through S2F.
-3. The completion **kernel**—the current Completion M1 and M2—is inserted after
+4. The completion **kernel**—the current Completion M1 and M2—is inserted after
    S2F and before S2R. S2R then gives every durable control primitive explicit
    composition semantics under that kernel.
-4. Native Parity's S2R–S7 migrations consume that kernel. The current
+5. Native Parity's S2R–S7 migrations consume that kernel. The current
    Completion M3 and the Megaplan-specific parts of M4 are folded into those
    milestones rather than run later as a retrofit.
-5. Platformization consumes the completed Megaplan proof. It owns durable
+6. Platformization consumes the completed Megaplan proof. It owns durable
    product-neutral extraction, authoring/tooling, isolated recomposition, and
    the unrelated second-consumer proof. The current Completion M5 is distributed
    across Platformization S1–S6, with certification only in S6.
@@ -26,6 +89,7 @@ In shorthand:
 
 ```text
 Custody M11
+  -> milestone-gate bootstrap
   -> Native Parity S1 -> S2F
   -> completion kernel (spec + binding + evaluator)
   -> Native Parity S2R ... S7 using that kernel
@@ -33,9 +97,10 @@ Custody M11
   -> stable public completion API only after second-consumer proof
 ```
 
-The prepared completion initiative remains valuable as a design and brief
-source. Its current `chain.yaml` should stay unlaunched until its work is
-redistributed and the dependency manifests are corrected.
+The prepared completion initiative remains valuable as a byte-preserved design
+and brief source. Its work has been redistributed through an explicit
+crosswalk covering 81 requirements plus two intentionally changed historical
+constraints; its `chain.yaml` is non-launchable by design.
 
 ## Why this is not simply “before” or “after”
 
@@ -184,14 +249,16 @@ mutation, because a completed historical milestone may contain proof that the
 corrective program expects to consume. “Superseded” must never mean “delete its
 evidence.”
 
-There is also a concrete preparation defect to resolve: the currently prepared
-Native Parity initiative contains no `CompletionSpec`, `CompletionBinding`, or
-`CompletionVerdict` references. It does not yet implement the allocation
-described by the governing completion proposal. By contrast, the standalone
-completion initiative is fully prepared around those types. Therefore neither
-initiative should launch unchanged: move the requirements into Native Parity,
-preserve the standalone initiative as traceability/design input, and validate
-the resulting chain before execution.
+That earlier preparation defect is now resolved in source: Native Parity has
+explicit C1/C2 milestones for `CompletionSpec`, `CompletionBinding`, and
+`CompletionVerdict`; the standalone completion briefs and governing proposal
+remain byte-preserved; and
+`standardized-completion-specifications/SUPERSESSION_CROSSWALK.yaml` maps all
+81 retained requirements plus two changed constraints to active owners and
+proof destinations. The
+remaining launch dependency is executable rather than architectural: the
+bootstrap must first install the chain schema that makes each intermediate
+gate and transition enforceable.
 
 ## Exact allocation of completion work
 
@@ -429,12 +496,37 @@ neutral surface proven by S5; leave unsupported capabilities experimental.
 
 ## Required dependency and manifest changes
 
+### Milestone-gate bootstrap
+
+Run this after M11 acceptance and before Native Parity. Its completion manifest
+must bind:
+
+- the parser/driver implementation supporting intermediate
+  `conformance_gate` and `receipt_consuming_transition`;
+- exact-tree negative and compatibility tests;
+- external CI, independent review, manual merge attestation, and the existing
+  final conformance receipt;
+- the migrated Native Parity and Platformization chain specs;
+- every referenced downstream brief and North Star; and
+- `downstream-spec-readiness.json`, containing those hashes and the installed
+  implementation commit.
+- `editable-runtime-readiness.json`, binding the exact approved
+  `editible-install` commit, import root, installed distribution/module hashes,
+  and cloud worker runtime provenance consumed by downstream preflight.
+
+The bootstrap is not a fourth product architecture or a completion bridge. It
+adds missing orchestration enforcement, then hands control to Native Parity.
+It must not define completion semantics, product dispositions, or Megaplan
+cutover policy.
+
 ### Native Parity
 
-Amend the Native Parity chain so the completion kernel lands after S2F and
-before S2R as two inserted C1/C2 milestones. Do not use a separately completed
-bridge chain: it would add a manifest authority and pause/resume seam across two
-parts that need one semantic owner.
+The Native Parity chain now places the completion kernel after S2F and before
+S2R as inserted C1/C2 milestones. The bootstrap must encode the prepared
+per-milestone gates and transitions into the newly supported chain schema and
+prove the resulting spec preflights. Do not use a separately completed
+completion bridge chain: it would add a manifest authority and pause/resume
+seam across two parts that need one semantic owner.
 
 S2R and every S3A–S7 gate should bind:
 
@@ -447,11 +539,11 @@ S2R and every S3A–S7 gate should bind:
 
 ### Prepared completion initiative
 
-Do not discard it. Convert it from an independently executable five-sprint
-chain into normative source briefs and traceability assets imported into Native
-Parity and Platformization. Insert C1/C2 directly into the Native chain. A
-bridge chain would add a manifest authority and crash/resume seam between two
-parts that must share one semantic owner, so it is not the default plan.
+It has been converted from an independently executable five-sprint chain into
+normative source briefs and traceability assets imported into Native Parity and
+Platformization. C1/C2 are in the Native chain, and the source initiative is
+explicitly non-launchable. A bridge chain would add a manifest authority and
+crash/resume seam between two parts that must share one semantic owner.
 
 Its current local M11 precondition must not be trusted until the authoritative
 cloud M11 initiative revision is merged and the manifest matches that exact
@@ -460,10 +552,12 @@ local chain is not proof of identity.
 
 ### Platformization
 
-Replace or supplement its current predecessor checks with the final
-authoritative Native Parity corrective manifest. If the older Native Python and
-Composition chains retain unique responsibilities, enumerate their exact proof
-artifacts rather than requiring vague nominal completion.
+Its predecessor checks now name the final authoritative Native Parity
+corrective manifest and hashed handoff. The bootstrap must migrate its
+intermediate gates/transitions to the supported schema and bind the result in
+the downstream readiness manifest. If the older Native Python and Composition
+chains retain unique responsibilities, enumerate their exact proof artifacts
+rather than requiring vague nominal completion.
 
 The current `native-workflow-platformization` chain already depends on the
 Native Parity manifest and hashed handoff. Extend that handoff and its S1 gate
@@ -486,6 +580,23 @@ Perform a disposition audit:
 
 Do not run them merely because chain files exist.
 
+### Historical platform-evidence caveat
+
+The historical `native-platform-followup/completion-manifest.json` is
+spec-hash-valid, but that does not prove its referenced evidence is still
+available or current. The preservation audit found twelve referenced plan
+artifacts absent locally and on the active cloud checkout, plus eleven
+referenced working artifacts whose hashes have drifted. Until reconciled, the
+strategy must not claim complete historical-proof preservation.
+
+Platform S1 therefore owns a milestone-by-milestone disposition ledger with
+expected path/hash, observed path/hash, and one explicit state:
+`import_verified`, `recover_required`, `reprove_in_native`,
+`reprove_in_platform`, or `unavailable_nonblocking_with_rationale`. Any unique
+proof required by a later gate blocks that consumer until recovered or
+re-proved. Native S7 hands the final retained/reproved set forward; Platform S6
+must prove the ledger is closed before public certification.
+
 ## Handoff artifacts
 
 Each boundary should be mechanical:
@@ -493,6 +604,7 @@ Each boundary should be mechanical:
 | Producer | Required handoff |
 |---|---|
 | Custody M11/consolidation | Completion manifest covering RA/Custody/WBC versions, acceptance transaction, replay, runtime provenance, negative fixtures, and a 57k-scale bounded projection receipt with full-rebuild parity |
+| Milestone-gate bootstrap | Installed intermediate-gate/transition schema and driver proof; exact-tree negative tests; migrated Native/Platform specs; `downstream-spec-readiness.json`; completion manifest |
 | Native Parity S2F | `.pype` identity/compiler receipt, authored host identity and durable-boundary call-site templates, source/runtime correspondence, graph lock, GO-FORMAT proof |
 | Completion kernel C1/C2 | Experimental package/import contract; schema, serialization, hash, reader/writer versions; durable predicate; adapter map; evidence-scope and candidate-outcome model; current divergence-ledger hash; restore and projection-invariance receipts; shadow acceptance integration |
 | Native Parity S2R | Total completion semantics for every durable primitive, crash/reentry proof, child-set and waiver aggregation instances, named-exit supersession proof, and the sole authoritative kernel-enablement receipt |
@@ -539,27 +651,32 @@ stability.
 2. Produce and independently validate the M11 completion manifest, then close
    the known incident-projection scalability gap with a 57k-scale Custody
    follow-up receipt before Native launch.
-3. Audit the actual completion state of the older Native Python and Composition
+3. Run the one-sprint milestone-gate bootstrap in the same Custody checkout.
+   Require its final manifest and `downstream-spec-readiness.json`; it must
+   migrate and preflight both downstream specs but must not launch them.
+4. Audit the actual completion state of the older Native Python and Composition
    chains and record an explicit retain/import/supersede disposition for every
    milestone.
-4. Amend Native Parity:
-   - extend S2F with durable-boundary call-site identity templates;
-   - insert Completion Kernel A: neutral package, versioned spec/identity,
+5. Run the prepared Native Parity chain:
+   - S2F establishes durable-boundary call-site identity templates;
+   - Completion Kernel C1 lands the neutral package, versioned spec/identity,
      shadow evaluation, divergence ledger, and named-exit terminal;
-   - insert Completion Kernel B: immutable binding/evaluator schemas, wire
+   - Completion Kernel C2 lands immutable binding/evaluator schemas, wire
      compatibility, restore/projection proof, and shadow acceptance integration;
-   - make S2R instantiate aggregate semantics and be the sole authoritative
+   - S2R instantiates aggregate semantics and is the sole authoritative
      enablement point;
-   - make every later cutover consume those proof receipts and ledger hash.
-5. Fold the M10/M11 vertical slice into S5A/S5B and the full Megaplan migration
-   into S3A–S7 acceptance.
-6. Amend Platformization to depend on Native Parity's exact final manifest and
-   to own neutral extraction, authoring/tooling, second-consumer proof, and
-   public certification.
-7. Retire the standalone completion chain as a launch target and preserve it as
-   normative design/traceability input.
-8. Run Platformization only after Native Parity proves no live competing
-   completion authority.
+   - every later cutover consumes those exact proof receipts and ledger hash;
+   - S5A/S5B executes the M10/M11 false-done, discontinuous-manifest,
+     accepted-attempt-closure, bounded-history, and causal-rework fixtures.
+6. Run Platformization only after Native Parity's exact final manifest proves
+   no live competing completion authority. It owns neutral extraction,
+   authoring/tooling, second-consumer proof, and public certification.
+7. Keep the standalone completion chain non-launchable and preserve its five
+   briefs, governing proposal, and 83-entry crosswalk as normative
+   traceability.
+8. After each chain, refresh the shared checkout from the exact
+   `editible-install` commit, verify predecessor state/manifests in that same
+   checkout, and refuse older same-named cloud artifacts.
 
 ## Disposition of the second oracle review
 

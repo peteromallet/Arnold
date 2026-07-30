@@ -48,13 +48,14 @@ protected_historical_sources:
   - path: decisions/standardized-completion-spec-proposal.md
     preservation: byte-for-byte
 coverage_summary:
-  total_requirements: 81
+  total_requirements: 83
   by_old_milestone:
     Completion M1: 20
     Completion M2: 20
     Completion M3: 15
     Completion M4: 14
     Completion M5: 12
+    Historical constraints/non-goals: 2
   required_fields:
     - id
     - source
@@ -66,6 +67,7 @@ coverage_summary:
   allowed_statuses:
     - redistributed
     - corrected_and_redistributed
+    - superseded_by_design
 requirements:
   - id: CM1-01
     source: briefs/m1.md#scope-in
@@ -618,8 +620,8 @@ requirements:
     old_owner: Completion M5
     new_owners: [Platform S6]
     proof_destination: S6 compatibility/evolution classification
-    preservation: preserve stable, experimental, deprecated, and tombstoned categories
-    status: redistributed
+    preservation: preserve stable, experimental, deprecated, and terminal removal categories; old tombstoned is normatively represented by Platform withdrawn
+    status: corrected_and_redistributed
   - id: CM5-11
     source: briefs/m5.md#done-criteria
     old_owner: Completion M5
@@ -634,3 +636,17 @@ requirements:
     proof_destination: S6 final two-consumer conformance and North Star proof map
     preservation: preserve exact proof links and leave unproven behavior experimental
     status: redistributed
+  - id: CNG-01
+    source: briefs/m3.md#scope-out
+    old_owner: Completion M3 constraints/non-goals
+    new_owners: [Native S3A-S7, Platform S1]
+    proof_destination: Native integrated phase migration and Platform extraction traceability
+    preservation: the old no-all-phases/no-broad-composition limit is intentionally superseded because M3 is no longer an isolated slice; scope expands only through the ordered Native and Platform gates
+    status: superseded_by_design
+  - id: CNG-02
+    source: briefs/m4.md#scope-out
+    old_owner: Completion M4 constraints/non-goals
+    new_owners: [Platform S1, Platform S2A, Platform S4]
+    proof_destination: Platform total-join policy index and quorum/race conformance rules
+    preservation: the old no-unsupported-quorum/race/first-wins limit is intentionally superseded only by typed total joins, explicit arbitration policy, forced-race fixtures, and retained loser facts
+    status: superseded_by_design

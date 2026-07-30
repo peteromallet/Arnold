@@ -1,5 +1,12 @@
 # Megaplan Native Parity Corrective North Star
 
+The byte-preserved completion proposal and its supersession crosswalk are
+normative inputs for every milestone assigned completion work. The bootstrap's
+accepted `completion-crosswalk-readiness.json` resolves every requirement and
+changed historical constraint to canonical milestone and proof-rule IDs. No
+Native milestone may close with an assigned row missing, stale, unconsumed, or
+mapped only by prose.
+
 Canonical Megaplan must have one source-authoritative native workflow and one
 composed, fenced runtime history.
 

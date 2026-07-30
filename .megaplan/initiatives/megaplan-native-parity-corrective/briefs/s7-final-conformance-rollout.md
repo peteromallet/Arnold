@@ -1,5 +1,11 @@
 # S7 - Native-Topology Conformance on the M11 Proof Framework
 
+Rerun the bootstrap-installed completion-crosswalk validator and require exact
+equality across every requirement and changed-constraint ID, canonical owner
+milestone, proof rule, and accepted proof artifact. No prose-only, unconsumed,
+stale, missing-source, or unknown-owner row may enter the Native-to-Platform
+handoff.
+
 ## Objective
 
 Extend—not duplicate—the admitted Custody M11 conformance framework with

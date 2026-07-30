@@ -7,6 +7,10 @@ launch_preconditions:
   - name: bootstrap brief is committed and clean
     kind: git_tracked
     path: .megaplan/initiatives/megaplan-chain-milestone-gates
+  - name: externally reviewed bootstrap PR attestation exists
+    path: .megaplan/initiatives/megaplan-chain-milestone-gates/.megaplan/evidence/bootstrap-pr-attestation.json
+    check:
+      kind: exists
 
 milestones:
   - label: s1-premerge-content-addressed-conformance-gates
@@ -22,7 +26,8 @@ milestones:
         traceability: docs/arnold/megaplan-chain-milestone-gates-traceability.yaml
         proof_map: .megaplan/initiatives/megaplan-chain-milestone-gates/final-proof-map.json
     notes: >-
-      Add a generic pre-merge conformance_gate, exact predecessor-artifact assertions, and
+      Certify the externally reviewed bootstrap attestation; add a generic
+      pre-merge conformance_gate, exact predecessor-artifact assertions, and
       typed receipt-consuming transitions with post-transition verification;
       prove that missing, red, stale, unbound, or bypassed evidence cannot
       merge or advance a chain.
@@ -31,7 +36,7 @@ on_failure:
   retry: retry_milestone
   abort: stop_chain
 
-merge_policy: auto
+merge_policy: review
 prerequisite_policy: required
 validation_policy: required
 

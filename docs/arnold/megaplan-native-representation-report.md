@@ -1,5 +1,13 @@
 # Megaplan Native Python and Reusable Workflow Platform Representation Report
 
+> **Sequencing amendment — 2026-07-30.** This report's older milestone totals
+> and migration graph are superseded for execution by
+> `docs/arnold/completion-spec-sequencing-and-ownership.md`. The active order is
+> Custody M11 → milestone-gate bootstrap → twelve-milestone Native Parity with
+> C1/C2 between S2F and S2R → seven-milestone Platformization. Preserve this
+> report as architectural evidence; do not use its old counts to rewrite the
+> chain sources.
+
 ## 1. Executive summary
 
 In this report, "native" means more than "the workflow is authored in

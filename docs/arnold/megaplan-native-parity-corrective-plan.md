@@ -1,5 +1,14 @@
 # Megaplan Native Parity Corrective Plan
 
+> **Sequencing amendment — 2026-07-30.** The milestone counts and migration
+> diagrams below predate the completion-kernel insertion. For execution order,
+> prerequisite rationale, and ownership, the controlling source is
+> `docs/arnold/completion-spec-sequencing-and-ownership.md`: Custody M11 →
+> milestone-gate bootstrap → Native
+> `S1,S2F,C1,C2,S2R,S3A,S3B,S4,S5A,S5B,S6,S7` → Platformization
+> `S1,S2A,S2B,S3,S4,S5,S6`. The older analysis remains evidence; it must not be
+> used to regenerate or overwrite the prepared chain specs.
+
 ## Purpose
 
 This plan makes canonical Megaplan's native Python source the complete,

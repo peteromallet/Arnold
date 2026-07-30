@@ -1,5 +1,18 @@
 # S1 — Component standard and extraction inventory
 
+Before extraction, ingest and validate the exact completion supersession
+crosswalk plus `completion-crosswalk-readiness.json`. Produce a row-by-row
+Platform owner/proof inventory; reject unknown milestone labels, missing proof
+rules, stale hashes, or free-text-only destinations.
+
+Also inventory every milestone and proof artifact from the historical
+`native-platform-followup` manifest. Record expected path/hash, current
+path/hash, and one explicit disposition: `import_verified`,
+`recover_required`, `reprove_in_native`, `reprove_in_platform`, or
+`unavailable_nonblocking_with_rationale`. Missing or drifted evidence may not
+be described as preserved. Any uniquely required proof blocks the consuming
+milestone until recovered or re-proved.
+
 ## Objective
 
 Consume the completed Native Parity handoff and turn its proved product-native

@@ -23,8 +23,27 @@ milestone is bounded to two weeks.
 This milestone also supplies the exhaustive failure-injection and replay proof
 for M6A's transactional WBC store and M8's universal producer adoption.
 
+M10 also implements and proves C01–C19 from
+`decisions/m10-m11-structural-conformance-closure-20260723.md`. It begins from
+one exact source/seed/runtime/process launch manifest and one fresh plan
+snapshot derived from the latest seed set. The target branch itself must
+descend from the convergence revision; an editable install alone is not source
+custody.
+
 ## In scope
 
+- Treat the structural closure decision C01–C19 as acceptance requirements.
+  Implement guarded target-source/seed/runtime rebind, independent B→A
+  rollback, strict schema parity, explicit request acceptance, authoritative
+  RA/Custody/WBC rereads, append/CAS histories, identity-bound liveness,
+  target-bound acceptance, fail-closed repair backstops, and clean
+  candidate-bound evidence before crediting recovery.
+- Generate and validate the exact launch seed before any M10 worker dispatch.
+  A changed load-bearing seed invalidates prior gate/finalize/review artifacts
+  and requires fresh materialization and gate while preserving old history.
+- Replace parallel effect/idempotency authority with the single WBC effect
+  protocol or explicit read-only historical adapters. Unknown provider outcome
+  is terminal `INDETERMINATE`, not duplicate success or retry permission.
 - Execute batch/worker retry, model/provider fallback, watchdog/L1/L2/L3 repair,
   queue/locks/leases/requests, source/install/retrigger, chain/PR/publication,
   resident completion/ordinary/scheduled delivery, provider effects, restart/
@@ -37,6 +56,11 @@ for M6A's transactional WBC store and M8's universal producer adoption.
   normalized failure kind, blocker/phase-result hash, managed-worker identity,
   Run Authority grant/fence, lease owner/host/process-birth identity, and custody
   epoch immediately before claim and effect.
+- Admit explicitly approved deterministic quality-block families, including the
+  captured review-budget-exhausted occurrence, through the same exact-signature
+  repair allowlist. If classification or L1 launch fails, persist that failed
+  launch as an occurrence and route it to bounded meta-repair/reconciliation;
+  “L1 never launched” may not disappear before the six-hour backstop.
 - Exercise cross-host acquisition, renewal, orderly transfer, expired-owner
   reclaim, network delay, host death, and restarted process/PID reuse. The old
   epoch must be durably fenced before the new host can perform an effect.
@@ -92,6 +116,21 @@ evidence, reconciliation, and verification.
 
 ## Done criteria
 
+- The launch manifest proves exact equality across target branch/root/HEAD,
+  latest seed hashes and materialized snapshot, installed runtime/interpreter,
+  imports/direct-URL/all `.pth`, wrappers, supervisor/resident/watchdog,
+  marker, and chain binding. Missing/ambiguous binding blocks dispatch, and
+  integrated A→B→A fault injection preserves history and pause safety.
+- Strict model schemas are content-addressed and identical at prompt,
+  materialization, scratch, capture, handler, and receipt. Missing or unknown
+  fields fail without reconstruction, defaults, inference, or stripping.
+- Request acceptance, lease/history append, authority validation, repair
+  advancement, status/acceptance projection, and effect reservation satisfy
+  C05–C16 with their negative controls; no syntactic/shadow/local evidence
+  authorizes or closes an occurrence.
+- Clean baseline/candidate and installed-wheel runs satisfy C18, and executable
+  incident/migration/fault replays satisfy C15, C17, and C19. Every carried
+  baseline failure has an owner and expiry and is excluded from conformance.
 - Crash/fault injection at every in-scope edge causes neither duplicate effect
   nor false success/closure; ambiguity remains visible and bounded.
 - The generated WBC inventory's failure/replay cases all pass against the exact
@@ -114,6 +153,11 @@ evidence, reconciliation, and verification.
 - Captured T7/T12 and same-basename fixtures cannot cross-bind; duplicate, late, lost, and out-of-
   order triggers launch at most one current managed repair or remain visibly
   pending for reconciliation.
+- The captured M5 `failed: <detail>` review block launches at most one approved
+  L1 attempt with machine provenance. Parser loss, dispatch incompatibility,
+  and launcher failure each produce a durable failed occurrence that reaches
+  bounded L2 or typed human escalation; no layer may report success merely
+  because the child process was absent.
 - Shadow and repair/worker canary measurements prove p95 from durable eligible
   blocker event to accepted repair or typed escalation is under five minutes.
   A deliberately missed event is recovered by the six-hour backstop.
@@ -152,6 +196,36 @@ event-driven SLO and missed-event proof, exact-signature and terminal-custody
 evidence, independent verification and recurrence evidence, repair/worker
 canary/kill-switch/rollback proof, genuine-block candidate, and the evidence-
 backed list of legacy paths eligible for retirement.
+
+## F01–F17 amendment contract
+
+This milestone supplies end-to-end acceptance for F01, F02, F04, F15, and F16
+under failure/replay, plus the effect/recovery portions of R1 and R3. It consumes
+the owned M6A/M7/M8/M9 contracts and creates no parallel ledger or queue.
+
+- **Prerequisite:** accepted M9 views/joined ledger, M8 exact producer traces,
+  M7 occurrence/lease/epoch/terminal contract, and M6A durable history.
+- **Structural amendment:** C01–C19 in
+  `decisions/m10-m11-structural-conformance-closure-20260723.md` are required;
+  the July 23 incident/consolidation assets and their hashes are part of the
+  execution binding and generated launch seed.
+- **First safe action:** produce and run
+  `evidence/m10-f01-f17-fault-matrix.json` entirely action-off with fakes,
+  covering every persistence, trigger, retry, handoff, verification, and replay
+  edge before any separately approved canary.
+- **Deliverables:** exhaustive fault/replay receipts, event→request→claim→terminal
+  SLO join, terminal-custody closure report, cross-host transfer/reclaim proof,
+  exact-signature isolation, independent verification/recurrence evidence,
+  missed-event reconciliation, kill switch, rollback, and genuine-block
+  candidate package.
+- **Acceptance evidence:** no duplicate effect/false closure, one current actor,
+  every outcome terminal or typed indeterminate, T7/T12 and same-basename
+  isolation, denominated p95 <5m or typed escalation, six-hour recovery of a
+  missed event, and no self-verification.
+- **Component-versus-wiring safeguard:** enqueue hooks, watchdogs, requests,
+  leases, typed reasons, and focused tests do not prove recovery. Acceptance
+  requires the exact installed runtime and joined occurrence lifecycle; real
+  effects remain unauthorized unless separately approved.
 
 ## Profile rationale
 

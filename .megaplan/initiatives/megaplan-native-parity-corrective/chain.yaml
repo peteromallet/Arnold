@@ -9,6 +9,10 @@ launch_preconditions:
   require_manifest: true
 - name: bootstrap produced launch-ready downstream chain specifications
   path: .megaplan/initiatives/megaplan-chain-milestone-gates/downstream-spec-readiness.json
+- name: bootstrap produced mechanically validated completion traceability
+  path: .megaplan/initiatives/megaplan-chain-milestone-gates/completion-crosswalk-readiness.json
+- name: bootstrap attested the approved editable runtime identity
+  path: .megaplan/initiatives/megaplan-chain-milestone-gates/editable-runtime-readiness.json
 - name: custody control plane M11 is completed with content-addressed proof
   kind: chain_completed
   chain: .megaplan/initiatives/custody-control-plane/chain.yaml
