@@ -116,6 +116,7 @@ AUDIT_GITHUB_REPO="${MEGAPLAN_AUDIT_GITHUB_REPO:-}"
 AUDIT_GITHUB_REPO_PATH="${MEGAPLAN_AUDIT_GITHUB_REPO_PATH:-}"
 AUDIT_GITHUB_LABELS="${MEGAPLAN_AUDIT_GITHUB_LABELS:-incident-control-plane,persistent-problem}"
 RECOVERY_ENABLED="${MEGAPLAN_AUDIT_RECOVERY_ENABLED:-1}"
+GLOBAL_WATCHDOG_SWEEP_ENABLED="${MEGAPLAN_AUDIT_GLOBAL_WATCHDOG_SWEEP_ENABLED:-0}"
 RECOVERY_SYNC_ENABLED="${MEGAPLAN_AUDIT_RECOVERY_SYNC_ENABLED:-0}"
 WATCHDOG_BIN="${MEGAPLAN_AUDIT_WATCHDOG_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog}"
 REPAIR_TRIGGER_BIN="${MEGAPLAN_AUDIT_REPAIR_TRIGGER_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"
@@ -393,6 +394,16 @@ run_recovery_sweep() {
   local after_path="$GATHER_DIR/recovery-after.json"
   local watchdog_rc=0
   capture_recovery_snapshot "$before_path"
+  case "${GLOBAL_WATCHDOG_SWEEP_ENABLED,,}" in
+    1|true|yes|on)
+      ;;
+    *)
+      log "global watchdog recovery sweep disabled; bounded gather and targeted L3 repair custody own recovery"
+      capture_recovery_snapshot "$after_path"
+      assemble_recovery_evidence "$before_path" "$after_path" 0 0
+      return 0
+      ;;
+  esac
   if [[ "$AUDIT_MUTATION_AUTHORIZED_FLAG" != "1" ]]; then
     log "report-only audit: skipping watchdog recovery sweep because mutation is not authorized"
     capture_recovery_snapshot "$after_path"
@@ -2267,14 +2278,40 @@ def _repair_custody_summary(session, plan_state, current_target):
         "malformed_request_paths": [item.get("path") for item in malformed_requests[:3]],
         "malformed_decision_paths": [item.get("path") for item in malformed_decisions[:3]],
     }
+EVENT_TAIL_MAX_BYTES = max(
+    int(os.environ.get("MEGAPLAN_AUDIT_EVENT_TAIL_MAX_BYTES", str(16 * 1024 * 1024))),
+    1024,
+)
+EVENT_TAIL_MAX_LINES = max(
+    int(os.environ.get("MEGAPLAN_AUDIT_EVENT_TAIL_MAX_LINES", "5000")),
+    1,
+)
 
 def _load_events(events_path):
+    """Load a bounded recent journal tail.
+
+    Progress auditing needs the current evidence window, not a reconstruction
+    of the plan's complete event history.  Reading a multi-hundred-megabyte
+    journal with ``read_text().splitlines()`` multiplies its resident-memory
+    cost and can OOM-kill the repair supervisor before it reaches the session
+    that needs recovery.
+    """
     events = []
     try:
-        lines = events_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except Exception:
+        size = events_path.stat().st_size
+        with events_path.open("rb") as handle:
+            truncated = size > EVENT_TAIL_MAX_BYTES
+            if truncated:
+                handle.seek(size - EVENT_TAIL_MAX_BYTES)
+            raw = handle.read(EVENT_TAIL_MAX_BYTES)
+    except (OSError, ValueError):
         return events
-    for line in lines:
+    lines = raw.splitlines()
+    if truncated and lines:
+        # The byte cursor normally lands inside a JSON record.
+        lines = lines[1:]
+    for raw_line in lines[-EVENT_TAIL_MAX_LINES:]:
+        line = raw_line.decode("utf-8", errors="replace")
         if not line.strip():
             continue
         try:

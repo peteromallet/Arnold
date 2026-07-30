@@ -587,23 +587,18 @@ def has_advancement(
     previous: Mapping[str, Any] | None,
     current: Mapping[str, Any],
 ) -> bool:
+    """Return whether recovery crossed a durable workflow boundary.
+
+    Process liveness, LLM heartbeats, and journal growth prove that a worker is
+    active; they do not prove that the phase which triggered recovery finished.
+    Counting those signals as advancement resets the recurrence breaker as soon
+    as a relaunched phase starts, allowing the same runner to die at the phase
+    handoff indefinitely without reaching meta-repair.
+    """
     if not previous:
         return False
     prev = _as_dict(previous)
     curr = _as_dict(current)
-    prev_activity = _as_dict(prev.get("plan_activity"))
-    curr_activity = _as_dict(curr.get("plan_activity"))
-    if bool(curr_activity.get("has_in_flight_llm")):
-        return True
-    if bool(prev_activity.get("available")) and bool(curr_activity.get("available")):
-        prev_events_mtime = _as_float(prev_activity.get("events_mtime")) or 0.0
-        curr_events_mtime = _as_float(curr_activity.get("events_mtime")) or 0.0
-        prev_events_size = _as_int(prev_activity.get("events_size")) or 0
-        curr_events_size = _as_int(curr_activity.get("events_size")) or 0
-        if curr_events_mtime > prev_events_mtime or curr_events_size > prev_events_size:
-            return True
-    if _as_text(curr_activity.get("liveness")) == "progressing":
-        return True
 
     curr_external = _as_dict(curr.get("external_checks"))
     curr_pr = _as_dict(curr_external.get("pr"))
@@ -624,6 +619,44 @@ def has_advancement(
         if prev_ahead is not None and curr_ahead is not None and curr_ahead > prev_ahead:
             return True
 
+    state_rank = {
+        "initialized": 0,
+        "prepped": 1,
+        "planned": 2,
+        "critiqued": 3,
+        "gated": 4,
+        "revised": 5,
+        "finalized": 6,
+        "executed": 7,
+        "reviewed": 8,
+        "done": 9,
+        "complete": 9,
+        "completed": 9,
+    }
+    phase_target_rank = {
+        "prep": 1,
+        "plan": 2,
+        "critique": 3,
+        "gate": 4,
+        "revise": 5,
+        "finalize": 6,
+        "execute": 7,
+        "review": 8,
+        "feedback": 9,
+    }
+    prev_state = _as_text(prev.get("current_state")).lower()
+    curr_state = _as_text(curr.get("current_state")).lower()
+    prev_rank = state_rank.get(prev_state)
+    curr_rank = state_rank.get(curr_state)
+    recovered_phase_rank = phase_target_rank.get(_as_text(prev.get("phase")).lower())
+    if recovered_phase_rank is not None and curr_rank is not None:
+        # When recovery targets a known phase, finishing that phase is not
+        # enough: custody must cross into the next durable state.
+        if curr_rank > recovered_phase_rank:
+            return True
+    elif prev_rank is not None and curr_rank is not None and curr_rank > prev_rank:
+        return True
+
     external_available = any(
         bool(_as_dict(checks.get(name)).get("available"))
         for checks in (prev_external, curr_external)
@@ -640,9 +673,6 @@ def has_advancement(
     curr_index = _as_int(curr.get("current_milestone_index"))
     if prev_index is not None and curr_index is not None and curr_index > prev_index:
         return True
-    if _as_text(prev.get("current_state")).lower() not in {"done", "complete", "completed"}:
-        if _as_text(curr.get("current_state")).lower() in {"done", "complete", "completed"}:
-            return True
     return False
 
 
