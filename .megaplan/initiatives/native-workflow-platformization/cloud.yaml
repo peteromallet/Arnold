@@ -3,7 +3,7 @@ provider: ssh
 repo:
   url: https://github.com/peteromallet/Arnold.git
   branch: editible-install
-  workspace: /workspace/native-workflow-platformization/Arnold
+  workspace: /workspace/custody-control-plane-20260714/Arnold
 
 agents:
   default: codex
@@ -16,7 +16,7 @@ chain_session: native-workflow-platformization
 mode: idle
 
 chain:
-  spec: /workspace/native-workflow-platformization/Arnold/.megaplan/initiatives/native-workflow-platformization/chain.yaml
+  spec: /workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/native-workflow-platformization/chain.yaml
 
 megaplan:
   ref: editible-install

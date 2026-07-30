@@ -3,7 +3,7 @@ provider: ssh
 repo:
   url: https://github.com/peteromallet/Arnold.git
   branch: editible-install
-  workspace: /workspace/megaplan-chain-milestone-gates/Arnold
+  workspace: /workspace/custody-control-plane-20260714/Arnold
 
 agents:
   default: codex
@@ -16,7 +16,7 @@ chain_session: megaplan-chain-milestone-gates
 mode: idle
 
 chain:
-  spec: /workspace/megaplan-chain-milestone-gates/Arnold/.megaplan/initiatives/megaplan-chain-milestone-gates/chain.yaml
+  spec: /workspace/custody-control-plane-20260714/Arnold/.megaplan/initiatives/megaplan-chain-milestone-gates/chain.yaml
 
 megaplan:
   ref: editible-install
