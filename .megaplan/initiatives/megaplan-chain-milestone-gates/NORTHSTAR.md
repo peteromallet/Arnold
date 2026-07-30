@@ -31,10 +31,10 @@ declared transition slot; the registered product handler consumes the exact
 receipt supplied by the chain, and the chain verifies the after-state. Where
 proof must stay effect-inert, proof and cutover remain different milestones.
 
-The bootstrap also cannot safely self-host the capability it is adding. Its
-single implementation PR is prepared outside this chain, uses required
-external CI and independent review against the proposed tree, and is manually
-merged. The chain is launched only afterward to validate a trusted,
-content-addressed PR/CI/review attestation and certify the landed capability.
-Its existing post-merge `final_conformance_gate` is a backstop and completion-
-manifest input, not retroactive authorization for the merge.
+The bootstrap also cannot safely self-host the capability it is adding. Trusted
+external CI and an independent verifier must attest the exact proposed tree
+before the existing automatic merge path is allowed to proceed. The verifier
+must be organizationally and mechanically separate from the implementation
+under test. The existing post-merge `final_conformance_gate` then rebinds the
+proof to the landed tree and supplies the completion-manifest input. This is a
+non-self-hosting trust boundary, but it is not a human PR/merge gate.

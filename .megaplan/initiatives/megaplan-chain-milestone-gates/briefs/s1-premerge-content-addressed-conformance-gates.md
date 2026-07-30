@@ -15,23 +15,24 @@ arbitrary command hook.
 ## Bootstrap safety
 
 This milestone cannot use the behavior it is certifying to authorize its own
-implementation merge. Before this chain launches, its implementation PR must:
+implementation merge. Before automatic merge, the exact proposed tree must:
 
 - run the complete bootstrap contract suite as required external PR CI against
   the exact proposed tree;
-- receive independent review of the chain ordering, unsafe-input negatives,
-  and auto-merge-blocking mutations before manual merge; and
+- receive an independent verifier disposition covering chain ordering,
+  unsafe-input negatives, and auto-merge-blocking mutations; and
 - emit a trusted, content-addressed
-  `.megaplan/initiatives/megaplan-chain-milestone-gates/.megaplan/evidence/bootstrap-pr-attestation.json`
+  `.megaplan/initiatives/megaplan-chain-milestone-gates/.megaplan/evidence/bootstrap-independent-attestation.json`
   binding PR/head/merge commit and tree, CI check identity/result/suite digest,
-  reviewer/approval identity, and the implementation diff.
+  verifier identity and trust class, disposition, and the implementation diff.
 
 The bootstrap validator verifies that attestation against the configured
-trusted CI/reviewer authority and current merge tree. A missing, forged, stale,
-wrong-tree, non-green, or self-approved attestation fails. This closes the
-current runner's local/no-PR bypass: local certification is allowed only after
-the externally reviewed PR has already landed. A green post-merge result cannot
-excuse missing pre-merge CI or independent review.
+trusted CI/verifier authority and current merge tree. A missing, forged, stale,
+wrong-tree, non-green, or self-issued attestation fails. Branch protection or
+the existing merge-readiness path must block automatic merge until it exists.
+This closes the current runner's local/no-PR bypass without introducing a
+human merge ceremony. A green post-merge result cannot excuse missing
+pre-merge CI or independent verification.
 
 ## Required behavior
 
@@ -148,7 +149,7 @@ Produce and certify the schema/runtime implementation, source-ordering tests,
 receipt, transition and `required_proof_artifacts` schemas, validator fixtures,
 conformance and traceability indexes, proof map, and
 content-addressed completion manifest. The manifest must bind the external
-pre-merge CI run, independent review disposition, and post-merge backstop
+pre-merge CI run, independent verifier disposition, and post-merge backstop
 receipt. The handoff must name the exact
 `conformance_gate` schema/version that downstream chain specs may use.
 
@@ -161,8 +162,8 @@ The bootstrap completion manifest must also bind
 It must bind `editable-runtime-readiness.json` as well.
 
 Do not close if a failing gate can be merged, if validation first occurs after
-auto-merge, if the bootstrap itself was auto-merged or lacked its required
-external pre-merge verification, if the merged tree is not rebound, or if a
+auto-merge, if automatic merge bypassed the required independent external
+pre-merge verification, if the merged tree is not rebound, or if a
 declared transition can be skipped/partially applied/self-verified, local
-execution can fabricate or omit the trusted PR attestation, or a product
+execution can fabricate or omit the trusted independent attestation, or a product
 cutover could claim temporal ordering solely from milestone completion.

@@ -12,13 +12,14 @@ receipt delivery, idempotency, transition-receipt recording, verification, and
 the prohibition on bypass.
 
 Because the current engine cannot enforce its own new pre-merge gate, this
-bootstrap is deliberately non-self-hosted: prepare its implementation PR
-outside `megaplan chain`, require trusted external CI and independent review,
-and merge it manually. Only then run this one-milestone chain to verify the
-signed/content-addressed PR attestation, exercise the landed behavior, and
-produce the completion manifest. Local/no-PR execution without that attestation
-fails before launch. Its current `final_conformance_gate` is a post-merge
-backstop, not authorization for the implementation merge.
+bootstrap uses an independent, already-available verifier rather than trusting
+the implementation under test. The chain may merge automatically only after
+trusted external CI and that verifier emit a content-addressed attestation for
+the exact proposed tree. Branch protection/merge readiness consumes that
+attestation before automatic merge; the existing `final_conformance_gate`
+rechecks the landed tree and produces the completion manifest. No human PR
+merge is required, and a local path that cannot produce the same independent
+attestation fails closed.
 
 It also adds an exact predecessor-artifact assertion to
 `chain_completed + require_manifest`, so a dependent chain can require a named

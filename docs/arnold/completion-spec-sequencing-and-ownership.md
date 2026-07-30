@@ -39,13 +39,13 @@ design-shaped but invalid artifact; omitting them lets authority-changing
 milestones rely on narrative completion. The bootstrap closes that
 orchestration gap once, generically, before either downstream program runs.
 
-The bootstrap is deliberately the one human-reviewed exception to unattended
-auto-merge. It cannot safely use the new gate to certify the implementation of
-that same gate. Its exact proposed tree therefore requires external CI,
-independent review, manual merge, and a content-addressed attestation; the
-existing final gate then certifies the landed tree. This is a bootstrap trust
-boundary, not a general preference for PR ceremony. Native Parity and
-Platformization remain unattended/auto-merge once that capability is installed.
+The bootstrap is unattended and auto-merged, like the downstream epics, but it
+does not self-certify. It cannot safely use the new gate to authorize the
+implementation of that same gate. Its exact proposed tree therefore requires
+trusted external CI and a mechanically independent verifier to emit a
+content-addressed attestation before merge readiness. The existing final gate
+then rebinds the proof to the landed tree. This preserves the bootstrap trust
+boundary without introducing a human PR or manual-merge ceremony.
 
 All three cloud configurations intentionally target the existing Custody
 checkout **sequentially**, after M11. `chain_completed` state and completion
@@ -504,8 +504,8 @@ must bind:
 - the parser/driver implementation supporting intermediate
   `conformance_gate` and `receipt_consuming_transition`;
 - exact-tree negative and compatibility tests;
-- external CI, independent review, manual merge attestation, and the existing
-  final conformance receipt;
+- external CI, an independent-verifier attestation consumed before automatic
+  merge, and the existing final conformance receipt;
 - the migrated Native Parity and Platformization chain specs;
 - every referenced downstream brief and North Star; and
 - `downstream-spec-readiness.json`, containing those hashes and the installed
