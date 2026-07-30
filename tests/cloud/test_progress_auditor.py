@@ -445,6 +445,56 @@ def test_deterministic_phase_history_surfaces_structural_retry_loop() -> None:
     assert evidence["count"] == 3
     assert evidence["phase"] == "gate"
     assert evidence["source"] == "state.history"
+def test_event_loader_reads_only_bounded_recent_tail(tmp_path: Path) -> None:
+    program = _extract_gather_program()
+    constants_start = program.index("EVENT_TAIL_MAX_BYTES =")
+    function_end = program.index("\ndef _event_timestamp(", constants_start)
+    namespace = {"json": json, "os": os}
+    old_bytes = os.environ.get("MEGAPLAN_AUDIT_EVENT_TAIL_MAX_BYTES")
+    old_lines = os.environ.get("MEGAPLAN_AUDIT_EVENT_TAIL_MAX_LINES")
+    os.environ["MEGAPLAN_AUDIT_EVENT_TAIL_MAX_BYTES"] = "1024"
+    os.environ["MEGAPLAN_AUDIT_EVENT_TAIL_MAX_LINES"] = "3"
+    try:
+        exec(program[constants_start:function_end], namespace)
+    finally:
+        if old_bytes is None:
+            os.environ.pop("MEGAPLAN_AUDIT_EVENT_TAIL_MAX_BYTES", None)
+        else:
+            os.environ["MEGAPLAN_AUDIT_EVENT_TAIL_MAX_BYTES"] = old_bytes
+        if old_lines is None:
+            os.environ.pop("MEGAPLAN_AUDIT_EVENT_TAIL_MAX_LINES", None)
+        else:
+            os.environ["MEGAPLAN_AUDIT_EVENT_TAIL_MAX_LINES"] = old_lines
+
+    events_path = tmp_path / "events.ndjson"
+    events = [
+        {"seq": seq, "kind": "phase_start", "padding": "x" * 180}
+        for seq in range(12)
+    ]
+    events_path.write_text(
+        "".join(json.dumps(event) + "\n" for event in events),
+        encoding="utf-8",
+    )
+
+    loaded = namespace["_load_events"](events_path)
+
+    assert [event["seq"] for event in loaded] == [9, 10, 11]
+
+
+def test_global_watchdog_sweep_is_default_off_before_targeted_recovery() -> None:
+    wrapper = _wrapper("arnold-progress-auditor")
+
+    assert (
+        'GLOBAL_WATCHDOG_SWEEP_ENABLED="${MEGAPLAN_AUDIT_GLOBAL_WATCHDOG_SWEEP_ENABLED:-0}"'
+        in wrapper
+    )
+    guard = wrapper.index('case "${GLOBAL_WATCHDOG_SWEEP_ENABLED,,}" in')
+    targeted = wrapper.index(
+        "bounded gather and targeted L3 repair custody own recovery",
+        guard,
+    )
+    watchdog = wrapper.index('"$WATCHDOG_BIN" --audit-sweep', targeted)
+    assert guard < targeted < watchdog
 
 
 def _extract_auditor_function(name: str) -> str:
