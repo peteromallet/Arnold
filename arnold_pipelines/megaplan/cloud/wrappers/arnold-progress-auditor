@@ -105,6 +105,7 @@ arnold_supervisor_runtime_init progress-auditor "$ARNOLD_SRC" || exit $?
 DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
 LAUNCHER="${MEGAPLAN_AUDIT_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/launch_hermes_agent.py}"
 AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"
+AUDIT_SESSION_ALLOWLIST="${MEGAPLAN_AUDIT_SESSION_ALLOWLIST:-}"
 SUBAGENT_TIMEOUT="${MEGAPLAN_AUDIT_SUBAGENT_TIMEOUT_SECS:-900}"
 SUBAGENT_MAX_TOKENS="${MEGAPLAN_AUDIT_SUBAGENT_MAX_TOKENS:-8192}"
 SUBAGENT_PROFILE="${MEGAPLAN_AUDIT_SUBAGENT_PROFILE:-partnered-5}"
@@ -614,8 +615,16 @@ for workspace in workspace_children:
         if _recent_mtime(state_path) or _recent_mtime(events_path):
             _merge(entries, workspace, plan_dir, workspace.name, "workspace_activity")
 
+session_allowlist = {
+    item.strip()
+    for item in os.environ.get("MEGAPLAN_AUDIT_SESSION_ALLOWLIST", "").split(",")
+    if item.strip()
+}
+
 with open(out, "w", encoding="utf-8") as handle:
     for entry in sorted(entries.values(), key=lambda item: (item["workspace"], item["plan"])):
+        if session_allowlist and entry.get("session") not in session_allowlist:
+            continue
         handle.write(json.dumps(entry, sort_keys=True) + "\n")
 PY
 
