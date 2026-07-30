@@ -125,6 +125,7 @@ LAUNCHER="${MEGAPLAN_AUDIT_LAUNCHER:-$ARNOLD_SRC/arnold_pipelines/megaplan/skill
 AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"
 AUDIT_WORKSPACE_ROOT="${MEGAPLAN_AUDIT_WORKSPACE_ROOT:-/workspace}"
 AUDIT_SESSION_ALLOWLIST="${MEGAPLAN_AUDIT_SESSION_ALLOWLIST:-}"
+AUDIT_PLAN_ALLOWLIST="${MEGAPLAN_AUDIT_PLAN_ALLOWLIST:-}"
 if ! "$MEGAPLAN_SUPERVISOR_STDLIB_PYTHON" - "$AUDIT_WINDOW_HOURS" <<'PY'
 import math
 import sys
@@ -716,10 +717,17 @@ session_allowlist = {
     for item in os.environ.get("MEGAPLAN_AUDIT_SESSION_ALLOWLIST", "").split(",")
     if item.strip()
 }
+plan_allowlist = {
+    item.strip()
+    for item in os.environ.get("MEGAPLAN_AUDIT_PLAN_ALLOWLIST", "").split(",")
+    if item.strip()
+}
 
 with open(out, "w", encoding="utf-8") as handle:
     for entry in sorted(entries.values(), key=lambda item: (item["workspace"], item["plan"])):
         if session_allowlist and entry.get("session") not in session_allowlist:
+            continue
+        if plan_allowlist and entry.get("plan") not in plan_allowlist:
             continue
         handle.write(json.dumps(entry, sort_keys=True) + "\n")
 
