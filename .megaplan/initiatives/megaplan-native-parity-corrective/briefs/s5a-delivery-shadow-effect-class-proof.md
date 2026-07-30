@@ -78,6 +78,11 @@ accepted GO-2 receipt to make the exact slice live.
     Legacy `done` without accepted bound evidence remains incomplete,
     `REVIEW` never reaches the executor, valid new review work is admitted,
     and accepted unrelated evidence remains immutable without rebinding.
+    Include the M11 `{1,39}` versus `{1..39}` execution-manifest case and its
+    missing/unresolved accepted-attempt dependency chain. Shadow review must
+    identify one causal manifest/authority repair scope, preserve affected task
+    identities, and avoid emitting duplicate per-task rework for downstream
+    symptoms.
 12. Exercise crash/reentry at finalize/admission, execution, evidence capture,
     verdict/acceptance, review, reopen/new-work admission, rework execution and
     aggregate completion without duplicate effects, duplicate admission or

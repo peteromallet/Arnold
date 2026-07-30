@@ -107,6 +107,11 @@ S5B verifier over writer fences and admitted behavior before completion.
   legacy `done` without an accepted bound verdict is incomplete, new review
   work is normally admitted and executable, and unrelated accepted evidence
   remains unchanged.
+- Re-execute the captured discontinuous execution-manifest fixture on the
+  admitted live path: `{1,39}` cannot masquerade as `{1..39}`, unresolved
+  accepted-attempt dependencies cannot inherit completion, and reconciliation
+  emits one bounded causal repair scope rather than duplicating every
+  downstream task symptom.
 - Execute at least the captured 57,000-event history through Custody's exact
   bounded/cursor-incremental projection API. Pin latency and peak-memory
   budgets, prove cursor/snapshot-plus-tail consumption and full-rebuild parity,

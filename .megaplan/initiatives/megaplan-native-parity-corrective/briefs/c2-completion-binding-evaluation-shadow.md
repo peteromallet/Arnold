@@ -83,6 +83,13 @@ Normative retained design and exhaustive redistribution map:
     divergences to the same ledger and emit `completion-kernel-c2-manifest.json`
     plus the C2 proof map. Do not fork a second ledger or mark unresolved
     blocking entries complete.
+16. Add the captured M11 contiguous-manifest and authority-closure fixture.
+    A completed batch set with indices `{1, 39}` cannot satisfy an admitted
+    expected set `{1..39}`; missing interior manifests, a task with no accepted
+    attempt, or an accepted attempt whose dependency closure is unresolved all
+    fail closed. Reconciliation must preserve the single causal occurrence and
+    may not inflate its eight downstream task symptoms into eight independent
+    rework obligations.
 
 ## C2 gate
 
@@ -96,6 +103,9 @@ Normative retained design and exhaustive redistribution map:
   explicit and executable;
 - atomic shadow integration, restore/replay, projection deletion/rebuild, and
   projection forgery invariance pass; and
+- batch-manifest set equality and transitive accepted-attempt closure reject
+  missing interior records and produce one causal repair scope rather than
+  duplicated symptom work; and
 - no live behavior changes and no crash between C2 and S2R can partially
   enable the kernel.
 
