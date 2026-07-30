@@ -1,12 +1,28 @@
-base_branch: main
+base_branch: editible-install
 anchors:
   north_star: NORTHSTAR.md
+
 launch_preconditions:
+- name: pre-merge milestone conformance-gate bootstrap completed
+  kind: chain_completed
+  chain: .megaplan/initiatives/megaplan-chain-milestone-gates/chain.yaml
+  require_manifest: true
+- name: custody control plane M11 is completed with content-addressed proof
+  kind: chain_completed
+  chain: .megaplan/initiatives/custody-control-plane/chain.yaml
+  require_manifest: true
+- name: custody bounded incident projection handoff exists
+  path: .megaplan/initiatives/custody-control-plane/bounded-incident-projection-handoff.json
 - name: end-state report exists
   path: docs/arnold/megaplan-native-representation-report.md
   check:
     kind: contains_text
-    text: Native Python Representation Report
+    text: Megaplan Native Python and Reusable Workflow Platform Representation Report
+- name: golden source-to-runtime trace contract exists
+  path: .megaplan/initiatives/megaplan-native-parity-corrective/GOLDEN_TRACE_CONTRACT.md
+  check:
+    kind: contains_text
+    text: Native Megaplan golden source-to-runtime trace contract
 - name: current codebase map exists
   path: docs/arnold/megaplan-native-current-codebase-map.md
   check:
@@ -25,77 +41,129 @@ launch_preconditions:
 - name: corrective initiative source is committed and clean
   kind: git_tracked
   path: .megaplan/initiatives/megaplan-native-parity-corrective
-- name: corrective plan docs are committed and clean
+- name: corrective plan is committed and clean
   kind: git_tracked
   path: docs/arnold/megaplan-native-parity-corrective-plan.md
+
 milestones:
-- label: m1-checker-outcomes-builder-slice
-  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s1-checker-outcomes-builder-slice.md
+- label: s1-custody-admission-semantic-preservation
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s1-custody-admission-semantic-preservation.md
   profile: partnered-5
-  robustness: thorough
-  depth: high
-- label: m2-front-half-native-loop
-  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s2-front-half-native-loop.md
+  robustness: extreme
+  depth: max
+  notes: Admit the exact M11 substrate, inventory and stage .pypeline-to-.pype migration without selecting it, freeze exact-one/private-step/shared-Python/identity semantics, and hand S2F a recoverable candidate plus negative corpus.
+- label: s2f-pype-compiler-identity-converter
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s2f-pype-compiler-identity-converter.md
   profile: partnered-5
-  robustness: full
-  depth: high
+  robustness: extreme
+  depth: max
   depends_on:
-  - m1-checker-outcomes-builder-slice
-- label: m2-5-boundary-evidence-alignment
-  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s2-5-boundary-evidence-alignment.md
+  - s1-custody-admission-semantic-preservation
+  notes: Implement the exact-one .pype compiler/linker, authored/component/graph identity, durable-boundary call-site identity templates, descriptor integration, converter, diagnostics and preview; after readiness validation, the typed transition selects .pype and a post-transition GO-FORMAT verifier must pass before the completion kernel.
+- label: c1-completion-contract-identity-shadow
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/c1-completion-contract-identity-shadow.md
   profile: partnered-5
-  robustness: thorough
-  depth: high
+  robustness: extreme
+  depth: max
   depends_on:
-  - m2-front-half-native-loop
-- label: m3-tiebreaker-replan-native
-  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s3-tiebreaker-replan-native.md
+  - s2f-pype-compiler-identity-converter
+  notes: Land the experimental neutral completion package, versioned spec/identity/serialization contracts, durable-helper lint, candidate-outcome registry, named-exit terminal, shadow generation, false-done/REVIEW fixture, and content-addressed divergence ledger. C1 is non-authoritative.
+- label: c2-completion-binding-evaluation-shadow
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/c2-completion-binding-evaluation-shadow.md
   profile: partnered-5
-  robustness: full
-  depth: medium
+  robustness: extreme
+  depth: max
   depends_on:
-  - m2-5-boundary-evidence-alignment
-- label: m4-execute-dag-approval-resume
-  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s4-execute-dag-approval-resume.md
+  - c1-completion-contract-identity-shadow
+  notes: Land immutable binding/evaluation schemas, exact evidence scope and proof modes, aggregation signatures, verifier independence, waiver taint, the internal persisted-wire compatibility matrix, authoritative decoder behavior, shadow atomic acceptance integration, restore proof and projection deletion/forgery invariance. C2 remains non-authoritative; the compatibility promise starts only at S2R GO-0.
+- label: s2r-durable-control-primitives-custody-binding
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s2r-durable-control-primitives-custody-binding.md
   profile: partnered-5
-  robustness: thorough
-  depth: high
+  robustness: extreme
+  depth: max
+  depends_on:
+  - c2-completion-binding-evaluation-shadow
+  notes: Revalidate GO-FORMAT and C1/C2, instantiate concrete child-set and aggregation semantics for every durable primitive, and keep the kernel shadow-only until the typed GO-0 transition atomically emits the sole authoritative completion-kernel enablement receipt.
+- label: s3a-prep-plan-critique-native-cutover
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s3a-prep-plan-critique-native-cutover.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
+  depends_on:
+  - s2r-durable-control-primitives-custody-binding
+  notes: Reconsume GO-FORMAT, the exact S2R kernel-enablement receipt, and the current completion-divergence-ledger hash before any S3A work; land workflow.pype and plan_quality/critique.pype non-authoritatively, then use the typed transition and post-transition GO-1A verifier to make prep, plan and critique load-bearing with exclusive resume-plane binding.
+- label: s3b-gate-revise-front-half-cutover
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s3b-gate-revise-front-half-cutover.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
+  depends_on:
+  - s3a-prep-plan-critique-native-cutover
+  notes: Consume the exact S2R kernel-enablement receipt and current divergence-ledger hash; land gate/revise non-authoritatively, then use the typed transition and post-transition GO-1B verifier to prove the front-half cutover plus remaining old-carrier/scaffold inertness.
+- label: s4-tiebreaker-finalize-durable-reentry
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s4-tiebreaker-finalize-durable-reentry.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
+  depends_on:
+  - s3b-gate-revise-front-half-cutover
+  notes: Consume the exact S2R kernel-enablement receipt and current divergence-ledger hash; land tiebreaker/finalize/human durable reentry non-authoritatively, then use the exact accepted readiness receipt in the typed atomic producer/seam/fence transition and require the post-transition S4 verifier before completion.
+- label: s5a-delivery-shadow-effect-class-proof
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s5a-delivery-shadow-effect-class-proof.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
   phase_model:
   - execute=codex:gpt-5.5
   - loop_execute=codex:gpt-5.5
   depends_on:
-  - m3-tiebreaker-replan-native
-- label: m5-review-rework-finalize
-  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s5-review-rework-finalize.md
+  - s4-tiebreaker-finalize-durable-reentry
+  notes: Consume the exact S2R kernel-enablement receipt and current divergence-ledger hash; prove the full finalize/admit/execute/evidence/accept/review/reopen-or-new-rework/aggregate vertical slice, false-done/REVIEW rejection, every effect class and bounded-projection API use in comparison/shadow, and close GO-2 without live cutover.
+- label: s5b-live-delivery-cutover-review-rework
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s5b-live-delivery-cutover-review-rework.md
   profile: partnered-5
-  robustness: full
-  depth: medium
+  robustness: extreme
+  depth: max
+  phase_model:
+  - execute=codex:gpt-5.5
+  - loop_execute=codex:gpt-5.5
   depends_on:
-  - m4-execute-dag-approval-resume
-- label: m6-override-auto-compat-collapse
+  - s5a-delivery-shadow-effect-class-proof
+  notes: Validate the exact S2R kernel-enablement receipt, current divergence-ledger hash, Custody bounded-projection receipt and S5A GO-2 vertical-slice proof, then use the typed live-delivery transition for the only live delivery/review/rework cutover; the post-transition verifier proves new admission for reopened/new work, no executable REVIEW, 57k bounded-query consumption, reconciliation and old completion-writer fences.
+- label: s6-override-auto-control-adoption
   idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s6-override-auto-compat-collapse.md
   profile: partnered-5
-  robustness: thorough
-  depth: high
+  robustness: extreme
+  depth: max
   depends_on:
-  - m5-review-rework-finalize
-- label: m7-final-conformance-rollout
+  - s5b-live-delivery-cutover-review-rework
+  notes: Consume the exact S2R kernel-enablement receipt and current divergence-ledger hash; land authored overrides/recovery non-authoritatively, transition control authority once, and require post-transition GO-3 proof that auto/projections are non-authoritative consumers and old carriers/completion writers are inert.
+- label: s7-native-topology-conformance
   idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s7-final-conformance-rollout.md
   profile: partnered-5
-  robustness: full
-  depth: high
+  robustness: extreme
+  depth: max
   depends_on:
-  - m6-override-auto-compat-collapse
+  - s6-override-auto-control-adoption
+  validate:
+  - kind: final_conformance_gate
+    validator: scripts/validate_megaplan_native_parity_conformance.py
+    conformance: docs/arnold/megaplan-native-parity-conformance.yaml
+    traceability: docs/arnold/megaplan-native-parity-traceability.yaml
+    proof_map: .megaplan/initiatives/megaplan-native-parity-corrective/final-proof-map.json
+  notes: Consume the exact S2R kernel-enablement receipt and final current divergence-ledger hash; extend the admitted M11 proof framework with native topology/completion inventory equality, zero competing completion writer, cross-file/root conformance, zero hidden durable Python or route authority, zero live .pypeline authoring/admission surfaces, and the exact completion-aware Platformization handoff.
+
 on_failure:
   retry: retry_milestone
-  escalate: bump_profile
   abort: stop_chain
 on_escalate:
   abort: stop_chain
 merge_policy: auto
+prerequisite_policy: required
+validation_policy: required
 driver:
   auto_approve: true
   max_iterations: 90
   require_clean_base: true
-  robustness: full
+  robustness: thorough
   poll_sleep: 8.0

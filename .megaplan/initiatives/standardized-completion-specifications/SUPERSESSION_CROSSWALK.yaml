@@ -1,0 +1,636 @@
+schema: arnold.completion_supersession_crosswalk.v1
+launchable: false
+retired_initiative: standardized-completion-specifications
+governing_analysis: docs/arnold/completion-spec-sequencing-and-ownership.md
+active_native_path: .megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml
+active_platform_path: .megaplan/initiatives/native-workflow-platformization/chain.yaml
+critical_path:
+  - accepted/consolidated Custody M11 plus bounded-projection handoff
+  - Native S1
+  - amended Native S2F
+  - Native C1
+  - Native C2 (shadow/non-authoritative)
+  - Native S2R GO-0 (sole authoritative kernel enablement)
+  - Native S3A through S7
+  - Platform S1
+  - Platform S2A
+  - Platform S2B
+  - Platform S3
+  - Platform S4
+  - Platform S5
+  - Platform S6
+global_invariants:
+  custody_bounded_projection_owner: >-
+    Custody owns the incremental/bounded incident projection implementation,
+    full-rebuild parity, invalidation behavior, and 57k-scale benchmark
+    receipt. Native requires and consumes that exact handoff.
+  registry_separation: >-
+    Completion candidate outcomes and Platform enforcement dispositions are
+    distinct typed registries with a total generated reject-unknown-pairs
+    boundary mapping. They are never collapsed into one enum.
+  compatibility_boundary: >-
+    Internal persisted-wire compatibility begins at accepted Native S2R GO-0.
+    Stable public API publication remains Platform S6-only.
+  evidence_preservation: >-
+    Preserve historical evidence and every artifact consumed by an existing
+    manifest or gate. Supersession must never orphan proof.
+protected_historical_sources:
+  - path: briefs/m1.md
+    preservation: byte-for-byte
+  - path: briefs/m2.md
+    preservation: byte-for-byte
+  - path: briefs/m3.md
+    preservation: byte-for-byte
+  - path: briefs/m4.md
+    preservation: byte-for-byte
+  - path: briefs/m5.md
+    preservation: byte-for-byte
+  - path: decisions/standardized-completion-spec-proposal.md
+    preservation: byte-for-byte
+coverage_summary:
+  total_requirements: 81
+  by_old_milestone:
+    Completion M1: 20
+    Completion M2: 20
+    Completion M3: 15
+    Completion M4: 14
+    Completion M5: 12
+  required_fields:
+    - id
+    - source
+    - old_owner
+    - new_owners
+    - proof_destination
+    - preservation
+    - status
+  allowed_statuses:
+    - redistributed
+    - corrected_and_redistributed
+requirements:
+  - id: CM1-01
+    source: briefs/m1.md#scope-in
+    old_owner: Completion M1
+    new_owners: [Native C1, Platform S1]
+    proof_destination: C1 carrier inventory and Platform S1 candidate inventory
+    preservation: preserve normative source and content-addressed inventory receipts
+    status: redistributed
+  - id: CM1-02
+    source: decisions/standardized-completion-spec-proposal.md#4.2
+    old_owner: Completion M1
+    new_owners: [amended Native S2F]
+    proof_destination: S2F identity/compiler receipt
+    preservation: preserve authored workflow/component/graph identity requirement
+    status: redistributed
+  - id: CM1-03
+    source: briefs/m1.md#scope-in
+    old_owner: Completion M1
+    new_owners: [amended Native S2F, Native S2R, admission]
+    proof_destination: S2F durable-boundary call-site templates and S2R/admission occurrence receipts
+    preservation: preserve human/effect/rework/reopen identity coverage
+    status: redistributed
+  - id: CM1-04
+    source: briefs/m1.md#scope-in
+    old_owner: Completion M1
+    new_owners: [Native C1]
+    proof_destination: C1 versioned CompletionSpec schema and identity receipt
+    preservation: preserve stable obligation_id, spec_hash, tombstone, and non-reuse rules
+    status: redistributed
+  - id: CM1-05
+    source: briefs/m1.md#scope-in
+    old_owner: Completion M1
+    new_owners: [Native C2, Native S2R, admission]
+    proof_destination: C2 binding schema plus S2R/admission occurrence proof
+    preservation: preserve binding_hash and exact verdict-reuse identity
+    status: redistributed
+  - id: CM1-06
+    source: briefs/m1.md#locked-decisions
+    old_owner: Completion M1
+    new_owners: [Native C1, Native C2]
+    proof_destination: C1 schema decision and C2 evaluator compatibility receipt
+    preservation: evolve existing CompletionVerdict; never create a competing verdict
+    status: redistributed
+  - id: CM1-07
+    source: briefs/m1.md#scope-in
+    old_owner: Completion M1
+    new_owners: [Native C1]
+    proof_destination: C1 durable-subject predicate and fixtures
+    preservation: preserve coverage of routes, effects, suspension, checkpoint, authority, custody, and cross-boundary artifacts
+    status: redistributed
+  - id: CM1-08
+    source: briefs/m1.md#scope-in
+    old_owner: Completion M1
+    new_owners: [Native C1, Native S7, Platform S4, Platform S5]
+    proof_destination: C1 helper lint with cumulative rerun receipts
+    preservation: preserve hidden-effect negative fixtures and transitive behavior digest
+    status: redistributed
+  - id: CM1-09
+    source: briefs/m1.md#open-questions
+    old_owner: Completion M1
+    new_owners: [Native C1]
+    proof_destination: C1 experimental package/import-boundary receipt
+    preservation: preserve neutral arnold/workflow/completion boundary and product-side adapters
+    status: redistributed
+  - id: CM1-10
+    source: briefs/m1.md#done-criteria
+    old_owner: Completion M1
+    new_owners: [Native C1, Native C2, Native S2R]
+    proof_destination: C1/C2 schema serialization matrix and S2R compatibility enablement receipt
+    preservation: preserve canonical hashing and old/new reader-writer compatibility
+    status: redistributed
+  - id: CM1-11
+    source: briefs/m1.md#scope-in
+    old_owner: Completion M1
+    new_owners: [Native C1]
+    proof_destination: C1 versioned completion candidate-outcome registry
+    preservation: preserve explicit non-success outcomes and nonterminal quarantine/suspension
+    status: redistributed
+  - id: CM1-12
+    source: briefs/m1.md#locked-decisions
+    old_owner: Completion M1
+    new_owners: [Native C1, Native C2]
+    proof_destination: C1 proof-mode names and C2 exact evaluator semantics
+    preservation: preserve presence, complete-capture absence, set-equality, and aggregate modes
+    status: redistributed
+  - id: CM1-13
+    source: briefs/m1.md#locked-decisions
+    old_owner: Completion M1
+    new_owners: [Native C2]
+    proof_destination: C2 multiplicity and evidence-linking tests
+    preservation: preserve legitimate shared evidence while prohibiting double counting
+    status: redistributed
+  - id: CM1-14
+    source: decisions/standardized-completion-spec-proposal.md#5
+    old_owner: Completion M1
+    new_owners: [Native C1, Native C2, Native S2R]
+    proof_destination: C1 named-exit terminal, C2 mutations, and S2R unwind proof
+    preservation: preserve non-laundering and ordered-unwind semantics
+    status: redistributed
+  - id: CM1-15
+    source: briefs/m1.md#scope-in
+    old_owner: Completion M1
+    new_owners: [amended Native S2F, Native C1, Native S2R, admission]
+    proof_destination: C1 templates and shadow generation with S2F/S2R identity receipts
+    preservation: preserve workflow, step, dynamic-task, effect, and human coverage without helper specs
+    status: redistributed
+  - id: CM1-16
+    source: briefs/m1.md#scope-in
+    old_owner: Completion M1
+    new_owners: [Native C1, Native S5A, Native S5B]
+    proof_destination: C1 negative fixture, S5A shadow trace, and S5B live GO trace
+    preservation: preserve false-done, REVIEW, new-subject, and unrelated-evidence cases
+    status: redistributed
+  - id: CM1-17
+    source: briefs/m1.md#scope-in
+    old_owner: Completion M1
+    new_owners: [Native C1]
+    proof_destination: C1 content-addressed append-only divergence ledger
+    preservation: preserve individual old-defect/new-defect/intentional dispositions
+    status: redistributed
+  - id: CM1-18
+    source: briefs/m1.md#done-criteria
+    old_owner: Completion M1
+    new_owners: [Native S2R, Native S3A-S7]
+    proof_destination: every authority-changing Native gate
+    preservation: require exact current ledger hash and no stale blocking entry
+    status: redistributed
+  - id: CM1-19
+    source: briefs/m1.md#scope-out
+    old_owner: Completion M1
+    new_owners: [Native C1]
+    proof_destination: C1 negative import/authority/system-duplication gates
+    preservation: preserve no-acceptance-authority, no-new-store, no-scheduler, no-public-API limits
+    status: redistributed
+  - id: CM1-20
+    source: briefs/m1.md#done-criteria
+    old_owner: Completion M1
+    new_owners: [Native C1]
+    proof_destination: C1 kernel handoff consumed directly by C2
+    preservation: preserve package owner, versions, adapter map, fixture IDs, ledger hash, and entry conditions
+    status: redistributed
+  - id: CM2-01
+    source: briefs/m2.md#scope-in
+    old_owner: Completion M2
+    new_owners: [amended Native S2F, Native C1]
+    proof_destination: S2F compiler receipt and C1 template factories
+    preservation: preserve compile/install template derivation
+    status: redistributed
+  - id: CM2-02
+    source: briefs/m2.md#scope-in
+    old_owner: Completion M2
+    new_owners: [Native S5A, Native S5B, admission]
+    proof_destination: S5 finalization/admission traces
+    preservation: preserve proposed task/rework obligation admission
+    status: redistributed
+  - id: CM2-03
+    source: briefs/m2.md#scope-in
+    old_owner: Completion M2
+    new_owners: [Native C2, Native S2R, admission]
+    proof_destination: C2 immutable-binding tests and S2R/admission occurrence receipts
+    preservation: preserve one binding, idempotent identical admission, and conflicting-content rejection
+    status: redistributed
+  - id: CM2-04
+    source: briefs/m2.md#scope-in
+    old_owner: Completion M2
+    new_owners: [Native C2]
+    proof_destination: C2 exact evidence-scope schema and hash fixtures
+    preservation: preserve full coordinate vector, locks, fences, epochs, incarnations, cursors, and child set
+    status: redistributed
+  - id: CM2-05
+    source: briefs/m2.md#scope-in
+    old_owner: Completion M2
+    new_owners: [Native C2]
+    proof_destination: C2 out-of-scope and stitching rejection tests
+    preservation: preserve fail-closed attempt/generation/restore/runtime boundaries
+    status: redistributed
+  - id: CM2-06
+    source: briefs/m2.md#scope-in
+    old_owner: Completion M2
+    new_owners: [Native C1, Native C2]
+    proof_destination: C1 outcome registry and C2 per-candidate evaluator tests
+    preservation: preserve obligations for every non-success candidate
+    status: redistributed
+  - id: CM2-07
+    source: briefs/m2.md#scope-in
+    old_owner: Completion M2
+    new_owners: [Native C2]
+    proof_destination: C2 proof-mode positive, negative, and incomplete-capture tests
+    preservation: preserve unknown on incomplete capture
+    status: redistributed
+  - id: CM2-08
+    source: briefs/m2.md#done-criteria
+    old_owner: Completion M2
+    new_owners: [Native C2]
+    proof_destination: C2 aggregation-signature conformance suite
+    preservation: preserve total mapping shape, multiplicity constraints, and waiver laws
+    status: redistributed
+  - id: CM2-09
+    source: briefs/m2.md#done-criteria
+    old_owner: Completion M2
+    new_owners: [Native S2R]
+    proof_destination: S2R child-set and per-primitive aggregation-instance receipt
+    preservation: preserve total concrete semantics for every durable primitive
+    status: redistributed
+  - id: CM2-10
+    source: briefs/m2.md#scope-in
+    old_owner: Completion M2
+    new_owners: [Native C2]
+    proof_destination: C2 verifier-independence policy and adversarial tests
+    preservation: preserve provenance, producer, trust-domain, and primary-access checks
+    status: redistributed
+  - id: CM2-11
+    source: briefs/m2.md#scope-in
+    old_owner: Completion M2
+    new_owners: [Native C2, Native S2R]
+    proof_destination: C2 waiver schema/signature tests and S2R composition receipts
+    preservation: preserve authority, scope, reason, evidence, expiry, and transitive taint
+    status: redistributed
+  - id: CM2-12
+    source: briefs/m2.md#scope-in
+    old_owner: Completion M2
+    new_owners: [Native C2]
+    proof_destination: C2 shadow acceptance atomic-contender receipt
+    preservation: reuse one existing acceptance transaction without authority widening
+    status: redistributed
+  - id: CM2-13
+    source: briefs/m2.md#outcome
+    old_owner: Completion M2
+    new_owners: [Native S2R]
+    proof_destination: accepted S2R GO-0 receipt
+    preservation: C2 remains non-authoritative; S2R GO-0 is the sole live enablement
+    status: corrected_and_redistributed
+  - id: CM2-14
+    source: briefs/m2.md#scope-in
+    old_owner: Completion M2
+    new_owners: [Native C2, Platform S3]
+    proof_destination: C2 causal diagnostics and Platform S3 inspection surfaces
+    preservation: preserve unsatisfied, unknown, stale, inadmissible, and waived explanations
+    status: redistributed
+  - id: CM2-15
+    source: briefs/m2.md#done-criteria
+    old_owner: Completion M2
+    new_owners: [Native C2, Native S2R]
+    proof_destination: C2 mutation tests enforced from S2R GO-0
+    preservation: preserve changed-code, stale-fence, old-epoch, wrong-store, and cross-attempt rejection
+    status: redistributed
+  - id: CM2-16
+    source: briefs/m2.md#constraints
+    old_owner: Completion M2
+    new_owners: [Native C2, Native S2R]
+    proof_destination: C2 decoder/version matrix and S2R persisted-wire compatibility receipt
+    preservation: preserve legacy/unknown mapping and unknown-future reject/quarantine behavior
+    status: redistributed
+  - id: CM2-17
+    source: decisions/standardized-completion-spec-proposal.md#9
+    old_owner: Completion M2
+    new_owners: [Native C2]
+    proof_destination: C2 introduction-time restore/replay drill
+    preservation: preserve every new durable kernel record
+    status: redistributed
+  - id: CM2-18
+    source: briefs/m2.md#anti-scope
+    old_owner: Completion M2
+    new_owners: [Native C2]
+    proof_destination: C2 projection deletion/rebuild and forgery-invariance receipt
+    preservation: preserve identical decision/verdict/effect identity with no new action
+    status: redistributed
+  - id: CM2-19
+    source: decisions/standardized-completion-spec-proposal.md#5
+    old_owner: Completion M2
+    new_owners: [Native C2, Native S2R]
+    proof_destination: C2 named-exit mutation suite and S2R unwind proof
+    preservation: preserve duplicate, missing, reordered, wrong-target, and ambient-exception cases
+    status: redistributed
+  - id: CM2-20
+    source: briefs/m2.md#scope-out
+    old_owner: Completion M2
+    new_owners: [Native C2]
+    proof_destination: C2 scope and non-authority gate
+    preservation: preserve no-broad-migration, no-product-DX, no-second-consumer, and no-new-store limits
+    status: redistributed
+  - id: CM3-01
+    source: briefs/m3.md#scope-in
+    old_owner: Completion M3
+    new_owners: [Native S5A, Native S5B]
+    proof_destination: S5 task-spec compilation traces
+    preservation: preserve objectives, criteria, write sets, tests, sense checks, and validation jobs
+    status: redistributed
+  - id: CM3-02
+    source: briefs/m3.md#scope-in
+    old_owner: Completion M3
+    new_owners: [Native S5A, Native S5B]
+    proof_destination: S5 deterministic augmentation receipts
+    preservation: preserve landed-write, validation, freshness, runtime, custody, authority, and contract hashes
+    status: redistributed
+  - id: CM3-03
+    source: briefs/m3.md#scope-in
+    old_owner: Completion M3
+    new_owners: [Native S5A, Native S5B, admission]
+    proof_destination: S5 admission-lint negative suite
+    preservation: preserve vague, circular, trivial, unscoped, and unverifiable rejection
+    status: redistributed
+  - id: CM3-04
+    source: briefs/m3.md#outcome
+    old_owner: Completion M3
+    new_owners: [Native S5A, Native S5B]
+    proof_destination: S5A shadow vertical-slice receipt and S5B live-cutover receipt
+    preservation: preserve complete finalize/execute/review/rework/aggregate flow
+    status: redistributed
+  - id: CM3-05
+    source: briefs/m3.md#scope-in
+    old_owner: Completion M3
+    new_owners: [Native S5A, Native S5B]
+    proof_destination: S5 candidate-disposition and acceptance traces
+    preservation: accepted(...) proposes but never authorizes completion
+    status: redistributed
+  - id: CM3-06
+    source: briefs/m3.md#scope-in
+    old_owner: Completion M3
+    new_owners: [Native S5A, Native S5B, admission]
+    proof_destination: S5 review-routing identity and executor exclusion receipts
+    preservation: preserve reopen, new-work admission, justified non-action, and no executable REVIEW
+    status: redistributed
+  - id: CM3-07
+    source: briefs/m3.md#locked-decisions
+    old_owner: Completion M3
+    new_owners: [Native S2R, admission, Native S5A, Native S5B]
+    proof_destination: S2R/admission occurrence receipts and S5 product-created work proof
+    preservation: preserve new attempt/generation bindings for rework occurrences
+    status: redistributed
+  - id: CM3-08
+    source: briefs/m3.md#scope-in
+    old_owner: Completion M3
+    new_owners: [Native S5A, Native S5B]
+    proof_destination: S5 unaffected-task replay and evidence-preservation proof
+    preservation: preserve accepted unrelated evidence without rebinding
+    status: redistributed
+  - id: CM3-09
+    source: briefs/m3.md#scope-in
+    old_owner: Completion M3
+    new_owners: [Native S2R, Native S5A, Native S5B]
+    proof_destination: S2R primitive algebra and S5 slice aggregation receipt
+    preservation: preserve all-admitted-binding terminal/permitted requirement
+    status: redistributed
+  - id: CM3-10
+    source: briefs/m3.md#scope-in
+    old_owner: Completion M3
+    new_owners: [Native S5A, Native S5B, Platform S3]
+    proof_destination: Native causal status and Platform generic inspection proof
+    preservation: preserve binding, candidate, failure, evidence, and repair-frontier explanation
+    status: redistributed
+  - id: CM3-11
+    source: briefs/m3.md#constraints
+    old_owner: Completion M3
+    new_owners: [Native S5A, Native S5B]
+    proof_destination: S5 crash/retry/reentry suite
+    preservation: preserve no duplicate effects, tasks, or cross-window reuse
+    status: redistributed
+  - id: CM3-12
+    source: briefs/m3.md#done-criteria
+    old_owner: Completion M3
+    new_owners: [Native S5A, Native S5B]
+    proof_destination: S5A mandatory shadow gate and S5B mandatory live GO gate
+    preservation: preserve false-done and REVIEW golden trace
+    status: redistributed
+  - id: CM3-13
+    source: briefs/m3.md#done-criteria
+    old_owner: Completion M3
+    new_owners: [Native S5B]
+    proof_destination: S5B 57k-scale bounded-query latency and peak-memory gate
+    preservation: preserve full live-path consumption without full-history fallback
+    status: redistributed
+  - id: CM3-14
+    source: decisions/standardized-completion-spec-proposal.md#8
+    old_owner: Completion M3
+    new_owners: [Custody]
+    proof_destination: accepted/consolidated Custody bounded-projection handoff
+    preservation: preserve incremental implementation, invalidation, full-rebuild parity, and benchmark receipt
+    status: corrected_and_redistributed
+  - id: CM3-15
+    source: briefs/m3.md#done-criteria
+    old_owner: Completion M3
+    new_owners: [Native S5B, Native S7, Platform S1]
+    proof_destination: S5B executed golden trace and migration inventory consumed by S7/Platform S1
+    preservation: preserve content-addressed handoff identity
+    status: redistributed
+  - id: CM4-01
+    source: briefs/m4.md#scope-in
+    old_owner: Completion M4
+    new_owners: [Native C2, Native S2R]
+    proof_destination: C2 aggregation signatures and S2R concrete instances
+    preservation: preserve total child-disposition laws without primitive instances in C2
+    status: redistributed
+  - id: CM4-02
+    source: briefs/m4.md#scope-in
+    old_owner: Completion M4
+    new_owners: [Native S2R, Native S3A-S7]
+    proof_destination: S2R primitive conformance and later Native consumption gates
+    preservation: preserve sequence, branch, loop, fanout, suspension, effect, and rework fixtures
+    status: redistributed
+  - id: CM4-03
+    source: briefs/m4.md#scope-in
+    old_owner: Completion M4
+    new_owners: [Native S3A-S7]
+    proof_destination: phase-specific Native cutover receipts
+    preservation: preserve planning, gate, loop, execution, human, finalization, review, delivery, override, recovery, and compatibility paths
+    status: redistributed
+  - id: CM4-04
+    source: briefs/m4.md#scope-in
+    old_owner: Completion M4
+    new_owners: [Native S2R, Native S3A-S7]
+    proof_destination: S2R GO-0 and every later fail-closed cutover gate
+    preservation: preserve no-valid-binding rejection for new durable subjects
+    status: redistributed
+  - id: CM4-05
+    source: briefs/m4.md#scope-in
+    old_owner: Completion M4
+    new_owners: [amended Native S2F, Native C1, Native S2R, Native S7]
+    proof_destination: source/template/runtime inventories and S7 writer-retirement proof
+    preservation: preserve old tables only as read-only parity/negative fixtures
+    status: redistributed
+  - id: CM4-06
+    source: briefs/m4.md#scope-in
+    old_owner: Completion M4
+    new_owners: [Native C1, Platform S2B, Platform S3]
+    proof_destination: C1 generation/lint, S2B authoring core, and S3 DX receipt
+    preservation: preserve no helper declarations and domain-obligations-only burden
+    status: redistributed
+  - id: CM4-07
+    source: briefs/m4.md#scope-in
+    old_owner: Completion M4
+    new_owners: [Native C1, Native C2, Native S3A-S7, Platform S3]
+    proof_destination: kernel records, Native projections, and Platform generic views
+    preservation: preserve canonical machine records and disposable Markdown
+    status: redistributed
+  - id: CM4-08
+    source: briefs/m4.md#scope-in
+    old_owner: Completion M4
+    new_owners: [Native S3A-S7, Platform S3]
+    proof_destination: Native human-boundary receipts and Platform focused-request tooling
+    preservation: preserve narrow authority-bound human verification
+    status: redistributed
+  - id: CM4-09
+    source: briefs/m4.md#scope-in
+    old_owner: Completion M4
+    new_owners: [Native S3A-S7, Native S7]
+    proof_destination: phase writer-retirement gates and S7 no-competing-writer proof
+    preservation: compatibility readers may remain; compatibility writers may not
+    status: redistributed
+  - id: CM4-10
+    source: briefs/m4.md#constraints
+    old_owner: Completion M4
+    new_owners: [Native C2]
+    proof_destination: C2 projection-invariance receipt
+    preservation: preserve projection rebuild non-authority
+    status: redistributed
+  - id: CM4-11
+    source: briefs/m4.md#constraints
+    old_owner: Completion M4
+    new_owners: [Native C1, Native C2, Native S7, Platform S4]
+    proof_destination: bridge ownership/removal/deletion-test registry
+    preservation: preserve owner, removal condition, and negative test for every bridge
+    status: redistributed
+  - id: CM4-12
+    source: briefs/m4.md#done-criteria
+    old_owner: Completion M4
+    new_owners: [Native S7]
+    proof_destination: S7 exact inventory-equality receipt
+    preservation: preserve subjects, bindings, evidence, verdicts, decisions, effects, and terminal outcomes
+    status: redistributed
+  - id: CM4-13
+    source: briefs/m4.md#done-criteria
+    old_owner: Completion M4
+    new_owners: [Native S7]
+    proof_destination: S7 editable/installed/cloud identity conformance
+    preservation: preserve content-addressed identity equality across runtimes
+    status: redistributed
+  - id: CM4-14
+    source: briefs/m4.md#done-criteria
+    old_owner: Completion M4
+    new_owners: [Native S7, Platform S1]
+    proof_destination: S7 public-candidate inventory and exact Platform S1 handoff
+    preservation: preserve experimental classification; no premature public stability
+    status: redistributed
+  - id: CM5-01
+    source: briefs/m5.md#scope-in
+    old_owner: Completion M5
+    new_owners: [Platform S1]
+    proof_destination: Platform S1 exact Native candidate inventory
+    preservation: preserve schemas, registries, adapters, proof corpus, bridges, and coupling
+    status: redistributed
+  - id: CM5-02
+    source: briefs/m5.md#locked-decisions
+    old_owner: Completion M5
+    new_owners: [Platform S1, Platform S2A]
+    proof_destination: S1 typed registry inventory and S2A total generated boundary mapping
+    preservation: keep candidate outcomes and enforcement dispositions distinct; reject unknown pairs
+    status: corrected_and_redistributed
+  - id: CM5-03
+    source: briefs/m5.md#scope-in
+    old_owner: Completion M5
+    new_owners: [Platform S2A]
+    proof_destination: S2A neutral enforcement extraction receipt
+    preservation: preserve one implementation and one acceptance transaction without forks
+    status: redistributed
+  - id: CM5-04
+    source: briefs/m5.md#scope-in
+    old_owner: Completion M5
+    new_owners: [Platform S2B]
+    proof_destination: S2B pype authoring/compiler productization receipt
+    preservation: preserve generated mechanical obligations and domain-only declarations
+    status: redistributed
+  - id: CM5-05
+    source: briefs/m5.md#scope-in
+    old_owner: Completion M5
+    new_owners: [Platform S3]
+    proof_destination: S3 lint/inspection/test-kit/views/editor/docs receipt
+    preservation: preserve projection non-authority and causal diagnostics
+    status: redistributed
+  - id: CM5-06
+    source: briefs/m5.md#outcome
+    old_owner: Completion M5
+    new_owners: [Platform S4]
+    proof_destination: S4 isolated extraction/recomposition and receipt-bound Megaplan migration
+    preservation: preserve exact implementation, no reverse dependency, and no duplicate writer
+    status: redistributed
+  - id: CM5-07
+    source: briefs/m5.md#scope-in
+    old_owner: Completion M5
+    new_owners: [Platform S5]
+    proof_destination: S5 independently originated unrelated-consumer proof
+    preservation: preserve different obligations/topology, human/effect boundary, and new-work semantics
+    status: redistributed
+  - id: CM5-08
+    source: briefs/m5.md#scope-in
+    old_owner: Completion M5
+    new_owners: [Platform S5, Platform S6]
+    proof_destination: S5 adversarial compatibility suite and S6 certification
+    preservation: preserve runtime rejection, old resume, migration/quarantine, absence, taint, and independence
+    status: redistributed
+  - id: CM5-09
+    source: briefs/m5.md#constraints
+    old_owner: Completion M5
+    new_owners: [Platform S5, Platform S6]
+    proof_destination: S5/S6 clean-checkout, wheel/sdist, installed, and cloud receipts
+    preservation: preserve non-editable-only proof requirement
+    status: redistributed
+  - id: CM5-10
+    source: briefs/m5.md#done-criteria
+    old_owner: Completion M5
+    new_owners: [Platform S6]
+    proof_destination: S6 compatibility/evolution classification
+    preservation: preserve stable, experimental, deprecated, and tombstoned categories
+    status: redistributed
+  - id: CM5-11
+    source: briefs/m5.md#done-criteria
+    old_owner: Completion M5
+    new_owners: [Native S2R, Platform S6]
+    proof_destination: S2R internal-wire enablement receipt and S6 public-API publication receipt
+    preservation: distinguish internal persisted compatibility from stable public API timing
+    status: corrected_and_redistributed
+  - id: CM5-12
+    source: briefs/m5.md#done-criteria
+    old_owner: Completion M5
+    new_owners: [Platform S6]
+    proof_destination: S6 final two-consumer conformance and North Star proof map
+    preservation: preserve exact proof links and leave unproven behavior experimental
+    status: redistributed

@@ -2,7 +2,7 @@ provider: ssh
 
 repo:
   url: https://github.com/peteromallet/Arnold.git
-  branch: main
+  branch: editible-install
   workspace: /workspace/megaplan-native-parity-corrective/Arnold
 
 agents:

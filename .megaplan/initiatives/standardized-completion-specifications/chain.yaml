@@ -1,0 +1,36 @@
+schema: megaplan.archived_initiative_source_index.v1
+launchable: false
+retired_as_independent_chain: true
+superseded_path: .megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml
+downstream_path: .megaplan/initiatives/native-workflow-platformization/chain.yaml
+reason: >-
+  The accepted completion sequencing inserts C1 and shadow-only C2 directly
+  into Native Parity after amended S2F and before S2R. S2R GO-0 is the sole
+  authoritative kernel enablement. The former M1-M5 chain is a normative
+  design and traceability source, not an executable epic.
+source_index:
+  north_star: NORTHSTAR.md
+  supersession_crosswalk: SUPERSESSION_CROSSWALK.yaml
+  decision_snapshot: decisions/standardized-completion-spec-proposal.md
+  source_ticket: notes/source-ticket.md
+  historical_briefs:
+    - briefs/m1.md
+    - briefs/m2.md
+    - briefs/m3.md
+    - briefs/m4.md
+    - briefs/m5.md
+active_critical_path:
+  - accepted/consolidated Custody M11 plus bounded-projection handoff
+  - Native S1
+  - amended Native S2F
+  - inserted Native C1
+  - inserted Native C2 (shadow/non-authoritative)
+  - Native S2R GO-0 (sole authoritative kernel enablement)
+  - Native S3A through S7
+  - Platform S1
+  - Platform S2A
+  - Platform S2B
+  - Platform S3
+  - Platform S4
+  - Platform S5
+  - Platform S6

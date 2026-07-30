@@ -1,0 +1,43 @@
+base_branch: editible-install
+
+anchors:
+  north_star: NORTHSTAR.md
+
+launch_preconditions:
+  - name: bootstrap brief is committed and clean
+    kind: git_tracked
+    path: .megaplan/initiatives/megaplan-chain-milestone-gates
+
+milestones:
+  - label: s1-premerge-content-addressed-conformance-gates
+    idea: .megaplan/initiatives/megaplan-chain-milestone-gates/briefs/s1-premerge-content-addressed-conformance-gates.md
+    profile: apex
+    robustness: extreme
+    depth: max
+    with_prep: true
+    validate:
+      - kind: final_conformance_gate
+        validator: scripts/validate_megaplan_chain_milestone_gates.py
+        conformance: docs/arnold/megaplan-chain-milestone-gates-conformance.yaml
+        traceability: docs/arnold/megaplan-chain-milestone-gates-traceability.yaml
+        proof_map: .megaplan/initiatives/megaplan-chain-milestone-gates/final-proof-map.json
+    notes: >-
+      Add a generic pre-merge conformance_gate, exact predecessor-artifact assertions, and
+      typed receipt-consuming transitions with post-transition verification;
+      prove that missing, red, stale, unbound, or bypassed evidence cannot
+      merge or advance a chain.
+
+on_failure:
+  retry: retry_milestone
+  abort: stop_chain
+
+merge_policy: auto
+prerequisite_policy: required
+validation_policy: required
+
+driver:
+  auto_approve: true
+  max_iterations: 90
+  require_clean_base: true
+  robustness: thorough
+  poll_sleep: 8.0
