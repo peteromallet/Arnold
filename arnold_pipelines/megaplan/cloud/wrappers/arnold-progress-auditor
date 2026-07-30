@@ -429,17 +429,36 @@ run_recovery_sweep() {
   local before_path="$GATHER_DIR/recovery-before.json"
   local after_path="$GATHER_DIR/recovery-after.json"
   local watchdog_rc=0
-  capture_recovery_snapshot "$before_path"
   case "${GLOBAL_WATCHDOG_SWEEP_ENABLED,,}" in
     1|true|yes|on)
       ;;
     *)
       log "global watchdog recovery sweep disabled; bounded gather and targeted L3 repair custody own recovery"
-      capture_recovery_snapshot "$after_path"
-      assemble_recovery_evidence "$before_path" "$after_path" 0 0
+      python3 - "$RECOVERY_EVIDENCE" <<'PY'
+import datetime as dt
+import json
+import pathlib
+import sys
+
+payload = {
+    "schema_version": 1,
+    "timestamp_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+    "enabled": False,
+    "skip_reason": "targeted_l3_repair_custody",
+    "watchdog_exit_code": 0,
+    "sessions_discovered": 0,
+    "should_run_count": 0,
+    "decisions": [],
+}
+pathlib.Path(sys.argv[1]).write_text(
+    json.dumps(payload, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
       return 0
       ;;
   esac
+  capture_recovery_snapshot "$before_path"
   if [[ "$AUDIT_MUTATION_AUTHORIZED_FLAG" != "1" ]]; then
     log "report-only audit: skipping watchdog recovery sweep because mutation is not authorized"
     capture_recovery_snapshot "$after_path"

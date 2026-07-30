@@ -493,8 +493,9 @@ def test_global_watchdog_sweep_is_default_off_before_targeted_recovery() -> None
         "bounded gather and targeted L3 repair custody own recovery",
         guard,
     )
-    watchdog = wrapper.index('"$WATCHDOG_BIN" --audit-sweep', targeted)
-    assert guard < targeted < watchdog
+    snapshot = wrapper.index('capture_recovery_snapshot "$before_path"', targeted)
+    watchdog = wrapper.index('"$WATCHDOG_BIN" --audit-sweep', snapshot)
+    assert guard < targeted < snapshot < watchdog
 
 
 def _extract_auditor_function(name: str) -> str:
