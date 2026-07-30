@@ -1527,13 +1527,40 @@ def _repair_data_summary(session):
         "repeated_failure_signatures": repeated[:6],
     }
 
+EVENT_TAIL_MAX_BYTES = max(
+    int(os.environ.get("MEGAPLAN_AUDIT_EVENT_TAIL_MAX_BYTES", str(16 * 1024 * 1024))),
+    1024,
+)
+EVENT_TAIL_MAX_LINES = max(
+    int(os.environ.get("MEGAPLAN_AUDIT_EVENT_TAIL_MAX_LINES", "5000")),
+    1,
+)
+
 def _load_events(events_path):
+    """Load a bounded recent journal tail.
+
+    Progress auditing needs the current evidence window, not a reconstruction
+    of the plan's complete event history.  Reading a multi-hundred-megabyte
+    journal with ``read_text().splitlines()`` multiplies its resident-memory
+    cost and can OOM-kill the repair supervisor before it reaches the session
+    that needs recovery.
+    """
     events = []
     try:
-        lines = events_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except Exception:
+        size = events_path.stat().st_size
+        with events_path.open("rb") as handle:
+            truncated = size > EVENT_TAIL_MAX_BYTES
+            if truncated:
+                handle.seek(size - EVENT_TAIL_MAX_BYTES)
+            raw = handle.read(EVENT_TAIL_MAX_BYTES)
+    except (OSError, ValueError):
         return events
-    for line in lines:
+    lines = raw.splitlines()
+    if truncated and lines:
+        # The byte cursor normally lands inside a JSON record.
+        lines = lines[1:]
+    for raw_line in lines[-EVENT_TAIL_MAX_LINES:]:
+        line = raw_line.decode("utf-8", errors="replace")
         if not line.strip():
             continue
         try:
