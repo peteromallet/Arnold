@@ -4,6 +4,10 @@ anchors:
   north_star: NORTHSTAR.md
 
 launch_preconditions:
+  - name: custody M11 is complete with a validated manifest
+    kind: chain_completed
+    chain: .megaplan/initiatives/custody-control-plane/chain.yaml
+    require_manifest: true
   - name: bootstrap brief is committed and clean
     kind: git_tracked
     path: .megaplan/initiatives/megaplan-chain-milestone-gates
