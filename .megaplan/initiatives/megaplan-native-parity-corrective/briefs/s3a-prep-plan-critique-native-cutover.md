@@ -6,7 +6,7 @@ Make prep, plan, and critique through the critique join load-bearing authored
 topology, establish exclusive resume-plane selection before the first human
 resume cut, and hand one closed typed result to the retained legacy gate.
 
-Use `../GOLDEN_TRACE_CONTRACT.md` as proof only. S3A owns GO-1A; it does not
+Use `../validation/GOLDEN_TRACE_CONTRACT.md` as proof only. S3A owns GO-1A; it does not
 claim that the complete front half is native.
 
 ## Mandatory GO-1A stop/go

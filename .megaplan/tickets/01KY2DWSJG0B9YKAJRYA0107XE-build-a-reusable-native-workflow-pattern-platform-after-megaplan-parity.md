@@ -138,7 +138,7 @@ second consumer proves the shared abstraction.
 
 The detailed S1–S5 sketch below is retained as the proposal that created the
 ticket. It is not launch authority. The prepared epic now has six milestones:
-S1, S2A, S2B, S4, S5, and S6. Its `PLATFORM_CONTRACT.md`, current briefs, and
+S1, S2A, S2B, S4, S5, and S6. Its `decisions/PLATFORM_CONTRACT.md`, current briefs, and
 `chain.yaml` supersede the old numbering and ownership below.
 
 In particular, `docs/arnold/pype-authoring-contract.md` freezes one canonical
@@ -1063,7 +1063,7 @@ versioned platform contract data rather than runner-local discretion.
 
 This ticket is promoted into the prepared, six-milestone epic at
 `.megaplan/initiatives/native-workflow-platformization/`. Its `NORTHSTAR.md`,
-`PLATFORM_CONTRACT.md`, `chain.yaml`, and six milestone briefs are the launch
+`decisions/PLATFORM_CONTRACT.md`, `chain.yaml`, and six milestone briefs are the launch
 source. The platform contract preserves all eleven standardization closure
 clauses and all 37 acceptance families from this ticket as stable proof-map
 identifiers.
@@ -1077,7 +1077,7 @@ Native-to-Platformization handoff manifest.
 ## References
 
 - `.megaplan/initiatives/megaplan-native-parity-corrective/`
-- `.megaplan/initiatives/megaplan-native-parity-corrective/GOLDEN_TRACE_CONTRACT.md`
+- `.megaplan/initiatives/megaplan-native-parity-corrective/validation/GOLDEN_TRACE_CONTRACT.md`
 - `docs/arnold/megaplan-native-parity-corrective-plan.md`
 - `docs/arnold/megaplan-native-representation-report.md`
 - `.tmp/workflow-standardization-gap/final-report.md`

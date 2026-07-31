@@ -180,7 +180,7 @@ declared typed durable boundary. An opaque phase/effect boundary may compute or
 interact externally; it may not choose a product route.
 
 The normative composition oracle is
-`GOLDEN_TRACE_CONTRACT.md`. It is the human-reviewed scenario/invariant
+`validation/GOLDEN_TRACE_CONTRACT.md`. It is the human-reviewed scenario/invariant
 contract. An independent static source oracle derives source occurrences
 without calling the production lowerer, and a separately implemented verifier
 checks raw primary-store event multiplicity before contract-approved

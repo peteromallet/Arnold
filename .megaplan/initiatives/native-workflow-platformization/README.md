@@ -63,7 +63,7 @@ or proof infrastructure.
 ## Artifact map
 
 - `NORTHSTAR.md` — durable destination and non-negotiable boundaries.
-- `PLATFORM_CONTRACT.md` — normative cross-milestone decisions and acceptance
+- `decisions/PLATFORM_CONTRACT.md` — normative cross-milestone decisions and acceptance
   contract.
 - `docs/arnold/workflow-execution-mode-dispositions.yaml` — sole machine
   registry for modes,

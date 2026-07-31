@@ -20,7 +20,7 @@ authority. S2R GO-0 is the sole future live-enablement receipt.
 Normative retained design and exhaustive redistribution map:
 
 - `../../standardized-completion-specifications/decisions/standardized-completion-spec-proposal.md`
-- `../../standardized-completion-specifications/SUPERSESSION_CROSSWALK.yaml`
+- `../../standardized-completion-specifications/evidence/SUPERSESSION_CROSSWALK.yaml`
 - `../../standardized-completion-specifications/briefs/m1.md`
 
 ## Required inputs
