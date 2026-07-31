@@ -46,6 +46,7 @@ STATUS_RE = re.compile(
     # progress columns overflow.  Do not require a trailing word boundary.
     r"\s+(?P<status>PASSED|FAILED|SKIPPED|XFAIL|XPASS|ERROR)"
 )
+PYTEST_PROVENANCE_RE = re.compile(r".+\.py(?::\d+)?$")
 SUMMARY_RE = re.compile(
     r"(?P<count>\d+)\s+(?P<status>passed|failed|skipped|xfailed|xpassed|error|errors|deselected)\b"
 )
@@ -328,16 +329,48 @@ def _parse_outcomes(
         # opaque node ID ends.  Trying every rendered status position avoids
         # confusing status words inside parametrized IDs with pytest's actual
         # terminal status, while still accepting glued-on skip reasons.
+        direct: list[tuple[str, str]] = []
+        inherited: list[tuple[str, str]] = []
         for match in STATUS_RE.finditer(raw):
-            nodeid = raw[: match.start()].strip()
-            if nodeid not in expected:
-                continue
-            if nodeid in statuses:
-                raise ValidationShardError(
-                    f"pytest reported duplicate terminal outcome for {nodeid!r}"
-                )
-            statuses[nodeid] = STATUS_MAP[match.group("status")]
-            break
+            rendered_prefix = raw[: match.start()].strip()
+            status = STATUS_MAP[match.group("status")]
+            if rendered_prefix in expected:
+                direct.append((rendered_prefix, status))
+
+            # Pytest renders inherited tests as
+            # ``<frozen-nodeid> <- <definition-source.py> PASSED``. Recover
+            # that node ID only by proving the left side is in the frozen
+            # inventory and the right side has pytest's source-locator shape.
+            # Do not globally strip arrows: they are valid opaque node-ID text.
+            offset = 0
+            marker = " <- "
+            while True:
+                marker_index = rendered_prefix.find(marker, offset)
+                if marker_index < 0:
+                    break
+                candidate = rendered_prefix[:marker_index]
+                provenance = rendered_prefix[marker_index + len(marker) :]
+                if (
+                    candidate in expected
+                    and PYTEST_PROVENANCE_RE.fullmatch(provenance)
+                ):
+                    inherited.append((candidate, status))
+                offset = marker_index + len(marker)
+
+        candidates = direct + inherited
+        unique_candidates = set(candidates)
+        if len(unique_candidates) > 1:
+            raise ValidationShardError(
+                "pytest terminal outcome is ambiguous against frozen inventory"
+            )
+        if not unique_candidates:
+            continue
+        nodeid, status = unique_candidates.pop()
+        if nodeid in statuses:
+            raise ValidationShardError(
+                f"pytest reported duplicate terminal outcome for {nodeid!r}"
+            )
+        statuses[nodeid] = status
     counts = {name: 0 for name in OUTCOMES}
     for status in statuses.values():
         counts[status] += 1
