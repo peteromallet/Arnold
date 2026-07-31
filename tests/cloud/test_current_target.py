@@ -799,6 +799,10 @@ def test_is_canonical_session_marker_path_true_for_markers() -> None:
     assert is_canonical_session_marker_path("parent-session.json") is True
 
 
+def test_reserved_service_session_is_not_a_canonical_run_marker() -> None:
+    assert is_canonical_session_marker_path("megaplan-resident-discord.json") is False
+
+
 def test_is_canonical_session_marker_path_false_for_sidecars() -> None:
     for suffix in (".repair-progress.json", ".reap-progress.json", ".chain-health.progress.json", ".progress.json"):
         assert is_canonical_session_marker_path(f"session{suffix}") is False

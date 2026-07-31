@@ -15240,6 +15240,10 @@ def test_watchdog_scan_once_filters_canonical_sidecar_jsons(tmp_path: Path) -> N
         ),
         encoding="utf-8",
     )
+    (marker_dir / "megaplan-resident-discord.json").write_text(
+        json.dumps({"session": "megaplan-resident-discord", "run_kind": "chain"}),
+        encoding="utf-8",
+    )
     # Canonical sidecars that must be skipped
     for suffix in (
         ".repair-progress.json",
@@ -15297,6 +15301,7 @@ def test_watchdog_scan_once_filters_canonical_sidecar_jsons(tmp_path: Path) -> N
     log_text = (tmp_path / "scan.log").read_text(encoding="utf-8")
     # Only the real session should be ticked
     assert "tick:real-session" in log_text
+    assert "tick:megaplan-resident-discord" not in log_text
     # Should report exactly 1 marker found (only the canonical session marker)
     assert "scan complete markers=1" in log_text
 

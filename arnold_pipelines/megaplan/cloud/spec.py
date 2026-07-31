@@ -16,6 +16,7 @@ except ImportError as exc:  # pragma: no cover - import guard
 
 from arnold_pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING, KNOWN_AGENTS
 from arnold_pipelines.megaplan.types import CliError
+from .session_markers import RESERVED_SERVICE_SESSION_NAMES
 
 
 VALID_MODES = ("auto", "chain", "idle")
@@ -185,6 +186,17 @@ def _optional_string(raw: Any, label: str) -> str | None:
     if not isinstance(raw, str) or not raw.strip():
         raise _invalid(f"`{label}` must be a non-empty string")
     return raw
+
+
+def _chain_session(raw: Any, *, default: str) -> str:
+    value = _string(raw, "chain_session", default=default)
+    if value in RESERVED_SERVICE_SESSION_NAMES:
+        reserved = ", ".join(sorted(RESERVED_SERVICE_SESSION_NAMES))
+        raise _invalid(
+            f"`chain_session` {value!r} is reserved for a supervised service; "
+            f"reserved names: {reserved}"
+        )
+    return value
 
 
 def _absolute_posix(raw: Any, label: str) -> str:
@@ -433,9 +445,8 @@ def load_spec(path: Path) -> CloudSpec:
     chain_session_explicit = "chain_session" in raw or (
         chain_spec is not None and chain_spec.chain_session is not None
     )
-    chain_session = _string(
+    chain_session = _chain_session(
         raw.get("chain_session"),
-        "chain_session",
         default=chain_spec.chain_session if chain_spec and chain_spec.chain_session else "megaplan-chain",
     )
 
