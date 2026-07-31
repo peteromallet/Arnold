@@ -58,3 +58,19 @@ def test_import_runtime_treats_megaplan_agent_missing_as_legacy_fallback(monkeyp
     assert AIAgent is fake_run_agent.AIAgent
     assert SessionDB is fake_state.SessionDB
     assert resolve_model("demo-model") == "demo-model"
+
+
+def test_model_shortcut_normalizes_chain_hermes_provider_prefix() -> None:
+    module = _load_module()
+
+    assert (
+        module._resolve_model_shortcut("hermes:zhipu:glm-5.2")
+        == "zhipu:glm-5.2"
+    )
+    assert (
+        module._resolve_model_shortcut(" hermes:deepseek:deepseek-v4-pro ")
+        == "deepseek:deepseek-v4-pro"
+    )
+    assert module._resolve_model_shortcut("pro") == "deepseek:deepseek-v4-pro"
+    assert module._resolve_model_shortcut("hermes:pro") == "deepseek:deepseek-v4-pro"
+    assert module._resolve_model_shortcut("custom:model") == "custom:model"

@@ -1671,3 +1671,66 @@ def test_run_chain_rechecks_pr_state_when_premerge_completion_guard_fails(
         assert saved.completed[0]["label"] == "m1"
         assert saved.completed[0]["pr_state"] == "merged"
         assert any("merged while completion guard was evaluating" in msg for msg in messages)
+
+
+@pytest.mark.parametrize(
+    "diagnostic",
+    [
+        "GraphQL: Could not resolve to a PullRequest with the number of 206.",
+        "GraphQL: Could not resolve to a pull request with the number of 206.",
+        "pull request not found",
+        "no pull requests found for branch",
+        "pull request was not found",
+    ],
+)
+def test_pr_state_classifies_missing_github_pr_as_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    diagnostic: str,
+) -> None:
+    messages: list[str] = []
+
+    def missing_pr(*_args, **_kwargs):
+        raise CliError(
+            "gh_pr_view_failed",
+            "gh pr view 206 exited 1",
+            extra={"stdout": "", "stderr": diagnostic},
+        )
+
+    monkeypatch.setattr(
+        git_ops,
+        "_compat",
+        lambda: SimpleNamespace(
+            _run_command=missing_pr,
+            GH_PR_STATE_ATTEMPTS=3,
+            _is_transient_gh_error=lambda _exc: False,
+        ),
+    )
+
+    assert git_ops._pr_state(tmp_path, 206, writer=messages.append) == "closed"
+    assert any("treating persisted PR #206 as closed" in message for message in messages)
+
+
+def test_pr_state_does_not_classify_unrelated_github_error_as_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def permission_error(*_args, **_kwargs):
+        raise CliError(
+            "gh_pr_view_failed",
+            "gh pr view 206 exited 1",
+            extra={"stdout": "", "stderr": "HTTP 403: resource not accessible"},
+        )
+
+    monkeypatch.setattr(
+        git_ops,
+        "_compat",
+        lambda: SimpleNamespace(
+            _run_command=permission_error,
+            GH_PR_STATE_ATTEMPTS=1,
+            _is_transient_gh_error=lambda _exc: False,
+        ),
+    )
+
+    with pytest.raises(CliError, match="gh pr view 206 exited 1"):
+        git_ops._pr_state(tmp_path, 206, writer=lambda _message: None)
