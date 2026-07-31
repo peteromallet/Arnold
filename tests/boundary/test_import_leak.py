@@ -9,19 +9,9 @@ any ``arnold_pipelines.megaplan.*`` import attempts to import
 ``arnold.agent.run_agent``.  If the import chain is clean the subprocess
 exits 0; otherwise it exits non-zero with the blocking module name in stderr.
 
-Current status (as of m7 rework batch 1)
------------------------------------------
-The static import surface of ``arnold/agent/`` is CLEAN — ``git grep`` for
-``from arnold_pipelines.megaplan`` in that tree returns zero real imports.
-
-However 33 shim files under ``arnold/agent/{tools,hermes_cli,agent}/`` use
-``_importlib.import_module("arnold_pipelines.megaplan.*")`` at module-load
-time, which triggers megaplan imports whenever run_agent.py's top-level
-``from arnold.agent.X import Y`` statements execute.
-
-Full resolution requires T5-T11 (tool-layer migration, skipped in batch 1
-due to baseline_test_failures=null).  The dynamic-coupling test is therefore
-marked ``xfail`` until those tasks land.  The static-surface test passes now.
+Shared process lifecycle and mini-swe-agent discovery live on Arnold-neutral
+surfaces.  Product adapters may import Megaplan lazily when invoked, but merely
+importing the generic agent must load no Megaplan modules.
 """
 
 from __future__ import annotations
@@ -29,9 +19,6 @@ from __future__ import annotations
 import subprocess
 import sys
 import textwrap
-
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # Static surface check: git grep for actual megaplan imports in arnold/agent/
@@ -101,16 +88,6 @@ class TestAgentImportLeakage:
             f"Static surface check failed.\n--- stderr ---\n{result.stderr}"
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "T5-T11 not yet migrated: 33 shims under arnold/agent/ delegate to "
-            "arnold_pipelines.megaplan.* via _importlib.import_module() at load "
-            "time, causing megaplan imports when run_agent.py is imported.  Full "
-            "cleanup requires T5-T11 (tool-layer migration tasks, skipped in "
-            "batch 1 due to baseline_test_failures=null)."
-        ),
-        strict=False,
-    )
     def test_fresh_interpreter_import_loads_zero_megaplan_modules(self) -> None:
         """Subprocess: importing arnold.agent.run_agent loads zero megaplan modules."""
         result = subprocess.run(
@@ -123,3 +100,11 @@ class TestAgentImportLeakage:
             f"Subprocess exited {result.returncode} — megaplan leaked into "
             f"arnold.agent import chain.\n--- stderr ---\n{result.stderr}"
         )
+
+    def test_megaplan_minisweagent_adapter_reexports_neutral_owner(self) -> None:
+        """The compatibility path must not fork helper behavior."""
+        import arnold.agent.minisweagent_path as neutral
+        import arnold_pipelines.megaplan.agent.minisweagent_path as adapter
+
+        assert adapter.discover_minisweagent_src is neutral.discover_minisweagent_src
+        assert adapter.ensure_minisweagent_on_path is neutral.ensure_minisweagent_on_path

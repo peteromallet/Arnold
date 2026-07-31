@@ -21,6 +21,8 @@ Normalization rules
     (e.g. ``"int"``, ``"builtins.float"``, ``"arnold_pipelines.megaplan.cli._non_negative_float"``)
   * Classes → qualified name (e.g. ``"builtins.int"``)
   * ``argparse.REMAINDER`` → ``"REMAINDER"``
+  * Positional ``required`` is derived from public ``nargs`` semantics rather
+    than argparse's version-sensitive internal ``Action.required`` flag.
   * Keys in every JSON object are sorted for deterministic output.
   * The ``--help`` / ``-h`` action (``_HelpAction``) is included so that the
     full action list is represented, but ``option_strings`` are sorted so
@@ -44,7 +46,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +105,10 @@ def _normalize_value(val: Any) -> Any:
 
 def _action_to_dict(action: argparse.Action) -> dict[str, Any]:
     """Serialize a single argparse action to a stable dictionary."""
+    if action.option_strings:
+        required = action.required
+    else:
+        required = action.nargs not in ("?", "*", argparse.REMAINDER)
     return {
         "option_strings": sorted(action.option_strings),
         "dest": action.dest,
@@ -113,7 +118,7 @@ def _action_to_dict(action: argparse.Action) -> dict[str, Any]:
         "default": _normalize_value(action.default),
         "type": _normalize_value(action.type),
         "choices": _normalize_value(action.choices),
-        "required": action.required,
+        "required": required,
         "metavar": _normalize_value(action.metavar),
         "help": action.help,
     }
@@ -187,7 +192,7 @@ def _read_fixture() -> dict[str, Any]:
         pytest.fail(
             f"Fixture not found: {FIXTURE_PATH}\n"
             f"Generate it with: python -m pytest {Path(__file__).name} "
-            f"-k test_generate_fixture --write-fixture"
+            f"--write-fixture"
         )
     return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
@@ -208,10 +213,12 @@ def _write_fixture(data: dict[str, Any]) -> None:
 class TestCliParserSnapshot:
     """Snapshot characterization for ``megaplan.cli.build_parser()``."""
 
-    def test_snapshot_matches_fixture(self) -> None:
+    def test_snapshot_matches_fixture(self, request: pytest.FixtureRequest) -> None:
         """Build the parser snapshot in-process and compare against the
         committed fixture.  Fails if the parser shape has changed."""
         current = build_snapshot()
+        if request.config.getoption("--write-fixture", default=False):
+            _write_fixture(current)
         fixture = _read_fixture()
 
         # Use JSON round-trip to normalize key ordering and whitespace.
@@ -222,7 +229,7 @@ class TestCliParserSnapshot:
             # Produce a helpful diff-style message.
             msg = "CLI parser snapshot has diverged from the committed fixture.\n\n"
             msg += "If the change is intentional, regenerate the fixture with:\n"
-            msg += f"  python -m pytest {Path(__file__).name} -k test_generate_fixture --write-fixture\n\n"
+            msg += f"  python -m pytest {Path(__file__).name} --write-fixture\n\n"
             msg += "Changed keys:\n"
             # Quick top-level key comparison
             current_keys = set(current.get("commands", {}).keys()) | {""}
@@ -249,28 +256,6 @@ class TestCliParserSnapshot:
                     msg += f"  Subcommands removed: {sorted(sub_removed)}\n"
 
             pytest.fail(msg)
-
-    def test_generate_fixture(self, request: pytest.FixtureRequest) -> None:
-        """Generate (or overwrite) the JSON fixture on disk.
-
-        Opt-in via ``--write-fixture``::
-
-            python -m pytest tests/characterization/test_cli_parser_snapshot.py \\
-                -k test_generate_fixture --write-fixture
-        """
-        if not request.config.getoption("--write-fixture", default=False):
-            pytest.skip("Pass --write-fixture to regenerate the fixture")
-
-        snapshot = build_snapshot()
-        _write_fixture(snapshot)
-
-        # Verify round-trip: read it back and compare
-        reloaded = _read_fixture()
-        current_str = json.dumps(snapshot, indent=2, sort_keys=True)
-        reloaded_str = json.dumps(reloaded, indent=2, sort_keys=True)
-        assert current_str == reloaded_str, (
-            "Fixture round-trip failed: written JSON does not match in-memory snapshot"
-        )
 
     def test_lazy_subcommands_are_passthrough_only(self) -> None:
         """Document that cloud/resident/bakeoff subcommands are dispatched

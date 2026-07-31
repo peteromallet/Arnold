@@ -40,8 +40,8 @@ import uuid
 import logging
 from datetime import datetime
 import yaml
-from dataclasses import dataclass, field
-from arnold_pipelines.megaplan.runtime.process import kill_group, spawn, spawn_async
+from dataclasses import dataclass
+from arnold.runtime.process import kill_group, spawn, spawn_async
 from arnold.supervisor.capacity_context import gate_capacity
 from pathlib import Path
 from typing import Any, Dict, List, Optional

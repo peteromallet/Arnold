@@ -214,7 +214,11 @@ def test_arnold_pipeline_wins_over_megaplan_duplicate(
     sys.modules.pop("arnold_pipelines.megaplan.pipelines.planning", None)
 
     registry = PipelineRegistry()
-    names = registry.names()
+    with pytest.warns(
+        UserWarning,
+        match=r"cli_name 'megaplan' already discovered from an earlier scan root",
+    ):
+        names = registry.names()
 
     # Both scan roots contribute; 'megaplan' must be present.
     assert "megaplan" in names, (
