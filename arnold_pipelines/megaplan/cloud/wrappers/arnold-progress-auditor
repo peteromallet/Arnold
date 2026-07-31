@@ -3758,10 +3758,19 @@ def _coherent_terminal_success(ev):
     }:
         return False
     try:
-        total = int(chain_current.get("total_milestones"))
         completed_count = int(chain_current.get("completed_count"))
     except (TypeError, ValueError):
         return False
+    try:
+        total = int(chain_current.get("total_milestones"))
+    except (TypeError, ValueError):
+        # Legacy chain journals did not persist the milestone list.  Their
+        # terminal cursor is still coherent when the zero-based "next
+        # milestone" index equals the append-only completed record count.
+        try:
+            total = int(chain_current.get("current_milestone_index"))
+        except (TypeError, ValueError):
+            return False
     if total <= 0 or completed_count != total:
         return False
     plan_name = str(ev.get("plan") or "").strip()
