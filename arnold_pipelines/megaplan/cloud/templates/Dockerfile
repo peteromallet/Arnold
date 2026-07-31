@@ -69,12 +69,14 @@ RUN curl -fsSL https://bun.sh/install | bash \
 # shells see them. Shannon is no longer installed via npm — the megaplan-vendored
 # fork at megaplan/vendor/shannon/index.ts is invoked directly via ``bun``.
 RUN . "$NVM_DIR/nvm.sh" \
-    && npm i -g @openai/codex @anthropic-ai/claude-code \
+    && npm i -g @openai/codex @anthropic-ai/claude-code @railway/cli@4.12.0 \
     && NVBIN=$(ls -d /root/.nvm/versions/node/*/bin | head -1) \
     && ln -sf "$NVBIN/codex"  /usr/local/bin/codex \
     && ln -sf "$NVBIN/claude" /usr/local/bin/claude \
+    && ln -sf "$NVBIN/railway" /usr/local/bin/railway \
     && codex --version \
-    && claude --version
+    && claude --version \
+    && railway --version
 
 # Megaplan from PyPI (override via build-arg MEGAPLAN_INSTALL_SPEC for git/custom sources)
 ARG MEGAPLAN_INSTALL_SPEC="arnold[agent]"

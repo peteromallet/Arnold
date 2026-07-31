@@ -162,6 +162,41 @@ def test_entrypoint_starts_discord_resident_from_shared_secret_env() -> None:
     )
 
 
+def test_cloud_image_installs_pinned_railway_cli() -> None:
+    dockerfile = (
+        Path(__file__).parents[2]
+        / "arnold_pipelines/megaplan/cloud/templates/Dockerfile"
+    ).read_text()
+
+    assert "@railway/cli@4.12.0" in dockerfile
+    assert 'ln -sf "$NVBIN/railway" /usr/local/bin/railway' in dockerfile
+    assert "railway --version" in dockerfile
+
+
+def test_entrypoint_persists_railway_auth_without_rendered_secret() -> None:
+    import subprocess
+
+    from arnold_pipelines.megaplan.cloud.template import render_entrypoint
+
+    entrypoint = render_entrypoint(_minimal_cloud_spec())
+
+    assert "RAILWAY_CREDS_DIR=/workspace/.creds/railway" in entrypoint
+    assert 'ln -s "$RAILWAY_CREDS_DIR" /root/.railway' in entrypoint
+    assert "/workspace/.creds/railway-config.json" in entrypoint
+    assert '[[ ! -s "$RAILWAY_CREDS_DIR/config.json" ]]' in entrypoint
+    assert "railway login" not in entrypoint
+    assert "RAILWAY_TOKEN=" not in entrypoint
+    assert "RAILWAY_API_TOKEN=" not in entrypoint
+    syntax = subprocess.run(
+        ["bash", "-n"],
+        input=entrypoint,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert syntax.returncode == 0, syntax.stderr
+
+
 def test_resident_self_heal_starts_the_production_bot_boundary() -> None:
     ensure_script = (
         Path(__file__).parents[2]

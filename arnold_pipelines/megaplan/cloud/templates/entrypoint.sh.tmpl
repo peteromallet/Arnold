@@ -10,6 +10,23 @@ mkdir -p /workspace /root/.ssh /root/.config/megaplan /root/.codex /root/.hermes
 chmod 700 /root/.ssh
 chmod 700 /root/.codex /root/.hermes /workspace/.creds
 
+# Railway CLI auth lives on the persistent workspace volume. Railway updates
+# ~/.railway/config.json with an atomic rename, so the whole directory (not
+# merely the file) must point at the volume for a browserless login to survive
+# container restarts. The legacy single-file seed is imported only when the
+# durable config does not already exist; credentials are never rendered into
+# the image, cloud.yaml, or logs.
+RAILWAY_CREDS_DIR=/workspace/.creds/railway
+install -d -m 700 "$$RAILWAY_CREDS_DIR"
+if [[ -s /workspace/.creds/railway-config.json ]] && [[ ! -s "$$RAILWAY_CREDS_DIR/config.json" ]]; then
+  install -m 600 /workspace/.creds/railway-config.json "$$RAILWAY_CREDS_DIR/config.json"
+fi
+if [[ -e /root/.railway ]] || [[ -L /root/.railway ]]; then
+  rm -rf /root/.railway
+fi
+ln -s "$$RAILWAY_CREDS_DIR" /root/.railway
+echo "Railway CLI: persistent credential directory configured"
+
 REPO_URL="$${REPO_URL:-${REPO_URL}}"
 REPO_BRANCH="$${REPO_BRANCH:-${REPO_BRANCH}}"
 WORKSPACE_PATH="${WORKSPACE_PATH}"
