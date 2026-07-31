@@ -66,6 +66,7 @@ from arnold_pipelines.megaplan.auto import (
     drive as auto_drive,
 )
 from arnold_pipelines.megaplan.feature_flags import supervisor_tier_routing_on
+from arnold_pipelines.megaplan._core.phase_runtime import active_step_has_live_worker
 from arnold_pipelines.megaplan.runtime.execution_environment import (
     merge_isolation_evidence,
     resolve_execution_environment,
@@ -5412,14 +5413,7 @@ def _plan_state_payload_from_name(root: Path, plan: str | None) -> dict[str, Any
 
 def _plan_has_live_active_step(plan_state: Mapping[str, Any]) -> bool:
     active_step = plan_state.get("active_step")
-    if not isinstance(active_step, Mapping):
-        return False
-    return bool(
-        active_step.get("phase")
-        or active_step.get("worker_pid")
-        or active_step.get("pid")
-        or active_step.get("session_id")
-    )
+    return active_step_has_live_worker(active_step)
 
 
 def _blocked_plan_replay_would_be_redundant(
