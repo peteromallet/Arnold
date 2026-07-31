@@ -353,7 +353,7 @@ class PipelineStepwiseDriver:
                 )
                 if fallback is not None:
                     edge = fallback
-                elif not stage.decision_vocabulary and not stage.override_vocabulary:
+                elif not stage.edges:
                     edge = None
                 else:
                     raise
