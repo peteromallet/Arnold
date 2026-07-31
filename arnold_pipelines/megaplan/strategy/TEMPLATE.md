@@ -1,5 +1,3 @@
-> **Authority status (M11):** Zero-authority history. All repair, audit, and deployment authority has been migrated to canonical delegation. This document is retained for reference only — it must not be used to materialize commands, grant authority, or drive automated actions.
-
 ---
 schema_version: megaplan-strategy-v1
 ---

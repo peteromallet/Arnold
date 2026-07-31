@@ -46,6 +46,7 @@ from arnold_pipelines.megaplan.strategy import (
     load_strategy_projection,
     make_roadmap_entry,
     move_roadmap_entry,
+    parse_strategy,
     project_to_dict,
     project_to_json,
     remove_roadmap_entry,
@@ -86,12 +87,25 @@ _TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "strategy" / "TEMPLATE
 def _read_template() -> str:
     """Read the v1 strategy template from the strategy package directory."""
     try:
-        return _TEMPLATE_PATH.read_text(encoding="utf-8")
+        template = _TEMPLATE_PATH.read_text(encoding="utf-8")
     except OSError as exc:
         raise CliError(
             "strategy_template_missing",
             f"Strategy template not found at {_TEMPLATE_PATH}: {exc}",
         ) from exc
+    document = parse_strategy(template, str(_TEMPLATE_PATH))
+    errors = [
+        diagnostic.message
+        for diagnostic in document.diagnostics
+        if diagnostic.level == "error"
+    ]
+    if errors:
+        raise CliError(
+            "strategy_template_invalid",
+            "Strategy template is not a valid current authority document: "
+            + "; ".join(errors),
+        )
+    return template
 
 
 # ---------------------------------------------------------------------------
