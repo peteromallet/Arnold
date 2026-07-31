@@ -10,7 +10,7 @@ tags:
 - acceptance
 codebase_id: null
 created_at: '2026-07-31T07:46:35.271850+00:00'
-last_edited_at: '2026-07-31T07:46:35.271850+00:00'
+last_edited_at: '2026-07-31T08:44:50+00:00'
 epics: []
 ---
 
@@ -60,3 +60,28 @@ instrumentation, and retirement of split legacy stores are deliberately
 separated into `01KYVKPN6JHD19ZRM3WQF9XV8S`, associated with Native Parity and
 Platformization. They remain mandatory platform work, but they do not prevent
 this concrete release from proving the backend it actually deploys.
+
+## 2026-07-31 implementation checkpoint
+
+The current-backend implementation now exists on the dedicated release branch:
+
+- `m11_workflow_canary admit` pins the exact target, deployment, source and
+  strict runtime receipt;
+- `run` drives real plan, prep/override resume, critique/gate/revise and all
+  four tiebreaker handlers with a provenance-marked deterministic inference
+  adapter, then executes the real suite boundary and atomic acceptance commit;
+- the producer checkpoints SQLite and freezes an exact evidence inventory but
+  has no verdict-writing path;
+- `verify` independently opens the frozen SQLite ledgers read-only, replays the
+  four scenario obligations, revalidates committed content-addressed
+  acceptance, and alone writes the immutable verdict;
+- conformance reruns the independent derivation rather than trusting verdict
+  shape or a self-hash;
+- the gate schema-parity false-positive was fixed at its source (the old code
+  compared a schema hash with an output instance), and the verifier rejects
+  any remaining persisted schema-parity error.
+
+Keep this ticket open until the exact deployed runtime executes `admit`, `run`
+and `verify` successfully and its verified verdict is captured by the release
+receipt. Code completion or a locally verified fixture is not a substitute for
+that deployed acceptance event.

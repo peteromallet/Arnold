@@ -629,20 +629,30 @@ receipt without those fields is unsupported and cannot be admitted. The
 runtime identity is derived from the receipt digest, never supplied separately
 by the caller.
 
-There is not yet an approved deployed runner and accepting verifier for this
-obligation. The current command can only record the exact admission and an
-immutable `pending` verdict:
+Run the producer against the immutable deployed checkout. The deterministic
+decision adapter replaces model inference only; every custody, WBC, boundary,
+suspension, tiebreaker, suite and acceptance write comes from the canonical
+production handler or acceptance entrypoint:
+
+```text
+RUNTIME_PYTHON -P -m arnold_pipelines.megaplan.cloud.m11_workflow_canary run
+  --root WORKFLOW_CANARY_ROOT
+  --project-dir RUNTIME_SRC
+```
+
+The producer checkpoints the current SQLite backend, removes only successfully
+checkpointed WAL bookkeeping sidecars, and writes an exact append-only frozen
+manifest. It cannot write `verdict.json`. Run the separate verifier:
 
 ```text
 RUNTIME_PYTHON -P -m arnold_pipelines.megaplan.cloud.m11_workflow_canary verify
   --root WORKFLOW_CANARY_ROOT
 ```
 
-It exits nonzero. This is intentional. Arbitrary observations, evidence-kind
-labels, pass booleans, timestamps, and recomputed self-hashes cannot turn the
-pending record into release proof. The release umbrella remains blocked until
-a follow-up implementation provides one executable deployed runner and an
-independently re-derived, immutable, backend-neutral proof joining all of:
+Before a complete frozen run, `verify` exits nonzero and writes no verdict.
+Afterward it opens SQLite read-only/immutable and independently re-derives the
+exact inventory, producer provenance, lifecycle order, boundary histories,
+committed acceptance snapshots/transactions, source/runtime joins, and:
 
 1. a genuinely fresh plan through accepted terminal completion;
 2. a durable suspension followed by a distinct resume and accepted terminal
@@ -652,13 +662,13 @@ independently re-derived, immutable, backend-neutral proof joining all of:
 4. the tiebreaker path, including its decision, before accepted terminal
    completion.
 
-That implementation must prove exact journal/manifest/run identity; committed
-acceptance snapshot and verdict identity; backend-neutral WBC start, resume,
-and terminal gates; suspension checkpoint/cursor and distinct reentry; three
-real authored gate iterations; and the declared tiebreaker decision route.
-The stores and verdict must be frozen before independent evaluation. Until
-then `deployed_proof_status` remains `pending`, and conformance deliberately
-rejects every `verified` claim.
+Any changed, missing, or extra frozen artifact; reused attempt identity;
+malformed event order; missing canonical producer provenance; stale
+source/runtime binding; uncommitted acceptance; or structured-output schema
+parity error fails closed. Arbitrary observations, labels, booleans,
+timestamps, and recomputed self-hashes cannot become release proof.
+Conformance accepts `deployed_proof_status: verified` only by rerunning this
+independent derivation against the stored `workflow-canary/verdict.json`.
 
 ## 8. Final receipts
 

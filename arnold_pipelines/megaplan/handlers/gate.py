@@ -52,9 +52,8 @@ from arnold_pipelines.megaplan._core import (
     require_state,
     save_debt_registry,
     workflow_includes_step,
-    workflow_next,
-    workflow_transition,
 )
+from arnold_pipelines.megaplan.flags import update_flags_after_gate
 
 from .critique import _validate_tiebreaker
 from .shared import (
@@ -1212,10 +1211,13 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
                 "iteration": iteration,
                 "produced_at": now_utc(),
             })
-            # Verify the persisted gate artifact matches the declared schema hash
+            # Verify the schema carried into the handler matches the persisted
+            # declaration.  ``gate_summary`` is an output instance, not a JSON
+            # Schema; hashing it against the schema declaration made every
+            # successful gate report a false parity drift.
             try:
                 verify_schema_hash(
-                    _computed_hash, gate_summary, phase="gate"
+                    _computed_hash, _gate_schema, phase="gate"
                 )
             except SchemaParityError as exc:
                 log.error("gate schema parity failure: %s", exc)
@@ -1296,6 +1298,3 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             },
             history_fields={"recommendation": gate_summary["recommendation"]},
         )
-
-
-from arnold_pipelines.megaplan.flags import update_flags_after_gate
