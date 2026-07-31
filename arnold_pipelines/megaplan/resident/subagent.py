@@ -3364,7 +3364,7 @@ def launch_managed_subagent_detached(
     reasoning_effort: str = "medium",
     toolsets: str = "file,web,terminal",
     max_tokens: int = 65_536,
-    provider_timeout_s: float = 600.0,
+    provider_timeout_s: float | None = None,
     task_kind: DelegatedTaskKind = DEFAULT_DELEGATED_TASK_KIND,
     work_intent: DelegatedWorkIntent = DEFAULT_DELEGATED_WORK_INTENT,
     mutation_claim: DelegatedMutationClaim = "auto",
@@ -7640,7 +7640,7 @@ async def launch_subagent_task(
         query_path = handle.name
     argv += ["--query-file", query_path]
 
-    timeout_s = float(config.special_requests_subagent_timeout_s)
+    timeout_s = config.special_requests_subagent_timeout_s
     try:
         completed = await asyncio.to_thread(_run_subprocess, argv, timeout_s)
     finally:
@@ -7810,22 +7810,19 @@ if __name__ == "__main__":
     raise SystemExit(_main())
 
 
-def _run_subprocess(argv: list[str], timeout_s: float) -> SubagentResult:
+def _run_subprocess(argv: list[str], timeout_s: float | None) -> SubagentResult:
+    run_kwargs: dict[str, Any] = {"capture_output": True, "text": True, "check": False}
+    if timeout_s is not None:
+        run_kwargs["timeout"] = timeout_s
     try:
-        completed = subprocess.run(
-            argv,
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            check=False,
-        )
+        completed = subprocess.run(argv, **run_kwargs)
     except subprocess.TimeoutExpired as exc:
         return SubagentResult(
             ok=False,
             final_text="",
             stderr=str(exc),
             returncode=-1,
-            error=f"subagent timed out after {timeout_s:.0f}s",
+            error=(f"subagent timed out after {timeout_s:.0f}s" if timeout_s is not None else "subagent timed out unexpectedly"),
         )
     final_text = (completed.stdout or "").strip()
     stderr = completed.stderr or ""

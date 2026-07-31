@@ -258,7 +258,7 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
     ) -> None:
         self.config = config
         self.max_tool_calls = max_tool_calls or config.max_tool_calls_per_turn
-        self.tool_timeout_s = tool_timeout_s or config.model_timeout_s
+        self.tool_timeout_s = tool_timeout_s if tool_timeout_s is not None else 30.0
         self._client_override = client_override
         self._model_override = model_override
         if self.max_tool_calls <= 0:
@@ -286,15 +286,19 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
                 }))
             except ModelBudgetError:
                 raise
-            response = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model=model_name,
-                    messages=messages,
-                    tools=openai_tools or None,
-                    tool_choice="auto" if openai_tools else None,
-                    timeout=self.config.model_timeout_s,
-                ),
-                timeout=self.config.model_timeout_s,
+            request_kwargs: dict[str, Any] = {
+                "model": model_name,
+                "messages": messages,
+                "tools": openai_tools or None,
+                "tool_choice": "auto" if openai_tools else None,
+            }
+            if self.config.model_timeout_s is not None:
+                request_kwargs["timeout"] = self.config.model_timeout_s
+            model_request = client.chat.completions.create(**request_kwargs)
+            response = (
+                await asyncio.wait_for(model_request, timeout=self.config.model_timeout_s)
+                if self.config.model_timeout_s is not None
+                else await model_request
             )
             message = response.choices[0].message
             tool_calls = tuple(message.tool_calls or ())
@@ -804,14 +808,13 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
             )
             _atomic_json_file(paths["manifest"], manifest)
             try:
-                await asyncio.wait_for(
-                    proc.communicate(
-                        stdin_payload.encode("utf-8")
-                        if stdin_payload is not None
-                        else None
-                    ),
-                    timeout=self.config.model_timeout_s,
+                communication = proc.communicate(
+                    stdin_payload.encode("utf-8") if stdin_payload is not None else None
                 )
+                if self.config.model_timeout_s is None:
+                    await communication
+                else:
+                    await asyncio.wait_for(communication, timeout=self.config.model_timeout_s)
                 returncode = int(proc.returncode or 0)
             except asyncio.TimeoutError:
                 await _terminate_process_group(proc)
@@ -1074,14 +1077,16 @@ class ManagedProviderCliAgentRunner(DispatchProtocol):
                 str(self.cwd),
                 "--query-file",
                 str(paths["prompt"]),
-                "--timeout",
-                str(self.config.model_timeout_s),
                 "--output-format",
                 "stream-json",
                 "--verbose",
                 "--tools",
                 claude_tools_for(toolsets),
             ]
+            if self.config.model_timeout_s is not None:
+                argv[argv.index("--output-format"):argv.index("--output-format")] = [
+                    "--timeout", str(self.config.model_timeout_s)
+                ]
             argv += ["--resume" if resume else "--session-id", str(session_id)]
             if hasattr(os, "geteuid") and os.geteuid() == 0:
                 argv += ["--permission-mode", "auto"]
@@ -1417,6 +1422,15 @@ def openai_client_from_config(config: ResidentConfig) -> Any:
     )
 
 
+def _openai_transport_timeout() -> Any:
+    """Finite socket guards without imposing a total progressing-work deadline."""
+    try:
+        import httpx
+    except ImportError as exc:
+        raise AgentLoopError("httpx is required for resident API calls") from exc
+    return httpx.Timeout(timeout=None, connect=30.0, read=120.0, write=30.0, pool=30.0)
+
+
 def openai_client_for_endpoint(
     *,
     credential_env: str,
@@ -1432,7 +1446,10 @@ def openai_client_for_endpoint(
     api_key = os.getenv(credential_env)
     if not api_key:
         raise ResidentCredentialError(credential_env)
-    kwargs: dict[str, Any] = {"api_key": api_key}
+    kwargs: dict[str, Any] = {
+        "api_key": api_key,
+        "timeout": timeout_s if timeout_s is not None else _openai_transport_timeout(),
+    }
     if base_url:
         kwargs["base_url"] = base_url
     if timeout_s is not None:
@@ -1497,7 +1514,10 @@ def _client_for_model(model_name: str) -> tuple[Any, str]:
         from openai import AsyncOpenAI
     except ImportError as exc:
         raise AgentLoopError("The openai package is required for live resident model turns") from exc
-    client_kwargs: dict[str, Any] = {"api_key": agent_kwargs.get("api_key") or os.getenv("OPENAI_API_KEY")}
+    client_kwargs: dict[str, Any] = {
+        "api_key": agent_kwargs.get("api_key") or os.getenv("OPENAI_API_KEY"),
+        "timeout": _openai_transport_timeout(),
+    }
     base_url = agent_kwargs.get("base_url")
     if base_url:
         client_kwargs["base_url"] = base_url
