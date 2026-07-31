@@ -383,3 +383,39 @@ SQLite-backed path. Backend-neutral SQLite/PostgreSQL persistence and universal
 workflow evidence joins are follow-up ticket `01KYVKPN6JHD19ZRM3WQF9XV8S`,
 associated with Native Parity and Platformization. The split narrows the
 release implementation without weakening its four real deployed proofs.
+
+## 2026-07-31 shard 031 release-discovery residual
+
+Shard 031 first ran from the clean consolidation vector
+`ddebf0870cb75c0cfa87f2fc6373ac76a2ba4af6`, which already contains the
+honest deployed workflow canary. The frozen 22-file partition collected and
+executed exactly 205 nodes: 202 passed and three failed, with zero skips,
+xfails, xpasses, deselections, inventory gaps, parser ambiguities, or source
+mutation. The immutable failing receipt is
+`Arnold-validation-checkpoints/ddebf0870c-shard031-exact-20260731/receipts/full-suite-031-ddebf0870c.json`
+with content SHA-256
+`b123ec18c600b6f13c8e4bc1056f3cb3c3f481325b0f16b3fee5ec60fa0f688b`.
+
+Two failures were stale replay-oracle assumptions. The routed
+`force-proceed` path now deliberately exceeds legacy behavior by atomically
+retaining every critique disposition as explicit debt custody. Requiring byte
+parity with the uncustodied legacy state would delete the proof that prevents
+a manufactured `done` result. The corrected oracle therefore proves the
+routed path is a strict authority-preserving superset: every current finding
+has a stable disposition, the override binds the custody transaction and exact
+debt count, and the gate projection names the same subjects.
+
+The third failure exposed a real routed-resume projection gap. Both paths
+completed the durable prep WBC lifecycle, and the routed response returned the
+new reentry invocation, but the routed override record did not persist that
+identity. The correction writes the reentry ID into the same atomic state
+transition that clears the suspension and advances to `prepped`; it fails
+closed if the matching durable override row is absent. The replay fixture now
+constructs an authentic STARTED/SUSPENDED attempt and proves both paths reach
+STARTED/SUSPENDED/RESUMED/COMPLETED with their own non-stitched reentry
+lineage.
+
+This update does not declare the release ticket complete. A terminal label may
+be repaired when underlying acceptance is already proven, but it may not
+substitute for the remaining exact-inventory, runtime-equivalence, deployed
+canary, supervision, cleanup, and Native S1 handoff obligations.
