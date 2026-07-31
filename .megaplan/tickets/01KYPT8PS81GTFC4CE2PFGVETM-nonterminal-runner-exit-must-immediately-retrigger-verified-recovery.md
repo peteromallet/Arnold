@@ -12,7 +12,7 @@ tags:
 - immediate-residual
 codebase_id: null
 created_at: '2026-07-29T11:30:57.448947+00:00'
-last_edited_at: '2026-07-31T03:17:11+00:00'
+last_edited_at: '2026-07-31T09:25:00+00:00'
 epics:
 - epic_id: megaplan-native-parity-corrective
   resolves_on_complete: false
@@ -21,7 +21,19 @@ epics:
   linked_at: '2026-07-31T03:17:11+00:00'
 ---
 
-The fixer declared recovery after transient cursor movement, and a retained M11 runner later exited nonterminal without a new occurrence. Fix commit b74157f1c9a1f3de3605c7f30447db18e5615f10 adds delayed live-heartbeat verification, a managed runner boundary, and immediate predecessor-linked runner_exit_nonterminal requests. The 13:28Z recurrence exposed a remaining deployment boundary: attempt 37 was an already-running noncanonical tmux session, so the managed exit sentinel never owned it and its death again produced no sidecar or queue request. Require the fixer to classify every live target as canonically managed, adopt it under an exit monitor when safe or replace it once, and never report healthy from a raw tmux PID alone. Acceptance: replay a pre-existing noncanonical runner that later dies and prove exactly one fresh global occurrence, one singleton recovery, and a canonical managed successor. Current recovery is now running under operator_control run-runner with supervisor PID 3490468 and child PID 3490470.
+The fixer declared recovery after transient cursor movement, and a retained M11
+runner later exited nonterminal without a new occurrence. Historical run notes
+cite `b74157f1c9a1f3de3605c7f30447db18e5615f10` for delayed live-heartbeat
+verification and a managed runner boundary, but that object is unavailable in
+the candidate repository and must not be represented as landed candidate
+evidence. The 13:28Z recurrence exposed a remaining deployment boundary:
+attempt 37 was an already-running noncanonical tmux session, so the managed
+exit sentinel never owned it and its death again produced no sidecar or queue
+request. Require the fixer to classify every live target as canonically
+managed, adopt it under an exit monitor when safe or replace it once, and never
+report healthy from a raw tmux PID alone. Acceptance: replay a pre-existing
+noncanonical runner that later dies and prove exactly one fresh global
+occurrence, one singleton recovery, and a canonical managed successor.
 
 ## 2026-07-31 reconciliation
 

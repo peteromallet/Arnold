@@ -56,6 +56,11 @@ Native S3A migrates the critique path. This ordering avoids concurrent
 authority-changing cutovers while leaving the native completion-kernel
 dependency graph unchanged.
 
+The release prerequisite is executable, not narrative: Critique Ledger may
+start only after ticket `01KYSBGRHM1S8R6RQ1DGZ7843Y` has an accepted
+exact-revision release receipt and its deployed-canary blocker
+`01KYVJ7A47TMH4BRGEV9JFTK10` is independently verified.
+
 ### Usable exits and gates
 
 - **Post-M11 release:** the existing Megaplan product is usable on the
@@ -92,6 +97,8 @@ dependency graph unchanged.
 ## Now
 
 - [epic:repository-strategy-roadmap] Repository Strategy Roadmap
+- [ticket:01KYSBGRHM1S8R6RQ1DGZ7843Y] Consolidate the post-M11 compatibility release before Native Parity
+- [ticket:01KYVJ7A47TMH4BRGEV9JFTK10] Implement an honest deployed workflow canary runner
 - [epic:critique-ledger] Critique Loop / Cumulative Finding Ledger Implementation Epic
 
 ## Next
