@@ -110,3 +110,16 @@ ordinary planning loop.
 ## Ownership and handoff
 
 Execute this in the post-M11 stabilization release, not inside the live M11 epic. Native Parity must consume and replay the fixtures when it introduces source-visible completion/rework semantics. Platformization may extract the neutral candidate-graph admission/CAS/circuit-breaker primitive, but must not introduce a second planner, scheduler, authority reducer, or progress registry.
+
+## 2026-07-31 implementation evidence and residual
+
+Implemented candidate-graph admission in `f72c9653d7`. Rejected candidates are
+kept off the canonical authority path, the prior accepted finalize and
+feasibility artifacts remain current, a narrow planner-repair receipt is
+published, and a repeated identical fingerprint opens the repair circuit
+instead of restarting broad critique/revision.
+
+Keep this ticket open until the exact archived 46-task and 40-task/67-edge
+graphs are replayed. Deterministic graph normalization, crash-injection and
+concurrent-finalizer tests, frozen semantic-hash proof, and the separate
+planner-feasibility status projection remain outstanding.
