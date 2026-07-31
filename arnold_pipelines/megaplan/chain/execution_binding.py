@@ -1663,6 +1663,15 @@ def expected_worker_launch_values(
         from arnold_pipelines.megaplan.chain.spec import load_chain_state
 
         state = load_chain_state(spec_path, verify_execution_binding=False)
+        policy = binding_policy(spec_path)
+        if not bool(
+            policy.get("required")
+            and policy.get("require_editable_runtime_match")
+        ):
+            return {
+                **empty,
+                "expected_chain_spec": str(spec_path.resolve(strict=False)),
+            }
         binding = (state.metadata or {}).get("execution_binding") or {}
         identity = binding.get("launched_identity") or {}
         runtime_binding = binding.get("runtime_binding") or {}

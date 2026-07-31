@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -174,7 +175,12 @@ def _write_chain(root: Path, labels: tuple[str, ...]) -> Path:
     return spec_path
 
 
-def _pinned_chain(tmp_path: Path, labels: tuple[str, ...] = ("c1", "c2", "c3")) -> Path:
+def _pinned_chain(
+    tmp_path: Path,
+    labels: tuple[str, ...] = ("c1", "c2", "c3"),
+    *,
+    require_runtime_match: bool = False,
+) -> Path:
     _git(tmp_path, "init")
     _git(tmp_path, "config", "user.email", "tests@example.com")
     _git(tmp_path, "config", "user.name", "Tests")
@@ -184,6 +190,7 @@ def _pinned_chain(tmp_path: Path, labels: tuple[str, ...] = ("c1", "c2", "c3")) 
     revision = _git(tmp_path, "rev-parse", "HEAD")
     raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
     raw["driver"]["intended_initiative_revision"] = revision
+    raw["driver"]["require_editable_runtime_match"] = require_runtime_match
     spec_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
     return spec_path
 
@@ -1120,25 +1127,21 @@ def test_external_runtime_receipt_rejects_stale_pth_observation(
         pth_path.write_bytes(before)
 
 
-def test_worker_expectations_resolve_canonical_spec_and_persisted_runtime(
+def test_worker_expectations_do_not_pin_runtime_when_policy_opts_out(
     tmp_path: Path,
 ) -> None:
     spec_path = _pinned_chain(tmp_path)
     state = _bound_state(spec_path)
     state.current_plan_name = "owned-plan"
     save_chain_state(spec_path, state)
-    expected_runtime = state.metadata["execution_binding"]["runtime_binding"][
-        "current_identity"
-    ]
-
     resolved = find_bound_chain_spec(tmp_path, plan_name="owned-plan")
     values = expected_worker_launch_values(resolved, root=tmp_path)
 
     assert resolved == spec_path
-    assert values["expected_installed_package_path"] == expected_runtime["import_root"]
-    assert values["expected_runtime_revision"] == expected_runtime["source_revision"]
-    assert values["expected_source_ref"] == expected_runtime["source_revision"]
-    assert values["expected_root"] == expected_runtime["import_root"]
+    assert values["expected_installed_package_path"] == ""
+    assert values["expected_runtime_revision"] == ""
+    assert values["expected_source_ref"] == ""
+    assert values["expected_root"] == ""
     assert values["expected_chain_spec"] == str(spec_path.resolve())
 
 
@@ -1177,15 +1180,32 @@ def test_worker_binding_requirement_rejects_ambiguous_canonical_owner(
     ]
 
 
-def test_worker_expectations_reject_incomplete_bound_runtime(tmp_path: Path) -> None:
+def test_worker_expectations_reject_incomplete_bound_runtime(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     spec_path = _pinned_chain(tmp_path)
-    state = _bound_state(spec_path)
-    state.current_plan_name = "owned-plan"
-    state.metadata["execution_binding"]["runtime_binding"]["current_identity"] = {
-        "source_revision": "",
-        "import_root": "",
-    }
-    save_chain_state(spec_path, state)
+    state = SimpleNamespace(
+        metadata={
+            "execution_binding": {
+                "launched_identity": {},
+                "runtime_binding": {
+                    "current_identity": {
+                        "source_revision": "",
+                        "import_root": "",
+                    }
+                },
+            }
+        }
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.execution_binding.binding_policy",
+        lambda _path: {"required": True, "require_editable_runtime_match": True},
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.spec.load_chain_state",
+        lambda _path, verify_execution_binding=False: state,
+    )
 
     with pytest.raises(CliError, match="incomplete worker runtime expectations"):
         expected_worker_launch_values(spec_path, root=tmp_path)
