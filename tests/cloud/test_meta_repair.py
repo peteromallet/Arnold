@@ -3048,28 +3048,21 @@ class TestCanPushChanges:
             finally:
                 os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
 
-    def test_commit_authority_does_not_imply_push(self) -> None:
+    def test_commit_authority_does_not_imply_push(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A local commit grant must not authorize an external push."""
-        os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
+        monkeypatch.setenv("ARNOLD_AUTONOMY", "1")
+        monkeypatch.setenv("ARNOLD_META_REPAIR_ENABLED", "1")
+        monkeypatch.setenv("ARNOLD_META_REPAIR_COMMIT_ENABLED", "1")
+        monkeypatch.delenv("ARNOLD_META_REPAIR_PUSH_ENABLED", raising=False)
+
         commit_result = can_commit_changes()
         push_result = can_push_changes()
+
         assert commit_result.allowed is True
         assert push_result.allowed is False
         assert push_result.flag_name == "ARNOLD_META_REPAIR_PUSH_ENABLED"
-
-        os.environ["ARNOLD_META_REPAIR_COMMIT_ENABLED"] = "1"
-        os.environ["ARNOLD_AUTONOMY"] = "1"
-        os.environ["ARNOLD_META_REPAIR_ENABLED"] = "1"
-        try:
-            commit_result = can_commit_changes()
-            push_result = can_push_changes()
-            assert commit_result.allowed is True
-            assert push_result.allowed is False
-            assert push_result.flag_name == "ARNOLD_META_REPAIR_PUSH_ENABLED"
-        finally:
-            os.environ.pop("ARNOLD_AUTONOMY", None)
-            os.environ.pop("ARNOLD_META_REPAIR_ENABLED", None)
-            os.environ.pop("ARNOLD_META_REPAIR_COMMIT_ENABLED", None)
 
     def test_push_requires_commit_gate_too(self) -> None:
         os.environ["ARNOLD_META_REPAIR_PUSH_ENABLED"] = "1"
