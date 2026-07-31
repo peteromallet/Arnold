@@ -13,7 +13,7 @@ Native-specific topology and identity proof. Close only when clean checkout,
 wheel/sdist, and pinned cloud runtime demonstrate the same authored semantics,
 authority decisions, custody ownership, WBC history, and disposable projections.
 
-`../GOLDEN_TRACE_CONTRACT.md` is the human-reviewed required proof-map input.
+`../validation/GOLDEN_TRACE_CONTRACT.md` is the human-reviewed required proof-map input.
 An independent static source oracle and separately implemented raw-event audit
 verifier check Python/runtime equivalence. It is never runtime route or repair
 authority.

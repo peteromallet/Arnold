@@ -6,7 +6,7 @@ Author the remaining planning/finalization decision topology and prove that
 every human suspension resumes at the exact semantic point under current Run
 Authority and Custody—not from a marker, receipt, projection, or stale lease.
 
-Make `NP-GT-003` in `../GOLDEN_TRACE_CONTRACT.md` green as the normative
+Make `NP-GT-003` in `../validation/GOLDEN_TRACE_CONTRACT.md` green as the normative
 same-run clarification suspend/cross-host resume trace.
 
 Before any S4 work, reconsume the exact C1/C2 manifests, S2R

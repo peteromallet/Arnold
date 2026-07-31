@@ -253,7 +253,7 @@ That earlier preparation defect is now resolved in source: Native Parity has
 explicit C1/C2 milestones for `CompletionSpec`, `CompletionBinding`, and
 `CompletionVerdict`; the standalone completion briefs and governing proposal
 remain byte-preserved; and
-`standardized-completion-specifications/SUPERSESSION_CROSSWALK.yaml` maps all
+`standardized-completion-specifications/evidence/SUPERSESSION_CROSSWALK.yaml` maps all
 81 retained requirements plus two changed constraints to active owners and
 proof destinations. The
 remaining launch dependency is executable rather than architectural: the

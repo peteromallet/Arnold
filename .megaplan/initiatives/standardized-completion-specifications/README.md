@@ -9,7 +9,7 @@ The useful material remains normative design and traceability input:
   snapshot;
 - `briefs/m1.md` through `briefs/m5.md` are preserved historical requirement
   sources; and
-- `SUPERSESSION_CROSSWALK.yaml` exhaustively assigns every former requirement
+- `evidence/SUPERSESSION_CROSSWALK.yaml` exhaustively assigns every former requirement
   to its accepted owner and proof destination.
 
 `chain.yaml` and `cloud.yaml` are archival source indexes. They are valid YAML
@@ -56,6 +56,6 @@ Historical evidence and any artifact consumed by an existing manifest or gate
 must remain content-addressably reachable. Supersession never means deletion
 of proof.
 
-`SUPERSESSION_CROSSWALK.yaml` is the machine-readable source for canonical
+`evidence/SUPERSESSION_CROSSWALK.yaml` is the machine-readable source for canonical
 active milestone labels, oracle-amendment proof-rule IDs and exact proof paths,
 including the non-orphaning dependency on M11/live evidence.

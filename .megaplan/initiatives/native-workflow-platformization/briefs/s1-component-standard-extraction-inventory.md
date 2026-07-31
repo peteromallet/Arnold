@@ -24,7 +24,7 @@ reproducible work; it does not certify a stable platform.
 
 ## Normative contract and inputs
 
-[`../PLATFORM_CONTRACT.md`](../PLATFORM_CONTRACT.md) is the normative
+[`../decisions/PLATFORM_CONTRACT.md`](../decisions/PLATFORM_CONTRACT.md) is the normative
 cross-milestone contract. This brief assigns S1 ownership; it does not abridge or
 override that contract. If wording here appears to differ, the contract wins
 and the inconsistency is a blocking defect.

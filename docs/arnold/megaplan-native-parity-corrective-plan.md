@@ -200,7 +200,7 @@ The system need not maximize visible steps. It must use the minimum readable
 workflow that completely determines behavior.
 
 The normative composition oracle is
-`.megaplan/initiatives/megaplan-native-parity-corrective/GOLDEN_TRACE_CONTRACT.md`.
+`.megaplan/initiatives/megaplan-native-parity-corrective/validation/GOLDEN_TRACE_CONTRACT.md`.
 It is the human-reviewed scenario/invariant contract, not a generated route
 graph. An independent static source oracle derives source occurrences and
 structured-control relations without calling the production lowerer; raw

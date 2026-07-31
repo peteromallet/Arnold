@@ -6,7 +6,7 @@ Make every override/recovery/configuration route and exact reentry edge authored
 topology, then reduce auto-drive, CLI, status, watchdog, auditor, and projections
 to non-authoritative consumers of the admitted M11 control/query APIs.
 
-Make the `NP-GT-006` family in `../GOLDEN_TRACE_CONTRACT.md` green, including
+Make the `NP-GT-006` family in `../validation/GOLDEN_TRACE_CONTRACT.md` green, including
 `NP-GT-006A`, `NP-GT-006B`, and `NP-GT-006C`.
 
 Before any S6 work, reconsume the exact C1/C2 manifests, S2R
