@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util as _iu
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -31,6 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 TOOLS_DIR = REPO_ROOT / "tools"
 EVIDENCE_DIR = REPO_ROOT / "evidence"
 REPLAY_DIR = EVIDENCE_DIR / "replay"
+_SANDBOX_EVIDENCE_DIR: Path | None = None
 
 # Ensure tools/ is on sys.path for direct imports
 sys.path.insert(0, str(TOOLS_DIR))
@@ -67,10 +69,93 @@ def _load_json(path: Path) -> dict[str, Any]:
         return json.load(fh)
 
 
+def _sandboxed_output_args(script: str, args: tuple[str, ...]) -> list[str]:
+    """Bind every generator write to the attempt-local evidence sandbox."""
+    if _SANDBOX_EVIDENCE_DIR is None:
+        raise AssertionError("M6 evidence sandbox was not initialized")
+    rendered = list(args)
+    evidence_dir = _SANDBOX_EVIDENCE_DIR
+    if script == "verify_m6_prerequisites.py" and "--output" not in rendered:
+        rendered.extend(["--output", str(evidence_dir / "m6-prerequisite-verification.json")])
+    elif script == "generate_wbc_boundary_inventory.py" and "--output" not in rendered:
+        rendered.extend(["--output", str(evidence_dir / "wbc-boundary-inventory.json")])
+    elif script == "generate_m6_finding_register.py" and "--output" not in rendered:
+        rendered.extend(["--output", str(evidence_dir / "finding-prevention-register.json")])
+    elif script == "generate_m6_controlled_registries.py":
+        output_flag = "--reader-output" if "--reader-registry" in rendered else "--output"
+        if output_flag not in rendered:
+            output_name = (
+                "authority-reader-registry.json"
+                if output_flag == "--reader-output"
+                else "controlled-writer-registry.json"
+            )
+            rendered.extend([output_flag, str(evidence_dir / output_name)])
+    elif script == "generate_m6_replay_fixtures.py" and "--output" not in rendered:
+        fixture = (
+            rendered[rendered.index("--fixture") + 1]
+            if "--fixture" in rendered
+            else "transaction-spine"
+        )
+        rendered.extend(["--output", str(evidence_dir / "replay" / f"{fixture}.json")])
+    elif script == "reconcile_m6_migration_matrix.py" and "--output" not in rendered:
+        rendered.extend(["--output", str(evidence_dir / "migration-matrix-reconciled.json")])
+    elif script in {
+        "generate_m6_ownership_decision.py",
+        "generate_m6_rollout_register.py",
+    } and "--output-dir" not in rendered:
+        rendered.extend(["--output-dir", str(evidence_dir)])
+    elif script == "validate_m6_evidence.py" and "--output" not in rendered:
+        rendered.extend(["--output", str(evidence_dir / "m6-proof-index.json")])
+    return rendered
+
+
+def _git_status() -> str:
+    result = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    return result.stdout
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _m6_evidence_sandbox(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """Keep regeneration proof hermetic and reject source-checkout writes."""
+    global EVIDENCE_DIR, REPLAY_DIR, _SANDBOX_EVIDENCE_DIR
+
+    source_evidence_dir = EVIDENCE_DIR
+    status_before = _git_status()
+
+    sandbox_root = tmp_path_factory.mktemp("m6-evidence-sandbox")
+    sandbox_evidence_dir = sandbox_root / "evidence"
+    shutil.copytree(source_evidence_dir, sandbox_evidence_dir)
+    EVIDENCE_DIR = sandbox_evidence_dir
+    REPLAY_DIR = sandbox_evidence_dir / "replay"
+    _SANDBOX_EVIDENCE_DIR = sandbox_evidence_dir
+    try:
+        yield
+    finally:
+        EVIDENCE_DIR = source_evidence_dir
+        REPLAY_DIR = source_evidence_dir / "replay"
+        _SANDBOX_EVIDENCE_DIR = None
+        status_after = _git_status()
+        assert status_after == status_before, (
+            "M6 generator tests mutated the source checkout:\n"
+            f"before:\n{status_before or '<clean>'}\n"
+            f"after:\n{status_after or '<clean>'}"
+        )
+
+
 def _run_tool(script: str, *args: str) -> subprocess.CompletedProcess:
-    """Run a tool script from the repo root with a generous timeout."""
+    """Run a tool with all outputs bound to the evidence sandbox."""
     return subprocess.run(
-        [sys.executable, str(TOOLS_DIR / script)] + list(args),
+        [sys.executable, str(TOOLS_DIR / script)]
+        + _sandboxed_output_args(script, args),
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
@@ -795,7 +880,13 @@ class TestPinnedInputsNoMutableState:
         """
         # Run prerequisite verifier with minimal env
         result = subprocess.run(
-            [sys.executable, str(TOOLS_DIR / "verify_m6_prerequisites.py"), "--json"],
+            [
+                sys.executable,
+                str(TOOLS_DIR / "verify_m6_prerequisites.py"),
+                "--json",
+                "--output",
+                str(EVIDENCE_DIR / "m6-prerequisite-verification.json"),
+            ],
             cwd=str(REPO_ROOT),
             capture_output=True,
             text=True,

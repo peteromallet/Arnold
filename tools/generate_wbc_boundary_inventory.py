@@ -2261,7 +2261,9 @@ def _check_completion_equation(inventory: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _run_validation(inventory: dict[str, Any]) -> int:
+def _run_validation(
+    inventory: dict[str, Any], *, evidence_dir: Path = EVIDENCE_DIR
+) -> int:
     """Run the validation/completion-equation check.
 
     Returns 0 if validation passes or prerequisites block,
@@ -2284,7 +2286,7 @@ def _run_validation(inventory: dict[str, Any]) -> int:
     eq_result["prerequisite_status"] = prereq_status
 
     # Write validation result alongside inventory
-    validation_path = EVIDENCE_DIR / "wbc-boundary-inventory-validation.json"
+    validation_path = evidence_dir / "wbc-boundary-inventory-validation.json"
     validation_path.parent.mkdir(parents=True, exist_ok=True)
     with open(validation_path, "w", encoding="utf-8") as fh:
         json.dump(eq_result, fh, indent=2, default=str, sort_keys=True)
@@ -2474,9 +2476,11 @@ def _historical_adapters() -> dict[str, Any]:
     }
 
 
-def _write_discovery_rules() -> None:
-    if DISCOVERY_RULES_PATH.is_file():
-        text = DISCOVERY_RULES_PATH.read_text(encoding="utf-8")
+def _write_discovery_rules(
+    output_path: Path = DISCOVERY_RULES_PATH,
+) -> None:
+    if output_path.is_file():
+        text = output_path.read_text(encoding="utf-8")
     elif SOURCE_DISCOVERY_RULES_PATH.is_file():
         text = SOURCE_DISCOVERY_RULES_PATH.read_text(encoding="utf-8")
     else:
@@ -2491,12 +2495,16 @@ def _write_discovery_rules() -> None:
         text += "".join(
             f"  - {spec[0]}\n" for spec in _HISTORICAL_ADAPTER_SPECS
         )
-    DISCOVERY_RULES_PATH.parent.mkdir(parents=True, exist_ok=True)
-    DISCOVERY_RULES_PATH.write_text(text, encoding="utf-8")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(text, encoding="utf-8")
 
 
 def _write_validation_receipt(
-    inventory: dict[str, Any], *, matrix_before: str, matrix_after: str
+    inventory: dict[str, Any],
+    *,
+    matrix_before: str,
+    matrix_after: str,
+    output_path: Path | None = None,
 ) -> None:
     checks = [
         {
@@ -2517,7 +2525,7 @@ def _write_validation_receipt(
         "checks": checks,
         "inventory_content_hash": inventory["meta"]["content_hash"],
     }
-    path = EVIDENCE_DIR / "wbc-boundary-inventory-validation.json"
+    path = output_path or EVIDENCE_DIR / "wbc-boundary-inventory-validation.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(receipt, indent=2, sort_keys=True) + "\n",
@@ -2701,17 +2709,21 @@ def generate(output_path: Path | None = None) -> dict[str, Any]:
             json.dump(inventory, fh, indent=2, default=str, sort_keys=False)
         print(f"[generate_wbc_boundary_inventory] wrote {output_path}")
 
+    artifact_dir = output_path.parent if output_path else EVIDENCE_DIR
+
     # T7: Also generate historical adapters artifact
     adapters = _historical_adapters()
-    HISTORICAL_ADAPTERS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(HISTORICAL_ADAPTERS_PATH, "w", encoding="utf-8") as fh:
+    historical_adapters_path = artifact_dir / "wbc-historical-adapters.json"
+    historical_adapters_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(historical_adapters_path, "w", encoding="utf-8") as fh:
         json.dump(adapters, fh, indent=2, default=str, sort_keys=True)
-    print(f"[generate_wbc_boundary_inventory] wrote {HISTORICAL_ADAPTERS_PATH}")
-    _write_discovery_rules()
+    print(f"[generate_wbc_boundary_inventory] wrote {historical_adapters_path}")
+    _write_discovery_rules(artifact_dir / "wbc-boundary-discovery-rules.yaml")
     _write_validation_receipt(
         inventory,
         matrix_before=matrix_before,
         matrix_after=_matrix_hash(),
+        output_path=artifact_dir / "wbc-boundary-inventory-validation.json",
     )
 
     return inventory
@@ -2942,7 +2954,7 @@ def main() -> None:
     inventory = generate(output_path=args.output)
 
     if args.validate:
-        exit_code = _run_validation(inventory)
+        exit_code = _run_validation(inventory, evidence_dir=args.output.parent)
         sys.exit(exit_code)
 
 
