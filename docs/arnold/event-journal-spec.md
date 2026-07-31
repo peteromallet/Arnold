@@ -54,6 +54,41 @@ Canonical JSON rules (see `canonical_json`):
 | `idempotency_key` | effect/budget | Idempotency boundary for effects and reservations |
 | `replay` | journal | `ReplayReference(journal_uri, sequence)` for lineage |
 
+## Portable correlation envelope target
+
+Native Parity S1 freezes, and S2R implements, the versioned successor
+`arnold.workflow.event_envelope.v2`. It retains every v1 replay/quarantine field
+and adds durable correlation keys sufficient for product-neutral audit:
+
+- `workflow_identity`, `semantic_occurrence_id`, `parent_occurrence_id`, and
+  authored `source_span`;
+- `step_occurrence_id` where the boundary is a step;
+- `loop_generation`, `rework_generation`, `logical_retry_generation`, and
+  `reentry_generation`;
+- `execution_attempt_id`, distinct from the semantic occurrence and WBC
+  attempt;
+- platform-issued `agent_session_id`, `model_call_id`, `tool_call_id`, and
+  `effect_id` where applicable;
+- `trace_id` and `span_id`;
+- immutable structured-log/transcript/input/output artifact refs carrying
+  digest, schema, retention, redaction and access classification;
+- prompt/model/tool/policy versions, usage/cost values, and optional provider
+  session/request provenance; and
+- accepted consuming decision/terminal identity when one exists.
+
+Every event carries its owning run/occurrence/attempt coordinates even when no
+agent, call, effect, or consuming decision exists. Provider identifiers never
+replace platform identity. Large or sensitive values may be protected artifact
+references rather than plaintext journal payloads.
+
+The keys support both directions: occurrence/attempt → agent/model/tool/effect/
+cost/log artifacts and each record → owning occurrence/source plus consuming
+decision/terminal when present. Reverse indexes and search views are rebuildable
+projections; the append-only events and artifact refs remain authoritative.
+Logs and transcripts are observational and cannot route, authorize,
+terminalize, or certify. “Complete audit” means complete durable-boundary
+envelopes and causal joins, not Python instruction or local-variable tracing.
+
 ## Required event types
 
 ### Lifecycle

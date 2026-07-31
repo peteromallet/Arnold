@@ -1,0 +1,360 @@
+# S2R - Durable Control Primitives Bound to Custody APIs
+
+## Objective
+
+Consume the accepted S2F `.pype` compiler/identity handoff, C1/C2 completion
+kernel manifests, and their exact current divergence-ledger hash. Implement
+the product-neutral durable constructs needed to express Megaplan without
+semantic erasure, instantiate runtime occurrences and concrete completion
+aggregation for every primitive, then bind their execution boundaries to the
+admitted M11 Run Authority, Custody, WBC, and acceptance APIs. Do not migrate
+Megaplan product phases until a neutral reference pipeline proves the machinery
+and the chain's GO-0 transition emits the sole authoritative
+completion-kernel enablement receipt.
+
+Use `../GOLDEN_TRACE_CONTRACT.md` as the neutral pipeline's normalized ordered,
+multiset, same-run trace oracle; never as an execution input.
+
+## Required work
+
+- Independently rerun S2F's GO-FORMAT validator against its accepted merged
+  source, compiler, descriptor, lock, proof map and receipt before consuming
+  any IR. Missing, red, stale, unbound or incompatible evidence blocks S2R.
+  Build the neutral reference workflows through that one accepted frontend;
+  do not reimplement parsing, linking, conversion, identity or preview.
+- Validate and consume `completion-kernel-c1-manifest.json`,
+  `completion-kernel-c2-manifest.json`, the exact current
+  `completion-divergence-ledger.json` hash, schema/serialization/decoder matrix,
+  candidate-outcome registry, total platform-disposition boundary mapping,
+  evidence-scope/proof-mode contracts, aggregation signatures, import lint,
+  restore/projection-invariance receipts, and shadow acceptance integration.
+  Require the exact `(spec_hash, obligation_id)` identity rule, normative
+  evidence-window tuple, canonical candidate registry plus strict generated
+  product projections, and the reproduced false-pass golden receipt. Any
+  unresolved or stale blocking divergence or missing golden exemplar stops
+  GO-0.
+- Instantiate invocation, fanout-child, human-suspension/reentry, retry,
+  rework-generation, and effect occurrences beneath S2F's source-stable
+  call-site templates. Preserve distinct authored, semantic occurrence, Run
+  Authority, WBC, and Custody identities. Do not infer a durable subject from
+  incidental ledger appearance. Close every S2F deferred human/rework template
+  through its named allocator/admission lint; an unowned or implicit template
+  cannot pass GO-0.
+- Freeze admitted child sets and supply exactly one total concrete completion
+  aggregation instance conforming to C2's signatures for every supported
+  sequence, branch, map/reducer, retry, bounded loop, named exit, human,
+  checkpoint, suspension, effect, cancellation/reconciliation, and rework
+  primitive. Incomplete candidate mappings fail at compile/admission.
+- Enforce immutable bindings, exact evidence scope, proof modes, verifier
+  independence, waiver taint, and decoder behavior at every primitive. Retain
+  each intervening binding across `superseded_by_named_exit`; do not launder it
+  into accepted, waived, cancelled, or not-applicable.
+- Enforce the frozen store/capability matrix at runtime. Preview and durable
+  sandbox may share physical infrastructure only through disjoint credentials,
+  logical namespaces, keys, indexes, retention and discovery; they cannot
+  acquire admitted authority, product-history, proof/evidence, effect,
+  checkpoint, idempotency or production-cache capabilities.
+- Implement or finish typed decisions, typed terminal outcomes, bounded loops,
+  dynamic runtime map/reducer, sequential fallback, per-item retry/fallback,
+  deterministic child naming, human suspend/resume, checkpoint coordinates,
+  and retry/timeout/model/fallback policy attached at call sites.
+- Lower source constructs to a product-neutral runtime graph without importing
+  Megaplan components, policies, handlers, route vocabulary, or canonical-path
+  special cases.
+- Implement S1's generated-manifest schema/version/hash evolution contract
+  before changing serialized topology. Exercise old/new workers against old/new
+  manifests; an unsupported schema/hash rejects before body/effect intent and
+  continuation requires the declared compatibility/migration/quarantine path.
+- Preserve runtime collection schema, max workers, reducer, child paths,
+  cancellation/orphan behavior, and dynamic cardinality when width is unknown
+  at compile time.
+- Give every invocation and fanout child a deterministic semantic identity.
+  Map it—without collapsing it—to a Run Authority subject attempt/fence, WBC
+  execution attempt/version, and exact Custody target/lease epoch.
+- Use M11's existing WBC reservation/start/terminal/retry/suspend/resume/cancel,
+  effect-intent/outcome, checkpoint, outbox, and reconciliation APIs.
+- Invoke the admitted action validator and lease/recovery interfaces at every
+  authority-increasing dispatch, transition, retry, resume, effect, or terminal
+  acceptance. Do not recreate grant, lease, or reconciliation logic.
+- Every closed typed decision and terminal acceptance creates or links exactly
+  one accepted Run Authority Decision under the current subject attempt/fence.
+  The runtime transition consumes that exact decision ID/outcome/CAS sequence;
+  no handler, status field, WBC receipt, or projection may independently persist
+  or infer the accepted route.
+- Define Native-specific semantic reentry and checkpoint coordinates and pass
+  them through the settled custody lifecycle.
+- Bind every checkpoint/reentry envelope to the authored program/topology
+  digest, call-site-policy digest, exact WBC boundary-contract version,
+  installed-artifact and dependency-lock digests, and applicable prompt/tool
+  binding identities.
+  Resume under drift must use the pinned original or take an explicit typed
+  migration, new-attempt, or quarantine path—with new subject/WBC attempt and
+  current custody epoch as applicable. Silent recompilation under changed
+  program, policy, or contract is forbidden.
+- Bind and validate the admitted program/topology digest, call-site-policy
+  digest, exact WBC contract version, installed-artifact/dependency-lock
+  digests, and applicable prompt/tool identities on **every**
+  Native authority-increasing dispatch, typed decision, transition, terminal
+  acceptance, and effect envelope before product body or effect intent—not only
+  at checkpoint/reentry.
+- Build a neutral reference pipeline that exercises crash, retry, dynamic
+  fanout, cancellation, suspension, effect ambiguity, transfer/reclaim, and
+  resume in enforce mode.
+- Add a heterogeneous-host fixture: one stale installed worker in an otherwise
+  current run is rejected/quarantined before body/effect intent; continuation
+  requires an explicit accepted migration/new-attempt decision.
+- Enforce S1's deterministic-Python contract with compile-time analysis and
+  runtime guards where static proof is impossible. Canonicalize or reject
+  unstable ordering. Preserve authored file/span and semantic path through
+  lowering so compile and runtime failures report stable source-local
+  diagnostics and supported rewrites.
+- Ship an in-process authoring harness over the production compiler, lowerer,
+  and transition semantics. It supports typed phase fakes, recorded LLM/tool/
+  effect results, logical time and fault injection, fast-forwarded human
+  decisions, crash/retry/resume simulation, and normalized trace inspection.
+  Test stores implement the admitted RA/Custody/WBC contracts; the harness may
+  not add routes, weaken closed outcomes/effects, or count as release proof.
+- Implement S1's execution modes as explicit runner inputs and record fields.
+  Make working-tree edit/repeat/fork the short path: automatically compute the
+  behavior-relevant content digest; accept typed fixtures or immutable recorded
+  boundary inputs; start fresh experiment/run/attempt lineage and isolated
+  state/checkpoint/artifact/cache/effect-idempotency namespaces; retain source-
+  run/boundary provenance; and default effects to fakes or explicitly sandbox-
+  scoped targets. No experiment appends to the source run or reuses its
+  production authority/effect identity.
+- Provide an explicit non-durable `authoring_preview` runner for unsupported
+  Python. It may return functional output, but cannot emit a durable checkpoint,
+  RA/Custody/WBC/effect success, replay/resume token, comparison evidence or
+  admission/certification receipt. Durable compiler errors link to this preview
+  and the supported typed rewrite without silently selecting either.
+- Define an LLM/tool call envelope binding prompt/template content and all
+  referenced prompt assets, system/developer instructions, model/provider/
+  profile and decoding/tool-choice parameters, tool input/output schema/version
+  and effect class, token/cost/time/retry budgets with durable counters, cache/
+  memoization policy and key, output schema, and durable result identity.
+  Replay consumes a recorded result; logical retry creates a new declared
+  attempt without resetting budget. Cache entries are fully content-addressed,
+  schema-validated, provenance-journaled, non-authoritative, and run-scoped
+  unless cross-run reuse is explicitly declared.
+- Implement the portable bidirectional audit-correlation envelope and indexes.
+  Join run, workflow/step occurrence, loop/rework/retry/reentry generation and
+  execution attempt to agent session, model/tool/effect call, trace/span,
+  usage/cost and immutable structured-log/transcript artifact, and resolve
+  every such record back to its owning occurrence and source span, plus an
+  accepted consuming workflow decision or terminal when one exists. Use a
+  platform-issued agent-session identity; provider session/request IDs are
+  optional provenance.
+  Inputs/outputs, attempts, terminals and declared effects are durable-boundary
+  facts; large/sensitive content uses digest/schema/retention/redaction-bound
+  artifact refs. Arbitrary line/local-variable tracing is not required, and
+  observational records cannot route, authorize, terminalize or certify.
+  Durable events carry correlation keys; reverse indexes are rebuildable
+  projections.
+- Enforce checkpoint payload discipline using M11 facilities: inline only
+  bounded schema-versioned control values; represent large/unbounded plans,
+  prompts, transcripts/results, task outputs, reviews, and binaries as immutable
+  artifact references. Missing/expired/digest-mismatched/schema-incompatible
+  required artifacts enter typed repair/migration/quarantine, never silent
+  recomputation.
+- Derive durable state, checkpoint, artifact, effect-idempotency, and cache keys
+  from run identity plus semantic path and invocation/loop/item/retry/reentry
+  coordinates. Python object identity, display labels, list positions, and broad
+  phase names are forbidden.
+- Implement typed exits that address a named enclosing loop. Lowering validates
+  ancestor targets and exhaustive parent handling; sentinels and exceptions
+  cannot encode multi-level product routes.
+- Canonicalize every decision input as a schema-qualified serializable value and
+  journal its digest with the accepted RA decision. Reject or explicitly
+  normalize host paths, datetimes, float edge cases, unordered containers, and
+  mutable/custom objects.
+- Freeze one fanout-admission digest over canonical item keys, context, policy,
+  prompt/tool bindings, and artifact references. Every sibling consumes it.
+  Reducers receive a canonical keyed multiset of typed results, never completion
+  order; duplicate or missing keys fail.
+- Permit topology to match only declared typed phase outcomes/errors. Unexpected
+  exceptions enter one fixed infrastructure-failure channel and declared retry/
+  recovery policy; open exception-class product branching is forbidden.
+- Implement a typed `reconfigure(delta, target_cursor)` transition that accepts
+  a schema-versioned delta, checkpoints it, derives new policy/executable and
+  product-contract bindings, advances reentry/attempt identity as required, and
+  resumes the named cursor. Ambient context or live flags cannot mutate routes.
+- Freeze the declared durable-agentic boundary with typed ports, closed outer
+  outcomes, named policy/budgets, one explicit WBC inner-call protocol, and an
+  ordered durable model/tool/effect ledger. Implement it in this milestone only
+  if S1 proves a current model-determined inner-call consumer; otherwise reject
+  opaque inner loops with a stable diagnostic and experimental-Platformization
+  recipe. For any admitted implementation, outer route hints are forbidden and
+  every effectful inner call owns an exact Custody target plus its own durable
+  WBC effect intent/outcome record; an enclosing phase receipt cannot stand in
+  for them.
+- Reject open-ended streams or opaque polling with a stable diagnostic and a
+  deliberate-non-support recipe pointing to a future event-queue port. Do not
+  add race/quorum without a demonstrated current Megaplan parity requirement.
+- Bind the normalized product/Plan Contract digest to compile, checkpoint,
+  reentry, decision, transition, terminal, and effect envelopes wherever it
+  changes evidence obligations.
+- Integrate S1's independent source oracle and raw-event audit comparator with
+  the neutral production runtime. Check raw event IDs/multiplicity before the
+  golden contract's approved normalization; production lowerer/runtime
+  adapters and the verifier cannot share deduplication, event-elision or
+  ordering logic.
+- Implement product-neutral entry adapters/guards for `arnold.execution`,
+  `NativeProgram`, and the retained runtime-envelope/legacy plane. Register all
+  live writers in M11 and cross one complete enforce-mode validator. GO-0
+  injects an unregistered writer and a plane-local bypass for every plane;
+  adapters may serialize an already selected action but cannot route.
+- Through two independent clients using the production Run Authority adapter,
+  contend on every neutral decision-consumption and terminal/arbitration key in
+  both release orders. Inject crashes immediately before and after the
+  conditional write and require exactly one committed acceptance. Bind the
+  receipt to the concrete adapter, canonical store/service and schema;
+  application read/check/write, local mutexes and in-memory test stores do not
+  count as GO-0 evidence.
+- Put every Native durable ledger/registry introduced here inside the admitted
+  rollback boundary or run its restore-then-replay proof now. S7 may consume
+  this introduction receipt but cannot be the first time rollback safety is
+  tested.
+- Distinguish immutable execution-attempt terminals, retry generations under
+  one semantic child, and the one aggregate child terminal consumed by the
+  parent. Implement named-exit unwind terminals and explicit new-instance
+  reentry; per-application migration decisions; default reconcile-before-cancel
+  plus declared `cancelled_pending_reconciliation`; typed repair invalidation/
+  redispatch classes; conditional agentic final-call reserves; and duplicate-
+  human rejected-late evidence.
+
+## GO-FORMAT consumption and GO-0
+
+S2F owns GO-FORMAT. S2R consumes and independently revalidates it; it cannot
+weaken, regenerate around, or postpone a failed format row.
+
+S2R owns GO-0. The readiness `conformance_gate` must pass before merge and bind
+merge HEAD afterward. It proves product-neutral durable decisions, loops,
+fanout/fanin, retry/fallback, humans, checkpoints, effects, completion
+bindings/aggregation and replay over the admitted RA/Custody/WBC/acceptance
+substrate, including production CAS and introduction-time restore receipts.
+
+The kernel stays shadow-only through merge. Only the chain's declared
+`arnold.workflow.completion.kernel_enablement.v1` transition may consume the
+exact accepted readiness, C1, and C2 receipts and atomically enable persisted
+bindings/evaluation for new admitted work. It emits
+`completion-kernel-enablement-receipt.json`; the post-transition GO-0 verifier
+must accept the selected state before S2R completes. No flag, decoder,
+milestone status, C2 receipt, or later S7 result can enable the kernel.
+
+Internal persisted-wire compatibility for spec/binding/verdict/acceptance
+records and authoritative decoder behavior begins at this accepted GO-0
+transition. It is not stable public authoring/API publication, which remains
+Platform S6-only. S3A cannot begin on a missing, red, stale, unbound,
+self-certified, or partially applied enablement receipt.
+
+## Semantic gate
+
+- Source-to-lowered-to-runtime set equality passes for every reference node,
+  decision, loop, dynamic child, reducer, policy, and reentry edge.
+- Canonical import fixtures produce the same logical graph in checkout,
+  editable install, wheel, and cloud. Zero/two workflows, private-member import,
+  `.py` durable topology, cycles/recursion/collisions, hidden executable
+  helpers, and declaration-order selection fail before lowering or authority.
+- Selection fixtures cover explicit CLI/API-over-descriptor-default precedence
+  and prove source, descriptor, manifest, lock, admission, source map, or
+  checkpoint cannot disagree with the frozen logical workflow.
+- Allowed pure helpers retain call-site/dependency provenance, compile/replay
+  deterministically, and change executable identity when behavior changes;
+  transitive forbidden I/O or effect calls produce the originating and call
+  spans.
+- Dynamic fanout works for runtime-sized collections and collision tests prove
+  identity is semantic, not list-position-only.
+- The generic compiler/runtime has zero Megaplan carrier imports or
+  report-specific route reconstruction.
+- Decision occurrences, accepted Run Authority decisions, and consumed runtime
+  transitions are one-to-one with matching outcomes.
+- The neutral reference trace passes ordered/partial-order and multiset
+  occurrence equality from one composed history.
+- Raw event multiplicity and the independently normalized audit trace agree;
+  duplicate events cannot be laundered by a shared normalizer.
+- Production-adapter contention yields one accepted truth at every reference
+  CAS site under both release orders and every injected crash edge.
+- Replaying with identical recorded boundary results produces the same semantic,
+  decision, and checkpoint trace. Representative illegal constructs report the
+  authored location rather than only generated IR frames.
+- Selected local-harness traces normalize equivalently to installed execution
+  with the same recorded boundaries.
+- Completion-order permutations yield identical keyed-reducer output and
+  decision-input digest; sibling mutation after fanout admission cannot change
+  another child's frozen binding.
+- `NP-DX-001` repeats edited working-tree code from one recorded input under
+  fresh isolated identities; `NP-DX-002` rejects silent changed-code resume;
+  `NP-DX-003` preserves source provenance while assigning a sandbox fork new
+  authority/history/effect identity; and `NP-DX-004` runs unsupported preview
+  code while every durable/promotion consumer rejects it.
+- Every supported durable primitive supplies one concrete total aggregation
+  instance; admitted child-set completeness, multiplicity, waiver taint,
+  selected/unselected path proof, named-exit unwind, and one parent-consumed
+  aggregate terminal pass positive and mutation fixtures.
+- C1/C2 remain behaviorally inert before the enablement transition; after it,
+  every binding and authoritative decoder result uses the exact accepted wire
+  versions and current divergence-ledger hash.
+
+## Custody-adoption gate
+
+- Missing/stale grant, coordinator fence, lease, or custody epoch blocks every
+  authority-increasing reference action in enforce mode.
+- WBC ambiguity or missing required boundary evidence may block or mark the
+  boundary indeterminate, but no WBC receipt can grant dispatch or resume.
+- Crash/retry/idempotency, terminal uniqueness, persistence failure,
+  cross-host transfer/reclaim, and stale-epoch tests reuse the admitted M11
+  facilities and pass without a parallel store or recovery service.
+- Program/topology, call-site-policy, and WBC-version drift tests prove pinned
+  resume or explicit migration/new-attempt/quarantine behavior.
+- Installed-artifact and all other executable-digest mismatches reject a stale
+  dispatched worker before product execution or effect intent.
+- A crash after a durable LLM/tool result but before checkpoint does not repeat
+  the call or reset budget; forged cache entries and changed prompt/tool schema
+  fail admission.
+- Oversized inline checkpoint values and invalid artifact references fail
+  closed through the admitted payload/version facilities.
+- Product-contract drift, non-canonical decision values, undeclared phase
+  errors, ambient reconfiguration, and unjournaled agentic inner calls fail
+  before they can select or execute a route.
+- An effectful agentic inner call without an exact target, current custody and
+  its own effect intent/outcome record fails before external action.
+- Every unregistered or plane-local bypass fails before body/effect intent, and
+  repair rejection cannot be reclassified by scheduler code.
+
+## Do not close if
+
+- Product-specific metadata is used to compensate for missing generic
+  lowering/runtime semantics.
+- A `.pype` is executed for discovery, has zero/multiple workflows, exposes a
+  private member, depends on declaration order/path, admits `.py` topology, or
+  lets effectful/durable Python bypass a typed step/effect boundary.
+- A common `attempt_id` collapses the four identity domains.
+- A projection, receipt, or historical success record can trigger a positive
+  action.
+- A typed outcome routes without exactly one accepted, matching Run Authority
+  Decision consumed by the transition.
+- A C1/C2 shadow record changes live behavior, a primitive lacks a concrete
+  aggregation instance, a child set is not frozen, waiver taint disappears, or
+  a named exit erases/reclassifies an intervening binding.
+- A checkpoint resumes after program, policy, or WBC-version drift without an
+  explicit accepted drift decision.
+- A current grant/fence and lease/epoch allow a stale worker to dispatch,
+  decide, transition, accept terminal, or emit effect intent.
+- The local harness contains an alternate route table, replay performs a fresh
+  completed LLM/tool call, or durable keys omit run/occurrence coordinates.
+- A multi-level exit uses a sentinel/exception, a reducer observes completion
+  order, siblings observe mutable shared bindings, or payload fields smuggle an
+  undeclared route.
+- A serialized/local-lock CAS fixture is presented as release proof, or a new
+  durable record lacks an introduction-time restore owner and passing receipt.
+- Edit/repeat requires a migration declaration merely to execute, an
+  experiment overwrites admitted history, preview emits a durable claim, a
+  fork reuses production effect/idempotency identity, or mode/severity changes
+  implicitly between CLI/API/runtime layers.
+- GO-FORMAT is not independently revalidated, GO-0 is missing/red/stale or
+  self-certified, the kernel is enabled outside the typed GO-0 transition, or
+  S3A could consume runtime output before the post-transition enablement
+receipt is accepted.
+This is the first live enforcement point in the program. No C1/C2 decoder,
+shadow acceptance hook, feature flag, migration, or pre-transition S2R code
+may enforce a completion verdict.

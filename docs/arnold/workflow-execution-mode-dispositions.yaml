@@ -1,0 +1,187 @@
+schema: arnold.workflow.execution_mode_dispositions.v1
+registry_version: 1
+status: adopted_target_contract
+authority:
+  owner: Native Parity S1 freeze; Arnold workflow platform after S6
+  amendment_rule: >-
+    Change only by a versioned PLATFORM_CONTRACT amendment with affected
+    acceptance-family updates, migration/retention disposition, and an
+    independently verified invalidation-and-replay receipt.
+
+modes:
+  authoring_preview:
+    id: MODE-1
+    claim: non_durable_exploration
+    durable_history: forbidden
+  durable_sandbox:
+    id: MODE-2
+    claim: isolated_durable_experiment_or_fork
+    durable_history: isolated_non_production_only
+  comparison:
+    id: MODE-3
+    claim: quarantined_non_authoritative_evaluation
+    durable_history: isolated_comparison_only
+  admitted_production:
+    id: MODE-4
+    claim: exact_pinned_authority_bearing_execution
+    durable_history: admitted
+  certification:
+    id: MODE-5
+    claim: evidence_backed_compatibility_or_stable_publication
+    durable_history: dedicated_certification_or_pinned_read_only_production
+
+dispositions:
+  always_hard:
+    id: DISP-1
+    meaning: >-
+      Block effect leakage, evidence-as-authority, namespace collision,
+      executable impersonation, admitted-history mutation, and unsafe identity
+      reuse in every mode.
+  automatic:
+    id: DISP-2
+    meaning: >-
+      Mechanically derive fresh executable, experiment, attempt, namespace,
+      lineage, digest, and cache disposition.
+  production_admission_gate:
+    id: DISP-3
+    meaning: >-
+      Block the production claim until durable-subset, pin, authority, Custody,
+      WBC, effect, migration, and production-CAS requirements pass.
+  stable_publication_gate:
+    id: DISP-4
+    meaning: >-
+      Block stable publication until install, conformance, compatibility,
+      unrelated-consumer, documentation, DX, and SLO requirements pass.
+  authoring_advisory:
+    id: DISP-5
+    meaning: >-
+      Warn about naming, granularity, complexity, reuse class, pre-SLO
+      performance, or incomplete documentation without granting a durable claim.
+  non_durable_only:
+    id: DISP-6
+    meaning: >-
+      Permit unsupported exploration only when it cannot checkpoint, replay,
+      resume, authoritatively compare, certify, publish, or enter admitted
+      evidence.
+
+store_classes:
+  ephemeral_fixture_debug:
+    authoring_preview: isolated_read_write
+    durable_sandbox: isolated_read_write
+    comparison: isolated_read_write
+    admitted_production: forbidden
+    certification: isolated_fixture_only
+  sandbox_checkpoint_wbc_effect_history:
+    authoring_preview: forbidden
+    durable_sandbox: isolated_fresh_namespace
+    comparison: copied_input_read_isolated_history_write
+    admitted_production: forbidden
+    certification: isolated_fixture_only
+  content_addressed_artifact:
+    authoring_preview: exported_immutable_read_preview_namespace_write
+    durable_sandbox: explicit_capability_sandbox_namespace
+    comparison: copied_or_recorded_read_comparison_namespace_write
+    admitted_production: exact_admitted_capability_and_namespace
+    certification: isolated_write_pinned_production_evidence_read
+  evidence_proof:
+    authoring_preview: no_authoritative_write
+    durable_sandbox: no_authoritative_write
+    comparison: no_authoritative_write
+    admitted_production: admitted_producer_only_never_authority
+    certification: governed_producer_or_independent_verifier
+  production_authority_custody_wbc_checkpoint_effect_idempotency_cache:
+    authoring_preview: forbidden
+    durable_sandbox: forbidden
+    comparison: declared_redacted_or_copy_boundary_read_only
+    admitted_production: exact_admitted_capability_namespace_and_verbs
+    certification: declared_read_or_dedicated_non_live_fixture_mutation
+
+logical_isolation:
+  required_binding_fields:
+    - mode
+    - store_class
+    - capability
+    - namespace
+    - run_or_experiment_lineage
+    - allowed_verbs
+    - retention
+    - effect_or_idempotency_domain
+  physical_backend_sharing_does_not_merge_classes: true
+  production_mutation_capability_by_default:
+    authoring_preview: false
+    durable_sandbox: false
+    comparison: false
+    certification: false
+
+rule_mode_matrix:
+  workflow_topology_in_py:
+    authoring_preview: {disposition: non_durable_only, action: warn_ephemeral_faked}
+    durable_sandbox: {disposition: non_durable_only, action: reject}
+    comparison: {disposition: non_durable_only, action: reject}
+    admitted_production: {disposition: non_durable_only, action: reject}
+    certification: {disposition: non_durable_only, action: reject}
+  hidden_effect_or_nondeterminism_in_helper:
+    authoring_preview: {disposition: non_durable_only, action: warn_ephemeral_faked}
+    durable_sandbox: {disposition: non_durable_only, action: reject}
+    comparison: {disposition: non_durable_only, action: reject}
+    admitted_production: {disposition: non_durable_only, action: reject}
+    certification: {disposition: non_durable_only, action: reject}
+  step_invokes_workflow_or_decorated_step:
+    authoring_preview: {disposition: always_hard, action: reject}
+    durable_sandbox: {disposition: always_hard, action: reject}
+    comparison: {disposition: always_hard, action: reject}
+    admitted_production: {disposition: always_hard, action: reject}
+    certification: {disposition: always_hard, action: reject}
+  dynamic_topology_or_dynamic_pype_import:
+    authoring_preview: {disposition: non_durable_only, action: warn_ephemeral_only}
+    durable_sandbox: {disposition: non_durable_only, action: reject}
+    comparison: {disposition: non_durable_only, action: reject}
+    admitted_production: {disposition: non_durable_only, action: reject}
+    certification: {disposition: non_durable_only, action: reject}
+  recursive_workflow_call:
+    authoring_preview: {disposition: always_hard, action: reject}
+    durable_sandbox: {disposition: always_hard, action: reject}
+    comparison: {disposition: always_hard, action: reject}
+    admitted_production: {disposition: always_hard, action: reject}
+    certification: {disposition: always_hard, action: reject}
+  identity_drift_against_pinned_occurrence:
+    authoring_preview: {disposition: automatic, action: fresh_ephemeral_identity}
+    durable_sandbox: {disposition: automatic, action: fresh_fork_or_accepted_migration}
+    comparison: {disposition: automatic, action: fresh_comparison_identity}
+    admitted_production: {disposition: production_admission_gate, action: reject_without_accepted_migration}
+    certification: {disposition: stable_publication_gate, action: reject_without_accepted_migration}
+  descriptor_source_disagreement:
+    authoring_preview: {disposition: non_durable_only, action: warn_no_durable_claim}
+    durable_sandbox: {disposition: always_hard, action: reject}
+    comparison: {disposition: always_hard, action: reject}
+    admitted_production: {disposition: always_hard, action: reject}
+    certification: {disposition: always_hard, action: reject}
+  name_path_layout_or_size_guidance:
+    authoring_preview: {disposition: authoring_advisory, action: advisory}
+    durable_sandbox: {disposition: authoring_advisory, action: advisory}
+    comparison: {disposition: authoring_advisory, action: advisory}
+    admitted_production: {disposition: authoring_advisory, action: advisory}
+    certification: {disposition: authoring_advisory, action: advisory_report}
+  preview_artifact_claims_durable_history:
+    authoring_preview: {disposition: always_hard, action: reject}
+    durable_sandbox: {disposition: always_hard, action: reject}
+    comparison: {disposition: always_hard, action: reject}
+    admitted_production: {disposition: always_hard, action: reject}
+    certification: {disposition: always_hard, action: reject}
+  admitted_history_or_identity_impersonation:
+    authoring_preview: {disposition: always_hard, action: reject}
+    durable_sandbox: {disposition: always_hard, action: reject}
+    comparison: {disposition: always_hard, action: reject}
+    admitted_production: {disposition: always_hard, action: reject}
+    certification: {disposition: always_hard, action: reject}
+  stable_profile_or_unrelated_consumer_missing:
+    authoring_preview: {disposition: stable_publication_gate, action: no_stable_claim}
+    durable_sandbox: {disposition: stable_publication_gate, action: no_stable_claim}
+    comparison: {disposition: stable_publication_gate, action: no_stable_claim}
+    admitted_production: {disposition: stable_publication_gate, action: no_stable_claim}
+    certification: {disposition: stable_publication_gate, action: reject_stable_publication}
+
+derivation:
+  prose_tables_are_informative: true
+  consumer_local_overrides_forbidden: true
+  unknown_mode_disposition_rule_or_store_class: reject
