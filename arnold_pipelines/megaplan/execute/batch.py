@@ -275,7 +275,7 @@ def _repair_missing_user_action_gate(
 
 _M8A_REPAIR_ADOPTION_ENFORCEMENT_ENV = "ARNOLD_M8A_REPAIR_ADOPTION_ENFORCEMENT"
 _M8A_REPAIR_ADOPTION_DISABLE_VALUES: frozenset[str] = frozenset(
-    {"", "0", "false", "no", "off"}
+    {"0", "false", "no", "off"}
 )
 
 
@@ -283,7 +283,7 @@ def _m8a_repair_adoption_enforcement_enabled() -> bool:
     """Return ``True`` when M8A repair-adoption canary promotion is active.
 
     Controlled by ``ARNOLD_M8A_REPAIR_ADOPTION_ENFORCEMENT`` — defaults to
-    OFF (``"0"``).  When disabled (the default), the repair adoption check
+    ON after the post-M11 promotion.  When explicitly disabled, the repair adoption check
     runs in shadow/report-only mode: it rereads boundary conditions, emits
     adoption/quarantine evidence, and emits ``repair_verify`` work-ledger
     events, but never skips replay or modifies dispatch flow.
@@ -726,21 +726,71 @@ def _run_repair_adoption_check(
         except OSError:
             pass
 
-        summary["evaluated"].append(
-            {
-                "task_id": task_id,
-                "outcome": outcome_str,
-                "receipt_digest": receipt_digest,
-                "mismatch_count": len(decision.mismatches),
-                "mismatch_fields": sorted(mismatch_fields),
-            }
-        )
+        evaluation_row = {
+            "task_id": task_id,
+            "outcome": outcome_str,
+            "receipt_digest": receipt_digest,
+            "mismatch_count": len(decision.mismatches),
+            "mismatch_fields": sorted(mismatch_fields),
+        }
         if decision.outcome == AdoptionOutcome.ADOPT:
-            summary["adopted_count"] += 1
-            if enforcement:
-                summary["skip_replay"] = True
+            from arnold_pipelines.megaplan.authority.scope_recovery import (
+                ScopeRecoveryConflict,
+                claim_successor_generation,
+                request_from_receipt,
+            )
+
+            authority_digest = _hashlib.sha256(
+                _json.dumps(
+                    {
+                        "run_authority_grant_id": context.run_authority_grant_id,
+                        "coordinator_fence_token": context.coordinator_fence_token,
+                        "custody_lease_id": context.custody_lease_id,
+                        "custody_epoch": context.custody_epoch,
+                        "wbc_attempt_reference": context.wbc_attempt_reference,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            task_record = next(
+                (
+                    task
+                    for task in finalize_data.get("tasks", [])
+                    if isinstance(task, dict) and task.get("id") == task_id
+                ),
+                {},
+            )
+            generation = task_record.get("generation", 0)
+            generation = generation if isinstance(generation, int) else 0
+            request = request_from_receipt(
+                receipt,
+                task_id=task_id,
+                batch_id=",".join(batch_task_ids),
+                current_generation=generation,
+                authority_digest=authority_digest,
+            )
+            try:
+                successor = (
+                    claim_successor_generation(plan_dir, request)
+                    if request is not None
+                    else None
+                )
+            except (ScopeRecoveryConflict, ValueError) as exc:
+                evaluation_row["outcome"] = "quarantine"
+                evaluation_row["scope_recovery_error"] = str(exc)
+                summary["quarantined_count"] += 1
+            else:
+                if successor is not None:
+                    evaluation_row["successor_claim"] = successor
+                    task_record["generation"] = successor["generation"]
+                    task_record["scope_recovery_claim_id"] = successor["claim_id"]
+                summary["adopted_count"] += 1
+                if enforcement:
+                    summary["skip_replay"] = True
         else:
             summary["quarantined_count"] += 1
+        summary["evaluated"].append(evaluation_row)
 
     return summary
 
@@ -2685,7 +2735,10 @@ def _run_and_merge_batch(
     _adopted_ids: set[str] = set()
     if _repair_adoption_summary.get("skip_replay"):
         for _e in _repair_adoption_summary.get("evaluated", []) or []:
-            if isinstance(_e, dict) and _e.get("outcome") == "ADOPT":
+            if (
+                isinstance(_e, dict)
+                and str(_e.get("outcome") or "").lower() == "adopt"
+            ):
                 _tid = _e.get("task_id")
                 if isinstance(_tid, str):
                     _adopted_ids.add(_tid)
@@ -2696,8 +2749,68 @@ def _run_and_merge_batch(
             sorted(_adopted_ids),
         )
         import types as _types
+        _successors = {
+            row["task_id"]: row.get("successor_claim")
+            for row in _repair_adoption_summary.get("evaluated", [])
+            if isinstance(row, dict) and isinstance(row.get("task_id"), str)
+        }
+        _task_records = {
+            task["id"]: task
+            for task in finalize_data.get("tasks", [])
+            if isinstance(task, dict) and isinstance(task.get("id"), str)
+        }
+        _adopted_updates = []
+        for _task_id in batch_task_ids:
+            _task = _task_records[_task_id]
+            _successor = _successors.get(_task_id)
+            _verification_commands = (
+                list(_successor.get("verification_commands", []))
+                if isinstance(_successor, Mapping)
+                else list(_task.get("commands_run", []))
+            )
+            _adopted_updates.append(
+                {
+                    "task_id": _task_id,
+                    "status": "done",
+                    "executor_notes": (
+                        "Recovered landed implementation through an authority-valid "
+                        "verification-only successor claim; implementation body was not replayed."
+                    ),
+                    "files_changed": list(_task.get("files_changed", [])),
+                    "commands_run": _verification_commands,
+                    "evidence_files": list(_task.get("evidence_files", [])),
+                    "scope_recovery_claim_id": (
+                        _successor.get("claim_id")
+                        if isinstance(_successor, Mapping)
+                        else None
+                    ),
+                }
+            )
         worker = _types.SimpleNamespace(
-            model_actual=(resolved_model or model), skipped_replay=True
+            payload={
+                "task_updates": _adopted_updates,
+                "sense_check_acknowledgments": [
+                    {
+                        "sense_check_id": sense_id,
+                        "executor_note": "Preserved by verification-only successor recovery.",
+                    }
+                    for sense_id in batch_sense_check_ids
+                ],
+                "deviations": [],
+            },
+            model_actual=(resolved_model or model),
+            skipped_replay=True,
+            auth_metadata=None,
+            attempt_index=0,
+            duration_ms=0,
+            cost_usd=0.0,
+            cost_pricing=None,
+            total_tokens=0,
+            raw_output="",
+            trace_output=None,
+            session_id=None,
+            worker_channel="repair_adoption",
+            auth_channel=None,
         )
     else:
         worker, agent, mode, refreshed = _run_execute_worker_with_configured_fallback(
