@@ -352,10 +352,17 @@ let a forged standalone verdict satisfy conformance. It must never be merged
 or cited as deployed proof.
 
 The deliberate deferral now has explicit owner
-`01KYVJ7A47TMH4BRGEV9JFTK10`. That ticket requires the backend-neutral runner,
-non-stitchable journal/WBC/acceptance/runtime joins, real suspension/reentry,
-real gate iterations, canonical tiebreaker routing, frozen stores, independent
-re-derivation, adversarial tests, and exact cloud commands. This release
+`01KYVJ7A47TMH4BRGEV9JFTK10`. That ticket requires a runner for the exact
+deployed backend, non-stitchable journal/WBC/acceptance/runtime joins, real
+suspension/reentry, real gate iterations, canonical tiebreaker routing, frozen
+stores, independent re-derivation, adversarial tests, and exact cloud commands. This release
 umbrella remains open until that ticket produces the four real deployed
 proofs; the pending verdict makes the missing work visible but does not close
 it.
+
+Subsequent inspection split the ownership more precisely. The immediate
+`01KYVJ7A47TMH4BRGEV9JFTK10` runner proves the exact currently deployed
+SQLite-backed path. Backend-neutral SQLite/PostgreSQL persistence and universal
+workflow evidence joins are follow-up ticket `01KYVKPN6JHD19ZRM3WQF9XV8S`,
+associated with Native Parity and Platformization. The split narrows the
+release implementation without weakening its four real deployed proofs.
