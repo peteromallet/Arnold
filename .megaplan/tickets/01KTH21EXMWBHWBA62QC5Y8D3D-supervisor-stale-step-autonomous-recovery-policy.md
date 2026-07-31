@@ -15,7 +15,7 @@ tags:
 - write-intent
 codebase_id: null
 created_at: '2026-06-07T12:48:34.740779+00:00'
-last_edited_at: '2026-07-31T06:53:18+00:00'
+last_edited_at: '2026-07-31T06:54:31+00:00'
 epics:
 - epic_id: megaplan-native-parity-corrective
   resolves_on_complete: false
@@ -66,13 +66,17 @@ durable handoff reconciliation. A cache refresh could therefore reinterpret
 already-committed execute/review custody, mutate or clear `active_step`, and
 make the next observer report a stall that the heartbeat writer itself caused.
 
-Commit `be164da4cb` is the reviewed immediate post-M11 containment candidate,
-pending merge into the release vector. It guards only the known
-`active-step-heartbeat` path from handoff reconciliation and retains focused
-regressions showing that a heartbeat cannot arm, advance, or recover a handoff
-while an authoritative lifecycle transition still can. Those focused tests are
-green; the release umbrella `01KYSBGRHM1S8R6RQ1DGZ7843Y` owns the exact shard
-rerun and deployed proof.
+Commit `be164da4cb` is the reviewed immediate post-M11 containment. It guards
+only the known `active-step-heartbeat` path from handoff reconciliation and
+retains focused regressions showing that a heartbeat cannot arm, advance, or
+recover a handoff while an authoritative lifecycle transition still can. Those
+focused tests are green, the exact frozen shard passed 475/475 with zero debt,
+and the change merged into the consolidation vector at `6027584bf9`. The
+content-addressed receipt is
+`Arnold-validation-checkpoints/be164da-shard015-exact-20260731/receipts/full-suite-015-be164da.json`
+(`sha256:8494218e44063815fa1a622a49d81656a74ab17d62505c70f31e8bd36b36a0c2`).
+The release umbrella `01KYSBGRHM1S8R6RQ1DGZ7843Y` remains open for the complete
+frozen inventory and deployed live canary.
 
 The broader nonlanded classifier experiment at `a242f6ea78` was rejected:
 transport-mode names do not reliably describe semantic write authority across
