@@ -1,7 +1,8 @@
 # Post-M11 consolidation release evidence
 
 Status: **in progress**. Evidence cut:
-`87ef026ba7bfced7906f27cb0d965b2b62c3884a`.
+`5642cdd1ac5749aaf206bccdc5723613493e6db3`, tree
+`129a3e880884a64bc8a0a09e57a884b976f14580`.
 
 This is the human-readable projection of
 [`post-m11-release-evidence-20260731.json`](post-m11-release-evidence-20260731.json).
@@ -19,7 +20,9 @@ pending.
 - Origin base containing that plan:
   `96127731661b4aeec7e049b8a7b59170a9506b06`
 - Consolidation evidence cut:
-  `87ef026ba7bfced7906f27cb0d965b2b62c3884a`
+  `5642cdd1ac5749aaf206bccdc5723613493e6db3`
+- Exact evidence-cut tree:
+  `129a3e880884a64bc8a0a09e57a884b976f14580`
 
 The original dirty checkout is preserved, not normalized. Its encrypted
 payload and preservation bundle each have a local copy and a hash-matched
@@ -41,7 +44,9 @@ The first-parent lineage records eleven integration steps:
 8. post-M11 ticket reconciliation;
 9. repair publication and runtime custody containment;
 10. explicit human-wait custody; and
-11. canonical fixer-occurrence custody.
+11. canonical fixer-occurrence custody; and
+12. reconciliation of five stale cloud-supervisor test modules with the
+    post-M11 contracts.
 
 Every `LAND` source in the JSON names both its immutable source SHA and the
 integration commit that contains it. The two dirty-work checkpoint branches
@@ -58,6 +63,8 @@ substitute for the still-pending final integrated validation:
 - the first broader run found seven real integration failures after 275 passes;
 - 289 passed and one skipped on the immediate-stability branch; and
 - 488 passed on the bounded-supervision compatibility scope.
+- 650 passed across the five-file cloud-supervisor reconciliation matrix at
+  commit `5642cdd1ac5749aaf206bccdc5723613493e6db3`.
 
 The seven-failure run remains in the record because failure history must not be
 laundered by later fixes. A final green run must be bound to the final release

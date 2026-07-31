@@ -8,7 +8,8 @@
     "plan_publication_commit": "f1c0b7384752ee96ea74eaee0f6c8d5d06c301d4",
     "plan_blob": "8b8a157ae0e2ad89209dd1cde61791856997585b",
     "origin_base_commit": "96127731661b4aeec7e049b8a7b59170a9506b06",
-    "evidence_cut_commit": "87ef026ba7bfced7906f27cb0d965b2b62c3884a",
+    "evidence_cut_commit": "5642cdd1ac5749aaf206bccdc5723613493e6db3",
+    "evidence_cut_tree": "129a3e880884a64bc8a0a09e57a884b976f14580",
     "release_branch": "consolidate/post-m11-f1c0b7384752-96127731661b"
   },
   "checkpoints": [
@@ -121,6 +122,12 @@
       "sha": "359370b430a44a46836164544f669c18888fb3f5",
       "classification": "LAND",
       "disposition": "Included in 87ef026ba7bfced7906f27cb0d965b2b62c3884a."
+    },
+    {
+      "ref": "fix/post-m11-stale-cloud-tests-20260731",
+      "sha": "ad3e6176775d629d180c86f72f3432719249893c",
+      "classification": "LAND",
+      "disposition": "Included in 5642cdd1ac5749aaf206bccdc5723613493e6db3."
     }
   ],
   "integration_lineage": [
@@ -167,6 +174,10 @@
     {
       "sha": "87ef026ba7bfced7906f27cb0d965b2b62c3884a",
       "subject": "Merge canonical fixer occurrence custody"
+    },
+    {
+      "sha": "5642cdd1ac5749aaf206bccdc5723613493e6db3",
+      "subject": "Merge post-M11 cloud supervisor test reconciliation"
     }
   ],
   "validation_observations": [
@@ -212,6 +223,18 @@
       },
       "acceptance_effect": "branch_level_only",
       "source": ".megaplan/tickets/01KYT4ZMFNK458MA5AFNR1ZM9R-bound-event-journal-replay-and-watchdog-supervision.md"
+    },
+    {
+      "id": "stale-cloud-tests-five-file-matrix",
+      "scope": "tests/cloud/test_meta_repair.py, tests/cloud/test_post_fixer_recovery_gate.py, tests/cloud/test_runtime_provenance.py, tests/cloud/test_superfixer_custody_systemic.py, and tests/cloud/test_watchdog_wrappers.py at the stale-test integration cut",
+      "status": "historical_pass",
+      "result": {
+        "passed": 650,
+        "failed": 0
+      },
+      "acceptance_effect": "integration_cut_only",
+      "bound_commit": "5642cdd1ac5749aaf206bccdc5723613493e6db3",
+      "bound_tree": "129a3e880884a64bc8a0a09e57a884b976f14580"
     }
   ],
   "cloud_protected_resources": [
