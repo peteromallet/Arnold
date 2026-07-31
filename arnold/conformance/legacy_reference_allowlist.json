@@ -709,18 +709,6 @@
       "reason": "Test intentionally references the deleted legacy package path as a compatibility assertion."
     },
     {
-      "path": "tests/test_no_bare_subprocess.py",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "scanner-target",
-      "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
-    },
-    {
-      "path": "tests/test_pipeline_discovery_integrity.py",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "scanner-target",
-      "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
-    },
-    {
       "path": "arnold/conformance/authoring_terms.py",
       "pattern": "arnold.pipelines.megaplan",
       "category": "scanner-target",
