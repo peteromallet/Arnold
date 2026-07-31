@@ -1083,3 +1083,27 @@ Native-to-Platformization handoff manifest.
 - `.tmp/workflow-standardization-gap/final-report.md`
 - `.tmp/workflow-standardization-gap/oracle-answers-summary.md`
 - `.tmp/workflow-standardization-gap/oracle-stage2-delta.md`
+
+## Post-M11 release findings to inherit, not reimplement
+
+Shard 016 of the post-M11 exact release inventory found two product-neutral
+rules that this platform epic must preserve through its existing S1 admission
+and conformance ownership:
+
+- a retired/tombstoned workflow or initiative is rejected before generic
+  worktree, compile, authority, custody, or mutation preflight, with one
+  canonical typed disposition; and
+- every conformance generator has an explicit attempt-local output root,
+  writes all primary and side artifacts beneath it, uses one canonical module
+  identity, and proves that checkout, wheel, and installed-package validation
+  do not mutate their source or consume ambient build tooling.
+
+These are feed-forward acceptance cases, not a reason to launch
+Platformization early and not a second implementation of the M11 release
+canary. The concrete pipless wheel fixture and honest semantic deployed M11
+workflow proof remain immediate obligations of ticket
+`01KYSBGRHM1S8R6RQ1DGZ7843Y`. The rejected nonlanded experiment `c88ebe00ac`
+is a negative fixture: hashing caller-supplied booleans, kind labels, and
+arbitrary JSON does not establish semantic behavior. Platformization should
+reuse that failure when defining generic evidence-verifier independence and
+test-kit contracts, but it does not own the immediate release correction.
