@@ -1,7 +1,9 @@
 # `partnered-5-glm` preserves the complete partnered-5 routing shape while
-# replacing every Codex/GPT slot with direct Zhipu GLM 5.2. DeepSeek and
-# Fireworks routes, fallback order, and execute/critique tier boundaries remain
-# identical to partnered-5.
+# replacing Codex/GPT slots with direct Zhipu GLM 5.2, except for finalize.
+# Finalization is deliberately pinned to GPT-5.6 Sol at high reasoning because
+# it must compile the planning result into the exact execution contract.
+# DeepSeek and Fireworks routes, fallback order, and execute/critique tier
+# boundaries remain identical to partnered-5.
 [profiles.partnered-5-glm]
 adaptive_critique = true
 plan                  = "hermes:zhipu:glm-5.2"
@@ -10,7 +12,7 @@ critique              = "hermes:deepseek:deepseek-v4-pro"
 critique_evaluator    = "hermes:zhipu:glm-5.2"
 revise                = "hermes:zhipu:glm-5.2"
 gate                  = "hermes:deepseek:deepseek-v4-pro"
-finalize              = "hermes:zhipu:glm-5.2"
+finalize              = "codex:gpt-5.6-sol:high"
 execute               = "hermes:zhipu:glm-5.2"
 feedback              = "hermes:zhipu:glm-5.2"
 loop_plan             = "hermes:zhipu:glm-5.2"
