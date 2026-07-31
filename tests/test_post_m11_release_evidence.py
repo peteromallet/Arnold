@@ -135,27 +135,27 @@ def test_complete_release_requires_one_immutable_acceptance_binding(
         (
             "historical_pass",
             "final_acceptance",
-            "must pair acceptance_pass only with final_acceptance",
+            "invalid acceptance_effect",
         ),
         (
             "acceptance_pass",
             "informational_only",
-            "must pair acceptance_pass only with final_acceptance",
+            "invalid status",
         ),
         (
             "historical_failure",
             "final_acceptance",
-            "must pair acceptance_pass only with final_acceptance",
+            "invalid acceptance_effect",
         ),
         (
             "discovery",
             "final_acceptance",
-            "must pair acceptance_pass only with final_acceptance",
+            "invalid acceptance_effect",
         ),
         (
             "superseded",
             "final_acceptance",
-            "must pair acceptance_pass only with final_acceptance",
+            "invalid acceptance_effect",
         ),
     ],
 )
