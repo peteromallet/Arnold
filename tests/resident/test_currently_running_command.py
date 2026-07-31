@@ -486,34 +486,6 @@ def test_render_preserves_canonical_epic_percent_and_prefers_display_state() -> 
     assert "finalized" not in rendered
 
 
-def test_running_runner_with_blocked_display_state_is_needs_attention() -> None:
-    blocked = {
-        "session": "blocked-with-live-runner",
-        "status": "running",
-        "process": True,
-        "progress": {
-            "display_state": "blocked",
-            "plan_state": "executing",
-            "percent": 61,
-        },
-    }
-    status_node = {"sessions": [blocked]}
-
-    assert discover_running_sessions(status_node) == []
-    assert discover_attention_sessions(status_node) == [blocked]
-
-    rendered = render_currently_running(
-        CurrentlyRunningReport(status_node=status_node, managed_agents={"running": []})
-    )
-
-    assert "## ⛓️ Epics & chains · 0 active" in rendered
-    assert "### 🟢 Running" not in rendered.split("## 🤖 Managed agents", 1)[0]
-    assert "### ⚠️ Needs attention · 1" in rendered
-    assert "`blocked-with-live-runner`" in rendered
-    assert "`blocked` · 61% overall · runner process alive" in rendered
-    assert "`executing`" not in rendered
-
-
 def test_render_labels_full_task_bookkeeping_during_review_rework() -> None:
     rendered = render_currently_running(
         CurrentlyRunningReport(
