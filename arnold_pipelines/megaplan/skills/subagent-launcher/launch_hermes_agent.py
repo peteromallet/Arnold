@@ -517,6 +517,12 @@ def run(
         query = qpath.read_text(encoding="utf-8")
 
     _load_hermes_env()
+    if os.environ.get("ARNOLD_RESIDENT_UNBOUNDED_REQUEST") == "1":
+        for timeout_name in ("HERMES_API_TIMEOUT", "HERMES_DEEPSEEK_API_TIMEOUT"):
+            if os.environ.get(timeout_name, "").strip().lower() in {
+                "inf", "+inf", "infinity", "+infinity"
+            }:
+                os.environ.pop(timeout_name, None)
 
     # Optional cwd change so file tools resolve relative paths the caller expects.
     if project_dir:

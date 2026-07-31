@@ -82,6 +82,11 @@ def _write_run(
             "max_tokens": 32768,
             "timeout_s": 321,
         },
+        "timeout_policy": {
+            "mode": "explicit",
+            "source": "trusted_cli",
+            "timeout_s": 321,
+        },
         "reasoning_effort": "high",
         "task_kind": "architecture",
         "difficulty": 8,

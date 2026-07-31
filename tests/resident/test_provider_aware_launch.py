@@ -206,6 +206,11 @@ def _worker_manifest(tmp_path: Path, *, backend: str, model: str) -> Path:
                     "max_tokens": 128,
                     "timeout_s": 30,
                 },
+                "timeout_policy": {
+                    "mode": "explicit",
+                    "source": "trusted_cli",
+                    "timeout_s": 30,
+                },
                 "status_history": [],
                 "completion_delivery": {"status": "not_applicable"},
             }

@@ -33,8 +33,9 @@ def test_provider_capability_matrix_is_truthful_and_complete() -> None:
         backend: provider_execution_contract(
             backend=backend,
             toolsets="file,web,terminal",
-            max_tokens=4096,
-            timeout_s=90,
+                max_tokens=4096,
+                timeout_s=90,
+                timeout_source="trusted_cli",
         )
         for backend in ("codex", "hermes", "claude")
     }
@@ -65,7 +66,8 @@ def test_generic_tool_policy_maps_exactly_or_fails_truthfully() -> None:
         normalize_toolsets("file,secrets")
     with pytest.raises(ValueError, match="cannot enforce a narrowed generic toolset"):
         provider_execution_contract(
-            backend="codex", toolsets="file", max_tokens=100, timeout_s=30
+            backend="codex", toolsets="file", max_tokens=100, timeout_s=30,
+            timeout_source="trusted_cli",
         )
 
 
