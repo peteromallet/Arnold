@@ -2,14 +2,14 @@
   "schema": "arnold.post_m11_release_evidence.v1",
   "record_id": "post-m11-consolidation-20260731",
   "record_status": "in_progress",
-  "recorded_at_utc": "2026-07-31T04:17:24Z",
+  "recorded_at_utc": "2026-07-31T04:35:57Z",
   "authority": {
     "plan_path": "docs/megaplan/post-m11-loose-work-consolidation-release-plan-2026-07-29.md",
     "plan_publication_commit": "f1c0b7384752ee96ea74eaee0f6c8d5d06c301d4",
     "plan_blob": "8b8a157ae0e2ad89209dd1cde61791856997585b",
     "origin_base_commit": "96127731661b4aeec7e049b8a7b59170a9506b06",
-    "evidence_cut_commit": "730fbf08c0a493c928ae234f0a6716098e3c672b",
-    "evidence_cut_tree": "5e74be82804962e17d3a97b4949f5a191e6551ac",
+    "evidence_cut_commit": "20644b23a7e041caad15684ddba07e703ca1c5af",
+    "evidence_cut_tree": "3518bd92e7ef7a1af6883879c41c179d1ff46d9c",
     "release_branch": "consolidate/post-m11-f1c0b7384752-96127731661b"
   },
   "checkpoints": [
@@ -140,6 +140,12 @@
       "sha": "81a44fd930e60070cae39b11e7416ad2eb43b717",
       "classification": "LAND",
       "disposition": "Included in 730fbf08c0a493c928ae234f0a6716098e3c672b; resolves the three packaging code blockers recorded at the prior evidence cut."
+    },
+    {
+      "ref": "fix/post-m11-conformance-layout-20260731",
+      "sha": "3ca68e0e3bc024c002d74a1a358bf756b3697939",
+      "classification": "LAND",
+      "disposition": "Included in 20644b23a7e041caad15684ddba07e703ca1c5af; moves four normative initiative artifacts to their canonical semantic subdirectories and removes their obsolete locations."
     }
   ],
   "integration_lineage": [
@@ -198,6 +204,14 @@
     {
       "sha": "730fbf08c0a493c928ae234f0a6716098e3c672b",
       "subject": "Merge packaging release contract fixes"
+    },
+    {
+      "sha": "cd7c6ac0ee7fb473e6aad2f3c0e3952fa7648aa8",
+      "subject": "Merge durable post-M11 release evidence ledger"
+    },
+    {
+      "sha": "20644b23a7e041caad15684ddba07e703ca1c5af",
+      "subject": "Merge canonical initiative conformance layout"
     }
   ],
   "validation_observations": [
@@ -375,7 +389,29 @@
       },
       "acceptance_effect": "packaging_code_gate",
       "bound_commit": "81a44fd930e60070cae39b11e7416ad2eb43b717",
-      "setup_smoke_log_sha256": "f2b7ce6be90ec81acbeb05d6d988cc1854ff2f2917e25e1b1679f3e1868ce262"
+      "setup_smoke_log_sha256": "384cb2f6325a2bde92a625db9cace86117f89be76e05a53011788e55ed9bfdc5"
+    },
+    {
+      "id": "initiative-conformance-regressions",
+      "scope": "Canonical initiative artifact layout and adjacent conformance regression matrix",
+      "status": "historical_pass",
+      "result": {
+        "passed": 275,
+        "failed": 0
+      },
+      "acceptance_effect": "conformance_fix_level_only",
+      "bound_commit": "3ca68e0e3bc024c002d74a1a358bf756b3697939"
+    },
+    {
+      "id": "initiative-conformance-focused",
+      "scope": "Focused current-tree conformance gates after canonical artifact moves",
+      "status": "historical_pass",
+      "result": {
+        "passed": 55,
+        "failed": 0
+      },
+      "acceptance_effect": "conformance_fix_level_only",
+      "bound_commit": "3ca68e0e3bc024c002d74a1a358bf756b3697939"
     }
   ],
   "historical_superseded_attempts": [
@@ -400,6 +436,39 @@
         "sha256": "e7536c92ec32a4ccd3128d80557dc5bd3bac4f62dc220e03dbc5b5bd99162d2b"
       },
       "notes": "The seeded run was deliberately aborted and superseded. It is evidence of the attempt, not acceptance."
+    },
+    {
+      "id": "full-no-debt-cd7-shard-002-failure",
+      "status": "superseded_failed_shard_receipt",
+      "acceptance_effect": "evidence_not_acceptance",
+      "bound_commit": "cd7c6ac0ee7fb473e6aad2f3c0e3952fa7648aa8",
+      "receipt": {
+        "location": "$LOCAL_VALIDATION_CHECKPOINT_ROOT/cd7c6ac0ee-full-no-debt-20260731/receipts/full-suite-002.json",
+        "sha256": "3204f23d829ca0cf8acb5b312133d0e85d8b3464207f593f8e86ba20dcf360f9",
+        "content_sha256": "824ce37484b10ac83e1a4ed5b0a535fb3ec3ef6b3c17e7cfbf103ec81a9c4d9f",
+        "custody_file_sha256": "2f028f0d2dfe36da035518ef276e2e96946213b6c27fef53ab58df54db24ed2c",
+        "terminal_file_sha256": "de1801ba22d3ac5a98f4031ba1bc3ee9b683ef9f72cd4688c37119ede68b7d12",
+        "failure_list_sha256": "4807ad8f6d2d61925e4ca39d5865146fbac91b09323434e649bd2b09f76c7408"
+      },
+      "notes": "Shard 002 failed nine conformance tests because four normative artifacts were outside canonical semantic subdirectories and one obsolete legacy-reference exception remained. Commit 3ca68e0e3b resolves that defect. The failed shard remains historical evidence and cannot satisfy final no-debt acceptance."
+    }
+  ],
+  "canonical_artifact_moves": [
+    {
+      "from": ".megaplan/initiatives/megaplan-native-parity-corrective/GOLDEN_TRACE_CONTRACT.md",
+      "to": ".megaplan/initiatives/megaplan-native-parity-corrective/validation/GOLDEN_TRACE_CONTRACT.md"
+    },
+    {
+      "from": ".megaplan/initiatives/megaplan-north-star-sense-checks-revise-design/docs/research.md",
+      "to": ".megaplan/initiatives/megaplan-north-star-sense-checks-revise-design/research/research.md"
+    },
+    {
+      "from": ".megaplan/initiatives/native-workflow-platformization/PLATFORM_CONTRACT.md",
+      "to": ".megaplan/initiatives/native-workflow-platformization/decisions/PLATFORM_CONTRACT.md"
+    },
+    {
+      "from": ".megaplan/initiatives/standardized-completion-specifications/SUPERSESSION_CROSSWALK.yaml",
+      "to": ".megaplan/initiatives/standardized-completion-specifications/evidence/SUPERSESSION_CROSSWALK.yaml"
     }
   ],
   "packaging_artifacts": [
