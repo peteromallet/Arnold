@@ -108,15 +108,11 @@ def _derive_plan_test_blast_radius(
     )
 
     repo_root = Path(state["config"]["project_dir"])
-    changed_surfaces = payload.get("changed_surfaces")
-    if not isinstance(changed_surfaces, list):
-        model_proposed = payload.get("test_blast_radius")
-        if isinstance(model_proposed, dict):
-            proposed_changed_surfaces = model_proposed.get("changed_surfaces")
-            if isinstance(proposed_changed_surfaces, list):
-                changed_surfaces = proposed_changed_surfaces
-    if not isinstance(changed_surfaces, list):
-        changed_surfaces = _prep_relevant_code_surfaces(plan_dir)
+    # The prep artifact is harness-owned and records the complete surface
+    # inventory. Model-provided changed_surfaces are only a proposal for the
+    # merge below; using them here would let a partial proposal narrow the
+    # deterministic floor.
+    changed_surfaces = _prep_relevant_code_surfaces(plan_dir)
     changed_surfaces = [
         surface.strip()
         for surface in changed_surfaces
