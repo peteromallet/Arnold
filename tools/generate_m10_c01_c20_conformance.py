@@ -45,15 +45,11 @@ from arnold_pipelines.megaplan.cloud.six_hour_auditor import (  # noqa: E402
 )
 
 EVIDENCE_DIR = _REPO_ROOT / "evidence"
-PLAN_DIR = (
-    _REPO_ROOT
-    / ".megaplan"
-    / "plans"
-    / "m10-safe-retry-recovery-and-20260723-1122"
-)
+CRITERIA_FIXTURE_PATH = _REPO_ROOT / "tests" / "fixtures" / "m10_success_criteria.json"
 
 # Files whose content hash binds the receipt to the installed runtime.
 _BOUND_FILES: list[tuple[str, str, str]] = [
+    ("criteria/m10_success_criteria", "tests/fixtures/m10_success_criteria.json"),
     ("source/runtime_attestation", "arnold_pipelines/megaplan/cloud/runtime_attestation.py"),
     ("source/seed_rematerialize", "arnold_pipelines/megaplan/chain/seed_rematerialize.py"),
     ("schema/schema_parity", "arnold_pipelines/megaplan/handlers/schema_parity.py"),
@@ -129,8 +125,7 @@ def _criterion_by_index(criteria: list[dict], idx: int) -> dict | None:
 
 def generate_conformance_receipt() -> dict:
     """Generate the candidate-bound C01-C20 conformance receipt."""
-    meta_path = PLAN_DIR / "plan_v9.meta.json"
-    meta = json.loads(meta_path.read_text())
+    meta = json.loads(CRITERIA_FIXTURE_PATH.read_text(encoding="utf-8"))
     criteria: list[dict] = meta.get("success_criteria", [])
 
     # Bound file hashes

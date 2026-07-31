@@ -18,6 +18,7 @@ import ast
 import hashlib
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -174,7 +175,7 @@ def _text_uses_git_runner(seg: str) -> bool:
 
 def scan_module(relpath: str) -> list[Sink]:
     abspath = os.path.join(REPO_ROOT, relpath.replace("/", os.sep))
-    source = open(abspath, encoding="utf-8").read()
+    source = Path(abspath).read_text(encoding="utf-8")
     tree = ast.parse(source, filename=abspath)
     lines = source.splitlines()
     sinks: list[Sink] = []

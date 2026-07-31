@@ -67,8 +67,16 @@ def _default_mock_plan_payload(state: PlanState, plan_dir: Path) -> dict[str, An
         ).strip(),
         "questions": ["Are there existing patterns in the repo that should be preserved?"],
         "success_criteria": [
-            {"criterion": "A concrete implementation path exists.", "priority": "must", "requires": []},
-            {"criterion": "Verification is defined before execution.", "priority": "should", "requires": []},
+            {
+                "criterion": "A concrete implementation path exists.",
+                "priority": "must",
+                "requires": ["read_files"],
+            },
+            {
+                "criterion": "Verification is defined before execution.",
+                "priority": "should",
+                "requires": ["run_tests"],
+            },
         ],
         "assumptions": ["The project directory is writable."],
     }
@@ -452,6 +460,30 @@ def _default_mock_review_payload(state: PlanState, plan_dir: Path) -> dict[str, 
     }
 
 
+def _default_mock_critique_evaluator_payload(
+    state: PlanState, plan_dir: Path
+) -> dict[str, Any]:
+    """Return a complete deterministic lens decision for mock critique runs."""
+
+    del state, plan_dir
+    from arnold_pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+
+    return {
+        "selections": [
+            {
+                "check_id": check["id"],
+                "complexity": 4,
+                "complexity_justification": (
+                    "Deterministic mock coverage exercises this registered lens."
+                ),
+            }
+            for check in CRITIQUE_CHECKS
+        ],
+        "skipped": [],
+        "evaluator_model": "mock",
+    }
+
+
 _MockPayloadBuilder = Callable[[dict[str, Any], Path], dict[str, Any]]
 
 _MOCK_DEFAULTS: dict[str, _MockPayloadBuilder] = {
@@ -461,6 +493,7 @@ _MOCK_DEFAULTS: dict[str, _MockPayloadBuilder] = {
     "prep-research": _default_mock_prep_research_payload,
     "prep-distill": _default_mock_prep_payload,
     "loop_plan": _default_mock_loop_plan_payload,
+    "critique_evaluator": _default_mock_critique_evaluator_payload,
     "critique": _default_mock_critique_payload,
     "revise": _default_mock_revise_payload,
     "gate": _default_mock_gate_payload,

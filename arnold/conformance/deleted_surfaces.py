@@ -69,7 +69,6 @@ M6_DELETION_LIST: tuple[DeletedSurface, ...] = (
 RUNTIME_SALVAGE_DELETION_TARGETS: tuple[DeletedSurface, ...] = (
     DeletedSurface("arnold.runtime.batch*", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.runtime", "M6 deletion target", "Product-specific batch scheduling.", note="Wildcard row; concrete gates expand to arnold.runtime.batch."),
     DeletedSurface("arnold.runtime.driver", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.runtime", "M6 deletion target", "Superseded by arnold.execution.runner.run."),
-    DeletedSurface("arnold.runtime.process", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.runtime", "M6 deletion target", "Process model no longer used."),
     DeletedSurface("arnold.runtime.recovery", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.runtime", "M6 deletion target", "Recovery logic is now journal replay."),
     DeletedSurface("arnold.runtime.sandbox", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.runtime", "M6 deletion target", "Replaced by artifact-root isolation."),
     DeletedSurface("arnold.runtime.settings*", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.runtime", "M6 deletion target", "Settings resolution moved to product harness.", note="Wildcard row; concrete gates expand to arnold.runtime.settings."),
@@ -107,7 +106,6 @@ DELETED_IMPORT_MODULES: tuple[str, ...] = (
     "arnold_pipelines.megaplan.stages.inprocess_step",
     "arnold.runtime.batch",
     "arnold.runtime.driver",
-    "arnold.runtime.process",
     "arnold.runtime.recovery",
     "arnold.runtime.sandbox",
     "arnold.runtime.settings",
