@@ -31,6 +31,8 @@ def _run_watchdog_shell(
 ) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+    env["MEGAPLAN_SUPERVISOR_PYTHON"] = sys.executable
+    env["PATH"] = f"{Path(sys.executable).parent}:{env.get('PATH', '')}"
     if path_prefix is not None:
         env["PATH"] = f"{path_prefix}:{env.get('PATH', '')}"
     if extra_env:
