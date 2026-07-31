@@ -44,7 +44,7 @@ fi
 
 log "watchdog_missing restarting container=$CONTAINER"
 if ! docker exec "$CONTAINER" tmux new-session -d -s watchdog -c /workspace \
-  bash -lc 'set -a; [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env; set +a; exec /workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog' \
+  bash -lc 'set -a; [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env; set +a; runtime_src="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"; exec "$runtime_src/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog"' \
   >> "$LOG" 2>&1; then
   log "watchdog_restart_failed container=$CONTAINER"
   exit 1

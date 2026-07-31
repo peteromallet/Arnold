@@ -576,12 +576,32 @@ def test_host_watchdog_ensure_starts_shell_wrapped_watchdog_and_verifies_livenes
     assert "tmux new-session -d -s watchdog -c /workspace" in text
     assert ". /workspace/.cloud-hot-env" in text
     assert (
+        'runtime_src="${MEGAPLAN_RUNTIME_SRC:-'
+        '${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"'
+    ) in text
+    assert (
+        'exec "$runtime_src/arnold_pipelines/megaplan/cloud/wrappers/'
+        'arnold-watchdog"'
+    ) in text
+    assert (
         "exec /workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/"
         "arnold-watchdog"
-    ) in text
+    ) not in text
     assert "tmux new-session -d -s watchdog -c /workspace exec /usr/local/bin/arnold-watchdog" not in text
     assert "watchdog_restart_failed_not_alive" in text
     assert text.count("tmux has-session -t watchdog") >= 2
+
+
+def test_host_resident_ensure_starts_from_pinned_runtime_source() -> None:
+    text = _systemd_file("ensure-megaplan-resident")
+
+    assert "tmux new-session -d -s megaplan-resident-discord -c /workspace" in text
+    assert r"runtime_src=\${MEGAPLAN_RUNTIME_SRC:-/workspace/arnold}" in text
+    assert r'cd \"\$runtime_src\"' in text
+    assert (
+        "tmux new-session -d -s megaplan-resident-discord "
+        "-c /workspace/arnold"
+    ) not in text
 
 
 def test_watchdog_flags_setup_deviations_without_silent_skips() -> None:
