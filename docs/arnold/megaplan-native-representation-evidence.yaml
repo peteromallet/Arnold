@@ -33,13 +33,13 @@ records:
   kind: source_checker
   checker: scripts.generate_native_representation_evidence
   carrier_path: docs/arnold/package-authoring-contract.md
-  carrier_sha256: sha256:191df92a472e2f10c45ec734469485e57f04488de2c52c986216e058abed5876
+  carrier_sha256: sha256:51527daa02fecd696061d5336cc56fb42dcf211c7cb312afa931adce67ac8b52
   proof_artifact_path: docs/arnold/package-authoring-contract.md
-  proof_artifact_sha256: sha256:191df92a472e2f10c45ec734469485e57f04488de2c52c986216e058abed5876
+  proof_artifact_sha256: sha256:51527daa02fecd696061d5336cc56fb42dcf211c7cb312afa931adce67ac8b52
   source_span:
     path: docs/arnold/package-authoring-contract.md
     start_line: 1
-    end_line: 324
+    end_line: 318
   policy_object: package_authoring_contract
   carrier_name: package_authoring_contract
 - row_id: critique-bare-skip
@@ -215,13 +215,13 @@ records:
   kind: source_checker
   checker: scripts.generate_native_representation_evidence
   carrier_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  carrier_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  carrier_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   proof_artifact_path: arnold_pipelines/megaplan/workflows/workflow.pypeline
   proof_artifact_sha256: sha256:4b91c422e376bdce729fb0e8cc83a07557b40ac1a0dda469e1df17b5fc78513f
   source_span:
     path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
     start_line: 1
-    end_line: 936
+    end_line: 2451
   policy_object: boundary_contract_registry
   carrier_name: boundary_contract_registry
 - row_id: execute-review-rework-loop
@@ -271,13 +271,13 @@ records:
   kind: source_checker
   checker: scripts.generate_native_representation_evidence
   carrier_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  carrier_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  carrier_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   proof_artifact_path: arnold_pipelines/megaplan/workflows/workflow.pypeline
   proof_artifact_sha256: sha256:4b91c422e376bdce729fb0e8cc83a07557b40ac1a0dda469e1df17b5fc78513f
   source_span:
     path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
     start_line: 1
-    end_line: 936
+    end_line: 2451
   policy_object: boundary_contract_registry
   carrier_name: boundary_contract_registry
 - row_id: override-action-surface
@@ -313,13 +313,13 @@ records:
   kind: source_checker
   checker: scripts.generate_native_representation_evidence
   carrier_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  carrier_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  carrier_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   proof_artifact_path: arnold_pipelines/megaplan/workflows/override_matrix.py
   proof_artifact_sha256: sha256:5bea042118a1ea310f26cbcf7bab6a64a67e08fc2fbcbd39bb41e388388d8a53
   source_span:
     path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
     start_line: 1
-    end_line: 936
+    end_line: 2451
   policy_object: boundary_contract_registry
   carrier_name: boundary_contract_registry
 - row_id: timeout-deadline-policy
@@ -467,13 +467,13 @@ records:
   kind: source_checker
   checker: scripts.generate_native_representation_evidence
   carrier_path: arnold_pipelines/megaplan/handlers/plan.py
-  carrier_sha256: sha256:720cbf5d7672db3c9a8bf648c94820797b2e85f8201512c560ff1284d448b827
+  carrier_sha256: sha256:290f5b3f936a9dca47f6cd87a518405fe5706100b3937b2e80976fe688197f3d
   proof_artifact_path: arnold_pipelines/megaplan/handlers/plan.py
-  proof_artifact_sha256: sha256:720cbf5d7672db3c9a8bf648c94820797b2e85f8201512c560ff1284d448b827
+  proof_artifact_sha256: sha256:290f5b3f936a9dca47f6cd87a518405fe5706100b3937b2e80976fe688197f3d
   source_span:
     path: arnold_pipelines/megaplan/handlers/plan.py
     start_line: 1
-    end_line: 361
+    end_line: 389
   policy_object: plan_phase_body
   carrier_name: plan_phase_body
 - row_id: handler-purity-audit
@@ -481,13 +481,13 @@ records:
   kind: source_checker
   checker: scripts.generate_native_representation_evidence
   carrier_path: arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py
-  carrier_sha256: sha256:481a6836bbbd23e98a32ff0267fd712c58d21b8d790e7c8e275dbcac688365ee
+  carrier_sha256: sha256:918155694199f8dbebd2df6ce88322a5d9a618d59c11f24a8512885ec1d88113
   proof_artifact_path: arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py
-  proof_artifact_sha256: sha256:481a6836bbbd23e98a32ff0267fd712c58d21b8d790e7c8e275dbcac688365ee
+  proof_artifact_sha256: sha256:918155694199f8dbebd2df6ce88322a5d9a618d59c11f24a8512885ec1d88113
   source_span:
     path: arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py
     start_line: 1
-    end_line: 65
+    end_line: 72
   policy_object: tiebreaker_phase_body
   carrier_name: tiebreaker_phase_body
 - row_id: golden-trace-regeneration
@@ -524,8 +524,8 @@ records:
   checker: scripts.generate_native_representation_evidence
   carrier_path: arnold_pipelines/megaplan/workflows/workflow.pypeline
   carrier_sha256: sha256:4b91c422e376bdce729fb0e8cc83a07557b40ac1a0dda469e1df17b5fc78513f
-  proof_artifact_path: tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py
-  proof_artifact_sha256: sha256:60c182731b2b91e207a758e7167741fbe3ec9a10a49d24aa18cde1331fca7b89
+  proof_artifact_path: arnold_pipelines/megaplan/workflows/workflow.pypeline
+  proof_artifact_sha256: sha256:4b91c422e376bdce729fb0e8cc83a07557b40ac1a0dda469e1df17b5fc78513f
   source_span:
     path: arnold_pipelines/megaplan/workflows/workflow.pypeline
     start_line: 1
@@ -580,7 +580,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: prep_to_plan
   supporting_fixture_id: prep_to_plan
   observed_boundary_id: prep_to_plan
@@ -591,7 +591,7 @@ boundary_contract_records:
   covered_effects:
   - artifact
   contract_path: docs/arnold/package-authoring-contract.md
-  contract_sha256: sha256:191df92a472e2f10c45ec734469485e57f04488de2c52c986216e058abed5876
+  contract_sha256: sha256:51527daa02fecd696061d5336cc56fb42dcf211c7cb312afa931adce67ac8b52
   policy_object: megaplan:artifact-contract
   supporting_fixture_id: finalize_artifacts
   observed_boundary_id: finalize_artifacts
@@ -657,7 +657,7 @@ boundary_contract_records:
   covered_effects:
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: gate_to_revise
   supporting_fixture_id: gate_to_revise
   observed_boundary_id: gate_to_revise
@@ -668,7 +668,7 @@ boundary_contract_records:
   covered_effects:
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: revise_to_critique
   supporting_fixture_id: revise_to_critique
   observed_boundary_id: revise_to_critique
@@ -732,7 +732,7 @@ boundary_contract_records:
   - reducer
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: tiebreaker_researcher_to_challenger
   supporting_fixture_id: tiebreaker_synthesis_to_decision
   observed_boundary_id: tiebreaker_synthesis_to_decision
@@ -747,7 +747,7 @@ boundary_contract_records:
   - reducer
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: tiebreaker_challenger_to_synthesis
   supporting_fixture_id: tiebreaker_synthesis_to_decision
   observed_boundary_id: tiebreaker_synthesis_to_decision
@@ -762,7 +762,7 @@ boundary_contract_records:
   - reducer
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: tiebreaker_synthesis_to_decision
   supporting_fixture_id: tiebreaker_synthesis_to_decision
   observed_boundary_id: tiebreaker_synthesis_to_decision
@@ -777,7 +777,7 @@ boundary_contract_records:
   - reducer
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: tiebreaker_decision_to_parent
   supporting_fixture_id: tiebreaker_synthesis_to_decision
   observed_boundary_id: tiebreaker_synthesis_to_decision
@@ -792,7 +792,7 @@ boundary_contract_records:
   - reducer
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: parent_rejoin_promotion
   supporting_fixture_id: tiebreaker_synthesis_to_decision
   observed_boundary_id: tiebreaker_synthesis_to_decision
@@ -807,7 +807,7 @@ boundary_contract_records:
   - reducer
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: replan_authority
   supporting_fixture_id: tiebreaker_synthesis_to_decision
   observed_boundary_id: tiebreaker_synthesis_to_decision
@@ -835,7 +835,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: execute_approval
   supporting_fixture_id: execute_approval
   observed_boundary_id: execute_approval
@@ -849,7 +849,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: execute_approval_denial
   supporting_fixture_id: execute_approval
   observed_boundary_id: execute_approval
@@ -863,7 +863,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: review_human_verification
   supporting_fixture_id: execute_approval
   observed_boundary_id: execute_approval
@@ -877,7 +877,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: override_suspension_authority
   supporting_fixture_id: override_suspension_authority
   observed_boundary_id: override_suspension_authority
@@ -891,7 +891,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: override_human_gate_authority
   supporting_fixture_id: override_human_gate_authority
   observed_boundary_id: override_human_gate_authority
@@ -915,7 +915,7 @@ boundary_contract_records:
   - artifact
   - receipt
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: finalize_fallback
   supporting_fixture_id: finalize_fallback
   observed_boundary_id: finalize_fallback
@@ -927,7 +927,7 @@ boundary_contract_records:
   - artifact
   - receipt
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: final_projection
   supporting_fixture_id: final_projection
   observed_boundary_id: final_projection
@@ -972,7 +972,7 @@ boundary_contract_records:
   - reducer
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: execute_batch_checkpoint
   supporting_fixture_id: execute_aggregate_promotion
   observed_boundary_id: execute_aggregate_promotion
@@ -987,7 +987,7 @@ boundary_contract_records:
   - reducer
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: execute_partial_failure
   supporting_fixture_id: execute_aggregate_promotion
   observed_boundary_id: execute_aggregate_promotion
@@ -1002,7 +1002,7 @@ boundary_contract_records:
   - reducer
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: execute_blocked_anchor
   supporting_fixture_id: execute_aggregate_promotion
   observed_boundary_id: execute_aggregate_promotion
@@ -1017,7 +1017,7 @@ boundary_contract_records:
   - reducer
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: execute_resume_anchor
   supporting_fixture_id: execute_aggregate_promotion
   observed_boundary_id: execute_aggregate_promotion
@@ -1032,7 +1032,7 @@ boundary_contract_records:
   - reducer
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: execute_aggregate_promotion
   supporting_fixture_id: execute_aggregate_promotion
   observed_boundary_id: execute_aggregate_promotion
@@ -1060,7 +1060,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: execute_approval
   supporting_fixture_id: execute_approval
   observed_boundary_id: execute_approval
@@ -1074,7 +1074,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: execute_approval_denial
   supporting_fixture_id: execute_approval
   observed_boundary_id: execute_approval
@@ -1088,7 +1088,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: execute_no_review_terminal
   supporting_fixture_id: execute_approval
   observed_boundary_id: execute_approval
@@ -1102,7 +1102,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: override_human_gate_authority
   supporting_fixture_id: override_human_gate_authority
   observed_boundary_id: override_human_gate_authority
@@ -1132,7 +1132,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: review_rework_effects
   supporting_fixture_id: execute_partial_failure
   observed_boundary_id: execute_partial_failure
@@ -1174,7 +1174,7 @@ boundary_contract_records:
   - receipt
   - reducer
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: review_child_outputs
   supporting_fixture_id: execute_aggregate_promotion
   observed_boundary_id: execute_aggregate_promotion
@@ -1188,7 +1188,7 @@ boundary_contract_records:
   - receipt
   - reducer
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: review_reducer_promotion
   supporting_fixture_id: execute_aggregate_promotion
   observed_boundary_id: execute_aggregate_promotion
@@ -1214,7 +1214,7 @@ boundary_contract_records:
   - phase_result
   - receipt
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: review_cap_authority
   supporting_fixture_id: review_cap_authority
   observed_boundary_id: review_cap_authority
@@ -1227,7 +1227,7 @@ boundary_contract_records:
   - phase_result
   - receipt
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: review_human_verification
   supporting_fixture_id: review_cap_authority
   observed_boundary_id: review_cap_authority
@@ -1240,7 +1240,7 @@ boundary_contract_records:
   - phase_result
   - receipt
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: review_rework_effects
   supporting_fixture_id: review_cap_authority
   observed_boundary_id: review_cap_authority
@@ -1276,7 +1276,7 @@ boundary_contract_records:
   - authority
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: override_abort_authority
   supporting_fixture_id: override_abort_authority
   observed_boundary_id: override_abort_authority
@@ -1288,7 +1288,7 @@ boundary_contract_records:
   - authority
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: override_force_proceed_authority
   supporting_fixture_id: override_force_proceed_authority
   observed_boundary_id: override_force_proceed_authority
@@ -1300,7 +1300,7 @@ boundary_contract_records:
   - authority
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: override_replan_authority
   supporting_fixture_id: override_replan_authority
   observed_boundary_id: override_replan_authority
@@ -1312,7 +1312,7 @@ boundary_contract_records:
   - authority
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: override_recover_blocked_authority
   supporting_fixture_id: override_recover_blocked_authority
   observed_boundary_id: override_recover_blocked_authority
@@ -1324,7 +1324,7 @@ boundary_contract_records:
   - authority
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: override_resume_clarify_authority
   supporting_fixture_id: override_resume_clarify_authority
   observed_boundary_id: override_resume_clarify_authority
@@ -1336,7 +1336,7 @@ boundary_contract_records:
   - authority
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: override_adopt_execution_authority
   supporting_fixture_id: override_adopt_execution_authority
   observed_boundary_id: override_adopt_execution_authority
@@ -1348,7 +1348,7 @@ boundary_contract_records:
   - authority
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: override_suspension_authority
   supporting_fixture_id: override_suspension_authority
   observed_boundary_id: override_suspension_authority
@@ -1360,7 +1360,7 @@ boundary_contract_records:
   - authority
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: override_human_gate_authority
   supporting_fixture_id: override_human_gate_authority
   observed_boundary_id: override_human_gate_authority
@@ -1396,7 +1396,7 @@ boundary_contract_records:
   - external_effect
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: execute_blocked_anchor
   supporting_fixture_id: execute_blocked_anchor
   observed_boundary_id: execute_blocked_anchor
@@ -1408,7 +1408,7 @@ boundary_contract_records:
   - external_effect
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: execute_resume_anchor
   supporting_fixture_id: execute_resume_anchor
   observed_boundary_id: execute_resume_anchor
@@ -1420,7 +1420,7 @@ boundary_contract_records:
   - external_effect
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: review_cap_authority
   supporting_fixture_id: execute_blocked_anchor
   observed_boundary_id: execute_blocked_anchor
@@ -1511,7 +1511,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: tiebreaker_researcher_to_challenger
   supporting_fixture_id: tiebreaker_researcher_to_challenger
   observed_boundary_id: tiebreaker_researcher_to_challenger
@@ -1524,7 +1524,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: tiebreaker_challenger_to_synthesis
   supporting_fixture_id: tiebreaker_challenger_to_synthesis
   observed_boundary_id: tiebreaker_challenger_to_synthesis
@@ -1537,7 +1537,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: tiebreaker_synthesis_to_decision
   supporting_fixture_id: tiebreaker_synthesis_to_decision
   observed_boundary_id: tiebreaker_synthesis_to_decision
@@ -1550,7 +1550,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: tiebreaker_decision_to_parent
   supporting_fixture_id: tiebreaker_decision_to_parent
   observed_boundary_id: tiebreaker_decision_to_parent
@@ -1563,7 +1563,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: execute_resume_anchor
   supporting_fixture_id: execute_resume_anchor
   observed_boundary_id: execute_resume_anchor
@@ -1576,7 +1576,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: review_human_verification
   supporting_fixture_id: review_human_verification
   observed_boundary_id: review_human_verification
@@ -1589,7 +1589,7 @@ boundary_contract_records:
   - receipt
   - state_history
   contract_path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
-  contract_sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  contract_sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   policy_object: override_recover_blocked_authority
   supporting_fixture_id: override_recover_blocked_authority
   observed_boundary_id: override_recover_blocked_authority
@@ -4381,8 +4381,8 @@ scenario_hashes:
   - resume_clarify
   route_authority: false
   scenario_manifest_path: docs/arnold/megaplan-native-representation-scenarios.yaml
-  scenario_manifest_sha256: sha256:ab24a69501cb1a1e72ce52a7e837d2a6b2781a325dd30f73ae558f71feb58bbe
-  record_sha256: sha256:a94ebb3a8f2a8e1353ec90b7a7e07e8c7007a144a47737536f01969e44adf60f
+  scenario_manifest_sha256: sha256:987ca5e62894289035de06bd9910ef58c1333f7d3c3755babe4264c3460d5b48
+  record_sha256: sha256:bbe31846d2103a0405098036e011ee09ae2c18f7acae14e4d560e764d7d05c6b
   refresh_rule: Refresh split-outcome hashes only when the referenced deterministic
     tests or fixtures change under reviewer-approved semantic diff review.
   authority_rule: Split-outcome scenario records are evidence-only; canonical .pypeline
@@ -4391,11 +4391,7 @@ scenario_hashes:
   - path: tests/arnold_pipelines/megaplan/test_native_golden_traces.py
     case_ids:
     - D1-prep-plan
-    sha256: sha256:a670ffba28e8867d347ce9fa5bc710e8f034fa16f292fc9b7bc1df78fc550471
-  - path: tests/arnold_pipelines/megaplan/test_compositional_workflow.py
-    case_ids:
-    - test_human_gate_continue_resumes_into_proceed_path
-    sha256: sha256:be10b19f6f1b26b2fa9b4732781402abd9e1945f051750d3a619f84aef5bbc3a
+    sha256: sha256:044c90c34c4d2761c4c47e78f8795bdbb7911f8007adaca9f983eab0f1b0cd10
   deterministic_fixture_hashes:
   - path: tests/arnold_pipelines/megaplan/fixtures/native_goldens/D1-prep-plan/events.ndjson
     sha256: sha256:ba31e720dec9d8a57e187d64f9bd2a8a65634549e3931fc65cadaccdd0f593c8
@@ -4425,8 +4421,8 @@ scenario_hashes:
   - unresolved_flag_reprompt
   route_authority: false
   scenario_manifest_path: docs/arnold/megaplan-native-representation-scenarios.yaml
-  scenario_manifest_sha256: sha256:ab24a69501cb1a1e72ce52a7e837d2a6b2781a325dd30f73ae558f71feb58bbe
-  record_sha256: sha256:03e5fbc9b1176fb592fdffbdc58e906e19299d2710811817e7e8f33ad903ab11
+  scenario_manifest_sha256: sha256:987ca5e62894289035de06bd9910ef58c1333f7d3c3755babe4264c3460d5b48
+  record_sha256: sha256:2ee1cf0986f8e40966cffbc415a5c6ea9133f8849d6bd0d0d8cc4c395ff87e1d
   refresh_rule: Refresh split-outcome hashes only when the referenced deterministic
     tests or fixtures change under reviewer-approved semantic diff review.
   authority_rule: Split-outcome scenario records are evidence-only; canonical .pypeline
@@ -4436,26 +4432,21 @@ scenario_hashes:
     case_ids:
     - D3-gate-preflight
     - D4-gate-revise
-    sha256: sha256:a670ffba28e8867d347ce9fa5bc710e8f034fa16f292fc9b7bc1df78fc550471
-  - path: tests/arnold_pipelines/megaplan/test_compositional_workflow.py
-    case_ids:
-    - test_abort_path_stops_at_halt
-    - test_iterate_route_reaches_revise_before_looping
-    sha256: sha256:be10b19f6f1b26b2fa9b4732781402abd9e1945f051750d3a619f84aef5bbc3a
+    sha256: sha256:044c90c34c4d2761c4c47e78f8795bdbb7911f8007adaca9f983eab0f1b0cd10
   deterministic_fixture_hashes:
   - path: tests/arnold_pipelines/megaplan/fixtures/native_goldens/D3-gate-preflight/events.ndjson
-    sha256: sha256:3640a846379b585e29dbfde693ce7ea2759b0f97115c417261f3237c50bafee0
+    sha256: sha256:457b1eefae77d2380559790dde3b3686ed28319d40c87613a9cca023c43f7579
   - path: tests/arnold_pipelines/megaplan/fixtures/native_goldens/D3-gate-preflight/checkpoint.json
-    sha256: sha256:9d24bd8b8504f5a3f90544edf2e37525637bd743543c2743646ff350f7e16318
+    sha256: sha256:ec2f282c8312daea405fc5a1fec8640c1058776d1e88bb90e113d49aa936f802
   - path: tests/arnold_pipelines/megaplan/fixtures/native_goldens/D4-gate-revise/events.ndjson
-    sha256: sha256:f277e1b305f1a186ec22e8df78fee7005485b170226f7d85877ab64c4c4e043d
+    sha256: sha256:c73c1bacdfc9fac32973319cd21093d7042ecb2f4117c09f1193ea59c86b051b
   - path: tests/arnold_pipelines/megaplan/fixtures/native_goldens/D4-gate-revise/checkpoint.json
-    sha256: sha256:d2e3fea24213b27aadf8b2c7deb2f6778218999ab25f5c13df2d033294d177b5
+    sha256: sha256:ad3649d9c8b173b51738b3dafbda9c4c03a9ea41074fb6f2ef2779e62dad2bef
   source_warrant_hashes:
   - path: arnold_pipelines/megaplan/workflows/workflow.pypeline
     sha256: sha256:4b91c422e376bdce729fb0e8cc83a07557b40ac1a0dda469e1df17b5fc78513f
   - path: arnold_pipelines/megaplan/handlers/gate.py
-    sha256: sha256:996d2c1a23596fb3daab4fe108ca831cd5297ea819075ac96d2d6722be0b7a51
+    sha256: sha256:38b9d00c1e792c4071db4e3c7abb6c72f6c6d0b2b4a8885ed0cb2c1391b7e0f6
 - record_id: cap-exhaustion-distinctions
   path_classes:
   - cap
@@ -4472,8 +4463,8 @@ scenario_hashes:
   - request_rework
   route_authority: false
   scenario_manifest_path: docs/arnold/megaplan-native-representation-scenarios.yaml
-  scenario_manifest_sha256: sha256:ab24a69501cb1a1e72ce52a7e837d2a6b2781a325dd30f73ae558f71feb58bbe
-  record_sha256: sha256:0021981db688ea5238b8d157789f2d1fdc549cf903e5a36abb3bcdd9ad84ba87
+  scenario_manifest_sha256: sha256:987ca5e62894289035de06bd9910ef58c1333f7d3c3755babe4264c3460d5b48
+  record_sha256: sha256:625bb4a202475ff75737266f2045c2c2bf2a306b649e1625de60db6f43ab4d96
   refresh_rule: Refresh split-outcome hashes only when the referenced deterministic
     tests or fixtures change under reviewer-approved semantic diff review.
   authority_rule: Split-outcome scenario records are evidence-only; canonical .pypeline
@@ -4484,20 +4475,20 @@ scenario_hashes:
     - test_newly_failing_deterministic_check_is_blocking
     - test_resolve_review_outcome_emits_rework_signal
     - test_review_approval_fails_when_finalize_tasks_lack_execute_authority
-    sha256: sha256:e2c7ad2aa44ba912c359066f0abb331ab73ce55a946dae6fa28b84b5e3a9ca36
+    sha256: sha256:457a968263e59efc7ce326bda74053e823af0b4155467f41139dbd9c14410fda
   - path: tests/arnold_pipelines/megaplan/test_native_golden_manifest.py
     case_ids:
     - test_review_needs_rework_has_cap_exhaustion_artifacts
     - test_review_needs_rework_has_loop_config
-    sha256: sha256:0a1de21ec3a911f28220e4b7f7ff2933ef11ae98207c2c48c245b8cf748975da
+    sha256: sha256:0b5ab74205feed916377d80b5911c87dd22996fc191f63a8407bab71e131d6ff
   deterministic_fixture_hashes:
   - path: tests/arnold_pipelines/megaplan/fixtures/golden_artifacts/review_needs_rework.json
-    sha256: sha256:c0a5a4a3fe30f556bf392bea8dfc605c4d335f6b7fb9e498540d0b3c4ab4d2b7
+    sha256: sha256:7c70be6fa37b5acc7920cc6c14b805d15bde9c1975de69440e74835027d174e4
   source_warrant_hashes:
   - path: arnold_pipelines/megaplan/workflows/workflow.pypeline
     sha256: sha256:4b91c422e376bdce729fb0e8cc83a07557b40ac1a0dda469e1df17b5fc78513f
   - path: arnold_pipelines/megaplan/handlers/review.py
-    sha256: sha256:9b06b6e71c7c3215e30b49b5a599dbfe871d58c724a7c52cff1f008d760c69e4
+    sha256: sha256:8cbbfaa15708fde72ee080a56449a6d5bcd4169e4578295ecd45c8ea846be02e
 - record_id: tiebreaker-rejoin-and-escalate
   path_classes:
   - tiebreaker
@@ -4514,8 +4505,8 @@ scenario_hashes:
   - replan_route
   route_authority: false
   scenario_manifest_path: docs/arnold/megaplan-native-representation-scenarios.yaml
-  scenario_manifest_sha256: sha256:ab24a69501cb1a1e72ce52a7e837d2a6b2781a325dd30f73ae558f71feb58bbe
-  record_sha256: sha256:b1275536dc8b1eb1891816d2c82c0390c9bb4f8187152a1b80756713685624f8
+  scenario_manifest_sha256: sha256:987ca5e62894289035de06bd9910ef58c1333f7d3c3755babe4264c3460d5b48
+  record_sha256: sha256:6190854cf47958c81aab8acfd2a4e616d45041785abbb9c0a3ac949e5b2224d2
   refresh_rule: Refresh split-outcome hashes only when the referenced deterministic
     tests or fixtures change under reviewer-approved semantic diff review.
   authority_rule: Split-outcome scenario records are evidence-only; canonical .pypeline
@@ -4527,23 +4518,23 @@ scenario_hashes:
     - test_iterate_signal_from_replan_positions_for_revise_rejoin
     - test_proceed_decision_positions_for_gate_finalize_path
     - test_tiebreaker_replan_rejoins_ordinary_path_and_does_not_bypass_finalize
-    sha256: sha256:e2c7ad2aa44ba912c359066f0abb331ab73ce55a946dae6fa28b84b5e3a9ca36
+    sha256: sha256:457a968263e59efc7ce326bda74053e823af0b4155467f41139dbd9c14410fda
   - path: tests/arnold_pipelines/megaplan/test_native_golden_traces.py
     case_ids:
     - D5-tiebreaker
-    sha256: sha256:a670ffba28e8867d347ce9fa5bc710e8f034fa16f292fc9b7bc1df78fc550471
+    sha256: sha256:044c90c34c4d2761c4c47e78f8795bdbb7911f8007adaca9f983eab0f1b0cd10
   deterministic_fixture_hashes:
   - path: tests/arnold_pipelines/megaplan/fixtures/native_goldens/D5-tiebreaker/events.ndjson
-    sha256: sha256:b37fea2c9affc2120430aa7fde674ad647b411342b6ee502ec5bc227f60b00b1
+    sha256: sha256:05efdd7ee6ae5595ba256f76ab3651aab788980c11f44b4225c1c87c90899c4e
   - path: tests/arnold_pipelines/megaplan/fixtures/native_goldens/D5-tiebreaker/checkpoint.json
-    sha256: sha256:73021cbdd82f7b1a544391116bdc03e9f9dafd07d3833fb9c8f9856e56fed463
+    sha256: sha256:cdf074c749399f16f63bb6f9cb265581fa8ba2a1e22b6a00b410ee416e7c77ff
   - path: tests/arnold_pipelines/megaplan/fixtures/native_goldens/D5-tiebreaker/state.json
-    sha256: sha256:951d89d4ced5c04ad04c2d64a93bf5befb257b0706d61bb0f47adb8c58ba3b0c
+    sha256: sha256:2f83092ae945a9e840eaf9b31e7a5c90d27bb9fe8633db04ea22f3d3ed36a940
   source_warrant_hashes:
   - path: arnold_pipelines/megaplan/workflows/workflow.pypeline
     sha256: sha256:4b91c422e376bdce729fb0e8cc83a07557b40ac1a0dda469e1df17b5fc78513f
   - path: arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py
-    sha256: sha256:481a6836bbbd23e98a32ff0267fd712c58d21b8d790e7c8e275dbcac688365ee
+    sha256: sha256:918155694199f8dbebd2df6ce88322a5d9a618d59c11f24a8512885ec1d88113
 - record_id: execute-batch-resume
   path_classes:
   - execute
@@ -4560,8 +4551,8 @@ scenario_hashes:
   - stable_batch_paths
   route_authority: false
   scenario_manifest_path: docs/arnold/megaplan-native-representation-scenarios.yaml
-  scenario_manifest_sha256: sha256:ab24a69501cb1a1e72ce52a7e837d2a6b2781a325dd30f73ae558f71feb58bbe
-  record_sha256: sha256:258e7dfd0ba4638c110a2e86b6ea2ba404c48c4e8178b23249f5f519bda245b3
+  scenario_manifest_sha256: sha256:987ca5e62894289035de06bd9910ef58c1333f7d3c3755babe4264c3460d5b48
+  record_sha256: sha256:27b9b8e9237c030a6ea4c0f71930f5376edd5ecb807dff5b83ed3a3e1f8f3002
   refresh_rule: Refresh split-outcome hashes only when the referenced deterministic
     tests or fixtures change under reviewer-approved semantic diff review.
   authority_rule: Split-outcome scenario records are evidence-only; canonical .pypeline
@@ -4572,14 +4563,14 @@ scenario_hashes:
     - test_batch_ordering_and_s4_paths_are_deterministic
     - test_batch_two_of_four_block_resume_reruns_only_blocked_batch
     - test_partial_failure_resume_preserves_success_outputs_and_evidence_refs
-    sha256: sha256:18238fe1e14a0b42e5bd7e6dc95e8f8c74d0a4de4c21d7f3e3911fdeed145dc7
+    sha256: sha256:2b6279a6629defbb4354c9d4a548e1fc80857baa2e5cb1303df948b1e032992c
   - path: tests/arnold_pipelines/megaplan/test_native_golden_traces.py
     case_ids:
     - D7-execute-dag
-    sha256: sha256:a670ffba28e8867d347ce9fa5bc710e8f034fa16f292fc9b7bc1df78fc550471
+    sha256: sha256:044c90c34c4d2761c4c47e78f8795bdbb7911f8007adaca9f983eab0f1b0cd10
   deterministic_fixture_hashes:
   - path: tests/arnold_pipelines/megaplan/fixtures/golden_artifacts/execute_failure_resume.json
-    sha256: sha256:5d9e21499b65aecc51f31ec9e933c5fe945e9029e7185463e0b809b82ae2e142
+    sha256: sha256:1e4f3b2762cbd0f745725f9f873e0d6ce88907dec5ab88764161b50f09e2acdb
   - path: tests/arnold_pipelines/megaplan/fixtures/native_goldens/D7-execute-dag/events.ndjson
     sha256: sha256:77c9842835064af25f448e4184605a3f6cc396d726499e6f6fd7e12d8cd64d75
   - path: tests/arnold_pipelines/megaplan/fixtures/native_goldens/D7-execute-dag/checkpoint.json
@@ -4588,7 +4579,7 @@ scenario_hashes:
   - path: arnold_pipelines/megaplan/workflows/workflow.pypeline
     sha256: sha256:4b91c422e376bdce729fb0e8cc83a07557b40ac1a0dda469e1df17b5fc78513f
   - path: arnold_pipelines/megaplan/execute/policy.py
-    sha256: sha256:6af5d36f54e8d5a75f64b257039277c1000d33cd4606326e1ff9678694e3841e
+    sha256: sha256:d7d2e99c5912e0fd6c22893b15180e39a965f0e99c2fc96f2a9e25e243cfadb4
 - record_id: approval-gate-split-outcomes
   path_classes:
   - approval
@@ -4604,8 +4595,8 @@ scenario_hashes:
   - denied_missing_confirm
   route_authority: false
   scenario_manifest_path: docs/arnold/megaplan-native-representation-scenarios.yaml
-  scenario_manifest_sha256: sha256:ab24a69501cb1a1e72ce52a7e837d2a6b2781a325dd30f73ae558f71feb58bbe
-  record_sha256: sha256:f915521fb8bfe0160a752d0a983b65a941350301e59680e58b91c4009f7b74d4
+  scenario_manifest_sha256: sha256:987ca5e62894289035de06bd9910ef58c1333f7d3c3755babe4264c3460d5b48
+  record_sha256: sha256:ce476114b1d3120ffadf9683cb434ac31e09767c8be9b7efc3c5877c1ad3c8d7
   refresh_rule: Refresh split-outcome hashes only when the referenced deterministic
     tests or fixtures change under reviewer-approved semantic diff review.
   authority_rule: Split-outcome scenario records are evidence-only; canonical .pypeline
@@ -4614,11 +4605,11 @@ scenario_hashes:
   - path: tests/arnold_pipelines/megaplan/test_execute_s4_behavior_parity.py
     case_ids:
     - test_destructive_approval_split_outcomes_are_policy_visible
-    sha256: sha256:18238fe1e14a0b42e5bd7e6dc95e8f8c74d0a4de4c21d7f3e3911fdeed145dc7
+    sha256: sha256:2b6279a6629defbb4354c9d4a548e1fc80857baa2e5cb1303df948b1e032992c
   - path: tests/arnold_pipelines/megaplan/test_native_golden_traces.py
     case_ids:
     - D8-execute-gates
-    sha256: sha256:a670ffba28e8867d347ce9fa5bc710e8f034fa16f292fc9b7bc1df78fc550471
+    sha256: sha256:044c90c34c4d2761c4c47e78f8795bdbb7911f8007adaca9f983eab0f1b0cd10
   deterministic_fixture_hashes:
   - path: tests/arnold_pipelines/megaplan/fixtures/native_goldens/D8-execute-gates/events.ndjson
     sha256: sha256:37daaceeb7d75df0b03c3821278903aaffe636810015f26dc8237ff9d80b0b31
@@ -4628,7 +4619,7 @@ scenario_hashes:
   - path: arnold_pipelines/megaplan/workflows/workflow.pypeline
     sha256: sha256:4b91c422e376bdce729fb0e8cc83a07557b40ac1a0dda469e1df17b5fc78513f
   - path: arnold_pipelines/megaplan/execute/policy.py
-    sha256: sha256:6af5d36f54e8d5a75f64b257039277c1000d33cd4606326e1ff9678694e3841e
+    sha256: sha256:d7d2e99c5912e0fd6c22893b15180e39a965f0e99c2fc96f2a9e25e243cfadb4
 - record_id: review-rework-and-human-verify
   path_classes:
   - review
@@ -4643,8 +4634,8 @@ scenario_hashes:
   - raw_rework_preserved
   route_authority: false
   scenario_manifest_path: docs/arnold/megaplan-native-representation-scenarios.yaml
-  scenario_manifest_sha256: sha256:ab24a69501cb1a1e72ce52a7e837d2a6b2781a325dd30f73ae558f71feb58bbe
-  record_sha256: sha256:517d92475ee4cc4ee4c02c8fec5951e5c9ca095c3240f9170db3505fcd15a31d
+  scenario_manifest_sha256: sha256:987ca5e62894289035de06bd9910ef58c1333f7d3c3755babe4264c3460d5b48
+  record_sha256: sha256:2fef04d1dcfc099df95e7a12f76e4a64c281b87bfbe78509129dfed144ba4b2c
   refresh_rule: Refresh split-outcome hashes only when the referenced deterministic
     tests or fixtures change under reviewer-approved semantic diff review.
   authority_rule: Split-outcome scenario records are evidence-only; canonical .pypeline
@@ -4655,15 +4646,15 @@ scenario_hashes:
     - test_raw_review_output_needs_rework_cannot_be_normalized_to_approved
     - test_resolve_review_outcome_emits_deferred_human_signal
     - test_resolve_review_outcome_emits_rework_signal
-    sha256: sha256:e2c7ad2aa44ba912c359066f0abb331ab73ce55a946dae6fa28b84b5e3a9ca36
+    sha256: sha256:457a968263e59efc7ce326bda74053e823af0b4155467f41139dbd9c14410fda
   deterministic_fixture_hashes:
   - path: tests/arnold_pipelines/megaplan/fixtures/golden_artifacts/review_needs_rework.json
-    sha256: sha256:c0a5a4a3fe30f556bf392bea8dfc605c4d335f6b7fb9e498540d0b3c4ab4d2b7
+    sha256: sha256:7c70be6fa37b5acc7920cc6c14b805d15bde9c1975de69440e74835027d174e4
   source_warrant_hashes:
   - path: arnold_pipelines/megaplan/workflows/workflow.pypeline
     sha256: sha256:4b91c422e376bdce729fb0e8cc83a07557b40ac1a0dda469e1df17b5fc78513f
   - path: arnold_pipelines/megaplan/handlers/review.py
-    sha256: sha256:9b06b6e71c7c3215e30b49b5a599dbfe871d58c724a7c52cff1f008d760c69e4
+    sha256: sha256:8cbbfaa15708fde72ee080a56449a6d5bcd4169e4578295ecd45c8ea846be02e
 - record_id: no-review-terminal
   path_classes:
   - no_review
@@ -4679,8 +4670,8 @@ scenario_hashes:
   - terminate_done
   route_authority: false
   scenario_manifest_path: docs/arnold/megaplan-native-representation-scenarios.yaml
-  scenario_manifest_sha256: sha256:ab24a69501cb1a1e72ce52a7e837d2a6b2781a325dd30f73ae558f71feb58bbe
-  record_sha256: sha256:3071b48e2e6812665e9587715aa8fd5220055f2dfaee228bb9df82338a3f0a8a
+  scenario_manifest_sha256: sha256:987ca5e62894289035de06bd9910ef58c1333f7d3c3755babe4264c3460d5b48
+  record_sha256: sha256:2471ba4ac6ae0e4d6b60dd1b33c7a74adeb84aee963acb330f82753c68fb6ef7
   refresh_rule: Refresh split-outcome hashes only when the referenced deterministic
     tests or fixtures change under reviewer-approved semantic diff review.
   authority_rule: Split-outcome scenario records are evidence-only; canonical .pypeline
@@ -4689,7 +4680,7 @@ scenario_hashes:
   - path: tests/arnold_pipelines/megaplan/test_execute_s4_behavior_parity.py
     case_ids:
     - test_bare_and_light_no_review_terminal_split_outcomes
-    sha256: sha256:18238fe1e14a0b42e5bd7e6dc95e8f8c74d0a4de4c21d7f3e3911fdeed145dc7
+    sha256: sha256:2b6279a6629defbb4354c9d4a548e1fc80857baa2e5cb1303df948b1e032992c
   - path: tests/arnold_pipelines/megaplan/test_path_resume_proofs.py
     case_ids:
     - test_execute_terminal_projection_helpers_follow_source_policy_routes
@@ -4704,7 +4695,7 @@ scenario_hashes:
   - path: arnold_pipelines/megaplan/workflows/workflow.pypeline
     sha256: sha256:4b91c422e376bdce729fb0e8cc83a07557b40ac1a0dda469e1df17b5fc78513f
   - path: arnold_pipelines/megaplan/execute/policy.py
-    sha256: sha256:6af5d36f54e8d5a75f64b257039277c1000d33cd4606326e1ff9678694e3841e
+    sha256: sha256:d7d2e99c5912e0fd6c22893b15180e39a965f0e99c2fc96f2a9e25e243cfadb4
 - record_id: override-force-proceed-and-replan
   path_classes:
   - override
@@ -4721,8 +4712,8 @@ scenario_hashes:
   - resume_clarify_authority_scope
   route_authority: false
   scenario_manifest_path: docs/arnold/megaplan-native-representation-scenarios.yaml
-  scenario_manifest_sha256: sha256:ab24a69501cb1a1e72ce52a7e837d2a6b2781a325dd30f73ae558f71feb58bbe
-  record_sha256: sha256:f8079a8390908db6ee58060b22a517b3b1be6b59615b586ffec0e33600c4e803
+  scenario_manifest_sha256: sha256:987ca5e62894289035de06bd9910ef58c1333f7d3c3755babe4264c3460d5b48
+  record_sha256: sha256:1ff57b5e8ce90acc4f287083064e9211f50a87f564e0596666b043437c9a538e
   refresh_rule: Refresh split-outcome hashes only when the referenced deterministic
     tests or fixtures change under reviewer-approved semantic diff review.
   authority_rule: Split-outcome scenario records are evidence-only; canonical .pypeline
@@ -4733,12 +4724,12 @@ scenario_hashes:
     - test_build_override_action_output_preserves_force_proceed_priority
     - test_override_replan_rejoins_ordinary_planning_path
     - test_override_replan_then_gate_finalize_does_not_bypass_finalize
-    sha256: sha256:e2c7ad2aa44ba912c359066f0abb331ab73ce55a946dae6fa28b84b5e3a9ca36
+    sha256: sha256:457a968263e59efc7ce326bda74053e823af0b4155467f41139dbd9c14410fda
   - path: tests/arnold_pipelines/megaplan/test_semantic_health.py
     case_ids:
     - test_active_override_without_receipt_generates_missing_authority_finding
     - test_override_authority_rejects_smuggled_declared_target_ref
-    sha256: sha256:acebb8f843e9adc9f5de2796ad3acc914f66aece103ffa5292f4855a5bbf67ec
+    sha256: sha256:177d5a36f3a175753c942b58e4298617de2156be546811349a50178dd36c180b
   deterministic_fixture_hashes:
   - path: docs/arnold/megaplan-native-representation-boundary-fixtures/override_force_proceed_authority/manifest.json
     sha256: sha256:ddff6abc9ed7e258657f9e55bb1cff66e051706987e0bcb2c77921af8ce01cbd
@@ -4748,7 +4739,7 @@ scenario_hashes:
   - path: arnold_pipelines/megaplan/workflows/workflow.pypeline
     sha256: sha256:4b91c422e376bdce729fb0e8cc83a07557b40ac1a0dda469e1df17b5fc78513f
   - path: arnold_pipelines/megaplan/handlers/override.py
-    sha256: sha256:39371dbdddab675912b16ec415b52285b2705ef64726e846fbd8f0a9455f61ae
+    sha256: sha256:fce67c93778e57b0fddd240bc41723305972385b6f5658ef3ae3ac4b57bae402
 installed_package_fingerprints:
 - suite_id: installed_package_canonical_source
   row_ids:
@@ -4799,8 +4790,8 @@ topology_regeneration_checks:
 - check_id: topology_regeneration
   row_ids:
   - shadow-topology
-  proof_artifact_path: tests/arnold_pipelines/megaplan/test_compositional_workflow.py
-  proof_artifact_sha256: sha256:be10b19f6f1b26b2fa9b4732781402abd9e1945f051750d3a619f84aef5bbc3a
+  proof_artifact_path: tests/arnold_pipelines/megaplan/test_native_contract.py
+  proof_artifact_sha256: sha256:78ee902b8f3329c0b912f681e402c410a74f259673bbbe29b0b13986b38637e3
   fixture_path: tests/arnold_pipelines/megaplan/fixtures/megaplan_m4_topology.yaml
   fixture_sha256: sha256:09b6c6b55bcc35864252d1617c3df82ecf94d8a9720b71c106a07b6597d4e8f4
   canonical_source_path: arnold_pipelines/megaplan/workflows/workflow.pypeline
@@ -4817,7 +4808,7 @@ handler_purity_checks:
   row_ids:
   - handler-purity-audit
   proof_artifact_path: tests/arnold_pipelines/megaplan/test_semantics_carrier.py
-  proof_artifact_sha256: sha256:e76baf0a4aeb3493801d8ac0a54019d39ed057e27e180f6eacd2b88f585baa3f
+  proof_artifact_sha256: sha256:1d81040611566adbc979d75e5bbdafb23719f3653924f4ccde0c9a4b7cb19cfa
   retained_handlers:
   - handle_critique
   - handle_execute
@@ -4829,81 +4820,24 @@ handler_purity_checks:
   - handle_tiebreaker_run
   module_hashes:
   - path: arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py
-    sha256: sha256:481a6836bbbd23e98a32ff0267fd712c58d21b8d790e7c8e275dbcac688365ee
+    sha256: sha256:918155694199f8dbebd2df6ce88322a5d9a618d59c11f24a8512885ec1d88113
   - path: arnold_pipelines/megaplan/handlers/critique.py
     sha256: sha256:e7567231eba1a9adb74112ad120d655bb1d7725e19edd22d79d2421005dcfe1a
   - path: arnold_pipelines/megaplan/handlers/execute.py
-    sha256: sha256:210b92f0185ec3d6b2540f3f6efdcb5e214c7e3d607fedde023332ca17bf10e1
+    sha256: sha256:26085e895dca2c3e80f82136bed6a15c5e86a75971be6e5f302d3acf0bd97cc5
   - path: arnold_pipelines/megaplan/handlers/finalize.py
-    sha256: sha256:148e52265ff26148ba19c9057186134a6fcb63010e6dd56a8001ef70f263a457
+    sha256: sha256:ba7923121c4d20d2071d393fe873d82c7dffc21bed5b6d2d6a622279984fa1c9
   - path: arnold_pipelines/megaplan/handlers/gate.py
-    sha256: sha256:996d2c1a23596fb3daab4fe108ca831cd5297ea819075ac96d2d6722be0b7a51
+    sha256: sha256:38b9d00c1e792c4071db4e3c7abb6c72f6c6d0b2b4a8885ed0cb2c1391b7e0f6
   - path: arnold_pipelines/megaplan/handlers/override.py
-    sha256: sha256:39371dbdddab675912b16ec415b52285b2705ef64726e846fbd8f0a9455f61ae
+    sha256: sha256:fce67c93778e57b0fddd240bc41723305972385b6f5658ef3ae3ac4b57bae402
   - path: arnold_pipelines/megaplan/handlers/review.py
-    sha256: sha256:9b06b6e71c7c3215e30b49b5a599dbfe871d58c724a7c52cff1f008d760c69e4
+    sha256: sha256:8cbbfaa15708fde72ee080a56449a6d5bcd4169e4578295ecd45c8ea846be02e
   - path: arnold_pipelines/megaplan/handlers/shared.py
-    sha256: sha256:71e8164e917f82cee0bdded5432f584f0596b652c4fd34a5a03fd71364059461
-  violations:
-    handle_execute:
-      state_mutation:
-      - response["state"] = ...
-      - response["next_step"] = ...
-      - state["current_state"] = ...
-      - response["state"] = ...
-      - response["next_step"] = ...
-      - state["current_state"] = ...
-      - response["state"] = ...
-      - response["next_step"] = ...
-    handle_finalize:
-      state_mutation:
-      - state["current_state"] = ...
-      local_route_functions:
-        _route_finalize_baseline_selection_failure_to_revise:
-        - 'state mutation: state["current_state"] = ...'
-    handle_gate:
-      local_route_functions:
-        _build_gate_route_signal:
-        - 'state mutation: state["current_state"] = ...'
-        _critique_terminate_branch:
-        - 'state mutation: state["current_state"] = ...'
-        _next_progress_step:
-        - 'routing calls: [''workflow_next'']'
-        _resolve_revise_transition:
-        - 'routing calls: [''workflow_transition'']'
-    handle_override:
-      local_route_functions:
-        _override_abort:
-        - 'state mutation: state["current_state"] = ...'
-        _override_adopt_execution:
-        - 'state mutation: state["current_state"] = ...'
-        _override_force_proceed:
-        - 'state mutation: state["current_state"] = ...'
-        _override_recover_blocked:
-        - 'state mutation: state["current_state"] = ...'
-        _override_resume_clarify:
-        - 'state mutation: state["current_state"] = ...'
-        _routed_override_response:
-        - 'state mutation: response["next_step"] = ...'
-    handle_review:
-      fanout_calls:
-      - run_parallel_review
-      local_route_functions:
-        _finalize_review_outcome:
-        - 'state mutation: state["current_state"] = ...'
-    handle_tiebreaker_decide:
-      local_route_functions:
-        _apply_legacy_tiebreaker_bridge:
-        - 'state mutation: response["next_step"] = ...'
-    handle_tiebreaker_run:
-      local_route_functions:
-        _apply_legacy_tiebreaker_bridge:
-        - 'state mutation: response["next_step"] = ...'
-  shared_module_violations:
-    _finish_step:
-    - 'routing calls: [''workflow_next'']'
-    - 'state mutation: response["next_step"] = ...'
-  passed: false
+    sha256: sha256:373b719fcb164e8446d0be18029c5f3cce449756650217663f9498eec4fb214a
+  violations: {}
+  shared_module_violations: {}
+  passed: true
 compatibility_quarantine_checks:
 - check_id: compatibility_quarantine
   row_ids:
@@ -4920,45 +4854,41 @@ compatibility_quarantine_checks:
   quarantine_record_count: 6
   authority_conflicts: {}
   coupling_gate:
-    passed: false
+    passed: true
     check_id: generic-arnold-megaplan-coupling
-    message: 'new generic Arnold Megaplan coupling: arnold.workflow.source_compiler'
+    message: ''
     details:
       allowlisted_count: 11
-      coupled_count: 12
-      unexpected:
-        arnold.workflow.source_compiler:
-        - arnold_pipelines.megaplan.workflows.boundary_contracts
-        - arnold_pipelines.megaplan.workflows.boundary_contracts.BOUNDARY_CONTRACTS
+      coupled_count: 11
+      unexpected: {}
       stale_allowlist: []
-  passed: false
+  passed: true
 dead_delete_mutation_checks:
 - check_id: dead_delete_mutation
   row_ids:
   - source-path-reconciliation
   proof_artifact_path: tests/arnold/conformance/test_deleted_surfaces.py
-  proof_artifact_sha256: sha256:c0379a5f077bc1b0299139f195a4cbd859d08b96dd03ea283749da4439864718
+  proof_artifact_sha256: sha256:546f460eb6765a4c32b458b9f6e4f612601ed005756302140036533ceafe2c56
   deleted_source_path_count: 24
   deleted_import_module_count: 26
-  present_deleted_paths:
-  - arnold_pipelines/megaplan/cli/parser.py
+  present_deleted_paths: []
   present_deleted_modules: []
   product_import_violations: {}
-  passed: false
+  passed: true
 approved_carriers:
 - path: arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py
   carrier_name: tiebreaker_phase_body
-  sha256: sha256:481a6836bbbd23e98a32ff0267fd712c58d21b8d790e7c8e275dbcac688365ee
+  sha256: sha256:918155694199f8dbebd2df6ce88322a5d9a618d59c11f24a8512885ec1d88113
   rows:
   - handler-purity-audit
 - path: arnold_pipelines/megaplan/handlers/plan.py
   carrier_name: plan_phase_body
-  sha256: sha256:720cbf5d7672db3c9a8bf648c94820797b2e85f8201512c560ff1284d448b827
+  sha256: sha256:290f5b3f936a9dca47f6cd87a518405fe5706100b3937b2e80976fe688197f3d
   rows:
   - handler-purity-audit
 - path: arnold_pipelines/megaplan/workflows/boundary_contracts.py
   carrier_name: boundary_contract_registry
-  sha256: sha256:f510b25d855b80279dfb6d3dcd1e55fcb2089ce151c161db4b16f94b8c146648
+  sha256: sha256:cb89c6dbeec6f4f9034736b9ceff682fd5c438dc260c4eb11ed05705e46668a7
   rows:
   - execute-approval-gates
   - override-action-surface
@@ -5022,16 +4952,16 @@ approved_carriers:
   - timeout-deadline-policy
 - path: docs/arnold/package-authoring-contract.md
   carrier_name: package_authoring_contract
-  sha256: sha256:191df92a472e2f10c45ec734469485e57f04488de2c52c986216e058abed5876
+  sha256: sha256:51527daa02fecd696061d5336cc56fb42dcf211c7cb312afa931adce67ac8b52
   rows:
   - plan-artifact-version-metadata
 fixture_hashes:
 - path: arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py
-  sha256: sha256:481a6836bbbd23e98a32ff0267fd712c58d21b8d790e7c8e275dbcac688365ee
+  sha256: sha256:918155694199f8dbebd2df6ce88322a5d9a618d59c11f24a8512885ec1d88113
   referenced_by_rows:
   - handler-purity-audit
 - path: arnold_pipelines/megaplan/handlers/plan.py
-  sha256: sha256:720cbf5d7672db3c9a8bf648c94820797b2e85f8201512c560ff1284d448b827
+  sha256: sha256:290f5b3f936a9dca47f6cd87a518405fe5706100b3937b2e80976fe688197f3d
   referenced_by_rows:
   - handler-purity-audit
 - path: arnold_pipelines/megaplan/workflows/events.py
@@ -5055,6 +4985,7 @@ fixture_hashes:
 - path: arnold_pipelines/megaplan/workflows/workflow.pypeline
   sha256: sha256:4b91c422e376bdce729fb0e8cc83a07557b40ac1a0dda469e1df17b5fc78513f
   referenced_by_rows:
+  - behavior-parity
   - critique-gate-revise-loop
   - critique-parallel-lenses
   - dynamic-parallel-map
@@ -5073,6 +5004,63 @@ fixture_hashes:
   - source-readability
   - tiebreaker-subworkflow
   - typed-loop-outcomes
+- path: docs/arnold/megaplan-native-representation-boundary-fixtures/execute_aggregate_promotion/semantic_health.json
+  sha256: sha256:76146e4a8653082a83835e7a4b01768d12769bbead05284889fead49de9065d2
+  referenced_by_rows:
+  - critique-parallel-lenses
+  - execute-dependency-batches
+  - review-parallel-fanin
+- path: docs/arnold/megaplan-native-representation-boundary-fixtures/execute_blocked_anchor/semantic_health.json
+  sha256: sha256:a6a7d8063183f46ce55db8ecaf61ed90385076e3a59c283aa937b587497b935f
+  referenced_by_rows:
+  - critique-evaluator-retry
+  - gate-preflight-normalization
+  - timeout-deadline-policy
+- path: docs/arnold/megaplan-native-representation-boundary-fixtures/execute_partial_failure/semantic_health.json
+  sha256: sha256:f0069aabcd12c04322efe6d4a5bda4b480a3d8c0e54199a15902ef6b6951f16a
+  referenced_by_rows:
+  - execute-review-rework-loop
+  - gate-flag-debt-fallback
+- path: docs/arnold/megaplan-native-representation-boundary-fixtures/execute_resume_anchor/semantic_health.json
+  sha256: sha256:75e21e543f14be3104ce5e16c5d2b05fe5baf16f5a0a2d43e9b6fdd45003c095
+  referenced_by_rows:
+  - gate-signal-reprompt
+  - model-routing-policy
+  - path-addressed-checkpoints
+- path: docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_artifacts/semantic_health.json
+  sha256: sha256:7906b52d2a6d92c8e1fb5001bfd29041227c77d132265249226aedf63be57894
+  referenced_by_rows:
+  - plan-artifact-version-metadata
+- path: docs/arnold/megaplan-native-representation-boundary-fixtures/finalize_fallback/semantic_health.json
+  sha256: sha256:dd2e50badbf51231b9256a104577d5f6800c8c9b77fb68f9bb0a25476b4cdba4
+  referenced_by_rows:
+  - finalize-fallback-routes
+- path: docs/arnold/megaplan-native-representation-boundary-fixtures/gate_to_revise/semantic_health.json
+  sha256: sha256:a69a4220668e8518dafccc9fc7341367c00150224931f3b03e5340f74c1f7846
+  referenced_by_rows:
+  - critique-gate-revise-loop
+- path: docs/arnold/megaplan-native-representation-boundary-fixtures/prep_to_plan/semantic_health.json
+  sha256: sha256:07f6ff5d1bea6f1815d6793a72d3ddaee98e03aa9f61da6071f33ead581b0d49
+  referenced_by_rows:
+  - prep-clarification-gate
+- path: docs/arnold/megaplan-native-representation-boundary-fixtures/tiebreaker_synthesis_to_decision/semantic_health.json
+  sha256: sha256:f09ccb9cde463a830d4fc6ceb03f467e429827c3acdc34e0523e9638586ae5c4
+  referenced_by_rows:
+  - tiebreaker-subworkflow
+- path: docs/arnold/megaplan-native-representation-scenarios.yaml
+  sha256: sha256:987ca5e62894289035de06bd9910ef58c1333f7d3c3755babe4264c3460d5b48
+  referenced_by_rows:
+  - execute-dependency-batches
+  - execute-review-rework-loop
+  - gate-flag-debt-fallback
+  - gate-preflight-normalization
+  - gate-signal-reprompt
+  - model-routing-policy
+  - path-addressed-checkpoints
+  - prep-clarification-gate
+  - tiebreaker-subworkflow
+  - timeout-deadline-policy
+  - typed-loop-outcomes
 - path: docs/arnold/native-platform.md
   sha256: sha256:93712cc6b8f2ef0b32a46ed79fc04a5706a73e7684b287e0ef0e1cbd84c189d6
   referenced_by_rows:
@@ -5084,67 +5072,28 @@ fixture_hashes:
   - golden-trace-regeneration
   - timeout-deadline-policy
 - path: docs/arnold/package-authoring-contract.md
-  sha256: sha256:191df92a472e2f10c45ec734469485e57f04488de2c52c986216e058abed5876
+  sha256: sha256:51527daa02fecd696061d5336cc56fb42dcf211c7cb312afa931adce67ac8b52
   referenced_by_rows:
   - plan-artifact-version-metadata
-  - source-readability
-- path: tests/arnold/conformance/test_platform_e2e.py
-  sha256: sha256:041b233a8d82fd62ba1ef61e4a9bc8b618ac8f69fb80066940f134644a455cad
-  referenced_by_rows:
-  - behavior-parity
-  - critique-evaluator-retry
-  - execute-dependency-batches
-  - execute-review-rework-loop
-  - gate-flag-debt-fallback
-  - path-addressed-checkpoints
-  - prep-clarification-gate
-  - timeout-deadline-policy
-- path: tests/arnold/workflow/test_source_compiler_api.py
-  sha256: sha256:e856e0bbbb67ef6592ec5eb279bb03c2ac5a64da4711cdc72e9470e44ac0eb0c
-  referenced_by_rows:
-  - runtime-list-iteration
-  - typed-loop-outcomes
 - path: tests/arnold_pipelines/megaplan/fixtures/megaplan_m4_topology.yaml
   sha256: sha256:09b6c6b55bcc35864252d1617c3df82ecf94d8a9720b71c106a07b6597d4e8f4
   referenced_by_rows:
   - shadow-topology
 - path: tests/arnold_pipelines/megaplan/test_boundary_contracts.py
-  sha256: sha256:22a86c4ee945df3933aec7d4318d7c4cffdc4f7da3dcaeeaca34e0c1c2918799
+  sha256: sha256:3bf82a902caae435e59aff60445a7e42cf3c962cd4cc4086aa7341fc2b117c15
   referenced_by_rows:
   - execute-approval-gates
   - override-action-surface
   - review-retry-cap-outcomes
-- path: tests/arnold_pipelines/megaplan/test_chain_pr_platform_conformance.py
-  sha256: sha256:7ff0f5e2efdfc6670253ce396e0643a5ca87eeed883a28d2b73c0bb1634aa9da
-  referenced_by_rows:
-  - behavior-parity
-  - execute-dependency-batches
-  - execute-review-rework-loop
-  - gate-flag-debt-fallback
-  - model-routing-policy
-  - path-addressed-checkpoints
-  - review-parallel-fanin
-- path: tests/arnold_pipelines/megaplan/test_compositional_workflow.py
-  sha256: sha256:be10b19f6f1b26b2fa9b4732781402abd9e1945f051750d3a619f84aef5bbc3a
-  referenced_by_rows:
-  - critique-bare-skip
-  - critique-evaluator-retry
-  - critique-gate-revise-loop
-  - critique-parallel-lenses
-  - dynamic-parallel-map
-  - gate-preflight-normalization
-  - gate-signal-reprompt
-  - golden-trace-regeneration
-  - shadow-topology
-  - tiebreaker-subworkflow
 - path: tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py
   sha256: sha256:60c182731b2b91e207a758e7167741fbe3ec9a10a49d24aa18cde1331fca7b89
   referenced_by_rows:
   - behavior-parity
   - source-path-reconciliation
 - path: tests/arnold_pipelines/megaplan/test_native_contract.py
-  sha256: sha256:56cff727aab6a122b9f07d62d915bbaa6752ad95e1d57624598049b1a2299427
+  sha256: sha256:78ee902b8f3329c0b912f681e402c410a74f259673bbbe29b0b13986b38637e3
   referenced_by_rows:
+  - shadow-topology
   - source-path-reconciliation
 - path: tests/arnold_pipelines/megaplan/test_observability_events_projection.py
   sha256: sha256:7febda83a6713592abc29651843cd7dda3cbebc3ddc012782cabe8014c316e30
@@ -5159,27 +5108,26 @@ fixture_hashes:
   referenced_by_rows:
   - human-decision-suspension
 - path: tests/arnold_pipelines/megaplan/test_s6_auto_event_consumption.py
-  sha256: sha256:c40a6a120624ec75a8f17258b43dff4dd4e0d0773d2549fe0da3b34aa2d80960
+  sha256: sha256:f805e7d7e9db6c31d067257ad006c80a14e64f7e01f4ae53ed77708e3568daee
   referenced_by_rows:
   - autodrive-event-liveness
 - path: tests/arnold_pipelines/megaplan/test_s6_override_routing.py
-  sha256: sha256:2c5b87b81c68b078ca700727041e346176a1c58d6c1d219166f11f5d9d3c0d92
+  sha256: sha256:c4cb51b67548aba05cadcbce649b3a68dd65b6b4b1c9ad149c37bbd207e5e408
   referenced_by_rows:
   - override-action-surface
   - review-retry-cap-outcomes
 - path: tests/arnold_pipelines/megaplan/test_semantic_health.py
-  sha256: sha256:acebb8f843e9adc9f5de2796ad3acc914f66aece103ffa5292f4855a5bbf67ec
+  sha256: sha256:177d5a36f3a175753c942b58e4298617de2156be546811349a50178dd36c180b
   referenced_by_rows:
   - human-decision-suspension
 - path: tests/arnold_pipelines/megaplan/test_semantics_carrier.py
-  sha256: sha256:e76baf0a4aeb3493801d8ac0a54019d39ed057e27e180f6eacd2b88f585baa3f
+  sha256: sha256:1d81040611566adbc979d75e5bbdafb23719f3653924f4ccde0c9a4b7cb19cfa
   referenced_by_rows:
   - handler-purity-audit
 - path: tests/arnold_pipelines/megaplan/test_source_path_reconciliation.py
-  sha256: sha256:889352ff6d1b2a5b0c45fcc0b34f07095dca289a33af2543465a927f0b14aa62
+  sha256: sha256:ce35c6480b437e51e1c6cee6a604643ef650202cd4942b429b88a36c0695120b
   referenced_by_rows:
   - source-path-reconciliation
-  - source-readability
 - path: tests/arnold_pipelines/megaplan/test_status_cli.py
   sha256: sha256:1c07fe5ea7ebc300da4ac3900c5238980eae6da26d2a56f1f7dc0f0862512bcf
   referenced_by_rows:
@@ -5191,25 +5139,8 @@ fixture_hashes:
 - path: tests/arnold_pipelines/megaplan/test_workflows_planning.py
   sha256: sha256:5952678594bf1286bca312ce93a7773c262bf43f932e88b592897eef10e87a52
   referenced_by_rows:
-  - critique-bare-skip
-  - critique-gate-revise-loop
-  - critique-parallel-lenses
-  - dynamic-parallel-map
   - execute-approval-gates
-  - finalize-fallback-routes
-  - gate-preflight-normalization
-  - gate-signal-reprompt
-  - plan-artifact-version-metadata
-  - prep-clarification-gate
-  - review-parallel-fanin
   - review-retry-cap-outcomes
-  - runtime-list-iteration
-  - tiebreaker-subworkflow
-  - typed-loop-outcomes
-- path: tests/characterization/test_pipeline_golden.py
-  sha256: sha256:023d4a95220cb9491cdc41063e9b1884fd1a973bfee28b25878ef05c646bc468
-  referenced_by_rows:
-  - golden-trace-regeneration
 boundary_fixture_hashes:
 - fixture_id: execute_aggregate_promotion
   boundary_id: execute_aggregate_promotion
@@ -5686,7 +5617,7 @@ boundary_fixture_hashes:
 quarantine_records:
 - scan_id: components-authority
   path: arnold_pipelines/megaplan/workflows/components.py
-  sha256: sha256:28ae0707d31cd4d98b30d38a69aac206c94e02ee397431263fe07dde90392c69
+  sha256: sha256:db48ada889fbaa8099542cf3b56a0c32bf3eb8a6ebf57edd6e6124b8b2d58345
   authority_allowed: false
   classification: quarantined_authority_surface
   rationale: Compatibility component metadata cannot satisfy implemented-row authority.
@@ -5702,73 +5633,73 @@ quarantine_records:
     - 326
     - 1007
     - 1063
-    - 1959
-    - 1971
+    - 1972
     - 1984
-    - 1998
-    - 2036
-    - 2052
-    - 2066
-    - 2107
-    - 2122
-    - 2137
-    - 2155
-    - 2195
-    - 2210
-    - 2221
-    - 2242
-    - 2263
-    - 2286
-    - 2328
-    - 2336
-    - 2345
-    - 2354
-    - 2364
-    - 2374
-    - 2383
-    - 2390
-    - 2401
-    - 2413
-    - 2421
-    - 2428
-    - 2437
-    - 2444
-    - 2453
-    - 2467
-    - 2476
-    - 2508
-    - 2679
-    - 2687
-    - 2696
-    - 2705
-    - 2715
-    - 2725
-    - 2733
-    - 2740
-    - 2748
-    - 2757
-    - 2771
+    - 1997
+    - 2011
+    - 2049
+    - 2065
+    - 2079
+    - 2120
+    - 2135
+    - 2150
+    - 2168
+    - 2208
+    - 2223
+    - 2234
+    - 2255
+    - 2276
+    - 2299
+    - 2341
+    - 2349
+    - 2358
+    - 2367
+    - 2377
+    - 2387
+    - 2396
+    - 2403
+    - 2414
+    - 2426
+    - 2434
+    - 2441
+    - 2450
+    - 2457
+    - 2466
+    - 2480
+    - 2489
+    - 2521
+    - 2692
+    - 2700
+    - 2709
+    - 2718
+    - 2728
+    - 2738
+    - 2746
+    - 2753
+    - 2761
+    - 2770
+    - 2784
   - pattern: route_bindings
     line_numbers:
     - 133
     - 303
     - 315
-    - 1962
     - 1975
     - 1988
-    - 2002
-    - 2040
-    - 2056
-    - 2070
-    - 2111
-    - 2126
-    - 2144
-    - 2159
-    - 2199
-    - 2210
-    - 2246
-    - 2265
-    - 2290
+    - 2001
+    - 2015
+    - 2053
+    - 2069
+    - 2083
+    - 2124
+    - 2139
+    - 2157
+    - 2172
+    - 2212
+    - 2223
+    - 2259
+    - 2278
+    - 2303
   - pattern: compatibility_quarantine
     line_numbers:
     - 118
@@ -5778,7 +5709,7 @@ quarantine_records:
     - 214
     - 331
     - 381
-    - 2626
+    - 2639
 - scan_id: manifest-route-bindings
   path: arnold_pipelines/megaplan/workflows/planning.py
   sha256: sha256:521f6a93e2d52acec2d4ef8d50316245eb171e3ee2bfa0b28f4395b4882daecb
@@ -5815,7 +5746,7 @@ quarantine_records:
     - 792
 - scan_id: auto-next-step-derivation
   path: arnold_pipelines/megaplan/auto.py
-  sha256: sha256:eb4ab7607cfd989e5fef198cc7633c8adc7ee4d50a1dda8c89f5f9db1b014fca
+  sha256: sha256:9e2ce95c14a474cbcce8cb9026451ab93ab7e7c4033eb19c3be683cbb6d44ce9
   authority_allowed: false
   classification: quarantined_authority_surface
   rationale: Auto-driver next-step derivation is operational control flow, not semantic
@@ -5826,159 +5757,176 @@ quarantine_records:
   matched_patterns:
   - pattern: _required_state_for_control_action
     line_numbers:
-    - 1099
-    - 1114
+    - 1200
+    - 1215
   - pattern: _command_for_auto_target
     line_numbers:
-    - 1200
-    - 4656
+    - 1301
+    - 1362
+    - 1373
+    - 5482
   - pattern: next_step
     line_numbers:
-    - 1095
-    - 1096
-    - 1099
-    - 1100
-    - 1109
-    - 1112
-    - 1114
-    - 1117
-    - 1120
-    - 1153
-    - 1158
-    - 1160
-    - 1182
+    - 1196
+    - 1197
     - 1200
     - 1201
-    - 1256
-    - 1268
-    - 1279
-    - 1508
-    - 1522
-    - 2157
-    - 2889
-    - 3026
-    - 3076
-    - 3088
-    - 3097
-    - 3110
-    - 3122
-    - 3585
-    - 3639
-    - 3647
-    - 3651
-    - 3657
-    - 3691
-    - 3700
-    - 3706
-    - 3712
-    - 3716
-    - 3724
-    - 3730
-    - 3737
-    - 3738
-    - 3842
-    - 3845
-    - 3848
-    - 3850
-    - 3854
-    - 3855
-    - 3858
-    - 3860
-    - 3893
-    - 3895
-    - 3936
-    - 3952
-    - 4166
-    - 4172
-    - 4176
-    - 4199
-    - 4218
-    - 4354
-    - 4484
-    - 4526
-    - 4546
-    - 4575
-    - 4591
-    - 4600
-    - 4613
-    - 4621
-    - 4640
-    - 4656
-    - 4657
-    - 4658
-    - 4664
-    - 4671
-    - 4674
-    - 4676
-    - 4682
-    - 4685
-    - 4686
-    - 4698
-    - 4706
-    - 4719
-    - 4720
-    - 4745
-    - 4746
-    - 4754
-    - 4764
-    - 4769
-    - 4776
-    - 4781
-    - 4784
-    - 4797
-    - 4799
-    - 4814
-    - 4824
-    - 4825
-    - 4829
-    - 4833
-    - 4843
-    - 4845
-    - 4846
-    - 4871
-    - 4879
-    - 4883
-    - 4885
-    - 4914
-    - 4932
-    - 4940
-    - 4941
-    - 4958
-    - 4969
-    - 4981
-    - 4987
-    - 4994
-    - 4996
-    - 5011
+    - 1210
+    - 1213
+    - 1215
+    - 1218
+    - 1221
+    - 1254
+    - 1259
+    - 1261
+    - 1283
+    - 1301
+    - 1302
+    - 1357
+    - 1370
+    - 1373
+    - 1377
+    - 1389
+    - 1401
+    - 1695
+    - 1724
+    - 2614
+    - 3458
+    - 3603
+    - 3653
+    - 3665
+    - 3674
+    - 3687
+    - 3699
+    - 4227
+    - 4356
+    - 4364
+    - 4368
+    - 4374
+    - 4408
+    - 4417
+    - 4423
+    - 4429
+    - 4433
+    - 4441
+    - 4447
+    - 4454
+    - 4455
+    - 4558
+    - 4576
+    - 4584
+    - 4587
+    - 4589
+    - 4593
+    - 4594
+    - 4597
+    - 4599
+    - 4635
+    - 4637
+    - 4675
+    - 4691
+    - 4939
+    - 4945
+    - 4949
+    - 4972
     - 5013
-    - 5014
-    - 5028
-    - 5030
-    - 5052
-    - 5087
-    - 5114
-    - 5121
-    - 5129
-    - 5151
-    - 5153
-    - 5154
-    - 5163
-    - 5166
-    - 5168
-    - 5171
-    - 5177
-    - 5179
-    - 5180
-    - 5189
-    - 5198
-    - 5273
-    - 5275
-    - 5317
-    - 5319
-    - 5371
-    - 5373
-    - 5414
-    - 5540
+    - 5149
+    - 5292
+    - 5352
+    - 5372
+    - 5401
+    - 5417
+    - 5426
+    - 5439
+    - 5447
+    - 5466
+    - 5482
+    - 5483
+    - 5484
+    - 5490
+    - 5497
+    - 5500
+    - 5502
+    - 5508
+    - 5511
+    - 5512
+    - 5524
+    - 5532
+    - 5567
+    - 5568
+    - 5614
+    - 5626
+    - 5627
+    - 5635
+    - 5645
+    - 5650
+    - 5663
+    - 5666
+    - 5676
+    - 5681
+    - 5684
+    - 5694
+    - 5711
+    - 5713
+    - 5728
+    - 5738
+    - 5739
+    - 5750
+    - 5754
+    - 5764
+    - 5766
+    - 5767
+    - 5792
+    - 5800
+    - 5804
+    - 5806
+    - 5835
+    - 5853
+    - 5861
+    - 5862
+    - 5879
+    - 5890
+    - 5902
+    - 5910
+    - 5919
+    - 5921
+    - 5936
+    - 5950
+    - 5958
+    - 5960
+    - 5985
+    - 5991
+    - 5993
+    - 5994
+    - 6013
+    - 6015
+    - 6037
+    - 6072
+    - 6099
+    - 6106
+    - 6114
+    - 6136
+    - 6138
+    - 6139
+    - 6148
+    - 6151
+    - 6153
+    - 6156
+    - 6162
+    - 6164
+    - 6165
+    - 6174
+    - 6183
+    - 6258
+    - 6260
+    - 6303
+    - 6305
+    - 6331
+    - 6384
+    - 6386
+    - 6427
+    - 6446
+    - 6572
 - scan_id: cli-dispatch
   path: arnold/cli/workflow.py
   sha256: sha256:7e3be295dc415ea7d96425e7f1d009fe10d4d3ee7b9be49e64d4f0dc10d79a7b
@@ -6022,7 +5970,7 @@ quarantine_records:
     - 800
 - scan_id: pipeline-projection
   path: arnold_pipelines/megaplan/pipeline.py
-  sha256: sha256:e5b1cd177f1f1aff31d385582b43abe7d12d3b3f3adaa5f0b621876bc7199bd9
+  sha256: sha256:aed148cba86c097f8c9a7eebe68568c998a64557001900d09e6e8b7ed081c965
   authority_allowed: false
   classification: quarantined_authority_surface
   rationale: Projected compatibility shells cannot satisfy native source authority.
@@ -6033,12 +5981,12 @@ quarantine_records:
   - pattern: build_compatibility_shell
     line_numbers:
     - 16
-    - 22
+    - 25
   - pattern: build_and_compile_pipeline
     line_numbers:
     - 5
-    - 20
-    - 26
+    - 23
+    - 35
 - scan_id: workflow-shim
   path: arnold_pipelines/megaplan/workflows/workflow.py
   sha256: sha256:e6b229ff78238dcc8d9411f653baa3d728cbb01c4940ec511780e07233123a43
