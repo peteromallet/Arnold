@@ -10,10 +10,16 @@ tags:
 - autonomy-ladder
 - reliability
 - managed-recovery-custody
+- immediate-residual
 codebase_id: null
 created_at: '2026-06-07T12:48:34.740779+00:00'
-last_edited_at: '2026-07-30T12:58:49.893995+00:00'
-epics: []
+last_edited_at: '2026-07-31T03:17:11+00:00'
+epics:
+- epic_id: megaplan-native-parity-corrective
+  resolves_on_complete: false
+  kind: associated
+  provenance: post-m11-ticket-reconciliation-20260731
+  linked_at: '2026-07-31T03:17:11+00:00'
 ---
 
 Problem
@@ -34,3 +40,12 @@ Suggested touchpoints
 - `arnold/pipelines/megaplan/control_interface.py`
 - `arnold/runtime/resume.py`
 - `tests/test_supervisor_ladder.py`
+
+## 2026-07-31 reconciliation
+
+M11 plus the post-M11 fixes now provide canonical repair custody, dead-PID
+liveness checks, bounded event checkpoints, and safer handoff. Keep open:
+structured lock leases, bounded stale-heartbeat kill/resume, repeated-schema
+terminal classification, exact live replay, and the full golden policy matrix
+are not complete. Native S6 is associated because it consumes and demotes
+recovery control paths, but cannot auto-close these immediate residuals.

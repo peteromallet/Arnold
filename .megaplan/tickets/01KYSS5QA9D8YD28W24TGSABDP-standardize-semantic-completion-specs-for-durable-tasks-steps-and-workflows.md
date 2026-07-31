@@ -11,8 +11,18 @@ tags:
 - rework
 codebase_id: null
 created_at: '2026-07-30T15:09:34.409902+00:00'
-last_edited_at: '2026-07-30T15:11:06.121548+00:00'
-epics: []
+last_edited_at: '2026-07-31T03:17:11+00:00'
+epics:
+- epic_id: megaplan-native-parity-corrective
+  resolves_on_complete: false
+  kind: promoted_to_epic
+  provenance: standardized-completion-specifications-supersession-crosswalk
+  linked_at: '2026-07-31T03:17:11+00:00'
+- epic_id: native-workflow-platformization
+  resolves_on_complete: false
+  kind: associated
+  provenance: standardized-completion-specifications-supersession-crosswalk
+  linked_at: '2026-07-31T03:17:11+00:00'
 ---
 
 Problem
@@ -50,3 +60,12 @@ Design and oracle checklist
 docs/arnold/standardized-completion-spec-proposal.md
 
 Do not create a second evidence registry, verdict system, waiver subsystem, scheduler, or acceptance authority.
+
+## 2026-07-31 ownership reconciliation
+
+The independent `standardized-completion-specifications` chain is retired and
+must not be launched. Its complete requirement crosswalk promotes the
+implementation into Native Parity C1/C2/S2R/S5 and assigns public extraction
+and second-consumer certification to Platformization. Both relationships remain
+non-auto-resolving: this ticket is addressed only after both active initiatives
+produce their named proof artifacts.

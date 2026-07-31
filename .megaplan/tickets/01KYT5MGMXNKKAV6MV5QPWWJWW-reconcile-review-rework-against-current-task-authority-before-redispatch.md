@@ -10,14 +10,15 @@ tags:
 - execution
 - completion-contract
 - pre-native-blocker
+- immediate-residual
 codebase_id: null
 created_at: '2026-07-30T18:47:22.013736+00:00'
-last_edited_at: '2026-07-30T19:00:04.248941+00:00'
+last_edited_at: '2026-07-31T03:17:11+00:00'
 epics:
 - epic_id: megaplan-native-parity-corrective
   resolves_on_complete: false
   kind: associated
-  provenance: null
+  provenance: post-m11-ticket-reconciliation-20260731
   linked_at: 2026-07-30 19:00:04.248853+00:00
 ---
 
@@ -65,3 +66,8 @@ validation.
 Keep this ticket open. The final authority reread, disposition publication,
 and worker dispatch still need one state-version CAS immediately before
 dispatch. The exact archived M11 review-v10 trace also remains to be replayed.
+
+Native S5A/S5B/S7 consumes and ultimately replaces this compatibility path, but
+cannot auto-close the pre-launch CAS and archived-replay residual. Critique
+Ledger owns cumulative finding identity/reconciliation, not review-originated
+task admission.

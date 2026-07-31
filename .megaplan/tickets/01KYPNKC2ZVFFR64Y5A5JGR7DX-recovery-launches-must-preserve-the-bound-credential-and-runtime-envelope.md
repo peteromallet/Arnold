@@ -9,10 +9,16 @@ tags:
 - credentials
 - runtime-provenance
 - managed-recovery-custody
+- immediate-residual
 codebase_id: null
 created_at: '2026-07-29T10:09:24.064192+00:00'
-last_edited_at: '2026-07-30T20:28:00.000000+00:00'
-epics: []
+last_edited_at: '2026-07-31T03:17:11+00:00'
+epics:
+- epic_id: megaplan-native-parity-corrective
+  resolves_on_complete: false
+  kind: associated
+  provenance: post-m11-ticket-reconciliation-20260731
+  linked_at: '2026-07-31T03:17:11+00:00'
 ---
 
 Recovery must preserve the bound runtime, provider routing, and approved credential channel without reconstructing secrets manually. Direct retries used the pinned editable interpreter but depended on copying the environment from a hard-coded resident PID. During the 13:39Z recovery that resident had restarted from PID 3304356 to PID 3411953, making the retry launcher fail before execution. Persist a non-secret launch-envelope reference bound to the current resident generation or a stable credential broker, resolve it dynamically at launch, and fail with a typed stale-envelope error rather than a missing procfs path. Acceptance: rotate or restart the resident between failure and recovery, then prove the canonical managed relaunch uses the same approved credentials and editable runtime without PID-specific configuration or secret output.
@@ -61,3 +67,9 @@ This closes the Railway bootstrap/persistence subcase only. Keep this ticket
 open: the canonical recovery launch-envelope resolver and its resident
 rotation, trusted-container, and provider-preflight acceptance cases remain
 outstanding.
+
+The finalized Platformization epic is not the resolver for these cloud-launch
+semantics; it consumes prior credential/runtime substrate rather than replacing
+it. Keep this as an immediate release residual. Native Parity is associated
+only because its recovery/control cutover must preserve the resulting envelope
+contract and fixtures.
