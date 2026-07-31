@@ -43,18 +43,8 @@ NATIVE_DIR = REPO_ROOT / "arnold" / "pipeline" / "native"
 # When a handler no longer needs a write, remove its entry — do not leave
 # stale entries that would mask a regression.
 _INVENTORIED_HANDLER_WRITE_COUNTS: dict[tuple[str, str], int] = {
-    # execute.py
-    ("arnold_pipelines/megaplan/handlers/execute.py", "current_state"): 2,
-    # finalize.py
-    ("arnold_pipelines/megaplan/handlers/finalize.py", "current_state"): 2,
-    # gate.py
-    ("arnold_pipelines/megaplan/handlers/gate.py", "current_state"): 5,
-    # override.py
-    ("arnold_pipelines/megaplan/handlers/override.py", "current_state"): 7,
     # plan.py
     ("arnold_pipelines/megaplan/handlers/plan.py", "current_state"): 2,
-    # review.py
-    ("arnold_pipelines/megaplan/handlers/review.py", "current_state"): 2,
     # verifiability.py
     ("arnold_pipelines/megaplan/handlers/verifiability.py", "current_state"): 1,
 }
@@ -220,9 +210,6 @@ class TestRoutingSourceInvariants:
 
     def test_no_native_module_imports_megaplan_product_semantics(self) -> None:
         """Native pipeline modules must not import megaplan-specific packages."""
-        banned_prefixes = (
-            "arnold_pipelines.megaplan",
-        )
         violations: dict[str, list[str]] = {}
 
         for source in sorted(NATIVE_DIR.rglob("*.py")):

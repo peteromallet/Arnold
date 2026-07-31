@@ -29,8 +29,6 @@ import ast
 import importlib
 import subprocess
 import sys
-from pathlib import Path
-from typing import Any
 
 import pytest
 from tests.arnold_pipelines.megaplan.package_resources import (
@@ -332,19 +330,10 @@ class TestStaleDotPathsDoNotCarryImplementation:
     ) -> None:
         """The stale dot-path must NOT resolve.
 
-        We accept one exception: ``arnold.pipelines.megaplan`` (the
-        top-level package name) may resolve as a namespace side-effect
-        because ``arnold.pipelines`` is a real package.  But any
-        *sub-module* under the stale dot-path must fail.
+        Both the top-level stale package and every sub-module beneath it
+        must fail, proving the underscore package is the sole implementation
+        surface.
         """
-        # Skip the top-level package, which may resolve due to
-        # arnold.pipelines being an existing package with other content.
-        if stale_module == "arnold.pipelines.megaplan":
-            pytest.skip(
-                "Top-level stale path may resolve as namespace side-effect; "
-                "sub-module staleness is tested instead."
-            )
-
         try:
             importlib.import_module(stale_module)
             pytest.fail(
@@ -433,18 +422,7 @@ class TestLiveUnderscorePackageIsAuthoritative:
             build_pipeline as planning_bp,
         )
 
-        # The facade should reference the same callable (or at least the
-        # same underlying module for delegation).
-        facade_mod = getattr(facade_bp, "__module__", "")
-        planning_mod = getattr(planning_bp, "__module__", "")
-
-        # If the facade re-exports the planning version, the modules
-        # should match.  If not, the facade's module must still be
-        # under arnold_pipelines.
-        assert "arnold_pipelines" in facade_mod, (
-            f"Facade build_pipeline must come from arnold_pipelines, "
-            f"got: {facade_mod}"
-        )
+        assert facade_bp is planning_bp
 
     def test_canonical_workflow_paths_reconcile_to_pypeline_and_glue_shim(self) -> None:
         workflow_source = resource_text(WORKFLOW_RESOURCE_PACKAGE, "workflow.pypeline")
