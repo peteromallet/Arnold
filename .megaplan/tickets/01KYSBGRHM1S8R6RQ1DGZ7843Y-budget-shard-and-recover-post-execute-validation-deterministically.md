@@ -21,7 +21,7 @@ tags:
 - pre-native-blocker
 codebase_id: null
 created_at: '2026-07-30T11:10:56.052843+00:00'
-last_edited_at: '2026-07-31T06:17:01+00:00'
+last_edited_at: '2026-07-31T06:27:01+00:00'
 epics:
 - epic_id: megaplan-native-parity-corrective
   resolves_on_complete: false
@@ -191,3 +191,27 @@ provider-fault applicability.
 
 The ticket remains open until the final consolidated revision passes the whole
 frozen no-debt inventory and the release-level acceptance conditions above.
+
+## 2026-07-31 shard 013 release-discovery residual
+
+The exact shard 013 run on `21626bcb2a` collected 404 nodes and terminated with
+384 passed and 20 skipped. There were no failures, errors, xfails, xpasses,
+inventory gaps, or parser ambiguities. All twenty skips came from the single
+module-wide marker in
+`tests/arnold_pipelines/megaplan/test_compositional_workflow.py`, which declares
+the old 12-node compatibility-shell parity suite retired in favor of the
+current 14-node native contract.
+
+This is canonical-inventory debt, not a reason to admit skips or restore the
+retired shell. Before removing or archiving the obsolete module, preserve an
+assertion-by-assertion crosswalk to the active coverage in
+`test_workflows_planning.py` and `test_native_contract.py`; add any genuinely
+missing semantic assertion to the active suites. Then regenerate the frozen
+inventory and require shard 013 to report zero skipped nodes.
+
+The immutable discovery receipt is
+`Arnold-validation-checkpoints/e9c88f6f93-shards005-037-discovery-20260731/receipts/full-suite-013-after-21626b.json`
+with content SHA-256
+`bf65b7b695b24b87418a966069e1d95f1830bd31b3f8ef030d41be537a338204`.
+This remains an immediate release blocker under this umbrella; it does not
+justify a separate platform or Native Parity ticket.
