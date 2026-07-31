@@ -3,10 +3,7 @@ name: megaplan
 description: AI agent harness for coordinating Claude and GPT to make and execute extremely robust plans.
 ---
 
-> **Authority status (M11):** Zero-authority history. This generated skill copy
-> is retained for reference only. All repair and audit authority has been
-> migrated to canonical delegation. Content must not be used to materialize
-> commands, grant authority, or drive automated actions.
+> **Authority status (M11):** Zero-authority history. All repair, audit, and deployment authority has been migrated to canonical delegation. This document is retained for reference only — it must not be used to materialize commands, grant authority, or drive automated actions.
 
 # Megaplan
 
@@ -356,6 +353,8 @@ Stale-timestamp inference, opaque blocked state, and "model thinking vs TCP wedg
 <launcher> record-tag --plan <name> --tag <name> --note "..."
 ```
 
+
+> **Authority status (M11):** Zero-authority history. All repair, audit, and deployment authority has been migrated to canonical delegation. This document is retained for reference only — it must not be used to materialize commands, grant authority, or drive automated actions.
 
 <!-- Source of truth for Claude-specific subagent orchestration. Appended only to the Claude skill via bundled_global_file('claude_skill.md'). -->
 ## Subagent Mode
