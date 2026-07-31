@@ -163,14 +163,17 @@ def test_terminal_chain_completion_does_not_require_a_live_runner(
 
     assert result["status"] != GOAL_ACTIVE
     assert result["semantic_completion"] is True
-    assert result["evaluation"]["recovery_gate_accepted"] is True
-    receipt = result["recovery_acceptance"]
-    assert receipt["accepted"] is True
-    assert receipt["requirements"]["live_canonical_runner"] is False
-    assert receipt["requirements"]["bounded_continued_progress"] is False
-    assert receipt["terminal_completion"]["applicability"] == (
-        "chain_terminal_success"
+    # The chain cursor moved beyond the frozen repair target as it completed.
+    # That stronger authority supersedes this goal, so no live runner or
+    # synthetic recovery receipt is required after terminal completion.
+    assert result["evaluation"]["recovery_gate_accepted"] is False
+    assert (
+        result["evaluation"]["recovery_gate_not_applicable"]
+        == "superseded_target"
     )
+    assert result["evaluation"]["superseded_blocker"] is True
+    assert result["evaluation"]["superseded_by"]["chain_last_state"] == "done"
+    assert result["recovery_acceptance"] is None
 
 
 def test_bounded_followup_without_continued_progress_fails_closed(
