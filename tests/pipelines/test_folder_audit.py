@@ -1,12 +1,17 @@
-"""Retired folder-audit pipeline compatibility suite.
+"""Retirement contract for the archived folder-audit pipeline."""
 
-The pipeline was archived in d47a4ce05. Current first-class native pipeline
-coverage lives in the active pipeline contract suites.
-"""
+from pathlib import Path
 
-import pytest
+from arnold_pipelines.discovery import discover_shipped_pipelines
 
 
-@pytest.mark.skip(reason="folder-audit pipeline was archived; current native targets remain covered")
-def test_folder_audit_pipeline_retired() -> None:
-    pass
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_folder_audit_is_archived_and_not_publicly_discoverable() -> None:
+    """Retirement stays explicit without carrying an unconditional skip."""
+
+    shipped_ids = {info.id for info in discover_shipped_pipelines()}
+    assert "folder_audit" not in shipped_ids
+    assert "folder-audit" not in shipped_ids
+    assert (REPO_ROOT / "docs/archive/m5/pipelines/folder_audit").is_dir()
