@@ -15,10 +15,16 @@ tags:
 - native-platform-consumer
 - containment
 - do-not-wait-for-platform
+- immediate-residual
 codebase_id: null
 created_at: '2026-07-28T17:31:11.978059+00:00'
-last_edited_at: '2026-07-30T15:28:19.598177+00:00'
-epics: []
+last_edited_at: '2026-07-31T03:17:11+00:00'
+epics:
+- epic_id: megaplan-native-parity-corrective
+  resolves_on_complete: false
+  kind: associated
+  provenance: post-m11-ticket-reconciliation-20260731
+  linked_at: '2026-07-31T03:17:11+00:00'
 ---
 
 ## Scope: post-M11 containment only
@@ -71,8 +77,25 @@ reconciliation, and proof that the blocker cleared.
 - Implementing platform M2/M4/M5 inside Megaplan.
 - Reopening M11.
 
+The finalized `native-workflow-platformization` initiative is not an automatic
+resolver for this ticket. It explicitly consumes the already-existing
+credential, durable-backend, and worker-supervision substrate and focuses on
+component extraction/recomposition. Native Parity S6 is associated because it
+must consume canonical recovery events and demote legacy control paths, but the
+singleton fixer/runner containment and its live replay remain immediate
+post-M11 release work.
+
 ## M11 recurrence 2026-07-30
 
 The live plan was `blocked`, with no worker and a current repairable quality-circuit receipt, while cloud status classified the custody chain `complete`. The three-hour fixer therefore had no truthful target to claim. After legal recovery, `chain start` consumed a full CPU core recomputing the 57k-event accepted-attempt projection for minutes and did not dispatch execute; direct legal `execute` through the same pinned runtime started attempt 67 immediately.
 
 Containment must make newest nonaccepted plan state outrank chain-complete projections, enqueue one occurrence on this disagreement, and bound/cache authority projection by source cursor so supervision never performs an unbounded O(events x attempts) recomputation before dispatch. Acceptance must replay this exact blocked-plan/complete-chain contradiction and prove automatic fixer claim plus worker start.
+
+## 2026-07-31 implementation reconciliation
+
+The consolidated M11 and post-M11 commits provide canonical repair-occurrence
+custody, dead-worker liveness checks, bounded event checkpoints, atomic
+execute-to-review handoff, and chain-completion reconciliation. This is material
+containment, not full closure: the exact production contradiction still needs a
+single-target live replay proving one claim, one managed runner, accepted
+progress, and no wrong-runtime evidence.
