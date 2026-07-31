@@ -22,7 +22,7 @@ All successor links below are association-only unless explicitly stated.
 | `01KYMTMKX` graph admission | Open, immediate residual | Candidate admission/circuit breaker integrated; archived graphs, normalization, crash/CAS, semantic-hash, and status proof remain |
 | `01KYMTN1T` timeout preservation | Open, immediate residual | Original call-site fixed; persistence, multi-batch, hash, and trace proof remain |
 | `01KYMWFKQ` fixer custody containment | Open, immediate residual | Canonical custody, liveness, bounded projection, and handoff landed; exact singleton live replay remains |
-| `01KYPNKC2` launch envelope | Open, immediate residual | Railway persistence subcase landed; canonical envelope/resident rotation/trusted-container/provider preflight remain |
+| `01KYPNKC2` launch envelope | Open, immediate residual | Railway persistence, pinned sibling repair routes, and content-addressed container-boot source selection landed through `98056ca183`; canonical envelope/resident rotation/trusted-container/provider preflight and final live selector/canary proof remain |
 | `01KYPNKD0` receipt repair | Open, immediate residual | CAS successor/no-body-replay landed; archived fixtures and hostile path/write semantics remain |
 | `01KYPT8PS` nonterminal runner exit | Open, immediate residual | Dead-PID and handoff prerequisites landed; adoption/replacement of a pre-existing noncanonical runner remains |
 | `01KYQ1CN4` canonical timeline | Open, split | Bounded checkpoint substrate landed; current product view is immediate/Native S6, later extraction may use Platformization without auto-closing |
@@ -57,3 +57,23 @@ All successor links below are association-only unless explicitly stated.
 `01KYMTMKX`. The narrow ready-wave symptom is now addressed rather than being
 kept open by the broader release-validation umbrella. No other partial
 implementation or successor relationship is treated as completion.
+
+## 2026-07-31 release-preflight addendum
+
+The final image preflight found a concrete launch-envelope defect not visible
+in the earlier code-only reconciliation: the generated container entrypoint
+hard-coded heartbeat and watchdog wrapper execution to the mutable
+`/workspace/arnold` checkout and gave the resident that checkout as its tmux
+working directory. The live checkout is dirty and is not the selected
+content-addressed runtime, so container replacement could revive recovery
+authority from the wrong source.
+
+Commit `98056ca183` makes all three boot services resolve and enter the same
+quoted runtime source selected by `MEGAPLAN_RUNTIME_SRC`, falling back to
+`CLOUD_WATCHDOG_ARNOLD_SRC` and only then `/workspace/arnold`. Rendering,
+fallback, hard-coded-path negative, host-ensure compatibility, Bash syntax,
+Ruff, compile, and diff checks passed. This is a landed subcase of
+`01KYPNKC2`, not ticket closure: the final live selector rewrite, service
+cutover, runtime provenance, ten-minute/three-cycle canary, resident rotation,
+trusted-container, credential-channel, and provider-preflight evidence remain
+required.
