@@ -46,3 +46,18 @@ provider. Acceptance must reproduce both 2026-07-30 cases, prove the canonical
 relaunch uses the same envelope as the cloud wrapper without reading a
 hard-coded PID or printing a secret, and prove a provider-route override is
 durably recorded when the bound provider is intentionally changed.
+
+## 2026-07-31 runtime bootstrap evidence
+
+The cloud image now includes a pinned Railway CLI for application deployment
+from the runner. Its entire `~/.railway` directory is backed by
+`/workspace/.creds/railway`, so Railway's atomic config rewrites and
+`railway login --browserless` survive container replacement. A legacy
+`/workspace/.creds/railway-config.json` is imported only when no durable config
+exists. No token or config content is rendered into the image, `cloud.yaml`, or
+logs.
+
+This closes the Railway bootstrap/persistence subcase only. Keep this ticket
+open: the canonical recovery launch-envelope resolver and its resident
+rotation, trusted-container, and provider-preflight acceptance cases remain
+outstanding.
