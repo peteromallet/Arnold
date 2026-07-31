@@ -11,13 +11,10 @@ already satisfy.  The canonical pipeline must:
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-import pytest
-
 from arnold.pipeline.native import validate_pipeline_purity
-from arnold.pipeline.native.ir import NativePipeline, NativeProgram
+from arnold.pipeline.native.ir import NativeProgram
 from arnold.pipeline.types import Pipeline as NeutralPipeline
 from arnold.workflow.source_compiler import lower_workflow_file
 from arnold_pipelines.megaplan.workflows.planning import AUTHORING_SOURCE_PATH
@@ -260,6 +257,15 @@ class TestCanonicalMegaplanNativeContract:
         assert metadata.get("product") == "megaplan", (
             "Canonical pipeline metadata must identify product=megaplan"
         )
+        forbidden_routing_keys = {
+            "stage_order",
+            "canonical_stage_order",
+            "megaplan_topology",
+            "phase_order",
+            "native_stage_order",
+            "gate_order",
+        }
+        assert forbidden_routing_keys.isdisjoint(metadata)
         assert canonical["authored_source_path"] == str(workflow_planning.AUTHORING_SOURCE_PATH.resolve())
 
         native_program = getattr(pipeline, "native_program", None)
@@ -433,7 +439,6 @@ def test_substrate_proof_only_native_routing_is_generic() -> None:
                     if isinstance(node, ast.Constant) and isinstance(node.value, str):
                         if node.value == stage:
                             # Found a string literal — check if it's in a docstring
-                            parent = getattr(node, 'parent', None)
                             assert False, (
                                 f"{file_path.name} contains Megaplan stage "
                                 f"name '{stage}' as a string literal — "

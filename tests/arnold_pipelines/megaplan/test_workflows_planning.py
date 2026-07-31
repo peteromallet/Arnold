@@ -150,6 +150,9 @@ class TestAuthoredWorkflow:
         assert isinstance(pipeline, Pipeline)
         assert pipeline.id == "megaplan"
         assert pipeline.version == "m4-phase3"
+        assert pipeline.entry == "prep"
+        assert pipeline.metadata["product"] == "megaplan"
+        assert pipeline.metadata["max_critique_iterations"] == 4
 
     def test_step_order_matches_fixture(self) -> None:
         pipeline = planning.build_pipeline()

@@ -1667,7 +1667,9 @@
       },
       "description": "Broken case: Receipt state_observation emptied \u2014 breaks state relation by severing the receipt's link to observable state.",
       "expected_compatibility": "incompatible",
-      "expected_diagnostics": [],
+      "expected_diagnostics": [
+        "CBC023_RECEIPT_STATE_OBSERVATION_MISSING"
+      ],
       "phase_family": "review",
       "source_bundle": "captured_bundle_028_review_human_verification.json",
       "source_pre_existing_issues": []
