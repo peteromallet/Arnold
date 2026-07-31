@@ -145,6 +145,12 @@ def test_synthetic_verifiability_flags_are_evidence_complete() -> None:
     assert len(flags) == 2
     assert all(flag["evidence"] == flag["concern"] for flag in flags)
     assert all(flag["evidence"].strip() for flag in flags)
+    assert any(
+        "success_criteria[0]" in flag["evidence"]
+        and "criterion='Prove the contract.'" in flag["evidence"]
+        and "requires=['not_a_registered_capability']" in flag["evidence"]
+        for flag in flags
+    )
 
 
 def test_historical_provider_capacity_downgrade_is_recoverable_from_blocked_state() -> None:
