@@ -33,9 +33,9 @@ def test_provider_capability_matrix_is_truthful_and_complete() -> None:
         backend: provider_execution_contract(
             backend=backend,
             toolsets="file,web,terminal",
-                max_tokens=4096,
-                timeout_s=90,
-                timeout_source="trusted_cli",
+            max_tokens=4096,
+            timeout_s=90,
+            timeout_source="trusted_cli",
         )
         for backend in ("codex", "hermes", "claude")
     }
@@ -57,6 +57,33 @@ def test_provider_capability_matrix_is_truthful_and_complete() -> None:
     )
 
 
+def test_unbounded_provider_contract_is_explicit_and_provenanced() -> None:
+    contract = provider_execution_contract(
+        backend="hermes",
+        toolsets="file,web,terminal",
+        max_tokens=4096,
+        timeout_s=None,
+    )
+
+    assert contract["controls"]["timeout_s"] is None
+    assert contract["controls"]["timeout_enforcement"] == "not_configured"
+    assert contract["controls"]["timeout_policy"] == {
+        "mode": "not_configured",
+        "source": None,
+        "timeout_s": None,
+    }
+
+
+def test_explicit_provider_timeout_requires_trusted_provenance() -> None:
+    with pytest.raises(ValueError, match="trusted ingress provenance"):
+        provider_execution_contract(
+            backend="hermes",
+            toolsets="file,web,terminal",
+            max_tokens=4096,
+            timeout_s=30,
+        )
+
+
 def test_generic_tool_policy_maps_exactly_or_fails_truthfully() -> None:
     assert normalize_toolsets("terminal,file,file") == ("file", "terminal")
     assert claude_tools_for(("file", "web", "terminal")) == (
@@ -66,7 +93,10 @@ def test_generic_tool_policy_maps_exactly_or_fails_truthfully() -> None:
         normalize_toolsets("file,secrets")
     with pytest.raises(ValueError, match="cannot enforce a narrowed generic toolset"):
         provider_execution_contract(
-            backend="codex", toolsets="file", max_tokens=100, timeout_s=30,
+            backend="codex",
+            toolsets="file",
+            max_tokens=100,
+            timeout_s=30,
             timeout_source="trusted_cli",
         )
 

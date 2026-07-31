@@ -22,7 +22,7 @@ def _add_source_universe(data: dict) -> None:
         entries.append({
             "source_id": item["ref"],
             "source_kind": "git_ref",
-            "head_fingerprint": item["sha"],
+            "head_fingerprint": f"sha1:{item['sha']}",
             "unique_delta_count": 0,
             "disposition": "LANDED",
             "disposition_evidence": {"exact_final_proof": f"final:{item['sha']}"},

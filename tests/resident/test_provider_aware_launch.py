@@ -358,6 +358,23 @@ def test_managed_non_codex_worker_rejects_empty_success(
     assert "without a final response" in manifest["failure"]["message"]
 
 
+def test_markerless_legacy_timeout_is_not_a_supervisor_deadline() -> None:
+    legacy = {"provider_options": {"timeout_s": 600}}
+    admitted = {
+        "provider_options": {"timeout_s": 17},
+        "timeout_policy": {
+            "mode": "explicit",
+            "source": "trusted_cli",
+            "timeout_s": 17,
+        },
+    }
+
+    assert subagent._explicit_manifest_timeout(legacy) is None
+    assert subagent._explicit_manifest_timeout_source(legacy) is None
+    assert subagent._explicit_manifest_timeout(admitted) == 17.0
+    assert subagent._explicit_manifest_timeout_source(admitted) == "trusted_cli"
+
+
 def test_provider_timeout_is_enforced_and_captured_durably(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

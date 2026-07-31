@@ -79,7 +79,11 @@ def provider_execution_contract(
         raise ValueError("max_tokens must be positive")
     if timeout_s is not None and timeout_s <= 0:
         raise ValueError("provider timeout must be positive")
-    if timeout_s is not None and timeout_source not in {"trusted_cli", "verified_user_request"}:
+    if timeout_s is not None and timeout_source not in {
+        "trusted_cli",
+        "trusted_config",
+        "verified_user_request",
+    }:
         raise ValueError("provider timeout requires trusted ingress provenance")
     if timeout_s is None and timeout_source is not None:
         raise ValueError("timeout source requires an explicit timeout")
