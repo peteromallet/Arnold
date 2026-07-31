@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -24,6 +25,27 @@ def _pid_alive(pid: int) -> bool:
         return True
     except OSError:
         return False
+
+
+def active_step_has_live_worker(active_step: Any) -> bool:
+    """Return whether an active-step record names a currently live worker.
+
+    Phase names and resumable model ``session_id`` values are identities, not
+    liveness evidence.  Only a signal-0 probe of a recorded process PID proves
+    that the worker is still present.  Invalid, absent, and dead PIDs all fail
+    closed.
+    """
+
+    if not isinstance(active_step, Mapping):
+        return False
+    raw_pid = active_step.get("worker_pid")
+    if raw_pid is None:
+        raw_pid = active_step.get("pid")
+    try:
+        pid = int(raw_pid)
+    except (TypeError, ValueError):
+        return False
+    return _pid_alive(pid)
 
 
 DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS = 900

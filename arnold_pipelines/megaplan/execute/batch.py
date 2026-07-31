@@ -275,7 +275,7 @@ def _repair_missing_user_action_gate(
 
 _M8A_REPAIR_ADOPTION_ENFORCEMENT_ENV = "ARNOLD_M8A_REPAIR_ADOPTION_ENFORCEMENT"
 _M8A_REPAIR_ADOPTION_DISABLE_VALUES: frozenset[str] = frozenset(
-    {"", "0", "false", "no", "off"}
+    {"0", "false", "no", "off"}
 )
 
 
@@ -283,7 +283,7 @@ def _m8a_repair_adoption_enforcement_enabled() -> bool:
     """Return ``True`` when M8A repair-adoption canary promotion is active.
 
     Controlled by ``ARNOLD_M8A_REPAIR_ADOPTION_ENFORCEMENT`` — defaults to
-    OFF (``"0"``).  When disabled (the default), the repair adoption check
+    ON after the post-M11 promotion.  When explicitly disabled, the repair adoption check
     runs in shadow/report-only mode: it rereads boundary conditions, emits
     adoption/quarantine evidence, and emits ``repair_verify`` work-ledger
     events, but never skips replay or modifies dispatch flow.
@@ -726,21 +726,196 @@ def _run_repair_adoption_check(
         except OSError:
             pass
 
-        summary["evaluated"].append(
-            {
-                "task_id": task_id,
-                "outcome": outcome_str,
-                "receipt_digest": receipt_digest,
-                "mismatch_count": len(decision.mismatches),
-                "mismatch_fields": sorted(mismatch_fields),
-            }
-        )
+        evaluation_row = {
+            "task_id": task_id,
+            "outcome": outcome_str,
+            "receipt_digest": receipt_digest,
+            "mismatch_count": len(decision.mismatches),
+            "mismatch_fields": sorted(mismatch_fields),
+        }
         if decision.outcome == AdoptionOutcome.ADOPT:
-            summary["adopted_count"] += 1
-            if enforcement:
-                summary["skip_replay"] = True
+            from arnold_pipelines.megaplan.authority.scope_recovery import (
+                ScopeRecoveryConflict,
+                claim_successor_generation,
+                request_from_receipt,
+            )
+
+            authority_digest = _hashlib.sha256(
+                _json.dumps(
+                    {
+                        "run_authority_grant_id": context.run_authority_grant_id,
+                        "coordinator_fence_token": context.coordinator_fence_token,
+                        "custody_lease_id": context.custody_lease_id,
+                        "custody_epoch": context.custody_epoch,
+                        "wbc_attempt_reference": context.wbc_attempt_reference,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            task_record = next(
+                (
+                    task
+                    for task in finalize_data.get("tasks", [])
+                    if isinstance(task, dict) and task.get("id") == task_id
+                ),
+                {},
+            )
+            generation = task_record.get("generation", 0)
+            generation = generation if isinstance(generation, int) else 0
+            request = request_from_receipt(
+                receipt,
+                task_id=task_id,
+                batch_id=",".join(batch_task_ids),
+                current_generation=generation,
+                authority_digest=authority_digest,
+            )
+            try:
+                successor = (
+                    claim_successor_generation(plan_dir, request)
+                    if request is not None
+                    else None
+                )
+            except (ScopeRecoveryConflict, ValueError) as exc:
+                evaluation_row["outcome"] = "quarantine"
+                evaluation_row["scope_recovery_error"] = str(exc)
+                summary["quarantined_count"] += 1
+            else:
+                if successor is not None:
+                    evaluation_row["successor_claim"] = successor
+                    task_record["generation"] = successor["generation"]
+                    task_record["scope_recovery_claim_id"] = successor["claim_id"]
+                    from arnold_pipelines.megaplan.execute.merge import (
+                        _test_command_evidence,
+                    )
+                    from arnold_pipelines.megaplan.orchestration import (
+                        suite_runner as _scope_suite_runner,
+                    )
+
+                    narrow = task_record.get("narrow_tests")
+                    narrow = narrow if isinstance(narrow, Mapping) else {}
+                    allowed_selectors = {
+                        str(selector).strip().lstrip("./")
+                        for selector in narrow.get("selectors", [])
+                        if isinstance(selector, str) and selector.strip()
+                    }
+                    per_command_max = narrow.get(
+                        "per_command_max_seconds",
+                        narrow.get("max_seconds", 120),
+                    )
+                    total_max = narrow.get("total_max_seconds")
+                    max_runs = narrow.get("max_runs", 2)
+                    commands = list(successor["verification_commands"])
+                    admission_errors: list[str] = []
+                    total_declared = 0
+                    if isinstance(max_runs, int) and len(commands) > max_runs:
+                        admission_errors.append("verification command count exceeds max_runs")
+                    for command in commands:
+                        parsed = _test_command_evidence(command)
+                        if parsed is None:
+                            admission_errors.append(f"not a bounded test command: {command!r}")
+                            continue
+                        timeout_seconds, selectors = parsed
+                        if timeout_seconds is None:
+                            admission_errors.append(f"missing timeout wrapper: {command!r}")
+                        else:
+                            total_declared += timeout_seconds
+                            if (
+                                isinstance(per_command_max, int)
+                                and timeout_seconds > per_command_max
+                            ):
+                                admission_errors.append(
+                                    f"command timeout {timeout_seconds}s exceeds "
+                                    f"per-command maximum {per_command_max}s"
+                                )
+                        for selector in selectors:
+                            selector_base = selector.split("::", 1)[0]
+                            if not any(
+                                selector == allowed
+                                or selector_base == allowed.split("::", 1)[0]
+                                for allowed in allowed_selectors
+                            ):
+                                admission_errors.append(
+                                    f"selector {selector!r} is outside admitted narrow tests"
+                                )
+                    if isinstance(total_max, int) and total_declared > total_max:
+                        admission_errors.append(
+                            f"declared timeout total {total_declared}s exceeds "
+                            f"total maximum {total_max}s"
+                        )
+                    verification_results = []
+                    if not admission_errors:
+                        try:
+                            _scope_state = read_json(Path(plan_dir) / "state.json")
+                        except (OSError, ValueError, TypeError):
+                            _scope_state = {}
+                        _scope_config = (
+                            _scope_state.get("config")
+                            if isinstance(_scope_state, Mapping)
+                            else {}
+                        )
+                        _scope_project_dir = Path(
+                            str(
+                                _scope_config.get("project_dir")
+                                if isinstance(_scope_config, Mapping)
+                                else Path.cwd()
+                            )
+                        )
+                        for command in commands:
+                            parsed = _test_command_evidence(command)
+                            timeout_seconds = parsed[0] if parsed is not None else None
+                            result = _scope_suite_runner.run_suite(
+                                _scope_project_dir,
+                                {
+                                    "project_dir": str(_scope_project_dir),
+                                    "plan_dir": str(plan_dir),
+                                    "test_command": command,
+                                },
+                                phase="scope_recovery_verification",
+                                deadline_seconds=float(timeout_seconds or per_command_max or 120),
+                                idle_seconds=None,
+                            )
+                            verification_results.append(
+                                {
+                                    "command": result.command,
+                                    "exit_code": result.exit_code,
+                                    "status": result.status,
+                                    "code_hash": result.code_hash,
+                                    "timeout_reason": result.timeout_reason,
+                                }
+                            )
+                    verification_passed = (
+                        not admission_errors
+                        and bool(verification_results)
+                        and all(row["exit_code"] == 0 for row in verification_results)
+                    )
+                    verification_receipt = {
+                        "schema": "megaplan.scope_recovery_verification",
+                        "schema_version": 1,
+                        "claim_id": successor["claim_id"],
+                        "admission_errors": admission_errors,
+                        "results": verification_results,
+                        "passed": verification_passed,
+                    }
+                    verification_dir = Path(plan_dir) / "scope_recovery_verification"
+                    verification_dir.mkdir(parents=True, exist_ok=True)
+                    atomic_write_json(
+                        verification_dir
+                        / f"{str(successor['claim_id']).split(':')[-1]}.json",
+                        verification_receipt,
+                    )
+                    evaluation_row["scope_recovery_verification"] = verification_receipt
+                    if not verification_passed:
+                        evaluation_row["outcome"] = "quarantine"
+                        summary["quarantined_count"] += 1
+                        summary["evaluated"].append(evaluation_row)
+                        continue
+                summary["adopted_count"] += 1
+                if enforcement:
+                    summary["skip_replay"] = True
         else:
             summary["quarantined_count"] += 1
+        summary["evaluated"].append(evaluation_row)
 
     return summary
 
@@ -2685,7 +2860,10 @@ def _run_and_merge_batch(
     _adopted_ids: set[str] = set()
     if _repair_adoption_summary.get("skip_replay"):
         for _e in _repair_adoption_summary.get("evaluated", []) or []:
-            if isinstance(_e, dict) and _e.get("outcome") == "ADOPT":
+            if (
+                isinstance(_e, dict)
+                and str(_e.get("outcome") or "").lower() == "adopt"
+            ):
                 _tid = _e.get("task_id")
                 if isinstance(_tid, str):
                     _adopted_ids.add(_tid)
@@ -2696,8 +2874,68 @@ def _run_and_merge_batch(
             sorted(_adopted_ids),
         )
         import types as _types
+        _successors = {
+            row["task_id"]: row.get("successor_claim")
+            for row in _repair_adoption_summary.get("evaluated", [])
+            if isinstance(row, dict) and isinstance(row.get("task_id"), str)
+        }
+        _task_records = {
+            task["id"]: task
+            for task in finalize_data.get("tasks", [])
+            if isinstance(task, dict) and isinstance(task.get("id"), str)
+        }
+        _adopted_updates = []
+        for _task_id in batch_task_ids:
+            _task = _task_records[_task_id]
+            _successor = _successors.get(_task_id)
+            _verification_commands = (
+                list(_successor.get("verification_commands", []))
+                if isinstance(_successor, Mapping)
+                else list(_task.get("commands_run", []))
+            )
+            _adopted_updates.append(
+                {
+                    "task_id": _task_id,
+                    "status": "done",
+                    "executor_notes": (
+                        "Recovered landed implementation through an authority-valid "
+                        "verification-only successor claim; implementation body was not replayed."
+                    ),
+                    "files_changed": list(_task.get("files_changed", [])),
+                    "commands_run": _verification_commands,
+                    "evidence_files": list(_task.get("evidence_files", [])),
+                    "scope_recovery_claim_id": (
+                        _successor.get("claim_id")
+                        if isinstance(_successor, Mapping)
+                        else None
+                    ),
+                }
+            )
         worker = _types.SimpleNamespace(
-            model_actual=(resolved_model or model), skipped_replay=True
+            payload={
+                "task_updates": _adopted_updates,
+                "sense_check_acknowledgments": [
+                    {
+                        "sense_check_id": sense_id,
+                        "executor_note": "Preserved by verification-only successor recovery.",
+                    }
+                    for sense_id in batch_sense_check_ids
+                ],
+                "deviations": [],
+            },
+            model_actual=(resolved_model or model),
+            skipped_replay=True,
+            auth_metadata=None,
+            attempt_index=0,
+            duration_ms=0,
+            cost_usd=0.0,
+            cost_pricing=None,
+            total_tokens=0,
+            raw_output="",
+            trace_output=None,
+            session_id=None,
+            worker_channel="repair_adoption",
+            auth_channel=None,
         )
     else:
         worker, agent, mode, refreshed = _run_execute_worker_with_configured_fallback(
@@ -4904,11 +5142,85 @@ def handle_execute_auto_loop(
         if isinstance(loaded_review, dict):
             review_data = loaded_review
             if _review_requests_rework(review_data):
-                review_rework_task_ids, unrunnable_rework_task_ids = _review_rework_task_ids(
-                    review_data,
-                    finalize_data,
+                from arnold_pipelines.megaplan.orchestration.rework_admission import (
+                    reconcile_review_rework,
                 )
-                if not review_rework_task_ids:
+                review_revision = None
+                review_evidence_path = plan_dir / "review_evidence.json"
+                if review_evidence_path.exists():
+                    try:
+                        review_evidence = read_json(review_evidence_path)
+                    except (OSError, UnicodeDecodeError, ValueError):
+                        review_evidence = {}
+                    if isinstance(review_evidence, dict):
+                        raw_revision = review_evidence.get("head_sha")
+                        if isinstance(raw_revision, str) and raw_revision:
+                            review_revision = raw_revision
+                authority_revision = _best_effort_git_head(root)
+                rework_admission = reconcile_review_rework(
+                    review_data,
+                    known_task_ids=set(all_task_ids),
+                    accepted_task_ids=set(completed_task_ids),
+                    authority_revision=authority_revision,
+                    review_revision=review_revision,
+                )
+                atomic_write_json(
+                    plan_dir / "review_rework_admission.json",
+                    rework_admission.to_dict(),
+                )
+                review_rework_task_ids = list(rework_admission.runnable_task_ids)
+                unrunnable_rework_task_ids = [
+                    str(row.get("code") or "rework_admission_blocked")
+                    for row in rework_admission.blockers
+                ]
+                validation_only_satisfied = False
+                if rework_admission.validation_jobs:
+                    import shlex as _shlex
+                    from arnold_pipelines.megaplan.execute.validation_runner import (
+                        run_single_validation_job,
+                    )
+
+                    validation_results = []
+                    for job in rework_admission.validation_jobs:
+                        validation_results.append(
+                            run_single_validation_job(
+                                {
+                                    "id": job["id"],
+                                    "command": _shlex.split(str(job["command"])),
+                                    "cwd": ".",
+                                    "environment": {},
+                                    "timeout_seconds": 600,
+                                    "expected_output_paths": [],
+                                },
+                                project_dir=Path(root),
+                            ).as_dict()
+                        )
+                    atomic_write_json(
+                        plan_dir / "review_rework_validation.json",
+                        {
+                            "schema": "megaplan.review_rework_validation",
+                            "schema_version": 1,
+                            "authority_digest": rework_admission.authority_digest,
+                            "results": validation_results,
+                        },
+                    )
+                    failed_validation = [
+                        row
+                        for row in validation_results
+                        if row.get("error") or row.get("timed_out") or row.get("exit_code") != 0
+                    ]
+                    if failed_validation:
+                        return _block_no_runnable_rework(
+                            plan_dir=plan_dir,
+                            state=state,
+                            auto_approve=auto_approve,
+                            reason=(
+                                "review bulk verification failed its bounded validation "
+                                "job; a scoped successor task is required"
+                            ),
+                        )
+                    validation_only_satisfied = not review_rework_task_ids
+                if not review_rework_task_ids and not validation_only_satisfied:
                     if unrunnable_rework_task_ids:
                         return _handle_unroutable_review_rework(
                             plan_dir=plan_dir,
@@ -4944,7 +5256,7 @@ def handle_execute_auto_loop(
                     state.setdefault("meta", {}).pop(
                         _UNROUTABLE_REWORK_ATTEMPTS_KEY, None
                     )
-                rework_mode = True
+                rework_mode = bool(review_rework_task_ids)
                 pending_tasks = [
                     task
                     for task in tasks

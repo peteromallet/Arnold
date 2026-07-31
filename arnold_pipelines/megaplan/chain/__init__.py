@@ -66,6 +66,7 @@ from arnold_pipelines.megaplan.auto import (
     drive as auto_drive,
 )
 from arnold_pipelines.megaplan.feature_flags import supervisor_tier_routing_on
+from arnold_pipelines.megaplan._core.phase_runtime import active_step_has_live_worker
 from arnold_pipelines.megaplan.runtime.execution_environment import (
     merge_isolation_evidence,
     resolve_execution_environment,
@@ -5412,14 +5413,7 @@ def _plan_state_payload_from_name(root: Path, plan: str | None) -> dict[str, Any
 
 def _plan_has_live_active_step(plan_state: Mapping[str, Any]) -> bool:
     active_step = plan_state.get("active_step")
-    if not isinstance(active_step, Mapping):
-        return False
-    return bool(
-        active_step.get("phase")
-        or active_step.get("worker_pid")
-        or active_step.get("pid")
-        or active_step.get("session_id")
-    )
+    return active_step_has_live_worker(active_step)
 
 
 def _blocked_plan_replay_would_be_redundant(
@@ -6464,6 +6458,15 @@ def run_chain(
 
     events: list[dict[str, Any]] = []
 
+    if one and len(state.completed) > completed_before_reconciliation:
+        return _result(
+            "done",
+            state,
+            events,
+            spec=spec,
+            reason="one-milestone limit reached during ground-truth reconciliation",
+        )
+
     def log(msg: str, **fields: Any) -> None:
         events.append({"msg": msg, **fields})
         writer(f"[chain] {msg}\n")
@@ -6905,11 +6908,33 @@ def run_chain(
             state.last_state == STATE_AWAITING_PR_MERGE
             and state.current_milestone_index == idx
         ):
+            local_publication_sha: str | None = None
             if not use_pr or state.pr_number is None:
                 log(
                     f"review merge wait for {milestone.label} has no PR context; advancing"
                 )
+                if not use_pr and state.pr_number is not None:
+                    local_publication_sha = _current_git_head(root)
+                    if local_publication_sha is None:
+                        return _result(
+                            "blocked",
+                            state,
+                            events,
+                            spec=spec,
+                            reason=(
+                                f"milestone {milestone.label} cannot reconcile its open PR "
+                                "to a local-only run without a readable local HEAD"
+                            ),
+                        )
+                    state.metadata["local_pr_reconciliation"] = {
+                        "milestone": milestone.label,
+                        "pr_number": state.pr_number,
+                        "observed_pr_state": state.pr_state,
+                        "local_commit_sha": local_publication_sha,
+                    }
+                    state.pr_number = None
                 state.pr_state = None
+                chain_spec.save_chain_state(spec_path, state)
             else:
                 pr_state = _pr_state(root, state.pr_number, writer=writer)
                 if pr_state == "closed":
@@ -7099,16 +7124,20 @@ def run_chain(
                     spec=spec,
                     reason=validation_reason,
                 )
+            completion_record = {
+                "label": milestone.label,
+                "plan": state.current_plan_name,
+                "status": "done",
+                "pr_number": state.pr_number,
+                "pr_state": "merged" if state.pr_number is not None else None,
+            }
+            if local_publication_sha is not None:
+                completion_record["local_commit_sha"] = local_publication_sha
+                completion_record["publication_evidence"] = "local_no_push_reconciliation"
             appended, reason = _append_completed_with_guard(
                 root,
                 state,
-                {
-                    "label": milestone.label,
-                    "plan": state.current_plan_name,
-                    "status": "done",
-                    "pr_number": state.pr_number,
-                    "pr_state": "merged" if state.pr_number is not None else None,
-                },
+                completion_record,
                 implementation_milestone=True,
                 writer=writer,
             )

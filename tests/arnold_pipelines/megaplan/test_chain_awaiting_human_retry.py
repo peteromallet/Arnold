@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -51,7 +52,9 @@ def _write_plan_state(
     plan_dir = tmp_path / ".megaplan" / "plans" / plan_name
     plan_dir.mkdir(parents=True, exist_ok=True)
     serialized_active_step = json.dumps(
-        {"phase": "execute"} if active_step is _DEFAULT_ACTIVE_STEP else active_step
+        {"phase": "execute", "worker_pid": os.getpid()}
+        if active_step is _DEFAULT_ACTIVE_STEP
+        else active_step
     )
     (plan_dir / "state.json").write_text(
         (
@@ -466,7 +469,14 @@ def test_sync_chain_last_state_prefers_active_step_phase_over_terminal_projectio
     plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
     plan_dir.mkdir(parents=True)
     (plan_dir / "state.json").write_text(
-        '{"name":"m7-plan","current_state":"finalized","active_step":{"phase":"execute"},"meta":{}}',
+        json.dumps(
+            {
+                "name": "m7-plan",
+                "current_state": "finalized",
+                "active_step": {"phase": "execute", "worker_pid": os.getpid()},
+                "meta": {},
+            }
+        ),
         encoding="utf-8",
     )
     messages: list[str] = []
@@ -533,8 +543,14 @@ def test_record_chain_last_state_after_plan_run_keeps_execute_phase_visible(
     plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
     plan_dir.mkdir(parents=True)
     (plan_dir / "state.json").write_text(
-        '{"name":"m7-plan","current_state":"finalized","latest_failure":null,'
-        '"active_step":{"phase":"execute"}}',
+        json.dumps(
+            {
+                "name": "m7-plan",
+                "current_state": "finalized",
+                "latest_failure": None,
+                "active_step": {"phase": "execute", "worker_pid": os.getpid()},
+            }
+        ),
         encoding="utf-8",
     )
     messages: list[str] = []

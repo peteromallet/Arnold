@@ -52,3 +52,18 @@ Keep rejected attempts immutable. If valid landed work exists, recovery must pro
 ## Successor-epic handoff
 
 Native S5A/S5B/S7 consume these exact regressions and prove the compatibility recovery path is absorbed into declared review/rework lifecycle. C1/C2 provide immutable binding/evidence identity. Platformization may generalize retry/generation/fanout mechanics but cannot weaken Megaplan authority, write-set, or recovery policy.
+
+## 2026-07-31 implementation evidence and residual
+
+Implemented in `b39c6012ac` and `937df385dd`. Exact-match landed work can now
+produce one CAS-fenced immutable successor claim without rerunning the
+implementation worker. The claim binds task, batch, rejected attempt,
+generation, revision, authority digest, baseline, landed tree, write-set
+version, paths, verification commands, and receipt digest. Verification
+commands are checked against narrow selectors and budgets and are actually run
+before adoption.
+
+Keep this ticket open until the exact archived T30/T7/T8/T33/T43 fixtures are
+replayed. Canonical directory, symlink, rename/delete, ignored-file, and
+overlapping-write-set semantics also still need completion in the task
+contract generator and write validator.
