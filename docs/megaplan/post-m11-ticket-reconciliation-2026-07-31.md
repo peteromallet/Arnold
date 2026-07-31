@@ -17,6 +17,7 @@ All successor links below are association-only unless explicitly stated.
 | `01KTPVSH8` unresolved route | Addressed | Integrated fail-loud neutral-executor behavior and tests |
 | `01KYSXVF1` malformed ticket discovery | Addressed | Integrated tolerant parser, isolation, and discovery tests |
 | `01KYPNKB5` ready-wave full-suite | Addressed now | Terminal-frontier fix, focused regression, and archived production proof complete the narrow scope |
+| `01KYV57FAP` opaque pytest node IDs | Open, immediate release blocker | The original whitespace/status-word repair landed, but the `1a10886218` exact run exposed inherited-test `nodeid <- source.py` provenance as a second accounting gap; parser fix and exact final full-inventory rerun remain |
 | `01KYTANWK` graph-admission duplicate | Dismissed | Canonical scope remains in `01KYMTMKX` |
 | `01KYMTM93` force-proceed custody | Open, immediate residual | Code is integrated; exact archived M11/WBC replay remains. Native S6 consumes it; Critique Ledger does not own it |
 | `01KYMTMKX` graph admission | Open, immediate residual | Candidate admission/circuit breaker integrated; archived graphs, normalization, crash/CAS, semantic-hash, and status proof remain |
@@ -57,6 +58,14 @@ All successor links below are association-only unless explicitly stated.
 `01KYMTMKX`. The narrow ready-wave symptom is now addressed rather than being
 kept open by the broader release-validation umbrella. No other partial
 implementation or successor relationship is treated as completion.
+
+The release-discovery run at `1a10886218` reopened `01KYV57FAP`: shard 004
+executed 852 passing tests, but the terminal parser admitted only 810 because
+42 inherited conformance cases carried pytest's ` <- definition-source.py`
+provenance suffix. This is an evidence-accounting defect, not a product-test
+failure. Closure requires a frozen-inventory-aware parser fix plus a complete
+exact rerun on the final release revision; focused tests alone do not restore
+`addressed`.
 
 ## 2026-07-31 release-preflight addendum
 
