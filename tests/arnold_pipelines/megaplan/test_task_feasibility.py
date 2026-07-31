@@ -297,7 +297,7 @@ def test_runtime_write_budget_blocks_undeclared_paths() -> None:
     assert issues
 
 
-def test_feasibility_failure_routes_finalize_back_to_revise(tmp_path: Path) -> None:
+def test_feasibility_failure_enters_narrow_planner_repair(tmp_path: Path) -> None:
     from arnold_pipelines.megaplan.handlers import finalize
     from arnold_pipelines.megaplan.workers import WorkerResult
 
@@ -336,10 +336,13 @@ def test_feasibility_failure_routes_finalize_back_to_revise(tmp_path: Path) -> N
         finalize.TaskFeasibilityError(report),
     )
 
-    assert response["result"] == "plan_contract_revise_needed"
-    assert response["next_step"] == "revise"
+    assert response["result"] == "planner_repair_required"
+    assert response["next_step"] == "finalize"
     assert response["details"]["code"] == "finalized_task_feasibility_failed"
+    assert response["details"]["accepted_authority_preserved"] is True
+    assert response["details"]["implementation_dispatch_allowed"] is False
     assert (plan_dir / "finalize_revise_feedback.json").exists()
+    assert (plan_dir / "planner_repair.json").exists()
 
 
 # ---------------------------------------------------------------------------

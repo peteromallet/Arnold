@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -233,23 +234,12 @@ def handle_setup_hooks(
     target_dir: Path | None = None, *, force: bool = False
 ) -> StepResponse:
     start = (target_dir or Path.cwd()).resolve()
-    root = start
-    for candidate in (start, *start.parents):
-        if (candidate / ".git").exists():
-            root = candidate
-            break
-    git_dir = root / ".git"
-    if not git_dir.exists():
+    hook_path = resolve_pre_commit_hook_path(start)
+    if hook_path is None:
         raise CliError(
             "not_git_repo",
-            f"Cannot install hooks because {root} does not contain a .git directory.",
+            f"Cannot install hooks because {start} is not inside a git repository.",
         )
-    if not git_dir.is_dir():
-        raise CliError(
-            "unsupported_git_dir",
-            f"Cannot install hooks for {root}: .git is not a directory.",
-        )
-    hook_path = git_dir / "hooks" / "pre-commit"
     content = _canonical_pre_commit_hook()
     if hook_path.exists() and not force:
         if hook_path.read_text(encoding="utf-8") == content:
@@ -278,9 +268,71 @@ def handle_setup_hooks(
     }
 
 
+def resolve_pre_commit_hook_path(start: Path) -> Path | None:
+    """Resolve git's effective pre-commit hook path, including worktrees."""
+
+    proc = subprocess.run(
+        ["git", "-C", str(start), "rev-parse", "--git-path", "hooks/pre-commit"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    path = Path(proc.stdout.strip())
+    return path.resolve() if path.is_absolute() else (start / path).resolve()
+
+
+def pre_commit_hook_status(start: Path) -> tuple[str, Path | None]:
+    """Return ``missing``, ``current``, or ``stale`` for the effective hook."""
+
+    hook_path = resolve_pre_commit_hook_path(start.resolve())
+    if hook_path is None or not hook_path.exists():
+        return "missing", hook_path
+    try:
+        installed = hook_path.read_text(encoding="utf-8")
+    except OSError:
+        return "stale", hook_path
+    return (
+        ("current" if installed == _canonical_pre_commit_hook() else "stale"),
+        hook_path,
+    )
+
+
+def handle_setup_hook_check(target_dir: Path | None = None) -> StepResponse:
+    """Fail actionably when an installed hook differs from the template."""
+
+    start = (target_dir or Path.cwd()).resolve()
+    status, hook_path = pre_commit_hook_status(start)
+    if status == "stale":
+        raise CliError(
+            "stale_pre_commit_hook",
+            "Installed pre-commit hook is stale at "
+            f"{hook_path}. Refresh it with: "
+            "python -m arnold_pipelines.megaplan setup --install-hooks --force",
+        )
+    return {
+        "success": True,
+        "step": "setup",
+        "mode": "hook-check",
+        "status": status,
+        "path": str(hook_path) if hook_path is not None else None,
+        "summary": (
+            f"Pre-commit hook is {status}"
+            + (f" at {hook_path}" if hook_path is not None else "")
+        ),
+    }
+
+
 def handle_setup(args: argparse.Namespace) -> StepResponse:
     if getattr(args, "regen_composed", False):
-        return handle_regen_composed()
+        result = handle_regen_composed()
+        if getattr(args, "stage_regenerated", False) and result.get("changed_paths"):
+            subprocess.run(
+                ["git", "add", "--", *result["changed_paths"]],
+                check=True,
+            )
+        return result
     if getattr(args, "editors", False):
         target_dir = Path(args.target_dir).resolve() if args.target_dir else Path.cwd()
         changes = ensure_repo_editor_support(target_dir)
@@ -301,6 +353,9 @@ def handle_setup(args: argparse.Namespace) -> StepResponse:
     if getattr(args, "install_hooks", False):
         target_dir = Path(args.target_dir).resolve() if args.target_dir else Path.cwd()
         return handle_setup_hooks(target_dir, force=args.force)
+    if getattr(args, "check_hooks", False):
+        target_dir = Path(args.target_dir).resolve() if args.target_dir else Path.cwd()
+        return handle_setup_hook_check(target_dir)
     local = args.local or args.target_dir
     if not local:
         return handle_setup_global(force=args.force)

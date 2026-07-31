@@ -124,6 +124,7 @@ from .setup import (
     handle_setup,
     handle_setup_global,
     handle_setup_hooks,
+    pre_commit_hook_status,
 )
 from .skills import (
     _GLOBAL_TARGETS,
@@ -178,7 +179,9 @@ def build_parser() -> argparse.ArgumentParser:
     setup_parser.add_argument("--target-dir")
     setup_parser.add_argument("--force", action="store_true")
     setup_parser.add_argument("--regen-composed", action="store_true")
+    setup_parser.add_argument("--stage-regenerated", action="store_true")
     setup_parser.add_argument("--install-hooks", action="store_true")
+    setup_parser.add_argument("--check-hooks", action="store_true")
     setup_parser.add_argument("--editors", action="store_true")
     setup_parser.add_argument("--user-editors", action="store_true")
 
@@ -3508,6 +3511,16 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args, remaining = parser.parse_known_args(argv)
+    if args.command != "setup":
+        status, hook_path = pre_commit_hook_status(Path.cwd())
+        if status == "stale":
+            print(
+                "megaplan: installed pre-commit hook is stale at "
+                f"{hook_path}; refresh it with: "
+                "python -m arnold_pipelines.megaplan setup "
+                "--install-hooks --force",
+                file=sys.stderr,
+            )
     if args.command != "setup":
         _auto_sync_installed_skills()
     try:

@@ -1,7 +1,7 @@
 ---
 id: 01KTH21DTP1HR3ER5W7SRRJVV5
 title: Prevent stale git pre-commit hook rot
-status: open
+status: addressed
 source: human
 tags:
 - bug
@@ -11,7 +11,13 @@ tags:
 - dx
 codebase_id: null
 created_at: '2026-06-07T12:48:33.622270+00:00'
-last_edited_at: '2026-06-07T12:48:33.622270+00:00'
+last_edited_at: '2026-07-31T02:31:00+00:00'
+resolution_note: >-
+  Installed hooks now self-check against the canonical template, ordinary CLI
+  use warns on drift, forced setup refreshes stale hooks, worktree hook paths
+  resolve through git, and regeneration stages only paths returned by the
+  generator.
+addressed_at: '2026-07-31T02:31:00+00:00'
 epics: []
 ---
 
@@ -32,3 +38,8 @@ Suggested touchpoints
 - `arnold/pipelines/megaplan/cli/skills.py`
 - `tests/test_prep_no_shadow_skills.py`
 
+Immediate remediation
+
+Run `python -m arnold_pipelines.megaplan setup --install-hooks --force`.
+Current hooks self-check before regeneration, and ordinary CLI commands warn
+when an older installed copy differs from the canonical template.

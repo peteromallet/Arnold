@@ -824,13 +824,12 @@ def _step_at(
             fallback = hooks.resolve_routing_fallback(stage, result, stage.edges, exc)
             if fallback is not None:
                 edge = fallback
+            elif not stage.edges:
+                # A leaf stage is structurally terminal even if an older step
+                # returns a non-halt label.  An edged stage is never allowed to
+                # turn an unresolved label into an implicit successful halt.
+                edge = None
             else:
-                # For simple stages (no declared vocabularies), a missing
-                # normal-label edge terminates gracefully — backward compat
-                # with pre-T4 lenient dispatch.
-                if not stage.decision_vocabulary and not stage.override_vocabulary:
-                    break
-                # Stages with declared vocabularies propagate RoutingError.
                 raise
 
         # ── Terminal exit 1: halt ─────────────────────────────────────

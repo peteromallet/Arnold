@@ -36,6 +36,12 @@ def _run(argv: list[str], *, cwd: Path, registry_home: Path) -> subprocess.Compl
     env = os.environ.copy()
     env.pop("MEGAPLAN_BACKEND", None)
     env["MEGAPLAN_REGISTRY_HOME"] = str(registry_home)
+    checkout = str(Path(__file__).resolve().parents[1])
+    env["PYTHONPATH"] = (
+        checkout
+        if not env.get("PYTHONPATH")
+        else checkout + os.pathsep + env["PYTHONPATH"]
+    )
     return subprocess.run(
         [sys.executable, "-m", "arnold_pipelines.megaplan", *argv],
         cwd=cwd,
@@ -236,3 +242,40 @@ class TestEmptyAndNoKeyword:
         data = json.loads(proc.stdout)
         assert len(data) == 1
         assert "special" in (data[0].get("snippet") or "").lower()
+
+
+class TestMalformedInventoryIsolation:
+    def test_mixed_directory_keeps_valid_ticket_searchable(
+        self, repo: Path, registry_home: Path
+    ) -> None:
+        valid_id = _make(repo, registry_home, "Valid searchable", "needle body")
+        ticket_dir = repo / ".megaplan" / "tickets"
+        (ticket_dir / "legacy-note.md").write_text(
+            "# Note\n\nProblem: prose, not YAML\n\n---\n", encoding="utf-8"
+        )
+        (ticket_dir / "unclosed.md").write_text(
+            "---\nid: fake\nmissing: close\n", encoding="utf-8"
+        )
+        (ticket_dir / "bad-yaml.md").write_text(
+            "---\n{[invalid yaml: here\n---\n", encoding="utf-8"
+        )
+
+        proc = _run(
+            ["ticket", "search", "needle", "--json"],
+            cwd=repo,
+            registry_home=registry_home,
+        )
+
+        assert proc.returncode == 0
+        assert [row["id"] for row in json.loads(proc.stdout)] == [valid_id]
+        diagnostics = proc.stderr.splitlines()
+        assert any("bad-yaml.md: YAML parse error" in line for line in diagnostics)
+        assert any("legacy-note.md: no YAML frontmatter opener" in line for line in diagnostics)
+        assert any("unclosed.md: unclosed YAML frontmatter" in line for line in diagnostics)
+
+    def test_active_cli_parser_exposes_ticket_surface(
+        self, repo: Path, registry_home: Path
+    ) -> None:
+        proc = _run(["ticket", "list", "--json"], cwd=repo, registry_home=registry_home)
+        assert proc.returncode == 0, proc.stderr
+        assert json.loads(proc.stdout) == []

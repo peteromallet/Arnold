@@ -49,3 +49,19 @@ Before any review-originated redispatch, reconcile each finding occurrence again
 ## Successor-epic handoff
 
 Native Parity S5A/S5B/S7 must consume these fixtures and prove the compatibility repair is absorbed or deleted with no fallback. C1/C2 supply stable disposition vocabulary, binding identity, and inert shadow behavior. Platformization may generalize neutral retry/generation/fanout lifecycle but may not duplicate Megaplan finding-to-task policy.
+
+## 2026-07-31 implementation evidence and residual
+
+Implemented the typed authority-aware rework reducer and durable
+`review_rework_admission.json` projection in `4774629863`. Accepted work is
+suppressed only when current deterministic checks still pass; fresh failures
+reopen work, accepted debt remains visible, and bulk findings become one
+bounded validation job rather than implementation replay.
+
+Focused regressions cover the 46-task attempt-70 recurrence shape, T9/T42
+regressions, T33/T43 accepted work, stale evidence windows, and bulk
+validation.
+
+Keep this ticket open. The final authority reread, disposition publication,
+and worker dispatch still need one state-version CAS immediately before
+dispatch. The exact archived M11 review-v10 trace also remains to be replayed.

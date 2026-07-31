@@ -21,6 +21,7 @@ from arnold_pipelines.megaplan._core import (
     resolve_plan_dir,
 )
 from arnold_pipelines.megaplan._core.state import write_plan_state
+from arnold_pipelines.megaplan._core.phase_runtime import active_step_has_live_worker
 from arnold_pipelines.megaplan.chain import spec as chain_spec
 from arnold_pipelines.megaplan.chain.advancement import policy_for_spec
 from arnold.control.interface import ControlBinding, RunStateView
@@ -1262,14 +1263,7 @@ def _plan_dir(root: Path, plan_name: str) -> Path:
 
 def _plan_has_live_active_step(raw_state: Mapping[str, Any]) -> bool:
     active_step = raw_state.get("active_step")
-    if not isinstance(active_step, Mapping):
-        return False
-    return bool(
-        active_step.get("phase")
-        or active_step.get("worker_pid")
-        or active_step.get("pid")
-        or active_step.get("session_id")
-    )
+    return active_step_has_live_worker(active_step)
 
 
 def _blocked_plan_replay_would_be_redundant(
