@@ -17,7 +17,6 @@ SHA256 = re.compile(r"^[0-9a-f]{64}$")
 ALLOWED_RECORD_STATUS = {"in_progress", "complete"}
 ALLOWED_RESIDUAL_STATUS = {"pending", "complete"}
 ALLOWED_OBSERVATION_STATUS = {
-    "acceptance_pass",
     "discovery",
     "failure",
     "historical_blocked",
@@ -31,7 +30,6 @@ ALLOWED_ACCEPTANCE_EFFECT = {
     "conformance_fix_level_only",
     "defect_level_only",
     "evidence_not_acceptance",
-    "final_acceptance",
     "informational_only",
     "integration_cut_only",
     "packaging_code_gate",
@@ -377,13 +375,6 @@ def validate(path: Path) -> None:
         if acceptance_effect not in ALLOWED_ACCEPTANCE_EFFECT:
             raise ValueError(
                 f"validation_observations[{index}] has invalid acceptance_effect"
-            )
-        if (status == "acceptance_pass") != (
-            acceptance_effect == "final_acceptance"
-        ):
-            raise ValueError(
-                f"validation_observations[{index}] must pair acceptance_pass "
-                "only with final_acceptance"
             )
         if (
             status in NON_ACCEPTANCE_OBSERVATION_STATUS
