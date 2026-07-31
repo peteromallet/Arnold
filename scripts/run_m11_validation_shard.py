@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
+import importlib.metadata
 import json
 import os
 import re
@@ -29,6 +30,7 @@ from arnold_pipelines.megaplan.runtime.process import (
 
 SHARD_SCHEMA = "m11.test-shard-receipt.v1"
 AGGREGATE_SCHEMA = "m11.no-debt-aggregate.v1"
+RUNTIME_SCHEMA = "m11.validation-runtime.v2"
 KINDS = {"full_suite", "semantic_carrier"}
 OUTCOMES = ("passed", "failed", "skipped", "xfailed", "xpassed", "errors")
 STATUS_MAP = {
@@ -166,14 +168,80 @@ def _git_identity(root: Path) -> dict[str, str]:
     }
 
 
-def _runtime_identity() -> dict[str, Any]:
-    executable = Path(sys.executable).resolve(strict=True)
-    return {
-        "python": str(executable),
-        "python_sha256": _file_digest(executable),
+def _normalized_distribution_inventory() -> list[dict[str, Any]]:
+    """Return a stable, pip-freeze-equivalent installed environment vector."""
+
+    inventory: list[dict[str, Any]] = []
+    for distribution in importlib.metadata.distributions():
+        name = str(distribution.metadata.get("Name") or "").strip()
+        if not name:
+            raise ValidationShardError("installed distribution has no canonical name")
+        row: dict[str, Any] = {
+            "name": re.sub(r"[-_.]+", "-", name).lower(),
+            "version": str(distribution.version),
+        }
+        direct_url_raw = distribution.read_text("direct_url.json")
+        if direct_url_raw:
+            try:
+                direct_url = json.loads(direct_url_raw)
+            except json.JSONDecodeError as exc:
+                raise ValidationShardError(
+                    f"invalid direct_url.json for distribution {name!r}"
+                ) from exc
+            if not isinstance(direct_url, dict):
+                raise ValidationShardError(
+                    f"direct_url.json for distribution {name!r} is not an object"
+                )
+            # Retain the actual editable source target.  This is intentionally
+            # path-sensitive: two editable installs from different checkouts
+            # are not the same validation environment.
+            row["direct_url"] = direct_url
+        inventory.append(row)
+    return sorted(inventory, key=lambda row: _canonical_bytes(row))
+
+
+def _runtime_identity(root: Path) -> dict[str, Any]:
+    # Do not resolve the invoked executable: venv/bin/python commonly points
+    # at the same base binary as every other venv, and resolving it erased the
+    # environment distinction that this receipt must prove.
+    invoked = Path(os.path.abspath(sys.executable))
+    invoked.stat()
+    resolved = invoked.resolve(strict=True)
+    project_inputs: dict[str, str | None] = {}
+    for name in ("pyproject.toml", "uv.lock"):
+        path = root / name
+        project_inputs[name] = _file_digest(path) if path.is_file() else None
+    runtime = {
+        "schema": RUNTIME_SCHEMA,
+        "python": str(invoked),
+        "python_realpath": str(resolved),
+        "python_sha256": _file_digest(invoked),
+        "prefix": os.path.abspath(sys.prefix),
+        "base_prefix": os.path.abspath(sys.base_prefix),
         "safe_path": bool(sys.flags.safe_path),
         "version": list(sys.version_info[:3]),
+        "project_inputs": project_inputs,
+        "distributions": _normalized_distribution_inventory(),
     }
+    runtime["content_sha256"] = _digest(runtime)
+    return runtime
+
+
+def _validate_runtime_identity(value: Any, *, label: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or value.get("schema") != RUNTIME_SCHEMA:
+        raise ValidationShardError(f"{label} runtime identity schema mismatch")
+    unhashed = dict(value)
+    observed = unhashed.pop("content_sha256", None)
+    if observed != _digest(unhashed):
+        raise ValidationShardError(f"{label} runtime identity hash mismatch")
+    distributions = value.get("distributions")
+    if not isinstance(distributions, list) or distributions != sorted(
+        distributions, key=lambda row: _canonical_bytes(row)
+    ):
+        raise ValidationShardError(
+            f"{label} runtime distribution inventory is not canonical"
+        )
+    return value
 
 
 def _assert_identity(
@@ -184,7 +252,7 @@ def _assert_identity(
     expected_python_sha256: str,
 ) -> tuple[dict[str, str], dict[str, Any]]:
     revision = _git_identity(root)
-    runtime = _runtime_identity()
+    runtime = _runtime_identity(root)
     if revision != {
         "git_commit": expected_revision,
         "git_tree": expected_tree,
@@ -494,7 +562,9 @@ def build_aggregate(
             )
         seen.update(inventory)
         shard_revision = receipt.get("revision")
-        shard_runtime = receipt.get("runtime")
+        shard_runtime = _validate_runtime_identity(
+            receipt.get("runtime"), label=f"shard[{index}]"
+        )
         if revision is None:
             revision = dict(shard_revision)
             runtime = dict(shard_runtime)
