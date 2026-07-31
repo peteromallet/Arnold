@@ -3021,6 +3021,25 @@ def _schema_template(schema: dict) -> str:
     return json.dumps(template, indent=2)
 
 
+def _deescape_double_encoded_json(raw: str) -> str | None:
+    """Return one decoded JSON-source layer for an escaped object response.
+
+    Some coding endpoints return an object-shaped JSON string without the
+    outer JSON-string quotes, for example ``{\"title\":\"Plan\"}``.  That
+    response is neither valid JSON nor ordinary prose.  Decode only this exact
+    shape and leave valid JSON, fenced output, and unrelated backslash-heavy
+    text untouched.
+    """
+    text = str(raw).strip()
+    if not (text.startswith("{") and text.endswith("}") and '\\"' in text):
+        return None
+    try:
+        decoded = json.loads(f'"{text}"')
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    return decoded if isinstance(decoded, str) else None
+
+
 def _parse_json_response(text: str) -> dict | None:
     """Extract a JSON object from a model response.
 
@@ -3036,7 +3055,12 @@ def _parse_json_response(text: str) -> dict | None:
     if not text:
         return None
 
-    for candidate in [text, _repair_json(text)]:
+    deescaped = _deescape_double_encoded_json(text)
+    candidates = [text, _repair_json(text)]
+    if deescaped is not None:
+        candidates[:0] = [deescaped, _repair_json(deescaped)]
+
+    for candidate in candidates:
         # Direct parse
         try:
             parsed = json.loads(candidate)

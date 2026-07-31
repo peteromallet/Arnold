@@ -259,7 +259,10 @@ _NESTED_WORKER_ENV = "ARNOLD_NESTED_MANAGED_AGENT_WORKER"
 
 
 def _resolve_model_shortcut(model: str) -> str:
-    return _MODEL_SHORTCUTS.get(str(model).strip(), model)
+    normalized = str(model).strip()
+    if normalized.startswith("hermes:"):
+        normalized = normalized.removeprefix("hermes:")
+    return _MODEL_SHORTCUTS.get(normalized, normalized)
 
 
 def _automatic_managed_reexec() -> int | None:
