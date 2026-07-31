@@ -593,7 +593,7 @@ def test_exact_trigger_claims_taskless_lifecycle_phase_failure(tmp_path: Path) -
     assert claim["blocker_id"] == blocker_id
 
 
-def test_trigger_suppresses_dispatch_claim_when_worker_is_unavailable(
+def test_trigger_does_not_require_legacy_worker_for_simple_fixer_delegation(
     tmp_path: Path,
 ) -> None:
     marker_dir = tmp_path / "markers"
@@ -605,15 +605,21 @@ def test_trigger_suppresses_dispatch_claim_when_worker_is_unavailable(
     result = _run_trigger(marker_dir, tmp_path / "missing-repair-loop", enabled=True)
 
     assert result.returncode == 0, result.stderr
-    event = next(item for item in _events(result) if item["event"] == "repair_trigger")
-    assert event["status"] == "repair_unavailable"
+    event = next(
+        item for item in _events(result)
+        if item["event"] == "repair_trigger_dispatch"
+    )
+    assert event["status"] == "dispatched"
+    assert event["delegation_outcome"] == "delegated"
     decisions = [
         item["decision"]
         for item in _decisions(marker_dir)
         if item["request_id"] == queued["request"]["request_id"]
     ]
-    assert "dispatched" not in decisions
-    assert repair_requests.iter_repair_attempts(_queue_root(workspace)) == []
+    assert "dispatched" in decisions
+    attempts = repair_requests.iter_repair_attempts(_queue_root(workspace))
+    assert len(attempts) == 1
+    assert attempts[0]["command"] == "simple_fixer_delegation"
 
 
 def test_l3_actionable_finding_reaches_claim_attempt_and_terminal_decision(
@@ -681,17 +687,11 @@ def test_l3_actionable_finding_reaches_claim_attempt_and_terminal_decision(
     dispatch_event = next(
         event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
     )
-    # Typed L3 repair retains the managed-agent route; only L1 occurrence
-    # repair delegates to the canonical simple_fixer.
+    # L3 remains diagnostic depth, while mutation custody crosses the same
+    # canonical exact-occurrence simple_fixer boundary as L1.
     assert dispatch_event["repair_layer"] == "l3"
-    launched = _read_json_eventually(tmp_path / "repair-args.json")
-    manifest = _read_json_eventually(Path(dispatch_event["managed_manifest_path"]))
-    assert launched["argv"] == ["demo", "l3_progress_auditor"]
-    assert launched["request_id"] == request["request_id"]
-    assert manifest["run_kind"] == "automatic_root_cause_repair"
-    assert manifest["model"] == "gpt-5.6-sol"
-    assert manifest["reasoning_effort"] == "high"
-    assert manifest["difficulty"] == 9
+    assert dispatch_event["delegation_outcome"] == "delegated"
+    assert not (tmp_path / "repair-args.json").exists()
     claim_path = repair_requests.active_repair_claim_lock_dir(
         _queue_root(workspace), dispatch_event["attempt"]["blocker_id"]
     ) / "owner.json"
@@ -711,8 +711,7 @@ def test_l3_actionable_finding_reaches_claim_attempt_and_terminal_decision(
     assert custody_attempts[0]["blocker_id"] == dispatch_event["attempt"]["blocker_id"]
     assert custody_attempts[0]["repair_layer"] == "l3"
     assert custody_attempts[0]["status"] == "launched"
-    assert custody_attempts[0]["managed_run_id"] == dispatch_event["attempt"]["managed_run_id"]
-    assert custody_attempts[0]["managed_manifest_path"] == dispatch_event["attempt"]["managed_manifest_path"]
+    assert custody_attempts[0]["command"] == "simple_fixer_delegation"
     assert request["target"]["evidence_cursor"]["accepted_request_ids"] == ["legacy-request"]
     assert request["target"]["retry_budget"]["remaining_attempts"] == 2
 
@@ -788,15 +787,10 @@ def test_typed_l3_request_is_not_downgraded_when_target_also_looks_l1_repairable
     dispatch = next(
         event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
     )
-    attempt = _read_json_eventually(tmp_path / "repair-args.json")
-    manifest = _read_json_eventually(Path(dispatch["managed_manifest_path"]))
     assert dispatch["request_id"] == request["request_id"]
     assert dispatch["repair_layer"] == "l3"
-    assert attempt["argv"] == ["demo", "l3_progress_auditor"]
-    assert manifest["run_kind"] == "automatic_root_cause_repair"
-    assert manifest["model"] == "gpt-5.6-sol"
-    assert manifest["reasoning_effort"] == "high"
-    assert manifest["difficulty"] == 9
+    assert dispatch["delegation_outcome"] == "delegated"
+    assert not (tmp_path / "repair-args.json").exists()
 def test_terminal_l1_replan_routes_exact_request_to_l2(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     workspace = tmp_path / "workspace"
@@ -827,9 +821,8 @@ def test_terminal_l1_replan_routes_exact_request_to_l2(tmp_path: Path) -> None:
         event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
     )
     assert dispatch["repair_layer"] == "l2"
-    launched = _read_json_eventually(tmp_path / "repair-args.json")
-    assert launched["argv"] == ["demo", "l1_custody_failure"]
-    assert launched["request_id"] == request["request_id"]
+    assert dispatch["delegation_outcome"] == "delegated"
+    assert not (tmp_path / "repair-args.json").exists()
 
 
 def test_trigger_consumes_human_gate_request_from_explicit_central_queue(tmp_path: Path) -> None:
@@ -1243,9 +1236,8 @@ def test_trigger_routes_typed_supervisor_binding_drift_to_l2(tmp_path: Path) -> 
     )
     assert dispatch["repair_layer"] == "l2"
     assert dispatch["request_id"] == queued["request"]["request_id"]
-    launched = _read_json_eventually(meta_log)
-    assert launched["argv"] == ["demo", "l1_custody_failure"]
-    assert launched["request_id"] == queued["request"]["request_id"]
+    assert dispatch["delegation_outcome"] == "delegated"
+    assert not meta_log.exists()
     assert not (tmp_path / "repair-args.json").exists()
 
 
