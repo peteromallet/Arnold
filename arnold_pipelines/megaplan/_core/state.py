@@ -2227,9 +2227,9 @@ def reconcile_work_ledger_aggregate(
     The summary is deterministic for a given ledger and explicitly
     non-authoritative.
 
-    Returns a dict with ``by_class``, ``by_task``, ``totals``,
-    ``unavailable_measures``, and the ``_non_authoritative`` / ``_rebuildable``
-    markers.
+    Returns a dict with ``by_class``, ``by_category``, ``identity_joins``,
+    ``by_task``, ``totals``, ``unavailable_measures``, and the
+    ``_non_authoritative`` / ``_rebuildable`` markers.
     """
     from arnold_pipelines.megaplan.observability.work_ledger import (
         build_work_class_summary,
@@ -2247,7 +2247,14 @@ def work_ledger_aggregation_valid(summary: dict[str, Any]) -> bool:
     """
     if not isinstance(summary, dict):
         return False
-    required_keys = {"by_class", "by_task", "totals", "unavailable_measures"}
+    required_keys = {
+        "by_class",
+        "by_category",
+        "identity_joins",
+        "by_task",
+        "totals",
+        "unavailable_measures",
+    }
     if not required_keys.issubset(summary.keys()):
         return False
     if summary.get("_non_authoritative") is not True:
@@ -2270,7 +2277,11 @@ def work_ledger_aggregation_valid(summary: dict[str, Any]) -> bool:
     totals = summary.get("totals")
     if not isinstance(totals, dict):
         return False
-    totals_required = {"productive_duration_ms", "overhead_duration_ms", "unavailable_measure_count"}
+    totals_required = {
+        "value_work_duration_ms",
+        "non_value_work_duration_ms",
+        "gap_count",
+    }
     if not totals_required.issubset(totals.keys()):
         return False
 

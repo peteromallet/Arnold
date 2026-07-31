@@ -10,8 +10,6 @@ These tests prove that:
 
 from __future__ import annotations
 
-import hashlib
-import json
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -725,12 +723,12 @@ class TestReconciliationPrimitives:
 
             assert result["validation"]["count"] == 2
             assert result["validation"]["total_duration_ms"] == 300
-            assert result["validation"]["category"] == "productive"
+            assert result["validation"]["category"] == "value_work"
             assert result["productive"]["count"] == 1
             assert result["productive"]["total_duration_ms"] == 5000
             assert result["queue"]["count"] == 1
             assert result["queue"]["total_duration_ms"] == 300
-            assert result["queue"]["category"] == "overhead"
+            assert result["queue"]["category"] == "non_value_work"
         finally:
             try:
                 for f in plan_dir.iterdir():
@@ -872,8 +870,11 @@ class TestReconciliationPrimitives:
             except OSError:
                 pass
 
-    def test_build_work_class_summary_is_rebuildable(self) -> None:
-        """build_work_class_summary produces a deterministic, rebuildable aggregate."""
+    def test_build_work_class_summary_round_trips_through_validator(self) -> None:
+        """A populated canonical summary is accepted by its schema validator."""
+        from arnold_pipelines.megaplan._core.state import (
+            work_ledger_aggregation_valid,
+        )
         from arnold_pipelines.megaplan.observability.work_ledger import (
             build_work_class_summary,
             emit_productive,
@@ -913,13 +914,14 @@ class TestReconciliationPrimitives:
             assert "totals" in summary
             assert "unavailable_measures" in summary
 
-            # Totals should reflect productive vs overhead split
+            # Totals should reflect value-work vs non-value-work split.
             totals = summary["totals"]
-            # productive includes validation (150) + productive (3000) = 3150
-            # overhead includes queue (200)
-            assert totals["productive_duration_ms"] == 3150
-            assert totals["overhead_duration_ms"] == 200
-            assert totals["unavailable_measure_count"] == 0
+            # Value work includes validation (150) + productive (3000) = 3150.
+            # Non-value work includes queue (200).
+            assert totals["value_work_duration_ms"] == 3150
+            assert totals["non_value_work_duration_ms"] == 200
+            assert totals["gap_count"] == 0
+            assert work_ledger_aggregation_valid(summary) is True
         finally:
             try:
                 for f in plan_dir.iterdir():
@@ -928,8 +930,11 @@ class TestReconciliationPrimitives:
             except OSError:
                 pass
 
-    def test_build_work_class_summary_handles_empty_ledger(self) -> None:
-        """Empty ledger produces valid aggregate with null durations."""
+    def test_empty_work_class_summary_round_trips_through_validator(self) -> None:
+        """An empty canonical summary is accepted with null durations."""
+        from arnold_pipelines.megaplan._core.state import (
+            work_ledger_aggregation_valid,
+        )
         from arnold_pipelines.megaplan.observability.work_ledger import (
             build_work_class_summary,
         )
@@ -940,10 +945,36 @@ class TestReconciliationPrimitives:
 
             assert summary["_non_authoritative"] is True
             assert summary["_rebuildable"] is True
-            assert summary["totals"]["productive_duration_ms"] is None
-            assert summary["totals"]["overhead_duration_ms"] is None
-            assert summary["totals"]["unavailable_measure_count"] == 0
+            assert summary["totals"]["value_work_duration_ms"] is None
+            assert summary["totals"]["non_value_work_duration_ms"] is None
+            assert summary["totals"]["gap_count"] == 0
             assert summary["unavailable_measures"] == []
+            assert work_ledger_aggregation_valid(summary) is True
+        finally:
+            try:
+                plan_dir.rmdir()
+            except OSError:
+                pass
+
+    def test_legacy_work_class_total_aliases_are_rejected(self) -> None:
+        """The validator accepts only the canonical value/non-value/gap totals."""
+        from arnold_pipelines.megaplan._core.state import (
+            work_ledger_aggregation_valid,
+        )
+        from arnold_pipelines.megaplan.observability.work_ledger import (
+            build_work_class_summary,
+        )
+
+        plan_dir = _fresh_plan_dir()
+        try:
+            summary = build_work_class_summary(plan_dir)
+            summary["totals"] = {
+                "productive_duration_ms": None,
+                "overhead_duration_ms": None,
+                "unavailable_measure_count": 0,
+            }
+
+            assert work_ledger_aggregation_valid(summary) is False
         finally:
             try:
                 plan_dir.rmdir()
@@ -1440,7 +1471,7 @@ class TestCostAttributionReconciliation:
             summary = build_work_class_summary(plan_dir)
 
             # Full accounting: unavailable_measures are explicit
-            assert summary["totals"]["unavailable_measure_count"] == 3
+            assert summary["totals"]["gap_count"] == 3
             assert len(summary["unavailable_measures"]) == 3
 
             # task-full has productive event with cost, no unavailability

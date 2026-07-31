@@ -50,8 +50,6 @@ from __future__ import annotations
 import hashlib
 import enum
 import json
-import os
-import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1129,7 +1127,7 @@ def aggregate_by_class(
     - ``count``: number of events
     - ``total_duration_ms``: summed duration (null when unavailable)
     - ``task_ids``: deduplicated set of referenced identities
-    - ``category``: ``"productive"`` or ``"overhead"``
+    - ``category``: ``"value_work"``, ``"non_value_work"``, or ``"gap"``
 
     This is a rebuildable function — same ledger → same output (deterministic
     aside from timestamp-dependent fields, which are excluded from the
