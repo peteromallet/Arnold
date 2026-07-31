@@ -12,7 +12,7 @@ tags:
 - immediate-residual
 codebase_id: null
 created_at: '2026-07-29T10:09:24.064192+00:00'
-last_edited_at: '2026-07-31T03:21:00.000000+00:00'
+last_edited_at: '2026-07-31T05:24:50+00:00'
 epics:
 - epic_id: megaplan-native-parity-corrective
   resolves_on_complete: false
@@ -88,3 +88,35 @@ This closes the sibling-wrapper/source-selection subcase only. Keep this ticket
 open: the single canonical launch-envelope resolver, credential-channel
 preflight, resident-generation rotation fixture, and provider-route acceptance
 proof remain outstanding.
+
+## 2026-07-31 container-boot source closure
+
+Release preflight found that the generated cloud entrypoint still launched
+`arnold-heartbeat` and `arnold-watchdog` from the literal mutable
+`/workspace/arnold` checkout. On the live Hetzner box that checkout is dirty,
+while the selected runtime is a separate content-addressed candidate. A normal
+container replacement could therefore boot recovery authority from unrelated
+dirty source before the host-side ensure timer intervened. The resident also
+used `/workspace/arnold` as its tmux working directory even when its executable
+and import source were selected elsewhere.
+
+Commit `98056ca183` closes this boot-source subcase. The generated entrypoint now
+loads the persistent hot environment and resolves heartbeat, watchdog, and
+resident source through the same precedence:
+`MEGAPLAN_RUNTIME_SRC`, then `CLOUD_WATCHDOG_ARNOLD_SRC`, then the legacy
+`/workspace/arnold` fallback. Each process changes to the selected source and
+executes its wrapper from that quoted path; the resident starts from neutral
+`/workspace` and then changes to the selected source. Focused rendering tests
+reject hard-coded wrapper paths and the dirty-checkout tmux cwd, assert all
+three consumers share the selector, and run `bash -n` over the rendered
+entrypoint. Validation: `14 passed` in `tests/cloud/test_ssh_deploy.py`,
+the two host ensure selector tests passed, Ruff passed, compileall passed, and
+`git diff --check` passed.
+
+Keep this ticket open. The broader canonical launch-envelope resolver,
+credential-channel preflight, resident-generation rotation fixture, and
+provider-route acceptance proof remain outstanding. The live
+`.cloud-hot-env` and `resident-runtime.env` selectors are intentionally not
+rewritten by this code commit; final-SHA cutover must replace their duplicated
+and contradictory runtime assignments with one CAS/checkpointed canonical
+block and produce a fresh runtime/canary receipt.
