@@ -2275,7 +2275,14 @@ def _enqueue_lifecycle_failure_request(
         # exact repair occurrence so downstream recovery joins can
         # identify the same tuple.
         session_id = session or plan_dir.name
+        # Phase-contract failures are durable repair subjects even when the
+        # phase does not own a task-shaped executor record.  Allocate that
+        # identity before constructing or admitting the request; otherwise
+        # the occurrence-bound queue correctly rejects the incomplete F01
+        # tuple and the watchdog can only see an unclaimable failure.
         blocked_task = _lifecycle_blocked_task_id(metadata)
+        if not blocked_task and phase:
+            blocked_task = f"phase:{phase}"
 
         # Derive a best-effort fence token from the plan directory's
         # modification signature.  When a real coordinator fence token
