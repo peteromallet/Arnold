@@ -59,7 +59,9 @@ def test_resume_injects_managed_repair_route_into_tmux_session(
 
     launch = calls[1]
     assert result["runner_started"] is True
-    assert f"ARNOLD_REPAIR_QUEUE_ROOT={tmp_path / '.megaplan' / 'repair-queue'}" in launch
+    assert (
+        f"ARNOLD_REPAIR_QUEUE_ROOT={tmp_path / '.megaplan' / 'repair-queue'}" in launch
+    )
     assert f"ARNOLD_REPAIR_MARKER_DIR={marker_dir}" in launch
     assert "ARNOLD_REPAIR_SESSION=demo" in launch
     assert "ARNOLD_REPAIR_RUN_KIND=chain" in launch
@@ -160,9 +162,7 @@ def test_resume_authority_only_does_not_start_runner(
     )
 
     assert calls == []
-    assert resume_calls == [
-        {"actor": "test", "verify_execution_binding": False}
-    ]
+    assert resume_calls == [{"actor": "test", "verify_execution_binding": False}]
     assert result["runner_started"] is False
     assert result["authority_only"] is True
     updated = json.loads(marker_path.read_text(encoding="utf-8"))
@@ -191,9 +191,7 @@ def test_resume_fails_closed_when_marker_changes_concurrently(
 
     def fake_resume_chain(*args, **kwargs):
         marker = json.loads(marker_path.read_text(encoding="utf-8"))
-        marker["runtime_binding"] = {
-            "current_identity": {"source_revision": "c" * 40}
-        }
+        marker["runtime_binding"] = {"current_identity": {"source_revision": "c" * 40}}
         marker_path.write_text(json.dumps(marker), encoding="utf-8")
         return {"changed": True, "paused": False}
 
@@ -216,3 +214,27 @@ def test_resume_fails_closed_when_marker_changes_concurrently(
         )
 
     assert calls == [["tmux", "has-session", "-t", "demo"]]
+
+
+def test_resume_rejects_stale_marker_command_after_runtime_cutover(
+    tmp_path: Path, monkeypatch
+) -> None:
+    marker_path = tmp_path / ".megaplan" / "cloud-sessions" / "demo.json"
+    marker_path.parent.mkdir(parents=True)
+    marker_path.write_text(
+        json.dumps(
+            {"run_kind": "chain", "relaunch_command": "git pull && python -m old"}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(operator_control, "resume_chain", lambda *a, **k: {})
+    monkeypatch.setattr(operator_control.subprocess, "run", lambda *a, **k: None)
+
+    with pytest.raises(RuntimeError, match="stale or unavailable"):
+        operator_control.resume_session(
+            spec=tmp_path / "chain.yaml",
+            workspace=tmp_path,
+            session="demo",
+            marker_path=marker_path,
+            actor="test",
+        )

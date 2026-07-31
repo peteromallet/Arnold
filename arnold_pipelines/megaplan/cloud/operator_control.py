@@ -14,12 +14,18 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan.chain.operator_pause import pause_chain, resume_chain
+from arnold_pipelines.megaplan.cloud.relaunch_resolution import marker_relaunch_command
 
 
 def _stop_owned_pidfile(path: Path, *, session: str) -> bool:
     try:
         pid = int(path.read_text(encoding="utf-8").strip())
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+        cmdline = (
+            Path(f"/proc/{pid}/cmdline")
+            .read_bytes()
+            .replace(b"\0", b" ")
+            .decode(errors="replace")
+        )
     except (OSError, ValueError):
         return False
     if session not in cmdline or not any(
@@ -34,13 +40,25 @@ def _stop_owned_pidfile(path: Path, *, session: str) -> bool:
 
 
 def pause_session(
-    *, spec: Path, workspace: Path, session: str, marker_path: Path, reason: str, actor: str
+    *,
+    spec: Path,
+    workspace: Path,
+    session: str,
+    marker_path: Path,
+    reason: str,
+    actor: str,
 ) -> dict[str, Any]:
     marker, marker_sha256 = _load_marker(marker_path)
     result = pause_chain(spec, workspace, reason=reason, actor=actor)
-    stopped = subprocess.run(
-        ["tmux", "kill-session", "-t", session], capture_output=True, text=True, check=False
-    ).returncode == 0
+    stopped = (
+        subprocess.run(
+            ["tmux", "kill-session", "-t", session],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).returncode
+        == 0
+    )
     marker_dir = marker_path.parent
     repair_stopped = any(
         _stop_owned_pidfile(path, session=session)
@@ -52,7 +70,12 @@ def pause_session(
     marker["operator_pause"] = result["authority"]
     marker["should_run"] = False
     _write_marker(marker_path, marker, expected_sha256=marker_sha256)
-    return {**result, "session": session, "runner_stopped": stopped, "repair_stopped": repair_stopped}
+    return {
+        **result,
+        "session": session,
+        "runner_stopped": stopped,
+        "repair_stopped": repair_stopped,
+    }
 
 
 def resume_session(
@@ -83,10 +106,13 @@ def resume_session(
             "no_push": no_push,
             "authority_only": True,
         }
-    relaunch = str(marker.get("relaunch_command") or marker.get("launch_command") or "").strip()
+    relaunch = marker_relaunch_command(marker)
     if not relaunch:
-        raise RuntimeError("session marker has no canonical relaunch command")
-    if subprocess.run(["tmux", "has-session", "-t", session], check=False).returncode == 0:
+        raise RuntimeError("session marker relaunch command is stale or unavailable")
+    if (
+        subprocess.run(["tmux", "has-session", "-t", session], check=False).returncode
+        == 0
+    ):
         raise RuntimeError("session already has a live runner")
     queue_root = Path(
         os.environ.get("ARNOLD_REPAIR_QUEUE_ROOT")
@@ -154,7 +180,9 @@ def _write_marker(
         try:
             current = path.read_bytes()
         except OSError as exc:
-            raise RuntimeError(f"session marker disappeared during update: {path}") from exc
+            raise RuntimeError(
+                f"session marker disappeared during update: {path}"
+            ) from exc
         observed_sha256 = _sha256(current)
         if observed_sha256 != expected_sha256:
             raise RuntimeError(
