@@ -8,7 +8,7 @@ description: Reference contract for the canonical Arnold native-first pipeline t
 The canonical scaffold is `arnold_pipelines/_template/`. It shows the minimum
 required contract for a native-first pipeline:
 
-- `build_pipeline()` returns `arnold.pipeline.types.Pipeline` with a
+- `build_pipeline()` returns `arnold.pipeline.Pipeline` with a
   **non-null** `native_program`.
 - Module-level metadata with `driver=("native", "<kind>")` and
   `supported_modes` containing `"native"`.

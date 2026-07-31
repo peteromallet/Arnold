@@ -12,8 +12,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
-from arnold.pipeline.native import project_graph
-from arnold.pipeline.types import Pipeline
+from arnold.pipeline import Pipeline, project_graph
 
 from arnold_pipelines._template.pipelines import (
     build_native_program,

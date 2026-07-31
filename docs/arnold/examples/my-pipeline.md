@@ -94,7 +94,7 @@ This template is **native-first**. Every package built from it uses
 
 ## Contract
 
-- `build_pipeline() -> arnold.pipeline.types.Pipeline` returning a projected
+- `build_pipeline() -> arnold.pipeline.Pipeline` returning a projected
   shell with a **non-null** `native_program`.
 - Module-level metadata: `name`, `description`, `driver`, `entrypoint`,
   `arnold_api_version`, `capabilities`.
@@ -124,8 +124,7 @@ Capsules is not finalised at this layer.
 ## Example
 
 ```python
-from arnold.pipeline.native import compile_pipeline, phase, pipeline, project_graph
-from arnold.pipeline.types import Pipeline
+from arnold.pipeline import Pipeline, StepResult, compile_pipeline, phase, pipeline, project_graph
 
 
 @phase(name="draft")
@@ -157,7 +156,7 @@ validation, not for hand-authored graph construction.
 ## Validation
 
 - Validate import: `arnold_pipelines.my_pipeline:build_pipeline`
-- Contract: `build_pipeline()` returns `arnold.pipeline.types.Pipeline`
+- Contract: `build_pipeline()` returns `arnold.pipeline.Pipeline`
   with a non-null `native_program`.
 - Metadata: `driver` starts with `"native"`; `supported_modes` contains
   `"native"`.

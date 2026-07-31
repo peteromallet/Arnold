@@ -33,13 +33,13 @@ records:
   kind: source_checker
   checker: scripts.generate_native_representation_evidence
   carrier_path: docs/arnold/package-authoring-contract.md
-  carrier_sha256: sha256:bdf7b44e415361ccb12ae699cfbaed67ac463ee138259ccaf44b458af7169650
+  carrier_sha256: sha256:9e3550e01200dd711f8a358171bdc8c8138e19bf30e98b7598b81e96d4259d07
   proof_artifact_path: docs/arnold/package-authoring-contract.md
-  proof_artifact_sha256: sha256:bdf7b44e415361ccb12ae699cfbaed67ac463ee138259ccaf44b458af7169650
+  proof_artifact_sha256: sha256:9e3550e01200dd711f8a358171bdc8c8138e19bf30e98b7598b81e96d4259d07
   source_span:
     path: docs/arnold/package-authoring-contract.md
     start_line: 1
-    end_line: 324
+    end_line: 330
   policy_object: package_authoring_contract
   carrier_name: package_authoring_contract
 - row_id: critique-bare-skip
@@ -591,7 +591,7 @@ boundary_contract_records:
   covered_effects:
   - artifact
   contract_path: docs/arnold/package-authoring-contract.md
-  contract_sha256: sha256:bdf7b44e415361ccb12ae699cfbaed67ac463ee138259ccaf44b458af7169650
+  contract_sha256: sha256:9e3550e01200dd711f8a358171bdc8c8138e19bf30e98b7598b81e96d4259d07
   policy_object: megaplan:artifact-contract
   supporting_fixture_id: finalize_artifacts
   observed_boundary_id: finalize_artifacts
@@ -4952,7 +4952,7 @@ approved_carriers:
   - timeout-deadline-policy
 - path: docs/arnold/package-authoring-contract.md
   carrier_name: package_authoring_contract
-  sha256: sha256:bdf7b44e415361ccb12ae699cfbaed67ac463ee138259ccaf44b458af7169650
+  sha256: sha256:9e3550e01200dd711f8a358171bdc8c8138e19bf30e98b7598b81e96d4259d07
   rows:
   - plan-artifact-version-metadata
 fixture_hashes:
@@ -5076,7 +5076,7 @@ fixture_hashes:
   - golden-trace-regeneration
   - timeout-deadline-policy
 - path: docs/arnold/package-authoring-contract.md
-  sha256: sha256:bdf7b44e415361ccb12ae699cfbaed67ac463ee138259ccaf44b458af7169650
+  sha256: sha256:9e3550e01200dd711f8a358171bdc8c8138e19bf30e98b7598b81e96d4259d07
   referenced_by_rows:
   - plan-artifact-version-metadata
 - path: docs/megaplan/final-cloud-runtime-promotion-runbook-2026-07-31.md
