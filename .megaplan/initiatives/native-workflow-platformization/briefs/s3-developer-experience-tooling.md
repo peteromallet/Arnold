@@ -59,6 +59,11 @@ around it in an editor adapter or CLI translation layer.
   response directory. That directory is hash-bound authoring evidence, not
   authority. Completion worksheets remain separate read-only projections;
   `compiled.json`, `validation.json` and `verdict.json` remain harness-owned.
+- The generated prompt presents one concise writable-path protocol, grouped
+  required/optional/conditional fields, relevant context links and one check
+  command. It does not expose custody/hash machinery or duplicate the schema.
+  Attempted finish with a repairable package continues the same live session
+  with human-readable path-level diagnostics and preserves valid work.
 - All surfaces remain experimental. S6 alone may stabilize them.
 - Completion lint, diagnostics, inspection and query tools are views over the
   authoritative kernel and Custody projection. Generated canonical-machine
@@ -144,11 +149,17 @@ around it in an editor adapter or CLI translation layer.
     obligations, tooling generates/pins the binding and worksheet, an omitted
     durable obligation fails lint/admission, and an ordinary pure helper needs
     no completion declaration.
-    Include agent tasks that omit an optional hint, supply a joint proposal that
+   Include agent tasks that omit an optional hint, supply a joint proposal that
     the harness widens, attempt to forge a derived test result, mutate protected
     identity, create deeply nested child records, and repair a syntactically
     valid but semantically inverted parse. The agent edits the generated package
     only; it never manually reconstructs the final machine envelope.
+    Include attempted-finish tasks proving: optional omission completes without
+    a follow-up; required omission continues the same session with exact paths;
+    conditional requiredness follows the candidate outcome; valid files survive
+    two repairs; dead-session fallback uses the preserved package; changed
+    evidence rejects the old session; and an identical diagnostic fingerprint
+    invokes the fixer at budget rather than looping.
 11. Measure no-network p50/p95 for format, check, compile, navigation, topology,
     preview startup, and each transactional refactor in the frozen benchmark
     environment. Compare to the inherited baseline; any baseline change is
@@ -192,6 +203,10 @@ around it in an editor adapter or CLI translation layer.
   provenance; final chat deletion is inert; compiler success is clearly
   distinguished from WBC/Custody publication; and targeted repair preserves no
   evidence outside the exact six-coordinate resume tuple.
+- The agent-facing result distinguishes “package valid,” “candidate submitted,”
+  and “accepted.” Diagnostics lead with the concrete fix while retaining stable
+  machine codes for logs. No agent needs to know WBC, Custody epochs or evidence
+  windows to complete an ordinary step correctly.
 
 ### Adoption gate
 

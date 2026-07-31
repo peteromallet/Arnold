@@ -77,15 +77,18 @@ or proof infrastructure.
   candidate.
 - `briefs/s2a-enforced-composition-resolution-package-surface.md` —
   product-neutral runtime, lifecycle, completion admission/binding/evaluation,
-  and authority enforcement without another kernel enablement.
+  attempted-finish/session-continuation lifecycle, and authority enforcement
+  without another kernel enablement.
 - `briefs/s2b-pype-authoring-format-toolchain.md` — product-neutral `.pype`
   compiler/linker, packaging, conservative digest, distribution identity,
   converter, transactional refactors, and Native's frozen response-directory
-  step-authoring compiler as one install-equivalent authoring core.
+  step-authoring compiler, optionality projection and typed repair dispositions
+  as one install-equivalent authoring core.
 - `briefs/s3-developer-experience-tooling.md` — generic CLI/editor/navigation,
   format/lint/topology/preview/test, ownership-aware response-package editing,
-  normalized parse/repair and completion inspection/generated-view experience,
-  author tasks, and benchmarks over the S2B core.
+  concise generated prompts, normalized parse/same-session repair and completion
+  inspection/generated-view experience, author tasks, and benchmarks over the
+  S2B core.
 - `briefs/s4-isolated-extraction-recomposition.md` — first extraction,
   isolation and recomposition proof.
 - `briefs/s5-adversarial-second-consumer-substitutability.md` — unrelated
