@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
-from arnold.workflow.native_wbc import begin_native_wbc_attempt
+from arnold.kernel.native_wbc import begin_native_wbc_attempt
 
 
 @dataclass(frozen=True)

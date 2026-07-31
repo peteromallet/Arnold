@@ -28,7 +28,7 @@ from arnold.pipeline.types import (
     StepResult,
 )
 from arnold.runtime.state_persistence import atomic_write_json
-from arnold.workflow.native_wbc import begin_native_wbc_attempt
+from arnold.kernel.native_wbc import begin_native_wbc_attempt
 
 _LOG = logging.getLogger(__name__)
 

@@ -97,7 +97,7 @@ from arnold.execution.state_store import (
     RunCheckpoint,
     StateStore,
 )
-from arnold.workflow.native_wbc import begin_native_wbc_attempt
+from arnold.kernel.native_wbc import begin_native_wbc_attempt
 
 
 class ExecutionBackend(Protocol):
