@@ -1561,7 +1561,8 @@ def write_plan_state(
             meta = dict(meta) if isinstance(meta, dict) else {}
             meta.setdefault("resident_delegation", resident_delegation)
             next_state["meta"] = meta
-        _reconcile_durable_phase_handoff(plan_dir, next_state)
+        if mode != "active-step-heartbeat":
+            _reconcile_durable_phase_handoff(plan_dir, next_state)
         if validate_current_state:
             _validate_plan_state_for_persist(next_state, plan_dir=plan_dir)
         if should_write:
