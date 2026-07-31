@@ -1,7 +1,8 @@
-"""T12 — Import-scan coverage for evidence-pack and _deliberation_example.
+"""T12 — Import-scan coverage for evidence-pack and retired examples.
 
-Ensures both evidence-pack packages (canonical + shim) and the
-``_deliberation_example`` package contain no forbidden graph-era surfaces:
+Ensures both evidence-pack packages (canonical + shim) contain no forbidden
+graph-era surfaces and the retired ``_deliberation_example`` package cannot
+silently return:
 
 * ``arnold.workflow.dsl`` — the legacy DSL import surface.
 * ``PipelineBuilder`` — the legacy fluent builder.
@@ -18,20 +19,19 @@ so that even commented-out or docstring references do not escape detection
 from __future__ import annotations
 
 import ast
+import importlib.util
 from pathlib import Path
-
-import pytest
 
 # ── Target packages ─────────────────────────────────────────────────────────
 
 _CANONICAL_EVIDENCE_PACK = Path("arnold/pipelines/evidence_pack")
 _SHIM_EVIDENCE_PACK = Path("arnold_pipelines/evidence_pack")
-_DELIBERATION_EXAMPLE = Path("arnold/pipelines/_deliberation_example")
+_RETIRED_DELIBERATION_EXAMPLE = Path("arnold/pipelines/_deliberation_example")
+_RETIRED_DELIBERATION_EXAMPLE_MODULE = "arnold.pipelines._deliberation_example"
 
 _TARGET_PACKAGES: tuple[Path, ...] = (
     _CANONICAL_EVIDENCE_PACK,
     _SHIM_EVIDENCE_PACK,
-    _DELIBERATION_EXAMPLE,
 )
 
 # ── Forbidden surfaces ─────────────────────────────────────────────────────
@@ -109,7 +109,7 @@ def _has_contract_status_hook_inspection(path: Path) -> bool:
 # ── Tests ───────────────────────────────────────────────────────────────────
 
 
-def test_evidence_pack_and_deliberation_example_have_no_forbidden_dsl_imports() -> None:
+def test_evidence_pack_packages_have_no_forbidden_dsl_imports() -> None:
     """No file imports ``arnold.workflow.dsl`` (or any sub-module)."""
     violations: dict[str, list[str]] = {}
     for pkg in _TARGET_PACKAGES:
@@ -125,7 +125,7 @@ def test_evidence_pack_and_deliberation_example_have_no_forbidden_dsl_imports() 
     )
 
 
-def test_evidence_pack_and_deliberation_example_have_no_pipeline_builder_or_agent_step() -> None:
+def test_evidence_pack_packages_have_no_pipeline_builder_or_agent_step() -> None:
     """No file contains ``PipelineBuilder`` or ``AgentStep`` in source text."""
     violations: dict[str, list[str]] = {}
     for pkg in _TARGET_PACKAGES:
@@ -141,11 +141,9 @@ def test_evidence_pack_and_deliberation_example_have_no_pipeline_builder_or_agen
     )
 
 
-def test_evidence_pack_and_deliberation_example_have_no_contract_status_hook_inspection() -> None:
+def test_evidence_pack_packages_have_no_contract_status_hook_inspection() -> None:
     """No file combines ``ContractStatus`` with ``arnold.execution.hooks`` imports.
 
-    The native deliberation example may legitimately import ``ContractStatus``
-    alongside ``arnold.pipeline.native.hooks`` — that pattern is allowed.
     Only the graph-era ``arnold.execution.hooks`` + ``ContractStatus``
     combination is forbidden.
     """
@@ -162,29 +160,9 @@ def test_evidence_pack_and_deliberation_example_have_no_contract_status_hook_ins
     )
 
 
-def test_deliberation_example_native_hooks_do_not_import_execution_hooks() -> None:
-    """The deliberation example hooks use the native protocol, not graph-era hooks."""
-    hooks_path = _DELIBERATION_EXAMPLE / "_hooks.py"
-    assert hooks_path.exists(), f"Missing {hooks_path}"
-
-    imports = _ast_imports(hooks_path)
-    exec_hooks_imports = {
-        name
-        for name in imports
-        if name == FORBIDDEN_EXECUTION_HOOKS_PREFIX
-        or name.startswith(FORBIDDEN_EXECUTION_HOOKS_PREFIX + ".")
-    }
-    assert not exec_hooks_imports, (
-        f"{hooks_path} imports graph-era execution hooks: {exec_hooks_imports}"
+def test_retired_deliberation_example_is_absent_and_nonimportable() -> None:
+    """The archived graph-era example must not re-enter the runtime package."""
+    assert not _RETIRED_DELIBERATION_EXAMPLE.exists(), (
+        f"retired runtime package returned: {_RETIRED_DELIBERATION_EXAMPLE}"
     )
-
-    # Confirm the native hook protocol is used instead.
-    native_hooks_imports = {
-        name
-        for name in imports
-        if name == "arnold.pipeline.native.hooks"
-        or name.startswith("arnold.pipeline.native.hooks.")
-    }
-    assert native_hooks_imports, (
-        f"{hooks_path} does not import arnold.pipeline.native.hooks"
-    )
+    assert importlib.util.find_spec(_RETIRED_DELIBERATION_EXAMPLE_MODULE) is None
