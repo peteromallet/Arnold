@@ -17,16 +17,11 @@ from __future__ import annotations
 import subprocess
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal
 
 from arnold_pipelines.megaplan.step_types import StepContext, StepResult
 from arnold_pipelines.megaplan.auto import _supervise_subprocess
 from arnold_pipelines.megaplan.runtime.process import spawn
-
-if TYPE_CHECKING:
-    from arnold_pipelines.megaplan.runtime.batch import BatchRuntimeSettings
-
 
 @dataclass
 class SubprocessIsolatedDriver:
