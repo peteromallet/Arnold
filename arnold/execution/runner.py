@@ -12,7 +12,7 @@ from arnold.execution.observability import ExecutionLogger
 from arnold.execution.registries import ExecutionRegistries
 from arnold.execution.result import ExecutionResult
 from arnold.execution.state_store import StateStore
-from arnold.workflow.native_wbc import begin_native_wbc_attempt
+from arnold.kernel.native_wbc import begin_native_wbc_attempt
 
 
 def run(

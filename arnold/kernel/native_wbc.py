@@ -17,6 +17,8 @@ from typing import Any, Mapping
 
 import fcntl
 
+# Persisted schema identity predates this helper's move into the neutral kernel.
+# Keep it stable: module ownership is not a wire-format migration.
 NATIVE_WBC_SCHEMA = "arnold.workflow.native_wbc.v1"
 _NATIVE_WBC_ROOT = ".native_wbc"
 

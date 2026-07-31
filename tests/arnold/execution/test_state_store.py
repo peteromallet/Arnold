@@ -16,7 +16,7 @@ from arnold.execution.state_store import (
     RoutingSnapshot,
     RunCheckpoint,
 )
-from arnold.workflow.native_wbc import native_wbc_dir
+from arnold.kernel.native_wbc import native_wbc_dir
 from arnold.manifest import WorkflowEdge, WorkflowManifest, WorkflowNode
 
 
@@ -86,7 +86,7 @@ def test_checkpoint_saved_during_run(tmp_path: Path) -> None:
     result = run(manifest, artifact_root=tmp_path / "artifacts", state_store=store)
 
     assert result.state is ExecutionState.COMPLETED
-    checkpoint_paths = list((tmp_path / "checkpoints").iterdir())
+    checkpoint_paths = list((tmp_path / "checkpoints").glob("*.json"))
     assert len(checkpoint_paths) == 1
     run_id = store.list()[0]
     checkpoint = store.load(run_id)

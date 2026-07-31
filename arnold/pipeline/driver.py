@@ -12,7 +12,7 @@ from dataclasses import replace
 from arnold.execution.driver import AdvanceOutcome, CheckpointOutcome
 from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.runtime.resume import ResumeCursorRef
-from arnold.workflow.native_wbc import begin_native_wbc_attempt
+from arnold.kernel.native_wbc import begin_native_wbc_attempt
 
 
 class StepwiseDriver:

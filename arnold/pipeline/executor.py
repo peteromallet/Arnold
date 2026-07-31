@@ -74,7 +74,7 @@ from arnold.pipeline.types import (
 )
 from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.execution.operations import NullOperationRegistry, OperationRegistry
-from arnold.workflow.native_wbc import begin_native_wbc_attempt
+from arnold.kernel.native_wbc import begin_native_wbc_attempt
 
 
 def _global_runtime_kill_switch() -> RuntimeOwner | None:
