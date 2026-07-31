@@ -599,7 +599,7 @@ def run_pipeline_resume(
     --------------------
     Events in ``events.ndjson`` under ``envelope.artifact_root`` are
     folded with ``kind_filter='state_written'`` and
-    :func:`~arnold.runtime.wal_fold.last_state_snapshot_projector`.
+    :func:`~arnold.kernel.fold.last_state_snapshot_projector`.
     The final state is ``{**initial_state, **replayed}`` (replayed wins
     on conflict).
 
