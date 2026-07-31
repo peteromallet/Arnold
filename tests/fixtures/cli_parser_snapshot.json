@@ -1284,7 +1284,7 @@
                   "metavar": null,
                   "nargs": "*",
                   "option_strings": [],
-                  "required": true,
+                  "required": false,
                   "type": null
                 }
               ],
@@ -5042,7 +5042,7 @@
                   "metavar": null,
                   "nargs": "*",
                   "option_strings": [],
-                  "required": true,
+                  "required": false,
                   "type": null
                 }
               ],
@@ -6293,12 +6293,42 @@
               "choices": null,
               "const": true,
               "default": false,
+              "dest": "stage_regenerated",
+              "help": null,
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--stage-regenerated"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
               "dest": "install_hooks",
               "help": null,
               "metavar": null,
               "nargs": "0",
               "option_strings": [
                 "--install-hooks"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "check_hooks",
+              "help": null,
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--check-hooks"
               ],
               "required": false,
               "type": null
@@ -7867,7 +7897,7 @@
                   "metavar": null,
                   "nargs": "*",
                   "option_strings": [],
-                  "required": true,
+                  "required": false,
                   "type": null
                 }
               ],

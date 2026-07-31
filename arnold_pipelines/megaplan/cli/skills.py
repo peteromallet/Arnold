@@ -271,6 +271,7 @@ def handle_regen_composed() -> dict[str, Any]:
     composed_dir = resources.files("arnold_pipelines.megaplan").joinpath("data", "_composed")
     Path(str(composed_dir)).mkdir(parents=True, exist_ok=True)
     changed: list[str] = []
+    changed_paths: list[str] = []
     for name, computed in targets.items():
         target_path = Path(str(composed_dir)) / name
         current = (
@@ -279,6 +280,7 @@ def handle_regen_composed() -> dict[str, Any]:
         if current != computed:
             atomic_write_text(target_path, computed)
             changed.append(name)
+            changed_paths.append(str(target_path))
     data_dir = Path(str(resources.files("arnold_pipelines.megaplan").joinpath("data")))
     for name, computed in codex_skill_dirs.items():
         target_path = data_dir / name
@@ -287,10 +289,17 @@ def handle_regen_composed() -> dict[str, Any]:
         if target_path.is_symlink() or current != computed:
             atomic_write_text(target_path, computed)
             changed.append(name)
+            changed_paths.append(str(target_path))
     if changed:
         return {
             "success": False,
             "changed": changed,
+            "changed_paths": changed_paths,
             "summary": f"Regenerated {len(changed)} composed bundle(s): {', '.join(changed)}.",
         }
-    return {"success": True, "changed": [], "summary": "No composed bundles changed."}
+    return {
+        "success": True,
+        "changed": [],
+        "changed_paths": [],
+        "summary": "No composed bundles changed.",
+    }
