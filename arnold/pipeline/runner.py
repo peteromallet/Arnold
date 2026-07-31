@@ -22,7 +22,7 @@ from arnold.execution.hooks import ExecutorHooks
 from arnold.pipeline.types import Pipeline, StepContext
 from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.execution.operations import OperationRegistry
-from arnold.workflow.native_wbc import begin_native_wbc_attempt
+from arnold.kernel.native_wbc import begin_native_wbc_attempt
 
 __all__ = [
     "run_pipeline",

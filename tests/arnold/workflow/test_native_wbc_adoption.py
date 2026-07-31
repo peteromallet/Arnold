@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 import subprocess
@@ -9,6 +10,7 @@ from arnold.execution.backend import LocalJournalBackend, NodeOutcome, NodeState
 from arnold.execution.driver import PipelineStepwiseDriver
 from arnold.execution.runner import run as run_execution
 from arnold.execution.state_store import FileStateStore
+from arnold.kernel.native_wbc import native_wbc_dir
 from arnold.manifest import EffectRef, IdempotencyPolicy, WorkflowManifest, WorkflowNode, WorkflowPolicy
 from arnold.pipeline.driver import StepwiseDriver as NeutralStepwiseDriver
 from arnold.pipeline.executor import run_pipeline_resume
@@ -19,7 +21,27 @@ from arnold.pipeline.native.ir import NativeInstruction, NativeProgram
 from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.runtime.resume import ResumeCursorRef
 from arnold.supervisor.reconcile import reconcile_worktree_for_takeover
-from arnold.workflow.native_wbc import native_wbc_dir
+
+
+def test_native_wbc_helper_is_kernel_owned() -> None:
+    repo_root = Path(__file__).parents[3]
+    assert (repo_root / "arnold" / "kernel" / "native_wbc.py").is_file()
+    assert not (repo_root / "arnold" / "workflow" / "native_wbc.py").exists()
+
+    legacy_imports: list[str] = []
+    for source in sorted((repo_root / "arnold").rglob("*.py")):
+        tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                if any(alias.name == "arnold.workflow.native_wbc" for alias in node.names):
+                    legacy_imports.append(str(source.relative_to(repo_root)))
+            elif (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "arnold.workflow.native_wbc"
+            ):
+                legacy_imports.append(str(source.relative_to(repo_root)))
+
+    assert legacy_imports == []
 
 
 class _HaltStep:

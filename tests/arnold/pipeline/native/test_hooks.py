@@ -19,7 +19,7 @@ from arnold.pipeline.native.hooks import (
 from arnold.pipeline.native.checkpoint import read_native_cursor
 from arnold.pipeline.native.trace import NativeTraceHooks
 from arnold.runtime.envelope import RunEnvelope
-from arnold.workflow.native_wbc import native_wbc_dir
+from arnold.kernel.native_wbc import native_wbc_dir
 
 
 class _StepResult:

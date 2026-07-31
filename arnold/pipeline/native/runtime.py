@@ -79,7 +79,7 @@ from arnold.supervisor.cancellation import (
     cancellation_result_payload,
     cancelled_contract_result,
 )
-from arnold.workflow.native_wbc import (
+from arnold.kernel.native_wbc import (
     NativeWbcAttempt,
     begin_native_wbc_attempt,
 )

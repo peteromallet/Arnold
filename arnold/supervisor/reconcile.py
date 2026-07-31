@@ -13,7 +13,7 @@ from arnold.pipeline.native.reconcile import (
     reconcile_git_worktree,
 )
 from arnold.runtime.resume import TrustTransition, resume_trust_allows_takeover
-from arnold.workflow.native_wbc import begin_native_wbc_attempt
+from arnold.kernel.native_wbc import begin_native_wbc_attempt
 
 from .leases import ProjectLease
 from .store import ProjectLeaseStore
