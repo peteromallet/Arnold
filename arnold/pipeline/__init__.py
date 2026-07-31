@@ -70,7 +70,16 @@ from arnold.agent.costing.media_cost import (
 from arnold.agent.costing.token_cost import (
     PricingEntry, estimate_usage_cost, normalize_usage,
 )
-from arnold.pipeline.native.decorators import decision, phase, pipeline, step, workflow
+from arnold.pipeline.native.decorators import (
+    decision,
+    native_panel,
+    parallel,
+    parallel_map,
+    phase,
+    pipeline,
+    step,
+    workflow,
+)
 from arnold.pipeline.content_validation import (
     ContentValidator,
     ContentValidatorRegistry,
@@ -312,6 +321,7 @@ __all__ = [
     "StepIOOperation",
     "StepIOPolicy",
     "StepContext",
+    "StepInvocation",
     "StepInvocationAdapter",
     "StepInvocationAdapterRegistry",
     "StepInvocationResult",
@@ -360,6 +370,9 @@ __all__ = [
     "no_op_content_validator",
     "normalize_schema_version",
     "native_runtime_enabled",
+    "native_panel",
+    "parallel",
+    "parallel_map",
     "register_media_content_validators",
     "parse_llm_json",
     "persist_native_cursor",

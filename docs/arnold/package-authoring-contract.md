@@ -8,7 +8,7 @@ pipeline packages. It is derived from the reference package
 
 The contract is **native-first**: every package exposes a `build_pipeline()`
 entrypoint that compiles a native program and returns a projected
-`arnold.pipeline.types.Pipeline` shell with a **non-null** `native_program`.
+`arnold.pipeline.Pipeline` shell with a **non-null** `native_program`.
 The runtime executes the native program directly. The projected shell exists
 for discovery, validation, and static identity — it is **not** the final
 compositional surface.
@@ -30,7 +30,7 @@ semantics at this layer.
 | `capabilities` | **required** | Labels used by the CLI, Capsule contracts, and registry filtering to classify what the pipeline can do. | `tuple[str, ...]` |
 | `driver` | **required** | Declares the execution driver shape. Native-first packages use `("native", "<kind>")` where `<kind>` describes the projection strategy (e.g. `"project+validate"`). The first element **must** be `"native"`. | `tuple[str, ...]` |
 | `entrypoint` | **required** | The callable that returns a `Pipeline`. Two formats are accepted: a bare name (e.g. `"build_pipeline"`) resolved from the module's top-level namespace, or a `"module:name"` string (e.g. `"arnold_pipelines.evidence_pack:build_pipeline"`) where the part after the colon is the bare name. | `str` (bare or `"module:name"`) |
-| `build_pipeline` | **required** | The nullary (or effectively nullary) entrypoint callable. Must return an `arnold.pipeline.types.Pipeline` with a **non-null** `native_program`. Aliased bindings are valid — the runtime validator uses `import` + `getattr`, not AST parsing. | `Callable[[], Pipeline]` |
+| `build_pipeline` | **required** | The nullary (or effectively nullary) entrypoint callable. Must return an `arnold.pipeline.Pipeline` with a **non-null** `native_program`. Aliased bindings are valid — the runtime validator uses `import` + `getattr`, not AST parsing. | `Callable[[], Pipeline]` |
 | `default_profile` | **recommended** | The default profile name when the caller does not specify one. May be `None`. | `str` \| `None` |
 | `supported_modes` | **recommended** | Tuple of mode strings the pipeline explicitly supports. For native-first packages this **must** include `"native"` (e.g. `("native",)` or `("native", "code", "doc")`). | `tuple[str, ...]` |
 
@@ -132,7 +132,7 @@ cataloguing and identity; runtime validation is for correctness checking.
 Authors should ensure both paths succeed for their package.
 
 At validation time the runtime checks that `build_pipeline()` returns an
-`arnold.pipeline.types.Pipeline` with a **non-null** `native_program`. A
+`arnold.pipeline.Pipeline` with a **non-null** `native_program`. A
 package that returns a graph-only `Pipeline` without a native program, or
 with a null `native_program`, will fail the check under the native-first
 contract.
@@ -147,9 +147,15 @@ builder objects, executor objects, or `_forward_m2_m3` graph objects.
 ```python
 from typing import Any
 
-from arnold.pipeline import step, workflow, decision
-from arnold.pipeline.native import compile_pipeline, parallel_map, project_graph
-from arnold.pipeline.types import Pipeline
+from arnold.pipeline import (
+    Pipeline,
+    compile_pipeline,
+    decision,
+    parallel_map,
+    project_graph,
+    step,
+    workflow,
+)
 
 name = "hello-world"
 description = "A compositional native-first package with nested workflows."
@@ -205,8 +211,8 @@ def build_pipeline() -> Pipeline:
 ```
 
 The returned `Pipeline` carries a non-null `native_program`. Pattern
-constructors from `arnold.pipeline.native` (`parallel`, `parallel_map`,
-`decision`, `start_from_trace`) may be used to build composite topologies
+constructors from `arnold.pipeline` (`parallel`, `parallel_map`, `decision`,
+`start_from_trace`) may be used to build composite topologies
 inside the `@workflow`-decorated generator.
 
 ## M6 Dispatch Substrate Boundary

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from arnold.pipeline.types import Pipeline
+from arnold.pipeline import Pipeline
 from arnold_pipelines._template import build_pipeline
 from arnold_pipelines.megaplan.runtime.discovery import _scan_dir_for_pipeline_modules
 
@@ -87,6 +87,13 @@ def test_template_builds_native_pipeline() -> None:
     assert isinstance(pipeline, Pipeline)
     assert pipeline.entry is not None
     assert len(pipeline.stages) >= 1
+
+
+def test_template_uses_only_public_authoring_surface() -> None:
+    """The copyable scaffold must not import implementation subpackages."""
+    source = _read_template_source()
+    assert "arnold.pipeline.native" not in source
+    assert "arnold.pipeline.types" not in source
 
 
 def test_template_pipeline_has_non_null_native_program() -> None:

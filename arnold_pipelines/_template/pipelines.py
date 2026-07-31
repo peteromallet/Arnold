@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from arnold.pipeline import StepResult
-from arnold.pipeline.native import (
+from arnold.pipeline import (
+    NativeProgram,
+    StepResult,
     compile_pipeline,
     decision,
     parallel_map,
@@ -15,7 +16,6 @@ from arnold.pipeline.native import (
     start_from_trace,
     workflow,
 )
-from arnold.pipeline.native.ir import NativeProgram
 
 
 def _required_schema(*names: str) -> dict[str, Any]:
