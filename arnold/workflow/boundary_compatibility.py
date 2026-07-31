@@ -98,6 +98,9 @@ class CompatibilityDiagnosticCode(StrEnum):
     EXACT_VERSION_LOOKUP_UNVERIFIED = "CBC020_EXACT_VERSION_LOOKUP_UNVERIFIED"
     CAUSAL_EVIDENCE_UNVERIFIED = "CBC021_CAUSAL_EVIDENCE_UNVERIFIED"
     POST_TRANSITION_REREAD_UNVERIFIED = "CBC022_POST_TRANSITION_REREAD_UNVERIFIED"
+    RECEIPT_STATE_OBSERVATION_MISSING = (
+        "CBC023_RECEIPT_STATE_OBSERVATION_MISSING"
+    )
 
 
 # ── Critical categories for compatibility evaluation ─────────────────────
@@ -311,7 +314,12 @@ class CompatibilityEvaluator:
 
         # ── Step 3: Extract boundary_id ────────────────────────────────
 
-        boundary_id = self._extract_boundary_id(artifacts)
+        declared_boundary_id = bundle.get("boundary_id")
+        boundary_id = (
+            declared_boundary_id
+            if isinstance(declared_boundary_id, str) and declared_boundary_id
+            else self._extract_boundary_id(artifacts)
+        )
         if boundary_id is None:
             return CompatibilityResult(
                 boundary_id="unknown",
@@ -551,6 +559,11 @@ class CompatibilityEvaluator:
                 )
             if not receipt.get("outcome"):
                 issues.append(CompatibilityDiagnosticCode.RECEIPT_OUTCOME_MISSING)
+            state_observation = receipt.get("state_observation")
+            if not isinstance(state_observation, dict) or not state_observation:
+                issues.append(
+                    CompatibilityDiagnosticCode.RECEIPT_STATE_OBSERVATION_MISSING
+                )
 
             break  # Only validate the first receipt
 

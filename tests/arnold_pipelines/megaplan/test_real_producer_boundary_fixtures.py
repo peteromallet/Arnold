@@ -18,6 +18,11 @@ from pathlib import Path
 
 import pytest
 
+from arnold.workflow.boundary_compatibility import (
+    CompatibilityDiagnosticCode,
+    CompatibilityEvaluator,
+    CompatibilityStatus,
+)
 from arnold.workflow.boundary_evidence import FindingSeverity, SemanticFinding
 from arnold_pipelines.megaplan.semantic_health import inspect_semantic_health
 
@@ -105,24 +110,6 @@ def _error_findings(findings: list[SemanticFinding]) -> list[SemanticFinding]:
 ALL_CASES = _load_bundle()
 HEALTHY_CASES = [c for c in ALL_CASES if c.get("case_type") == "healthy"]
 BROKEN_CASES = [c for c in ALL_CASES if c.get("case_type") == "broken"]
-
-# Boundaries whose contracts have receipt_required=False.  Semantic-health
-# will not produce receipt-related findings for these because the contract
-# itself declares that a receipt is optional.
-_NO_RECEIPT_REQUIRED_BOUNDARY_IDS: set[str] = set()
-
-# Populated lazily from the boundary contract registry.
-def _receipt_not_required_boundary_ids() -> set[str]:
-    if _NO_RECEIPT_REQUIRED_BOUNDARY_IDS:
-        return _NO_RECEIPT_REQUIRED_BOUNDARY_IDS
-    from arnold_pipelines.megaplan.workflows.boundary_contracts import (
-        BOUNDARY_CONTRACTS,
-    )
-    for c in BOUNDARY_CONTRACTS:
-        if not getattr(c, "receipt_required", True):
-            _NO_RECEIPT_REQUIRED_BOUNDARY_IDS.add(c.boundary_id)
-    return _NO_RECEIPT_REQUIRED_BOUNDARY_IDS
-
 
 # ── structural preconditions ───────────────────────────────────────────────
 
@@ -217,37 +204,34 @@ class TestBrokenCasesSemanticHealth:
     @pytest.mark.parametrize("case", BROKEN_CASES, ids=lambda c: c["case_id"])
     def test_broken_case_inspects_without_exception(self, case: dict) -> None:
         """Every broken case must survive inspection without raising."""
-        boundary_id = case["boundary_id"]
-        corruption_id = case["corruption"]["corruption_id"]
         with tempfile.TemporaryDirectory() as tmp:
             plan_dir = Path(tmp)
             _write_case_artifacts(case, plan_dir)
             findings = inspect_semantic_health(plan_dir)
-            own_findings = [f for f in findings if f.boundary_id == boundary_id]
-            # At minimum we can assert we got back a list of SemanticFindings
             assert isinstance(findings, list)
             for f in findings:
                 assert isinstance(f, SemanticFinding)
                 assert f.finding_id
                 assert f.boundary_id
 
-            # For boundaries with receipt_required=False, semantic-health
-            # may legitimately produce zero own-boundary findings because
-            # the contract does not require a receipt.  For all others we
-            # expect at least one finding (the corruption should surface).
-            no_receipt_req = boundary_id in _receipt_not_required_boundary_ids()
-            if not no_receipt_req:
-                # Log a diagnostic note rather than hard-failing for
-                # corruptions that semantic-health's current scope cannot
-                # detect (CBC-level diagnostics are tested elsewhere).
-                if len(own_findings) == 0:
-                    pytest.skip(
-                        f"{case['case_id']}: semantic-health produced 0 "
-                        f"own-boundary findings for corruption "
-                        f"'{corruption_id}'. This corruption is detected "
-                        f"by CompatibilityEvaluator (CBC codes) — "
-                        f"not by semantic-health in its current scope."
-                    )
+    @pytest.mark.parametrize("case", BROKEN_CASES, ids=lambda c: c["case_id"])
+    def test_broken_case_has_exact_structural_compatibility_diagnostics(
+        self,
+        case: dict,
+        tmp_path: Path,
+    ) -> None:
+        """CompatibilityEvaluator is the canonical owner of fixture corruption."""
+        expected = tuple(case["expected_diagnostics"])
+        assert expected, f"{case['case_id']}: broken case needs explicit diagnostics"
+        known_diagnostics = {member.value for member in CompatibilityDiagnosticCode}
+        assert all(code in known_diagnostics for code in expected)
+
+        fixture_path = tmp_path / f"{case['case_id']}.json"
+        fixture_path.write_text(json.dumps(case), encoding="utf-8")
+        result = CompatibilityEvaluator().evaluate_fixture(fixture_path)
+
+        assert result.status is not CompatibilityStatus.COMPATIBLE
+        assert tuple(result.details["structural_issues"]) == expected
 
     @pytest.mark.parametrize("case", BROKEN_CASES, ids=lambda c: c["case_id"])
     def test_broken_case_findings_are_well_formed(self, case: dict) -> None:

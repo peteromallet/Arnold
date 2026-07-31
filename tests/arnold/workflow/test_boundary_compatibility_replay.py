@@ -12,10 +12,8 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
 
 import pytest
 
@@ -551,13 +549,14 @@ class TestStableDiagnosticCodes:
         "EXACT_VERSION_LOOKUP_UNVERIFIED": "CBC020_EXACT_VERSION_LOOKUP_UNVERIFIED",
         "CAUSAL_EVIDENCE_UNVERIFIED": "CBC021_CAUSAL_EVIDENCE_UNVERIFIED",
         "POST_TRANSITION_REREAD_UNVERIFIED": "CBC022_POST_TRANSITION_REREAD_UNVERIFIED",
+        "RECEIPT_STATE_OBSERVATION_MISSING": "CBC023_RECEIPT_STATE_OBSERVATION_MISSING",
     }
 
     def test_all_codes_exist(self) -> None:
         """All CBC diagnostic codes must be members of the enum."""
         all_members = set(CompatibilityDiagnosticCode.__members__.keys())
-        assert len(all_members) == 22, (
-            f"Expected 22 CBC codes, got {len(all_members)}: {sorted(all_members)}"
+        assert len(all_members) == 23, (
+            f"Expected 23 CBC codes, got {len(all_members)}: {sorted(all_members)}"
         )
 
     def test_each_code_stable_value(self) -> None:
