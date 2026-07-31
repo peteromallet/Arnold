@@ -173,6 +173,9 @@ def build_parser() -> argparse.ArgumentParser:
     from arnold_pipelines.megaplan.auto import build_auto_parser
     from arnold_pipelines.megaplan.chain import build_chain_parser
     from arnold_pipelines.megaplan.chain.epic_chain import build_epic_chain_parser
+    from arnold_pipelines.megaplan.prompts.tiebreaker_orchestrator import (
+        build_tiebreaker_parser,
+    )
 
     setup_parser = subparsers.add_parser("setup")
     setup_parser.add_argument("--local", action="store_true")
@@ -323,6 +326,7 @@ def build_parser() -> argparse.ArgumentParser:
     build_auto_parser(subparsers)
     build_chain_parser(subparsers)
     build_epic_chain_parser(subparsers)
+    build_tiebreaker_parser(subparsers)
 
     brief_parser = subparsers.add_parser("brief")
     brief_sub = brief_parser.add_subparsers(dest="brief_action", required=True)

@@ -396,20 +396,11 @@ class TestCliParserSnapshot:
         assert "commands" in fixture
         assert "" in fixture["commands"]
 
-    def test_tiebreaker_run_has_work_dir(self) -> None:
-        """``tiebreaker-run`` is dispatched before ``build_parser()`` in
-        ``main()`` (alongside ``tiebreaker`` at cli.py line 3388) and is
-        therefore *not* registered inside ``build_parser()``.
-
-        The ``--work-dir`` flag is handled by the common dispatch path
-        in ``main()`` (line 3318) before any handler is called, so it
-        applies uniformly regardless of parser registration.
-        """
+    def test_tiebreaker_surfaces_are_registered(self) -> None:
+        """The commands emitted by auto must both be parseable."""
         fixture = _read_fixture()
         root = fixture["commands"][""]
-        tb_run = root.get("subcommands", {}).get("tiebreaker-run", {})
-        assert not tb_run, (
-            "tiebreaker-run should NOT be in build_parser() — it is dispatched "
-            "before the parser in main(). If this fails, tiebreaker-run was "
-            "moved into build_parser() and this test must be updated."
-        )
+        subcommands = root.get("subcommands", {})
+        assert "tiebreaker-run" in subcommands
+        assert "tiebreaker" in subcommands
+        assert "decide" in subcommands["tiebreaker"]["subcommands"]
