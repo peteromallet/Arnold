@@ -31,9 +31,14 @@ SYSTEMD_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "systemd"
 
 @pytest.fixture(autouse=True)
 def _isolate_resident_delegation_envelope(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Wrapper unit tests opt in to delegation provenance explicitly."""
+    """Pin wrapper dependencies and isolate delegation provenance."""
 
     monkeypatch.delenv("ARNOLD_RESIDENT_DELEGATION_CONTEXT", raising=False)
+    monkeypatch.setenv("MEGAPLAN_SUPERVISOR_PYTHON", sys.executable)
+    monkeypatch.setenv(
+        "PATH",
+        f"{Path(sys.executable).parent}:{os.environ.get('PATH', '')}",
+    )
 
 
 def _wrapper(name: str) -> str:
@@ -141,7 +146,7 @@ def test_long_running_superfixer_wrappers_pin_syntax_checked_source_snapshot(
     if wrapper_name == "arnold-watchdog":
         # Watchdog execs the checked snapshot immediately, then derives the
         # cleanup path from BASH_SOURCE inside that immutable child.
-        assert f'exec bash "$watchdog_snapshot" "$@"' in text
+        assert 'exec bash "$watchdog_snapshot" "$@"' in text
         assert f'export {prefix}_SNAPSHOT_PATH="$' not in text
     else:
         # The other wrappers carry the snapshot path through their re-exec
@@ -534,6 +539,8 @@ def _run_watchdog_shell(script: str, *, path_prefix: Path | None = None) -> subp
     ):
         env.pop(name, None)
     env["DISCORD_DM_BIN"] = "/bin/false"
+    env["MEGAPLAN_SUPERVISOR_PYTHON"] = sys.executable
+    env["PATH"] = f"{Path(sys.executable).parent}:{env.get('PATH', '')}"
     if path_prefix is not None:
         env["PATH"] = f"{path_prefix}:{env.get('PATH', '')}"
     return subprocess.run(
@@ -4096,7 +4103,6 @@ echo "status:${REPAIR_DISPATCH_RESULT:-unset}"
 def test_watchdog_dispatch_reclaims_stale_request_claim_and_launches(tmp_path: Path) -> None:
     marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
     marker_dir.mkdir(parents=True)
-    log_path = tmp_path / "watchdog.log"
     launch_log = tmp_path / "repair-launches.log"
     repair_bin = tmp_path / "fake-repair-loop"
     repair_bin.write_text(
@@ -16356,7 +16362,7 @@ def test_meta_repair_dispatch_enabled_success(tmp_path: Path) -> None:
     assert managed["run_id"] == marker_fields[3]
     assert managed["launch_provenance"]["origin_kind"] == "watchdog_meta_repair"
     # Verify report was emitted
-    assert report_path.exists(), f"report not created"
+    assert report_path.exists(), "report not created"
     report_content = report_path.read_text(encoding="utf-8")
     assert "dispatched" in report_content, f"report missing dispatched: {report_content}"
 
@@ -16580,6 +16586,7 @@ def test_meta_repair_dispatch_report_output(tmp_path: Path) -> None:
         ["bash", "-lc", script_missing],
         capture_output=True, text=True, check=False,
     )
+    assert result2.returncode == 0, result2.stderr
 
     # Verify report was emitted
     if report_path.exists():

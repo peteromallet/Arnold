@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.source_initiative_repair import (
@@ -154,6 +155,7 @@ def test_repair_loop_accepts_bounded_source_restore_and_exits_complete(
     env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
     env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(repair_data_dir)
     env["MEGAPLAN_RUNTIME_SRC"] = str(source_root)
+    env["MEGAPLAN_SUPERVISOR_PYTHON"] = sys.executable
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(tmp_path / "repair-root")
 
     result = subprocess.run(
