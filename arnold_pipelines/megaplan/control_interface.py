@@ -27,6 +27,10 @@ from arnold.control.interface import (
 )
 from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.custody.override_wbc import validate_override_wbc_transition
+from arnold_pipelines.megaplan.custody.phase_wbc import (
+    clear_phase_wbc_suspension,
+    resume_clarification_phase_wbc_if_present,
+)
 from arnold_pipelines.megaplan.orchestration.override_authority import (
     OverrideAuthorityError,
     build_override_authority_record,
@@ -613,9 +617,10 @@ def apply_transition(
         )
 
     applied_state: dict[str, Any] | None = None
+    phase_wbc_reentry_invocation_id: str | None = None
 
     def _apply_control_deltas(current: dict[str, Any]) -> bool:
-        nonlocal applied_state
+        nonlocal applied_state, phase_wbc_reentry_invocation_id
         expected_versions = getattr(transition, "expected_versions", {}) or {}
         versions = current.get("_state_meta", {}).get("versions", {})
         if not isinstance(versions, Mapping):
@@ -625,9 +630,26 @@ def apply_transition(
             actual = actual if isinstance(actual, int) else 0
             if actual != expected:
                 raise StateDeltaConflict(key, expected, actual)
+        if transition.op == "override" and transition.target_id == "resume-clarify":
+            phase_wbc_reentry_invocation_id = (
+                resume_clarification_phase_wbc_if_present(
+                    state=current,
+                    plan_dir=Path(plan_dir),
+                    agent=str(
+                        getattr(transition, "actor", None)
+                        or "override:resume-clarify"
+                    ),
+                )
+            )
         next_state = dict(current)
         for delta in deltas:
             next_state, _ = apply_delta(next_state, delta)
+        if (
+            transition.op == "override"
+            and transition.target_id == "resume-clarify"
+            and phase_wbc_reentry_invocation_id is not None
+        ):
+            clear_phase_wbc_suspension(next_state, step="prep")
         remove_keys = binding_result.artifacts.get("remove_state_keys", ())
         if isinstance(remove_keys, Sequence) and not isinstance(remove_keys, (str, bytes)):
             for key in remove_keys:
@@ -685,6 +707,13 @@ def apply_transition(
             transition,
             binding_result.artifacts,
         )
+    if phase_wbc_reentry_invocation_id is not None:
+        committed_artifacts = {
+            **dict(committed_artifacts),
+            "phase_wbc_reentry_invocation_id": (
+                phase_wbc_reentry_invocation_id
+            ),
+        }
     if (
         transition.op == "override"
         and isinstance(transition.target_id, str)
