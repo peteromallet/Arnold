@@ -6708,9 +6708,9 @@ def test_gather_promotes_installed_wrapper_drift_and_ignores_terminal_history(
             {
                 "current_plan_name": "",
                 "last_state": "done",
-                "chain_complete": True,
+                "chain_complete": None,
                 "pr_state": "merged",
-                "milestones": [{"label": "m1"}],
+                "current_milestone_index": 1,
                 "completed": [{"label": "m1", "plan": plan, "status": "done"}],
             }
         ),
@@ -6788,6 +6788,10 @@ def test_gather_suppresses_historical_churn_after_authoritative_terminal_success
             "completed": [
                 {"label": "m1", "plan": "m11-inconsistent", "status": "done"}
             ],
+        },
+        {
+            "milestones": None,
+            "current_milestone_index": 2,
         },
     ],
 )
