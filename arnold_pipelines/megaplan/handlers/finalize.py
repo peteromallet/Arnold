@@ -1774,7 +1774,7 @@ def _route_finalize_task_feasibility_failure_to_revise(
     refreshed: bool = False,
     error: TaskFeasibilityError | None = None,
 ) -> StepResponse:
-    """Persist final-stage sense-check evidence and route an infeasible DAG to revise."""
+    """Keep an infeasible candidate outside authority and enter planner repair."""
     if isinstance(args, WorkerResult):
         if not isinstance(worker, TaskFeasibilityError):
             raise TypeError("legacy feasibility fallback requires a feasibility error")
@@ -1790,109 +1790,60 @@ def _route_finalize_task_feasibility_failure_to_revise(
     agent = agent or "finalizer"
     mode = mode or "default"
 
-    projection = _finalize_revise_fallback_projection()
     diagnostics = error.report.get("diagnostics", [])
     codes = [str(item.get("code")) for item in diagnostics if isinstance(item, Mapping)]
     message = (
-        "Finalize rejected the executable task graph at the post-finalization "
-        f"feasibility gate ({', '.join(codes)}). Preserve legitimate dependencies, "
-        "but split oversized objectives/paths/tests and remove routing-only edges."
+        "Finalize rejected a candidate task graph before publication "
+        f"({', '.join(codes)}). The last admitted graph and accepted task "
+        "authority remain unchanged; repair only the candidate graph."
     )
-    prior_gate_contract: dict[str, Any] = {}
-    for prior_name in ("gate_carry.json", "gate.json"):
-        prior_path = plan_dir / prior_name
-        if not prior_path.exists():
-            continue
-        prior = read_json(prior_path)
-        if isinstance(prior, Mapping):
-            prior_gate_contract = project_schema_owned_fields(
-                prior,
-                SCHEMAS["gate.json"],
-                contract="finalize feasibility gate preservation",
-            )
-            break
-    gate_feedback = {
-        **prior_gate_contract,
-        "recommendation": "ITERATE",
-        "passed": False,
-        "rationale": message,
-        "signals_assessment": "The model-authored DAG is not executable within bounded task and phase budgets.",
-        "warnings": [message],
-        "criteria_check": {
-            "finalized_task_feasibility": {
-                "passed": False,
-                "message": message,
-                "requires_revise": True,
-            }
-        },
-        "preflight_results": {},
-        "unresolved_flags": [
-            {
-                "id": "finalized-task-feasibility",
-                "severity": "significant",
-                "status": "open",
-                "concern": "The finalized graph exceeds executable task, dependency, path, or test budgets.",
-                "evidence": ", ".join(codes),
-                "category": "execution_feasibility",
-            }
-        ],
-        "addressed_flags": [],
-        "flag_resolutions": [],
-        "accepted_tradeoffs": prior_gate_contract.get("accepted_tradeoffs", []),
-        "settled_decisions": prior_gate_contract.get("settled_decisions", []),
-        "north_star_actions": prior_gate_contract.get("north_star_actions", []),
-        "orchestrator_guidance": (
-            "Run revise, then finalize again. Each task must have one <=15-minute objective, "
-            "<=5 declared paths, and <=3 narrow selectors/120 seconds/2 runs; every edge "
-            "must cite a concrete consumed output, write order, or human prerequisite."
-        ),
-        "signals": {},
-        "finalize_failure": {
-            "code": "finalized_task_feasibility_failed",
-            "diagnostic_codes": codes,
-            "task_contract_hash": error.report.get("task_contract_hash"),
-        },
-    }
-    require_schema_fields(
-        gate_feedback,
-        SCHEMAS["gate.json"],
-        contract="finalize feasibility revise gate persistence",
-    )
-    apply_state_projection(
-        state, projection["state"], route_signal=projection["route_signal"]
-    )
-    from arnold_pipelines.megaplan.handlers.gate import (
-        _build_gate_carry,
-        _sync_legacy_last_gate_for_workflow,
-    )
+    repair = state.setdefault("meta", {}).get("planner_repair")
+    repair = dict(repair) if isinstance(repair, Mapping) else {}
+    if not repair:
+        from arnold_pipelines.megaplan.orchestration.graph_admission import (
+            record_rejected_candidate,
+        )
 
-    _sync_legacy_last_gate_for_workflow(state, gate_feedback)
-    state.setdefault("meta", {}).setdefault("finalize_revise_feedback", []).append(
-        {"code": "finalized_task_feasibility_failed", "message": message, "diagnostic_codes": codes}
-    )
-    atomic_write_json(plan_dir / "gate.json", gate_feedback)
-    atomic_write_json(
-        plan_dir / "gate_carry.json",
-        {
-            **_build_gate_carry(gate_feedback, iteration=state["iteration"]),
-            "source": "finalize_task_feasibility",
-        },
-    )
+        repair = record_rejected_candidate(
+            plan_dir,
+            state,
+            worker.payload,
+            error.report,
+        )
+    circuit_open = repair.get("circuit_open") is True
+    if circuit_open:
+        from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED
+
+        apply_state_projection(
+            state,
+            STATE_BLOCKED,
+            route_signal="planner_repair_circuit_open",
+        )
+        next_step = "override recover-blocked"
+        result = "planner_repair_blocked"
+    else:
+        # Keep the admitted gate/cursor intact.  A fresh finalizer invocation
+        # receives structured diagnostics without broad critique/revise.
+        next_step = "finalize"
+        result = "planner_repair_required"
     atomic_write_json(
         plan_dir / "finalize_revise_feedback.json",
         {
             "code": "finalized_task_feasibility_failed",
             "message": message,
-            "next_step": "revise",
+            "next_step": next_step,
             "diagnostic_codes": codes,
-            "report_artifact": "task_feasibility.json",
+            "candidate_id": repair.get("candidate_id"),
+            "failure_fingerprint": repair.get("failure_fingerprint"),
+            "occurrences": repair.get("occurrences"),
+            "circuit_open": circuit_open,
+            "report_artifact": "planner_repair.json",
+            "implementation_dispatch_allowed": False,
         },
     )
     artifacts = [
-            "task_feasibility.json",
-            "gate.json",
-            "gate_carry.json",
-            "finalize_revise_feedback.json",
+        "planner_repair.json",
+        "finalize_revise_feedback.json",
     ]
     response = _finish_step(
         plan_dir,
@@ -1907,16 +1858,25 @@ def _route_finalize_task_feasibility_failure_to_revise(
         artifacts=artifacts,
         output_file="finalize_revise_feedback.json",
         artifact_hash=sha256_file(plan_dir / "finalize_revise_feedback.json"),
-        result="plan_contract_revise_needed",
+        result=result,
         success=False,
-        next_step=projection["next_step"],
+        next_step=next_step,
         response_fields={
-            "result": "plan_contract_revise_needed",
-            "route_signal": projection["route_signal"],
+            "result": result,
+            "route_signal": (
+                "planner_repair_circuit_open"
+                if circuit_open
+                else "planner_repair_required"
+            ),
             "iteration": state["iteration"],
             "details": {
                 "code": "finalized_task_feasibility_failed",
                 "diagnostic_codes": codes,
+                "candidate_id": repair.get("candidate_id"),
+                "failure_fingerprint": repair.get("failure_fingerprint"),
+                "occurrences": repair.get("occurrences"),
+                "accepted_authority_preserved": True,
+                "implementation_dispatch_allowed": False,
             },
         },
     )
@@ -1928,7 +1888,7 @@ def _route_finalize_task_feasibility_failure_to_revise(
         error=CliError(
             "finalized_task_feasibility_failed",
             message,
-            valid_next=["revise"],
+            valid_next=[next_step],
             extra={"raw_output": worker.raw_output, "task_feasibility": error.report},
         ),
         duration_ms=worker.duration_ms,
@@ -2108,8 +2068,12 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
         payload["seed_epoch"] = _seed_epoch
     if state["config"].get("mode", "code") == "code":
         feasibility = compile_task_feasibility(payload, state.get("config", {}))
-        atomic_write_json(plan_dir / "task_feasibility.json", feasibility)
         if not feasibility["admitted"]:
+            from arnold_pipelines.megaplan.orchestration.graph_admission import (
+                record_rejected_candidate,
+            )
+
+            record_rejected_candidate(plan_dir, state, payload, feasibility)
             raise TaskFeasibilityError(feasibility)
         payload["graph_report"] = {
             **feasibility,
@@ -2170,9 +2134,16 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
     # critique clearance only to these exact bytes.
     if state["config"].get("mode", "code") == "code":
         feasibility = compile_task_feasibility(payload, state.get("config", {}))
-        atomic_write_json(plan_dir / "task_feasibility.json", feasibility)
         if not feasibility["admitted"]:
+            from arnold_pipelines.megaplan.orchestration.graph_admission import (
+                record_rejected_candidate,
+            )
+
+            record_rejected_candidate(plan_dir, state, payload, feasibility)
             raise TaskFeasibilityError(feasibility)
+        # Publication boundary: only an admitted report may replace the
+        # authoritative execute-entry receipt.
+        atomic_write_json(plan_dir / "task_feasibility.json", feasibility)
         payload["graph_report"] = {
             **feasibility,
             "splitter_diagnostics": splitter_diagnostics,
@@ -2363,6 +2334,11 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
                 error,
             )
         success_projection = _finalize_success_projection()
+        from arnold_pipelines.megaplan.orchestration.graph_admission import (
+            clear_planner_repair,
+        )
+
+        clear_planner_repair(state)
         _ensure_execution_baseline(state)
         apply_state_projection(
             state,
