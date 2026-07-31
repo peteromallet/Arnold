@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from arnold_pipelines.megaplan.chain.spec import (
     ChainSpec,
     ChainState,
@@ -34,12 +36,17 @@ milestones:
     source_chain.write_text(body, encoding="utf-8")
     target_chain.write_text(body, encoding="utf-8")
     (target_root / "m1.md").write_text("# M1\n", encoding="utf-8")
-    spec = ChainSpec.from_dict(
-        {
-            "merge_policy": "review",
-            "milestones": [{"label": "m1", "idea": "m1.md"}],
-        }
+    warning = (
+        r"merge_policy should only be set away from `auto` when the user "
+        r"explicitly requests a human PR merge gate"
     )
+    with pytest.warns(UserWarning, match=warning):
+        spec = ChainSpec.from_dict(
+            {
+                "merge_policy": "review",
+                "milestones": [{"label": "m1", "idea": "m1.md"}],
+            }
+        )
     state = ChainState(
         current_milestone_index=1,
         completed=[{"label": "m1", "status": "done", "plan": "plan-m1"}],
@@ -57,7 +64,8 @@ milestones:
     manifest_path = Path(result["manifest"]["manifest"])
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["milestones"][0]["publication_evidence"] == "chain_state_only"
-    saved = load_chain_state(target_chain)
+    with pytest.warns(UserWarning, match=warning):
+        saved = load_chain_state(target_chain)
     assert saved.completed[0]["publication_evidence"] == "chain_state_only"
 
     dependent_path = target_root / "dependent.yaml"
@@ -75,7 +83,8 @@ milestones:
             "milestones": [],
         }
     )
-    validate_paths(dependent_spec, target_root, spec_path=dependent_path)
+    with pytest.warns(UserWarning, match=warning):
+        validate_paths(dependent_spec, target_root, spec_path=dependent_path)
 
 
 def test_dependency_manifest_repair_finds_legacy_dot_chain_sibling(tmp_path: Path) -> None:
