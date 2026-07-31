@@ -11,10 +11,12 @@ from pathlib import Path
 import pytest
 
 from scripts.run_m11_validation_shard import (
+    RUNTIME_SCHEMA,
     SHARD_SCHEMA,
     ValidationShardError,
     _digest,
     _parse_outcomes,
+    _runtime_identity,
     build_aggregate,
     run_validation_shard,
 )
@@ -79,6 +81,10 @@ def test_run_persists_exact_self_hashed_custody_and_terminal_receipts(
     assert receipt["counts"]["passed"] == 1
     assert receipt["counts"]["collected"] == 1
     assert receipt["counts"]["debt"] == 0
+    runtime_unhashed = dict(receipt["runtime"])
+    runtime_hash = runtime_unhashed.pop("content_sha256")
+    assert receipt["runtime"]["schema"] == RUNTIME_SCHEMA
+    assert runtime_hash == _digest(runtime_unhashed)
     unhashed = dict(receipt)
     observed = unhashed.pop("content_sha256")
     assert observed == _digest(unhashed)
@@ -238,18 +244,32 @@ def test_durable_slot_rejects_concurrent_runner(tmp_path: Path) -> None:
 
 
 def _fake_shard(kind: str, inventory: list[str]) -> dict:
+    runtime = {
+        "schema": RUNTIME_SCHEMA,
+        "python": "/venv/bin/python",
+        "python_realpath": "/usr/bin/python3",
+        "python_sha256": "sha256:python",
+        "prefix": "/venv",
+        "base_prefix": "/usr",
+        "safe_path": True,
+        "version": [3, 11, 0],
+        "project_inputs": {
+            "pyproject.toml": "sha256:project",
+            "uv.lock": "sha256:lock",
+        },
+        "distributions": [
+            {"name": "arnold", "version": "0.23.0"},
+            {"name": "pytest", "version": "8.0.0"},
+        ],
+    }
+    runtime["content_sha256"] = _digest(runtime)
     value = {
         "schema": SHARD_SCHEMA,
         "kind": kind,
         "command": ["python", "-P", "-m", "pytest", *inventory],
         "exit_code": 0,
         "revision": {"git_commit": "a" * 40, "git_tree": "b" * 40},
-        "runtime": {
-            "python": "/python",
-            "python_sha256": "sha256:python",
-            "safe_path": True,
-            "version": [3, 11, 0],
-        },
+        "runtime": runtime,
         "inventory": inventory,
         "counts": {
             "collected": len(inventory),
@@ -321,11 +341,147 @@ def test_preflight_rejects_overlap_gaps_duplicates_and_vector_drift() -> None:
 
     drifted = deepcopy(semantic)
     drifted["runtime"] = {**drifted["runtime"], "python": "/other"}
+    drifted["runtime"]["content_sha256"] = _digest(
+        {
+            key: value
+            for key, value in drifted["runtime"].items()
+            if key != "content_sha256"
+        }
+    )
     drifted["content_sha256"] = _digest(
         {key: value for key, value in drifted.items() if key != "content_sha256"}
     )
     with pytest.raises(ValidationShardError, match="revision/runtime"):
         build_aggregate(
             shard_receipts=[full, drifted],
+            expected_inventory=["a::test_a", "b::test_b"],
+        )
+
+
+def test_runtime_identity_retains_invoked_venv_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    real_python = tmp_path / "python-real"
+    real_python.write_bytes(b"same interpreter bytes")
+    first = tmp_path / "venv-a" / "bin" / "python"
+    second = tmp_path / "venv-b" / "bin" / "python"
+    first.parent.mkdir(parents=True)
+    second.parent.mkdir(parents=True)
+    first.symlink_to(real_python)
+    second.symlink_to(real_python)
+    monkeypatch.setattr(
+        "scripts.run_m11_validation_shard.importlib.metadata.distributions",
+        lambda: [],
+    )
+
+    monkeypatch.setattr(sys, "executable", str(first))
+    first_identity = _runtime_identity(root)
+    monkeypatch.setattr(sys, "executable", str(second))
+    second_identity = _runtime_identity(root)
+
+    assert first_identity["python"] == str(first)
+    assert second_identity["python"] == str(second)
+    assert first_identity["python_realpath"] == second_identity["python_realpath"]
+    assert first_identity["python_sha256"] == second_identity["python_sha256"]
+    assert first_identity["content_sha256"] != second_identity["content_sha256"]
+
+
+def test_runtime_identity_hashes_project_lock_and_distribution_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeDistribution:
+        def __init__(
+            self, name: str, version: str, direct_url: dict | None = None
+        ) -> None:
+            self.metadata = {"Name": name}
+            self.version = version
+            self._direct_url = direct_url
+
+        def read_text(self, filename: str) -> str | None:
+            if filename != "direct_url.json" or self._direct_url is None:
+                return None
+            return json.dumps(self._direct_url)
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "pyproject.toml").write_text("[project]\nname='fixture'\n")
+    (root / "uv.lock").write_text("version = 1\n")
+    base = [
+        FakeDistribution(
+            "Arnold",
+            "0.23.0",
+            {
+                "url": "file:///workspace/arnold-a",
+                "dir_info": {"editable": True},
+            },
+        ),
+        FakeDistribution("pytest", "8.0.0"),
+    ]
+    monkeypatch.setattr(
+        "scripts.run_m11_validation_shard.importlib.metadata.distributions",
+        lambda: base,
+    )
+    base_identity = _runtime_identity(root)
+
+    monkeypatch.setattr(
+        "scripts.run_m11_validation_shard.importlib.metadata.distributions",
+        lambda: [*base, FakeDistribution("psycopg", "3.2.0")],
+    )
+    db_identity = _runtime_identity(root)
+    assert base_identity["project_inputs"]["pyproject.toml"].startswith("sha256:")
+    assert base_identity["project_inputs"]["uv.lock"].startswith("sha256:")
+    assert base_identity["distributions"][0]["direct_url"]["url"] == (
+        "file:///workspace/arnold-a"
+    )
+    assert base_identity["content_sha256"] != db_identity["content_sha256"]
+
+    changed_target = [
+        FakeDistribution(
+            "Arnold",
+            "0.23.0",
+            {
+                "url": "file:///workspace/arnold-b",
+                "dir_info": {"editable": True},
+            },
+        ),
+        FakeDistribution("pytest", "8.0.0"),
+    ]
+    monkeypatch.setattr(
+        "scripts.run_m11_validation_shard.importlib.metadata.distributions",
+        lambda: changed_target,
+    )
+    assert _runtime_identity(root)["content_sha256"] != base_identity[
+        "content_sha256"
+    ]
+
+
+def test_aggregate_rejects_base_vs_db_extra_distribution_drift() -> None:
+    full = _fake_shard("full_suite", ["a::test_a"])
+    db_extra = _fake_shard("semantic_carrier", ["b::test_b"])
+    db_extra["runtime"]["distributions"].append(
+        {"name": "psycopg", "version": "3.2.0"}
+    )
+    db_extra["runtime"]["distributions"].sort(
+        key=lambda row: json.dumps(row, sort_keys=True)
+    )
+    db_extra["runtime"]["content_sha256"] = _digest(
+        {
+            key: value
+            for key, value in db_extra["runtime"].items()
+            if key != "content_sha256"
+        }
+    )
+    db_extra["content_sha256"] = _digest(
+        {
+            key: value
+            for key, value in db_extra.items()
+            if key != "content_sha256"
+        }
+    )
+    with pytest.raises(ValidationShardError, match="revision/runtime"):
+        build_aggregate(
+            shard_receipts=[full, db_extra],
             expected_inventory=["a::test_a", "b::test_b"],
         )
