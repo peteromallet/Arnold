@@ -86,6 +86,14 @@ class SignalBundle:
     last_event_age_seconds: float | None = None
     degraded: bool = False
     failure_reason: str | None = None
+    # ── M9: heartbeat-based liveness from exact worker identities ──
+    heartbeat_liveness: str = "unknown"
+    heartbeat_liveness_reason: str = ""
+    worker_states: tuple[dict[str, Any], ...] = ()
+    live_worker_count: int = 0
+    stale_worker_count: int = 0
+    dead_worker_count: int = 0
+    _non_authoritative: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -97,11 +105,19 @@ class SignalBundle:
             "last_event_age_seconds": self.last_event_age_seconds,
             "degraded": self.degraded,
             "failure_reason": self.failure_reason,
+            "heartbeat_liveness": self.heartbeat_liveness,
+            "heartbeat_liveness_reason": self.heartbeat_liveness_reason,
+            "worker_states": list(self.worker_states),
+            "live_worker_count": self.live_worker_count,
+            "stale_worker_count": self.stale_worker_count,
+            "dead_worker_count": self.dead_worker_count,
+            "_non_authoritative": self._non_authoritative,
         }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "SignalBundle":
         findings = data.get("doctor_findings") or []
+        raw_worker_states = data.get("worker_states") or []
         return cls(
             liveness=data["liveness"],
             liveness_reason=data["liveness_reason"],
@@ -111,6 +127,13 @@ class SignalBundle:
             last_event_age_seconds=data.get("last_event_age_seconds"),
             degraded=bool(data.get("degraded", False)),
             failure_reason=data.get("failure_reason"),
+            heartbeat_liveness=str(data.get("heartbeat_liveness", "unknown")),
+            heartbeat_liveness_reason=str(data.get("heartbeat_liveness_reason", "")),
+            worker_states=tuple(dict(ws) if isinstance(ws, dict) else {} for ws in raw_worker_states),
+            live_worker_count=int(data.get("live_worker_count", 0)),
+            stale_worker_count=int(data.get("stale_worker_count", 0)),
+            dead_worker_count=int(data.get("dead_worker_count", 0)),
+            _non_authoritative=bool(data.get("_non_authoritative", True)),
         )
 
 
@@ -119,13 +142,22 @@ class Incident:
     plan_entry: PlanEntry
     signals: SignalBundle
     triage: Triage
+    # M9 — display-only liveness correlation summary. Never authority: a live
+    # process or fresh heartbeat is *evidence* of an in-flight attempt, never a
+    # success/repair verdict. Populated by the watchdog snapshot builder when
+    # canonical WBC attempt identity is supplied; defaults to empty so legacy
+    # snapshots round-trip unchanged.
+    liveness_authority: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "plan_entry": self.plan_entry.to_dict(),
             "signals": self.signals.to_dict(),
             "triage": self.triage.value,
         }
+        if self.liveness_authority:
+            result["liveness_authority"] = dict(self.liveness_authority)
+        return result
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Incident":
@@ -133,6 +165,7 @@ class Incident:
             plan_entry=PlanEntry.from_dict(data["plan_entry"]),
             signals=SignalBundle.from_dict(data["signals"]),
             triage=Triage(data["triage"]),
+            liveness_authority=dict(data.get("liveness_authority") or {}),
         )
 
 
@@ -212,13 +245,26 @@ class Snapshot:
     scan_ts_utc: str
     plans: tuple[PlanEntry, ...]
     incidents: tuple[Incident, ...]
+    # M9 — display-only annotations. ``source_cursor_vector`` records the
+    # canonical source cursors (ledger / projection history) the snapshot was
+    # built against; ``liveness_authority`` summarizes the per-plan liveness
+    # correlation. Both are *evidence only* — they never feed dispatch,
+    # completion, cancellation, publication, or delivery. Default to empty so
+    # legacy snapshots round-trip unchanged.
+    source_cursor_vector: dict[str, Any] = field(default_factory=dict)
+    liveness_authority: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "scan_ts_utc": self.scan_ts_utc,
             "plans": [p.to_dict() for p in self.plans],
             "incidents": [i.to_dict() for i in self.incidents],
         }
+        if self.source_cursor_vector:
+            result["source_cursor_vector"] = dict(self.source_cursor_vector)
+        if self.liveness_authority:
+            result["liveness_authority"] = dict(self.liveness_authority)
+        return result
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Snapshot":
@@ -226,6 +272,8 @@ class Snapshot:
             scan_ts_utc=data["scan_ts_utc"],
             plans=tuple(PlanEntry.from_dict(p) for p in data.get("plans", [])),
             incidents=tuple(Incident.from_dict(i) for i in data.get("incidents", [])),
+            source_cursor_vector=dict(data.get("source_cursor_vector") or {}),
+            liveness_authority=dict(data.get("liveness_authority") or {}),
         )
 
     @classmethod

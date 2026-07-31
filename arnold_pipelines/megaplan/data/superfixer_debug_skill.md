@@ -1,3 +1,5 @@
+> **Authority status (M11):** Zero-authority history. All repair, audit, and deployment authority has been migrated to canonical delegation. This document is retained for reference only — it must not be used to materialize commands, grant authority, or drive automated actions.
+
 ---
 name: superfixer-debug
 description: Diagnose a broken Hetzner superfixer (watchdog → repair-loop/Kimi goal operator → meta-repair → 6h progress-auditor) when a cloud epic chain won't self-heal. Walk each fixer asking four questions — did it track the real data, actually fix the thing, understand the intent, have the context it needed? Find the first layer that broke the chain of custody and the layer above that failed to catch it; fix the fixer, re-trigger it, verify the real chain recovers. Use when "the error checker / the fixer / the 6h audit" isn't converging on a stuck chain.

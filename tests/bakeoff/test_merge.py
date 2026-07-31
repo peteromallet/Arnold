@@ -111,6 +111,10 @@ def test_merge_applies_winner_patch_archives_all_plans_and_rewrites_project_dirs
     )
     assert winner_live["config"]["project_dir"] == str(root)
     assert winner_live["config"]["archived_project_dir"] == str(winner)
+    merged_state = json.loads(
+        (root / ".megaplan" / "bakeoffs" / exp_id / "bakeoff.json").read_text(encoding="utf-8")
+    )
+    assert merged_state["wbc_transition_evidence"][f"merge:{exp_id}"]["fixture_safety"]["authorized"] is True
     assert not (root / ".megaplan" / "plans" / f"{exp_id}-loser").exists()
     assert not winner.exists()
     assert not loser.exists()
@@ -215,4 +219,3 @@ def test_merge_rejects_dirty_main_tree_before_apply(tmp_path: Path) -> None:
 
     assert excinfo.value.code == "bakeoff_dirty_worktree"
     assert not (root / ".megaplan" / "bakeoffs" / exp_id / "winner.patch").exists()
-

@@ -16,12 +16,10 @@ from pathlib import Path
 
 
 _TOOLS_PACKAGE = importlib.import_module("arnold.agent.tools")
-sys.modules["tools"] = _TOOLS_PACKAGE
 
 _MINISWEAGENT_PATH = importlib.import_module(
     "arnold_pipelines.megaplan.agent.minisweagent_path"
 )
-sys.modules["minisweagent_path"] = _MINISWEAGENT_PATH
 
 _CANONICAL_PATH = (
     Path(__file__).resolve().parents[3]
@@ -38,7 +36,29 @@ if _SPEC is None or _SPEC.loader is None:
 
 _MODULE = importlib.util.module_from_spec(_SPEC)
 sys.modules[__name__] = _MODULE
-sys.modules["tools.terminal_tool"] = _MODULE
 setattr(_TOOLS_PACKAGE, "terminal_tool", _MODULE)
-_SPEC.loader.exec_module(_MODULE)
+_previous_tools = sys.modules.get("tools")
+_previous_terminal = sys.modules.get("tools.terminal_tool")
+_previous_minisweagent_path = sys.modules.get("minisweagent_path")
+try:
+    # The bundled Hermes module uses its historical top-level import names.
+    # Expose those aliases only while executing it; leaving ``tools`` globally
+    # rebound corrupts unrelated imports according to test/runtime order.
+    sys.modules["tools"] = _TOOLS_PACKAGE
+    sys.modules["tools.terminal_tool"] = _MODULE
+    sys.modules["minisweagent_path"] = _MINISWEAGENT_PATH
+    _SPEC.loader.exec_module(_MODULE)
+finally:
+    if _previous_tools is None:
+        sys.modules.pop("tools", None)
+    else:
+        sys.modules["tools"] = _previous_tools
+    if _previous_terminal is None:
+        sys.modules.pop("tools.terminal_tool", None)
+    else:
+        sys.modules["tools.terminal_tool"] = _previous_terminal
+    if _previous_minisweagent_path is None:
+        sys.modules.pop("minisweagent_path", None)
+    else:
+        sys.modules["minisweagent_path"] = _previous_minisweagent_path
 globals().update(_MODULE.__dict__)

@@ -14,6 +14,7 @@ depending on runtime state.
 from __future__ import annotations
 
 import ast
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -41,30 +42,50 @@ from arnold.workflow.handler_semantics import (
 )
 
 
+def test_m11_semantic_carrier_has_no_unowned_xfails() -> None:
+    """M11 cannot retire while this semantic carrier contains xfail calls."""
+
+    source = Path(__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    xfail_lines = sorted(
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "pytest"
+        and node.func.attr == "xfail"
+    )
+    assert xfail_lines == [], (
+        "semantic-carrier debt remains: pytest.xfail call sites at lines "
+        f"{xfail_lines}; M11 no-debt acceptance must remain blocked"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tests: Completeness and classification coverage
 # ---------------------------------------------------------------------------
 
 class TestHandlerRefCompleteness:
-    """Verify that all 11 handler refs in ALL_STEP_COMPONENTS are covered."""
+    """Verify that all 15 handler refs in ALL_STEP_COMPONENTS are covered."""
 
     def test_all_step_components_count(self) -> None:
-        """ALL_STEP_COMPONENTS must have exactly 12 entries (11 with handlers + HALT)."""
+        """ALL_STEP_COMPONENTS has 16 entries (15 with handlers + HALT)."""
         from arnold_pipelines.megaplan.workflows.components import ALL_STEP_COMPONENTS
 
-        assert len(ALL_STEP_COMPONENTS) == 12, (
-            f"ALL_STEP_COMPONENTS has {len(ALL_STEP_COMPONENTS)} entries; expected 12"
+        assert len(ALL_STEP_COMPONENTS) == 16, (
+            f"ALL_STEP_COMPONENTS has {len(ALL_STEP_COMPONENTS)} entries; expected 16"
         )
 
     def test_handler_ref_count(self) -> None:
-        """Exactly 11 StepComponents must have non-None handler_ref."""
+        """Exactly 15 StepComponents must have non-None handler_ref."""
         from arnold_pipelines.megaplan.workflows.components import ALL_STEP_COMPONENTS
 
         components_with_handler = [
             c for c in ALL_STEP_COMPONENTS if c.metadata.get("handler_ref") is not None
         ]
-        assert len(components_with_handler) == 11, (
-            f"Expected 11 StepComponents with handler_ref; found {len(components_with_handler)}"
+        assert len(components_with_handler) == 15, (
+            f"Expected 15 StepComponents with handler_ref; found {len(components_with_handler)}"
         )
 
     def test_halt_has_no_handler(self) -> None:

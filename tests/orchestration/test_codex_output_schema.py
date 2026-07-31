@@ -6,8 +6,10 @@ from typing import Any
 from arnold_pipelines.megaplan._core.io import _enforce_openai_strict_mode
 from arnold.pipeline import validate_payload_against_schema
 from arnold_pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+from arnold_pipelines.megaplan.finalize_contract import FINALIZE_MODEL_OUTPUT_SCHEMA
 from arnold_pipelines.megaplan.schemas import SCHEMAS, strict_schema
 from arnold_pipelines.megaplan.schemas.runtime import CRITIQUE_EVALUATOR_CHECK_IDS
+from arnold_pipelines.megaplan.step_contracts import STEP_CONTRACTS
 
 
 def _assert_required_keys_have_properties(schema: Any) -> None:
@@ -22,6 +24,20 @@ def _assert_required_keys_have_properties(schema: Any) -> None:
     elif isinstance(schema, list):
         for value in schema:
             _assert_required_keys_have_properties(value)
+
+
+def _assert_array_schemas_have_items(schema: Any, path: tuple[str, ...] = ()) -> None:
+    if isinstance(schema, dict):
+        schema_type = schema.get("type")
+        if schema_type == "array" or (
+            isinstance(schema_type, list) and "array" in schema_type
+        ):
+            assert "items" in schema, f"array schema missing items at {'/'.join(path)}"
+        for key, value in schema.items():
+            _assert_array_schemas_have_items(value, path + (str(key),))
+    elif isinstance(schema, list):
+        for index, value in enumerate(schema):
+            _assert_array_schemas_have_items(value, path + (str(index),))
 
 
 def test_plan_and_revise_codex_output_schemas_keep_test_blast_radius_declared() -> None:
@@ -44,10 +60,60 @@ def test_plan_and_revise_codex_output_schemas_keep_test_blast_radius_declared() 
         _assert_required_keys_have_properties(schema)
 
 
+def test_revise_schema_requires_every_north_star_closeout_field() -> None:
+    """A schema-valid receipt must also satisfy the fail-closed consumer."""
+
+    schema = SCHEMAS["revise.json"]
+    assert "north_star_actions_addressed" in schema["required"]
+    addressed = schema["properties"]["north_star_actions_addressed"]["items"]
+    assert set(addressed["required"]) >= {
+        "action_id",
+        "resolution",
+        "reason",
+        "plan_refs",
+        "action_type",
+    }
+
+
 def test_all_codex_output_schemas_have_strict_required_properties() -> None:
     for schema in SCHEMAS.values():
         strict = _enforce_openai_strict_mode(strict_schema(deepcopy(schema)))
         _assert_required_keys_have_properties(strict)
+        _assert_array_schemas_have_items(strict)
+
+
+def test_finalize_codex_schema_excludes_harness_owned_evidence() -> None:
+    contract = STEP_CONTRACTS["finalize"]
+    assert contract.schema_key == "finalize_capture.json"
+    assert contract.capture_schema_key == "finalize_capture.json"
+
+    schema = _enforce_openai_strict_mode(
+        strict_schema(deepcopy(SCHEMAS[contract.schema_key]))
+    )
+    properties = schema["properties"]
+    assert set(schema["required"]) == set(properties)
+    assert {
+        "critique_custody",
+        "validation",
+        "baseline_test_failures",
+        "baseline_test_command",
+        "baseline_test_note",
+        "suite_runs_ndjson_path",
+    }.isdisjoint(properties)
+    assert "critique_resolution_coverage" in properties
+
+
+def test_finalize_critique_resolution_schema_cannot_drift_at_runtime_boundary() -> None:
+    """The Codex capture schema must preserve the model contract's typed rows."""
+    contract_schema = FINALIZE_MODEL_OUTPUT_SCHEMA["properties"][
+        "critique_resolution_coverage"
+    ]
+    capture_schema = SCHEMAS["finalize_capture.json"]["properties"][
+        "critique_resolution_coverage"
+    ]
+
+    assert capture_schema == contract_schema
+    _assert_array_schemas_have_items(capture_schema)
 
 
 def test_critique_evaluator_schema_rejects_invented_catalog_lens_ids() -> None:

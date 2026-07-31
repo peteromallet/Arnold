@@ -1,0 +1,31 @@
+{
+  "a7_family": "sha256:37797161f03f7e19f330b48bd4f70c7270271195f9459799fb9d0a30a828cdf8",
+  "artifacts": {
+    "a7_family": "sha256:37797161f03f7e19f330b48bd4f70c7270271195f9459799fb9d0a30a828cdf8",
+    "c_family": "sha256:af6aba2c3893e21016271bb408d87ed3034734a751285872fbcb631b0ecfc1fa",
+    "m10_handoff": "sha256:bd8e3c0438f62efc977e436188a0b06102bb6ae1c9efb0418dd22432df188e41",
+    "m5_family": "sha256:934e37516b72197f6517e3e4683c1c24466a9b13c07a98b3becf570e618b5348"
+  },
+  "c_family": "sha256:af6aba2c3893e21016271bb408d87ed3034734a751285872fbcb631b0ecfc1fa",
+  "m10_handoff": "sha256:bd8e3c0438f62efc977e436188a0b06102bb6ae1c9efb0418dd22432df188e41",
+  "m5_family": "sha256:934e37516b72197f6517e3e4683c1c24466a9b13c07a98b3becf570e618b5348",
+  "schema": "m11.predecessor-artifact-manifest.v1",
+  "wrapper_status": {
+    "a7_family": {
+      "content_sha256": "sha256:37797161f03f7e19f330b48bd4f70c7270271195f9459799fb9d0a30a828cdf8",
+      "status": "satisfied"
+    },
+    "c_family": {
+      "content_sha256": "sha256:af6aba2c3893e21016271bb408d87ed3034734a751285872fbcb631b0ecfc1fa",
+      "status": "satisfied"
+    },
+    "m10_handoff": {
+      "content_sha256": "sha256:bd8e3c0438f62efc977e436188a0b06102bb6ae1c9efb0418dd22432df188e41",
+      "status": "satisfied"
+    },
+    "m5_family": {
+      "content_sha256": "sha256:934e37516b72197f6517e3e4683c1c24466a9b13c07a98b3becf570e618b5348",
+      "status": "satisfied"
+    }
+  }
+}

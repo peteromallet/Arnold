@@ -1,3 +1,10 @@
+> **Authority status (M11):** This document is retained as zero-authority history.
+> All repair, audit, and deployment authority has been migrated to canonical
+> delegation (see `arnold_pipelines/megaplan/cloud/wrappers/repair_delegation.py`).
+> Content below is historical reference only and must not be used to materialize
+> commands, grant authority, or drive automated repair actions.  For current
+> operator guidance consult the M11 acceptance suite and delegation contracts.
+
 # Sprint 7 Recovery Runbooks
 
 These runbooks cover the known hardening scenarios for local FileStore, DBStore, legacy local plan migration, export backup, and cloud chain operations.

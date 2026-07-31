@@ -61,7 +61,7 @@
       "receipt_metrics": ["receipt_review.success==true"]
     }
   ],
-  "native_trace_files": ["events.ndjson", "state.json", "stages.json", "artifacts.json", "checkpoint.json"],
+  "native_trace_files": ["events.ndjson", "state.json", "stages.json", "artifacts.json", "checkpoint.json", "tree.json"],
   "obligated_scenarios": {
     "committed": [
       {

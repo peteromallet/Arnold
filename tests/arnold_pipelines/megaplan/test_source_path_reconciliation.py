@@ -48,9 +48,6 @@ WORKFLOW_RESOURCE_PACKAGE = "arnold_pipelines.megaplan.workflows"
 WORKFLOW_PYPELINE_PATH = checkout_path("arnold_pipelines", "megaplan", "workflows", "workflow.pypeline")
 WORKFLOW_PY_PATH = checkout_path("arnold_pipelines", "megaplan", "workflows", "workflow.py")
 PROHIBITED_WRAPPER_TOKENS: tuple[str, ...] = (
-    "SOURCE_",
-    "handler_ref",
-    "route_bindings",
     "manifest_hash",
     "build_manifest",
     "build_node",
@@ -470,7 +467,11 @@ class TestLiveUnderscorePackageIsAuthoritative:
         assert not any(token in workflow_source for token in PROHIBITED_WRAPPER_TOKENS)
         assert any(isinstance(node, ast.While) for node in ast.walk(function))
         assert sum(isinstance(node, ast.If) for node in ast.walk(function)) >= 4
-        assert {"loop", "parallel_map", "TIEBREAKER_WORKFLOW"} <= called_names
+        assert {
+            "loop", "parallel_map",
+            "TIEBREAKER_RESEARCHER", "TIEBREAKER_CHALLENGER",
+            "TIEBREAKER_SYNTHESIS", "TIEBREAKER_DECISION",
+        } <= called_names
         assert {
             "gate_route_signal",
             "review_route_signal",

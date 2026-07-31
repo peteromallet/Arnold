@@ -20,9 +20,15 @@ from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.managed_agent import validate_automatic_managed_manifest
 from arnold_pipelines.megaplan.cloud.progress_auditor_liveness import classify_runner_liveness
+from arnold_pipelines.megaplan.cloud.simple_fixer import (
+    FORBIDDEN_AUTHORITY_SOURCES,
+    build_simple_fixer_occurrence,
+)
+from arnold_pipelines.megaplan.custody.contracts import F01_REPAIR_OCCURRENCE_FIELDS
 
 
 ESCALATION_SCHEMA = "arnold-progress-auditor-escalation-v1"
+NEXT_THREE_HOUR_BINDING_SCHEMA = "arnold-escalation-next-three-hour-occurrence-v1"
 POLICY_VERSION = "l3-superfixer-v1"
 DEEP_REPAIR_RUN_KIND = "automatic_root_cause_repair"
 DEEP_REPAIR_MODEL = "gpt-5.6-sol"
@@ -1536,6 +1542,128 @@ def bounded_repair_context(finding: Mapping[str, Any]) -> dict[str, Any]:
     return context
 
 
+def _finding_f01_fields(finding: Mapping[str, Any]) -> dict[str, str]:
+    """Extract the F01 repair-occurrence tuple fields from an audit finding."""
+
+    target = _mapping(finding.get("current_target"))
+    custody = _mapping(finding.get("repair_custody_summary"))
+    escalation = _mapping(finding.get("l3_escalation_gate"))
+    session_header = _mapping(finding.get("session_header"))
+    return {
+        "environment": _text(target.get("environment") or finding.get("environment")),
+        "session": _text(finding.get("session")),
+        "chain": _text(
+            session_header.get("chain")
+            or target.get("chain")
+            or finding.get("chain")
+        ),
+        "plan_revision": _text(
+            target.get("plan_revision") or finding.get("plan_revision")
+        ),
+        "phase": _text(target.get("phase") or finding.get("phase")),
+        "task": _text(target.get("task") or finding.get("task")),
+        "attempt": _text(target.get("attempt") or finding.get("iteration")),
+        "normalized_failure_kind": _text(
+            custody.get("normalized_failure_kind")
+            or finding.get("normalized_failure_kind")
+        ),
+        "blocker_or_phase_result_hash": _text(
+            custody.get("blocker_id")
+            or custody.get("blocker_or_phase_result_hash")
+        ),
+        "fence": _text(
+            escalation.get("fence") or custody.get("fence") or finding.get("fence")
+        ),
+    }
+
+
+def _forbidden_source_for_partial(f01: Mapping[str, str]) -> str:
+    """Return the canonical forbidden authority source implied by a partial tuple.
+
+    When the exact F01 tuple cannot be satisfied, any residual identity must
+    derive from one of the four forbidden authority surfaces.  The mapping is
+    deterministic so callers can record *why* authority was refused rather
+    than silently falling back to a non-occurrence identity.
+    """
+
+    fence = bool(_text(f01.get("fence")))
+    blocker = bool(_text(f01.get("blocker_or_phase_result_hash")))
+    kind = bool(_text(f01.get("normalized_failure_kind")))
+    if not fence and blocker:
+        return "wbc_receipt"
+    if not fence and kind:
+        return "liveness"
+    if not fence:
+        return "label"
+    return "rebuildable_projection"
+
+
+def next_three_hour_occurrence_binding(
+    finding: Mapping[str, Any],
+    *,
+    policy: EscalationPolicy | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Bind escalation decisions to the next-three-hour occurrence contract.
+
+    Authority for an escalation dispatch is derived ONLY from the exact F01
+    repair-occurrence tuple — never from a label, liveness signal, WBC
+    receipt, or rebuildable projection.  The occurrence fingerprint, current
+    fence, and custody epoch are returned so downstream eligibility, cooldown,
+    deep-repair planning, managed-launch validation, and source/target
+    identity checks operate on the canonical contract tuple.
+
+    Queue state is non-authoritative: a queue presence record or a stale
+    owner label cannot establish occurrence authority here.
+    """
+
+    observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    resolved_policy = policy or EscalationPolicy()
+    f01 = _finding_f01_fields(finding)
+
+    occurrence = build_simple_fixer_occurrence(f01)
+    fence = _text(f01.get("fence"))
+    custody = _mapping(finding.get("repair_custody_summary"))
+    escalation = _mapping(finding.get("l3_escalation_gate"))
+    epoch = _text(
+        escalation.get("custody_epoch")
+        or custody.get("custody_epoch")
+        or custody.get("epoch")
+    )
+
+    occurrence_fingerprint = ""
+    forbidden_source = None
+    if occurrence is not None:
+        occurrence_fingerprint = occurrence.occurrence_fingerprint
+    else:
+        forbidden_source = _forbidden_source_for_partial(f01)
+        if forbidden_source not in FORBIDDEN_AUTHORITY_SOURCES:
+            forbidden_source = "label"
+
+    eligible = bool(occurrence_fingerprint and fence and epoch)
+
+    return {
+        "binding_schema": NEXT_THREE_HOUR_BINDING_SCHEMA,
+        "observed_at": observed_at.isoformat(),
+        "policy_version": POLICY_VERSION,
+        "occurrence_fingerprint": occurrence_fingerprint,
+        "occurrence_present": occurrence is not None,
+        "fence": fence,
+        "custody_epoch": epoch,
+        "cooldown_seconds": int(resolved_policy.cooldown.total_seconds()),
+        "minimum_no_progress_seconds": int(
+            resolved_policy.minimum_no_progress.total_seconds()
+        ),
+        "deep_repair_run_kind": DEEP_REPAIR_RUN_KIND,
+        "deep_repair_model": DEEP_REPAIR_MODEL,
+        "deep_repair_difficulty": resolved_policy.requested_difficulty,
+        "eligible": eligible,
+        "forbidden_authority_source": forbidden_source,
+        "queue_authoritative": False,
+        "source_identity": "next_three_hour_occurrence",
+    }
+
+
 __all__ = [
     "DEEP_REPAIR_DIFFICULTY",
     "DEEP_REPAIR_MODEL",
@@ -1543,6 +1671,7 @@ __all__ = [
     "DEEP_REPAIR_RUN_KIND",
     "ESCALATION_SCHEMA",
     "EscalationPolicy",
+    "NEXT_THREE_HOUR_BINDING_SCHEMA",
     "AUDIT_REVIEW_EVIDENCE_MAX_BYTES",
     "AUDIT_REVIEW_RESPONSE_MAX_BYTES",
     "L3_REPAIR_CONTEXT_MAX_BYTES",
@@ -1555,6 +1684,7 @@ __all__ = [
     "escalation_identity",
     "evidence_digest",
     "next_attempt_state",
+    "next_three_hour_occurrence_binding",
     "normalize_audit_review_response",
     "plan_dispatch",
     "record_reverification",

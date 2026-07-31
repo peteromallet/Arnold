@@ -67,7 +67,10 @@ def test_unrecordable_codex_response_dispatches_direct_hermes() -> None:
     text = _meta_repair_wrapper()
 
     assert 'if ! has_recordable_verdict "$RESP_PATH"; then' in text
-    assert "run_direct_hermes_fallback || true" in text
+    assert (
+        'run_direct_hermes_fallback || authority_gap_continue "T29-BYPASS-040"'
+        in text
+    )
     assert '--query-file "$FALLBACK_BRIEF_PATH"' in text
     assert '--project-dir /workspace' in text
     assert 'cd /workspace || exit 1' in text
@@ -104,7 +107,11 @@ def test_l3_trigger_requires_typed_request_and_uses_pointer_prompt() -> None:
 
 def test_meta_repair_provenance_bootstrap_uses_safe_python_path() -> None:
     text = _meta_repair_wrapper()
-    assert 'PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - "$marker_path"' in text
+    assert (
+        'PYTHONSAFEPATH=1 PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 -P - \\\n'
+        '    "$marker_path" "${ARNOLD_MANAGED_AGENT_MANIFEST:-}"'
+        in text
+    )
     assert 'INSTALL_SYNC_STATUS="commit_custody_failed"' in text
     assert "will NOT install sync or retrigger ordinary repair" in text
     assert 'post_retrigger_verification["commit_custody"]' in text
@@ -402,3 +409,45 @@ def test_meta_investigator_gets_one_bounded_schema_correction_retry() -> None:
         "preserve_live is valid only when a correct live worker is actually present"
         in wrapper
     )
+
+
+def test_meta_repair_retrigger_rejected_or_delegated() -> None:
+    """Step 76-80: meta-repair retrigger routes through typed delegation or emits rejection.
+
+    The retrigger must never treat subprocess return-code success as accepted
+    repair.  It routes through run_managed_command (typed delegation) and
+    verifies through load_authoritative_post_retrigger_verification.  Return-code 0
+    without verified delegation outcome is treated as rejection (returncode 73).
+    """
+    wrapper = _meta_repair_wrapper()
+
+    # The retrigger section must route through typed delegation — not direct
+    # subprocess execution of the repair-loop binary.
+    assert "does NOT accept subprocess return-code success as accepted" in wrapper
+    assert "routes through typed delegation via run_managed_command" in wrapper
+    assert "load_authoritative_post_retrigger_verification" in wrapper
+    assert "Return-code 0 without verified" in wrapper
+    assert "delegation outcome is treated as rejection" in wrapper
+    assert "returncode 73" in wrapper
+
+    # Must use run_managed_command (the typed delegation path), not raw subprocess.
+    assert "run_managed_command" in wrapper
+
+    # Must carry the VERIFIER_REJECTION_RETURNCODE sentinel.
+    assert "VERIFIER_REJECTION_RETURNCODE = 73" in wrapper
+
+    # Must reference the canonical repair-data artifact for verification.
+    assert "canonical repair-data artifact" in wrapper
+
+    # Must never launch the repair-loop binary directly as a fire-and-forget
+    # subprocess whose returncode determines success.
+    retrigger_section_start = wrapper.index(
+        "retrigger ordinary repair after successful install sync (Step 76-80)"
+    )
+    retrigger_section = wrapper[retrigger_section_start:]
+    # The retrigger section must not contain a bare subprocess.run or os.system
+    # that executes the repair-loop binary directly.
+    assert "subprocess.run" not in retrigger_section or (
+        "subprocess.run" in retrigger_section
+        and "run_managed_command" in retrigger_section
+    ), "retrigger must route through run_managed_command, not bare subprocess"

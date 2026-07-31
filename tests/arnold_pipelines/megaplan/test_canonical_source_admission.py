@@ -9,6 +9,7 @@ from arnold_pipelines.megaplan.chain.execution_binding import bind_execution_ide
 from arnold_pipelines.megaplan.chain.source_admission import (
     admit_milestone_source,
     require_milestone_source_update,
+    worker_launch_preflight,
 )
 from arnold_pipelines.megaplan.chain.spec import (
     ChainState,
@@ -154,3 +155,46 @@ def test_active_chain_future_stale_milestone_cannot_enter_and_then_reconciles(tm
     assert requirement["status"] == "reconciled"
     assert event["current_identity"]["semantic_sha256"] == requirement["expected"]["semantic_sha256"]
     assert load_chain_state(spec_path).metadata["required_canonical_source_updates"]["c3"]["status"] == "reconciled"
+
+
+def test_worker_launch_preflight_requires_complete_expected_runtime_vector() -> None:
+    with pytest.raises(CliError, match="expected_runtime_vector_sha256"):
+        worker_launch_preflight(
+            source_ref="a" * 40,
+            installed_package_path="/runtime",
+            runtime_revision="a" * 40,
+            runtime_root="/runtime",
+            runtime_vector_sha256="b" * 64,
+            selected_model="gpt-5",
+            configured_spec="codex:gpt-5",
+            canonical_chain_spec="/repo/.megaplan/initiatives/demo/chain.yaml",
+            expected_source_ref="a" * 40,
+            expected_installed_package_path="/runtime",
+            expected_runtime_revision="a" * 40,
+            expected_root="/runtime",
+            expected_chain_spec="/repo/.megaplan/initiatives/demo/chain.yaml",
+            require_full_vector=True,
+        )
+
+
+def test_worker_launch_preflight_accepts_exact_complete_runtime_vector() -> None:
+    proof = worker_launch_preflight(
+        source_ref="a" * 40,
+        installed_package_path="/runtime",
+        runtime_revision="a" * 40,
+        runtime_root="/runtime",
+        runtime_vector_sha256="b" * 64,
+        selected_model="gpt-5",
+        configured_spec="codex:gpt-5",
+        canonical_chain_spec="/repo/.megaplan/initiatives/demo/chain.yaml",
+        expected_source_ref="a" * 40,
+        expected_installed_package_path="/runtime",
+        expected_runtime_revision="a" * 40,
+        expected_root="/runtime",
+        expected_runtime_vector_sha256="b" * 64,
+        expected_chain_spec="/repo/.megaplan/initiatives/demo/chain.yaml",
+        require_full_vector=True,
+    )
+
+    assert proof["status"] == "ready"
+    assert proof["actual"]["runtime_vector_sha256"] == "b" * 64

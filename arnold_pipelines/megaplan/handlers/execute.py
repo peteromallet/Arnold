@@ -44,8 +44,13 @@ from arnold_pipelines.megaplan._core import (
 )
 from arnold_pipelines.megaplan.execute.policy import (
     ApprovalOutcome,
+    CircuitDispatchOutcome,
+    CircuitFailureOutcome,
     ExecuteEntryRoute,
     NoReviewTerminalOutcome,
+    build_circuit_evidence_projection,
+    evaluate_circuit_after_failure,
+    evaluate_circuit_before_dispatch,
     evaluate_destructive_approval,
     evaluate_no_review_terminal,
     resolve_execute_entry_route,
@@ -63,12 +68,26 @@ from .shared import (
     worker_module,
 )
 from arnold_pipelines.megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
+from arnold_pipelines.megaplan.workflows.handler_contract import (
+    apply_response_projection,
+    apply_state_projection,
+)
 from arnold_pipelines.megaplan.orchestration.task_feasibility import (
     assert_admitted_task_feasibility,
 )
 from arnold_pipelines.megaplan.orchestration.critique_custody import (
     CritiqueCustodyError,
     assert_finalize_custody,
+)
+from arnold_pipelines.megaplan.orchestration.repair_adoption import (
+    AdoptionReport,
+    AdoptionVerdict,
+    verify_repair_adoption,
+    verify_repair_adoption_from_view,
+)
+from arnold_pipelines.megaplan.custody.repair_receipt import (
+    RepairReceipt,
+    normalize_repair_receipt,
 )
 
 log = logging.getLogger(__name__)
@@ -433,6 +452,237 @@ def _enforce_approval_gate(
     return decision.outcome
 
 
+def _best_effort_git_head_for_circuit(project_dir: Path) -> str | None:
+    """Best-effort git HEAD retrieval for circuit ref_metadata."""
+    try:
+        import subprocess as _sp
+        result = _sp.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# M8A T13: repair adoption wiring
+# ---------------------------------------------------------------------------
+
+
+def _derive_adoption_context(
+    plan_dir: Path,
+    state: PlanState,
+    finalize_data: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive current-state fields needed for repair adoption verification.
+
+    Returns a dict with keys matching the ``verify_repair_adoption``
+    keyword arguments.  Missing values are empty strings / zero; the
+    verifier will produce mismatch diagnostics for any check that
+    requires a field the handler cannot resolve.
+    """
+    context: dict[str, Any] = {}
+
+    # Grant identity — best-effort from state metadata or finalize data.
+    meta = state.get("meta", {}) if isinstance(state, dict) else {}
+    context["current_grant_id"] = str(
+        meta.get("run_authority_grant_id")
+        or finalize_data.get("run_authority_grant_id", "")
+    )
+
+    # Plan revision — from finalize data (the plan revision at finalize time).
+    context["current_revision"] = str(
+        finalize_data.get("plan_revision", "")
+    )
+
+    # Task contract — from finalize data.
+    context["current_task_contract"] = str(
+        finalize_data.get("task_contract", "")
+    )
+
+    # Tree/commit — best-effort git HEAD.
+    project_dir = Path(state["config"]["project_dir"])
+    context["current_tree_commit"] = (
+        _best_effort_git_head_for_circuit(project_dir) or ""
+    )
+
+    # Test result hash — from finalize data if present.
+    context["current_test_result_hash"] = str(
+        finalize_data.get("test_result_hash", "")
+    )
+
+    # Fence token — from state metadata.
+    context["current_fence_token"] = int(
+        meta.get("coordinator_fence_token", 0)
+    )
+
+    # Custody lease — from state metadata.
+    context["current_lease_id"] = str(
+        meta.get("custody_lease_id", "")
+    )
+
+    # Custody epoch — from state metadata.
+    context["current_epoch"] = int(
+        meta.get("custody_epoch", 0)
+    )
+
+    return context
+
+
+def _collect_repair_receipts_from_plan(plan_dir: Path) -> list[RepairReceipt]:
+    """Collect repair receipts from plan artifacts.
+
+    Looks for receipt payloads in the plan directory.  Currently scans
+    ``repair_receipts.json`` (single-receipt artifact) and
+    ``repair_receipts/`` (multi-receipt directory).  Returns only
+    successfully-normalized :class:`RepairReceipt` instances.
+    """
+    receipts: list[RepairReceipt] = []
+
+    # Single-receipt artifact.
+    single_path = plan_dir / "repair_receipts.json"
+    if single_path.is_file():
+        try:
+            payload = read_json(single_path)
+            if isinstance(payload, dict):
+                receipt = normalize_repair_receipt(payload)
+                if receipt is not None:
+                    receipts.append(receipt)
+            elif isinstance(payload, list):
+                for entry in payload:
+                    if isinstance(entry, dict):
+                        receipt = normalize_repair_receipt(entry)
+                        if receipt is not None:
+                            receipts.append(receipt)
+        except (OSError, ValueError):
+            log.warning("Could not read repair receipt artifact %s", single_path)
+
+    # Multi-receipt directory.
+    receipts_dir = plan_dir / "repair_receipts"
+    if receipts_dir.is_dir():
+        try:
+            for entry in sorted(receipts_dir.iterdir()):
+                if not entry.is_file() or not entry.suffix == ".json":
+                    continue
+                try:
+                    payload = read_json(entry)
+                    if isinstance(payload, dict):
+                        receipt = normalize_repair_receipt(payload)
+                        if receipt is not None:
+                            receipts.append(receipt)
+                except (OSError, ValueError):
+                    log.warning("Could not read repair receipt %s", entry)
+        except OSError:
+            pass
+
+    return receipts
+
+
+def _adopt_repair_receipts(
+    plan_dir: Path,
+    state: PlanState,
+    finalize_data: dict[str, Any],
+    response: StepResponse | None,
+) -> StepResponse | None:
+    """Verify and adopt repair receipts, returning projection metadata.
+
+    This is **strictly read-only** — no ledgers, custody state, or
+    evidence is mutated.  Receipt labels are never treated as authority.
+
+    Parameters
+    ----------
+    plan_dir
+        Plan directory containing repair receipt artifacts.
+    state
+        Current plan state.
+    finalize_data
+        Loaded finalize.json data.
+    response
+        Current execute response (may be ``None``).
+
+    Returns
+    -------
+    StepResponse | None
+        The response augmented with ``_repair_adoption`` projection
+        metadata, or the original response unchanged if no receipts exist.
+    """
+    receipts = _collect_repair_receipts_from_plan(plan_dir)
+    if not receipts:
+        return response
+
+    ctx = _derive_adoption_context(plan_dir, state, finalize_data)
+
+    adopted: list[dict[str, Any]] = []
+    quarantined: list[dict[str, Any]] = []
+    invalid: list[dict[str, Any]] = []
+
+    for receipt in receipts:
+        report = verify_repair_adoption(
+            receipt,
+            current_grant_id=ctx["current_grant_id"],
+            current_revision=ctx["current_revision"],
+            current_task_contract=ctx["current_task_contract"],
+            current_tree_commit=ctx["current_tree_commit"],
+            current_test_result_hash=ctx["current_test_result_hash"],
+            current_fence_token=ctx["current_fence_token"],
+            current_lease_id=ctx["current_lease_id"],
+            current_epoch=ctx["current_epoch"],
+        )
+
+        serialized = report.to_dict()
+        if report.verdict == AdoptionVerdict.ADOPT:
+            adopted.append(serialized)
+        elif report.verdict == AdoptionVerdict.QUARANTINE:
+            quarantined.append(serialized)
+        else:  # INVALID
+            invalid.append(serialized)
+
+    # Attach projection metadata only — never rewrite history.
+    projection: dict[str, Any] = {
+        "total_receipts": len(receipts),
+        "adopted": len(adopted),
+        "quarantined": len(quarantined),
+        "invalid": len(invalid),
+    }
+    if adopted:
+        projection["adopted_reports"] = adopted
+    if quarantined:
+        projection["quarantined_reports"] = quarantined
+    if invalid:
+        projection["invalid_reports"] = invalid
+
+    if response is None:
+        response = {}
+    response["_repair_adoption"] = projection
+
+    if quarantined or invalid:
+        log.warning(
+            "Repair adoption: %d adopted, %d quarantined, %d invalid (out of %d receipts)",
+            len(adopted), len(quarantined), len(invalid), len(receipts),
+        )
+        # Quarantined/invalid receipts do NOT block normal execution.
+        response.setdefault("warnings", [])
+        if isinstance(response.get("warnings"), list):
+            response["warnings"].append(
+                f"Repair adoption: {len(quarantined)} quarantined, "
+                f"{len(invalid)} invalid receipts"
+            )
+
+    if adopted:
+        log.info(
+            "Repair adoption: %d receipts adopted via verifier",
+            len(adopted),
+        )
+
+    return response
+
+
 def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="execute") as (plan_dir, state):
         from arnold_pipelines.megaplan.planning.source_binding import (
@@ -457,14 +707,32 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         # compiler before any approval receipt or mutating preflight so a stale
         # or hand-edited graph cannot bypass the final-stage sense-check.
         finalize_data = read_json(plan_dir / "finalize.json")
+        # M10 Step 7H-b (item 3): thread the gate step's seed_epoch
+        # attestation into the execute-entry admission verdict and block
+        # v1/None admission escapes so only admitted v2 graphs reach
+        # dispatch.  The epoch protocol activates only when the gate step
+        # produced a seed_epoch attestation; an absent key preserves
+        # backward-compat for pre-M10 plans.
+        _epoch_kwargs: dict = {}
+        if isinstance(state, dict) and state.get("seed_epoch") is not None:
+            _epoch_kwargs["current_epoch"] = state.get("seed_epoch")
         try:
-            assert_admitted_task_feasibility(finalize_data, state.get("config", {}))
+            _admission_report = assert_admitted_task_feasibility(
+                finalize_data, state.get("config", {}), **_epoch_kwargs
+            )
         except ValueError as exc:
             raise CliError(
                 "finalized_task_graph_changed",
                 str(exc),
                 valid_next=["finalize", "revise"],
             ) from exc
+        if _admission_report is None:
+            raise CliError(
+                "finalized_task_graph_changed",
+                "v1 task contract is not admitted by M10 dispatch; "
+                "re-finalize under the v2 task contract before executing",
+                valid_next=["finalize", "revise"],
+            )
         try:
             assert_finalize_custody(plan_dir, finalize_data)
         except CritiqueCustodyError as exc:
@@ -587,6 +855,49 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         )
         _emit_phase_notice("execute")
         save_state_merge_meta(plan_dir, state)
+        # --- M8A T9: circuit check before worker dispatch ---
+        # Create a plan-level circuit breaker instance and check whether any
+        # open circuit blocks the pending task set before dispatching workers.
+        from arnold_pipelines.megaplan.orchestration.plan_circuit import PlanCircuit as _PlanCircuit
+
+        _circuit = _PlanCircuit()
+        _finalize_data = read_json(plan_dir / "finalize.json")
+        _pending_task_ids: list[str] = [
+            str(t["id"])
+            for t in _finalize_data.get("tasks", [])
+            if isinstance(t, dict) and t.get("status") == "pending"
+            and isinstance(t.get("id"), str)
+        ]
+        _circuit_dispatch = evaluate_circuit_before_dispatch(
+            _circuit,
+            task_ids=_pending_task_ids,
+            batch_id=str(getattr(args, "batch", None)) if getattr(args, "batch", None) is not None else None,
+        )
+        if _circuit_dispatch.outcome == CircuitDispatchOutcome.CIRCUIT_OPEN:
+            _circuit_projection = build_circuit_evidence_projection(_circuit)
+            response = {
+                "success": False,
+                "step": "execute",
+                "summary": _circuit_dispatch.reason,
+                "artifacts": [],
+                "monitor_hint": "",
+                "next_step": "revise",
+                "state": STATE_BLOCKED,
+                "files_changed": [],
+                "deviations": [],
+                "warnings": [_circuit_dispatch.reason],
+                "auto_approve": auto_approve,
+                "user_approved_gate": bool(state["meta"].get("user_approved_gate", False)),
+                "blocked_task_ids": [
+                    s.get("task_id") for s in _circuit_dispatch.open_signatures if s.get("task_id")
+                ],
+                "_phase_outcome": "blocked_by_prereq",
+                "_circuit_evidence": _circuit_projection,
+                "result": "blocked",
+            }
+            save_state_merge_meta(plan_dir, state)
+            return response
+        # --- end circuit check ---
         response: StepResponse | None = None
         try:
             with phase_result_guard(plan_dir):
@@ -626,7 +937,73 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             save_state_merge_meta(plan_dir, state)
             raise
         clear_active_step(state, run_id=run_id)
+        # --- M8A T13: repair adoption verification ---
+        # After batch execution completes, verify any pending repair receipts
+        # through the read-only verifier.  Matching receipts are adopted;
+        # mismatches are quarantined.  Neither outcome rewrites history or
+        # treats receipt labels as authority.
+        _finalize_data = read_json(plan_dir / "finalize.json")
+        _repair_start = __import__("time").monotonic()
+        response = _adopt_repair_receipts(plan_dir, state, _finalize_data, response)
+        _repair_elapsed_ms = int((__import__("time").monotonic() - _repair_start) * 1000)
+        # --- M9: work ledger — repair verification tool event ---
+        try:
+            from arnold_pipelines.megaplan.observability.work_ledger import (
+                WorkClass,
+                emit_tool_activity,
+            )
+
+            _rv_adoption = response.get("_repair_adoption", {}) if response else {}
+            emit_tool_activity(
+                plan_dir,
+                phase="execute",
+                tool_name="repair_receipt_adoption",
+                work_class=WorkClass.REPAIR_VERIFICATION,
+                task_id=None,  # plan-scoped
+                batch_id=str(getattr(args, "batch", "auto")),
+                attempt_id=state.get("meta", {}).get("current_invocation_id"),
+                elapsed_ms=_repair_elapsed_ms,
+                metadata={
+                    "total_receipts": _rv_adoption.get("total_receipts", 0),
+                    "adopted": _rv_adoption.get("adopted", 0),
+                    "quarantined": _rv_adoption.get("quarantined", 0),
+                    "invalid": _rv_adoption.get("invalid", 0),
+                },
+            )
+        except Exception:
+            log.debug("Work ledger repair verification event emission skipped", exc_info=True)
+        # --- end work ledger ---
+        # --- end repair adoption ---
         if response.get("result") == "blocked":
+            # --- M8A T9: circuit recording after worker/result failure classification ---
+            # Record each blocked task failure against the plan circuit and persist
+            # circuit evidence as rebuildable projection metadata only.
+            _blocked_ids = response.get("blocked_task_ids", [])
+            if isinstance(_blocked_ids, list) and _blocked_ids:
+                _batch_num = str(getattr(args, "batch", "auto"))
+                _attempt_id = state.get("meta", {}).get("current_invocation_id", "unknown")
+                _provider = getattr(args, "model", None) or state.get("config", {}).get("model")
+                _ref = _best_effort_git_head_for_circuit(Path(state["config"]["project_dir"]))
+
+                for _tid in _blocked_ids:
+                    if isinstance(_tid, str):
+                        _blocker_payload = {"kind": "blocked_by_prereq", "task_id": _tid}
+                        evaluate_circuit_after_failure(
+                            _circuit,
+                            None,  # error — use failure_class override
+                            task_id=_tid,
+                            batch_id=_batch_num,
+                            attempt_id=_attempt_id,
+                            blocker=_blocker_payload,
+                            provider=_provider,
+                            ref_metadata=_ref,
+                            failure_class="blocked_by_prereq",
+                        )
+
+            # Build rebuildable circuit evidence projection and attach to response.
+            _circuit_projection = build_circuit_evidence_projection(_circuit)
+            response["_circuit_evidence"] = _circuit_projection
+            # --- end circuit recording ---
             blocked_projection = _blocked_execute_projection()
             save_state_merge_meta(plan_dir, state)
             # Include the typed retry decision (from
@@ -653,9 +1030,12 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             )
             _record_execute_blocked(plan_dir, response)
             state = read_plan_state_cached(plan_dir, mode="authority")
-            response["route_signal"] = blocked_projection["route_signal"]
-            response["state"] = blocked_projection["state"]
-            response["next_step"] = blocked_projection["next_step"]
+            apply_response_projection(
+                response,
+                route_signal=blocked_projection["route_signal"],
+                state=blocked_projection["state"],
+                next_step=blocked_projection["next_step"],
+            )
             _attach_next_step_runtime(response)
         else:
             state["latest_failure"] = None
@@ -677,11 +1057,18 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 terminal = evaluate_no_review_terminal(robustness="bare")
                 terminal_projection = _no_review_terminal_projection(terminal.outcome)
                 next_state = terminal_projection["state"]
-                state["current_state"] = next_state
+                apply_state_projection(
+                    state,
+                    next_state,
+                    route_signal=terminal_projection["route_signal"],
+                )
                 save_state_merge_meta(plan_dir, state)
-                response["route_signal"] = terminal_projection["route_signal"]
-                response["state"] = next_state
-                response["next_step"] = terminal_projection["next_step"]
+                apply_response_projection(
+                    response,
+                    route_signal=terminal_projection["route_signal"],
+                    state=next_state,
+                    next_step=terminal_projection["next_step"],
+                )
                 _attach_next_step_runtime(response)
                 _emit_execute_boundary_receipt(
                     boundary_id="execute_no_review_terminal",
@@ -753,11 +1140,18 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             artifacts = response.get("artifacts")
             if isinstance(artifacts, list) and "review.json" not in artifacts:
                 artifacts.append("review.json")
-            state["current_state"] = next_state
+            apply_state_projection(
+                state,
+                next_state,
+                route_signal=terminal_projection["route_signal"],
+            )
             save_state_merge_meta(plan_dir, state)
-            response["route_signal"] = terminal_projection["route_signal"]
-            response["state"] = next_state
-            response["next_step"] = terminal_projection["next_step"]
+            apply_response_projection(
+                response,
+                route_signal=terminal_projection["route_signal"],
+                state=next_state,
+                next_step=terminal_projection["next_step"],
+            )
             _attach_next_step_runtime(response)
             _emit_execute_boundary_receipt(
                 boundary_id="execute_no_review_terminal",

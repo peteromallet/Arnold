@@ -94,6 +94,63 @@ def policy_for_spec_path(spec_path: Path | str) -> AdvancementPolicy:
     return policy_for_spec(spec, runtime_overrides=load_runtime_policy(path))
 
 
+def _normalized_identity_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        normalized = value.strip()
+        return [normalized] if normalized else []
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        normalized = item.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return ordered
+
+
+def _parent_custody_conflict_reason(
+    parent_custody: Mapping[str, Any] | None,
+) -> str | None:
+    if not isinstance(parent_custody, Mapping):
+        return None
+    accepted_subject_ids = set(
+        _normalized_identity_list(parent_custody.get("accepted_subject_ids"))
+    )
+    active_repair_subject_ids = set(
+        _normalized_identity_list(parent_custody.get("active_repair_subject_ids"))
+    )
+    accepted_repair_occurrence_ids = set(
+        _normalized_identity_list(
+            parent_custody.get("accepted_repair_occurrence_ids")
+        )
+    )
+    active_repair_occurrence_ids = set(
+        _normalized_identity_list(parent_custody.get("active_repair_occurrence_ids"))
+    )
+    conflicting_subject_ids = sorted(
+        accepted_subject_ids.intersection(active_repair_subject_ids)
+    )
+    conflicting_repair_occurrence_ids = sorted(
+        accepted_repair_occurrence_ids.intersection(active_repair_occurrence_ids)
+    )
+    if conflicting_subject_ids:
+        return (
+            "accepted worker and repair custody overlap on subject ids "
+            f"{conflicting_subject_ids}; automatic advancement is blocked"
+        )
+    if conflicting_repair_occurrence_ids:
+        return (
+            "accepted worker and repair custody overlap on repair occurrences "
+            f"{conflicting_repair_occurrence_ids}; automatic advancement is blocked"
+        )
+    return None
+
+
 def check_successor_gate(
     policy: AdvancementPolicy,
     *,
@@ -102,6 +159,7 @@ def check_successor_gate(
     completed_count: int = 0,
     has_final_acceptance_receipt: bool = False,
     final_milestone_label: str | None = None,
+    parent_custody: Mapping[str, Any] | None = None,
 ) -> AdvancementDecision | None:
     """Check whether a completed chain's declared successors may be initialised.
 
@@ -154,6 +212,16 @@ def check_successor_gate(
             gate="successor_acceptance",
         )
 
+    custody_conflict = _parent_custody_conflict_reason(parent_custody)
+    if custody_conflict is not None:
+        return _decision(
+            policy,
+            "successor_gate_closed",
+            False,
+            f"chain is complete but {custody_conflict}",
+            gate="parent_custody",
+        )
+
     # Valid evidence present — gate is open.
     return _decision(
         policy,
@@ -179,6 +247,7 @@ def assess_advancement(
     completed_count: int = 0,
     has_final_acceptance_receipt: bool = False,
     final_milestone_label: str | None = None,
+    parent_custody: Mapping[str, Any] | None = None,
 ) -> AdvancementDecision:
     """Classify the next safe owner action without executing it.
 
@@ -201,6 +270,7 @@ def assess_advancement(
             completed_count=completed_count,
             has_final_acceptance_receipt=has_final_acceptance_receipt,
             final_milestone_label=final_milestone_label,
+            parent_custody=parent_custody,
         )
         if successor_decision is not None:
             return successor_decision
@@ -219,6 +289,18 @@ def assess_advancement(
             "preserve_live",
             False,
             "active plan step is still running; duplicate execution is forbidden",
+        )
+    custody_conflict = _parent_custody_conflict_reason(parent_custody)
+    if custody_conflict is not None and (
+        state in {"done", "complete", "completed", "reviewed"}
+        or chain_state == "between_milestones"
+    ):
+        return _decision(
+            policy,
+            "repair",
+            False,
+            custody_conflict,
+            gate="parent_custody",
         )
     if state in HUMAN_ONLY_STATES:
         return _decision(

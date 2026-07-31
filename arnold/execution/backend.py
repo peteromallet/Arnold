@@ -97,6 +97,7 @@ from arnold.execution.state_store import (
     RunCheckpoint,
     StateStore,
 )
+from arnold.workflow.native_wbc import begin_native_wbc_attempt
 
 
 class ExecutionBackend(Protocol):
@@ -211,6 +212,7 @@ class LocalJournalBackend:
         self._initial_scope_stack = initial_scope_stack
         self._state_store = state_store
         self._logger = logger or ExecutionLogger()
+        self._wbc_attempt = None
 
     # ------------------------------------------------------------------
     # Pluggable hooks (subclass-friendly)
@@ -270,6 +272,38 @@ class LocalJournalBackend:
             route=requirement.route,
             context={"run_id": self._run_id, "coordinate": str(context.coordinate)},
         )
+
+    def _record_wbc_effect_intent(
+        self,
+        *,
+        effect_id: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        if self._wbc_attempt is None:
+            return
+        self._wbc_attempt.effect_intent(effect_id, payload)
+
+    def _record_wbc_effect_outcome(
+        self,
+        *,
+        effect_id: str,
+        status: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        if self._wbc_attempt is None:
+            return
+        self._wbc_attempt.effect_outcome(effect_id, status=status, payload=payload)
+
+    def _record_wbc_reconciliation(
+        self,
+        *,
+        name: str,
+        outcome: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        if self._wbc_attempt is None:
+            return
+        self._wbc_attempt.reconciliation(name, outcome=outcome, payload=payload)
 
     def _budget_for_node(
         self, coordinate: RouteCoordinate, node: WorkflowNode
@@ -339,13 +373,41 @@ class LocalJournalBackend:
             key_template=idempotency.key_template if idempotency else None,
             key_ref=idempotency.key_ref if idempotency else None,
         )
-        return self._registries.effects.execute(
+        # Step 9B: route through durable WBC protocol when attached.
+        protocol = self._wbc_effect_protocol()
+        if protocol is not None:
+            protocol.persist_durable_intent(
+                idempotency_key=key,
+                intent_payload={
+                    "effect_id": effect_ref.effect_id,
+                    "route": str(effect_ref.route),
+                    "coordinate": str(context.coordinate),
+                    "run_id": self._run_id,
+                },
+            )
+        result = self._registries.effects.execute(
             effect_ref.effect_id,
             route=effect_ref.route,
             payload={"coordinate": str(context.coordinate)},
             idempotency_key=key,
             context={"run_id": self._run_id},
         )
+        if protocol is not None:
+            protocol.record_outcome(
+                idempotency_key=key, outcome="COMPLETED",
+            )
+        return result
+
+    def _wbc_effect_protocol(self):
+        """Step 9B/9C: override to inject a WBC effect-protocol adapter.
+
+        When non-None, every effect dispatch (``_execute_effect``,
+        ``_run_effect``, ``_execute_compensation_effect``) routes
+        through the durable WBC protocol: durable intent is persisted
+        before dispatch, outcomes are accepted through CAS, and there
+        is no blind (journal-only) compensation path.
+        """
+        return None
 
     def _select_branch(
         self,
@@ -429,6 +491,16 @@ class LocalJournalBackend:
             self._state_store = state_store
         if logger is not None:
             self._logger = logger
+        self._wbc_attempt = begin_native_wbc_attempt(
+            self._root,
+            producer_family="arnold_execution",
+            surface="backend.run_manifest",
+            run_id=self._run_id,
+            manifest_hash=manifest.manifest_hash or "",
+            subject={"manifest_id": manifest.id, "resume": resume_cursor is not None},
+            metadata={"backend": self.__class__.__name__},
+            start_payload={"artifact_root": str(self._root), "resume": resume_cursor is not None},
+        )
 
         span = self._logger.span("run_manifest", self._run_id)
         span.__enter__()
@@ -475,6 +547,10 @@ class LocalJournalBackend:
                     "resume_rejected",
                     {"node_ref": node_ref, "reason": "authority denied"},
                 )
+                self._wbc_attempt.resume(
+                    "resume_rejected",
+                    {"node_ref": node_ref, "reason": "authority denied"},
+                )
             else:
                 self._append(
                     EventFamily.SUSPENSION,
@@ -487,6 +563,10 @@ class LocalJournalBackend:
                 self._logger.log_event(
                     "run_resumed",
                     self._run_id,
+                    {"node_ref": node_ref, "reentry_id": self._reentry_id or ""},
+                )
+                self._wbc_attempt.resume(
+                    "node_resumed",
                     {"node_ref": node_ref, "reentry_id": self._reentry_id or ""},
                 )
 
@@ -637,6 +717,37 @@ class LocalJournalBackend:
                 resume_cursor_out = self._build_resume_cursor(suspended)
 
         span.__exit__(None, None, None)
+
+        if terminal == ExecutionState.SUSPENDED:
+            self._wbc_attempt.terminal(
+                status="suspended",
+                outcome="checkpoint",
+                payload={"state": terminal.value, "resume_available": resume_cursor_out is not None},
+            )
+        elif terminal == ExecutionState.QUARANTINED:
+            self._wbc_attempt.terminal(
+                status="quarantined",
+                outcome="result",
+                payload={"state": terminal.value, "diagnostic_count": len(diagnostics)},
+            )
+        elif terminal == ExecutionState.CANCELLED:
+            self._wbc_attempt.terminal(
+                status="cancelled",
+                outcome="result",
+                payload={"state": terminal.value, "diagnostic_count": len(diagnostics)},
+            )
+        elif terminal == ExecutionState.FAILED:
+            self._wbc_attempt.terminal(
+                status="failed",
+                outcome="result",
+                payload={"state": terminal.value, "diagnostic_count": len(diagnostics)},
+            )
+        else:
+            self._wbc_attempt.terminal(
+                status="completed",
+                outcome="result",
+                payload={"state": terminal.value, "diagnostic_count": len(diagnostics)},
+            )
 
         return ExecutionResult(
             state=terminal,
@@ -1274,6 +1385,13 @@ class LocalJournalBackend:
         effect_ref,
         context: ExecutionContext,
     ) -> bool:
+        effect_payload: dict[str, Any] = {
+            "node_ref": coordinate.node_ref,
+            "effect_id": effect_ref.effect_id,
+            "route": effect_ref.route,
+            "scope_stack": list(coordinate.scope_stack),
+        }
+        self._record_wbc_effect_intent(effect_id=effect_ref.effect_id, payload=effect_payload)
         try:
             idempotency = effect_ref.idempotency or None
             if idempotency is None:
@@ -1295,6 +1413,11 @@ class LocalJournalBackend:
                     "error": str(exc),
                 },
             )
+            self._record_wbc_effect_outcome(
+                effect_id=effect_ref.effect_id,
+                status="rejected",
+                payload={**effect_payload, "error": str(exc)},
+            )
             return False
 
         key = derive_effect_idempotency_key(
@@ -1304,9 +1427,20 @@ class LocalJournalBackend:
             key_template=effect_ref.idempotency.key_template if effect_ref.idempotency else None,
             key_ref=effect_ref.idempotency.key_ref if effect_ref.idempotency else None,
         )
+        effect_payload["idempotency_key"] = key
 
         ledger = fold_effect_ledger(self._journal.read())
         if ledger.is_duplicate(key):
+            self._record_wbc_reconciliation(
+                name=f"effect.{effect_ref.effect_id}.duplicate",
+                outcome="already_recorded",
+                payload=effect_payload,
+            )
+            self._record_wbc_effect_outcome(
+                effect_id=effect_ref.effect_id,
+                status="duplicate_skipped",
+                payload=effect_payload,
+            )
             return True
 
         descriptor = EffectDescriptor(
@@ -1338,6 +1472,11 @@ class LocalJournalBackend:
                 scope_stack=coordinate.scope_stack,
                 idempotency_key=key,
             )
+            self._record_wbc_effect_outcome(
+                effect_id=effect_ref.effect_id,
+                status="failed",
+                payload={**effect_payload, "error": str(exc)},
+            )
             return False
 
         self._append(
@@ -1346,6 +1485,11 @@ class LocalJournalBackend:
             fulfillment_payload(descriptor, result),
             scope_stack=coordinate.scope_stack,
             idempotency_key=key,
+        )
+        self._record_wbc_effect_outcome(
+            effect_id=effect_ref.effect_id,
+            status="fulfilled",
+            payload={**effect_payload, "result": dict(result)},
         )
         return True
 
@@ -1509,8 +1653,30 @@ class LocalJournalBackend:
 
         effect_ref = step.target.effect
         coordinate = step.coordinate
+        effect_payload: dict[str, Any] = {
+            "node_ref": coordinate.node_ref,
+            "effect_id": effect_ref.effect_id,
+            "route": effect_ref.route,
+            "scope_stack": list(coordinate.scope_stack),
+            "compensation": True,
+            "idempotency_key": step.idempotency_key,
+        }
+        self._record_wbc_effect_intent(
+            effect_id=f"{effect_ref.effect_id}.compensation",
+            payload=effect_payload,
+        )
         ledger = fold_effect_ledger(self._journal.read())
         if ledger.is_duplicate(step.idempotency_key):
+            self._record_wbc_reconciliation(
+                name=f"effect.{effect_ref.effect_id}.compensation.duplicate",
+                outcome="already_recorded",
+                payload=effect_payload,
+            )
+            self._record_wbc_effect_outcome(
+                effect_id=f"{effect_ref.effect_id}.compensation",
+                status="duplicate_skipped",
+                payload=effect_payload,
+            )
             return True, None
 
         descriptor = EffectDescriptor(
@@ -1541,6 +1707,11 @@ class LocalJournalBackend:
                 scope_stack=coordinate.scope_stack,
                 idempotency_key=step.idempotency_key,
             )
+            self._record_wbc_effect_outcome(
+                effect_id=f"{effect_ref.effect_id}.compensation",
+                status="failed",
+                payload={**effect_payload, "error": str(exc)},
+            )
             return False, str(exc)
         self._append(
             EventFamily.EFFECT,
@@ -1548,6 +1719,11 @@ class LocalJournalBackend:
             fulfillment_payload(descriptor, result),
             scope_stack=coordinate.scope_stack,
             idempotency_key=step.idempotency_key,
+        )
+        self._record_wbc_effect_outcome(
+            effect_id=f"{effect_ref.effect_id}.compensation",
+            status="fulfilled",
+            payload={**effect_payload, "result": dict(result)},
         )
         return True, None
 

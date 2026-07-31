@@ -68,6 +68,34 @@ def _make_program(
     return NativeProgram(name=name, instructions=instructions)
 
 
+def test_trace_emission_is_behavior_preserving(tmp_path: Path) -> None:
+    @phase
+    def do_work(ctx: dict) -> dict:
+        return {"result": 42}
+
+    @pipeline
+    def my_pipe(ctx: dict) -> dict:
+        state = yield do_work(ctx)
+        return state
+
+    program = compile_pipeline(my_pipe)
+    result_without_trace = run_native_pipeline(program)
+    trace_dir = tmp_path / "traces"
+    result_with_trace = run_native_pipeline(program, trace_dir=trace_dir)
+
+    assert {
+        "state.json",
+        "events.ndjson",
+        "stages.json",
+        "artifacts.json",
+        "checkpoint.json",
+    } <= {path.name for path in trace_dir.iterdir()}
+    assert json.loads((trace_dir / "state.json").read_text(encoding="utf-8"))
+    assert result_without_trace.state == result_with_trace.state
+    assert result_without_trace.stages == result_with_trace.stages
+    assert result_without_trace.suspended == result_with_trace.suspended
+
+
 def test_cancellation_boundary_checkpoints_typed_outcome_and_releases_lease(tmp_path: Path) -> None:
     store = FileProjectLeaseStore(tmp_path / "leases")
     claimed = store.claim_project_lease(

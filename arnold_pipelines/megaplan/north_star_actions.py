@@ -243,7 +243,16 @@ NORTH_STAR_ACTION_ADDRESSED_SCHEMA: dict[str, Any] = {
             "enum": list(NORTH_STAR_ACTION_TYPES),
         },
     },
-    "required": ["action_id", "resolution", "reason"],
+    # These fields match the fail-closed closeout consumer.  Keeping
+    # ``action_type`` or ``plan_refs`` optional here lets a provider produce a
+    # schema-valid receipt that revise/finalize must immediately reject.
+    "required": [
+        "action_id",
+        "resolution",
+        "reason",
+        "plan_refs",
+        "action_type",
+    ],
 }
 
 

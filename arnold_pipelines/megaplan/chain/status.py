@@ -31,6 +31,24 @@ from arnold_pipelines.megaplan.planning.state import (
     TERMINAL_STATES,
 )
 
+# M9 — chain terminal/completion reads now derive from canonical WBC terminal/gap
+# queries and exact source cursors. The legacy chain JSON remains a compatibility
+# projection only: it is still read for non-terminal dimensions (pause, PR-merge,
+# runner liveness, plan phase), but it can no longer mint terminal/completion
+# labels when canonical WBC evidence is supplied and contradicts it.
+
+# Sentinel for an absent source cursor vector — matches the convention used by
+# arnold_pipelines.megaplan.status_projection.
+_MISSING_CURSOR: dict[str, Any] = {
+    "authority": "absent",
+    "reason": "no_source_cursor_vector_provided",
+}
+
+# WBC terminal-gate statuses that invalidate a stale chain JSON terminal label.
+# VERIFIED means the durable ledger has a coherent terminal event; every other
+# status means the terminal label cannot be derived from canonical evidence.
+_WBC_INVALIDATING_STATUSES = frozenset({"INCOMPLETE", "INDETERMINATE", "INCOHERENT"})
+
 
 @dataclass(frozen=True)
 class ChainStatusClassification:
@@ -103,8 +121,17 @@ def build_chain_status_snapshot(
     *,
     resources: Iterable[TypedResource] = (),
     inspect_runner: Any | None = None,
+    wbc_terminal_envelope: Any | None = None,
+    wbc_gap_envelope: Any | None = None,
+    source_cursor_vector: Mapping[str, Any] | None = None,
 ) -> ChainStatusSnapshot:
-    """Gather local chain facts and classify them into an Arnold operation state."""
+    """Gather local chain facts and classify them into an Arnold operation state.
+
+    When canonical WBC terminal/gap envelopes and a source cursor vector are
+    supplied, terminal and completion status reads derive from those canonical
+    queries (see :func:`classify_chain_status`). The legacy chain JSON remains a
+    compatibility projection only — it is still read for non-terminal dimensions.
+    """
 
     diagnostics: list[dict[str, Any]] = []
     resource_tuple = tuple(resources)
@@ -156,6 +183,9 @@ def build_chain_status_snapshot(
         runner=runner,
         policy=policy,
         sync=sync,
+        wbc_terminal_envelope=wbc_terminal_envelope,
+        wbc_gap_envelope=wbc_gap_envelope,
+        source_cursor_vector=source_cursor_vector,
     )
 
     return ChainStatusSnapshot(
@@ -192,8 +222,28 @@ def classify_chain_status(
     runner: Mapping[str, Any],
     policy: Mapping[str, Any],
     sync: Mapping[str, Any],
+    wbc_terminal_envelope: Any | None = None,
+    wbc_gap_envelope: Any | None = None,
+    source_cursor_vector: Mapping[str, Any] | None = None,
 ) -> ChainStatusClassification:
-    """Classify gathered chain facts into a durable Arnold operation state."""
+    """Classify gathered chain facts into a durable Arnold operation state.
+
+    M9 — terminal and completion reads derive from canonical WBC terminal/gap
+    queries when supplied. The legacy chain JSON is treated as a compatibility
+    projection: it still informs non-terminal dimensions (operator pause,
+    PR-merge, runner liveness, plan phase, policy gates) but can no longer mint
+    a terminal/completion label when canonical WBC evidence contradicts it.
+
+    When a live active attempt (canonical WBC terminal query ``INCOMPLETE`` —
+    no durable terminal event) invalidates a stale chain terminal label, a drift
+    record is emitted and the terminal read falls through to the non-terminal
+    classification path. Other run-state dimensions are preserved: drift never
+    collapses pause/PR-merge/runner/policy reasoning into a single new state.
+
+    Neither the WBC envelopes nor the source cursor vector grant dispatch,
+    completion, cancellation, publication, or delivery authority. They are
+    evidence/traceability inputs only.
+    """
 
     base_metadata = {
         "source_operation_state": operation_state.value,
@@ -203,15 +253,86 @@ def classify_chain_status(
         "sync_state": sync.get("sync_state"),
     }
 
+    # M9 — accumulate drift records and WBC evidence refs. These are attached
+    # to every emitted classification so consumers can observe contradictions
+    # without re-deriving them. Drift is evidence-only and never authoritative.
+    drift_records: list[dict[str, Any]] = []
+    wbc_refs = _extract_wbc_refs(wbc_terminal_envelope, wbc_gap_envelope)
+    has_wbc = wbc_terminal_envelope is not None or wbc_gap_envelope is not None
+    terminal_authority = "wbc_canonical" if has_wbc else "legacy_chain_compat"
+    wbc_status_name = _wbc_status_name(wbc_terminal_envelope)
+    wbc_invalidates_terminal = (
+        wbc_terminal_envelope is not None
+        and wbc_status_name in _WBC_INVALIDATING_STATUSES
+    )
+
+    # Gap-envelope drift: ledger sequence gaps indicate bookkeeping
+    # inconsistency and are recorded independently of terminal classification.
+    _record_gap_drift(wbc_gap_envelope, source_cursor_vector, drift_records)
+
+    def _emit(
+        state: OperationState,
+        effective_status: str,
+        reason: str,
+        *,
+        extra: Mapping[str, Any] | None = None,
+    ) -> ChainStatusClassification:
+        metadata = dict(base_metadata)
+        if extra:
+            metadata.update(extra)
+        metadata["terminal_authority"] = terminal_authority
+        metadata["drift"] = [dict(record) for record in drift_records]
+        metadata["wbc_refs"] = [dict(ref) for ref in wbc_refs]
+        metadata["wbc_refs_authority"] = "evidence_extracted_non_authoritative"
+        metadata["source_cursor_vector"] = _source_cursor_meta(source_cursor_vector)
+        return _classification(state, effective_status, reason, metadata)
+
+    def _terminal(
+        state: OperationState,
+        effective_status: str,
+        reason: str,
+        *,
+        chain_terminal_label: str,
+    ) -> ChainStatusClassification | None:
+        """Emit a terminal classification, or return None to fall through.
+
+        When canonical WBC evidence invalidates the chain terminal label, a
+        drift record is appended (so it surfaces on the eventual non-terminal
+        classification) and ``None`` is returned so the non-terminal dimensions
+        below take over — without collapsing them.
+        """
+        if not wbc_invalidates_terminal:
+            return _emit(state, effective_status, reason)
+        drift_records.append(
+            _drift_record(
+                kind=(
+                    "live_active_attempt_contradicts_stale_terminal_label"
+                    if wbc_status_name == "INCOMPLETE"
+                    else "wbc_terminal_unverifiable_invalidates_chain_label"
+                ),
+                chain_terminal_label=chain_terminal_label,
+                wbc_status=wbc_status_name or "UNKNOWN",
+                wbc_terminal_event_type=_wbc_terminal_event_type_name(
+                    wbc_terminal_envelope
+                ),
+                operation_state=state.value,
+                wbc_terminal_envelope=_wbc_terminal_envelope_ref(
+                    wbc_terminal_envelope
+                ),
+                source_cursor=_source_cursor_meta(source_cursor_vector),
+            )
+        )
+        return None
+
     if chain_state is not None:
         from arnold_pipelines.megaplan.chain.operator_pause import is_paused
 
         if is_paused(chain_state):
-            return _classification(
+            # Pause is a non-terminal dimension — preserved even during drift.
+            return _emit(
                 OperationState.SUSPENDED,
                 "paused",
                 "operator_pause",
-                base_metadata,
             )
 
     if spec is not None and chain_state is not None:
@@ -222,108 +343,133 @@ def classify_chain_status(
             and current_index >= milestone_count
             and _chain_has_full_completed_set(spec, chain_state)
         ):
-            return _classification(
+            result = _terminal(
                 OperationState.SUCCEEDED,
                 "complete",
                 "all_milestones_completed",
-                base_metadata,
+                chain_terminal_label=STATE_DONE,
             )
+            if result is not None:
+                return result
 
     if chain_state is not None and chain_state.last_state == STATE_AWAITING_PR_MERGE:
-        return _classification(
+        return _emit(
             OperationState.AWAITING_APPROVAL,
             "awaiting_pr_merge",
             "chain_waiting_for_pr_merge",
-            base_metadata,
         )
 
     state = _string_or_none(plan_status.get("status"))
     if state == STATE_AWAITING_HUMAN_VERIFY:
         if _human_verification_satisfied(human_verification):
             if _runner_alive(runner):
-                return _classification(
+                return _emit(
                     OperationState.RUNNING,
                     "running",
                     "human_verification_satisfied_runner_alive",
-                    base_metadata,
                 )
-            return _classification(
+            return _emit(
                 OperationState.SUSPENDED,
                 "stale_bookkeeping",
                 "human_verification_satisfied_runner_inactive",
-                base_metadata,
             )
-        return _classification(
+        return _emit(
             OperationState.AWAITING_APPROVAL,
             "awaiting_human_verify",
             "latest_verdict_human_verification_pending",
-            base_metadata,
         )
 
     if state in {STATE_FAILED, STATE_BLOCKED}:
-        return _classification(OperationState.FAILED, state, f"plan_{state}", base_metadata)
+        result = _terminal(
+            OperationState.FAILED,
+            state,
+            f"plan_{state}",
+            chain_terminal_label=state,
+        )
+        if result is not None:
+            return result
     if state in {STATE_ABORTED, STATE_CANCELLED}:
-        return _classification(OperationState.CANCELLED, state, f"plan_{state}", base_metadata)
+        result = _terminal(
+            OperationState.CANCELLED,
+            state,
+            f"plan_{state}",
+            chain_terminal_label=state,
+        )
+        if result is not None:
+            return result
     if state == STATE_PAUSED:
-        return _classification(OperationState.SUSPENDED, "paused", "plan_paused", base_metadata)
+        return _emit(OperationState.SUSPENDED, "paused", "plan_paused")
     if state == STATE_AWAITING_PR_MERGE:
-        return _classification(
+        return _emit(
             OperationState.AWAITING_APPROVAL,
             "awaiting_pr_merge",
             "plan_waiting_for_pr_merge",
-            base_metadata,
         )
 
     if operation_state in {OperationState.SUCCEEDED, OperationState.FAILED, OperationState.CANCELLED}:
-        return _classification(
+        result = _terminal(
             operation_state,
             operation_state.value,
             "terminal_operation_state",
-            base_metadata,
+            chain_terminal_label=operation_state.value,
         )
+        if result is not None:
+            return result
 
     if _runner_alive(runner):
-        return _classification(OperationState.RUNNING, "running", "runner_alive", base_metadata)
+        return _emit(OperationState.RUNNING, "running", "runner_alive")
 
     if state and state not in {"missing", "unavailable"} and state not in TERMINAL_STATES:
-        return _classification(
+        return _emit(
             OperationState.SUSPENDED,
             "stale_bookkeeping",
             "active_plan_without_live_runner",
-            base_metadata,
         )
 
     if launch_state == "failed_before_running":
-        return _classification(
+        return _emit(
             OperationState.PENDING,
             "validation_failed_before_running",
             "pre_running_failure_retryable",
-            base_metadata,
         )
 
     if policy.get("prerequisite_policy") == "required":
-        return _classification(
+        return _emit(
             OperationState.AWAITING_APPROVAL,
             "human_prerequisite",
             "required_prerequisite_policy",
-            base_metadata,
         )
     if policy.get("validation_policy") == "required":
-        return _classification(
+        return _emit(
             OperationState.AWAITING_APPROVAL,
             "quality_gate",
             "required_validation_policy",
-            base_metadata,
         )
 
     if operation_state is OperationState.RUNNING:
-        return _classification(
+        return _emit(
             OperationState.SUSPENDED,
             "stale_bookkeeping",
             "running_operation_without_live_runner",
-            base_metadata,
         )
-    return _classification(operation_state, operation_state.value, "operation_state_fallback", base_metadata)
+    # M9 — the durable operation state may itself be terminal, but canonical
+    # WBC evidence has already invalidated the terminal label (drift records
+    # accumulated above). Re-emitting that terminal operation state here would
+    # make the terminal read derive from the operation state rather than from
+    # canonical WBC queries. Preserve the accumulated drift and surface a
+    # non-terminal stale-bookkeeping classification instead — this does not
+    # collapse any other run-state dimension, which was already evaluated above.
+    if wbc_invalidates_terminal and operation_state in {
+        OperationState.SUCCEEDED,
+        OperationState.FAILED,
+        OperationState.CANCELLED,
+    }:
+        return _emit(
+            OperationState.SUSPENDED,
+            "stale_bookkeeping",
+            "terminal_operation_state_invalidated_by_wbc",
+        )
+    return _emit(operation_state, operation_state.value, "operation_state_fallback")
 
 
 def _current_plan_facts(
@@ -574,6 +720,156 @@ def _classification(
         effective_status=effective_status,
         reason=reason,
         metadata=dict(metadata),
+    )
+
+
+# ── M9 WBC / source-cursor helpers ──────────────────────────────────────────
+# These helpers read canonical WBC envelopes and source cursor vectors in a
+# duck-typed, defensive way so the chain status module does not hard-depend on
+# the workflow package at import time. Every value they produce is an
+# evidence/traceability projection — none of them grant authority.
+
+
+def _wbc_status_name(envelope: Any | None) -> str | None:
+    """Return the canonical GateStatus name (e.g. ``VERIFIED``) or ``None``."""
+    if envelope is None:
+        return None
+    status = getattr(envelope, "status", None)
+    if status is None:
+        return None
+    name = getattr(status, "name", None)
+    if isinstance(name, str) and name:
+        return name
+    text = _string_or_none(status)
+    return text.upper() if text else None
+
+
+def _wbc_terminal_event_type_name(envelope: Any | None) -> str | None:
+    """Return the terminal event type name (e.g. ``completed``) when VERIFIED."""
+    if envelope is None:
+        return None
+    event = getattr(envelope, "terminal_event", None)
+    if event is None:
+        return None
+    event_type = getattr(event, "event_type", None)
+    if event_type is None:
+        return None
+    name = getattr(event_type, "name", None)
+    if isinstance(name, str) and name:
+        return name.lower()
+    text = _string_or_none(event_type)
+    return text.lower() if text else None
+
+
+def _wbc_terminal_envelope_ref(envelope: Any | None) -> dict[str, Any]:
+    """Compact, non-authoritative reference to a WBC terminal envelope."""
+    if envelope is None:
+        return {}
+    return {
+        "attempt_id": _string_or_none(getattr(envelope, "attempt_id", None)),
+        "status": _wbc_status_name(envelope),
+        "terminal_event_type": _wbc_terminal_event_type_name(envelope),
+        "chain": _string_or_none(getattr(envelope, "chain", None)),
+        "phase": _string_or_none(getattr(envelope, "phase", None)),
+        "task": _string_or_none(getattr(envelope, "task", None)),
+        "ledger_sequence": getattr(envelope, "ledger_sequence", 0),
+        "content_digest": _string_or_none(getattr(envelope, "content_digest", None)),
+        "evidence_ids": list(getattr(envelope, "evidence_ids", ()) or ()),
+    }
+
+
+def _wbc_gap_envelope_ref(envelope: Any | None) -> dict[str, Any]:
+    """Compact, non-authoritative reference to a WBC gap envelope."""
+    if envelope is None:
+        return {}
+    gaps = getattr(envelope, "gaps", ()) or ()
+    return {
+        "attempt_id": _string_or_none(getattr(envelope, "attempt_id", None)),
+        "status": _wbc_status_name(envelope),
+        "gap_count": len(gaps),
+        "chain": _string_or_none(getattr(envelope, "chain", None)),
+        "phase": _string_or_none(getattr(envelope, "phase", None)),
+        "task": _string_or_none(getattr(envelope, "task", None)),
+        "ledger_sequence": getattr(envelope, "ledger_sequence", 0),
+        "content_digest": _string_or_none(getattr(envelope, "content_digest", None)),
+        "evidence_ids": list(getattr(envelope, "evidence_ids", ()) or ()),
+    }
+
+
+def _extract_wbc_refs(
+    wbc_terminal_envelope: Any | None,
+    wbc_gap_envelope: Any | None,
+) -> list[dict[str, Any]]:
+    """Build the non-authoritative WBC evidence refs attached to classifications."""
+    refs: list[dict[str, Any]] = []
+    if wbc_terminal_envelope is not None:
+        refs.append({"query": "terminal", **_wbc_terminal_envelope_ref(wbc_terminal_envelope)})
+    if wbc_gap_envelope is not None:
+        refs.append({"query": "gap", **_wbc_gap_envelope_ref(wbc_gap_envelope)})
+    return refs
+
+
+def _source_cursor_meta(source_cursor_vector: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Render the source cursor vector as a display-only evidence projection."""
+    if isinstance(source_cursor_vector, Mapping) and source_cursor_vector:
+        return {
+            "authority": "evidence_extracted_display_only",
+            "value": dict(source_cursor_vector),
+        }
+    return dict(_MISSING_CURSOR)
+
+
+def _drift_record(
+    *,
+    kind: str,
+    chain_terminal_label: str | None = None,
+    wbc_status: str | None = None,
+    wbc_terminal_event_type: str | None = None,
+    operation_state: str | None = None,
+    wbc_terminal_envelope: Mapping[str, Any] | None = None,
+    wbc_gap_envelope: Mapping[str, Any] | None = None,
+    source_cursor: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Construct a single drift record. Drift is evidence-only — never authority."""
+    record: dict[str, Any] = {
+        "kind": kind,
+        "authority": "evidence_only_non_authoritative",
+    }
+    if chain_terminal_label is not None:
+        record["chain_terminal_label"] = chain_terminal_label
+    if wbc_status is not None:
+        record["wbc_status"] = wbc_status
+    if wbc_terminal_event_type is not None:
+        record["wbc_terminal_event_type"] = wbc_terminal_event_type
+    if operation_state is not None:
+        record["candidate_operation_state"] = operation_state
+    if wbc_terminal_envelope is not None:
+        record["wbc_terminal_envelope"] = dict(wbc_terminal_envelope)
+    if wbc_gap_envelope is not None:
+        record["wbc_gap_envelope"] = dict(wbc_gap_envelope)
+    if source_cursor is not None:
+        record["source_cursor_vector"] = dict(source_cursor)
+    return record
+
+
+def _record_gap_drift(
+    wbc_gap_envelope: Any | None,
+    source_cursor_vector: Mapping[str, Any] | None,
+    drift_records: list[dict[str, Any]],
+) -> None:
+    """Append a drift record when canonical WBC gap detection finds sequence gaps."""
+    if wbc_gap_envelope is None:
+        return
+    gaps = getattr(wbc_gap_envelope, "gaps", ()) or ()
+    if not gaps:
+        return
+    drift_records.append(
+        _drift_record(
+            kind="wbc_gap_detected_in_ledger_sequence",
+            wbc_status=_wbc_status_name(wbc_gap_envelope),
+            wbc_gap_envelope=_wbc_gap_envelope_ref(wbc_gap_envelope),
+            source_cursor=_source_cursor_meta(source_cursor_vector),
+        )
     )
 
 

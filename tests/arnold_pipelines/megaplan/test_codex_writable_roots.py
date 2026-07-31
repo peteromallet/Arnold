@@ -12,6 +12,13 @@ from arnold_pipelines.megaplan.runtime.engine_isolation import (
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.workers import _impl
 
+@pytest.fixture(autouse=True)
+def _clear_ambient_trusted_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each case declares its own isolation authority."""
+    monkeypatch.delenv("MEGAPLAN_TRUSTED_CONTAINER", raising=False)
+    monkeypatch.delenv("MEGPLAN_TRUSTED_CONTAINER", raising=False)
+
+
 
 def _env(*, project: Path, target: Path, work: Path, engine: Path) -> ExecutionEnvironment:
     return ExecutionEnvironment(

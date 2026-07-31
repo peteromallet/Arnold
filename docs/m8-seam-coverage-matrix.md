@@ -77,14 +77,14 @@ audited against a schema, and budget-checked with a real tokenizer assembly.
 
 | Component | File:Line | Role |
 |-----------|-----------|------|
-| `capture_step_output` | `arnold/pipelines/megaplan/model_seam.py:851-1050` | Single chokepoint: parses model output, runs structural audit, returns ContractResult |
-| `audit_step_payload` | `arnold/pipelines/megaplan/model_seam.py:1540-1700` | Structural audit entry point (delegates to `_audit_capture_payload` → `validate_payload_against_schema`) |
-| `budget_model_input` | `arnold/pipelines/megaplan/model_seam.py:200-380` | Real-tokenizer assembly-time budget check (catches char→token overflow) |
-| `render_step_message` | `arnold/pipelines/megaplan/model_seam.py:100-190` | Renders step message with budget metadata attached |
+| `capture_step_output` | `arnold_pipelines/megaplan/model_seam.py:210-275` | Single chokepoint: parses model output, runs structural audit, returns ContractResult |
+| `audit_step_payload` | `arnold_pipelines/megaplan/model_seam.py:308-370` | Structural audit entry point (delegates to `_audit_capture_payload` → `validate_payload_against_schema`) |
+| `budget_model_input` | `arnold_pipelines/megaplan/model_seam.py:1-210` | Real-tokenizer assembly-time budget check (catches char→token overflow) |
+| `render_step_message` | `arnold_pipelines/megaplan/model_seam.py:1-210` | Renders step message with budget metadata attached |
 | `StepInvocation` | `arnold/pipeline/step_invocation.py` | Worker invocation shape with adapter-kind resolution |
 | `StepInvocationAdapterRegistry` | `arnold/pipeline/step_invocation.py` | Adapter registry (model accepted; tool/human/state/arbitrary customs fail-closed) |
-| Worker capture chokepoints | `arnold/pipelines/megaplan/workers/shannon.py:2417`, `arnold/pipelines/megaplan/workers/hermes.py:1477,1499`, `arnold/pipelines/megaplan/workers/_impl.py:2234-2590`, `arnold/pipelines/megaplan/execute/timeout.py:149`, `arnold/pipelines/megaplan/execute/batch.py:484`, `arnold/pipelines/megaplan/_pipeline/steps/agent.py:112` | 10 production call sites all routed through `capture_step_output` |
-| Handler capture chokepoints | `arnold/pipelines/megaplan/handlers/critique.py:538,703,763`, `arnold/pipelines/megaplan/handlers/gate.py:717,778`, `arnold/pipelines/megaplan/handlers/review.py:283`, `arnold/pipelines/megaplan/handlers/execute.py:293` | All handler output paths structurally audited |
+| Worker capture chokepoints | `arnold_pipelines/megaplan/workers/shannon.py:2931`, `arnold_pipelines/megaplan/workers/_impl.py:3507-4005`, `arnold_pipelines/megaplan/execute/timeout.py:155`, `arnold_pipelines/megaplan/execute/batch.py:1488`, `arnold_pipelines/megaplan/steps/agent.py:91` | Production call sites route through `capture_step_output` |
+| Handler capture chokepoints | `arnold_pipelines/megaplan/handlers/review.py:682`, `arnold_pipelines/megaplan/handlers/execute.py:1100` | Handler output paths structurally audited |
 
 ### Test Evidence
 
@@ -147,7 +147,7 @@ policy, budget authority, parallel safety) is configured via neutral contracts.
 | Step-IO handoff evaluator | `arnold/pipeline/step_io_handoff.py:60` | Classifies producer payloads and resolves Author⇄Runtime policy outcomes for typed crossings |
 | Static C4 contract checks | `arnold/pipeline/c4_static_checks.py:1` | Pre-run declaration, schema-version, structural, invocation, and capability checks over lowered author declarations |
 | Contract-aware CLI | `arnold/pipeline/_cli_check.py:1` | `arnold pipeline check --module dotted.path:factory` loads real authored pipelines and renders hard findings |
-| Capability alias normalization | `arnold/pipeline/model_resource_capabilities.py:1` | Maps author-facing `requires-vision-model` and `requires-image-decoder` aliases into the closed runtime capability vocabulary |
+| Capability alias normalization | `arnold/agent/costing/model_resource_capabilities.py:1` | Maps author-facing `requires-vision-model` and `requires-image-decoder` aliases into the closed runtime capability vocabulary |
 | `PipelineRegistry` | `arnold/pipeline/registry.py` | Named pipeline registration and discovery |
 | Profile loading | `arnold/pipeline/profiles.py` | TOML profile parsing, agent-spec shape validation, layer merging |
 | `StepIOPolicy` | `arnold/pipeline/step_io_policy.py` | Author-supplied per-operation policies: block/allow/warn/shadow |
@@ -228,7 +228,7 @@ resolved by the neutral `resolve_edge` function.
 | `ParallelSafePredicate` | `arnold/pipeline/executor.py:47-60` | Contract for runtime-supplied parallel-safety guard |
 | `DEFAULT_PARALLEL_SAFE` | `arnold/pipeline/executor.py:57-65` | Accepts everything — runtimes supply their own predicate |
 | `reduce_contract_results` (MAX_WINS lattice) | `arnold/pipeline/contract_reduce.py:31-266` | Deterministic status-lattice reduction: COMPLETED < SUSPENDED < FAILED |
-| Suspension-aware fan-out join in evidence-pack | `arnold/pipelines/evidence_pack/pipelines.py:121-138` | Barrier `_join_validators` returns `next="completed"` for reduce routing, regardless of individual outcomes |
+| Suspension-aware fan-out join in evidence-pack | `arnold_pipelines/evidence_pack/pipeline.py:50-70` | Barrier `_join_validators` returns the deterministic reduce routing result regardless of individual outcomes |
 
 ### Test Evidence
 
@@ -261,8 +261,8 @@ StepResult carry-over.
 | `VERIFIER_ARTIFACT_CHECKPOINT` | `arnold/pipelines/evidence_pack/verifier.py:50-53` | Named constant: `"verifier.checkpoint"` |
 | `VERIFIER_ARTIFACT_ATTESTATION` | `arnold/pipelines/evidence_pack/verifier.py:47-49` | Named constant: `"verifier.attestation"` |
 | `VERIFIER_ARTIFACT_VERDICT` | `arnold/pipelines/evidence_pack/verifier.py:53-55` | Named constant: `"verifier.verdict"` |
-| `build_initial_pipeline` | `arnold/pipelines/evidence_pack/pipelines.py:73-204` | `ingest → validators(∥) → reduce → human_review → emit_attestation` |
-| `build_continuation_pipeline` | `arnold/pipelines/evidence_pack/pipelines.py:217-260` | Fresh pipeline with `entry='human_review'`; reads persisted `verdict`/`evidence_pack` as external `ReadRef`s |
+| `build_initial_pipeline` | `arnold_pipelines/evidence_pack/pipeline.py:70-170` | `ingest → validators(∥) → reduce → human_review → emit_attestation` |
+| `build_continuation_pipeline` | `arnold_pipelines/evidence_pack/native.py:250-340` | Fresh continuation pipeline reads persisted verdict/evidence-pack inputs through named references |
 
 ### Suspend/Continuation Proof
 

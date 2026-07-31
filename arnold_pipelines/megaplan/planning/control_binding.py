@@ -1,6 +1,22 @@
-"""Planning-owned binding hooks for the shared control interface."""
+"""Planning-owned binding hooks for the shared control interface.
+
+M9 status: This module is a positive-control-path consumer.  It is not
+cut over to the shared SourceCursorVector / WBC adapter seam in M9 (which
+operates in shadow/view-only mode).  Every control-path decision made here
+MUST reread live Run Authority grant/fence, Custody lease/epoch, and WBC
+evidence before any positive dispatch.  Full cutover is deferred to M10.
+
+Compatibility row: control_binding.py – non-authoritative in M9, expiry
+gated by M10 control-path migration readiness.
+"""
 
 from __future__ import annotations
+
+# M9: _non_authoritative marker at module level
+# This module's control-path decisions are not yet backed by the shared
+# SourceCursorVector contract.  Consumers must treat output as orientation
+# only until M10 integrates the reread obligations.
+_m9_non_authoritative = True
 
 from collections.abc import Mapping
 from pathlib import Path
@@ -46,6 +62,7 @@ from arnold_pipelines.megaplan.profiles.policy import (
 )
 from arnold_pipelines.megaplan.replan_state import (
     REPLAN_STATE_KEYS_TO_CLEAR,
+    blocked_iterate_gate_replan_allowed,
     reset_replan_loop_state,
 )
 from arnold_pipelines.megaplan.fallback_chains import decode_phase_model_value, select_fallback_spec
@@ -859,6 +876,17 @@ class PlanningControlBinding:
         ):
             return (_awaiting_human_target(state),)
 
+        if blocked_iterate_gate_replan_allowed(state):
+            return (
+                _workflow_step_target(
+                    "replan",
+                    direction="recovery",
+                    target_state=STATE_PLANNED,
+                    source="last_gate.recommendation",
+                    operator_action="replan",
+                ),
+            )
+
         phase, source = _recovery_phase(state)
         if phase is None:
             return (
@@ -1167,7 +1195,9 @@ class PlanningControlBinding:
                     "recover-blocked requires every current blocker to be explicitly resolved as non-terminal",
                     extra={
                         "resume_cursor": dict(resume_cursor),
-                        "phase_result_exit_kind": phase_result.exit_kind,
+                        "phase_result_exit_kind": (
+                            phase_result.exit_kind if phase_result is not None else None
+                        ),
                         "blocker_ids": [
                             blocker["blocker_id"] for blocker in unresolved_blockers
                         ],
@@ -1262,7 +1292,8 @@ class PlanningControlBinding:
         if action == "replan":
             allowed = {STATE_GATED, STATE_FINALIZED, STATE_CRITIQUED, STATE_FAILED}
             current_state = state["current_state"]
-            if current_state not in allowed:
+            blocked_gate_replan = blocked_iterate_gate_replan_allowed(state)
+            if current_state not in allowed and not blocked_gate_replan:
                 raise CliError(
                     "invalid_transition",
                     f"replan requires state {', '.join(sorted(allowed))}, got '{current_state}'",

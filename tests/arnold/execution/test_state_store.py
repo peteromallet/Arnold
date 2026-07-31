@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import pytest
 
@@ -15,11 +16,17 @@ from arnold.execution.state_store import (
     RoutingSnapshot,
     RunCheckpoint,
 )
+from arnold.workflow.native_wbc import native_wbc_dir
 from arnold.manifest import WorkflowEdge, WorkflowManifest, WorkflowNode
 
 
 def _manifest(*nodes: WorkflowNode, edges: tuple[WorkflowEdge, ...] = ()) -> WorkflowManifest:
     return WorkflowManifest(id="demo", nodes=nodes, edges=edges)
+
+
+def _records(root: Path) -> list[dict[str, object]]:
+    path = native_wbc_dir(root, producer_family="arnold_execution", surface="state_store") / "events.ndjson"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
 def test_file_state_store_round_trip(tmp_path: Path) -> None:
@@ -121,3 +128,38 @@ def test_local_backend_accepts_state_store_directly(tmp_path: Path) -> None:
     run_ids = store.list()
     assert len(run_ids) == 1
     assert store.load(run_ids[0]) is not None
+
+
+def test_state_store_emits_resume_and_reconciliation_wbc_evidence(tmp_path: Path) -> None:
+    store = FileStateStore(tmp_path / "checkpoints")
+    checkpoint = RunCheckpoint(
+        run_id="run-1",
+        manifest_id="demo",
+        manifest_hash="sha256:" + "d" * 64,
+        status="running",
+        journal_pointer=JournalPointer(journal_uri="file://journal", sequence=1),
+    )
+
+    store.save(checkpoint)
+    store.save(
+        RunCheckpoint(
+            run_id="run-1",
+            manifest_id="demo",
+            manifest_hash="sha256:" + "d" * 64,
+            status="completed",
+            journal_pointer=JournalPointer(journal_uri="file://journal", sequence=2),
+        )
+    )
+    loaded = store.load("run-1")
+    run_ids = store.list()
+
+    assert loaded is not None
+    assert run_ids == ["run-1"]
+
+    events = _records(tmp_path / "checkpoints")
+    event_types = [event["event"] for event in events]
+    assert "reconciliation" in event_types
+    assert "resume" in event_types
+    assert "effect_outcome" in event_types
+    assert all(event["authority"]["grants_authority"] is False for event in events)
+    assert all(event["authority"]["leases_authority"] is False for event in events)

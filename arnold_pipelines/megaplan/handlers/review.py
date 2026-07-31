@@ -30,6 +30,10 @@ from arnold_pipelines.megaplan.orchestration.transition_policy import (
     TransitionPolicyDecision,
     TransitionWriter,
 )
+from arnold_pipelines.megaplan.workflows.handler_contract import (
+    apply_state_projection,
+    dispatch_review_panel,
+)
 from arnold_pipelines.megaplan.execute.merge import _validate_and_merge_batch
 from arnold_pipelines.megaplan.model_seam import ModelStructuralAuditError, audit_step_payload
 from arnold_pipelines.megaplan.outcomes import ReviewDecisionResult, ReviewOutcome
@@ -88,6 +92,7 @@ from arnold_pipelines.megaplan._core import (
 from .shared import (
     _attach_next_step_runtime,
     _active_step_fallback_fields,
+    _emit_named_boundary_receipt,
     _agent_mode_parts,
     _emit_phase_notice,
     _emit_receipt,
@@ -100,6 +105,7 @@ from .shared import (
 from arnold_pipelines.megaplan.orchestration.phase_result import _emit_phase_result
 from arnold_pipelines.megaplan.orchestration.phase_result import Deviation as _PhaseDeviation
 from arnold_pipelines.megaplan.receipts.extractors import review_metrics
+from arnold_pipelines.megaplan.custody.phase_wbc import complete_phase_wbc, fail_phase_wbc, phase_wbc_state
 
 """Review handler — post-execute implementation-evidence pass.
 
@@ -111,6 +117,97 @@ judges the *work product*.  Do not rename or conflate them.
 """
 
 log = logging.getLogger(__name__)
+
+# M8A: Maximum number of review rework waves before the circuit opens.
+# The configured ``max_review_rework_cycles`` may be lower but never higher.
+_MAX_REWORK_WAVES: int = 5
+
+
+# ── M11 Step 23: Runtime provenance for review routing ──────────────────
+
+#: Prefix for synthetic review-only task IDs.  These are NOT runnable
+#: finalize task IDs — they are review-scoped concern markers that must
+#: not be routed to execute as generic runnable tasks.
+_SYNTHETIC_REVIEW_TASK_PREFIX: str = "REVIEW-"
+
+
+def _verify_attach_next_step_runtime() -> dict[str, Any]:
+    """Prove ``_attach_next_step_runtime`` exists in the loaded runtime.
+
+    Returns a provenance record confirming the function is importable,
+    callable, and bound to the expected module.  Raises
+    :class:`RuntimeError` if the function cannot be resolved — review
+    routing outcomes cannot be bound to runtime provenance without it.
+    """
+    from arnold_pipelines.megaplan.handlers.shared import _attach_next_step_runtime as _fn
+
+    if not callable(_fn):
+        raise RuntimeError(
+            "M11 review routing: _attach_next_step_runtime is not callable in the loaded runtime"
+        )
+    return {
+        "function": "_attach_next_step_runtime",
+        "module": _fn.__module__,
+        "qualname": getattr(_fn, "__qualname__", "_attach_next_step_runtime"),
+        "callable": True,
+        "present": True,
+    }
+
+
+def _is_synthetic_review_task_id(task_id: str) -> bool:
+    """Return True when *task_id* is a synthetic review-only concern marker.
+
+    Synthetic REVIEW-{check_id} task IDs are created when review checks
+    omit ``concerned_task_ids``.  They are NOT runnable finalize targets
+    and must never be routed as generic executable task IDs.
+    """
+    return isinstance(task_id, str) and task_id.startswith(_SYNTHETIC_REVIEW_TASK_PREFIX)
+
+
+def _reject_runnable_review_ids(task_ids: list[str]) -> list[str]:
+    """Replace synthetic REVIEW-{check_id} entries with non-runnable markers.
+
+    Returns a copy of *task_ids* where every synthetic REVIEW- prefix
+    is replaced with ``r:`` (review-scoped) so downstream routing never
+    treats them as generic runnable finalize task IDs.
+    """
+    sanitized: list[str] = []
+    for tid in task_ids:
+        if _is_synthetic_review_task_id(tid):
+            sanitized.append(f"r:{tid}")
+        else:
+            sanitized.append(tid)
+    return sanitized
+
+
+def _bind_review_routing_provenance(
+    response: StepResponse,
+    *,
+    verify_runtime: bool = True,
+) -> None:
+    """Bind review routing outcomes to runtime provenance.
+
+    Proves ``_attach_next_step_runtime`` is present (when *verify_runtime*
+    is True) and attaches a runtime provenance receipt to the response.
+    The receipt proves the routing decision was made under a known runtime.
+    """
+    provenance: dict[str, Any] = {
+        "review_routing_provenance": {
+            "schema": "arnold.megaplan.review_routing_provenance.v1",
+        }
+    }
+    if verify_runtime:
+        try:
+            rt_proof = _verify_attach_next_step_runtime()
+            provenance["review_routing_provenance"]["_attach_next_step_runtime"] = rt_proof
+        except RuntimeError:
+            provenance["review_routing_provenance"]["_attach_next_step_runtime"] = {
+                "function": "_attach_next_step_runtime",
+                "present": False,
+                "callable": False,
+                "error": "function not resolvable in loaded runtime",
+            }
+    response["review_routing_provenance"] = provenance["review_routing_provenance"]
 
 _REVIEW_SCRATCH_EXTENSION_FIELDS: frozenset[str] = frozenset(
     {"review_completion_status"}
@@ -990,12 +1087,72 @@ def _force_proceed_blockers(
     return blockers
 
 
+def _normalize_failed_detail_rows(
+    evidence: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Normalize evidence rows into ``failed: <detail>`` quality-block signatures.
+
+    Returns *(normalized_rows, malformed_rows)*.  Each normalized row carries
+    *command*, *criterion*, and content-addressed *artifact_hash*.  Rows that
+    cannot be resolved to a deterministic quality-block signature are typed
+    *unknown* and returned separately.
+    """
+    normalized: list[dict[str, Any]] = []
+    malformed: list[dict[str, Any]] = []
+    for row in evidence:
+        if not isinstance(row, dict):
+            malformed.append({"kind": "unknown", "reason": "non-dict evidence row"})
+            continue
+        command = str(row.get("command") or "").strip()
+        criterion = str(row.get("issue") or row.get("criterion") or row.get("id") or "").strip()
+        if not command:
+            malformed.append(
+                {
+                    "kind": "unknown",
+                    "reason": "missing command",
+                    "task_id": row.get("task_id", ""),
+                    "partial_criterion": criterion or None,
+                }
+            )
+            continue
+        # Content-addressed artifact hash: command + baseline_status + post_status
+        fingerprint = json.dumps(
+            {
+                "command": command,
+                "baseline_status": str(row.get("baseline_status", "")).strip(),
+                "post_status": str(row.get("post_status", "")).strip(),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        artifact_hash = hashlib.sha256(fingerprint).hexdigest()
+        normalized.append(
+            {
+                "kind": "failed",
+                "detail": criterion or "unspecified criterion",
+                "command": command,
+                "criterion": criterion,
+                "artifact_hash": artifact_hash,
+                "task_id": str(row.get("task_id") or ""),
+                "baseline_status": str(row.get("baseline_status") or ""),
+                "post_status": str(row.get("post_status") or ""),
+                "issue": str(row.get("issue") or ""),
+            }
+        )
+    return normalized, malformed
+
+
 def _deterministic_review_block_evidence(
     rework_items: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
-    """Return structured failing checks that a repair worker can reproduce."""
+    """Return structured failing checks that a repair worker can reproduce.
 
-    evidence: list[dict[str, Any]] = []
+    Each evidence row is a ``failed: <detail>`` quality-block signature with
+    command, criterion, and content-addressed artifact hash.  Rows missing a
+    deterministic command are preserved as typed *unknown*.
+    """
+
+    raw_evidence: list[dict[str, Any]] = []
     for item in rework_items or []:
         if not isinstance(item, dict) or not _rework_item_is_blocker(item):
             continue
@@ -1012,7 +1169,7 @@ def _deterministic_review_block_evidence(
             post = str(raw.get("post_status") or "").strip().lower()
             if not command or not ({baseline, post} & {"fail", "failed", "error"}):
                 continue
-            evidence.append(
+            raw_evidence.append(
                 {
                     "command": command,
                     "baseline_status": baseline or "unknown",
@@ -1021,7 +1178,12 @@ def _deterministic_review_block_evidence(
                     "issue": str(item.get("issue") or item.get("flag_id") or ""),
                 }
             )
-    return evidence
+    normalized, malformed = _normalize_failed_detail_rows(raw_evidence)
+    # Attach malformed rows as typed unknown so they are preserved
+    result: list[dict[str, Any]] = list(normalized)
+    for row in malformed:
+        result.append(row)
+    return result
 
 
 def _review_quality_block_failure(
@@ -1285,7 +1447,10 @@ def _resolve_review_outcome(
                 _record_maker_stop(state, plan_dir, defense=stop_data.get("defense", ""))
                 return _review_pass_decision(state, force_done=True)
         cap_key = _review_rework_cap_config_key(robustness)
-        max_review_rework_cycles = get_effective("execution", cap_key)
+        max_review_rework_cycles = min(
+            get_effective("execution", cap_key),
+            _MAX_REWORK_WAVES,
+        )
         prior_rework_count = sum(
             1 for entry in state.get("history", [])
             if entry.get("step") == "review"
@@ -1361,6 +1526,58 @@ def _format_review_success_summary(criteria: list[dict[str, Any]]) -> str:
     return f"Review complete: {passed}/{total} success criteria passed."
 
 
+def _review_boundary_ids_for_outcome(
+    *,
+    result: ReviewDecisionResult,
+    next_state: str,
+) -> tuple[str, ...]:
+    if next_state == STATE_AWAITING_HUMAN_VERIFY:
+        return ("review_human_verification",)
+    if result == ReviewDecisionResult.NEEDS_REWORK:
+        return ("review_rework_effects",)
+    if result == ReviewDecisionResult.FORCE_PROCEEDED:
+        return ("review_cap_authority",)
+    if result == ReviewDecisionResult.BLOCKED and next_state == STATE_BLOCKED:
+        return ("review_cap_authority",)
+    if result == ReviewDecisionResult.SUCCESS and next_state in {STATE_DONE, STATE_REVIEWED}:
+        return ("review_reducer_promotion",)
+    return ()
+
+
+def _emit_review_route_boundary_receipts(
+    *,
+    plan_dir: Path,
+    state: PlanState,
+    worker: WorkerResult,
+    agent: str,
+    mode: str,
+    result: ReviewDecisionResult,
+    next_state: str,
+    response: StepResponse,
+    artifact_hash: str,
+    strict: bool,
+) -> tuple[str, ...]:
+    emitted_ids: list[str] = []
+    for boundary_id in _review_boundary_ids_for_outcome(result=result, next_state=next_state):
+        receipt = _emit_named_boundary_receipt(
+            boundary_id=boundary_id,
+            plan_dir=plan_dir,
+            state=state,
+            step="review",
+            worker=worker,
+            agent=agent,
+            mode=mode,
+            artifacts=["review.json", "finalize.json", "final.md"],
+            output_file="review.json",
+            artifact_hash=artifact_hash,
+            response=response,
+            strict=strict,
+        )
+        if receipt is not None:
+            emitted_ids.append(receipt.boundary_id)
+    return tuple(emitted_ids)
+
+
 def _wrap_parallel_review_worker(
     merged_payload: dict[str, Any],
     parallel_result: WorkerResult,
@@ -1432,11 +1649,18 @@ def _synthesize_review_rework_items(checks: list[dict[str, Any]]) -> list[dict[s
                 or not all(isinstance(task_id, str) and task_id for task_id in concerned_task_ids)
             ):
                 log.warning(
-                    "Parallel review check %s omitted concerned_task_ids; falling back to synthetic REVIEW-%s task id.",
+                    "Parallel review check %s omitted concerned_task_ids; falling back to synthetic r:REVIEW-%s task id.",
                     check_id,
                     check_id,
                 )
-                concerned_task_ids = [f"REVIEW-{check_id}"]
+                concerned_task_ids = [f"r:REVIEW-{check_id}"]
+            else:
+                # M11 Step 23: reject generic runnable REVIEW IDs — replace
+                # any synthetic REVIEW- prefixed entries with r: prefix so
+                # downstream routing never treats them as executable tasks.
+                concerned_task_ids = _reject_runnable_review_ids(
+                    [str(c) for c in concerned_task_ids if isinstance(c, str) and c]
+                )
             task_ids = [str(candidate) for candidate in concerned_task_ids if isinstance(candidate, str) and candidate]
             for task_id in concerned_task_ids:
                 item = {
@@ -1845,8 +2069,9 @@ def _finalize_review_outcome(
                 explicit_root=plan_dir,
             ),
         )
-        state["current_state"] = STATE_EXECUTED
-        clear_active_step(state)
+        apply_state_projection(
+            state, STATE_EXECUTED, route_signal=str(ReviewOutcome.BLOCKED)
+        )
         apply_session_update(state, "review", agent, worker.session_id, mode=mode, refreshed=refreshed)
         append_history(
             state,
@@ -1876,7 +2101,6 @@ def _finalize_review_outcome(
             artifact_hash=sha256_file(plan_dir / "review.json"),
             verdict=ReviewDecisionResult.POLICY_DENIED,
         )
-        save_state_merge_meta(plan_dir, state)
         summary = "Review-to-done transition denied by policy. Re-run review after addressing the policy evidence."
         deviations = tuple(_PhaseDeviation.from_string(reason) for reason in policy_decision.reasons)
         _emit_phase_result(
@@ -1902,6 +2126,24 @@ def _finalize_review_outcome(
             "warnings": list(policy_decision.reasons),
             "_phase_outcome": "blocked_by_quality",
         }
+        if phase_wbc_state(state, step="review") is not None:
+            fail_phase_wbc(
+                state=state,
+                plan_dir=plan_dir,
+                step="review",
+                agent=agent,
+                payload={
+                    "phase": "review",
+                    "status": "failed",
+                    "failure_stage": "transition_policy",
+                    "phase_result_ref": "phase_result.json",
+                    "error_class": "ReviewPolicyDenied",
+                    "message": summary,
+                },
+            )
+        clear_active_step(state)
+        save_state_merge_meta(plan_dir, state)
+        _bind_review_routing_provenance(response)
         _attach_next_step_runtime(response)
         attach_agent_fallback(response, args)
         return response
@@ -1933,12 +2175,30 @@ def _finalize_review_outcome(
             "retry_strategy": "manual_review",
             "evidence_cursor": dict(state["latest_failure"]["evidence_cursor"]),
         }
-    state["current_state"] = next_state
+    apply_state_projection(
+        state, next_state, route_signal=str(decision.route_signal)
+    )
+    try:
+        from arnold_pipelines.megaplan.observability.work_ledger import emit_transition_activity
+
+        emit_transition_activity(
+            plan_dir,
+            phase="review",
+            transition="review_outcome",
+            from_state=STATE_EXECUTED,
+            to_state=next_state,
+            metadata={
+                "result": result,
+                "review_verdict": review_verdict,
+                "route_signal": str(decision.route_signal),
+            },
+        )
+    except Exception:
+        log.debug("Work ledger review transition event emission skipped", exc_info=True)
     if result != ReviewDecisionResult.BLOCKED and next_state != STATE_BLOCKED:
         state["latest_failure"] = None
         state.pop("resume_cursor", None)
 
-    clear_active_step(state)
     apply_session_update(state, "review", agent, worker.session_id, mode=mode, refreshed=refreshed)
     append_history(
         state,
@@ -1968,8 +2228,6 @@ def _finalize_review_outcome(
         artifact_hash=sha256_file(plan_dir / "review.json"),
         verdict=result if result == ReviewDecisionResult.FORCE_PROCEEDED else review_verdict,
     )
-    save_state_merge_meta(plan_dir, state)
-
     if force_proceed_blocked:
         summary = next(
             (
@@ -2034,6 +2292,58 @@ def _finalize_review_outcome(
             plan_dir=plan_dir,
             exit_kind="success",
         )
+    review_artifact_hash = sha256_file(plan_dir / "review.json")
+    strict_review_receipts = phase_wbc_state(state, step="review") is not None
+    emitted_boundary_ids = _emit_review_route_boundary_receipts(
+        plan_dir=plan_dir,
+        state=state,
+        worker=worker,
+        agent=agent,
+        mode=mode,
+        result=result,
+        next_state=next_state,
+        response=response,
+        artifact_hash=review_artifact_hash,
+        strict=strict_review_receipts,
+    )
+    if strict_review_receipts:
+        if emitted_boundary_ids:
+            complete_phase_wbc(
+                state=state,
+                plan_dir=plan_dir,
+                step="review",
+                agent=agent,
+                payload={
+                    "phase": "review",
+                    "status": "completed",
+                    "summary": summary,
+                    "next_step": response.get("next_step"),
+                    "phase_result_ref": "phase_result.json",
+                    "boundary_receipt_id": emitted_boundary_ids[0],
+                    "boundary_receipt_ids": list(emitted_boundary_ids),
+                    "artifacts_written": ["review.json", "finalize.json", "final.md"],
+                    "output_file": "review.json",
+                    "artifact_hash": review_artifact_hash,
+                },
+            )
+        else:
+            fail_phase_wbc(
+                state=state,
+                plan_dir=plan_dir,
+                step="review",
+                agent=agent,
+                payload={
+                    "phase": "review",
+                    "status": "failed",
+                    "failure_stage": "result_evidence",
+                    "phase_result_ref": "phase_result.json",
+                    "error_class": "MissingBoundaryReceipt",
+                    "message": "review route did not produce a required durable boundary receipt",
+                },
+            )
+    clear_active_step(state)
+    save_state_merge_meta(plan_dir, state)
+    _bind_review_routing_provenance(response)
     _attach_next_step_runtime(response)
     attach_agent_fallback(response, args)
     return response
@@ -2082,6 +2392,31 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 prompt_kwargs=prompt_kwargs,
                 read_only=True,
             )
+
+            # --- M9: work ledger — review/proof inference event ---
+            try:
+                from arnold_pipelines.megaplan.observability.work_ledger import (
+                    WorkClass,
+                    emit_worker_inference,
+                )
+
+                emit_worker_inference(
+                    plan_dir,
+                    phase="review",
+                    worker=worker,
+                    work_class=WorkClass.REVIEW_PROOF,
+                    task_id=None,  # plan-scoped
+                    batch_id=None,
+                    attempt_id=state.get("meta", {}).get("current_invocation_id"),
+                    agent=agent,
+                    metadata={
+                        "robustness": robustness,
+                        "boundary": "review_worker",
+                    },
+                )
+            except Exception:
+                log.debug("Work ledger review event emission skipped", exc_info=True)
+            # --- end work ledger ---
 
             # ── T11: Scratch promotion for review (single-worker) ──
             # Prefer valid filled review_output.json over worker.payload;
@@ -2133,6 +2468,23 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     explicit_root=plan_dir,
                 ),
             )
+
+            # Step 7B: persist review schema hash
+            from arnold_pipelines.megaplan.handlers.schema_parity import (
+                canonical_schema_hash,
+            )
+            from arnold_pipelines.megaplan.schemas import SCHEMAS as _review_schemas
+
+            _review_contract = _review_schemas.get("review.json")
+            if isinstance(_review_contract, dict):
+                _review_hash = canonical_schema_hash(_review_contract)
+                _review_hash_path = plan_dir / "review_schema_hash.json"
+                atomic_write_json(_review_hash_path, {
+                    "schema_hash": _review_hash,
+                    "phase": "review",
+                    "iteration": state.get("iteration", 0),
+                    "produced_at": now_utc(),
+                })
         else:
             rev_resolved = _pkg.resolve_agent_mode("review", args)
             agent_type, mode, refreshed, model = _agent_mode_parts(rev_resolved)
@@ -2146,6 +2498,31 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     resolved=(agent_type, mode, refreshed, model),
                     read_only=True,
                 )
+
+                # --- M9: work ledger — review/proof inference event (extreme path) ---
+                try:
+                    from arnold_pipelines.megaplan.observability.work_ledger import (
+                        WorkClass,
+                        emit_worker_inference,
+                    )
+
+                    emit_worker_inference(
+                        plan_dir,
+                        phase="review",
+                        worker=worker,
+                        work_class=WorkClass.REVIEW_PROOF,
+                        task_id=None,
+                        batch_id=None,
+                        attempt_id=state.get("meta", {}).get("current_invocation_id"),
+                        agent=agent,
+                        metadata={
+                            "robustness": robustness,
+                            "boundary": "review_worker_extreme",
+                        },
+                    )
+                except Exception:
+                    log.debug("Work ledger review event emission skipped", exc_info=True)
+                # --- end work ledger ---
 
                 # ── T11: Scratch promotion for review (single-worker, extreme) ──
                 from arnold_pipelines.megaplan.handlers.structured_output import (
@@ -2215,7 +2592,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 _emit_phase_notice("review")
                 save_state_merge_meta(plan_dir, state)
                 checks = review_checks.checks_for_robustness("extreme")
-                parallel_result = _pkg.run_parallel_review(
+                parallel_result = dispatch_review_panel(
                     state,
                     plan_dir,
                     root=root,
@@ -2223,6 +2600,32 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     checks=checks,
                     pre_check_flags=pre_check_flags,
                 )
+                # --- M9: work ledger — review/proof inference event (parallel extreme) ---
+                try:
+                    from arnold_pipelines.megaplan.observability.work_ledger import (
+                        WorkClass,
+                        emit_worker_inference,
+                    )
+
+                    emit_worker_inference(
+                        plan_dir,
+                        phase="review",
+                        worker=parallel_result,
+                        work_class=WorkClass.REVIEW_PROOF,
+                        task_id=None,
+                        batch_id=None,
+                        attempt_id=run_id,
+                        agent=agent_type,
+                        model_calls=len(checks) if checks else 1,
+                        metadata={
+                            "robustness": robustness,
+                            "parallel_checks": len(checks) if checks else 0,
+                            "boundary": "parallel_review",
+                        },
+                    )
+                except Exception:
+                    log.debug("Work ledger parallel review event emission skipped", exc_info=True)
+                # --- end work ledger ---
                 criteria_payload = parallel_result.payload.get("criteria_payload")
                 if not isinstance(criteria_payload, dict):
                     raise CliError("worker_parse_error", "Parallel review did not return a criteria payload object")

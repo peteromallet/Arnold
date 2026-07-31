@@ -28,9 +28,27 @@ WRAPPER_DIR = REPO_ROOT / "arnold_pipelines/megaplan/cloud/wrappers"
 REMOTE_BIN_DIR = "/usr/local/bin"
 
 KNOWN_SESSION_COMMANDS = {
-    "watchdog": "/usr/local/bin/arnold-watchdog",
-    "heartbeat": "/usr/local/bin/arnold-heartbeat",
+    "watchdog": "/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog",
+    "heartbeat": "/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-heartbeat",
 }
+
+# Legacy binary paths that must not be used as upload destinations or session
+# commands because they bypass canonical delegation (Step 85).
+FORBIDDEN_LEGACY_BIN_PATHS: tuple[str, ...] = (
+    "/usr/local/bin/arnold-watchdog",
+    "/usr/local/bin/arnold-heartbeat",
+    "/usr/local/bin/arnold-repair-trigger",
+    "/usr/local/bin/arnold-repair-loop",
+    "/usr/local/bin/arnold-meta-repair-loop",
+    "/usr/local/bin/arnold-progress-auditor",
+    "/usr/local/bin/arnold-supervise",
+    "/usr/local/bin/arnold-kimi-goal-operator",
+)
+
+FORBIDDEN_LEGACY_BIN_PREFIXES: tuple[str, ...] = (
+    "/usr/local/bin/arnold-",
+    "/usr/local/bin/mp-",
+)
 
 
 @dataclass(frozen=True)
@@ -209,6 +227,12 @@ def parse_upload(raw: str) -> Upload:
     src = Path(local).expanduser()
     if not remote.startswith("/"):
         raise HotUploadError(f"remote upload destination must be absolute: {remote!r}")
+    # Reject uploads to forbidden legacy binary destinations (Step 85).
+    if _is_forbidden_legacy_bin(remote):
+        raise HotUploadError(
+            f"upload destination {remote!r} is a forbidden legacy binary path; "
+            f"use a canonical workspace path instead"
+        )
     return Upload(src=src, dest=remote, mode="755")
 
 
@@ -225,7 +249,14 @@ def wrapper_uploads(args: argparse.Namespace) -> list[Upload]:
         if "/" in name or name in {"", ".", ".."}:
             raise HotUploadError(f"invalid wrapper name: {name!r}")
         src = WRAPPER_DIR / name
-        uploads.append(Upload(src=src, dest=f"{REMOTE_BIN_DIR}/{name}", mode="755"))
+        dest = f"{REMOTE_BIN_DIR}/{name}"
+        # Reject wrapper uploads to forbidden legacy binary destinations (Step 85).
+        if _is_forbidden_legacy_bin(dest):
+            raise HotUploadError(
+                f"wrapper {name!r} upload destination {dest!r} is a forbidden "
+                f"legacy binary path; use --upload with a canonical workspace path instead"
+            )
+        uploads.append(Upload(src=src, dest=dest, mode="755"))
     return uploads
 
 
@@ -327,6 +358,17 @@ def verify_file(remote: Remote, upload: Upload) -> bool:
     return True
 
 
+def _is_forbidden_legacy_bin(command: str) -> bool:
+    """Return True if *command* references a forbidden legacy binary path."""
+    cmd = command.strip()
+    if cmd in FORBIDDEN_LEGACY_BIN_PATHS:
+        return True
+    for prefix in FORBIDDEN_LEGACY_BIN_PREFIXES:
+        if cmd.startswith(prefix):
+            return True
+    return False
+
+
 def parse_session_commands(raw_items: list[str]) -> dict[str, str]:
     commands = dict(KNOWN_SESSION_COMMANDS)
     for raw in raw_items:
@@ -335,6 +377,13 @@ def parse_session_commands(raw_items: list[str]) -> dict[str, str]:
         session, command = raw.split("=", 1)
         if not session or not command:
             raise HotUploadError(f"--session-command must be SESSION=COMMAND, got {raw!r}")
+        # Reject caller-supplied session commands that reference legacy repair
+        # binaries or exec wrappers outside canonical delegation (Step 85).
+        if _is_forbidden_legacy_bin(command):
+            raise HotUploadError(
+                f"--session-command {session}={command!r} references a forbidden "
+                f"legacy binary path; use the canonical workspace wrapper path instead"
+            )
         commands[session] = command
     return commands
 

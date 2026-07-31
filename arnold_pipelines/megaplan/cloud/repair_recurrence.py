@@ -17,6 +17,16 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
 )
 from arnold_pipelines.megaplan.watchdog.signals import compute_signal_bundle
 
+# ── M7 custody contract imports (shadow/report-only) ────────────────────
+from arnold_pipelines.megaplan.custody.contracts import (
+    CustodyTargetKey,
+    RepairOccurrenceKey,
+    build_custody_target_key,
+    build_repair_occurrence_key,
+    occurrence_digest,
+    F01_REPAIR_OCCURRENCE_FIELDS as _F01_REPAIR_OCCURRENCE_FIELDS,
+)
+
 PROBLEM_SIGNATURE_FIELDS = (
     "failure_kind",
     "current_state",
@@ -682,6 +692,17 @@ def build_advancement_snapshot(
         },
         "plan_activity": plan_activity,
         "execute_empty_batch": _empty_execute_batch_summary(context),
+        "canonical_cursor": {
+            "plan": _plan_identity(context),
+            "completed_count": _as_int(chain_state.get("completed_count")),
+            "current_milestone_index": _as_int(chain_state.get("current_milestone_index")),
+            "current_state": _as_text(
+                plan_runtime.get("current_state")
+                or plan_failure.get("current_state")
+                or chain_state.get("last_state")
+                or chain_state.get("current_state")
+            ),
+        },
     }
 
 
@@ -693,57 +714,26 @@ def has_advancement(
         return False
     prev = _as_dict(previous)
     curr = _as_dict(current)
-    prev_activity = _as_dict(prev.get("plan_activity"))
-    curr_activity = _as_dict(curr.get("plan_activity"))
-    if bool(curr_activity.get("has_in_flight_llm")):
-        return True
-    if bool(prev_activity.get("available")) and bool(curr_activity.get("available")):
-        prev_events_mtime = _as_float(prev_activity.get("events_mtime")) or 0.0
-        curr_events_mtime = _as_float(curr_activity.get("events_mtime")) or 0.0
-        prev_events_size = _as_int(prev_activity.get("events_size")) or 0
-        curr_events_size = _as_int(curr_activity.get("events_size")) or 0
-        if curr_events_mtime > prev_events_mtime or curr_events_size > prev_events_size:
-            return True
-    if _as_text(curr_activity.get("liveness")) == "progressing":
-        return True
-
-    curr_external = _as_dict(curr.get("external_checks"))
-    curr_pr = _as_dict(curr_external.get("pr"))
-    if bool(curr_pr.get("available")) and bool(curr_pr.get("merged")):
-        return True
-
-    prev_external = _as_dict(prev.get("external_checks"))
-    prev_git = _as_dict(prev_external.get("git"))
-    curr_git = _as_dict(curr_external.get("git"))
-    if bool(prev_git.get("available")) and bool(curr_git.get("available")):
-        prev_head = _as_text(prev_git.get("head"))
-        curr_head = _as_text(curr_git.get("head"))
-        prev_ahead = _as_int(prev_git.get("ahead_count"))
-        curr_ahead = _as_int(curr_git.get("ahead_count"))
-        if curr_head and prev_head and curr_head != prev_head:
-            if prev_ahead is None or curr_ahead is None or curr_ahead >= prev_ahead:
-                return True
-        if prev_ahead is not None and curr_ahead is not None and curr_ahead > prev_ahead:
-            return True
-
-    external_available = any(
-        bool(_as_dict(checks.get(name)).get("available"))
-        for checks in (prev_external, curr_external)
-        for name in ("pr", "git")
-    )
-    if external_available:
+    prev_cursor = _as_dict(prev.get("canonical_cursor")) or prev
+    curr_cursor = _as_dict(curr.get("canonical_cursor")) or curr
+    prev_plan = _as_text(prev_cursor.get("plan") or prev.get("milestone_or_plan"))
+    curr_plan = _as_text(curr_cursor.get("plan") or curr.get("milestone_or_plan"))
+    # Recurrence belongs to one canonical plan occurrence.  Activity telemetry
+    # and external delivery state (events, Git, PR, CI) are diagnostic only and
+    # cannot reset its epoch.  A plan identity change also cannot retroactively
+    # prove that the prior occurrence advanced.
+    if not prev_plan or not curr_plan or prev_plan != curr_plan:
         return False
-
-    prev_completed = _as_int(prev.get("completed_count"))
-    curr_completed = _as_int(curr.get("completed_count"))
+    prev_completed = _as_int(prev_cursor.get("completed_count"))
+    curr_completed = _as_int(curr_cursor.get("completed_count"))
     if prev_completed is not None and curr_completed is not None and curr_completed > prev_completed:
         return True
-    prev_index = _as_int(prev.get("current_milestone_index"))
-    curr_index = _as_int(curr.get("current_milestone_index"))
+    prev_index = _as_int(prev_cursor.get("current_milestone_index"))
+    curr_index = _as_int(curr_cursor.get("current_milestone_index"))
     if prev_index is not None and curr_index is not None and curr_index > prev_index:
         return True
-    if _as_text(prev.get("current_state")).lower() not in {"done", "complete", "completed"}:
-        if _as_text(curr.get("current_state")).lower() in {"done", "complete", "completed"}:
+    if _as_text(prev_cursor.get("current_state")).lower() not in {"done", "complete", "completed"}:
+        if _as_text(curr_cursor.get("current_state")).lower() in {"done", "complete", "completed"}:
             return True
     return False
 
@@ -907,3 +897,345 @@ def evaluate_recurrence(
             "breaker_signature": normalized_signature if layer3_detected else {},
         },
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Recurrence minimum interval enforcement
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def recurrence_minimum_interval_seconds(
+    *,
+    min_interval: int | None = None,
+) -> int:
+    """Return the enforced minimum interval for same-signature recurrence dispatches.
+
+    Defaults to :data:`~arnold_pipelines.megaplan.custody.contracts.DEFAULT_REPAIR_RECURRENCE_MINIMUM_INTERVAL_SECONDS`.
+    Callers may override via *min_interval*, but the value is always clamped
+    to at least the default (the default is a floor, not a ceiling).
+    """
+    from arnold_pipelines.megaplan.custody.contracts import (
+        DEFAULT_REPAIR_RECURRENCE_MINIMUM_INTERVAL_SECONDS,
+    )
+
+    floor = DEFAULT_REPAIR_RECURRENCE_MINIMUM_INTERVAL_SECONDS
+    if min_interval is None:
+        return floor
+    # Clamp: overrides must respect the minimum floor
+    if min_interval < floor:
+        return floor
+    return min_interval
+
+
+def last_dispatch_within_minimum_interval(
+    last_occurred_at: str | None,
+    *,
+    now: datetime | None = None,
+    min_interval: int | None = None,
+) -> bool:
+    """Return True when *last_occurred_at* is within the minimum recurrence interval.
+
+    When ``True``, the repair loop should suppress dispatch for this
+    recurrence identity.
+
+    Args:
+        last_occurred_at: ISO-8601 timestamp of the last dispatch (or None).
+        now: Current time for comparison (defaults to ``datetime.now(timezone.utc)``).
+        min_interval: Override minimum interval in seconds (clamped to default floor).
+    """
+    if last_occurred_at is None:
+        return False
+
+    interval = recurrence_minimum_interval_seconds(min_interval=min_interval)
+    try:
+        last_dt = _parse_when(last_occurred_at)
+    except (ValueError, TypeError):
+        return False
+
+    if last_dt is None:
+        return False
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    elapsed = (now - last_dt).total_seconds()
+    return elapsed < interval
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# M7 custody helpers — RepairOccurrenceKey construction from failure context
+# ═══════════════════════════════════════════════════════════════════════════
+
+#: Known T7 outbox surface identifiers (Custody-04 outbox module).
+_T7_OUTBOX_SURFACE_PREFIXES: tuple[str, ...] = (
+    "outbox:",
+    "custody-outbox:",
+    "custody-04:",
+)
+
+#: Known T12 admission surface identifiers (future Custody admission).
+_T12_ADMISSION_SURFACE_PREFIXES: tuple[str, ...] = (
+    "admission:",
+    "custody-admission:",
+    "repair-admission:",
+)
+
+
+def is_t7_outbox_reference(ref: str) -> bool:
+    """Return True if *ref* identifies a T7 outbox record.
+
+    T7 outbox references are owned by the Custody outbox module and carry
+    ``outbox:``, ``custody-outbox:``, or ``custody-04:`` prefixes.
+
+    This is a read-only classifier — it does not mutate any state.
+    """
+    if not isinstance(ref, str) or not ref.strip():
+        return False
+    cleaned = ref.strip()
+    return any(cleaned.startswith(prefix) for prefix in _T7_OUTBOX_SURFACE_PREFIXES)
+
+
+def is_t12_admission_reference(ref: str) -> bool:
+    """Return True if *ref* identifies a T12 admission surface record.
+
+    T12 admission references are owned by the repair admission surface and
+    carry ``admission:``, ``custody-admission:``, or ``repair-admission:``
+    prefixes.
+
+    This is a read-only classifier — it does not mutate any state.
+    """
+    if not isinstance(ref, str) or not ref.strip():
+        return False
+    cleaned = ref.strip()
+    return any(cleaned.startswith(prefix) for prefix in _T12_ADMISSION_SURFACE_PREFIXES)
+
+
+def validate_t7_t12_cross_binding(
+    *,
+    occurrence_key: RepairOccurrenceKey | None = None,
+    wbc_attempt_reference: str = "",
+    source_surface: str = "",
+) -> list[str]:
+    """Return a list of cross-binding violation descriptions.
+
+    Rejects any attempt to bind T7 outbox references to T12 admission
+    surface identifiers and vice versa.  Stale T7→T12 binding would allow
+    an outbox record to be mistaken for an admission decision, which
+    violates the single-owner boundary.
+
+    Returns an empty list when no violation is detected.
+    """
+    violations: list[str] = []
+    if occurrence_key is None:
+        return violations
+
+    # Classify the source surface if not explicitly provided.
+    effective_source = source_surface.strip() if source_surface else ""
+    if not effective_source:
+        if is_t7_outbox_reference(occurrence_key.wbc_attempt_reference):
+            effective_source = "outbox"
+        elif is_t12_admission_reference(occurrence_key.wbc_attempt_reference):
+            effective_source = "admission"
+
+    # Check wbc_attempt_reference for cross-binding.
+    wbc_ref = (wbc_attempt_reference or occurrence_key.wbc_attempt_reference).strip()
+    if wbc_ref:
+        if effective_source == "outbox" and is_t12_admission_reference(wbc_ref):
+            violations.append(
+                f"T7 outbox source cannot bind T12 admission reference: {wbc_ref!r}"
+            )
+        elif effective_source == "admission" and is_t7_outbox_reference(wbc_ref):
+            violations.append(
+                f"T12 admission source cannot bind T7 outbox reference: {wbc_ref!r}"
+            )
+
+    # Check the occurrence digest for cross-surface contamination.
+    digest = occurrence_key.occurrence_digest
+    if digest:
+        if effective_source == "outbox" and "admission:" in digest:
+            violations.append(
+                f"occurrence_digest carries T12 admission marker: {digest!r}"
+            )
+        elif effective_source == "admission" and "outbox:" in digest:
+            violations.append(
+                f"occurrence_digest carries T7 outbox marker: {digest!r}"
+            )
+
+    return violations
+
+
+def build_custody_target_key_from_failure_context(
+    failure_context: Mapping[str, Any],
+    *,
+    chain_identity: str = "",
+) -> CustodyTargetKey | None:
+    """Construct a :class:`CustodyTargetKey` from a repair failure context.
+
+    Extracts F01 fields from the same failure_context dict already consumed
+    by :func:`build_problem_signature`.  Legacy problem-signature
+    normalization is preserved; this helper adds the M7 CustodyTargetKey
+    shape alongside the existing signature path.
+
+    Returns ``None`` when any required F01 field cannot be resolved.
+    """
+    context = _as_dict(failure_context)
+    chain_state = _as_dict(context.get("chain_state_summary"))
+    plan_failure = _as_dict(context.get("plan_latest_failure"))
+    plan_runtime = _as_dict(context.get("plan_runtime_state"))
+    execute_attempt = _as_dict(context.get("execute_attempt_context"))
+    signature = build_problem_signature(context)
+
+    environment = _first_non_empty(
+        _as_text(chain_state.get("environment")),
+        _as_text(signature.get("environment")),
+    )
+    session = _first_non_empty(
+        _as_text(chain_state.get("session")),
+        _as_text(signature.get("session")),
+    )
+    chain = _first_non_empty(
+        _as_text(chain_state.get("chain_name")),
+        _as_text(signature.get("chain")),
+    )
+    plan_revision = _first_non_empty(
+        _as_text(chain_state.get("plan_revision")),
+        _as_text(signature.get("plan_revision")),
+    )
+    phase = _first_non_empty(
+        _as_text(plan_failure.get("phase")),
+        _as_text(signature.get("phase_or_step")),
+    )
+    task = _first_non_empty(
+        _as_text(plan_failure.get("blocked_task_id")),
+        _as_text(plan_failure.get("task_id")),
+        _as_text(signature.get("blocked_task_id")),
+    )
+    attempt = _first_non_empty(
+        _as_text(chain_state.get("attempt")),
+        _as_text(signature.get("attempt")),
+    )
+    normalized_failure_kind = _first_non_empty(
+        _as_text(plan_failure.get("kind")),
+        _as_text(signature.get("failure_kind")),
+    )
+    blocker_or_phase_result_hash = _first_non_empty(
+        _as_text(chain_state.get("fingerprint")),
+        _as_text(signature.get("target_fingerprint")),
+    )
+    fence = _first_non_empty(
+        _as_text(chain_state.get("fence")),
+        _as_text(signature.get("fence")),
+    )
+
+    return build_custody_target_key(
+        environment=environment,
+        session=session,
+        chain=chain,
+        plan_revision=plan_revision,
+        phase=phase,
+        task=task,
+        attempt=attempt,
+        normalized_failure_kind=normalized_failure_kind,
+        blocker_or_phase_result_hash=blocker_or_phase_result_hash,
+        fence=fence,
+        chain_identity=chain_identity,
+    )
+
+
+def build_repair_occurrence_key_from_failure_context(
+    failure_context: Mapping[str, Any],
+    *,
+    chain_identity: str = "",
+    run_id: str = "",
+    run_revision: str = "",
+    coordinator_attempt_id: str = "",
+    fence_token: int = 0,
+    wbc_attempt_reference: str = "",
+    source_surface: str = "",
+) -> RepairOccurrenceKey | None:
+    """Construct a full M7 :class:`RepairOccurrenceKey` from failure context.
+
+    Builds a :class:`CustodyTargetKey` from the failure context, then wraps
+    it with the current coordinator fence token, run identity, WBC attempt
+    reference, and a deterministic occurrence digest over the F01 fields +
+    fence token + chain identity.
+
+    The returned key structurally includes the fence token and occurrence
+    digest required for M7 identity while preserving the read-only adapter
+    pattern used by existing problem-signature normalization.
+
+    Returns ``None`` when the target key cannot be constructed or when
+    T7/T12 cross-binding is detected.
+
+    Keyword Args:
+        failure_context: The full failure context dict (same as build_problem_signature).
+        chain_identity: Optional chain identity string.
+        run_id: Run Authority run identifier.
+        run_revision: Run Authority run revision.
+        coordinator_attempt_id: Coordinator attempt identifier.
+        fence_token: Current coordinator fence token (non-negative int).
+        wbc_attempt_reference: WBC attempt reference string.
+        source_surface: ``'outbox'`` for T7, ``'admission'`` for T12, or ``''``.
+    """
+    target = build_custody_target_key_from_failure_context(
+        failure_context,
+        chain_identity=chain_identity,
+    )
+    if target is None:
+        return None
+
+    context = _as_dict(failure_context)
+    chain_state = _as_dict(context.get("chain_state_summary"))
+
+    resolved_run_id = _first_non_empty(
+        run_id,
+        _as_text(chain_state.get("run_id")),
+    )
+    resolved_run_revision = _first_non_empty(
+        run_revision,
+        _as_text(chain_state.get("run_revision")),
+    )
+    resolved_attempt = _first_non_empty(
+        coordinator_attempt_id,
+        _as_text(chain_state.get("coordinator_attempt_id")),
+    )
+    resolved_fence_token = (
+        fence_token
+        if fence_token > 0
+        else _as_int(chain_state.get("fence_token"))
+        or 0
+    )
+    resolved_wbc_ref = _first_non_empty(
+        wbc_attempt_reference,
+        _as_text(chain_state.get("wbc_attempt_reference")),
+    )
+
+    occurrence_key = build_repair_occurrence_key(
+        target=target,
+        run_id=resolved_run_id,
+        run_revision=resolved_run_revision,
+        coordinator_attempt_id=resolved_attempt,
+        fence_token=resolved_fence_token,
+        wbc_attempt_reference=resolved_wbc_ref,
+    )
+    if occurrence_key is None:
+        return None
+
+    # T7/T12 cross-binding rejection.
+    violations = validate_t7_t12_cross_binding(
+        occurrence_key=occurrence_key,
+        wbc_attempt_reference=resolved_wbc_ref,
+        source_surface=source_surface,
+    )
+    if violations:
+        return None
+
+    return occurrence_key
+
+
+def _first_non_empty(*values: str) -> str:
+    """Return the first non-empty string value, or ''."""
+    for v in values:
+        if v and v.strip():
+            return v.strip()
+    return ""

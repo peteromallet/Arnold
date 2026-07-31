@@ -71,3 +71,18 @@ def test_missing_spec_accepts_explicit_all_milestones_complete_event(tmp_path: P
     )
 
     assert status == "complete\tchain complete"
+
+
+def test_missing_spec_accepts_explicit_chain_complete_flag(tmp_path: Path) -> None:
+    status = _terminal_status_for_missing_spec(
+        tmp_path,
+        {
+            "last_state": "done",
+            "chain_complete": True,
+            "current_plan_name": "",
+            "completed": [{"label": "m1", "status": "done"}],
+            "events": [],
+        },
+    )
+
+    assert status == "complete\tchain complete"

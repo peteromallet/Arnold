@@ -13,6 +13,9 @@ S4 constructs
 * :class:`TierRouteOutcome` / :func:`resolve_batch_tier`
 * :class:`BlockedRetryOutcome` — typed outcome for blocked-task retry
 * :class:`NextExecuteTransition` / :func:`resolve_single_batch_next_step`
+* :class:`CircuitDispatchOutcome` / :func:`evaluate_circuit_before_dispatch`
+* :class:`CircuitFailureOutcome` / :func:`evaluate_circuit_after_failure`
+* :func:`build_circuit_evidence_projection`
 * :class:`FutureParallelMarker` — reserved CANCEL / AWAIT / ORPHAN anchors
 """
 
@@ -229,7 +232,104 @@ class NextStepDecision:
     reason: str = ""
 
 
+
+# Circuit dispatch outcome — plan-level circuit breaking before dispatch
 # ---------------------------------------------------------------------------
+
+
+class CircuitDispatchOutcome(str, Enum):
+    """Typed outcomes for circuit evaluation before worker dispatch.
+
+    * ``PROCEED`` — no open circuit; dispatch may proceed.
+    * ``CIRCUIT_OPEN`` — at least one failure circuit is open; dispatch is blocked.
+    """
+
+    PROCEED = "proceed"
+    CIRCUIT_OPEN = "circuit_open"
+
+
+@dataclass(frozen=True)
+class CircuitDispatchDecision:
+    """Pure decision for circuit evaluation before worker dispatch.
+
+    *outcome* is ``PROCEED`` when no circuit is open for any task.
+    *open_signatures* carries the normalized failure signatures that have
+    open circuits (rebuildable projection metadata only — never authority).
+    *reason* is a human-readable explanation.
+    """
+
+    outcome: CircuitDispatchOutcome
+    open_signatures: tuple[dict[str, Any], ...] = ()
+    reason: str = ""
+
+    @property
+    def may_dispatch(self) -> bool:
+        """True when dispatch may proceed (no open circuit)."""
+        return self.outcome == CircuitDispatchOutcome.PROCEED
+
+
+# ---------------------------------------------------------------------------
+# Circuit failure outcome — after worker/result failure classification
+# ---------------------------------------------------------------------------
+
+
+class CircuitFailureOutcome(str, Enum):
+    """Typed outcomes for circuit evaluation after a failure is classified.
+
+    * ``ALLOW_RETRY`` — under threshold; retry is permitted.
+    * ``CIRCUIT_OPEN`` — threshold reached; circuit is now open.
+    * ``CIRCUIT_ALREADY_OPEN`` — circuit was already open; no further retries.
+    """
+
+    ALLOW_RETRY = "allow_retry"
+    CIRCUIT_OPEN = "circuit_open"
+    CIRCUIT_ALREADY_OPEN = "circuit_already_open"
+
+
+@dataclass(frozen=True)
+class CircuitFailureDecision:
+    """Pure decision for circuit evaluation after a failure is classified.
+
+    *outcome* tells the caller whether retry is permitted.
+    *signature* is the normalized :class:`FailureSignature` that was recorded.
+    *occurrence_count* is the total count after this recording.
+    *threshold* is the circuit threshold used.
+    *reason* is a human-readable explanation.
+    """
+
+    outcome: CircuitFailureOutcome
+    signature: dict[str, Any]  # serialized FailureSignature
+    occurrence_count: int = 0
+    threshold: int = 2
+    reason: str = ""
+
+    @property
+    def may_retry(self) -> bool:
+        """True when retry is still permitted."""
+        return self.outcome == CircuitFailureOutcome.ALLOW_RETRY
+
+    @property
+    def is_open(self) -> bool:
+        """True when the circuit is open (either newly or already)."""
+        return self.outcome in (
+            CircuitFailureOutcome.CIRCUIT_OPEN,
+            CircuitFailureOutcome.CIRCUIT_ALREADY_OPEN,
+        )
+
+
+def _serialize_failure_signature(signature: Any) -> dict[str, Any]:
+    """Serialize a :class:`FailureSignature` to a plain dict for projection metadata."""
+    return {
+        "failure_class": signature.failure_class,
+        "task_id": signature.task_id,
+        "batch_id": signature.batch_id,
+        "attempt_id": signature.attempt_id,
+        "blocker_digest": signature.blocker_digest,
+        "provider": signature.provider,
+        "ref_metadata": signature.ref_metadata,
+        "fence": signature.fence,
+    }
+
 # Reserved future parallel transition markers
 # ---------------------------------------------------------------------------
 
@@ -773,6 +873,233 @@ def resolve_partial_failure_resume(
 
 
 # ===========================================================================
+# ===========================================================================
+# Circuit evaluation helpers — pure functions over PlanCircuit state
+# ===========================================================================
+
+
+def evaluate_circuit_before_dispatch(
+    circuit: Any,
+    *,
+    task_ids: Iterable[str] = (),
+    batch_id: str | None = None,
+) -> CircuitDispatchDecision:
+    """Evaluate whether any open circuit blocks dispatch for *task_ids*.
+
+    Iterates over the circuit's open signatures and returns
+    ``CIRCUIT_OPEN`` when any open signature's ``task_id`` intersects
+    with *task_ids* (or when *task_ids* is empty and any circuit is
+    open at the plan level).
+
+    Parameters
+    ----------
+    circuit:
+        A :class:`~arnold_pipelines.megaplan.orchestration.plan_circuit.PlanCircuit`
+        instance carrying recorded failure occurrences.
+    task_ids:
+        The set of task IDs that are about to be dispatched.  When empty
+        the check is plan-level (any open circuit blocks dispatch).
+    batch_id:
+        Optional batch identity carried into the decision reason.
+
+    Returns
+    -------
+    CircuitDispatchDecision
+        ``PROCEED`` when dispatch may continue; ``CIRCUIT_OPEN`` when
+        at least one open circuit blocks the pending task set.
+    """
+    # Lazy import — keep policy module importable without plan_circuit.
+    from arnold_pipelines.megaplan.orchestration.plan_circuit import (
+        FailureSignature,
+        PlanCircuit,
+    )
+
+    if not isinstance(circuit, PlanCircuit):
+        return CircuitDispatchDecision(
+            CircuitDispatchOutcome.PROCEED,
+            reason="No circuit instance provided — dispatch allowed",
+        )
+
+    task_set = frozenset(str(tid) for tid in task_ids) if task_ids else frozenset()
+
+    open_sigs: list[dict[str, Any]] = []
+    for sig in circuit._open_circuits:
+        if not isinstance(sig, FailureSignature):
+            continue
+        sig_task = sig.task_id
+        # If checking specific tasks and the signature task is not in the set, skip
+        if task_set and sig_task is not None and sig_task not in task_set:
+            continue
+        open_sigs.append(_serialize_failure_signature(sig))
+
+    if not open_sigs:
+        return CircuitDispatchDecision(
+            CircuitDispatchOutcome.PROCEED,
+            reason="No open circuits for the pending task set",
+        )
+
+    blocked_tasks = sorted(
+        {s.get("task_id") for s in open_sigs if s.get("task_id")}
+    )
+    reason_parts = [f"Circuit open for task(s) {', '.join(blocked_tasks)}"]
+    if batch_id:
+        reason_parts.insert(0, f"Batch {batch_id}:")
+
+    return CircuitDispatchDecision(
+        CircuitDispatchOutcome.CIRCUIT_OPEN,
+        open_signatures=tuple(open_sigs),
+        reason=" ".join(reason_parts),
+    )
+
+
+def evaluate_circuit_after_failure(
+    circuit: Any,
+    error: Any,
+    *,
+    task_id: str | None = None,
+    batch_id: str | None = None,
+    attempt_id: str | None = None,
+    blocker: Any = None,
+    provider: str | None = None,
+    ref_metadata: str | None = None,
+    fence: str | None = None,
+    failure_class: str | None = None,
+) -> CircuitFailureDecision:
+    """Record a failure against the circuit and return the typed outcome.
+
+    Normalizes the failure into a :class:`FailureSignature`, records it
+    against *circuit*, and returns a :class:`CircuitFailureDecision`
+    carrying the outcome and serialized signature.
+
+    Parameters
+    ----------
+    circuit:
+        A :class:`~arnold_pipelines.megaplan.orchestration.plan_circuit.PlanCircuit`
+        instance.
+    error:
+        The error or result object whose shape determines the failure class.
+    task_id / batch_id / attempt_id:
+        Scope identity for normalization.
+    blocker:
+        Blocker payload whose digest is used for normalization.
+    provider:
+        Provider identifier.
+    ref_metadata:
+        Source/install revision metadata.
+    fence:
+        Current grant/authority fence identifier.
+    failure_class:
+        Explicit failure class override.
+
+    Returns
+    -------
+    CircuitFailureDecision
+    """
+    from arnold_pipelines.megaplan.orchestration.plan_circuit import (
+        PlanCircuit,
+        normalize_failure_signature,
+    )
+
+    if not isinstance(circuit, PlanCircuit):
+        return CircuitFailureDecision(
+            CircuitFailureOutcome.ALLOW_RETRY,
+            signature={},
+            reason="No circuit instance provided — retry allowed",
+        )
+
+    signature = normalize_failure_signature(
+        error,
+        task_id=task_id,
+        batch_id=batch_id,
+        attempt_id=attempt_id,
+        blocker=blocker,
+        provider=provider,
+        ref_metadata=ref_metadata,
+        fence=fence,
+        failure_class=failure_class,
+    )
+
+    decision = circuit.record_failure(signature)
+
+    # Map CircuitDecision action to CircuitFailureOutcome
+    if decision.action == "allow_retry":
+        outcome = CircuitFailureOutcome.ALLOW_RETRY
+    elif decision.action == "open_circuit":
+        outcome = CircuitFailureOutcome.CIRCUIT_OPEN
+    else:  # circuit_open
+        outcome = CircuitFailureOutcome.CIRCUIT_ALREADY_OPEN
+
+    return CircuitFailureDecision(
+        outcome=outcome,
+        signature=_serialize_failure_signature(signature),
+        occurrence_count=decision.occurrence_count,
+        threshold=decision.threshold,
+        reason=(
+            f"Failure class '{signature.failure_class}' "
+            f"(occurrence {decision.occurrence_count}/{decision.threshold})"
+        ),
+    )
+
+
+def build_circuit_evidence_projection(
+    circuit: Any,
+) -> dict[str, Any]:
+    """Build rebuildable projection metadata from circuit state.
+
+    Returns a plain dict suitable for embedding in evidence/status output.
+    The projection is explicitly *rebuildable* — it carries only the data
+    needed to reconstruct the circuit state from the plan's failure history.
+    It is never authority; it is a projection for observability only.
+
+    Parameters
+    ----------
+    circuit:
+        A :class:`~arnold_pipelines.megaplan.orchestration.plan_circuit.PlanCircuit`
+        instance.
+
+    Returns
+    -------
+    dict
+        Projection metadata with keys:
+        * ``circuit_threshold`` — the threshold value
+        * ``open_signatures`` — serialized FailureSignature dicts for open circuits
+        * ``occurrence_counts`` — {failure_class: {task_id: count}} mapping
+        * ``total_open_circuits`` — count of open circuit signatures
+    """
+    from arnold_pipelines.megaplan.orchestration.plan_circuit import (
+        FailureSignature,
+        PlanCircuit,
+    )
+
+    if not isinstance(circuit, PlanCircuit):
+        return {
+            "circuit_threshold": 2,
+            "open_signatures": [],
+            "occurrence_counts": {},
+            "total_open_circuits": 0,
+        }
+
+    open_sigs: list[dict[str, Any]] = []
+    for sig in circuit._open_circuits:
+        if isinstance(sig, FailureSignature):
+            open_sigs.append(_serialize_failure_signature(sig))
+
+    occurrence_counts: dict[str, dict[str, int]] = {}
+    for sig, count in circuit._occurrences.items():
+        if isinstance(sig, FailureSignature):
+            fc = sig.failure_class
+            tid = sig.task_id or "__plan__"
+            if fc not in occurrence_counts:
+                occurrence_counts[fc] = {}
+            occurrence_counts[fc][tid] = count
+
+    return {
+        "circuit_threshold": circuit.threshold,
+        "open_signatures": open_sigs,
+        "occurrence_counts": occurrence_counts,
+        "total_open_circuits": len(open_sigs),
+    }
+
 # Execute branch surface — explicit, source-visible execute routing topology
 # ===========================================================================
 #

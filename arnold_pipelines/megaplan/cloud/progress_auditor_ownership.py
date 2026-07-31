@@ -23,6 +23,7 @@ from typing import Any, Callable
 
 from arnold_pipelines.megaplan.cloud.redact import redact_text
 from arnold_pipelines.megaplan.managed_agent import managed_run_roots, observed_status
+from arnold_pipelines.megaplan.cloud.simple_fixer import build_simple_fixer_occurrence
 
 
 OWNERSHIP_SCHEMA = "arnold-progress-auditor-existing-ownership-v1"
@@ -494,9 +495,116 @@ def launch_suppressed_by_existing_owner(finding: Mapping[str, Any]) -> bool:
     )
 
 
+def _finding_f01_fields(finding: Mapping[str, Any]) -> dict[str, str]:
+    """Extract the F01 repair-occurrence tuple fields from an audit finding."""
+
+    target = _mapping(finding.get("current_target"))
+    custody = _mapping(finding.get("repair_custody_summary"))
+    escalation = _mapping(finding.get("l3_escalation_gate"))
+    session_header = _mapping(finding.get("session_header"))
+    return {
+        "environment": _text(target.get("environment") or finding.get("environment")),
+        "session": _text(finding.get("session")),
+        "chain": _text(
+            session_header.get("chain")
+            or target.get("chain")
+            or finding.get("chain")
+        ),
+        "plan_revision": _text(
+            target.get("plan_revision") or finding.get("plan_revision")
+        ),
+        "phase": _text(target.get("phase") or finding.get("phase")),
+        "task": _text(target.get("task") or finding.get("task")),
+        "attempt": _text(target.get("attempt") or finding.get("iteration")),
+        "normalized_failure_kind": _text(
+            custody.get("normalized_failure_kind")
+            or finding.get("normalized_failure_kind")
+        ),
+        "blocker_or_phase_result_hash": _text(
+            custody.get("blocker_id")
+            or custody.get("blocker_or_phase_result_hash")
+        ),
+        "fence": _text(
+            escalation.get("fence") or custody.get("fence") or finding.get("fence")
+        ),
+    }
+
+
+def ownership_occurrence_authority(
+    ownership: Mapping[str, Any],
+    finding: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+    dispatch_source: str = "",
+) -> dict[str, Any]:
+    """Bind owner suppression to exact occurrence, current fence, custody epoch.
+
+    Queue state is non-authoritative: a queue presence record cannot establish
+    that a live owner holds the current occurrence.  Suppression is only
+    occurrence-bound when the ownership record's occurrence fingerprint
+    matches the finding's exact F01 occurrence AND the fence and custody epoch
+    are current.  A stale-epoch or wrong-occurrence ownership record must not
+    suppress a launch, and suppression must never authorize a legacy dispatch
+    path (for example the ``six_hour_auditor`` label source).
+
+    The ``six_hour_auditor`` label source is legacy authority (pre-migration
+    topology) that cannot establish custody over the current occurrence.
+    """
+
+    observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    finding_f01 = _finding_f01_fields(finding)
+    finding_occurrence = build_simple_fixer_occurrence(finding_f01)
+    finding_fingerprint = (
+        finding_occurrence.occurrence_fingerprint if finding_occurrence else ""
+    )
+    finding_fence = _text(finding_f01.get("fence"))
+    custody = _mapping(finding.get("repair_custody_summary"))
+    escalation = _mapping(finding.get("l3_escalation_gate"))
+    finding_epoch = _text(
+        escalation.get("custody_epoch")
+        or custody.get("custody_epoch")
+        or custody.get("epoch")
+    )
+
+    owner_fingerprint = _text(ownership.get("occurrence_fingerprint"))
+    owner_fence = _text(ownership.get("fence"))
+    owner_epoch = _text(ownership.get("custody_epoch") or ownership.get("epoch"))
+
+    occurrence_match = (
+        bool(finding_fingerprint) and owner_fingerprint == finding_fingerprint
+    )
+    fence_match = bool(finding_fence) and owner_fence == finding_fence
+    epoch_match = bool(finding_epoch) and owner_epoch == finding_epoch
+
+    suppressed = launch_suppressed_by_existing_owner(
+        {"existing_agent_ownership": dict(ownership)}
+    )
+    suppression_occurrence_bound = bool(
+        suppressed and occurrence_match and fence_match and epoch_match
+    )
+
+    legacy_dispatch = _text(dispatch_source) == "six_hour_auditor"
+
+    return {
+        "authority_schema": "arnold-ownership-occurrence-authority-v1",
+        "observed_at": observed_at.isoformat(),
+        "finding_occurrence_fingerprint": finding_fingerprint,
+        "owner_occurrence_fingerprint": owner_fingerprint,
+        "occurrence_match": occurrence_match,
+        "fence_match": fence_match,
+        "epoch_match": epoch_match,
+        "suppressed": suppressed,
+        "suppression_occurrence_bound": suppression_occurrence_bound,
+        "queue_authoritative": False,
+        "can_authorize_dispatch": False,
+        "legacy_dispatch_blocked": legacy_dispatch,
+    }
+
+
 __all__ = [
     "DEFAULT_STALE_AFTER",
     "OWNERSHIP_SCHEMA",
     "inspect_existing_ownership",
     "launch_suppressed_by_existing_owner",
+    "ownership_occurrence_authority",
 ]

@@ -11,9 +11,11 @@ from arnold.kernel import (
     EventFamily,
     ManifestReference,
     MissingIdempotencyPolicyError,
+    TerminalStateError,
     derive_effect_idempotency_key,
     fold_effect_ledger,
     fulfillment_payload,
+    indeterminate_payload,
     intent_payload,
     receipt_payload,
     require_idempotency_policy,
@@ -147,3 +149,220 @@ def test_deduped_effect_is_not_re_executed() -> None:
     assert ledger.prerecord(effect) is True
     assert ledger.prerecord(effect) is False
     assert len(ledger) == 1
+
+
+# ── INDETERMINATE state tests ──────────────────────────────────────────────
+
+
+def test_mark_indeterminate_sets_state() -> None:
+    ledger = EffectLedger()
+    effect = _descriptor()
+    ledger.prerecord(effect)
+    ledger.mark_indeterminate(effect.idempotency_key)
+
+    record = ledger.get_record(effect.idempotency_key)
+    assert record is not None
+    assert record.state is EffectRecordState.INDETERMINATE
+
+
+def test_indeterminate_is_in_effect_record_state_enum() -> None:
+    assert hasattr(EffectRecordState, "INDETERMINATE")
+    assert EffectRecordState.INDETERMINATE.value == "indeterminate"
+
+
+def test_effect_indeterminate_event_is_folded() -> None:
+    effect = _descriptor(key="indet-1")
+    events = (
+        _event("effect_intent", intent_payload(effect)),
+        _event(
+            "effect_indeterminate",
+            indeterminate_payload(effect, reason="provider timeout"),
+        ),
+    )
+
+    ledger = fold_effect_ledger(events)
+    record = ledger.get_record(effect.idempotency_key)
+    assert record.state is EffectRecordState.INDETERMINATE
+
+
+def test_indeterminate_payload_includes_reason() -> None:
+    effect = _descriptor()
+    payload = indeterminate_payload(effect, reason="timeout")
+    assert payload["reason"] == "timeout"
+    assert payload["idempotency_key"] == effect.idempotency_key
+
+
+def test_indeterminate_payload_default_reason() -> None:
+    effect = _descriptor()
+    payload = indeterminate_payload(effect)
+    assert payload["reason"] == ""
+
+
+# ── Terminal state transition guards ────────────────────────────────────────
+
+
+def test_cannot_transition_from_fulfilled_to_failed() -> None:
+    ledger = EffectLedger()
+    effect = _descriptor()
+    ledger.prerecord(effect)
+    ledger.mark_fulfilled(effect.idempotency_key)
+
+    with pytest.raises(TerminalStateError, match="terminal state"):
+        ledger.mark_failed(effect.idempotency_key)
+
+
+def test_cannot_transition_from_failed_to_fulfilled() -> None:
+    ledger = EffectLedger()
+    effect = _descriptor()
+    ledger.prerecord(effect)
+    ledger.mark_failed(effect.idempotency_key)
+
+    with pytest.raises(TerminalStateError, match="terminal state"):
+        ledger.mark_fulfilled(effect.idempotency_key)
+
+
+def test_cannot_transition_from_indeterminate_to_fulfilled() -> None:
+    ledger = EffectLedger()
+    effect = _descriptor()
+    ledger.prerecord(effect)
+    ledger.mark_indeterminate(effect.idempotency_key)
+
+    with pytest.raises(TerminalStateError, match="terminal state"):
+        ledger.mark_fulfilled(effect.idempotency_key)
+
+
+def test_cannot_transition_from_indeterminate_to_failed() -> None:
+    ledger = EffectLedger()
+    effect = _descriptor()
+    ledger.prerecord(effect)
+    ledger.mark_indeterminate(effect.idempotency_key)
+
+    with pytest.raises(TerminalStateError, match="terminal state"):
+        ledger.mark_failed(effect.idempotency_key)
+
+
+def test_cannot_transition_from_received_to_compensated() -> None:
+    ledger = EffectLedger()
+    effect = _descriptor()
+    ledger.prerecord(effect)
+    ledger.mark_received(effect.idempotency_key)
+
+    with pytest.raises(TerminalStateError, match="terminal state"):
+        ledger.mark_compensated(effect.idempotency_key)
+
+
+def test_cannot_transition_from_compensated_to_received() -> None:
+    ledger = EffectLedger()
+    effect = _descriptor()
+    ledger.prerecord(effect)
+    ledger.mark_compensated(effect.idempotency_key)
+
+    with pytest.raises(TerminalStateError, match="terminal state"):
+        ledger.mark_received(effect.idempotency_key)
+
+
+def test_cannot_transition_from_indeterminate_to_received() -> None:
+    ledger = EffectLedger()
+    effect = _descriptor()
+    ledger.prerecord(effect)
+    ledger.mark_indeterminate(effect.idempotency_key)
+
+    with pytest.raises(TerminalStateError, match="terminal state"):
+        ledger.mark_received(effect.idempotency_key)
+
+
+# ── First-terminal folding: only the first terminal state sticks ────────────
+
+
+def test_intended_can_transition_to_any_terminal() -> None:
+    """INTENDED is the only non-terminal state; transitions are allowed."""
+    ledger = EffectLedger()
+    effect = _descriptor()
+    ledger.prerecord(effect)
+
+    # All terminal transitions should work from INTENDED
+    ledger.mark_fulfilled(effect.idempotency_key)
+    # We can't chain since fulfilled is terminal, so test each separately:
+    for state_method in [
+        lambda l, k: None,  # placeholder for already tested fulfilled
+    ]:
+        pass
+
+    # Test intended -> failed
+    ledger2 = EffectLedger()
+    effect2 = _descriptor(key="intended-to-failed")
+    ledger2.prerecord(effect2)
+    ledger2.mark_failed(effect2.idempotency_key)
+    assert ledger2.get_record(effect2.idempotency_key).state is EffectRecordState.FAILED
+
+    # Test intended -> indeterminate
+    ledger3 = EffectLedger()
+    effect3 = _descriptor(key="intended-to-indet")
+    ledger3.prerecord(effect3)
+    ledger3.mark_indeterminate(effect3.idempotency_key)
+    assert ledger3.get_record(effect3.idempotency_key).state is EffectRecordState.INDETERMINATE
+
+
+def test_terminal_state_preserved_on_duplicate_mark() -> None:
+    """Calling the same terminal mark twice raises, not silently ignored."""
+    ledger = EffectLedger()
+    effect = _descriptor()
+    ledger.prerecord(effect)
+    ledger.mark_fulfilled(effect.idempotency_key)
+
+    # Second attempt to mark fulfilled raises because already terminal
+    with pytest.raises(TerminalStateError, match="terminal state"):
+        ledger.mark_fulfilled(effect.idempotency_key)
+
+
+# ── No-blind-retry: INDETERMINATE prevents silent retry ─────────────────────
+
+
+def test_indeterminate_effect_is_terminal_blocks_retry() -> None:
+    """An indeterminate effect cannot be blindly retried (no transition allowed)."""
+    ledger = EffectLedger()
+    effect = _descriptor()
+    ledger.prerecord(effect)
+    ledger.mark_indeterminate(effect.idempotency_key)
+
+    # Any attempt to change state is rejected
+    for method_name in [
+        "mark_fulfilled",
+        "mark_received",
+        "mark_compensated",
+        "mark_failed",
+        "mark_indeterminate",
+    ]:
+        method = getattr(ledger, method_name)
+        with pytest.raises(TerminalStateError, match="terminal state"):
+            method(effect.idempotency_key)
+
+
+def test_multiple_indeterminate_effects_in_ledger() -> None:
+    """Multiple effects can independently be marked indeterminate."""
+    ledger = EffectLedger()
+    for i in range(3):
+        effect = _descriptor(effect_id=f"write-{i}", key=f"idem-{i}")
+        ledger.prerecord(effect)
+        ledger.mark_indeterminate(effect.idempotency_key)
+
+    assert len(ledger) == 3
+    for i in range(3):
+        record = ledger.get_record(f"idem-{i}")
+        assert record.state is EffectRecordState.INDETERMINATE
+
+
+def test_indeterminate_folded_from_journal_cannot_be_retried() -> None:
+    """When folded from a journal, indeterminate effects are terminal."""
+    effect = _descriptor(key="indet-journal")
+    events = (
+        _event("effect_intent", intent_payload(effect)),
+        _event(
+            "effect_indeterminate",
+            indeterminate_payload(effect, reason="unknown"),
+        ),
+    )
+    ledger = fold_effect_ledger(events)
+
+    with pytest.raises(TerminalStateError, match="terminal state"):
+        ledger.mark_fulfilled(effect.idempotency_key)

@@ -1,3 +1,5 @@
+> **Authority status (M11):** Zero-authority history. All repair, audit, and deployment authority has been migrated to canonical delegation. This document is retained for reference only — it must not be used to materialize commands, grant authority, or drive automated actions.
+
 ---
 name: megaplan-tickets
 description: File and manage megaplan tickets — short, repo-scoped notes on problems or observations that get folded into epics and auto-addressed when the resolving epic completes.

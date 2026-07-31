@@ -5,4 +5,7 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/ensure-megaplan-watchdog
+# Execute the ensure script from the workspace checkout so watchdog-ensure
+# surfaces cannot materialize unguarded legacy repair authority.  The script
+# itself delegates to the canonical watchdog wrapper through the checkout.
+ExecStart=/workspace/arnold/arnold_pipelines/megaplan/cloud/systemd/ensure-megaplan-watchdog

@@ -1,0 +1,442 @@
+{
+  "constraints": {
+    "auditor_is_primary_mutator": false,
+    "evidence_source": "installed_runtime_recovery_events_store",
+    "positive_proof_cadence": "next_three_hour",
+    "production_effects_action_off": true,
+    "six_hour_names_compatibility_only": true
+  },
+  "content_hash": "4d164104de40041bf778a43d0df646a126918a3f9f68511b5351c1d39e32cd70",
+  "eligible_denominator": 6,
+  "exclusions": [
+    {
+      "event_id": "blocker-missed-1",
+      "reason": "missed_event_no_request"
+    }
+  ],
+  "generated_at": "2026-07-30T16:43:25.668310+00:00",
+  "latencies_seconds": [
+    125.0,
+    130.0,
+    135.0,
+    140.0,
+    145.0,
+    420.0
+  ],
+  "milestone": "M10",
+  "next_three_hour_reconciliation": {
+    "audit_id": "six-hour-1785429805668631",
+    "escalated_count": 27,
+    "escalations": [
+      {
+        "category": "missed_event",
+        "detail": "Blocker detected but no repair request enqueued: blocker-missed-1",
+        "finding_id": "missed-blocker-blocker-missed-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event blocker-blk-fast-1-1785429805668341 has empty evidence dict",
+        "finding_id": "empty-evidence-blocker-blk-fast-1-1785429805668341",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event enqueue-fast-1 has empty evidence dict",
+        "finding_id": "empty-evidence-enqueue-fast-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event claim-fast-1 has empty evidence dict",
+        "finding_id": "empty-evidence-claim-fast-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event terminal-fast-1 has empty evidence dict",
+        "finding_id": "empty-evidence-terminal-fast-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event blocker-blk-fast-2-1785429805668394 has empty evidence dict",
+        "finding_id": "empty-evidence-blocker-blk-fast-2-1785429805668394",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event enqueue-fast-2 has empty evidence dict",
+        "finding_id": "empty-evidence-enqueue-fast-2",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event claim-fast-2 has empty evidence dict",
+        "finding_id": "empty-evidence-claim-fast-2",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event terminal-fast-2 has empty evidence dict",
+        "finding_id": "empty-evidence-terminal-fast-2",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event blocker-blk-fast-3-1785429805668436 has empty evidence dict",
+        "finding_id": "empty-evidence-blocker-blk-fast-3-1785429805668436",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event enqueue-fast-3 has empty evidence dict",
+        "finding_id": "empty-evidence-enqueue-fast-3",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event claim-fast-3 has empty evidence dict",
+        "finding_id": "empty-evidence-claim-fast-3",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event terminal-fast-3 has empty evidence dict",
+        "finding_id": "empty-evidence-terminal-fast-3",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event blocker-blk-fast-4-1785429805668468 has empty evidence dict",
+        "finding_id": "empty-evidence-blocker-blk-fast-4-1785429805668468",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event enqueue-fast-4 has empty evidence dict",
+        "finding_id": "empty-evidence-enqueue-fast-4",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event claim-fast-4 has empty evidence dict",
+        "finding_id": "empty-evidence-claim-fast-4",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event terminal-fast-4 has empty evidence dict",
+        "finding_id": "empty-evidence-terminal-fast-4",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event blocker-blk-fast-5-1785429805668502 has empty evidence dict",
+        "finding_id": "empty-evidence-blocker-blk-fast-5-1785429805668502",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event enqueue-fast-5 has empty evidence dict",
+        "finding_id": "empty-evidence-enqueue-fast-5",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event claim-fast-5 has empty evidence dict",
+        "finding_id": "empty-evidence-claim-fast-5",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event terminal-fast-5 has empty evidence dict",
+        "finding_id": "empty-evidence-terminal-fast-5",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event blocker-slow-1 has empty evidence dict",
+        "finding_id": "empty-evidence-blocker-slow-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event enqueue-slow-1 has empty evidence dict",
+        "finding_id": "empty-evidence-enqueue-slow-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event claim-slow-1 has empty evidence dict",
+        "finding_id": "empty-evidence-claim-slow-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event terminal-slow-1 has empty evidence dict",
+        "finding_id": "empty-evidence-terminal-slow-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event blocker-missed-1 has empty evidence dict",
+        "finding_id": "empty-evidence-blocker-missed-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "slo_violation",
+        "detail": "SLO violation: 420.0s > 300.0s target",
+        "finding_id": "slo-violation-blocker-slow-1",
+        "severity": "degraded"
+      }
+    ],
+    "events_checked": 25,
+    "missed_event_findings": [
+      {
+        "detail": "Blocker detected but no repair request enqueued: blocker-missed-1",
+        "evidence": {
+          "event_id": "blocker-missed-1",
+          "kind": "blocker_detected",
+          "metadata": {},
+          "occurred_at": "2026-07-30T14:43:25.668310+00:00"
+        },
+        "finding_id": "missed-blocker-blocker-missed-1",
+        "severity": "degraded"
+      }
+    ],
+    "ok": false,
+    "primary_mutator_invoked": false,
+    "ran_at": "2026-07-30T16:43:25.668310+00:00",
+    "reconciliation_interval": "next_three_hour",
+    "requests_checked": 6,
+    "requires_attention": true,
+    "slo_violation_findings": [
+      {
+        "detail": "SLO violation: 420.0s > 300.0s target",
+        "finding_id": "slo-violation-blocker-slow-1",
+        "severity": "degraded"
+      }
+    ]
+  },
+  "occurrence_ids": [
+    "blocker-blk-fast-1-1785429805668341",
+    "blocker-blk-fast-2-1785429805668394",
+    "blocker-blk-fast-3-1785429805668436",
+    "blocker-blk-fast-4-1785429805668468",
+    "blocker-blk-fast-5-1785429805668502",
+    "blocker-slow-1",
+    "blocker-missed-1"
+  ],
+  "p95_seconds": 420.0,
+  "schema_version": 1,
+  "six_hour_backstop": {
+    "audit_id": "six-hour-1785429805668631",
+    "compatibility_alias_for": "next_three_hour_reconciliation",
+    "compatibility_only": true,
+    "escalated_count": 27,
+    "escalations": [
+      {
+        "category": "missed_event",
+        "detail": "Blocker detected but no repair request enqueued: blocker-missed-1",
+        "finding_id": "missed-blocker-blocker-missed-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event blocker-blk-fast-1-1785429805668341 has empty evidence dict",
+        "finding_id": "empty-evidence-blocker-blk-fast-1-1785429805668341",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event enqueue-fast-1 has empty evidence dict",
+        "finding_id": "empty-evidence-enqueue-fast-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event claim-fast-1 has empty evidence dict",
+        "finding_id": "empty-evidence-claim-fast-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event terminal-fast-1 has empty evidence dict",
+        "finding_id": "empty-evidence-terminal-fast-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event blocker-blk-fast-2-1785429805668394 has empty evidence dict",
+        "finding_id": "empty-evidence-blocker-blk-fast-2-1785429805668394",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event enqueue-fast-2 has empty evidence dict",
+        "finding_id": "empty-evidence-enqueue-fast-2",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event claim-fast-2 has empty evidence dict",
+        "finding_id": "empty-evidence-claim-fast-2",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event terminal-fast-2 has empty evidence dict",
+        "finding_id": "empty-evidence-terminal-fast-2",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event blocker-blk-fast-3-1785429805668436 has empty evidence dict",
+        "finding_id": "empty-evidence-blocker-blk-fast-3-1785429805668436",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event enqueue-fast-3 has empty evidence dict",
+        "finding_id": "empty-evidence-enqueue-fast-3",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event claim-fast-3 has empty evidence dict",
+        "finding_id": "empty-evidence-claim-fast-3",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event terminal-fast-3 has empty evidence dict",
+        "finding_id": "empty-evidence-terminal-fast-3",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event blocker-blk-fast-4-1785429805668468 has empty evidence dict",
+        "finding_id": "empty-evidence-blocker-blk-fast-4-1785429805668468",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event enqueue-fast-4 has empty evidence dict",
+        "finding_id": "empty-evidence-enqueue-fast-4",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event claim-fast-4 has empty evidence dict",
+        "finding_id": "empty-evidence-claim-fast-4",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event terminal-fast-4 has empty evidence dict",
+        "finding_id": "empty-evidence-terminal-fast-4",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event blocker-blk-fast-5-1785429805668502 has empty evidence dict",
+        "finding_id": "empty-evidence-blocker-blk-fast-5-1785429805668502",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event enqueue-fast-5 has empty evidence dict",
+        "finding_id": "empty-evidence-enqueue-fast-5",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event claim-fast-5 has empty evidence dict",
+        "finding_id": "empty-evidence-claim-fast-5",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event terminal-fast-5 has empty evidence dict",
+        "finding_id": "empty-evidence-terminal-fast-5",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event blocker-slow-1 has empty evidence dict",
+        "finding_id": "empty-evidence-blocker-slow-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event enqueue-slow-1 has empty evidence dict",
+        "finding_id": "empty-evidence-enqueue-slow-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event claim-slow-1 has empty evidence dict",
+        "finding_id": "empty-evidence-claim-slow-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event terminal-slow-1 has empty evidence dict",
+        "finding_id": "empty-evidence-terminal-slow-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "malformed_evidence",
+        "detail": "Event blocker-missed-1 has empty evidence dict",
+        "finding_id": "empty-evidence-blocker-missed-1",
+        "severity": "degraded"
+      },
+      {
+        "category": "slo_violation",
+        "detail": "SLO violation: 420.0s > 300.0s target",
+        "finding_id": "slo-violation-blocker-slow-1",
+        "severity": "degraded"
+      }
+    ],
+    "events_checked": 25,
+    "legacy_cadence_label": "six_hour",
+    "missed_event_findings": [
+      {
+        "detail": "Blocker detected but no repair request enqueued: blocker-missed-1",
+        "evidence": {
+          "event_id": "blocker-missed-1",
+          "kind": "blocker_detected",
+          "metadata": {},
+          "occurred_at": "2026-07-30T14:43:25.668310+00:00"
+        },
+        "finding_id": "missed-blocker-blocker-missed-1",
+        "severity": "degraded"
+      }
+    ],
+    "ok": false,
+    "primary_mutator_invoked": false,
+    "ran_at": "2026-07-30T16:43:25.668310+00:00",
+    "reconciliation_interval": "next_three_hour",
+    "requests_checked": 6,
+    "requires_attention": true,
+    "slo_violation_findings": [
+      {
+        "detail": "SLO violation: 420.0s > 300.0s target",
+        "finding_id": "slo-violation-blocker-slow-1",
+        "severity": "degraded"
+      }
+    ]
+  },
+  "slo_exceeded_count": 1,
+  "slo_exceeded_event_ids": [
+    "blocker-slow-1"
+  ],
+  "slo_met": false,
+  "slo_target_seconds": 300.0,
+  "step": "22A-22B",
+  "typed_escalation": {
+    "reason": "p95 420.0s exceeds target 300.0s",
+    "required": true
+  }
+}

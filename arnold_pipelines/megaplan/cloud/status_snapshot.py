@@ -16,12 +16,39 @@ Design rules (see ``docs/ops/elegant-cloud-status-resident-plan.md``):
 - Be unit-testable with fixture directories and an injectable liveness probe.
 - Know nothing about Discord, resident conversations, or CLI rendering. Those
   live in :mod:`arnold_pipelines.megaplan.cloud.status_format` and the resident.
+
+M9 — canonical projection migration:
+  The snapshot now carries a ``source_cursor_vector`` recording every source file
+  that was read, plus per-session ``evidence_gaps`` for any stale or degraded
+  fields.  Neither field grants dispatch, completion, cancellation, publication,
+  or delivery authority — they are display-only projections (see ``status_projection.py``
+  for the authority contract).  The format module (:mod:`arnold_pipelines.megaplan.cloud.status_format`)
+  renders these gaps as structured evidence annotations.
+M7: Projection adapters for cloud status snapshot persistence.
+----------------------------------------------------------------------
+OLD-READER / NEW-WRITER METADATA:
+  - Legacy readers (all callers before M7) use load_cloud_status_snapshot()
+    which reads ``cloud-status.json`` directly.  These readers accept the
+    file as authority without cursor validation.
+  - New writers (M7+) supplement each write_cloud_status_snapshot() and
+    build_and_write_snapshot() with cursor-checked projection events
+    appended to an append-only history.
+  - New readers (M7+) can use rebuild_status_snapshot_projection() or
+    status_snapshot_projection_cursor() for cursor-validated reads.
+  - UNCERTAINTY: Legacy readers have no cursor validation; divergence
+    between the snapshot file and projection history is only detectable by
+    the new readers.  Production enforcement remains disabled in M7.
+  - The projection history is an append-only ledger; it never erases
+    prior records, even on rebuild.
+  - The projection is SUPPLEMENTAL evidence, not authority — the
+    cloud-status.json file remains the primary source of truth.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -29,6 +56,21 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
+
+from arnold_pipelines.megaplan._core.io import (
+    ProjectionCursor,
+    ProjectionCursorMismatchError,
+    ProjectionRecord,
+    append_projection_event,
+    deterministic_projection_replay,
+    latest_projection_cursor,
+    load_projection_history,
+    now_utc,
+    projection_history_path,
+    projection_snapshot_path,
+    rebuild_projection_atomically,
+    sha256_file,
+)
 
 from arnold_pipelines.megaplan.authority.views import (
     PlanExecutionDiagnostic,
@@ -56,7 +98,13 @@ from arnold_pipelines.megaplan.cloud.session_markers import (
 )
 from arnold_pipelines.megaplan.chain.spec import load_spec as load_chain_spec
 from arnold_pipelines.run_authority import canonical_json, reduce_run_authority
+import hashlib as _hashlib
+
 from arnold_pipelines.megaplan.status_projection import plan_status_presentation
+from arnold_pipelines.megaplan.source_cursor_contract import (
+    DimensionCursor,
+    SourceCursorVector,
+)
 from arnold_pipelines.megaplan.chain.advancement import (
     AdvancementPolicy,
     assess_advancement,
@@ -92,6 +140,205 @@ PLAN_PROGRESSION_RUNGS: tuple[str, ...] = (
 )
 
 SNAPSHOT_SOURCE = "cloud-local-observer"
+
+log = logging.getLogger("megaplan")
+
+# ── M7 projection constants ───────────────────────────────────────────────
+
+_STATUS_SNAPSHOT_PROJECTION_ID = "cloud-status-snapshot"
+_STATUS_SNAPSHOT_PROJECTION_SCHEMA_VERSION = 1
+
+
+def _status_projection_dir(snapshot_path: Path) -> Path:
+    """Return the projection storage directory for status snapshot events.
+
+    Stores under ``<status_dir>/projections/``.
+    """
+    return snapshot_path.parent / "projections"
+
+
+def _cursor_from_snapshot_file(path: Path) -> ProjectionCursor:
+    """Build a ProjectionCursor from the current state of a snapshot file."""
+    resolved = path.resolve()
+    record_count = 0
+    if resolved.exists():
+        try:
+            text = resolved.read_text(encoding="utf-8")
+            lines = [line for line in text.splitlines() if line.strip()]
+            record_count = len(lines)
+        except (FileNotFoundError, OSError):
+            pass
+    source_digest = (
+        sha256_file(resolved)
+        if resolved.exists()
+        else "sha256:" + hashlib.sha256(b"").hexdigest()
+    )
+    return ProjectionCursor(
+        source_path=str(resolved),
+        source_record_count=record_count,
+        source_digest=source_digest,
+        computed_at=now_utc(),
+    )
+
+
+def _generate_status_event_id(projection_id: str, event_type: str) -> str:
+    """Generate a deterministic event ID for status snapshot projection events."""
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+    seed = f"{projection_id}:{event_type}:{ts}"
+    return f"status-proj-{hashlib.sha256(seed.encode('utf-8')).hexdigest()[:12]}"
+
+
+# ── Status snapshot projection ────────────────────────────────────────────
+
+
+def _record_status_snapshot_event(
+    snapshot: Mapping[str, Any],
+    path: Path,
+    *,
+    event_type: str = "snapshot_written",
+    flock: bool = True,
+) -> ProjectionRecord:
+    """Append a cursor-checked projection event recording the status snapshot write.
+
+    The event carries the full snapshot payload and a cursor derived from the
+    current snapshot file.  This is a shadow-side-effect — it supplements
+    the existing atomic file write without replacing it.
+    """
+    path = Path(path)
+    projection_dir = _status_projection_dir(path)
+
+    source_cursor = None
+    if path.exists():
+        try:
+            source_cursor = _cursor_from_snapshot_file(path)
+        except (FileNotFoundError, OSError):
+            pass
+
+    event_id = _generate_status_event_id(_STATUS_SNAPSHOT_PROJECTION_ID, event_type)
+    record = ProjectionRecord(
+        event_type=event_type,
+        event_id=event_id,
+        payload={
+            "schema_version": _STATUS_SNAPSHOT_PROJECTION_SCHEMA_VERSION,
+            "snapshot_path": str(path),
+            "generated_at": snapshot.get("generated_at"),
+            "source": snapshot.get("source"),
+            "summary": dict(snapshot.get("summary") or {}),
+            "session_count": len(snapshot.get("sessions") or []),
+        },
+        occurred_at=now_utc(),
+        cursor=source_cursor,
+        idempotency_key=f"status-snapshot-{path.name}-{event_id}",
+    )
+    return append_projection_event(
+        projection_dir,
+        _STATUS_SNAPSHOT_PROJECTION_ID,
+        record,
+        source_path=path,
+        flock=flock,
+        snapshot_dir=projection_dir,
+    )
+
+
+def rebuild_status_snapshot_projection(
+    path: Path | str = DEFAULT_SNAPSHOT_PATH,
+    *,
+    flock: bool = True,
+) -> dict[str, Any]:
+    """Atomically rebuild the status snapshot projection from the append-only history.
+
+    Returns a dict with keys:
+      - ``status``: ``"rebuilt"`` | ``"no_history"`` | ``"error"``
+      - ``snapshot_path``: path to the written snapshot (if rebuilt)
+      - ``projection``: the complete projected state (if rebuilt)
+      - ``cursor``: the latest source cursor (if available)
+      - ``record_count``: number of projection records processed
+      - ``diagnostics``: list of diagnostic messages
+    """
+    path = Path(path)
+    projection_dir = _status_projection_dir(path)
+    diagnostics: list[str] = []
+    records = load_projection_history(projection_dir, _STATUS_SNAPSHOT_PROJECTION_ID)
+    if not records:
+        return {
+            "status": "no_history",
+            "snapshot_path": None,
+            "projection": None,
+            "cursor": None,
+            "record_count": 0,
+            "diagnostics": [
+                "No status snapshot projection history found — nothing to rebuild"
+            ],
+        }
+
+    def _fold_status_snapshot(
+        acc: dict[str, Any], record: ProjectionRecord
+    ) -> dict[str, Any]:
+        """Fold: last snapshot payload wins."""
+        payload = record.payload
+        if isinstance(payload, dict):
+            acc.update(payload)
+        return acc
+
+    try:
+        projection_data = deterministic_projection_replay(
+            projection_dir,
+            _STATUS_SNAPSHOT_PROJECTION_ID,
+            fold_fn=_fold_status_snapshot,
+        )
+    except Exception as exc:
+        return {
+            "status": "error",
+            "snapshot_path": None,
+            "projection": None,
+            "cursor": None,
+            "record_count": len(records),
+            "diagnostics": [f"Status snapshot replay failed: {exc}"],
+        }
+
+    last_cursor = latest_projection_cursor(
+        projection_dir, _STATUS_SNAPSHOT_PROJECTION_ID
+    )
+    snapshot_path = rebuild_projection_atomically(
+        projection_dir,
+        _STATUS_SNAPSHOT_PROJECTION_ID,
+        projection_data,
+        cursor=last_cursor,
+    )
+    return {
+        "status": "rebuilt",
+        "snapshot_path": str(snapshot_path),
+        "projection": dict(projection_data),
+        "cursor": last_cursor.to_dict() if last_cursor else None,
+        "record_count": len(records),
+        "diagnostics": diagnostics,
+    }
+
+
+def status_snapshot_projection_cursor(
+    path: Path | str = DEFAULT_SNAPSHOT_PATH,
+) -> ProjectionCursor | None:
+    """Return the latest cursor from the status snapshot projection history."""
+    path = Path(path)
+    projection_dir = _status_projection_dir(path)
+    return latest_projection_cursor(projection_dir, _STATUS_SNAPSHOT_PROJECTION_ID)
+
+
+def status_snapshot_projection_snapshot(
+    path: Path | str = DEFAULT_SNAPSHOT_PATH,
+) -> dict[str, Any] | None:
+    """Return the most recent status snapshot projection snapshot, or None."""
+    path = Path(path)
+    projection_dir = _status_projection_dir(path)
+    snapshot_path = projection_snapshot_path(
+        projection_dir, _STATUS_SNAPSHOT_PROJECTION_ID
+    )
+    if not snapshot_path.exists():
+        return None
+    try:
+        return json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
 
 
 def is_trusted_container() -> bool:
@@ -146,12 +393,20 @@ def build_cloud_status_snapshot(
     now: datetime | None = None,
     liveness_probe: LivenessProbe | None = None,
     history_path: Path | str | None = None,
+    source_cursor_vector: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the canonical cloud status snapshot from local observation only.
 
     All file reads are defensive: a missing or malformed source file degrades a
     session to ``attention`` rather than raising. The function never raises on
     absent inputs — callers may inspect the top-level ``degraded`` field.
+
+    *source_cursor_vector* is an optional M9 canonical projection cursor
+    recording which source files were read, their record counts, and digests.
+    When supplied, it is attached as ``source_cursor_vector`` in the snapshot
+    so downstream consumers (format module, resident) can trace evidence
+    provenance without repeating the read.  It never grants authority — this
+    is a display-only projection.
     """
     now = now or _utcnow()
     # Resolve defaults at call time so tests (and in-container callers) see the
@@ -200,6 +455,11 @@ def build_cloud_status_snapshot(
         if deltas:
             progress.update(deltas)
 
+    # Attach per-session evidence gaps (stale/degraded display fields as
+    # structured evidence annotations — never authority).
+    for entry in sessions:
+        entry["evidence_gaps"] = _collect_session_evidence_gaps(entry)
+
     summary = _summarize(sessions)
     snapshot: dict[str, Any] = {
         "generated_at": _isoformat(now),
@@ -209,6 +469,7 @@ def build_cloud_status_snapshot(
         "summary": summary,
         "sessions": sessions,
         "degraded": {"reasons": degraded_reasons} if degraded_reasons else None,
+        "source_cursor_vector": _format_source_cursor(source_cursor_vector),
     }
     if watchdog_report is not None:
         snapshot["watchdog_generated_at"] = watchdog_report.get("timestamp_utc") or ""
@@ -221,6 +482,7 @@ def write_cloud_status_snapshot(
     path: Path | str = DEFAULT_SNAPSHOT_PATH,
     *,
     previous_path: Path | str | None = DEFAULT_PREVIOUS_SNAPSHOT_PATH,
+    _record_projection: bool = True,
 ) -> Path:
     """Atomically write ``snapshot`` to ``path``, rotating the prior file.
 
@@ -228,6 +490,11 @@ def write_cloud_status_snapshot(
     writes are never observable. When ``previous_path`` is set, the existing
     snapshot (if any) is moved there first so consumers can diff consecutive
     sweeps. Returns the final path written.
+
+    M7 (shadow): In addition to the atomic write, this function appends a
+    cursor-checked projection event to an append-only history.  The projection
+    event is recorded *after* the file write succeeds.  Set
+    ``_record_projection=False`` to skip this side-effect.
     """
     target = Path(path)
     previous = Path(previous_path) if previous_path else None
@@ -253,6 +520,24 @@ def write_cloud_status_snapshot(
         except OSError:
             pass
         raise
+
+    # ── M7 projection side-effect ────────────────────────────────────────
+    if _record_projection:
+        try:
+            _record_status_snapshot_event(snapshot, target)
+        except ProjectionCursorMismatchError as exc:
+            log.warning(
+                "M7 status-snapshot projection append blocked by cursor mismatch: %s. "
+                "Snapshot file is intact; projection history may need reconciliation.",
+                exc,
+            )
+        except Exception:
+            log.warning(
+                "M7 status-snapshot projection append failed (non-fatal). "
+                "Snapshot file is intact.",
+                exc_info=True,
+            )
+
     return target
 
 
@@ -264,6 +549,7 @@ def build_and_write_snapshot(
     previous_path: Path | str | None = DEFAULT_PREVIOUS_SNAPSHOT_PATH,
     history_path: Path | str | None = None,
     now: datetime | None = None,
+    source_cursor_vector: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the snapshot and atomically write it + the previous rotation.
 
@@ -276,6 +562,7 @@ def build_and_write_snapshot(
         watchdog_report_path=watchdog_report_path,
         now=now,
         history_path=history_path,
+        source_cursor_vector=source_cursor_vector,
     )
     write_cloud_status_snapshot(snapshot, path=path, previous_path=previous_path)
     append_progress_history(snapshot, history_path or DEFAULT_HISTORY_PATH, now=now)
@@ -319,11 +606,16 @@ def load_cloud_status_snapshot(
 def plan_activity_summary(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
     """Derive the resident ``plan_activity_summary`` from a snapshot.
 
-    Returns three buckets — ``active_working`` (running),
+    Returns buckets — ``active_working`` (running),
     ``should_be_working_but_needs_attention`` (repairing + attention + blocked
-    that should be running), and ``recently_completed`` — plus a ``degraded``
-    flag when no snapshot was supplied. This is the shape the resident hot
-    context injects; it is derived from the canonical snapshot first.
+    that should be running), ``recently_completed``, and
+    ``indeterminate_completions`` — plus a ``degraded`` flag when no snapshot
+    was supplied.
+
+    M9/T44: ``indeterminate_completions`` surfaces sessions whose status
+    claims completion but whose source-cursor evidence (WBC/custody/run
+    authority) is stale, unknown, or incoherent — adapter-backed projections
+    expose typed indeterminate results instead of collapsing to complete.
     """
     if not snapshot or not isinstance(snapshot, Mapping):
         return {
@@ -332,6 +624,7 @@ def plan_activity_summary(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
             "active_working": [],
             "should_be_working_but_needs_attention": [],
             "recently_completed": [],
+            "indeterminate_completions": [],
         }
     # A sanitized stale snapshot (P1) carries a stale_banner and intentionally
     # empty buckets; surface it as degraded with the banner so consumers never
@@ -344,11 +637,13 @@ def plan_activity_summary(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
             "active_working": [],
             "should_be_working_but_needs_attention": [],
             "recently_completed": [],
+            "indeterminate_completions": [],
         }
     sessions = snapshot.get("sessions") or []
     active: list[dict[str, Any]] = []
     needs_attention: list[dict[str, Any]] = []
     completed: list[dict[str, Any]] = []
+    indeterminate: list[dict[str, Any]] = []
     for entry in sessions:
         if not isinstance(entry, Mapping):
             continue
@@ -365,7 +660,12 @@ def plan_activity_summary(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         if status == "running":
             active.append(compact)
         elif status == "complete":
-            completed.append(compact)
+            # M9/T44: Check source-cursor for indeterminate evidence
+            if _session_completion_is_indeterminate(entry):
+                compact["completion_evidence"] = "indeterminate"
+                indeterminate.append(compact)
+            else:
+                completed.append(compact)
         elif status in {"repairing", "attention", "blocked"}:
             needs_attention.append(compact)
     return {
@@ -373,7 +673,34 @@ def plan_activity_summary(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         "active_working": active,
         "should_be_working_but_needs_attention": needs_attention,
         "recently_completed": completed,
+        "indeterminate_completions": indeterminate,
     }
+
+
+def _session_completion_is_indeterminate(
+    session: Mapping[str, Any],
+) -> bool:
+    """Check whether a session's completion evidence is indeterminate.
+
+    M9/T44: When source-cursor metadata is present and WBC, custody, or
+    run_authority dimensions are non-fresh, the completion claim cannot
+    be verified — return True (indeterminate) instead of silently
+    collapsing to complete.
+    """
+    source_cursor = session.get("source_cursor")
+    if not isinstance(source_cursor, Mapping):
+        return False
+    cursors = source_cursor.get("cursors")
+    if not isinstance(cursors, (list, tuple)):
+        return False
+    for c in cursors:
+        if not isinstance(c, Mapping):
+            continue
+        dim = c.get("dimension", "")
+        state = c.get("state", "")
+        if dim in {"wbc", "custody", "run_authority"} and state != "fresh":
+            return True
+    return False
 
 
 def append_progress_history(
@@ -809,6 +1136,7 @@ def _overlay_newer_chain_state(
     completed_len = len(completed) if isinstance(completed, list) else 0
     current_index = _as_int(chain_state.get("current_milestone_index"))
     last_state = str(chain_state.get("last_state") or "").strip()
+    current_plan_name = str(chain_state.get("current_plan_name") or "").strip()
     chain_complete = _chain_state_complete(
         last_state=last_state,
         completed_len=completed_len,
@@ -816,6 +1144,7 @@ def _overlay_newer_chain_state(
     )
     custody_mismatch = bool(
         last_state.lower() in {"done", "complete", "completed"}
+        and not current_plan_name
         and milestone_count is not None
         and completed_len < milestone_count
     )
@@ -915,6 +1244,86 @@ def _chain_health_explicitly_incomplete(chain_health: Mapping[str, Any] | None) 
 
 
 # --- per-session classification -------------------------------------------
+
+
+def _build_session_source_cursor(
+    *,
+    session: str,
+    plan_current_state: str,
+    plan_state_doc: Any,
+    chain_health: Any,
+    watchdog_item: Mapping[str, Any],
+    liveness: Mapping[str, Any],
+    observed_at_epoch_ms: float,
+) -> SourceCursorVector:
+    """Build a source-cursor vector from available cloud session context.
+
+    Dimensions that cannot be determined from cloud-local observation are
+    explicitly ``unknown`` — never defaulted to fresh or stale.
+    """
+    now_iso = datetime.fromtimestamp(
+        observed_at_epoch_ms / 1000, tz=timezone.utc
+    ).isoformat()
+
+    # Lifecycle: version from current_state + chain health
+    ch_ver = ""
+    if isinstance(chain_health, Mapping):
+        ch_ver = f":ch:{chain_health.get('completed_count', '')}:{chain_health.get('chain_complete', '')}"
+    lifecycle_version = "sha256:" + _hashlib.sha256(
+        f"{session}:{plan_current_state}{ch_ver}".encode("utf-8")
+    ).hexdigest()
+    lifecycle_cursor = DimensionCursor.fresh(
+        "lifecycle", lifecycle_version, now_iso,
+        detail=f"session={session} state={plan_current_state or 'unknown'}",
+    )
+
+    # Process-correlation: from watchdog/liveness
+    has_tmux = bool(liveness.get("tmux")) if isinstance(liveness, Mapping) else False
+    has_process = bool(liveness.get("process")) if isinstance(liveness, Mapping) else False
+    if has_tmux or has_process:
+        pc_version = f"session:{session}:tmux:{has_tmux}:process:{has_process}"
+        pc_cursor = DimensionCursor.fresh(
+            "process_correlation", pc_version, now_iso,
+            detail=f"liveness tmux={has_tmux} process={has_process}",
+        )
+    else:
+        pc_cursor = DimensionCursor.unknown(
+            "process_correlation", observed_at=now_iso,
+            detail="no liveness signal from cloud session",
+        )
+
+    # Custody: from cloud-custody classification (built later, default unknown here)
+    custody_cursor = DimensionCursor.unknown(
+        "custody", observed_at=now_iso,
+        detail="custody classification computed per-session",
+    )
+
+    # Run Authority: unavailable from cloud-local observer
+    ra_cursor = DimensionCursor.unknown(
+        "run_authority", observed_at=now_iso,
+        detail="run authority unavailable from cloud-local observer",
+    )
+
+    # Work ledger: unavailable from cloud-local observer
+    wl_cursor = DimensionCursor.unknown(
+        "work_ledger", observed_at=now_iso,
+        detail="work ledger unavailable from cloud-local observer",
+    )
+
+    # WBC: unavailable from cloud-local observer
+    wbc_cursor = DimensionCursor.unknown(
+        "wbc", observed_at=now_iso,
+        detail="WBC boundary evidence unavailable from cloud-local observer",
+    )
+
+    return SourceCursorVector.from_cursors(
+        lifecycle_cursor,
+        wbc_cursor,
+        custody_cursor,
+        ra_cursor,
+        wl_cursor,
+        pc_cursor,
+    )
 
 
 def _build_session_entry(
@@ -1072,6 +1481,7 @@ def _build_session_entry(
     _completion_contract_mode = "shadow"
     _has_final_acceptance_receipt = False
     _final_milestone_label = None
+    _final_milestone_plan_name = None
     _chain_state_doc: dict[str, Any] | None = None
     if remote_spec and chain_complete:
         try:
@@ -1094,6 +1504,10 @@ def _build_session_entry(
                                 _has_final_acceptance_receipt = isinstance(
                                     _rec.get("acceptance_receipt"), dict
                                 )
+                                if _has_final_acceptance_receipt:
+                                    _final_milestone_plan_name = str(
+                                        _rec.get("plan") or ""
+                                    ).strip() or None
                                 break
         except Exception:
             pass
@@ -1163,6 +1577,61 @@ def _build_session_entry(
         "acceptance_required": _acceptance_required,
         "waiting_for_acceptance": _waiting_for_acceptance,
     }
+    repair_projection = _compose_repair_decision_projection(
+        workspace=workspace,
+        queue_root=marker_dir.parent / "repair-queue",
+        repair_data_dir=repair_data_dir,
+        plan_state=plan_state_doc,
+        current_target=current_target_record,
+    )
+    repair_custody = (
+        repair_projection.get("repair_custody")
+        if isinstance(repair_projection.get("repair_custody"), Mapping)
+        else None
+    )
+    parent_custody: dict[str, Any] | None = None
+    if _has_final_acceptance_receipt and isinstance(repair_custody, Mapping):
+        active_repair_subject_ids: list[str] = []
+        current_target = (
+            repair_custody.get("current_target")
+            if isinstance(repair_custody.get("current_target"), Mapping)
+            else {}
+        )
+        current_refs = (
+            current_target.get("current_refs")
+            if isinstance(current_target, Mapping)
+            and isinstance(current_target.get("current_refs"), Mapping)
+            else {}
+        )
+        repair_plan_state = (
+            repair_custody.get("plan_state")
+            if isinstance(repair_custody.get("plan_state"), Mapping)
+            else {}
+        )
+        for value in (
+            current_refs.get("current_plan_name"),
+            current_refs.get("chain_current_plan_name"),
+            repair_plan_state.get("name"),
+        ):
+            if isinstance(value, str) and value.strip():
+                active_repair_subject_ids.append(value.strip())
+        blocker_id = repair_custody.get("blocker_id")
+        parent_custody = {
+            "accepted_subject_ids": (
+                [_final_milestone_plan_name] if _final_milestone_plan_name else []
+            ),
+            "active_repair_subject_ids": list(
+                dict.fromkeys(active_repair_subject_ids)
+            ),
+            "accepted_repair_occurrence_ids": [],
+            "active_repair_occurrence_ids": (
+                [blocker_id.strip()]
+                if durable_repair_active(repair_custody)
+                and isinstance(blocker_id, str)
+                and blocker_id.strip()
+                else []
+            ),
+        }
     advancement = assess_advancement(
         advancement_policy,
         current_state=plan_current_state,
@@ -1177,6 +1646,7 @@ def _build_session_entry(
         completed_count=completed_count or 0,
         has_final_acceptance_receipt=_has_final_acceptance_receipt,
         final_milestone_label=_final_milestone_label,
+        parent_custody=parent_custody,
     )
     active_step = (
         plan_state_doc.get("active_step")
@@ -1184,10 +1654,27 @@ def _build_session_entry(
         and isinstance(plan_state_doc.get("active_step"), Mapping)
         else None
     )
+    # ── M9: build source-cursor metadata for this session row ──
+    _observed_at_epoch_ms = now.timestamp() * 1000
+    _session_source_cursor = _build_session_source_cursor(
+        session=session,
+        plan_current_state=plan_current_state,
+        plan_state_doc=plan_state_doc,
+        chain_health=chain_health,
+        watchdog_item=watchdog_item,
+        liveness=liveness,
+        observed_at_epoch_ms=_observed_at_epoch_ms,
+    )
+    _lifecycle_cursor = _session_source_cursor.cursor("lifecycle")
+
     presentation = plan_status_presentation(
         plan_state_label,
         active_step=active_step,
         completed=chain_complete or status == "complete",
+        source_cursor=_session_source_cursor,
+        lifecycle_cursor=_lifecycle_cursor,
+        observed_at_epoch_ms=_observed_at_epoch_ms,
+        evaluation_at_epoch_ms=_observed_at_epoch_ms,
     )
 
     custody_classification = _classify_session_custody(
@@ -1267,6 +1754,9 @@ def _build_session_entry(
         "repair_state": repair_state,
         "custody_state": custody_state,
         "repairable_issue": repairable_issue,
+        # ── M9: source-cursor metadata on the session row ──
+        "source_cursor": _session_source_cursor.to_dict() if _session_source_cursor else None,
+        "_non_authoritative": True,
         "evidence": {
             "marker": str(marker_path),
             "chain_health": str(marker_dir / f"{session}.chain-health.progress.json"),
@@ -1277,6 +1767,9 @@ def _build_session_entry(
             "superseded_by": superseding_sibling,
         },
     }
+    # ── M9: mark plan-percent bookkeeping as explicitly non-authoritative ──
+    if isinstance(entry.get("progress"), dict):
+        entry["progress"]["_non_authoritative"] = True
     entry.update(
         _compose_shadow_views(
             session=session,
@@ -1295,13 +1788,6 @@ def _build_session_entry(
             latest_activity=latest_activity,
             now=now,
         )
-    )
-    repair_projection = _compose_repair_decision_projection(
-        workspace=workspace,
-        queue_root=marker_dir.parent / "repair-queue",
-        repair_data_dir=repair_data_dir,
-        plan_state=plan_state_doc,
-        current_target=current_target_record,
     )
     entry.update(repair_projection)
     custody = repair_projection.get("repair_custody")
@@ -2611,3 +3097,201 @@ def _as_path(value: object) -> Path | None:
     if isinstance(value, Path):
         return value
     return None
+
+
+# ── M9: canonical projection helpers ──────────────────────────────────────
+
+
+def _format_source_cursor(
+    cursor_vector: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Format a source cursor vector for the snapshot, never granting authority.
+
+    When no cursor vector is supplied the field is an explicit ``absent``
+    sentinel so consumers never mistake a missing cursor for a verified read.
+    """
+    if isinstance(cursor_vector, Mapping) and cursor_vector:
+        return {
+            "authority": "evidence_extracted_display_only",
+            "value": dict(cursor_vector),
+        }
+    return {
+        "authority": "absent",
+        "reason": "no_source_cursor_vector_provided",
+    }
+
+
+def _collect_session_evidence_gaps(
+    entry: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Collect structured evidence gaps for one session entry.
+
+    Returns a dict whose keys name degraded dimensions and whose values are
+    ``{gap, reason, evidence_status}`` triples.  Gaps are pure display
+    annotations — they never feed dispatch, completion, cancellation,
+    publication, or delivery.
+    """
+    gaps: dict[str, Any] = {}
+
+    # --- tmux liveness gap ---
+    tmux_value = entry.get("tmux")
+    if tmux_value is None and not isinstance(entry.get("evidence"), Mapping):
+        gaps["tmux_liveness"] = {
+            "gap": "tmux_liveness_unavailable",
+            "reason": "no tmux probe result; process namespace unavailable",
+            "evidence_status": "missing",
+        }
+
+    # --- process liveness gap ---
+    process_value = entry.get("process")
+    if process_value is None and not isinstance(entry.get("evidence"), Mapping):
+        gaps["process_liveness"] = {
+            "gap": "process_liveness_unavailable",
+            "reason": "no process probe result; process namespace unavailable",
+            "evidence_status": "missing",
+        }
+
+    # --- watchdog status gap ---
+    watchdog_status = entry.get("watchdog")
+    if watchdog_status is None:
+        gaps["watchdog_status"] = {
+            "gap": "watchdog_status_unavailable",
+            "reason": "no watchdog report for this session",
+            "evidence_status": "missing",
+        }
+    elif watchdog_status == "stale":
+        gaps["watchdog_status"] = {
+            "gap": "watchdog_status_stale",
+            "reason": "watchdog report describes an earlier sweep; not current runner truth",
+            "evidence_status": "stale",
+        }
+
+    # --- chain-health gap ---
+    chain_complete = entry.get("chain_complete")
+    if chain_complete is None:
+        gaps["chain_health"] = {
+            "gap": "chain_health_unavailable",
+            "reason": "no chain-health sidecar for this session",
+            "evidence_status": "missing",
+        }
+
+    # --- plan state gap ---
+    plan_state = entry.get("plan_state")
+    if plan_state is None:
+        evidence = entry.get("evidence")
+        if isinstance(evidence, Mapping) and evidence.get("marker"):
+            gaps["plan_state"] = {
+                "gap": "plan_state_unavailable",
+                "reason": "plan state file missing or unreadable",
+                "evidence_status": "missing",
+            }
+
+    # --- custody mismatch ---
+    if entry.get("custody_mismatch"):
+        gaps["custody_mismatch"] = {
+            "gap": "chain_custody_mismatch",
+            "reason": (
+                "terminal chain state with incomplete milestone count; "
+                "plan state label suppressed"
+            ),
+            "evidence_status": "degraded",
+        }
+
+    # --- repair projection degraded ---
+    repair_degraded = entry.get("repair_projection_degraded")
+    if isinstance(repair_degraded, Mapping) and repair_degraded:
+        gaps["repair_projection"] = {
+            "gap": "repair_projection_degraded",
+            "reason": str(repair_degraded.get("reason") or "canonical repair projection unavailable"),
+            "evidence_status": "degraded",
+        }
+
+    # --- superseded sibling ---
+    evidence = entry.get("evidence")
+    if isinstance(evidence, Mapping) and evidence.get("superseded_by"):
+        gaps["superseded_by"] = {
+            "gap": "session_superseded",
+            "reason": f"superseded by sibling: {evidence['superseded_by']}",
+            "evidence_status": "superseded",
+        }
+
+    return gaps
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Step 93 — Recovery SLO projection (display-only, never authoritative)
+#
+# The status snapshot is the single "what is running?" truth document.
+# Recovery SLO state belongs here as a *projection* — it renders the
+# acceptance proof (Steps 92-94) for human/dashboard consumption but never
+# grants dispatch, completion, publication, or delivery authority.
+# The authoritative gate lives in
+# :func:`repair_revalidation.compute_recovery_slo_proof`.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def recovery_slo_projection(
+    route_closure: Mapping[str, Any] | None = None,
+    latency_ledger: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Project the recovery SLO state into the cloud status snapshot.
+
+    This is a **display-only** projection. It renders the route-authority
+    closure summary (Step 92) and the nearest-rank p95 latency cohort
+    (Steps 93-94) for human/dashboard consumption.
+
+    Authority is never granted here — the status snapshot is local
+    observation only. The authoritative acceptance gate is
+    :func:`~arnold_pipelines.megaplan.cloud.repair_revalidation.compute_recovery_slo_proof`.
+    """
+    closure_ok = False
+    if route_closure is not None:
+        closure_ok = (
+            bool(route_closure.get("closure_complete", False))
+            and int(route_closure.get("unplanned_count", 0)) == 0
+            and int(route_closure.get("planned_pending_count", 0)) == 0
+        )
+
+    p95: float | None = None
+    sample_count = 0
+    cohort_ok = False
+    if latency_ledger is not None:
+        sample_count = int(latency_ledger.get("sample_count", 0))
+        p95_val = latency_ledger.get("p95_seconds")
+        if isinstance(p95_val, (int, float)):
+            p95 = float(p95_val)
+        cohort_ok = sample_count >= 20
+
+    slo_met = (
+        closure_ok
+        and cohort_ok
+        and p95 is not None
+        and p95 < 300.0
+    )
+
+    return {
+        "projection_kind": "recovery_slo",
+        "authoritative": False,
+        "display_only": True,
+        "milestone": "M11",
+        "routes_closed": closure_ok,
+        "cohort_size": sample_count,
+        "p95_seconds": p95,
+        "p95_method": (
+            "nearest-rank ceil(0.95 * N) over sorted ascending latencies"
+        ),
+        "minimum_cohort_size": 20,
+        "slo_threshold_seconds": 300.0,
+        "slo_met": slo_met,
+        "cohort_definition": (
+            "Eligible durable blocked-occurrence or process-exit events "
+            "whose occurrence identity has current Run Authority grant/fence, "
+            "current Custody lease/epoch, same-occurrence verifier receipts, "
+            "and a terminal accepted-repair or typed-escalation receipt."
+        ),
+        "note": (
+            "This is a display-only projection in the status snapshot. "
+            "The authoritative recovery SLO gate is "
+            "repair_revalidation.compute_recovery_slo_proof."
+        ),
+    }

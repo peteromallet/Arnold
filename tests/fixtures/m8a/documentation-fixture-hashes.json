@@ -1,0 +1,206 @@
+{
+  "schema": "m8a.documentation-fixture-hashes.v1",
+  "generated_at": "2026-07-21T22:16:00Z",
+  "generator": "tests/fixtures/m8a/__init__.py",
+  "north_star_guard": "These hashes and limitation records are evidence only. No task, test, or executor may treat historical M6/incident documents as executable task graphs. The M8A synthetic v2 fixtures are the only honest way to exercise Transaction Spine and Strategy Roadmap shapes in this checkout.",
+  "documentation_fixtures": [
+    {
+      "fixture_key": "transaction-spine-replay",
+      "path": "evidence/replay/transaction-spine.json",
+      "content_sha256": "856d9988975f2766df6516ad87bda409e62cc0d1acde93112eade87463bd8101",
+      "schema": "m6.transaction-spine-replay-fixture.v1",
+      "limitations": [
+        {
+          "code": "missing_original_workspace",
+          "description": "The original Transaction Spine workspace is not available in this checkout. Preserved handoff documents, incident summaries, and repair data from the committed incident ledger serve as the best available evidence. Live plan state, chain logs, and raw repair artifacts cannot be independently verified.",
+          "severity": "limitation"
+        },
+        {
+          "code": "not_executable_task_graph",
+          "description": "The Transaction Spine replay fixture is a collection of handoff documents, incident summaries, and repair data. It is NOT a v2 task graph and cannot be consumed by compile_task_feasibility() or any executor dispatch path. Downstream tests must use the synthetic v2 fixture at tests/fixtures/m8a/transaction-spine-serial.json.",
+          "severity": "limitation"
+        },
+        {
+          "code": "path_redaction",
+          "description": "All absolute /workspace/ paths in the replay fixture have been redacted with stable content-hash tokens. Structural comparison is preserved but exact workspace paths are not recoverable.",
+          "severity": "limitation"
+        }
+      ],
+      "synthetic_v2_fixture": "tests/fixtures/m8a/transaction-spine-serial.json"
+    },
+    {
+      "fixture_key": "strategy-roadmap-replay",
+      "path": "evidence/replay/strategy-roadmap.json",
+      "content_sha256": "0c3342e3d2b5de9fa001368de272e264c0410712ca7276eb125472c37af9d853",
+      "schema": "m6.strategy-roadmap-replay-fixture.v1",
+      "limitations": [
+        {
+          "code": "missing_original_workspace",
+          "description": "The original Strategy Roadmap workspace is not available in this checkout. Preserved handoff context, incident summaries, repair data, and committed initiative artifacts serve as the best available evidence.",
+          "severity": "limitation"
+        },
+        {
+          "code": "not_executable_task_graph",
+          "description": "The Strategy Roadmap replay fixture is a collection of handoff context, incident data, repair data, and initiative artifacts. It is NOT a v2 task graph. Downstream tests must use the synthetic v2 fixture at tests/fixtures/m8a/strategy-validation.json.",
+          "severity": "limitation"
+        },
+        {
+          "code": "compaction_baselines_unknown",
+          "description": "Compaction and productive-versus-replayed baselines are UNKNOWN because the original workspace is unavailable and the handoff document notes these metrics were not separately timed.",
+          "severity": "limitation"
+        }
+      ],
+      "synthetic_v2_fixture": "tests/fixtures/m8a/strategy-validation.json"
+    },
+    {
+      "fixture_key": "m6-proof-index",
+      "path": "evidence/m6-proof-index.json",
+      "content_sha256": "recomputed-at-runtime",
+      "schema": "m6.proof-index.v2",
+      "limitations": [
+        {
+          "code": "not_executable_task_graph",
+          "description": "The M6 proof index is an aggregate validation result covering 15 artifacts. It is NOT a v2 task graph and must not be consumed by compile_task_feasibility().",
+          "severity": "limitation"
+        },
+        {
+          "code": "validation_failed",
+          "description": "The proof index reports validation_passed=false with prerequisite verification status INCOHERENT. Unavailable denominators are recorded as UNKNOWN, not as success evidence or zero.",
+          "severity": "limitation"
+        }
+      ]
+    },
+    {
+      "fixture_key": "m6a-f01-f17-substrate-map",
+      "path": "evidence/m6a-f01-f17-substrate-map.json",
+      "content_sha256": "sha256:3437084066612c8d91f3c13fa02682612d3956136fd50e0e6abada48177eaabf",
+      "schema": "m6a.f01-f17-substrate-map.v1",
+      "limitations": [
+        {
+          "code": "not_executable_task_graph",
+          "description": "The F01-F17 substrate map is a finding-to-call-site classification document. It maps 17 findings to canonical owners and migration matrix rows. It is NOT a v2 task graph.",
+          "severity": "limitation"
+        }
+      ]
+    },
+    {
+      "fixture_key": "work-ledger-vocabulary",
+      "path": "evidence/work-ledger-vocabulary.json",
+      "content_sha256": "recomputed-at-runtime",
+      "schema": "m6.work-ledger-vocabulary.v1",
+      "limitations": [
+        {
+          "code": "not_executable_task_graph",
+          "description": "The work-ledger vocabulary defines 12 stages and 3 cost dimensions for work-class telemetry. It is NOT a v2 task graph.",
+          "severity": "limitation"
+        },
+        {
+          "code": "baselines_unknown",
+          "description": "All stage baselines are recorded as UNKNOWN because M8A instrumentation did not exist when the vocabulary was generated. This is preserved as a limitation, not a defect.",
+          "severity": "limitation"
+        }
+      ]
+    }
+  ],
+  "synthetic_v2_fixtures": [
+    {
+      "fixture_key": "transaction-spine-serial",
+      "path": "tests/fixtures/m8a/transaction-spine-serial.json",
+      "schema": "megaplan-task-feasibility-v2",
+      "task_count": 30,
+      "edge_count": 29,
+      "expected_seriality": 1.0,
+      "expected_diagnostic": "serial_graph_unjustified",
+      "documents_finding": "F07",
+      "description": "Synthetic v2 payload reproducing the 30-task/29-edge fully serial Transaction Spine shape. Rejected with serial_graph_unjustified, critical_path_infeasible, and dispatch_budget_infeasible."
+    },
+    {
+      "fixture_key": "strategy-validation",
+      "path": "tests/fixtures/m8a/strategy-validation.json",
+      "schema": "megaplan-task-feasibility-v2",
+      "task_count": 5,
+      "expected_diagnostic": "model_validation_job_forbidden",
+      "documents_finding": "F09",
+      "description": "Synthetic v2 payload with Strategy-equivalent validation tasks that should be harness-owned validation_jobs, not model tasks."
+    },
+    {
+      "fixture_key": "complexity-7-8-9",
+      "path": "tests/fixtures/m8a/complexity-7-8-9.json",
+      "schema": "megaplan-task-feasibility-v2",
+      "task_count": 4,
+      "expected_diagnostic": "task_checkpoint_required",
+      "documents_finding": "F08",
+      "description": "Synthetic v2 payload with complexity 7/8/9 tasks. T7/T8/T9 have proper checkpoint contracts and are admitted. T7b lacks a checkpoint and is rejected."
+    },
+    {
+      "fixture_key": "repeated-budget-failures",
+      "path": "tests/fixtures/m8a/repeated-budget-failures.json",
+      "schema": "megaplan-task-feasibility-v2",
+      "task_count": 6,
+      "edge_count": 5,
+      "documents_finding": "F13",
+      "description": "Synthetic v2 payload with high-complexity chained tasks representing the repeated budget-failure pattern where normalized failure signatures should open a circuit before a third retry."
+    },
+    {
+      "fixture_key": "six-task-rework",
+      "path": "tests/fixtures/m8a/six-task-rework.json",
+      "schema": "megaplan-task-feasibility-v2",
+      "task_count": 6,
+      "edge_count": 5,
+      "expected_seriality": 1.0,
+      "documents_finding": "F12",
+      "description": "Synthetic v2 payload with six serial rework tasks exceeding the five-task rework-wave ceiling."
+    }
+  ],
+  "historical_incident_evidence": {
+    "description": "The following evidence files document historical incidents and M6/M7 implementation artifacts. They are NOT executable task graphs. Their content hashes are recorded here for downstream report-only verification.",
+    "files": [
+      {
+        "path": "evidence/m6-prerequisite-verification.json",
+        "role": "M6 prerequisite verification status",
+        "notes": "Reports INCOHERENT status; blocked prerequisites are recorded as blockers, not success evidence."
+      },
+      {
+        "path": "evidence/m6a-prerequisite-resolution.json",
+        "role": "M6A prerequisite resolution decisions",
+        "notes": "Documents explicit prerequisite acceptance/rejection decisions."
+      },
+      {
+        "path": "evidence/m6a-schema-only-row-classification.json",
+        "role": "Schema-only row classification for M6A migration matrix",
+        "notes": "Classifies migration matrix rows as schema-only; no runtime effects exist."
+      },
+      {
+        "path": "evidence/authority-reader-registry.json",
+        "role": "Authority reader registry (98 rows)",
+        "notes": "Generated by tools/generate_m6_controlled_registries.py."
+      },
+      {
+        "path": "evidence/controlled-writer-registry.json",
+        "role": "Controlled writer registry (43 rows)",
+        "notes": "Generated by tools/generate_m6_controlled_registries.py."
+      },
+      {
+        "path": "evidence/finding-prevention-register.json",
+        "role": "Finding prevention register (17 rows)",
+        "notes": "Generated by tools/generate_m6_finding_register.py."
+      },
+      {
+        "path": "evidence/migration-matrix-reconciled.json",
+        "role": "Reconciled migration matrix (92 rows)",
+        "notes": "Generated by tools/reconcile_m6_migration_matrix.py."
+      },
+      {
+        "path": "evidence/ownership-decision-record.json",
+        "role": "Ownership decision record",
+        "notes": "Records canonical ownership decisions for each finding."
+      },
+      {
+        "path": "evidence/rollout-deletion-register.json",
+        "role": "Rollout deletion register",
+        "notes": "Records surfaces deleted during M6/M7 rollout."
+      }
+    ]
+  },
+  "false_positive_rate_disclaimer": "The exact false-positive rate on the unavailable historical corpus remains documented as UNKNOWN until real v2 historical task graphs are available in this checkout. Synthetic v2 fixtures exercise the documented shapes but may not capture every edge case present in the unavailable original plans."
+}

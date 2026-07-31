@@ -9,9 +9,10 @@ tags:
 - stale-detection
 - autonomy-ladder
 - reliability
+- managed-recovery-custody
 codebase_id: null
 created_at: '2026-06-07T12:48:34.740779+00:00'
-last_edited_at: '2026-06-07T12:48:34.740779+00:00'
+last_edited_at: '2026-07-30T12:58:49.893995+00:00'
 epics: []
 ---
 
@@ -33,4 +34,3 @@ Suggested touchpoints
 - `arnold/pipelines/megaplan/control_interface.py`
 - `arnold/runtime/resume.py`
 - `tests/test_supervisor_ladder.py`
-

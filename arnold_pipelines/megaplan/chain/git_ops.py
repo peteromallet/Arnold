@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan._core import list_batch_artifacts
@@ -85,6 +85,7 @@ class PRTransitionEvidence:
     tip_containment_verified: bool | None = None
     tip_containment_reason: str | None = None
     pinned_pr_head: str | None = None
+    validation_evidence: Mapping[str, Any] | None = None
 
 
 def _compat():
@@ -2007,7 +2008,12 @@ def _mark_pr_ready(root: Path, pr_number: int, *, writer) -> None:
 
 
 def _capture_pr_ready_evidence(
-    root: Path, pr_number: int, *, writer, ci_readiness_state: str | None = None
+    root: Path,
+    pr_number: int,
+    *,
+    writer,
+    ci_readiness_state: str | None = None,
+    validation_evidence: Mapping[str, Any] | None = None,
 ) -> PRTransitionEvidence:
     """Capture PR-ready transition evidence.
 
@@ -2024,11 +2030,17 @@ def _capture_pr_ready_evidence(
         pr_head_sha=pr_head_sha,
         last_pushed_tip=last_pushed_tip,
         ci_readiness_state=ci_readiness_state,
+        validation_evidence=validation_evidence,
     )
 
 
 def _capture_pr_merged_evidence(
-    root: Path, pr_number: int, *, writer, pr_head_sha: str | None = None
+    root: Path,
+    pr_number: int,
+    *,
+    writer,
+    pr_head_sha: str | None = None,
+    validation_evidence: Mapping[str, Any] | None = None,
 ) -> PRTransitionEvidence:
     """Capture PR-merged transition evidence with tip containment check.
 
@@ -2058,6 +2070,7 @@ def _capture_pr_merged_evidence(
         tip_containment_applicable=applicable,
         tip_containment_verified=verified,
         tip_containment_reason=reason,
+        validation_evidence=validation_evidence,
     )
 
 
@@ -2391,6 +2404,7 @@ def _build_pr_transition_evidence(
     tip_containment_applicable: bool | None = None,
     tip_containment_verified: bool | None = None,
     tip_containment_reason: str | None = None,
+    validation_evidence: Mapping[str, Any] | None = None,
 ) -> PRTransitionEvidence:
     """Construct a PRTransitionEvidence record with an evidence timestamp."""
     return PRTransitionEvidence(
@@ -2405,6 +2419,7 @@ def _build_pr_transition_evidence(
         tip_containment_verified=tip_containment_verified,
         tip_containment_reason=tip_containment_reason,
         pinned_pr_head=pr_head_sha if tip_containment_applicable is False else None,
+        validation_evidence=dict(validation_evidence) if validation_evidence else None,
     )
 
 

@@ -636,6 +636,36 @@ def test_recover_blocked_replays_repaired_deterministic_phase_without_phase_resu
     ] == head
 
 
+def test_recover_blocked_rejects_mismatched_contract_failure_without_result(
+    tmp_path: Path,
+) -> None:
+    plan_dir = _plan_dir(tmp_path)
+    state = _base_state(tmp_path, current_state="blocked")
+    state["resume_cursor"] = {
+        "phase": "finalize",
+        "retry_strategy": "repair_phase_contract",
+    }
+    state["latest_failure"] = {
+        "kind": "deterministic_phase_failure",
+        "phase": "execute",
+        "state": "blocked",
+        "message": "different phase failed",
+    }
+    _write_json(plan_dir / "state.json", state)
+
+    with pytest.raises(CliError, match="must match the current failure"):
+        apply_transition(
+            planning_run_state_view(state),
+            ControlTransition(
+                op="override",
+                target_id="recover-blocked",
+                payload={"reason": "must remain fail closed"},
+            ),
+            "megaplan",
+            plan_dir=plan_dir,
+        )
+
+
 def test_resume_clarify_emits_authority_receipt(tmp_path: Path) -> None:
     plan_dir = _plan_dir(tmp_path)
     state = _base_state(tmp_path, current_state="awaiting_human_verify")

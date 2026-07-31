@@ -42,7 +42,15 @@ from arnold_pipelines.megaplan.workflows.events import (
     workflow_cursor,
 )
 from arnold.runtime.outcome import RunOutcome
+import hashlib
+import time
+
 from arnold_pipelines.megaplan.status_projection import plan_status_presentation
+from arnold_pipelines.megaplan.source_cursor_contract import (
+    DimensionCursor,
+    SourceCursorDimension,
+    SourceCursorVector,
+)
 
 def _parse_utc_timestamp(timestamp: str | None) -> datetime | None:
     if not isinstance(timestamp, str) or not timestamp:
@@ -945,6 +953,97 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
     return details
 
 
+def _build_source_cursor_for_status(
+    state: dict[str, Any],
+    *,
+    active_step: dict[str, Any] | None,
+    lock_held: bool,
+    observed_at_epoch_ms: float,
+) -> SourceCursorVector:
+    """Build a source-cursor vector from the available status payload context.
+
+    Dimensions that cannot be determined from CLI-available state are
+    explicitly ``unknown`` — never defaulted to fresh or stale.
+    """
+    now_iso = datetime.fromtimestamp(
+        observed_at_epoch_ms / 1000, tz=timezone.utc
+    ).isoformat()
+
+    # Lifecycle: version = sha256 over (plan_name, current_state, iteration)
+    lifecycle_raw = (
+        f"{state.get('name', '')}\x00{state.get('current_state', '')}\x00"
+        f"{state.get('iteration', 0)}"
+    )
+    lifecycle_version = "sha256:" + hashlib.sha256(
+        lifecycle_raw.encode("utf-8")
+    ).hexdigest()
+    lifecycle_cursor = DimensionCursor.fresh(
+        "lifecycle", lifecycle_version, now_iso,
+        detail=f"lifecycle state={state.get('current_state', 'unknown')}",
+    )
+
+    # Liveness / process-correlation: from active_step worker_pid + lock status
+    worker_pid = None
+    if isinstance(active_step, dict):
+        raw_pid = active_step.get("worker_pid")
+        try:
+            worker_pid = int(raw_pid) if raw_pid is not None else None
+        except (TypeError, ValueError):
+            worker_pid = None
+    if worker_pid is not None:
+        pc_version = f"pid:{worker_pid}:lock_held:{lock_held}"
+        pc_detail = f"active worker pid={worker_pid}" if lock_held else f"stale worker pid={worker_pid} (lock not held)"
+        pc_state = "fresh" if lock_held else "stale"
+    elif lock_held:
+        pc_version = f"lock_held:true:no_pid"
+        pc_detail = "lock held but no worker PID visible"
+        pc_state = "stale"
+    else:
+        pc_version = "no_active_worker"
+        pc_detail = "no active worker or lock"
+        pc_state = "unknown"
+    pc_cursor = DimensionCursor(
+        dimension="process_correlation",
+        state=pc_state,  # type: ignore[arg-type]
+        version=pc_version,
+        observed_at=now_iso,
+        detail=pc_detail,
+    )
+
+    # Custody: unavailable from CLI status context
+    custody_cursor = DimensionCursor.unknown(
+        "custody", observed_at=now_iso,
+        detail="custody leases unavailable from CLI status view",
+    )
+
+    # Run Authority: unavailable from CLI status context
+    ra_cursor = DimensionCursor.unknown(
+        "run_authority", observed_at=now_iso,
+        detail="run authority unavailable from CLI status view",
+    )
+
+    # Work ledger: unavailable from CLI status context
+    wl_cursor = DimensionCursor.unknown(
+        "work_ledger", observed_at=now_iso,
+        detail="work ledger unavailable from CLI status view",
+    )
+
+    # WBC: unavailable from CLI status context
+    wbc_cursor = DimensionCursor.unknown(
+        "wbc", observed_at=now_iso,
+        detail="WBC boundary evidence unavailable from CLI status view",
+    )
+
+    return SourceCursorVector.from_cursors(
+        lifecycle_cursor,
+        wbc_cursor,
+        custody_cursor,
+        ra_cursor,
+        wl_cursor,
+        pc_cursor,
+    )
+
+
 def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse:
     projection_state = _recovery_projection_state(state, plan_dir=plan_dir)
     next_steps = _legacy_status_next_hints(projection_state)
@@ -962,9 +1061,23 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
     plan_mode = state.get("config", {}).get("mode", "code")
     plan_output_path = state.get("config", {}).get("output_path")
     anchors = anchor_summary(state, plan_dir)
+
+    # ── M9: build source-cursor vector for projection metadata ──
+    observed_at_epoch_ms = time.time() * 1000
+    source_cursor = _build_source_cursor_for_status(
+        state,
+        active_step=active_step,
+        lock_held=lock_held,
+        observed_at_epoch_ms=observed_at_epoch_ms,
+    )
+    lifecycle_cursor = source_cursor.cursor("lifecycle")
+
     presentation = plan_status_presentation(
         state.get("current_state"),
         active_step=active_step,
+        source_cursor=source_cursor,
+        lifecycle_cursor=lifecycle_cursor,
+        observed_at_epoch_ms=observed_at_epoch_ms,
     )
     summary = f"Plan '{state['name']}' is currently {presentation['display_state']}"
     if presentation["display_state"] != state["current_state"]:

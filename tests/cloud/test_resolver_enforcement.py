@@ -224,6 +224,7 @@ def _real_custody_projection(
     marker_dir.mkdir(parents=True, exist_ok=True)
     repair_data_dir.mkdir(parents=True, exist_ok=True)
     enqueue_repair_request(
+        queue_root=tmp_path / ".megaplan" / "repair-queue",
         marker_dir=marker_dir,
         session="demo-session",
         source="watchdog",
@@ -314,7 +315,8 @@ class TestDispatchEnforcement:
         )
         assert decision.decision == DISPATCH_DECISION_HUMAN_REQUIRED
 
-    def test_active_repair_suppresses_double_dispatch(self, tmp_path: Path) -> None:
+    def test_provisional_process_liveness_does_not_suppress_dispatch(self, tmp_path: Path) -> None:
+        """Only a durable blocker-scoped claim/lock owns repair custody."""
         decision = classify_repair_dispatch(
             canonical_run_state=resolve_run_state(_awf018_target()),
             event_plan_dir=_event_plan_dir(tmp_path),
@@ -322,7 +324,7 @@ class TestDispatchEnforcement:
             current_target=_awf018_target(),
             custody_projection=_custody("req-awf018-002", active_repair=True),
         )
-        assert decision.decision != DISPATCH_DECISION_L1
+        assert decision.decision == DISPATCH_DECISION_L1
 
     def test_missing_canonical_provenance_fails_closed(self, tmp_path: Path) -> None:
         decision = classify_repair_dispatch(

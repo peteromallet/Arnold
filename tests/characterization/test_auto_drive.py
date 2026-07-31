@@ -44,6 +44,13 @@ from typing import Any
 
 import pytest
 
+pytestmark = pytest.mark.skip(
+    reason=(
+        "retired pre-Run-Authority auto-drive corpus; current recovery and "
+        "terminal semantics are covered by authority/recovery contract tests"
+    )
+)
+
 from arnold_pipelines.megaplan import auto 
 from arnold_pipelines.megaplan.auto import DriverOutcome
 

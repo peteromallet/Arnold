@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,6 +18,7 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     DISPATCH_DECISION_REPAIRING,
     DISPATCH_DECISION_TERMINAL,
     BlockerFingerprintV1,
+    blocker_fingerprint_from_exact_request,
     blocker_id_for_fingerprint,
     classify_repair_dispatch,
     durable_repair_active,
@@ -104,6 +106,92 @@ def test_malformed_or_partial_blocker_fingerprints_fail_conservatively(payload: 
     assert blocker_id_for_fingerprint(payload) is None
 
 
+def test_taskless_phase_failure_normalizes_identity_and_fails_closed(
+    tmp_path: Path,
+) -> None:
+    queue_root = _queue_root(tmp_path)
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        session="custody-session",
+        source="lifecycle_failure",
+        problem_signature={
+            "failure_kind": "deterministic_phase_failure",
+            "current_state": "blocked",
+            "phase_or_step": "finalize",
+            "milestone_or_plan": "m9-rebuildable-projections",
+            "gate_recommendation": "repair the deterministic phase contract",
+            "blocked_task_id": "",
+        },
+        target={"plan_name": "m9-rebuildable-projections"},
+        root_cause_hint="finalize contract failed",
+        created_at="2026-07-22T04:48:40Z",
+    )
+    request = queued["request"]
+    expected = {
+        "schema_version": 1,
+        "current_state": "blocked",
+        "retry_strategy": "repair_phase_contract",
+        "failure_kind": "deterministic_phase_failure",
+        "phase_or_step": "finalize",
+        "milestone_or_plan": "m9-rebuildable-projections",
+        "blocked_task_id": "phase:finalize",
+        "target_fingerprint": f"repair-request:{request['request_id']}",
+    }
+
+    assert blocker_fingerprint_from_exact_request(request) == expected
+    general = project_repair_custody(
+        plan_state={"name": "m9-rebuildable-projections", "current_state": "planned"},
+        current_target={"target_session": "custody-session"},
+        queue_root=queue_root,
+    )
+    exact = project_repair_custody(
+        plan_state={"name": "m9-rebuildable-projections", "current_state": "planned"},
+        current_target={"target_session": "custody-session"},
+        queue_root=queue_root,
+        request_id=request["request_id"],
+    )
+
+    assert general["blocker_fingerprint"] == {
+        **expected,
+        "target_fingerprint": general["blocker_fingerprint"]["target_fingerprint"],
+    }
+    assert general["blocker_fingerprint"]["target_fingerprint"].startswith(
+        "repair-target:v1:"
+    )
+    assert general["requests"][0]["blocker_id"] == general["blocker_id"]
+    assert exact["blocker_fingerprint"] == general["blocker_fingerprint"]
+    assert exact["blocker_id"] == general["blocker_id"]
+    assert exact["requests"][0]["blocker_id"] == exact["blocker_id"]
+
+    unknown = SimpleNamespace(canonical_state=CanonicalState.UNKNOWN)
+    decision = repair_contract.classify_repair_dispatch(
+        canonical_run_state=unknown,
+        plan_state={
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "repair_phase_contract"},
+            "latest_failure": {"kind": "deterministic_phase_failure"},
+        },
+        custody_projection=exact,
+    )
+    assert decision.decision == "broken_superfixer"
+
+    unfenced = dict(exact)
+    unfenced["blocker_fingerprint"] = {
+        **expected,
+        "target_fingerprint": "sha256:not-an-exact-request",
+    }
+    rejected = repair_contract.classify_repair_dispatch(
+        canonical_run_state=unknown,
+        plan_state={
+            "current_state": "blocked",
+            "resume_cursor": {"retry_strategy": "repair_phase_contract"},
+            "latest_failure": {"kind": "deterministic_phase_failure"},
+        },
+        custody_projection=unfenced,
+    )
+    assert rejected.decision == "broken_superfixer"
+
+
 def _plan_state() -> dict[str, object]:
     return {
         "name": "agentic-replay-viewer",
@@ -119,9 +207,13 @@ def _plan_state() -> dict[str, object]:
 
 def _current_target() -> dict[str, object]:
     return {
+        "target_session": "demo-session",
+        "target_id": "demo-session:agentic-replay-viewer",
         "current_refs": {
             "current_plan_name": "agentic-replay-viewer",
             "plan_current_state": "blocked",
+            "workspace": "/workspace/demo",
+            "remote_spec": "/workspace/demo/chain.yaml",
         },
         "event_cursors": {"resume_retry_strategy": "manual_review"},
         "plan_state": {"fingerprint": "sha256:target-proof"},
@@ -315,6 +407,94 @@ def test_identity_free_legacy_request_remains_unclaimable_after_projection(
     assert projection["lifecycle_counts"]["attempted"] == 0
     assert projection["lifecycle_counts"]["launched"] == 0
     assert projection["lifecycle_counts"]["recovered"] == 0
+
+
+def test_custody_projection_rejects_stale_request_with_mismatched_repair_identity(
+    tmp_path: Path,
+) -> None:
+    queue_root = _queue_root(tmp_path)
+    current_target = _current_target()
+    current_target["current_refs"]["plan_revision"] = "sha256:plan-rev-1"
+    current_target["current_refs"]["fence_token"] = "fence-1"
+    plan_state = _plan_state()
+    plan_state["plan_revision"] = "sha256:plan-rev-1"
+    plan_state["fence_token"] = "fence-1"
+    repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "",
+            "blocked_task_id": "T1",
+        },
+        target={"plan_dir": "/tmp/plan"},
+        root_cause_hint="repairable blocker",
+        repair_identity={
+            "environment_id": "/workspace/demo",
+            "session_id": "demo-session",
+            "chain_id": "/workspace/demo/chain.yaml",
+            "plan_revision": "sha256:stale-plan",
+            "phase": "execute",
+            "task_id": "T1",
+            "attempt_number": 9,
+            "failure_kind": "blocked_recovery_not_resolved",
+            "blocker_digest": "blocker:v1:stale",
+            "coordinator_fence_token": "fence-stale",
+        },
+        created_at="2026-07-04T01:00:00Z",
+    )
+
+    projection = project_repair_custody(
+        plan_state=plan_state,
+        current_target=current_target,
+        queue_root=queue_root,
+        repair_data_dir=tmp_path / "repair-data",
+    )
+
+    assert projection["request_count"] == 0
+    assert projection["active_request_ids"] == []
+
+
+def test_custody_projection_rejects_identity_free_request_when_current_target_has_exact_identity(
+    tmp_path: Path,
+) -> None:
+    queue_root = _queue_root(tmp_path)
+    current_target = _current_target()
+    current_target["current_refs"]["plan_revision"] = "sha256:plan-rev-1"
+    current_target["current_refs"]["fence_token"] = "fence-1"
+    plan_state = _plan_state()
+    plan_state["plan_revision"] = "sha256:plan-rev-1"
+    plan_state["fence_token"] = "fence-1"
+    repair_requests.enqueue_repair_request(
+        queue_root=queue_root,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "gate_recommendation": "",
+            "blocked_task_id": "T1",
+        },
+        target={"plan_dir": "/tmp/plan"},
+        root_cause_hint="legacy identity-free request",
+        created_at="2026-07-04T01:00:00Z",
+    )
+
+    projection = project_repair_custody(
+        plan_state=plan_state,
+        current_target=current_target,
+        queue_root=queue_root,
+        repair_data_dir=tmp_path / "repair-data",
+    )
+
+    assert projection["request_count"] == 0
+    assert projection["active_request_ids"] == []
 
 
 def test_advisory_sidecar_canonical_label_does_not_create_repair_custody(

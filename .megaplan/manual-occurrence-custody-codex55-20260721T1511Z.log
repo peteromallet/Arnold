@@ -1,0 +1,39 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/workspace/arnold-engine-running-f7f0967/arnold_pipelines/megaplan/__main__.py", line 7, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/workspace/arnold-engine-running-f7f0967/arnold_pipelines/megaplan/cli/__init__.py", line 3408, in main
+    response = handler(root, args)
+               ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/arnold-engine-running-f7f0967/arnold_pipelines/megaplan/handlers/execute.py", line 569, in handle_execute
+    response = handle_execute_auto_loop(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/arnold-engine-running-f7f0967/arnold_pipelines/megaplan/execute/batch.py", line 4398, in handle_execute_auto_loop
+    result = _run_and_merge_batch(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/arnold-engine-running-f7f0967/arnold_pipelines/megaplan/execute/batch.py", line 2057, in _run_and_merge_batch
+    worker, agent, mode, refreshed = _run_execute_worker_with_configured_fallback(
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/arnold-engine-running-f7f0967/arnold_pipelines/megaplan/execute/batch.py", line 640, in _run_execute_worker_with_configured_fallback
+    return worker_module.run_step_with_worker(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/arnold-engine-running-f7f0967/arnold_pipelines/megaplan/workers/_impl.py", line 4819, in run_step_with_worker
+    worker = run_codex_step(
+             ^^^^^^^^^^^^^^^
+  File "/workspace/arnold-engine-running-f7f0967/arnold_pipelines/megaplan/workers/_impl.py", line 3900, in run_codex_step
+    return _run_codex_step_uncapped(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/arnold-engine-running-f7f0967/arnold_pipelines/megaplan/workers/_impl.py", line 3385, in _run_codex_step_uncapped
+    result = run_command(
+             ^^^^^^^^^^^^
+  File "/workspace/arnold-engine-running-f7f0967/arnold_pipelines/megaplan/workers/_impl.py", line 1254, in run_command
+    returncode = process.wait(timeout=wait_slice)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.pyenv/versions/3.11.11/lib/python3.11/subprocess.py", line 1264, in wait
+    return self._wait(timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.pyenv/versions/3.11.11/lib/python3.11/subprocess.py", line 2047, in _wait
+    time.sleep(delay)
+KeyboardInterrupt

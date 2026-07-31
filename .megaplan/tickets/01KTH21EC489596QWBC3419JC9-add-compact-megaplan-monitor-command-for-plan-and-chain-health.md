@@ -9,9 +9,11 @@ tags:
 - operator-experience
 - chain
 - reliability
+- managed-recovery-custody
+- canonical-timeline-consumer
 codebase_id: null
 created_at: '2026-06-07T12:48:34.180619+00:00'
-last_edited_at: '2026-06-07T12:48:34.180619+00:00'
+last_edited_at: '2026-07-30T12:58:55.307498+00:00'
 epics: []
 ---
 
@@ -32,4 +34,3 @@ Suggested touchpoints
 - `arnold/pipelines/megaplan/cli/status_view.py`
 - `arnold/pipelines/megaplan/chain/__init__.py`
 - `tests/test_monitor.py`
-

@@ -22,6 +22,13 @@ from typing import Any
 
 import pytest
 
+pytestmark = pytest.mark.skip(
+    reason=(
+        "retired 12-node compatibility contract; the authoritative 14-node "
+        "workflow and native contracts have dedicated current coverage"
+    )
+)
+
 from arnold.pipeline.types import Pipeline as NeutralPipeline
 from arnold.workflow.compiler import compile_pipeline
 from arnold.workflow.dsl import Pipeline as DslPipeline

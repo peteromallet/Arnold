@@ -16,9 +16,14 @@ def _normalize_relpath(path: str) -> str:
 
 
 def _is_pytest_test_file(rel_path: str) -> bool:
-    path = Path(rel_path)
-    return path.suffix == ".py" and (
-        path.name.startswith("test_") or path.name.endswith("_test.py")
+    path = Path(_normalize_relpath(rel_path))
+    return (
+        path.suffix == ".py"
+        and "tests" in path.parts
+        and (
+            path.name.startswith("test_")
+            or path.name.startswith("editorial_")
+        )
     )
 
 

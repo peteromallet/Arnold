@@ -6,6 +6,11 @@ from pathlib import Path
 
 from arnold_pipelines.megaplan.execute.aggregation import _compute_execute_scope_drift
 from arnold_pipelines.megaplan.execute.batch import _durably_evidenced_finalized_task_ids
+from arnold_pipelines.megaplan._core.io import (
+    list_batch_artifacts,
+    resolve_batch_artifact,
+)
+from arnold_pipelines.megaplan.auto import _latest_recorded_execute_head
 from arnold_pipelines.megaplan.orchestration.execution_evidence import (
     apply_authoritative_execute_overrides,
 )
@@ -24,6 +29,82 @@ def _init_repo(project_dir: Path) -> str:
     subprocess.run(["git", "config", "user.name", "Test User"], cwd=project_dir, check=True)
     (project_dir / "base.py").write_text("BASE = 1\n", encoding="utf-8")
     return _commit(project_dir, "base")
+
+
+def _write_s4_attempt(
+    plan_dir: Path,
+    *,
+    batch_index: int,
+    digest: str,
+    head: str,
+    fence_token: int | None,
+) -> Path:
+    batch_dir = plan_dir / "execute_batches" / f"batch_{batch_index}"
+    batch_dir.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, object] = {
+        "task_updates": [
+            {
+                "task_id": f"T{batch_index}",
+                "status": "done",
+                "commands_run": ["pytest -q"],
+                "head_sha": head,
+            }
+        ]
+    }
+    if fence_token is not None:
+        payload["dispatch_identity"] = {
+            "fence": {"token": fence_token},
+        }
+    path = batch_dir / f"tasks_{digest}.json"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    return path
+
+
+def test_reused_batch_index_prefers_fenced_attempt_over_lexicographic_first(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    stale = _write_s4_attempt(
+        plan_dir,
+        batch_index=1,
+        digest="000000000000",
+        head="stale-head",
+        fence_token=None,
+    )
+    accepted = _write_s4_attempt(
+        plan_dir,
+        batch_index=1,
+        digest="ffffffffffff",
+        head="accepted-head",
+        fence_token=7,
+    )
+
+    assert stale.name < accepted.name
+    assert resolve_batch_artifact(plan_dir, 1) == accepted
+    assert list_batch_artifacts(plan_dir) == [accepted]
+
+
+def test_latest_execute_head_uses_newest_fence_not_highest_batch_number(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    newest_retry = _write_s4_attempt(
+        plan_dir,
+        batch_index=1,
+        digest="newest",
+        head="current-head",
+        fence_token=7,
+    )
+    _write_s4_attempt(
+        plan_dir,
+        batch_index=21,
+        digest="older",
+        head="old-head",
+        fence_token=4,
+    )
+
+    assert newest_retry in list_batch_artifacts(plan_dir)
+    assert _latest_recorded_execute_head(plan_dir) == "current-head"
 
 
 def test_terminal_quality_uses_finalized_evidence_and_current_partial_batch(

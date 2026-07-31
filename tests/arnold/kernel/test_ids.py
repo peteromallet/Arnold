@@ -78,11 +78,11 @@ def test_runtime_identity_surfaces_change_only_when_alias_or_manifest_hash_chang
 
 
 def test_workflow_identity_adapter_ignores_version_path_and_discovery_metadata() -> None:
-    manifest_hash = "sha256:" + "a" * 64
+    expected_manifest_hash = "sha256:" + "a" * 64
 
     class ManifestLike:
         id = "planning"
-        manifest_hash = manifest_hash
+        manifest_hash = expected_manifest_hash
         version = "v1"
         module_path = "/packages/one/pipeline.py"
         discovery_manifest_hash = "sha256:" + "b" * 64
@@ -91,7 +91,7 @@ def test_workflow_identity_adapter_ignores_version_path_and_discovery_metadata()
 
     class SameRuntimeIdentityWithDifferentMetadata:
         id = "planning"
-        manifest_hash = manifest_hash
+        manifest_hash = expected_manifest_hash
         version = "v999"
         module_path = "/packages/two/pipeline.py"
         discovery_manifest_hash = "sha256:" + "c" * 64
@@ -102,7 +102,7 @@ def test_workflow_identity_adapter_ignores_version_path_and_discovery_metadata()
         SameRuntimeIdentityWithDifferentMetadata
     )
     assert workflow_identity_from_manifest(ManifestLike).pipeline_identity == (
-        derive_pipeline_identity("planning", manifest_hash)
+        derive_pipeline_identity("planning", expected_manifest_hash)
     )
 
 
@@ -212,7 +212,7 @@ def test_judge_manifest_cross_reference_validates_relationship_enum() -> None:
 
 
 def test_judge_manifest_cross_reference_accepts_discovery_sidecar_versions() -> None:
-    from arnold.pipeline.discovery.judge_manifest import (
+    from arnold.workflow.discovery.judge_manifest import (
         compute_judge_version,
         compute_piece_version,
         compute_rubric_hash,

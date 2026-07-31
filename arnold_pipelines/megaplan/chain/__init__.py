@@ -348,6 +348,8 @@ def _plan_state(root: Path, plan: str, *, timeout: float) -> str:
 
 from .git_ops import (
     _branch_head,
+    _capture_pr_merged_evidence,
+    _capture_pr_ready_evidence,
     _capture_sync_state,
     _checkout_milestone_branch,
     _claimed_nested_repo_paths,
@@ -1756,6 +1758,95 @@ def _run_full_suite_backstop_gate(
         }
 
 
+def _full_suite_backstop_block_reason(
+    milestone_label: str,
+    plan_name: str,
+    result: dict[str, Any] | None,
+) -> str:
+    newly_failing = result.get("newly_failing") if isinstance(result, dict) else None
+    deleted_tests = result.get("deleted_tests") if isinstance(result, dict) else None
+    failing_suffix = (
+        f"; newly_failing={newly_failing[:10]}"
+        if isinstance(newly_failing, list) and newly_failing
+        else (
+            f"; deleted_tests={deleted_tests[:10]}"
+            if isinstance(deleted_tests, list) and deleted_tests
+            else ""
+        )
+    )
+    return (
+        "full_suite_backstop_mode=enforce: milestone "
+        f"{milestone_label!r} blocked before reconciliation advance; see "
+        f"{plan_name}/full_suite_backstop.json{failing_suffix}"
+    )
+
+
+def _run_pending_reconciliation_backstops(
+    root: Path,
+    spec_path: Path,
+    state: ChainState,
+    *,
+    writer,
+) -> str | None:
+    """Verify provisional completed records before reconciliation trusts them.
+
+    A terminal plan projection may leave a ``finalized`` completed record in
+    chain state before the cursor has advanced.  Reconciliation must not turn
+    that projection into completion authority without replaying the same
+    full-suite gate used by the ordinary advancement path.
+    """
+
+    fail_closed, _ = _reconciliation_fail_closed(state)
+    if fail_closed:
+        return None
+
+    changed = False
+    for record in state.completed:
+        if not isinstance(record, dict):
+            continue
+        if record.get("status") in {STATE_DONE, "complete"}:
+            continue
+        if isinstance(record.get("full_suite_backstop"), dict):
+            continue
+        milestone_label = record.get("label")
+        plan_name = record.get("plan")
+        if not isinstance(milestone_label, str) or not milestone_label:
+            continue
+        if not isinstance(plan_name, str) or not plan_name:
+            continue
+        gate = _run_full_suite_backstop_gate(
+            root,
+            spec_path,
+            plan_name,
+            milestone_label,
+            state.full_suite_backstop_mode,
+            log_fn=lambda message: writer(f"[chain] {message}\n"),
+        )
+        if gate.get("blocks"):
+            chain_spec.save_chain_state(spec_path, state)
+            result = gate.get("result")
+            return _full_suite_backstop_block_reason(
+                milestone_label,
+                plan_name,
+                result if isinstance(result, dict) else None,
+            )
+        summary = gate.get("summary")
+        if isinstance(summary, dict):
+            record["full_suite_backstop"] = dict(summary)
+            changed = True
+        result = gate.get("result")
+        if isinstance(result, dict):
+            _persist_full_suite_backstop_baseline(
+                spec_path,
+                result,
+                captured_at_sha=_current_head_sha(root),
+                milestone_label=milestone_label,
+            )
+    if changed:
+        chain_spec.save_chain_state(spec_path, state)
+    return None
+
+
 def _latest_execution_batch_all_tasks_done(
     plan_dir: Path,
     *,
@@ -2924,6 +3015,117 @@ def _ensure_published_claimed_changes_for_pr_progression(
     )
 
 
+def _validate_pr_progression_wbc(
+    *,
+    root: Path,
+    spec_path: Path,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    plan_name: str,
+    pr_number: int,
+    transition_name: str,
+) -> dict[str, Any]:
+    from arnold_pipelines.megaplan.chain.execution_binding import (
+        execution_binding_report,
+    )
+    from arnold_pipelines.megaplan.chain.wbc import (
+        GIT_PR_READY_SURFACE,
+        GIT_PR_READY_WRITER_ID,
+        ChainWbcRule,
+        finalize_artifact_candidates,
+        finalize_receipt_candidates,
+        record_chain_wbc_evidence,
+        validate_chain_wbc_transition,
+    )
+
+    binding = execution_binding_report(spec_path, state)
+    if not binding.get("required"):
+        # Legacy unbound chain specs predate the controlled-writer contract.
+        # Their existing completion guard remains authoritative; WBC becomes
+        # mandatory once execution_binding is declared required.
+        return {
+            "schema": "arnold.megaplan.chain_wbc_transition_evidence.v1",
+            "transition": transition_name,
+            "subject": f"{milestone.label}:pr#{pr_number}",
+            "migration_status": "legacy_unbound_spec",
+            "execution_binding": binding,
+        }
+
+    try:
+        plan_dir = resolve_plan_dir(root, plan_name)
+    except CliError:
+        # Preserve a failed, inspectable WBC result for synthetic/recovery
+        # callers whose plan record is absent. The artifact/receipt rules below
+        # remain false; no completion guard is relaxed.
+        plan_dir = root / ".megaplan" / "plans" / plan_name
+    plan_state = _plan_state_payload_from_name(root, plan_name)
+    current_state = plan_state.get("current_state")
+    finalize_receipts = finalize_receipt_candidates(plan_dir)
+    finalize_artifacts = finalize_artifact_candidates(plan_dir)
+    binding_ok = (
+        binding.get("status") in {"match", "reconcile_required"}
+        if binding.get("required")
+        else True
+    )
+    evidence = validate_chain_wbc_transition(
+        writer_id=GIT_PR_READY_WRITER_ID,
+        surface_name=GIT_PR_READY_SURFACE,
+        transition_name=transition_name,
+        subject=f"{milestone.label}:pr#{pr_number}",
+        source_path=spec_path,
+        project_dir=root,
+        rules=(
+            ChainWbcRule(
+                "plan_state_terminal",
+                f"{STATE_FINALIZED}|{STATE_DONE}|{STATE_AWAITING_PR_MERGE}",
+                current_state,
+                current_state in {STATE_FINALIZED, STATE_DONE, STATE_AWAITING_PR_MERGE},
+            ),
+            ChainWbcRule(
+                "finalize_receipt_present",
+                True,
+                bool(finalize_receipts),
+                bool(finalize_receipts),
+                "finalize promotion must persist a durable receipt before PR actions",
+            ),
+            ChainWbcRule(
+                "finalize_artifacts_present",
+                True,
+                bool(finalize_artifacts),
+                bool(finalize_artifacts),
+                "finalize promotion must leave canonical artifacts behind",
+            ),
+            ChainWbcRule(
+                "execution_binding_current",
+                True,
+                binding.get("status"),
+                binding_ok,
+                "chain execution binding must still match before PR progression",
+            ),
+            ChainWbcRule(
+                "pr_number_bound",
+                pr_number,
+                state.pr_number,
+                state.pr_number == pr_number,
+            ),
+        ),
+        extra={
+            "milestone_label": milestone.label,
+            "plan_name": plan_name,
+            "plan_dir": str(plan_dir),
+            "finalize_receipts": finalize_receipts,
+            "finalize_artifacts": finalize_artifacts,
+            "execution_binding_status": binding.get("status"),
+        },
+    )
+    record_chain_wbc_evidence(
+        state.metadata,
+        entry_key=f"{transition_name}:{milestone.label}:{pr_number}",
+        evidence=evidence,
+    )
+    return evidence
+
+
 def _recover_stale_merged_pr_for_unfinished_plan(
     root: Path,
     spec_path: Path,
@@ -3175,6 +3377,48 @@ def _append_completed_with_guard(
             state.last_state = "authority_divergence"
             writer(f"[chain] completion guard blocked {label}: {reason}\n")
             return False, reason
+        if spec_path is not None and plan_dir is not None:
+            from arnold_pipelines.megaplan.chain.wbc import (
+                CHAIN_ADVANCE_SURFACE,
+                CHAIN_ADVANCE_WRITER_ID,
+                ChainWbcRule,
+                record_chain_wbc_evidence,
+                validate_chain_wbc_transition,
+            )
+
+            validation_evidence = validate_chain_wbc_transition(
+                writer_id=CHAIN_ADVANCE_WRITER_ID,
+                surface_name=CHAIN_ADVANCE_SURFACE,
+                transition_name="chain_milestone_advance",
+                subject=label,
+                source_path=Path(spec_path),
+                project_dir=root,
+                rules=(
+                    ChainWbcRule("completion_guard", True, ok, ok),
+                    ChainWbcRule(
+                        "plan_name_bound",
+                        True,
+                        bool(record.get("plan")),
+                        bool(record.get("plan")),
+                    ),
+                    ChainWbcRule(
+                        "milestone_index_known",
+                        True,
+                        milestone_index is not None,
+                        milestone_index is not None,
+                    ),
+                ),
+                extra={
+                    "plan_name": str(record.get("plan") or ""),
+                    "milestone_index": milestone_index,
+                    "guard_reason": reason,
+                },
+            )
+            record_chain_wbc_evidence(
+                state.metadata,
+                entry_key=f"chain_advance:{label}:{milestone_index}",
+                evidence=validation_evidence,
+            )
         state.completed.append(record)
         return True, reason
 
@@ -3314,6 +3558,55 @@ def _append_completed_with_guard(
     # (5) Commit succeeded.  Mirror the durably-committed completion fields
     #     into the in-memory state so downstream callers observe the same
     #     state that was just written under the CAS guard.
+    from arnold_pipelines.megaplan.chain.wbc import (
+        CHAIN_ADVANCE_SURFACE,
+        CHAIN_ADVANCE_WRITER_ID,
+        ChainWbcRule,
+        record_chain_wbc_evidence,
+        validate_chain_wbc_transition,
+    )
+
+    validation_evidence = validate_chain_wbc_transition(
+        writer_id=CHAIN_ADVANCE_WRITER_ID,
+        surface_name=CHAIN_ADVANCE_SURFACE,
+        transition_name="chain_milestone_advance",
+        subject=label,
+        source_path=Path(spec_path),
+        project_dir=root,
+        rules=(
+            ChainWbcRule("completion_guard", True, ok, ok),
+            ChainWbcRule(
+                "acceptance_commit_committed",
+                True,
+                bool(getattr(cas_result, "committed", False)),
+                bool(getattr(cas_result, "committed", False)),
+            ),
+            ChainWbcRule(
+                "accepted_boundary_present",
+                True,
+                acceptance_result is not None,
+                acceptance_result is not None,
+            ),
+            ChainWbcRule(
+                "milestone_index_known",
+                True,
+                milestone_index is not None,
+                milestone_index is not None,
+            ),
+        ),
+        extra={
+            "plan_name": str(record.get("plan") or ""),
+            "milestone_index": milestone_index,
+            "acceptance_transaction_id": acceptance_transaction_id,
+            "acceptance_snapshot_hash": acceptance_snapshot_hash,
+            "guard_reason": reason,
+        },
+    )
+    record_chain_wbc_evidence(
+        state.metadata,
+        entry_key=f"chain_advance:{label}:{milestone_index}",
+        evidence=validation_evidence,
+    )
     _apply_committed_acceptance_state(state, commit_plan.new_state)
     return True, reason
 
@@ -3710,6 +4003,7 @@ def _append_reconciled_completed_record_with_guard(
     root: Path,
     state: ChainState,
     *,
+    spec_path: Path | None = None,
     plan_name: str,
     milestone: MilestoneSpec,
     pr_number: int | None,
@@ -3729,6 +4023,33 @@ def _append_reconciled_completed_record_with_guard(
             f"{milestone.label} in atomic mode: {fail_reason}\n"
         )
         return False, fail_reason
+    backstop_gate: dict[str, Any] = {
+        "blocks": False,
+        "summary": None,
+        "result": None,
+    }
+    if spec_path is not None:
+        backstop_gate = _run_full_suite_backstop_gate(
+            root,
+            spec_path,
+            plan_name,
+            milestone.label,
+            state.full_suite_backstop_mode,
+            log_fn=lambda message: writer(f"[chain] {message}\n"),
+        )
+    if backstop_gate.get("blocks"):
+        result = backstop_gate.get("result")
+        state.metadata["reconciliation_full_suite_backstop_block"] = {
+            "milestone": milestone.label,
+            "plan": plan_name,
+            "result": dict(result) if isinstance(result, dict) else {},
+        }
+        return False, _full_suite_backstop_block_reason(
+            milestone.label,
+            plan_name,
+            result if isinstance(result, dict) else None,
+        )
+    state.metadata.pop("reconciliation_full_suite_backstop_block", None)
     record = {
         "label": milestone.label,
         "plan": plan_name,
@@ -3736,6 +4057,22 @@ def _append_reconciled_completed_record_with_guard(
         "pr_number": pr_number,
         "pr_state": pr_state,
     }
+    summary = backstop_gate.get("summary")
+    if isinstance(summary, dict):
+        record["full_suite_backstop"] = dict(summary)
+    result = backstop_gate.get("result")
+    if spec_path is not None and isinstance(result, dict):
+        _persist_full_suite_backstop_baseline(
+            spec_path,
+            result,
+            captured_at_sha=_current_head_sha(root),
+            milestone_label=milestone.label,
+        )
+    if pr_number is None:
+        local_commit_sha = _current_git_head(root)
+        if local_commit_sha is not None:
+            record["local_commit_sha"] = local_commit_sha
+            record["publication_evidence"] = "local_no_push_reconciliation"
     appended, reason = _append_completed_with_guard(
         root,
         state,
@@ -5392,6 +5729,7 @@ def _reconcile_chain_from_ground_truth(
         appended, reason = _append_reconciled_completed_record_with_guard(
             root,
             state,
+            spec_path=spec_path,
             plan_name=plan_name,
             milestone=active_milestone,
             pr_number=state.pr_number if active_uses_pr else None,
@@ -5427,6 +5765,7 @@ def _reconcile_chain_from_ground_truth(
                 appended, reason = _append_reconciled_completed_record_with_guard(
                     root,
                     state,
+                    spec_path=spec_path,
                     plan_name=plan_name,
                     milestone=active_milestone,
                     pr_number=state.pr_number,
@@ -5445,6 +5784,7 @@ def _reconcile_chain_from_ground_truth(
             appended, reason = _append_reconciled_completed_record_with_guard(
                 root,
                 state,
+                spec_path=spec_path,
                 plan_name=plan_name,
                 milestone=active_milestone,
                 pr_number=None,
@@ -6082,6 +6422,21 @@ def run_chain(
         "yes",
         "YES",
     }
+    reconciliation_backstop_block = _run_pending_reconciliation_backstops(
+        root,
+        spec_path,
+        state,
+        writer=writer,
+    )
+    if reconciliation_backstop_block is not None:
+        return _result(
+            "blocked",
+            state,
+            [],
+            spec=spec,
+            reason=reconciliation_backstop_block,
+        )
+    completed_before_reconciliation = len(state.completed)
     state = _reconcile_chain_from_ground_truth(
         root,
         spec_path,
@@ -6090,12 +6445,106 @@ def run_chain(
         writer=writer,
         push_enabled=push_enabled,
     )
+    reconciliation_block = state.metadata.get(
+        "reconciliation_full_suite_backstop_block"
+    )
+    if isinstance(reconciliation_block, dict):
+        result = reconciliation_block.get("result")
+        return _result(
+            "blocked",
+            state,
+            [],
+            spec=spec,
+            reason=_full_suite_backstop_block_reason(
+                str(reconciliation_block.get("milestone") or "unknown"),
+                str(reconciliation_block.get("plan") or "unknown"),
+                result if isinstance(result, dict) else None,
+            ),
+        )
 
     events: list[dict[str, Any]] = []
 
     def log(msg: str, **fields: Any) -> None:
         events.append({"msg": msg, **fields})
         writer(f"[chain] {msg}\n")
+
+    def _emit_chain_work_boundary(
+        kind: str,
+        *,
+        plan_name: str | None = None,
+        phase: str | None = "chain",
+        elapsed_ms: int | None = None,
+        operation: str | None = None,
+        from_state: str | None = None,
+        to_state: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        target_plan = plan_name or state.current_plan_name
+        if not target_plan:
+            return
+        try:
+            plan_dir = resolve_plan_dir(root, target_plan)
+        except CliError:
+            return
+        payload = {
+            "boundary": kind,
+            "chain_spec": str(spec_path),
+            "current_plan_name": target_plan,
+            **dict(metadata or {}),
+        }
+        try:
+            from arnold_pipelines.megaplan.observability.work_ledger import (
+                emit_git_activity,
+                emit_replay,
+                emit_retry_wait,
+                emit_session_start,
+                emit_transition_activity,
+            )
+
+            if kind == "chain_session_start":
+                emit_session_start(
+                    plan_dir,
+                    phase=phase,
+                    session_id=f"chain:{os.getpid()}:{spec_path.name}",
+                    agent="chain",
+                    metadata=payload,
+                )
+            elif kind == "git":
+                emit_git_activity(
+                    plan_dir,
+                    phase=phase or "chain",
+                    operation=operation or "chain_git_boundary",
+                    elapsed_ms=elapsed_ms,
+                    metadata=payload,
+                )
+            elif kind == "retry_wait":
+                emit_retry_wait(
+                    plan_dir,
+                    elapsed_ms=elapsed_ms,
+                    unavailable_reason="chain_retry_boundary_no_model",
+                    metadata=payload,
+                )
+            elif kind == "replay":
+                emit_replay(
+                    plan_dir,
+                    elapsed_ms=elapsed_ms,
+                    unavailable_reason="chain_replay_boundary_usage_unavailable",
+                    metadata=payload,
+                )
+            elif kind == "transition":
+                emit_transition_activity(
+                    plan_dir,
+                    phase=phase,
+                    transition=str(payload.get("transition") or "chain_transition"),
+                    from_state=from_state,
+                    to_state=to_state,
+                    elapsed_ms=elapsed_ms,
+                    metadata=payload,
+                )
+        except Exception:
+            logging.getLogger("megaplan").debug(
+                "Work ledger chain event emission skipped", exc_info=True
+            )
 
     # ---- Seed phase ----
     if spec.seed_plan and state.current_milestone_index < 0:
@@ -6104,6 +6553,18 @@ def run_chain(
         if seed_state not in TERMINAL_SKIP_STATES:
             state.current_plan_name = spec.seed_plan
             chain_spec.save_chain_state(spec_path, state)
+            _emit_chain_work_boundary(
+                "chain_session_start",
+                plan_name=spec.seed_plan,
+                metadata={"boundary": "seed_plan_start", "seed_state": seed_state},
+            )
+            _emit_chain_work_boundary(
+                "transition",
+                plan_name=spec.seed_plan,
+                from_state=seed_state,
+                to_state="chain_driving_seed",
+                metadata={"transition": "chain_seed_start"},
+            )
             outcome = _drive_plan_with_blocked_execute_recovery(
                 root,
                 spec_path,
@@ -6139,6 +6600,15 @@ def run_chain(
                 )
             if decision == "retry":
                 # Recursive retry kept simple: re-drive seed once.
+                _emit_chain_work_boundary(
+                    "retry_wait",
+                    plan_name=spec.seed_plan,
+                    elapsed_ms=0,
+                    metadata={
+                        "milestone_label": "seed",
+                        "retry_strategy": "seed_recursive_retry",
+                    },
+                )
                 outcome = _drive_plan_with_blocked_execute_recovery(
                     root,
                     spec_path,
@@ -6476,9 +6946,31 @@ def run_chain(
                     if publish_reason.startswith("published "):
                         state = chain_spec.load_chain_state(spec_path)
                     if _automatic_pr_progression_permitted(spec, spec_path):
+                        validation_evidence = _validate_pr_progression_wbc(
+                            root=root,
+                            spec_path=spec_path,
+                            state=state,
+                            milestone=milestone,
+                            plan_name=state.current_plan_name or "",
+                            pr_number=state.pr_number,
+                            transition_name="chain_pr_ready",
+                        )
+                        _pr_ready_evidence = _capture_pr_ready_evidence(
+                            root,
+                            state.pr_number,
+                            writer=writer,
+                            ci_readiness_state="ready",
+                            validation_evidence=validation_evidence,
+                        )
                         _mark_pr_ready(root, state.pr_number, writer=writer)
                         state.pr_state = _enable_auto_merge(
                             root, state.pr_number, writer=writer
+                        )
+                        _pr_merged_evidence = _capture_pr_merged_evidence(
+                            root,
+                            state.pr_number,
+                            writer=writer,
+                            validation_evidence=validation_evidence,
                         )
                         chain_spec.save_chain_state(spec_path, state)
                         pr_state = _pr_state(root, state.pr_number, writer=writer)
@@ -6703,6 +7195,16 @@ def run_chain(
                     _rearm_fresh_session_execute_block(plan_dir, writer=writer)
                 plan_state = _plan_state_payload_from_name(root, plan_name)
                 if _blocked_plan_replay_would_be_redundant(state, plan_state=plan_state):
+                    _emit_chain_work_boundary(
+                        "replay",
+                        plan_name=plan_name,
+                        elapsed_ms=0,
+                        metadata={
+                            "milestone_label": milestone.label,
+                            "replay_boundary": "blocked_plan_replay_suppressed",
+                            "plan_state": plan_state.get("current_state"),
+                        },
+                    )
                     _append_reconciliation_audit(
                         state,
                         plan_name=plan_name,
@@ -6729,6 +7231,26 @@ def run_chain(
                     writer=writer,
                 )
                 log(f"resuming existing plan {plan_name} for {milestone.label}")
+                _emit_chain_work_boundary(
+                    "chain_session_start",
+                    plan_name=plan_name,
+                    metadata={
+                        "boundary": "milestone_resume",
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                    },
+                )
+                _emit_chain_work_boundary(
+                    "transition",
+                    plan_name=plan_name,
+                    from_state=str(plan_state.get("current_state") or ""),
+                    to_state="chain_resuming_milestone",
+                    metadata={
+                        "transition": "chain_milestone_resume",
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                    },
+                )
                 _emit_milestone_start_evidence(
                     state,
                     milestone_label=milestone.label,
@@ -6736,17 +7258,32 @@ def run_chain(
                     plan_name=plan_name,
                 )
                 if use_pr and milestone.branch:
-                    base_ref = _checkout_milestone_branch(
-                        root,
-                        milestone.branch or "",
-                        base_branch=spec.base_branch,
-                        writer=writer,
-                        from_origin=push_enabled and not no_git_refresh,
-                        expected_base_ref=state.target_base_ref,
+                    project_source_binding = state.metadata.get(
+                        "project_source_binding"
                     )
-                    if isinstance(base_ref, str) and base_ref:
-                        state.target_base_ref = base_ref
-                        chain_spec.save_chain_state(spec_path, state)
+                    if isinstance(project_source_binding, Mapping):
+                        from arnold_pipelines.megaplan.chain.target_rebind import (
+                            publish_bound_project_source_branch,
+                        )
+
+                        publish_bound_project_source_branch(
+                            root,
+                            state,
+                            plan_name=plan_name,
+                            milestone_branch=milestone.branch,
+                        )
+                    else:
+                        base_ref = _checkout_milestone_branch(
+                            root,
+                            milestone.branch or "",
+                            base_branch=spec.base_branch,
+                            writer=writer,
+                            from_origin=push_enabled and not no_git_refresh,
+                            expected_base_ref=state.target_base_ref,
+                        )
+                        if isinstance(base_ref, str) and base_ref:
+                            state.target_base_ref = base_ref
+                            chain_spec.save_chain_state(spec_path, state)
                     _capture_sync_state(
                         root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                     )
@@ -6842,7 +7379,28 @@ def run_chain(
                     plan_name=plan_name,
                 )
                 chain_spec.save_chain_state(spec_path, state)
+                _emit_chain_work_boundary(
+                    "chain_session_start",
+                    plan_name=plan_name,
+                    metadata={
+                        "boundary": "milestone_init",
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                    },
+                )
+                _emit_chain_work_boundary(
+                    "transition",
+                    plan_name=plan_name,
+                    from_state=None,
+                    to_state=STATE_PREPPED,
+                    metadata={
+                        "transition": "chain_milestone_init",
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                    },
+                )
                 if use_pr:
+                    _git_start = time.monotonic()
                     _commit_and_push_phase(
                         root,
                         milestone.branch or "",
@@ -6850,6 +7408,17 @@ def run_chain(
                         "init",
                         writer=writer,
                         preexisting_dirty_paths=preexisting_dirty_paths,
+                    )
+                    _emit_chain_work_boundary(
+                        "git",
+                        plan_name=plan_name,
+                        operation="chain_commit_and_push_init",
+                        elapsed_ms=max(0, int((time.monotonic() - _git_start) * 1000)),
+                        metadata={
+                            "milestone_label": milestone.label,
+                            "milestone_index": idx,
+                            "branch": milestone.branch,
+                        },
                     )
                     _capture_sync_state(
                         root, spec_path, branch=milestone.branch, pr_number=state.pr_number
@@ -6876,8 +7445,20 @@ def run_chain(
                 )
             raise
 
+        from arnold_pipelines.megaplan.chain.target_rebind import (
+            assert_chain_project_source_binding,
+        )
+
+        assert_chain_project_source_binding(
+            root,
+            state,
+            plan_name=plan_name,
+            operation=f"resume milestone {milestone.label}",
+        )
+
         def phase_callback(phase: str, _code: int, _out: str, _err: str) -> None:
             if use_pr and milestone.branch:
+                _git_start = time.monotonic()
                 _commit_and_push_phase(
                     root,
                     milestone.branch,
@@ -6885,6 +7466,19 @@ def run_chain(
                     phase,
                     writer=writer,
                     preexisting_dirty_paths=preexisting_dirty_paths,
+                )
+                _emit_chain_work_boundary(
+                    "git",
+                    plan_name=plan_name,
+                    operation=f"chain_commit_and_push_{phase}",
+                    phase=phase,
+                    elapsed_ms=max(0, int((time.monotonic() - _git_start) * 1000)),
+                    metadata={
+                        "milestone_label": milestone.label,
+                        "milestone_index": idx,
+                        "branch": milestone.branch,
+                        "phase_returncode": _code,
+                    },
                 )
                 _capture_sync_state(
                     root, spec_path, branch=milestone.branch, pr_number=state.pr_number
@@ -6978,8 +7572,27 @@ def run_chain(
                     f"retrying milestone {milestone.label} by resuming plan "
                     f"{state.current_plan_name} from {resumable_state}"
                 )
+                _emit_chain_work_boundary(
+                    "retry_wait",
+                    plan_name=state.current_plan_name,
+                    elapsed_ms=0,
+                    metadata={
+                        "milestone_label": milestone.label,
+                        "retry_strategy": "resume_milestone",
+                        "resumable_state": resumable_state,
+                    },
+                )
             else:
                 log(f"retrying milestone {milestone.label}")
+                _emit_chain_work_boundary(
+                    "retry_wait",
+                    plan_name=state.current_plan_name,
+                    elapsed_ms=0,
+                    metadata={
+                        "milestone_label": milestone.label,
+                        "retry_strategy": "reinit_milestone",
+                    },
+                )
                 _preserve_carried_wip_before_retry(
                     root,
                     spec_path,
@@ -7034,12 +7647,21 @@ def run_chain(
                     ),
                 )
         local_commit_sha: str | None = None
+        if decision == "advance" and outcome.status == "done":
+            current_source_state = chain_spec.load_chain_state(spec_path)
+            assert_chain_project_source_binding(
+                root,
+                current_source_state,
+                plan_name=plan_name,
+                operation=f"complete milestone {milestone.label}",
+            )
         if (
             decision == "advance"
             and outcome.status == "done"
             and not use_pr
             and mode != "plan"
         ):
+            _git_start = time.monotonic()
             local_commit_sha = _commit_phase(
                 root,
                 plan_name,
@@ -7047,7 +7669,19 @@ def run_chain(
                 writer=writer,
                 preexisting_dirty_paths=preexisting_dirty_paths,
             )
+            _emit_chain_work_boundary(
+                "git",
+                plan_name=plan_name,
+                operation="chain_commit_done",
+                elapsed_ms=max(0, int((time.monotonic() - _git_start) * 1000)),
+                metadata={
+                    "milestone_label": milestone.label,
+                    "milestone_index": idx,
+                    "commit_sha": local_commit_sha,
+                },
+            )
         if decision == "advance" and use_pr and state.pr_number is not None:
+            _git_start = time.monotonic()
             _commit_and_push_phase(
                 root,
                 milestone.branch or "",
@@ -7055,6 +7689,18 @@ def run_chain(
                 "done",
                 writer=writer,
                 preexisting_dirty_paths=preexisting_dirty_paths,
+            )
+            _emit_chain_work_boundary(
+                "git",
+                plan_name=plan_name,
+                operation="chain_commit_and_push_done",
+                elapsed_ms=max(0, int((time.monotonic() - _git_start) * 1000)),
+                metadata={
+                    "milestone_label": milestone.label,
+                    "milestone_index": idx,
+                    "branch": milestone.branch,
+                    "pr_number": state.pr_number,
+                },
             )
             _capture_sync_state(
                 root, spec_path, branch=milestone.branch, pr_number=state.pr_number
@@ -7126,6 +7772,22 @@ def run_chain(
                             ),
                         )
                 else:
+                    validation_evidence = _validate_pr_progression_wbc(
+                        root=root,
+                        spec_path=spec_path,
+                        state=state,
+                        milestone=milestone,
+                        plan_name=plan_name,
+                        pr_number=state.pr_number,
+                        transition_name="chain_pr_ready",
+                    )
+                    _pr_ready_evidence = _capture_pr_ready_evidence(
+                        root,
+                        state.pr_number,
+                        writer=writer,
+                        ci_readiness_state="ready",
+                        validation_evidence=validation_evidence,
+                    )
                     _mark_pr_ready(root, state.pr_number, writer=writer)
                     if not _automatic_pr_progression_permitted(spec, spec_path):
                         state.last_state = STATE_AWAITING_PR_MERGE
@@ -7155,6 +7817,12 @@ def run_chain(
                         )
                     state.pr_state = _enable_auto_merge(
                         root, state.pr_number, writer=writer
+                    )
+                    _pr_merged_evidence = _capture_pr_merged_evidence(
+                        root,
+                        state.pr_number,
+                        writer=writer,
+                        validation_evidence=validation_evidence,
                     )
                     chain_spec.save_chain_state(spec_path, state)
                     if state.pr_state != "merged":
@@ -7632,6 +8300,16 @@ def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
             f"expected={str(expected.get('bundle_sha256') or 'missing')[:12]} "
             f"active={str(active.get('bundle_sha256') or 'missing')[:12]}\n"
         )
+        runtime_binding = binding.get("runtime_binding")
+        if isinstance(runtime_binding, dict) and runtime_binding.get("required"):
+            runtime_expected = runtime_binding.get("expected") or {}
+            runtime_active = runtime_binding.get("active") or {}
+            writer(
+                "Runtime binding: "
+                f"{runtime_binding.get('status')} "
+                f"expected={str(runtime_expected.get('content_sha256') or 'missing')[:12]} "
+                f"active={str(runtime_active.get('content_sha256') or 'missing')[:12]}\n"
+            )
     # Sync section (branch/PR sync state)
     sync = summary.get("sync") or {}
     if any(v is not None for v in sync.values()) or sync.get("dirty_flag"):
@@ -7753,6 +8431,152 @@ def build_chain_parser(subparsers: Any) -> None:
         help="Read chain state from this project directory instead of discovering from CWD.",
     )
 
+    reconcile_source_parser = chain_sub.add_parser(
+        "reconcile-source",
+        help="Register a content-addressed canonical source update for a future milestone",
+    )
+    reconcile_source_parser.add_argument("--spec", required=True)
+    reconcile_source_parser.add_argument("--project-dir", required=False)
+    reconcile_source_parser.add_argument("--milestone", required=True)
+    reconcile_source_parser.add_argument("--authoritative-source", required=True)
+    reconcile_source_parser.add_argument("--reason", required=True)
+
+    rebind_parser = chain_sub.add_parser(
+        "rebind",
+        help="Guardedly adopt a content-addressed successor chain without moving its cursor",
+    )
+    rebind_parser.add_argument("--spec", required=True)
+    rebind_parser.add_argument("--project-dir", required=False)
+    rebind_parser.add_argument("--from-bundle-sha256", required=True)
+    rebind_parser.add_argument("--to-bundle-sha256", required=True)
+    rebind_parser.add_argument("--expected-current-milestone", required=True)
+    rebind_parser.add_argument(
+        "--expected-current-plan",
+        required=True,
+        help="Exact current plan name, or @none when the cursor has no plan yet.",
+    )
+    rebind_parser.add_argument("--expected-next-milestone", required=True)
+    rebind_parser.add_argument("--reason", required=True)
+    rebind_parser.add_argument("--actor", default="operator")
+
+    runtime_rebind_parser = chain_sub.add_parser(
+        "runtime-rebind",
+        help="Guardedly cut over or roll back the bound runtime without changing the chain spec binding",
+    )
+    runtime_rebind_parser.add_argument("--spec", required=True)
+    runtime_rebind_parser.add_argument("--project-dir", required=False)
+    runtime_rebind_parser.add_argument("--from-runtime-sha256", required=True)
+    runtime_rebind_parser.add_argument("--to-runtime-sha256", required=True)
+    runtime_rebind_parser.add_argument("--expected-current-milestone", required=True)
+    runtime_rebind_parser.add_argument(
+        "--expected-current-plan",
+        required=True,
+        help="Exact current plan name, or @none when the cursor has no plan yet.",
+    )
+    runtime_rebind_parser.add_argument("--direction", choices=("cutover", "rollback"), default="cutover")
+    runtime_rebind_parser.add_argument("--reason", required=True)
+    runtime_rebind_parser.add_argument("--actor", default="operator")
+    runtime_rebind_parser.add_argument(
+        "--runtime-identity",
+        help=(
+            "Content-addressed offline runtime identity JSON. Requires "
+            "--runtime-provenance-receipt and is freshly reverified by the "
+            "receipt's independent interpreter."
+        ),
+    )
+    runtime_rebind_parser.add_argument(
+        "--runtime-provenance-receipt",
+        help=(
+            "Digest-bound runtime_provenance receipt emitted by the offline "
+            "runtime's interpreter. Requires --runtime-identity."
+        ),
+    )
+
+    target_rebind_parser = chain_sub.add_parser(
+        "target-rebind",
+        help=(
+            "Guardedly cut over or roll back the paused pre-execute project "
+            "checkout and milestone baseline"
+        ),
+    )
+    target_rebind_parser.add_argument("--spec", required=True)
+    target_rebind_parser.add_argument("--project-dir", required=True)
+    target_rebind_parser.add_argument(
+        "--direction",
+        choices=("cutover", "rollback"),
+        default="cutover",
+    )
+    target_rebind_parser.add_argument("--expected-session-id", required=True)
+    target_rebind_parser.add_argument("--expected-current-milestone", required=True)
+    target_rebind_parser.add_argument("--expected-current-plan", required=True)
+    target_rebind_parser.add_argument("--from-branch", required=True)
+    target_rebind_parser.add_argument("--from-head", required=True)
+    target_rebind_parser.add_argument("--from-milestone-base", required=True)
+    target_rebind_parser.add_argument("--from-ref", required=True)
+    target_rebind_parser.add_argument("--to-branch", required=True)
+    target_rebind_parser.add_argument("--to-head", required=True)
+    target_rebind_parser.add_argument("--to-ref", required=True)
+    target_rebind_parser.add_argument("--expected-spec-sha256", required=True)
+    target_rebind_parser.add_argument(
+        "--expected-target-spec-sha256",
+        required=False,
+        help=(
+            "Exact chain-spec hash after target checkout; defaults to "
+            "--expected-spec-sha256 when the spec is unchanged"
+        ),
+    )
+    target_rebind_parser.add_argument("--expected-chain-state-sha256", required=True)
+    target_rebind_parser.add_argument("--expected-plan-state-sha256", required=True)
+    target_rebind_parser.add_argument("--reason", required=True)
+    target_rebind_parser.add_argument("--actor", default="operator")
+    target_rebind_parser.add_argument(
+        "--runtime-identity",
+        help="Verified external runtime identity used by a newer paused control interpreter",
+    )
+    target_rebind_parser.add_argument(
+        "--runtime-provenance-receipt",
+        help="Independent interpreter receipt paired with --runtime-identity",
+    )
+
+    seed_rematerialize_parser = chain_sub.add_parser(
+        "seed-rematerialize",
+        help=(
+            "Archive a paused pre-execute plan and rematerialize the same "
+            "milestone from an exact seed manifest"
+        ),
+    )
+    seed_rematerialize_parser.add_argument("--spec", required=True)
+    seed_rematerialize_parser.add_argument("--project-dir", required=True)
+    seed_rematerialize_parser.add_argument(
+        "--direction",
+        choices=("cutover", "rollback"),
+        default="cutover",
+    )
+    seed_rematerialize_parser.add_argument("--expected-session-id", required=True)
+    seed_rematerialize_parser.add_argument("--expected-current-milestone", required=True)
+    seed_rematerialize_parser.add_argument("--expected-current-plan", required=True)
+    seed_rematerialize_parser.add_argument("--expected-branch", required=True)
+    seed_rematerialize_parser.add_argument("--expected-head", required=True)
+    seed_rematerialize_parser.add_argument("--expected-spec-sha256", required=True)
+    seed_rematerialize_parser.add_argument("--expected-chain-state-sha256", required=True)
+    seed_rematerialize_parser.add_argument("--expected-plan-state-sha256", required=True)
+    seed_rematerialize_parser.add_argument("--seed-manifest", required=True)
+    seed_rematerialize_parser.add_argument(
+        "--expected-seed-manifest-sha256",
+        required=True,
+    )
+    seed_rematerialize_parser.add_argument("--expected-cutover-event-sha256")
+    seed_rematerialize_parser.add_argument("--expected-archive-manifest-sha256")
+    seed_rematerialize_parser.add_argument("--reason", required=True)
+    seed_rematerialize_parser.add_argument("--actor", default="operator")
+    seed_rematerialize_parser.add_argument(
+        "--runtime-identity",
+        help="Verified external runtime identity used by a newer paused control interpreter",
+    )
+    seed_rematerialize_parser.add_argument(
+        "--runtime-provenance-receipt",
+        help="Independent interpreter receipt paired with --runtime-identity",
+    )
     pause_parser = chain_sub.add_parser(
         "pause", help="Durably pause a chain and disable automatic recovery"
     )
@@ -7946,6 +8770,283 @@ def run_chain_cli(
         )
         return 0
 
+    if action == "reconcile-source":
+        try:
+            spec = chain_spec.load_spec(spec_path)
+            chain_state = chain_spec.load_chain_state(
+                spec_path,
+                verify_execution_binding=False,
+            )
+            from arnold_pipelines.megaplan.chain.source_admission import (
+                require_milestone_source_update,
+            )
+
+            requirement = require_milestone_source_update(
+                spec_path=spec_path,
+                state=chain_state,
+                spec=spec,
+                milestone_label=args.milestone,
+                authoritative_source=Path(args.authoritative_source).expanduser().resolve(),
+                reason=args.reason,
+            )
+            chain_spec.save_chain_state(spec_path, chain_state)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "reconcile-source",
+                    "requirement": requirement,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "rebind":
+        try:
+            chain_state = chain_spec.load_chain_state(
+                spec_path,
+                verify_execution_binding=False,
+            )
+            before = chain_state.to_dict()
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                rebind_execution_identity,
+            )
+
+            result = rebind_execution_identity(
+                spec_path,
+                chain_state,
+                expected_previous_bundle_sha256=args.from_bundle_sha256,
+                expected_active_bundle_sha256=args.to_bundle_sha256,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                expected_next_milestone=args.expected_next_milestone,
+                reason=args.reason,
+                actor=args.actor,
+            )
+            after = chain_state.to_dict()
+            for field in before:
+                if field != "metadata" and before[field] != after[field]:
+                    raise CliError(
+                        "chain_execution_binding_drift",
+                        f"chain rebind refused: operational field {field!r} changed",
+                    )
+            chain_spec.save_chain_state(spec_path, chain_state)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "rebind",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "runtime-rebind":
+        try:
+            chain_state = chain_spec.load_chain_state(
+                spec_path,
+                verify_execution_binding=False,
+            )
+            before = chain_state.to_dict()
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                rebind_runtime_identity,
+                verify_external_runtime_identity,
+            )
+
+            identity_arg = str(getattr(args, "runtime_identity", "") or "").strip()
+            receipt_arg = str(
+                getattr(args, "runtime_provenance_receipt", "") or ""
+            ).strip()
+            if bool(identity_arg) != bool(receipt_arg):
+                raise CliError(
+                    "chain_runtime_binding_drift",
+                    "chain runtime rebind refused: --runtime-identity and "
+                    "--runtime-provenance-receipt must be supplied together",
+                )
+            external_identity = (
+                verify_external_runtime_identity(
+                    Path(identity_arg).expanduser().resolve(strict=False),
+                    Path(receipt_arg).expanduser().resolve(strict=False),
+                )
+                if identity_arg
+                else None
+            )
+            result = rebind_runtime_identity(
+                spec_path,
+                chain_state,
+                expected_previous_runtime_sha256=args.from_runtime_sha256,
+                expected_active_runtime_sha256=args.to_runtime_sha256,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                direction=args.direction,
+                reason=args.reason,
+                actor=args.actor,
+                verified_external_runtime_identity=external_identity,
+            )
+            after = chain_state.to_dict()
+            for field in before:
+                if field != "metadata" and before[field] != after[field]:
+                    raise CliError(
+                        "chain_runtime_binding_drift",
+                        f"chain runtime rebind refused: operational field {field!r} changed",
+                    )
+            chain_spec.save_chain_state(spec_path, chain_state)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "runtime-rebind",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "target-rebind":
+        project_root = Path(args.project_dir).expanduser().resolve()
+        try:
+            from arnold_pipelines.megaplan.chain.target_rebind import target_rebind
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                verify_external_runtime_identity,
+            )
+
+            identity_arg = str(getattr(args, "runtime_identity", "") or "").strip()
+            receipt_arg = str(
+                getattr(args, "runtime_provenance_receipt", "") or ""
+            ).strip()
+            if bool(identity_arg) != bool(receipt_arg):
+                raise CliError(
+                    "project_source_rebind_refused",
+                    "target rebind requires --runtime-identity and "
+                    "--runtime-provenance-receipt together",
+                )
+            external_identity = (
+                verify_external_runtime_identity(
+                    Path(identity_arg).expanduser().resolve(strict=False),
+                    Path(receipt_arg).expanduser().resolve(strict=False),
+                )
+                if identity_arg
+                else None
+            )
+
+            result = target_rebind(
+                spec_path,
+                project_root,
+                direction=args.direction,
+                expected_session_id=args.expected_session_id,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                from_branch=args.from_branch,
+                from_head=args.from_head,
+                from_milestone_base=args.from_milestone_base,
+                from_ref=args.from_ref,
+                to_branch=args.to_branch,
+                to_head=args.to_head,
+                to_ref=args.to_ref,
+                expected_spec_sha256=args.expected_spec_sha256,
+                expected_target_spec_sha256=args.expected_target_spec_sha256,
+                expected_chain_state_sha256=args.expected_chain_state_sha256,
+                expected_plan_state_sha256=args.expected_plan_state_sha256,
+                reason=args.reason,
+                actor=args.actor,
+                verified_external_runtime_identity=external_identity,
+            )
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "target-rebind",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+
+    if action == "seed-rematerialize":
+        project_root = Path(args.project_dir).expanduser().resolve()
+        try:
+            from arnold_pipelines.megaplan.chain.seed_rematerialize import (
+                seed_rematerialize,
+            )
+            from arnold_pipelines.megaplan.chain.execution_binding import (
+                verify_external_runtime_identity,
+            )
+
+            identity_arg = str(getattr(args, "runtime_identity", "") or "").strip()
+            receipt_arg = str(
+                getattr(args, "runtime_provenance_receipt", "") or ""
+            ).strip()
+            if bool(identity_arg) != bool(receipt_arg):
+                raise CliError(
+                    "seed_rematerialize_refused",
+                    "seed rematerialize requires --runtime-identity and "
+                    "--runtime-provenance-receipt together",
+                )
+            external_identity = (
+                verify_external_runtime_identity(
+                    Path(identity_arg).expanduser().resolve(strict=False),
+                    Path(receipt_arg).expanduser().resolve(strict=False),
+                )
+                if identity_arg
+                else None
+            )
+
+            result = seed_rematerialize(
+                spec_path,
+                project_root,
+                expected_session_id=args.expected_session_id,
+                expected_current_milestone=args.expected_current_milestone,
+                expected_current_plan=args.expected_current_plan,
+                expected_branch=args.expected_branch,
+                expected_head=args.expected_head,
+                expected_spec_sha256=args.expected_spec_sha256,
+                expected_chain_state_sha256=args.expected_chain_state_sha256,
+                expected_plan_state_sha256=args.expected_plan_state_sha256,
+                seed_manifest_path=Path(args.seed_manifest).expanduser().resolve(),
+                expected_seed_manifest_sha256=args.expected_seed_manifest_sha256,
+                direction=args.direction,
+                expected_cutover_event_sha256=args.expected_cutover_event_sha256,
+                expected_archive_manifest_sha256=args.expected_archive_manifest_sha256,
+                reason=args.reason,
+                actor=args.actor,
+                verified_external_runtime_identity=external_identity,
+            )
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "spec": str(spec_path),
+                    "action": "seed-rematerialize",
+                    **result,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
     if action == "override":
         set_prereq = getattr(args, "set_prerequisite_policy", None)
         set_valid = getattr(args, "set_validation_policy", None)

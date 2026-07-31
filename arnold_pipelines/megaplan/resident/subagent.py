@@ -40,6 +40,7 @@ from arnold_pipelines.megaplan.managed_agent import (
 from .config import ResidentConfig
 from .git_custody import (
     GitCustodyError,
+    git_custody_projection,
     render_git_custody_contract,
     resolve_launch_git_custody,
     validate_git_custody_evidence,
@@ -50,6 +51,11 @@ from .delivery_status import (
     build_delivery_projection,
     delivery_policy_for_launch,
     infer_outcome_contract,
+)
+from .managed_child_custody import (
+    emit_managed_child_custody_event,
+    ensure_managed_child_custody_fields,
+    managed_child_delivery_projection,
 )
 from .provenance import (
     DelegationProvenanceError,
@@ -76,6 +82,7 @@ from .request_summary import (
     current_request_summary_line,
     source_request_fallback_line,
 )
+from .reply_chain import reply_chain_projection
 from .query_relationship import relationship_from_environment_or_project
 
 LOGGER = logging.getLogger(__name__)
@@ -214,6 +221,9 @@ class SubagentResult:
     manifest_path: str | None = None
     log_path: str | None = None
     result_path: str | None = None
+    custody_evidence_path: str | None = None
+    delivery_owner_run_id: str | None = None
+    parent_owned_delivery: bool | None = None
     pid: int | None = None
     description: str | None = None
 
@@ -562,6 +572,35 @@ def _atomic_text(path: Path, content: str) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(content, encoding="utf-8")
     os.replace(temporary, path)
+
+
+def _emit_managed_child_event(
+    manifest_path: Path,
+    manifest: Mapping[str, Any],
+    *,
+    event_kind: str,
+    surface: str,
+    evidence: str,
+    at: str | None = None,
+    details: Mapping[str, Any] | None = None,
+) -> None:
+    try:
+        emit_managed_child_custody_event(
+            manifest_path,
+            manifest,
+            event_kind=event_kind,
+            surface=surface,
+            evidence=evidence,
+            at=at,
+            details=details,
+        )
+    except Exception:
+        LOGGER.exception(
+            "Managed-child custody event emission failed run_id=%s surface=%s evidence=%s",
+            manifest.get("run_id") or manifest_path.parent.name,
+            surface,
+            evidence,
+        )
 
 
 def _git_revision_without_process(root: Path) -> str | None:
@@ -1060,6 +1099,7 @@ def _canonical_launch_provenance(
 
 def _result_from_manifest(manifest_path: Path, payload: Mapping[str, Any]) -> SubagentResult:
     status = str(payload.get("status") or "unknown")
+    delivery = managed_child_delivery_projection(payload)
     return SubagentResult(
         ok=status not in {"failed", "interrupted"},
         final_text="",
@@ -1070,6 +1110,9 @@ def _result_from_manifest(manifest_path: Path, payload: Mapping[str, Any]) -> Su
         manifest_path=str(manifest_path),
         log_path=str(payload.get("log_path") or manifest_path.parent / "run.log"),
         result_path=str(payload.get("result_path") or manifest_path.parent / "result.md"),
+        custody_evidence_path=str(payload.get("custody_evidence_path") or "") or None,
+        delivery_owner_run_id=delivery.get("delivery_owner_run_id"),
+        parent_owned_delivery=bool(delivery.get("parent_owned_delivery")),
         pid=payload.get("pid") if isinstance(payload.get("pid"), int) else None,
         description=str(payload.get("description") or "") or None,
     )
@@ -1160,6 +1203,19 @@ def _transfer_aggregation_delivery_ownership(
             delivery["state_history"] = history[-20:]
             payload["completion_delivery"] = delivery
         _atomic_json(path, payload)
+        _emit_managed_child_event(
+            path,
+            payload,
+            event_kind="delivery_custody",
+            surface="resident.subagent.aggregation",
+            evidence="single_logical_request_delivery_owner_transferred",
+            at=at,
+            details={
+                "prior_run_id": prior_run_id,
+                "new_owner_run_id": new_owner_run_id,
+                "delivery_projection": managed_child_delivery_projection(payload),
+            },
+        )
 
 
 def _aggregation_contributor_refs(
@@ -2790,6 +2846,7 @@ def follow_up_managed_subagent(
     query_relationship: Mapping[str, Any] | None = None,
     aggregation_role: str = "synthesis_delivery_owner",
     synthesis_group: str | None = None,
+    require_live: bool = False,
 ) -> SubagentFollowupResult:
     """Durably append ``message`` to the unique persistent session lineage.
 
@@ -2799,11 +2856,12 @@ def follow_up_managed_subagent(
     continuation waits for that parent to become terminal before resuming the
     same session.  The caller's validated resident provenance is the
     continuation's provenance; target provenance is used only to authorize the
-    same immutable conversation ownership.
+    same immutable conversation ownership. ``require_live`` narrows this to
+    the interrupting active-parent path and rejects a target that stopped
+    between command resolution and the locked continuation attachment.
     """
 
-    message = message.strip()
-    if not message:
+    if not isinstance(message, str) or not message.strip():
         raise SubagentFollowupError("follow-up message must not be empty")
     if len(message) > MAX_FOLLOWUP_MESSAGE_CHARS:
         raise SubagentFollowupError(
@@ -2992,6 +3050,10 @@ def follow_up_managed_subagent(
             raise SubagentFollowupError(
                 "target lineage tip claims an active state without a matching supervisor"
             )
+        if require_live and not parent_live:
+            raise SubagentFollowupError(
+                f"target lineage tip is not live (status: {parent_status})"
+            )
         if parent_status not in _ACTIVE_STATUSES and parent_status not in {
             "completed",
             "failed",
@@ -3061,6 +3123,20 @@ def follow_up_managed_subagent(
             }
             message_path.write_text(message + "\n", encoding="utf-8")
             _atomic_json(evidence_path, record)
+            _emit_managed_child_event(
+                tip_path,
+                tip,
+                event_kind="effect",
+                surface="resident.subagent.followup",
+                evidence="followup_message_and_custody_committed",
+                at=accepted_at,
+                details={
+                    "followup_id": followup_id,
+                    "evidence_path": str(evidence_path),
+                    "message_path": str(message_path),
+                    "requester_provenance_sha256": caller_sha256,
+                },
+            )
         else:
             record = existing
 
@@ -3157,6 +3233,27 @@ def follow_up_managed_subagent(
             }
         ]
         _atomic_json(evidence_path, record)
+        child_manifest = json.loads(
+            Path(continuation.manifest_path).read_text(encoding="utf-8")
+        )
+        _emit_managed_child_event(
+            Path(continuation.manifest_path),
+            child_manifest,
+            event_kind="effect",
+            surface="resident.subagent.followup",
+            evidence=(
+                "continuation_queued_to_interrupt_active_parent"
+                if parent_live
+                else "terminal_lineage_continuation_supervisor_started"
+            ),
+            at=started_at,
+            details={
+                "followup_id": followup_id,
+                "parent_run_id": parent_run_id,
+                "target_run_id": run_id,
+                "followup_evidence_path": str(evidence_path),
+            },
+        )
         return _followup_result(record, idempotent_replay=False)
 
 
@@ -3192,6 +3289,7 @@ def _spawn_managed_supervisor(
             env=environment_with_provenance(worker_provenance),
         )
     current = json.loads(manifest_path.read_text(encoding="utf-8"))
+    ensure_managed_child_custody_fields(manifest_path, current)
     current.setdefault("pid", process.pid)
     current.setdefault("started_at", _utc_now())
     if current.get("status") == "launching":
@@ -3218,6 +3316,15 @@ def _spawn_managed_supervisor(
         )
         current["queue"] = queue
     _atomic_json(manifest_path, current)
+    _emit_managed_child_event(
+        manifest_path,
+        current,
+        event_kind="start",
+        surface="resident.subagent.supervisor",
+        evidence="resident_supervisor_started",
+        at=str(current.get("updated_at") or current.get("started_at") or _utc_now()),
+        details={"supervisor_pid": process.pid},
+    )
     return process, current
 
 
@@ -3977,7 +4084,30 @@ def launch_managed_subagent_detached(
     manifest["lifecycle"]["delivery"]["status"] = str(
         dict(manifest["completion_delivery"]).get("status") or "not_applicable"
     )
+    custody_path = ensure_managed_child_custody_fields(manifest_path, manifest)
     _atomic_json(manifest_path, manifest)
+    _emit_managed_child_event(
+        manifest_path,
+        manifest,
+        event_kind="start",
+        surface="resident.subagent.launch",
+        evidence=(
+            "successor_committed_waiting_for_predecessor_terminal_evidence"
+            if dependency_run_ids
+            else "manifest_committed_before_process_launch"
+        ),
+        at=created_at,
+        details={
+            "custody_evidence_path": str(custody_path),
+            "queued": bool(dependency_run_ids),
+            "git_custody": git_custody_projection(git_custody),
+            "reply_chain_custody": reply_chain_projection(
+                (query_relationship or {}).get("reply_chain_provenance")
+                if isinstance(query_relationship, Mapping)
+                else None
+            ),
+        },
+    )
     if dependency_run_ids:
         for predecessor_path in predecessor_paths:
             linked_predecessor = json.loads(
@@ -4012,6 +4142,13 @@ def launch_managed_subagent_detached(
             manifest_path=str(manifest_path),
             log_path=str(log_path),
             result_path=str(result_path),
+            custody_evidence_path=str(manifest.get("custody_evidence_path") or "") or None,
+            delivery_owner_run_id=(
+                managed_child_delivery_projection(manifest).get("delivery_owner_run_id")
+            ),
+            parent_owned_delivery=bool(
+                managed_child_delivery_projection(manifest).get("parent_owned_delivery")
+            ),
             pid=None,
             description=agent_description,
         )
@@ -4022,6 +4159,7 @@ def launch_managed_subagent_detached(
     launch_handle.close()
     process, current = _spawn_managed_supervisor(manifest_path, manifest)
     status = str(current.get("status") or "running")
+    delivery = managed_child_delivery_projection(current)
     return SubagentResult(
         ok=status not in {"failed", "interrupted"},
         final_text="",
@@ -4032,6 +4170,9 @@ def launch_managed_subagent_detached(
         manifest_path=str(manifest_path),
         log_path=str(log_path),
         result_path=str(result_path),
+        custody_evidence_path=str(current.get("custody_evidence_path") or "") or None,
+        delivery_owner_run_id=delivery.get("delivery_owner_run_id"),
+        parent_owned_delivery=bool(delivery.get("parent_owned_delivery")),
         pid=process.pid,
         description=agent_description,
     )
@@ -4499,6 +4640,7 @@ def _run_managed_manifest(manifest_path: Path) -> int:
         # Reload before updating so the supervisor PID written by the launch
         # process cannot be lost to a parent/child manifest race.
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        ensure_managed_child_custody_fields(manifest_path, manifest)
         worker_started_at = _utc_now()
         manifest.update({"worker_started_at": worker_started_at, "worker_pid": worker.pid})
         manifest["session_dispatch"] = {
@@ -4517,6 +4659,19 @@ def _run_managed_manifest(manifest_path: Path) -> int:
         if provider_permission_mode is not None:
             manifest["session_dispatch"]["permission_mode"] = provider_permission_mode
         _atomic_json(manifest_path, manifest)
+        _emit_managed_child_event(
+            manifest_path,
+            manifest,
+            event_kind="effect",
+            surface="resident.subagent_worker.dispatch",
+            evidence=str(manifest["session_dispatch"]["evidence"]),
+            at=worker_started_at,
+            details={
+                "worker_pid": worker.pid,
+                "dispatch_mode": manifest["session_dispatch"]["mode"],
+                "session_id": session_id,
+            },
+        )
         try:
             returncode = worker.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
@@ -4654,6 +4809,17 @@ def _run_managed_manifest(manifest_path: Path) -> int:
                 custody_evidence = manifest["completion_verification"].get("evidence")
                 if isinstance(custody_evidence, Mapping):
                     manifest["git_custody_verification"] = dict(custody_evidence)
+                    _emit_managed_child_event(
+                        manifest_path,
+                        manifest,
+                        event_kind="effect",
+                        surface="resident.git_custody.verify",
+                        evidence="git_custody_verified",
+                        details={
+                            "git_custody": git_custody_projection(custody),
+                            "verification": manifest["git_custody_verification"],
+                        },
+                    )
             except (GitCustodyError, ValueError) as exc:
                 custody_error = str(exc)
                 returncode = 2
@@ -4729,6 +4895,18 @@ def _run_managed_manifest(manifest_path: Path) -> int:
         )
         manifest["lifecycle"] = lifecycle
         _atomic_json(manifest_path, manifest)
+        _emit_managed_child_event(
+            manifest_path,
+            manifest,
+            event_kind="terminal",
+            surface="resident.subagent_worker.terminal",
+            evidence="managed_codex_worker_waited",
+            at=str(manifest.get("finished_at") or _utc_now()),
+            details={
+                "returncode": returncode,
+                "git_custody_error": custody_error,
+            },
+        )
         try:
             reconcile_managed_subagent_queues(
                 project_root=str(manifest.get("project_dir") or manifest_path.parents[4]),
@@ -4762,6 +4940,15 @@ def _run_managed_manifest(manifest_path: Path) -> int:
             manifest["status_history"] = history[-100:]
             manifest["updated_at"] = history[-1]["at"]
             _atomic_json(manifest_path, manifest)
+            _emit_managed_child_event(
+                manifest_path,
+                manifest,
+                event_kind="terminal",
+                surface="resident.subagent_worker.terminal",
+                evidence="managed_codex_supervisor_acknowledged_control_terminal",
+                at=history[-1]["at"],
+                details={"control_status": control_status},
+            )
             return int(
                 manifest.get("returncode")
                 or (128 + interrupted_signal if interrupted_signal is not None else 1)
@@ -4824,6 +5011,22 @@ def _run_managed_manifest(manifest_path: Path) -> int:
             manifest["signal"] = interrupted_signal
             manifest["returncode"] = 128 + interrupted_signal
         _atomic_json(manifest_path, manifest)
+        _emit_managed_child_event(
+            manifest_path,
+            manifest,
+            event_kind="terminal",
+            surface="resident.subagent_worker.terminal",
+            evidence=(
+                "managed_codex_supervisor_exception"
+                if interrupted_signal is None
+                else "managed_codex_supervisor_interrupted"
+            ),
+            at=str(manifest.get("finished_at") or _utc_now()),
+            details={
+                "error_class": exc.__class__.__name__,
+                "signal": interrupted_signal,
+            },
+        )
         try:
             reconcile_managed_subagent_queues(
                 project_root=str(manifest.get("project_dir") or manifest_path.parents[4]),
@@ -5750,6 +5953,8 @@ def _delivery_claim(
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
             return None
+        if isinstance(manifest, dict):
+            ensure_managed_child_custody_fields(manifest_path, manifest)
         if not isinstance(manifest, dict) or not _is_managed_manifest(manifest):
             return None
         provenance_changed = _repair_manifest_delivery_provenance(manifest)
@@ -5937,6 +6142,15 @@ def _delivery_claim(
         delivery.pop("next_attempt_at", None)
         manifest["completion_delivery"] = delivery
         _atomic_json(manifest_path, manifest)
+        _emit_managed_child_event(
+            manifest_path,
+            manifest,
+            event_kind="effect",
+            surface="resident.subagent.delivery",
+            evidence="provider_attempt_claimed",
+            at=now.isoformat(),
+            details={"attempt_id": delivery.get("attempt_id")},
+        )
         return manifest, normalized_origin
 
 
@@ -5957,6 +6171,8 @@ def _completion_turn_claim(
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
             return None
+        if isinstance(manifest, dict):
+            ensure_managed_child_custody_fields(manifest_path, manifest)
         if not _is_managed_manifest(manifest):
             return None
         provenance_changed = _repair_manifest_delivery_provenance(manifest)
@@ -6001,6 +6217,15 @@ def _completion_turn_claim(
         completion.pop("next_attempt_at", None)
         manifest["resident_completion_turn"] = completion
         _atomic_json(manifest_path, manifest)
+        _emit_managed_child_event(
+            manifest_path,
+            manifest,
+            event_kind="effect",
+            surface="resident.runtime.completion_turn",
+            evidence="resident_completion_turn_claimed",
+            at=now.isoformat(),
+            details={"attempt_count": attempt},
+        )
         return manifest
 
 
@@ -6018,6 +6243,7 @@ def _finish_completion_turn(
         )
     with _delivery_lock(manifest_path):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        ensure_managed_child_custody_fields(manifest_path, manifest)
         payload = _completion_payload(
             manifest,
             {
@@ -6046,6 +6272,18 @@ def _finish_completion_turn(
         delivery["payload"] = payload
         manifest["completion_delivery"] = delivery
         _atomic_json(manifest_path, manifest)
+        _emit_managed_child_event(
+            manifest_path,
+            manifest,
+            event_kind="effect",
+            surface="resident.runtime.completion_turn",
+            evidence="resident_completion_turn_completed",
+            at=now.isoformat(),
+            details={
+                "verification_outcome": result.verification_outcome,
+                "resident_turn_id": result.turn_id,
+            },
+        )
 
 
 def record_completion_turn_id(manifest_path: Path, turn_id: str) -> None:
@@ -6053,6 +6291,7 @@ def record_completion_turn_id(manifest_path: Path, turn_id: str) -> None:
 
     with _delivery_lock(manifest_path):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        ensure_managed_child_custody_fields(manifest_path, manifest)
         completion = dict(manifest.get("resident_completion_turn") or {})
         existing = str(completion.get("resident_turn_id") or "")
         if existing and existing != turn_id:
@@ -6104,6 +6343,15 @@ def _retry_completion_turn(manifest_path: Path, *, now: datetime, exc: Exception
             delivery["payload"] = payload
             manifest["completion_delivery"] = delivery
             _atomic_json(manifest_path, manifest)
+            _emit_managed_child_event(
+                manifest_path,
+                manifest,
+                event_kind="effect",
+                surface="resident.runtime.completion_turn",
+                evidence="resident_completion_verification_unavailable",
+                at=now.isoformat(),
+                details={"attempt_count": attempt},
+            )
             return "unknown"
         delay_s = min(_DELIVERY_RETRY_MAX_S, _DELIVERY_RETRY_BASE_S * (2 ** min(attempt - 1, 7)))
         completion.update(
@@ -6117,6 +6365,15 @@ def _retry_completion_turn(manifest_path: Path, *, now: datetime, exc: Exception
         )
         manifest["resident_completion_turn"] = completion
         _atomic_json(manifest_path, manifest)
+        _emit_managed_child_event(
+            manifest_path,
+            manifest,
+            event_kind="effect",
+            surface="resident.runtime.completion_turn",
+            evidence="resident_completion_turn_retry_pending",
+            at=now.isoformat(),
+            details={"attempt_count": attempt},
+        )
         return "retry_pending"
 
 
@@ -6206,6 +6463,7 @@ def _finish_delivery(
 ) -> None:
     with _delivery_lock(manifest_path):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        ensure_managed_child_custody_fields(manifest_path, manifest)
         delivery = dict(manifest.get("completion_delivery") or {})
         origin = dict(manifest.get("discord_origin") or {})
         expected_conversation_key = str(origin.get("conversation_key") or "")
@@ -6284,6 +6542,19 @@ def _finish_delivery(
         )
         manifest["lifecycle"] = lifecycle
         _atomic_json(manifest_path, manifest)
+        _emit_managed_child_event(
+            manifest_path,
+            manifest,
+            event_kind="delivery_custody",
+            surface="resident.subagent.delivery",
+            evidence=str(history[-1]["evidence"]),
+            at=now.isoformat(),
+            details={
+                "message_ids": message_ids,
+                "result_kind": result_kind,
+                "delivery_evidence": evidence,
+            },
+        )
 
 
 def _normalized_discord_delivery_evidence(
@@ -6439,6 +6710,7 @@ def _retry_delivery(
 ) -> str:
     with _delivery_lock(manifest_path):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        ensure_managed_child_custody_fields(manifest_path, manifest)
         delivery = dict(manifest.get("completion_delivery") or {})
         attempt = max(1, int(delivery.get("attempt_count") or 1))
         delay_s = min(_DELIVERY_RETRY_MAX_S, _DELIVERY_RETRY_BASE_S * (2 ** min(attempt - 1, 7)))
@@ -6545,6 +6817,20 @@ def _retry_delivery(
             delivery.pop("next_attempt_at", None)
         manifest["completion_delivery"] = delivery
         _atomic_json(manifest_path, manifest)
+        _emit_managed_child_event(
+            manifest_path,
+            manifest,
+            event_kind="delivery_custody",
+            surface="resident.subagent.delivery",
+            evidence=str(state_history[-1]["evidence"]),
+            at=now.isoformat(),
+            details={
+                "attempt_id": delivery.get("attempt_id"),
+                "delivery_evidence": delivery_evidence,
+                "last_error_category": evidence["last_error_category"],
+                "status": status,
+            },
+        )
         return status
 
 
@@ -6557,8 +6843,14 @@ async def sweep_managed_agent_deliveries(
     completion_turn_handler: Callable[
         [Path, Mapping[str, Any]], Awaitable[ManagedCompletionTurnResult]
     ] | None = None,
+    delivery_effects: Any | None = None,
 ) -> ManagedAgentDeliverySweepResult:
-    """Reply with terminal managed-agent results and persist retry-safe evidence."""
+    """Reply with terminal managed-agent results and persist retry-safe evidence.
+
+    Step 13H: When *delivery_effects* is provided, completion sweep delivery
+    is routed through the durable WBC delivery effects adapter with stable
+    global-effect keys.  Real Discord stays action-off in M10 (SD3).
+    """
 
     from .runtime import OutboundMessage
 
@@ -6721,6 +7013,48 @@ async def sweep_managed_agent_deliveries(
                 continue
         try:
             run_id = manifest.get("run_id") or manifest_path.parent.name
+
+            # Step 13H: route completion sweep delivery through WBC when configured.
+            # If delivery_effects is provided directly or via the outbound sink,
+            # the delivery is routed through durable global-effect keys.
+            if delivery_effects is not None:
+                try:
+                    from arnold_pipelines.megaplan.resident.delivery_effects import (
+                        DeliveryChannel,
+                        DeliveryTarget,
+                    )
+
+                    sweep_target = DeliveryTarget(
+                        channel=DeliveryChannel.RESIDENT,
+                        parent_id=str(origin.get("conversation_key", "")),
+                        target_id=f"resident-subagent-completion:{run_id}",
+                        action="completion_sweep",
+                    )
+                    sweep_intent = {
+                        "content": content,
+                        "run_id": run_id,
+                        "result_kind": result_kind,
+                        "conversation_key": str(origin.get("conversation_key", "")),
+                    }
+                    if isinstance(metadata, dict):
+                        sweep_intent["metadata"] = dict(metadata)
+
+                    sweep_outcome = delivery_effects.deliver(
+                        target=sweep_target,
+                        intent_payload=sweep_intent,
+                        apply_fn=lambda p: {"delivered": True},
+                    )
+                    if not sweep_outcome.ok:
+                        LOGGER.warning(
+                            "Completion sweep delivery blocked by WBC: %s",
+                            sweep_outcome.error,
+                        )
+                except Exception as delivery_route_exc:
+                    LOGGER.warning(
+                        "Completion sweep delivery routing error: %s",
+                        delivery_route_exc,
+                    )
+
             await outbound.send(
                 OutboundMessage(
                     conversation_key=str(origin["conversation_key"]),

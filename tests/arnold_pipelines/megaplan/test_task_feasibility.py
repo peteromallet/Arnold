@@ -8,6 +8,8 @@ import pytest
 from arnold_pipelines.megaplan.orchestration.task_feasibility import (
     assert_admitted_task_feasibility,
     compile_task_feasibility,
+    plan_hash,
+    task_contract_hash,
 )
 
 
@@ -104,6 +106,88 @@ def test_dependency_requires_semantic_evidence_and_rejects_routing_reason() -> N
     del task["dependency_reasons"]["T1"]
     report = compile_task_feasibility(_payload([_task("T1"), task]))
     assert "dependency_reason_missing" in _codes(report)
+
+
+def test_non_mapping_dependency_evidence_rejected_as_routing() -> None:
+    """A dependency_reasons entry that is not a Mapping must be rejected
+    with routing_dependency_forbidden — it is not semantic evidence."""
+    task = _task("T2", depends_on=["T1"])
+    task["dependency_reasons"]["T1"] = "just a string, not evidence"  # type: ignore[dict-item]
+    report = compile_task_feasibility(_payload([_task("T1"), task]))
+    codes = _codes(report)
+    assert "routing_dependency_forbidden" in codes
+    assert report["admitted"] is False
+
+
+def test_non_semantic_kind_rejected_as_routing_forbidden() -> None:
+    """A dependency with a kind outside _DEPENDENCY_KINDS must be rejected
+    with routing_dependency_forbidden."""
+    task = _task("T2", depends_on=["T1"])
+    task["dependency_reasons"]["T1"]["kind"] = "routing"
+    report = compile_task_feasibility(_payload([_task("T1"), task]))
+    codes = _codes(report)
+    assert "routing_dependency_forbidden" in codes
+    assert "dependency_reason_invalid" not in codes
+    assert report["admitted"] is False
+
+
+@pytest.mark.parametrize(
+    "valid_kind",
+    ["consumes_output", "write_conflict", "human_prerequisite"],
+)
+def test_semantic_dependency_kinds_are_admitted(valid_kind: str) -> None:
+    """All three semantic dependency kinds must produce an admitted graph
+    when the rest of the evidence is well-formed."""
+    task = _task("T2", depends_on=["T1"])
+    task["dependency_reasons"]["T1"]["kind"] = valid_kind
+    task["dependency_reasons"]["T1"]["reason"] = f"Semantic reason for {valid_kind}."
+    task["dependency_reasons"]["T1"]["required_output"] = "src/t1.py"
+    report = compile_task_feasibility(_payload([_task("T1"), task]))
+    assert report["admitted"] is True
+    assert "routing_dependency_forbidden" not in _codes(report)
+
+
+def test_routing_group_is_non_authoritative_metadata_only() -> None:
+    """routing_group must never create or authorize a dependency edge.
+    It may only suppress the unordered-write-overlap diagnostic when
+    two tasks share identical routing_group values."""
+    left = _task("T1", paths=["src/shared.py"])
+    right = _task("T2", paths=["src/shared.py"])
+    # Without routing_group: must warn about unordered overlap
+    report = compile_task_feasibility(_payload([left, right]))
+    assert "write_overlap_unordered" in _codes(report)
+
+    # With a shared routing_group: overlap diagnostic suppressed
+    left["routing_group"] = right["routing_group"] = "shared-contract"
+    report = compile_task_feasibility(_payload([left, right]))
+    assert report["admitted"] is True
+    assert "write_overlap_unordered" not in _codes(report)
+
+    # routing_group must never manufacture a dependency edge
+    assert right.get("depends_on", []) == []
+    assert report["edge_count"] == 0
+
+
+def test_report_diagnostic_ordering_is_deterministic() -> None:
+    """Multiple compilations of the same payload must produce identical
+    diagnostic lists in the same order."""
+    tasks = []
+    for i in range(1, 5):
+        task = _task(f"T{i}", depends_on=[f"T{i-1}"] if i > 1 else [], minutes=1)
+        if i == 3:
+            # Inject a routing reason
+            task["dependency_reasons"][f"T{i-1}"]["reason"] = "Keep T3 and T2 in same batch."
+        if i == 4:
+            # Inject non-Mapping evidence
+            task["dependency_reasons"] = {f"T{i-1}": None}  # type: ignore[dict-item]
+        tasks.append(task)
+
+    report_a = compile_task_feasibility(_payload(tasks))
+    report_b = compile_task_feasibility(_payload(tasks))
+
+    assert report_a["diagnostics"] == report_b["diagnostics"]
+    assert report_a["task_contract_hash"] == report_b["task_contract_hash"]
+    assert report_a["admitted"] == report_b["admitted"]
 
 
 @pytest.mark.parametrize(
@@ -256,3 +340,382 @@ def test_feasibility_failure_routes_finalize_back_to_revise(tmp_path: Path) -> N
     assert response["next_step"] == "revise"
     assert response["details"]["code"] == "finalized_task_feasibility_failed"
     assert (plan_dir / "finalize_revise_feedback.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# M8A — DAG seriality gate: 30-task / 29-edge Transaction Spine rejection
+# ---------------------------------------------------------------------------
+
+
+def test_transaction_spine_30_task_29_edge_seriality_gate_rejected() -> None:
+    """The 30-task fully-serial Transaction Spine shape must be rejected.
+
+    Seriality 1.0 with >=8 tasks triggers ``serial_graph_unjustified``,
+    and the estimated dispatch budget will also exceed the phase timeout.
+    """
+    from tests.fixtures.m8a import transaction_spine_serial
+
+    payload = transaction_spine_serial()
+    report = compile_task_feasibility(payload)
+
+    assert report["task_count"] == 30
+    assert report["edge_count"] == 29
+    assert report["max_width"] == 1
+    assert report["critical_path_task_count"] == 30
+    assert report["seriality"] == 1.0
+    assert report["admitted"] is False
+    codes = _codes(report)
+    assert "serial_graph_unjustified" in codes
+    assert "critical_path_infeasible" in codes
+    assert "dispatch_budget_infeasible" in codes
+
+
+def test_seriality_at_8_tasks_single_file_each_is_rejected() -> None:
+    """8 fully-linear tasks (seriality=1.0) hits the floor threshold."""
+    tasks = [
+        _task(f"T{i}", depends_on=([f"T{i - 1}"] if i > 1 else []), minutes=3)
+        for i in range(1, 9)
+    ]
+    report = compile_task_feasibility(_payload(tasks))
+    assert report["task_count"] == 8
+    assert report["seriality"] == 1.0
+    assert "serial_graph_unjustified" in _codes(report)
+
+
+def test_seriality_below_threshold_with_diamond_is_admitted() -> None:
+    """A diamond-shaped DAG with 9 tasks and seriality < 1.0 is admitted."""
+    tasks = [
+        _task("T1", minutes=3),
+        _task("T2", depends_on=["T1"], minutes=3),
+        _task("T3", depends_on=["T1"], minutes=3),
+        _task("T4", depends_on=["T2", "T3"], minutes=3),
+        _task("T5", depends_on=["T4"], minutes=3),
+        _task("T6", depends_on=["T4"], minutes=3),
+        _task("T7", depends_on=["T5", "T6"], minutes=3),
+        _task("T8", depends_on=["T7"], minutes=3),
+        _task("T9", depends_on=["T7"], minutes=3),
+    ]
+    report = compile_task_feasibility(_payload(tasks))
+    assert report["task_count"] == 9
+    assert report["seriality"] < 1.0
+    assert report["admitted"] is True
+
+
+# ---------------------------------------------------------------------------
+# M8A — Content-hash identical recompilation
+# ---------------------------------------------------------------------------
+
+
+def test_content_hash_is_deterministic_across_recompilations() -> None:
+    """The task_contract_hash must be byte-stable across repeated compilations."""
+    payload = _payload([_task(f"T{i}", minutes=5) for i in range(1, 6)])
+    first = compile_task_feasibility(payload)
+    second = compile_task_feasibility(payload)
+    third = compile_task_feasibility(payload)
+
+    assert first["task_contract_hash"] == second["task_contract_hash"]
+    assert second["task_contract_hash"] == third["task_contract_hash"]
+    assert first["admitted"] is True
+    assert second["admitted"] is True
+
+
+def test_content_hash_changes_when_task_list_differs() -> None:
+    """Adding or removing a task produces a different contract hash."""
+    base = _payload([_task("T1"), _task("T2")])
+    mutated = _payload([_task("T1"), _task("T2"), _task("T3")])
+
+    base_hash = compile_task_feasibility(base)["task_contract_hash"]
+    mutated_hash = compile_task_feasibility(mutated)["task_contract_hash"]
+    assert base_hash != mutated_hash
+
+
+def test_content_hash_changes_when_validation_jobs_differ() -> None:
+    """Changes to validation_jobs must be reflected in the contract hash."""
+    payload_a = _payload([_task("T1")])
+    payload_a["validation_jobs"] = [
+        {"id": "v1", "kind": "post_execute_suite", "command": "pytest", "reason": "final"}
+    ]
+    payload_b = _payload([_task("T1")])
+    payload_b["validation_jobs"] = []
+
+    hash_a = compile_task_feasibility(payload_a)["task_contract_hash"]
+    hash_b = compile_task_feasibility(payload_b)["task_contract_hash"]
+    assert hash_a != hash_b
+
+
+def test_compile_task_feasibility_report_is_deterministic() -> None:
+    """The full feasibility report must be deterministic byte-for-byte."""
+    import json
+
+    payload = _payload([_task(f"T{i}", minutes=5) for i in range(1, 4)])
+    report_a = json.dumps(compile_task_feasibility(payload), sort_keys=True)
+    report_b = json.dumps(compile_task_feasibility(payload), sort_keys=True)
+    assert report_a == report_b
+
+
+# ---------------------------------------------------------------------------
+# M8A — Complexity 7/8/9 split-or-fail
+# ---------------------------------------------------------------------------
+
+
+def test_complexity_7_with_valid_checkpoint_is_admitted() -> None:
+    """A complexity-7 task with a valid checkpoint contract passes feasibility."""
+    task = _task("T7", complexity=7)
+    report = compile_task_feasibility(_payload([task]))
+    assert report["admitted"] is True
+
+
+def test_complexity_8_with_valid_checkpoint_is_admitted() -> None:
+    """A complexity-8 task with a valid checkpoint contract passes feasibility."""
+    task = _task("T8", complexity=8)
+    report = compile_task_feasibility(_payload([task]))
+    assert report["admitted"] is True
+
+
+def test_complexity_9_with_valid_checkpoint_is_admitted() -> None:
+    """A complexity-9 task with a valid checkpoint contract passes feasibility."""
+    task = _task("T9", complexity=9)
+    report = compile_task_feasibility(_payload([task]))
+    assert report["admitted"] is True
+
+
+def test_complexity_7_without_checkpoint_is_rejected() -> None:
+    """A complexity-7 task missing the checkpoint contract is rejected."""
+    task = _task("T7b", complexity=7)
+    task["checkpoint"] = {"required": False, "max_interval_seconds": 300, "records": []}
+    report = compile_task_feasibility(_payload([task]))
+    assert report["admitted"] is False
+    assert "task_checkpoint_required" in _codes(report)
+
+
+def test_complexity_7_with_missing_checkpoint_records_is_rejected() -> None:
+    """A complexity-7 task whose checkpoint is missing required records fails."""
+    task = _task("T7c", complexity=7)
+    task["checkpoint"] = {
+        "required": True,
+        "max_interval_seconds": 300,
+        "records": ["completed_subobjectives", "output_hashes"],  # incomplete
+    }
+    report = compile_task_feasibility(_payload([task]))
+    assert report["admitted"] is False
+    assert "task_checkpoint_required" in _codes(report)
+
+
+def test_complexity_7_with_invalid_interval_is_rejected() -> None:
+    """A complexity-7 task with a checkpoint interval > 300s is rejected."""
+    task = _task("T7d", complexity=7)
+    task["checkpoint"]["max_interval_seconds"] = 301
+    report = compile_task_feasibility(_payload([task]))
+    assert report["admitted"] is False
+    assert "task_checkpoint_required" in _codes(report)
+
+
+def test_m8a_complexity_7_8_9_fixture_split_or_fail_cases() -> None:
+    """The M8A complexity-7-8-9 fixture admits valid tasks and rejects the invalid one."""
+    from tests.fixtures.m8a import complexity_7_8_9_cases
+
+    payload = complexity_7_8_9_cases()
+    report = compile_task_feasibility(payload)
+
+    # T7 (complexity=7), T8 (complexity=8), T9 (complexity=9) — all have valid checkpoints
+    # T7b (complexity=7 — no checkpoint) should be rejected
+    diag_by_task: dict[str, list[str]] = {}
+    for diag in report["diagnostics"]:
+        tid = diag.get("task_id", "")
+        diag_by_task.setdefault(tid, []).append(diag["code"])
+
+    # The fixture contains 4 tasks total (T7, T8, T9, T7b)
+    assert report["task_count"] == 4
+    assert report["admitted"] is False  # T7b fails
+
+    # T7, T8, T9 should have no diagnostics against them
+    for admitted_id in ("T7", "T8", "T9"):
+        assert admitted_id not in diag_by_task or all(
+            c == "task_objective_oversized" for c in diag_by_task.get(admitted_id, [])
+        ), f"{admitted_id} should not have checkpoint failures"
+
+    # T7b should fail with task_checkpoint_required
+    assert "task_checkpoint_required" in diag_by_task.get("T7b", [])
+
+
+# ---------------------------------------------------------------------------
+# M8A — Post-finalize graph mutation prevents worker dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_post_finalize_write_set_mutation_prevents_dispatch() -> None:
+    """A mutation to a task's write_set after finalize changes the contract hash."""
+    payload = _payload([_task("T1"), _task("T2", depends_on=["T1"])])
+    payload["graph_report"] = compile_task_feasibility(payload)
+
+    # First call succeeds — graph hasn't been mutated
+    assert assert_admitted_task_feasibility(payload) is not None
+
+    # Mutate a task's write_set
+    mutated = deepcopy(payload)
+    mutated["tasks"][1]["write_set"]["paths"] = ["src/divergent.py"]
+    with pytest.raises(ValueError, match="hash differs"):
+        assert_admitted_task_feasibility(mutated)
+
+
+def test_post_finalize_added_task_prevents_dispatch() -> None:
+    """Adding a task after finalize changes the contract hash."""
+    payload = _payload([_task("T1")])
+    payload["graph_report"] = compile_task_feasibility(payload)
+
+    assert assert_admitted_task_feasibility(payload) is not None
+
+    mutated = deepcopy(payload)
+    mutated["tasks"].append(_task("T2"))
+    with pytest.raises(ValueError, match="hash differs"):
+        assert_admitted_task_feasibility(mutated)
+
+
+def test_post_finalize_dependency_chain_mutation_prevents_dispatch() -> None:
+    """Altering a dependency edge after finalize changes the contract hash."""
+    payload = _payload([
+        _task("T1"),
+        _task("T2", depends_on=["T1"]),
+        _task("T3", depends_on=["T2"]),
+    ])
+    payload["graph_report"] = compile_task_feasibility(payload)
+    assert assert_admitted_task_feasibility(payload) is not None
+
+    # Remove a dependency (leaves orphaned dependency_reason — fails feasibility)
+    mutated = deepcopy(payload)
+    mutated["tasks"][2]["depends_on"] = ["T1"]  # was ["T2"]
+    with pytest.raises(ValueError, match="no longer passes feasibility"):
+        assert_admitted_task_feasibility(mutated)
+
+
+def test_post_finalize_complexity_change_prevents_dispatch() -> None:
+    """Changing a task's complexity after finalize changes the contract hash."""
+    payload = _payload([_task("T1", complexity=4)])
+    payload["graph_report"] = compile_task_feasibility(payload)
+    assert assert_admitted_task_feasibility(payload) is not None
+
+    mutated = deepcopy(payload)
+    mutated["tasks"][0]["complexity"] = 7
+    with pytest.raises(ValueError, match="no longer passes feasibility"):
+        assert_admitted_task_feasibility(mutated)
+
+
+# ---------------------------------------------------------------------------
+# Step 7H-a: additive seed_epoch / plan_hash fields and epoch fencing
+# ---------------------------------------------------------------------------
+
+
+def test_compile_emits_additive_seed_epoch_and_plan_hash() -> None:
+    """seed_epoch and plan_hash are additive receipt fields in the report."""
+    payload = _payload([_task("T1")])
+    payload["seed_epoch"] = "epoch-abc-123"
+    payload["source"] = {"kind": "git", "head": "deadbeef"}
+    report = compile_task_feasibility(payload)
+    assert report["seed_epoch"] == "epoch-abc-123"
+    assert isinstance(report["plan_hash"], str)
+    assert report["plan_hash"].startswith("sha256:")
+
+
+def test_seed_epoch_defaults_to_none_when_absent() -> None:
+    """Without seed_epoch in the payload the report field is None."""
+    report = compile_task_feasibility(_payload([_task("T1")]))
+    assert report["seed_epoch"] is None
+    # plan_hash is still emitted (binds None seed_epoch)
+    assert report["plan_hash"].startswith("sha256:")
+
+
+def test_plan_hash_binds_seed_epoch_while_contract_hash_does_not() -> None:
+    """Changing seed_epoch changes plan_hash but NOT task_contract_hash."""
+    base = _payload([_task("T1")])
+    base["seed_epoch"] = "epoch-v1"
+    with_epoch_v2 = deepcopy(base)
+    with_epoch_v2["seed_epoch"] = "epoch-v2"
+
+    assert task_contract_hash(base) == task_contract_hash(with_epoch_v2)
+    assert plan_hash(base) != plan_hash(with_epoch_v2)
+
+
+def test_plan_hash_binds_source_while_contract_hash_does_not() -> None:
+    """Changing source changes plan_hash but NOT task_contract_hash."""
+    base = _payload([_task("T1")])
+    base["seed_epoch"] = "epoch-1"
+    base["source"] = {"kind": "git", "head": "aaa"}
+    with_source_b = deepcopy(base)
+    with_source_b["source"] = {"kind": "git", "head": "bbb"}
+
+    assert task_contract_hash(base) == task_contract_hash(with_source_b)
+    assert plan_hash(base) != plan_hash(with_source_b)
+
+
+def test_assert_admitted_matched_epoch_is_accepted() -> None:
+    """A matching current_epoch passes through without error."""
+    payload = _payload([_task("T1")])
+    payload["seed_epoch"] = "epoch-current"
+    payload["graph_report"] = compile_task_feasibility(payload)
+    report = assert_admitted_task_feasibility(payload, current_epoch="epoch-current")
+    assert report is not None
+    assert report["seed_epoch"] == "epoch-current"
+
+
+def test_assert_admitted_stale_epoch_is_rejected() -> None:
+    """A mismatched current_epoch (stale/conflicted) raises ValueError."""
+    payload = _payload([_task("T1")])
+    payload["seed_epoch"] = "epoch-current"
+    payload["graph_report"] = compile_task_feasibility(payload)
+    with pytest.raises(ValueError, match="seed_epoch mismatch"):
+        assert_admitted_task_feasibility(payload, current_epoch="epoch-stale")
+
+
+def test_assert_admitted_v2_with_none_epoch_is_rejected() -> None:
+    """v2 + explicitly absent attestation (current_epoch=None) is rejected."""
+    payload = _payload([_task("T1")])
+    payload["seed_epoch"] = "epoch-current"
+    payload["graph_report"] = compile_task_feasibility(payload)
+    with pytest.raises(ValueError, match="seed_epoch attestation required"):
+        assert_admitted_task_feasibility(payload, current_epoch=None)
+
+
+def test_assert_admitted_v1_with_none_epoch_escapes() -> None:
+    """v1 + current_epoch=None returns None (escape hatch regardless of epoch)."""
+    payload = {"task_contract_version": 1, "tasks": [], "validation_jobs": []}
+    assert assert_admitted_task_feasibility(payload, current_epoch=None) is None
+
+
+def test_assert_admitted_unset_epoch_is_backward_compatible() -> None:
+    """Unset current_epoch (sentinel) preserves prior behavior for v2 plans."""
+    payload = _payload([_task("T1")])
+    payload["seed_epoch"] = "epoch-current"
+    payload["graph_report"] = compile_task_feasibility(payload)
+    # No current_epoch passed — must not raise even though seed_epoch is present.
+    report = assert_admitted_task_feasibility(payload)
+    assert report is not None
+
+
+def test_m8a_report_backward_compat_task_contract_hash_stable() -> None:
+    """m8a_report reads task_contract_hash from compile output; it is stable."""
+    # Simulate the m8a_report consumption pattern:
+    # feasibility = compile_task_feasibility(payload, config)
+    # feasibility.get("task_contract_hash")
+    payload_a = _payload([_task("T1")])
+    payload_a["seed_epoch"] = "epoch-x"
+    payload_b = _payload([_task("T1")])
+    # No seed_epoch
+    report_a = compile_task_feasibility(payload_a)
+    report_b = compile_task_feasibility(payload_b)
+    # task_contract_hash must be identical (additive fields don't perturb it)
+    assert report_a["task_contract_hash"] == report_b["task_contract_hash"]
+    # But plan_hash and seed_epoch differ
+    assert report_a["plan_hash"] != report_b["plan_hash"]
+    assert report_a["seed_epoch"] == "epoch-x"
+    assert report_b["seed_epoch"] is None
+
+
+def test_critique_custody_backward_compat_hash_stable() -> None:
+    """critique_custody uses task_contract_hash(payload); it is stable."""
+    # Simulate the critique_custody consumption pattern:
+    # task_contract_hash(payload)
+    payload_a = _payload([_task("T1")])
+    payload_a["seed_epoch"] = "epoch-y"
+    payload_b = _payload([_task("T1")])
+    # Adding seed_epoch must not change task_contract_hash
+    assert task_contract_hash(payload_a) == task_contract_hash(payload_b)
