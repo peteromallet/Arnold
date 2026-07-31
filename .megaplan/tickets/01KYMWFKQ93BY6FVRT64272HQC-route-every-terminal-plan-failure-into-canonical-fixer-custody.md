@@ -17,7 +17,7 @@ tags:
 - do-not-wait-for-platform
 codebase_id: null
 created_at: '2026-07-28T17:31:11.978059+00:00'
-last_edited_at: '2026-07-30T15:28:19.598177+00:00'
+last_edited_at: '2026-07-31T03:05:00+00:00'
 epics: []
 ---
 
@@ -76,3 +76,36 @@ reconciliation, and proof that the blocker cleared.
 The live plan was `blocked`, with no worker and a current repairable quality-circuit receipt, while cloud status classified the custody chain `complete`. The three-hour fixer therefore had no truthful target to claim. After legal recovery, `chain start` consumed a full CPU core recomputing the 57k-event accepted-attempt projection for minutes and did not dispatch execute; direct legal `execute` through the same pinned runtime started attempt 67 immediately.
 
 Containment must make newest nonaccepted plan state outrank chain-complete projections, enqueue one occurrence on this disagreement, and bound/cache authority projection by source cursor so supervision never performs an unbounded O(events x attempts) recomputation before dispatch. Acceptance must replay this exact blocked-plan/complete-chain contradiction and prove automatic fixer claim plus worker start.
+
+## Release-blocker closure 2026-07-31
+
+The post-M11 audit found one remaining bypass family rather than four
+independent symptoms:
+
+- L2/meta and L3/deep dispatch could construct their own managed subprocess
+  instead of crossing the canonical exact-occurrence `simple_fixer` boundary.
+- A deterministic phase-contract failure without a task-shaped executor record
+  reached queue admission with an empty task identity and was therefore
+  unclaimable.
+- Managed meta-repair identity reused the request identity, allowing a failed
+  generation that had briefly started to be mistaken for launch evidence.
+- The watchdog could mechanically relaunch a deterministic phase-contract
+  failure before any repair request had canonical custody.
+
+The containment implementation closes that family at all four boundaries:
+
+1. repair-trigger treats L2/L3 as diagnosis depth only; mutation always
+   delegates through the canonical `simple_fixer` occurrence;
+2. phase failures allocate `phase:<phase>` before request construction and
+   admission;
+3. every managed retry carries an unconditional generation nonce and a
+   terminal-failed manifest can never satisfy launch confirmation; and
+4. watchdog relaunch is fenced for
+   `deterministic_phase_failure`/`repair_phase_contract` until canonical repair
+   custody is established.
+
+The focused release proofs are
+`test_repair_trigger_wrapper_surface_is_closed`,
+`test_phase_contract_lifecycle_request_allocates_identity_before_acceptance`,
+`test_meta_dispatch_retries_failed_generation_without_false_receipt`, and
+`test_watchdog_fences_mechanical_relaunch_for_phase_contract_failure`.
