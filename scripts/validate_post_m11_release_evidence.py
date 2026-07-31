@@ -343,8 +343,11 @@ def _validate_source_universe(data: dict[str, Any]) -> None:
             raise ValueError(f"{label}.source_kind is missing")
         fingerprint = entry["head_fingerprint"]
         if not isinstance(fingerprint, str) or not (
-            (fingerprint.startswith("sha1:") and len(fingerprint) == 45)
-            or (fingerprint.startswith("sha256:") and len(fingerprint) == 71)
+            (fingerprint.startswith("sha1:") and SHA1.fullmatch(fingerprint.removeprefix("sha1:")))
+            or (
+                fingerprint.startswith("sha256:")
+                and SHA256.fullmatch(fingerprint.removeprefix("sha256:"))
+            )
         ):
             raise ValueError(f"{label}.head_fingerprint must be content-addressed")
         if type(entry["unique_delta_count"]) is not int or entry["unique_delta_count"] < 0:

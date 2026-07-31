@@ -215,7 +215,18 @@ def test_candidate_ready_requires_complete_source_universe(tmp_path: Path) -> No
         validate(_write(tmp_path, data))
 
 
-@pytest.mark.parametrize("mutation", ["count", "digest", "duplicate", "unmapped_ref", "missing_proof", "deferred_fields"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "count",
+        "digest",
+        "duplicate",
+        "unmapped_ref",
+        "invalid_fingerprint",
+        "missing_proof",
+        "deferred_fields",
+    ],
+)
 def test_source_universe_completeness_gate_is_fail_closed(tmp_path: Path, mutation: str) -> None:
     data = _candidate_ready_record()
     universe = data["source_universe"]
@@ -227,6 +238,8 @@ def test_source_universe_completeness_gate_is_fail_closed(tmp_path: Path, mutati
         universe["entries"].append(deepcopy(universe["entries"][0]))
     elif mutation == "unmapped_ref":
         data["source_refs"][0]["ref"] = "missing-source"
+    elif mutation == "invalid_fingerprint":
+        universe["entries"][0]["head_fingerprint"] = f"sha1:{'!' * 40}"
     elif mutation == "missing_proof":
         universe["entries"][0]["disposition_evidence"] = {}
     else:
