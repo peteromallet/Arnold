@@ -7,6 +7,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 import arnold_pipelines.megaplan.cloud.runtime_provenance as provenance_module
 from arnold_pipelines.megaplan.cloud.runtime_provenance import (
     m11_bound_runtime_identity,
@@ -161,7 +163,7 @@ def _resolve_runtime_revision(root: Path) -> str:
     ).strip()
 
 
-def test_m11_bound_runtime_identity() -> None:
+def test_m11_bound_runtime_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     """Step 3: m11_bound_runtime_identity validates all eight components
     and emits a content-addressed identity receipt.
 
@@ -171,8 +173,31 @@ def test_m11_bound_runtime_identity() -> None:
     runtime.  The overall identity is invalid because the optional
     components are not configured.
     """
-    root = _resolve_runtime_root()
+    # This is the aggregate identity-schema test, not the editable-install
+    # integration test (covered above in a dedicated venv).  Pin discovery to
+    # this checkout so a developer's globally installed Arnold distribution
+    # cannot make the result depend on whichever worktree pip last saw.
+    root = Path(__file__).parents[2].resolve()
     revision = _resolve_runtime_revision(root)
+    monkeypatch.setattr(
+        provenance_module,
+        "_direct_url_identity",
+        lambda: (
+            root,
+            {"dir_info": {"editable": True}, "url": root.as_uri()},
+        ),
+    )
+    monkeypatch.setattr(
+        provenance_module,
+        "_pth_identity",
+        lambda: [
+            {
+                "path": str(root / ".test-editable-arnold.pth"),
+                "entries": [str(root)],
+                "readable": True,
+            }
+        ],
+    )
 
     identity = m11_bound_runtime_identity(
         expected_root=root,
