@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import shlex
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 from arnold_pipelines.megaplan.cloud.spec import (
     CloudSpec,
@@ -160,6 +159,62 @@ def test_entrypoint_starts_discord_resident_from_shared_secret_env() -> None:
     assert entrypoint.index("/workspace/.cloud-hot-env") < entrypoint.index(
         "/workspace/.megaplan/resident-runtime.env"
     )
+    assert "tmux new-session -d -s megaplan-resident-discord -c /workspace" in entrypoint
+    assert (
+        r"runtime_src=\${MEGAPLAN_RUNTIME_SRC:-"
+        r"\${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
+    ) in entrypoint
+    assert r'cd \"\$runtime_src\"' in entrypoint
+
+
+def test_entrypoint_boot_supervisors_use_one_runtime_selector_with_safe_fallback() -> None:
+    from arnold_pipelines.megaplan.cloud.template import render_entrypoint
+
+    entrypoint = render_entrypoint(_minimal_cloud_spec())
+    selector = (
+        r"runtime_src=\${MEGAPLAN_RUNTIME_SRC:-"
+        r"\${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
+    )
+
+    # Heartbeat, watchdog, and resident all resolve the same precedence after
+    # loading the persistent runtime selection.  The legacy checkout is only a
+    # final fallback, never a hard-coded wrapper source or tmux cwd.
+    assert entrypoint.count(selector) == 3
+    assert entrypoint.count(r'cd \"\$runtime_src\"') == 3
+    assert (
+        r'exec \"\$runtime_src/arnold_pipelines/megaplan/cloud/wrappers/'
+        r'arnold-heartbeat\"'
+    ) in entrypoint
+    assert (
+        r'exec \"\$runtime_src/arnold_pipelines/megaplan/cloud/wrappers/'
+        r'arnold-watchdog\"'
+    ) in entrypoint
+    assert (
+        "/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/"
+        "arnold-heartbeat"
+    ) not in entrypoint
+    assert (
+        "/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/"
+        "arnold-watchdog"
+    ) not in entrypoint
+    assert "tmux new-session -d -s megaplan-resident-discord -c /workspace/arnold" not in entrypoint
+
+
+def test_entrypoint_runtime_selector_quoting_is_valid_bash() -> None:
+    import subprocess
+
+    from arnold_pipelines.megaplan.cloud.template import render_entrypoint
+
+    entrypoint = render_entrypoint(_minimal_cloud_spec())
+    syntax = subprocess.run(
+        ["bash", "-n"],
+        input=entrypoint,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert syntax.returncode == 0, syntax.stderr
 
 
 def test_cloud_image_installs_pinned_railway_cli() -> None:
