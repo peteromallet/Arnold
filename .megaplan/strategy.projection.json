@@ -1,20 +1,5 @@
 {
-  "diagnostics": [
-    {
-      "level": "warning",
-      "message": "Addressed ticket in roadmap: ticket '01KTH21DTP1HR3ER5W7SRRJVV5' ('Prevent stale git pre-commit hook rot') has been addressed.  Consider removing it from the roadmap.",
-      "source": {
-        "column": 1,
-        "line": 99,
-        "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
-      }
-    },
-    {
-      "level": "warning",
-      "message": "Duplicate intent: ticket '01KYSS5QA9D8YD28W24TGSABDP' (in '?') and its promoted epic 'megaplan-native-parity-corrective' (in 'Next') both appear in the roadmap.  Both entries represent the same logical work — remove the ticket entry to avoid duplicate planning.",
-      "source": null
-    }
-  ],
+  "diagnostics": [],
   "roadmap": {
     "Later": [
       {
@@ -22,7 +7,7 @@
         "ref": "01KTH21EC489596QWBC3419JC9",
         "source": {
           "column": 1,
-          "line": 105,
+          "line": 104,
           "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
         },
         "title": "Add compact megaplan monitor command for plan and chain health",
@@ -33,31 +18,42 @@
         "ref": "native-workflow-platformization",
         "source": {
           "column": 1,
-          "line": 106,
+          "line": 105,
           "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
         },
         "title": "Native Workflow Platformization",
         "type": "epic"
+      },
+      {
+        "horizon": "Later",
+        "ref": "01KYVKPN6JHD19ZRM3WQF9XV8S",
+        "source": {
+          "column": 1,
+          "line": 106,
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+        },
+        "title": "Provide backend-neutral WBC persistence and canonical deployed-evidence joins",
+        "type": "ticket"
+      },
+      {
+        "horizon": "Later",
+        "ref": "01KYVQ6D5X008TT6RBNFCFCYZS",
+        "source": {
+          "column": 1,
+          "line": 107,
+          "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
+        },
+        "title": "Make execute-authority recovery converge after a base refresh",
+        "type": "ticket"
       }
     ],
     "Next": [
       {
         "horizon": "Next",
-        "ref": "01KTH21DTP1HR3ER5W7SRRJVV5",
-        "source": {
-          "column": 1,
-          "line": 99,
-          "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
-        },
-        "title": "Prevent stale git pre-commit hook rot",
-        "type": "ticket"
-      },
-      {
-        "horizon": "Next",
         "ref": "megaplan-chain-milestone-gates",
         "source": {
           "column": 1,
-          "line": 100,
+          "line": 99,
           "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
         },
         "title": "Megaplan milestone conformance-gate bootstrap",
@@ -68,7 +64,7 @@
         "ref": "megaplan-native-parity-corrective",
         "source": {
           "column": 1,
-          "line": 101,
+          "line": 100,
           "path": ".megaplan/initiatives/repository-strategy-roadmap/STRATEGY.md"
         },
         "title": "Megaplan Native Parity Corrective",
@@ -150,9 +146,9 @@
     }
   ],
   "validation_summary": {
-    "clean": false,
+    "clean": true,
     "error_count": 0,
-    "total_diagnostics": 2,
-    "warning_count": 2
+    "total_diagnostics": 0,
+    "warning_count": 0
   }
 }
