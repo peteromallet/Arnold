@@ -154,9 +154,9 @@ class TestSort:
         assert [r["id"] for r in json.loads(proc_asc.stdout)] == [u1, u2, u3]
 
     def test_sort_by_title(self, repo: Path, registry_home: Path) -> None:
-        u_c = _make(repo, registry_home, "Charlie", "x")
-        u_a = _make(repo, registry_home, "Alpha", "x")
-        u_b = _make(repo, registry_home, "Bravo", "x")
+        _make(repo, registry_home, "Charlie", "x")
+        _make(repo, registry_home, "Alpha", "x")
+        _make(repo, registry_home, "Bravo", "x")
 
         proc = _run(
             ["ticket", "search", "--sort", "title", "--asc", "--json"],
@@ -178,8 +178,10 @@ class TestSort:
 
 class TestProjectScope:
     def test_default_scope_is_current_repo(self, tmp_path: Path, registry_home: Path) -> None:
-        a = tmp_path / "a"; _init_git_repo(a)
-        b = tmp_path / "b"; _init_git_repo(b)
+        a = tmp_path / "a"
+        _init_git_repo(a)
+        b = tmp_path / "b"
+        _init_git_repo(b)
         _make(a, registry_home, "In A", "alpha")
         _make(b, registry_home, "In B", "alpha")
 
@@ -188,8 +190,10 @@ class TestProjectScope:
         assert [r["title"] for r in data] == ["In A"]
 
     def test_all_projects_via_registry(self, tmp_path: Path, registry_home: Path) -> None:
-        a = tmp_path / "a"; _init_git_repo(a)
-        b = tmp_path / "b"; _init_git_repo(b)
+        a = tmp_path / "a"
+        _init_git_repo(a)
+        b = tmp_path / "b"
+        _init_git_repo(b)
         _make(a, registry_home, "In A", "shared keyword")
         _make(b, registry_home, "In B", "shared keyword")
 
@@ -203,8 +207,10 @@ class TestProjectScope:
         assert titles == ["In A", "In B"]
 
     def test_specific_project_by_path(self, tmp_path: Path, registry_home: Path) -> None:
-        a = tmp_path / "a"; _init_git_repo(a)
-        b = tmp_path / "b"; _init_git_repo(b)
+        a = tmp_path / "a"
+        _init_git_repo(a)
+        b = tmp_path / "b"
+        _init_git_repo(b)
         _make(a, registry_home, "In A", "shared keyword")
         _make(b, registry_home, "In B", "shared keyword")
 

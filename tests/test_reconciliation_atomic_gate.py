@@ -24,10 +24,8 @@ from arnold_pipelines.megaplan.chain import (
     _reconcile_chain_from_ground_truth,
 )
 from arnold_pipelines.megaplan.chain.spec import (
-    ChainSpec,
     ChainState,
     MilestoneSpec,
-    load_chain_state,
     save_chain_state,
 )
 

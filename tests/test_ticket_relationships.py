@@ -10,10 +10,7 @@ Covers T5 requirements:
 
 from __future__ import annotations
 
-import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -271,7 +268,10 @@ def test_parse_serialize_round_trip_is_idempotent() -> None:
     links_2 = parse_frontmatter_links(reconstituted_record, ticket_id="01J1234567890")
 
     assert len(links_1) == len(links_2)
-    for l1, l2 in zip(sorted(links_1, key=lambda l: l.epic_id), sorted(links_2, key=lambda l: l.epic_id)):
+    for l1, l2 in zip(
+        sorted(links_1, key=lambda link: link.epic_id),
+        sorted(links_2, key=lambda link: link.epic_id),
+    ):
         assert l1.epic_id == l2.epic_id
         assert l1.resolves_on_complete == l2.resolves_on_complete
         assert l1.kind == l2.kind
@@ -406,7 +406,6 @@ def test_legacy_frontmatter_without_kind_is_normalised_on_read(
     """A ticket file written with legacy epics frontmatter (no kind/provenance)
     is normalised when read back through the store."""
     _make_ticket(file_store, "Legacy Ticket", "01JTEST001")
-    codebase = file_store._resolve_ticket_codebase()
 
     # Manually write legacy-style frontmatter (no kind/provenance)
     from arnold_pipelines.megaplan.tickets.files import read_ticket_file, write_ticket_file
@@ -533,7 +532,6 @@ def test_address_tickets_resolved_by_epic_only_addresses_resolving_links(
     when an epic completes."""
     _make_ticket(file_store, "Resolving Ticket", "01JTEST-RESOLVE")
     _make_ticket(file_store, "Associated Ticket", "01JTEST-ASSOC")
-    codebase = file_store._resolve_ticket_codebase()
 
     # Create two epics
     epic = file_store.create_epic(
@@ -617,7 +615,6 @@ def test_address_tickets_skips_already_addressed_tickets(
     """address_tickets_resolved_by_epic skips tickets that are already
     addressed (not open)."""
     _make_ticket(file_store, "Already Addressed", "01JTEST-ALREADY")
-    codebase = file_store._resolve_ticket_codebase()
 
     epic = file_store.create_epic(
         title="Skip Addressed Epic",
@@ -754,7 +751,7 @@ def test_store_replay_does_not_fork_links(
         provenance="first",
     )
     # Re-link same epic with new provenance
-    link2 = file_store.link_ticket_to_epic(
+    file_store.link_ticket_to_epic(
         ticket_id="01JTEST-FORK",
         epic_id=epic.id,
         resolves_on_complete=True,
