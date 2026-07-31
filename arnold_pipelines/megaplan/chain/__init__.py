@@ -78,6 +78,7 @@ from arnold_pipelines.megaplan._core import (
     save_state_merge_meta,
 )
 from arnold_pipelines.megaplan._core.user_config import VALID_VENDORS
+from arnold_pipelines.megaplan.layout import retired_chain_marker
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     _is_explained_noop_completion,
     AuthorityDecision,
@@ -6416,6 +6417,7 @@ def run_chain(
     """Drive the full chain. Returns a structured JSON-serializable result."""
     root = root.resolve(strict=False)
     spec_path = spec_path.resolve(strict=False)
+    _require_active_initiative_chain(root, spec_path)
     _require_git_worktree_root(root, operation="chain start")
     spec = chain_spec.load_spec(spec_path)
     anchor_requirement = chain_spec.validate_anchor_requirement(
@@ -9354,6 +9356,7 @@ def run_chain_cli(
     require_anchor_override = getattr(args, "require_anchor", None)
     missing_anchor_ack_override = getattr(args, "missing_anchor_ack", None)
     try:
+        _require_active_initiative_chain(root, spec_path)
         spec_for_anchor_check = chain_spec.load_spec(spec_path)
         chain_spec.validate_anchor_requirement(
             spec_for_anchor_check,
@@ -9397,3 +9400,15 @@ def _emit_error(error: CliError) -> int:
     payload = {"success": False, "error": error.code, "message": error.message}
     sys.stdout.write(json.dumps(payload, indent=2) + "\n")
     return error.exit_code or 1
+
+
+def _require_active_initiative_chain(root: Path, spec_path: Path) -> None:
+    """Reject a retired canonical initiative before any chain preflight."""
+
+    marker = retired_chain_marker(spec_path, root)
+    if marker is not None:
+        raise CliError(
+            "initiative_retired",
+            f"Retired initiative chain cannot be started: {spec_path}; "
+            f"retirement marker: {marker}",
+        )
