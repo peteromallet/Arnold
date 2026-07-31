@@ -100,7 +100,7 @@ ARNOLD_SRC="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arno
 SUPERVISOR_RUNTIME_LIB="$(dirname "$ARNOLD_REPAIR_LOOP_ORIGIN")/arnold-supervisor-runtime-lib"
 # A repair trigger may select an isolated, pre-attested runtime for one repair
 # child without changing the global editable install or the watchdog runtime.
-ARNOLD_SRC="${ARNOLD_REPAIR_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
+ARNOLD_SRC="${ARNOLD_REPAIR_RUNTIME_SRC:-$ARNOLD_SRC}"
 SUPERVISOR_RUNTIME_LIB="$(dirname "${BASH_SOURCE[0]:-$0}")/arnold-supervisor-runtime-lib"
 if [[ ! -f "$SUPERVISOR_RUNTIME_LIB" ]]; then
   SUPERVISOR_RUNTIME_LIB="$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-supervisor-runtime-lib"
@@ -1481,6 +1481,32 @@ stale_marker_relaunch_command() {
   [[ "$relaunch_command" == *'source checkout has local commits not contained in origin/'* ]] && return 0
   [[ "$relaunch_command" == *'attempting push'* ]] && return 0
   [[ "$relaunch_command" == *'git -C "$SRC" push origin'* ]] && return 0
+  [[ "$relaunch_command" == *'pip install '* ]] && return 0
+  [[ "$relaunch_command" == *'pip3 install '* ]] && return 0
+  [[ "$relaunch_command" == *'python -m pip install '* ]] && return 0
+  [[ "$relaunch_command" == *'python3 -m pip install '* ]] && return 0
+  [[ "$relaunch_command" =~ git[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?(push|pull|fetch|clone|checkout|switch|reset|merge|rebase|commit) ]] && return 0
+  [[ "$relaunch_command" == *'git push '* ]] && return 0
+  [[ "$relaunch_command" == *'git pull '* ]] && return 0
+  [[ "$relaunch_command" == *'git fetch '* ]] && return 0
+  [[ "$relaunch_command" == *'git clone '* ]] && return 0
+  [[ "$relaunch_command" == *'git checkout '* ]] && return 0
+  [[ "$relaunch_command" == *'git switch '* ]] && return 0
+  [[ "$relaunch_command" == *'git reset '* ]] && return 0
+  [[ "$relaunch_command" == *'git merge '* ]] && return 0
+  [[ "$relaunch_command" == *'git rebase '* ]] && return 0
+  [[ "$relaunch_command" == *'git commit '* ]] && return 0
+  [[ "$relaunch_command" == *'rm '* ]] && return 0
+  [[ "$relaunch_command" == *'mv '* ]] && return 0
+  [[ "$relaunch_command" == *'cp '* ]] && return 0
+  [[ "$relaunch_command" == *'touch '* ]] && return 0
+  [[ "$relaunch_command" == *'mkdir '* ]] && return 0
+  [[ "$relaunch_command" == *'chmod '* ]] && return 0
+  [[ "$relaunch_command" == *'chown '* ]] && return 0
+  [[ "$relaunch_command" == *'tee '* ]] && return 0
+  [[ "$relaunch_command" == *'sed -i '* ]] && return 0
+  [[ "$relaunch_command" == *' >>'* ]] && return 0
+  [[ "$relaunch_command" == *' >'* ]] && return 0
   [[ "$relaunch_command" == *"[megaplan-refresh] refusing editable install refresh:"* ]] || return 1
   [[ "$relaunch_command" == *'source checkout dirty; using current source checkout at $SRC to avoid stale runtime mirror'* ]] && return 1
   [[ "$relaunch_command" == *'git -C "$MEGAPLAN_RUNTIME_SRC" merge-base --is-ancestor HEAD "origin/$REF"'* ]] && return 1

@@ -12,7 +12,7 @@ tags:
 - immediate-residual
 codebase_id: null
 created_at: '2026-07-29T10:09:24.064192+00:00'
-last_edited_at: '2026-07-31T03:17:11+00:00'
+last_edited_at: '2026-07-31T03:21:00.000000+00:00'
 epics:
 - epic_id: megaplan-native-parity-corrective
   resolves_on_complete: false
@@ -73,3 +73,18 @@ semantics; it consumes prior credential/runtime substrate rather than replacing
 it. Keep this as an immediate release residual. Native Parity is associated
 only because its recovery/control cutover must preserve the resulting envelope
 contract and fixtures.
+
+## 2026-07-31 pinned repair-route evidence
+
+The post-M11 recovery wrappers now prefer `MEGAPLAN_RUNTIME_SRC` when selecting
+sibling repair launchers, preserve the dedicated `editible-install` branch as
+the fallback source, and pass the selected runtime into repair children through
+`ARNOLD_REPAIR_RUNTIME_SRC`. Watchdog dispatch and regenerated chain relaunches
+also carry the same repair queue root, marker directory, session, and run kind.
+Focused wrapper tests cover pinned-source selection and route-context
+propagation.
+
+This closes the sibling-wrapper/source-selection subcase only. Keep this ticket
+open: the single canonical launch-envelope resolver, credential-channel
+preflight, resident-generation rotation fixture, and provider-route acceptance
+proof remain outstanding.
