@@ -815,6 +815,16 @@ def _canonical_runner_live(observation: Mapping[str, Any]) -> bool:
     )
 
 
+def _chain_terminal_success(observation: Mapping[str, Any]) -> bool:
+    """Return true when chain authority proves completion and no runner applies."""
+
+    return bool(
+        str(observation.get("chain_last_state") or "").strip().lower()
+        in {"done", "complete", "completed"}
+        and not str(observation.get("chain_current_plan_name") or "").strip()
+    )
+
+
 def _continued_progress(
     candidate: Mapping[str, Any], observation: Mapping[str, Any]
 ) -> bool:
@@ -1406,7 +1416,42 @@ def evaluate_repair_goal(
             else None
         )
         if evaluation["status"] == GOAL_PROGRESSED:
-            if not _canonical_runner_live(observation):
+            if _chain_terminal_success(observation):
+                receipt = _recovery_receipt(
+                    payload=payload,
+                    frozen=frozen,
+                    candidate=candidate_observation,
+                    observation=observation,
+                    accepted=True,
+                    reasons=[],
+                    followup_seconds=followup_seconds,
+                )
+                receipt["requirements"]["live_canonical_runner"] = False
+                receipt["requirements"]["bounded_continued_progress"] = False
+                receipt["terminal_completion"] = {
+                    "applicability": "chain_terminal_success",
+                    "chain_last_state": str(
+                        observation.get("chain_last_state") or ""
+                    ),
+                    "chain_current_plan_name": "",
+                }
+                payload["recovery_acceptance"] = receipt
+                payload.pop("recovery_candidate", None)
+                evaluation.update(
+                    {
+                        "recovery_gate_accepted": True,
+                        "recovery_gate_reasons": [],
+                        "failed_fixer_evidence": receipt[
+                            "failed_fixer_evidence"
+                        ],
+                        "reason": (
+                            "post-fixer recovery gate accepted authoritative terminal "
+                            "chain completion; a live runner and continued-progress "
+                            "window are not applicable after completion"
+                        ),
+                    }
+                )
+            elif not _canonical_runner_live(observation):
                 reasons = ["canonical_runner_not_live"]
                 receipt = _recovery_receipt(
                     payload=payload,
