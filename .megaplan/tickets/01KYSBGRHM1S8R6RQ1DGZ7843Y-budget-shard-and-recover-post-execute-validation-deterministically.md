@@ -94,6 +94,23 @@ MUST COMPLETE AFTER M11 ACCEPTANCE AND BEFORE THE NATIVE PARITY EPIC STARTS. Thi
 
 The historical native-platform-followup M5/M6 is not the owner of this future work and must not be cited as the resolver.
 
+## 2026-07-31 superseded-session relaunch residual
+
+The live seven-day cloud projection exposed an operator-paused, superseded M10
+session whose marker correctly had `should_run: false`, while the cloud status
+reducer recomputed `should_be_running: true` solely because its effective
+status was `stopped`. That contradictory projection invited the watchdog to
+keep relaunching intentionally retired work and contributed to the apparent
+inventory of random recent agents.
+
+Commit `e4ccb78b05` makes explicit stop custody and an active operator pause
+outrank status-shape heuristics. This is immediate release containment, not a
+new scheduler or lifecycle registry. Final runtime acceptance must demonstrate
+that the same superseded marker projects `should_be_running: false`, is not
+relaunched for three watchdog cycles, and does not contribute to the
+`should_be_running_count`. Marker retirement remains a separate cleanup action
+subject to its existing evidence and approval rules.
+
 ## 2026-07-31 reconciliation
 
 This remains the one-time release umbrella and is not resolved by any successor
