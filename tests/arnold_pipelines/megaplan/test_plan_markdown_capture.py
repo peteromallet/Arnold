@@ -109,12 +109,21 @@ def test_normalize_plan_capture_flattens_grouped_changed_surfaces_without_notes(
                 "modified": ["arnold/critique_ledger/store.py"],
                 "note": "This prose is not a path.",
             },
+            "test_blast_radius": {
+                "strategy": "scoped",
+                "selectors": [],
+                "full_suite_fallback": True,
+                "rationale": "Focused new-package tests.",
+            },
         }
     )
 
     assert normalized["changed_surfaces"] == [
         "arnold/critique_ledger/store.py",
         "tests/arnold/critique_ledger/test_store.py",
+    ]
+    assert normalized["test_blast_radius"]["changed_surfaces"] == normalized[
+        "changed_surfaces"
     ]
 
 
