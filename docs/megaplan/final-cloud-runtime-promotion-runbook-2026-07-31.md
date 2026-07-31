@@ -53,6 +53,13 @@ export RELEASE_EVIDENCE_DOCUMENT="${RECEIPT_CONTAINER}/public/post-m11-release-e
 export RELEASE_EVIDENCE_SHA256="${RELEASE_EVIDENCE_DOCUMENT}.sha256"
 export RUNTIME_IDENTITY="${RECEIPT_CONTAINER}/private/candidate-runtime-identity.json"
 export RUNTIME_PROVENANCE_RECEIPT="${RECEIPT_CONTAINER}/private/candidate-runtime-provenance.json"
+export AUTHORITATIVE_MARKER="${AUTHORITATIVE_MARKER:?current marker path in container}"
+export AUTHORITATIVE_CHAIN_SPEC="${AUTHORITATIVE_CHAIN_SPEC:?current chain spec path in container}"
+export AUTHORITATIVE_CHAIN_STATE="${AUTHORITATIVE_CHAIN_STATE:?current chain state path in container}"
+export CHAIN_PREVIOUS_RUNTIME_SHA256="${CHAIN_PREVIOUS_RUNTIME_SHA256:?current chain runtime digest}"
+export MARKER_PREVIOUS_RUNTIME_SHA256="${MARKER_PREVIOUS_RUNTIME_SHA256:?current marker runtime digest}"
+export CHAIN_PREVIOUS_RUNTIME_IDENTITY="${CHAIN_PREVIOUS_RUNTIME_IDENTITY:?independently receipted old chain runtime identity}"
+export CHAIN_PREVIOUS_RUNTIME_PROVENANCE="${CHAIN_PREVIOUS_RUNTIME_PROVENANCE:?independent old chain runtime provenance receipt}"
 
 case "$FINAL_SHA" in
   [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
@@ -307,11 +314,43 @@ never guess them or bind a stale historical marker.
 
 ### 5.1 Freeze and validate the existing release-evidence authority
 
-Resolve these two paths from the current terminal projection before continuing:
+Resolve these three paths and both previous runtime identities from the current
+terminal projection before continuing:
 
 ```bash
 export AUTHORITATIVE_MARKER="${AUTHORITATIVE_MARKER:?current marker path in container}"
 export AUTHORITATIVE_CHAIN_SPEC="${AUTHORITATIVE_CHAIN_SPEC:?current chain spec path in container}"
+export AUTHORITATIVE_CHAIN_STATE="${AUTHORITATIVE_CHAIN_STATE:?current chain state path in container}"
+export CHAIN_PREVIOUS_RUNTIME_SHA256="${CHAIN_PREVIOUS_RUNTIME_SHA256:?current chain runtime digest}"
+export MARKER_PREVIOUS_RUNTIME_SHA256="${MARKER_PREVIOUS_RUNTIME_SHA256:?current marker runtime digest}"
+```
+
+For the 2026-07-31 Custody preflight these were, respectively,
+`3d482370707a0a7f9d806a38ff270b986f646b2e4595b1ede57cedc1cb52b6fd`
+and `b7ec04a77bc6ef47adfafbcc6482cf2e5734be9b372541cf11c08e4c57e22e8f`.
+They are historical observations, not defaults: re-read and compare them
+immediately before mutation.
+
+Checkpoint both authorities and the independently receipted chain rollback
+runtime. This happens before either rebind and is included in the receipt hash:
+
+```bash
+python -m arnold_pipelines.megaplan cloud exec \
+  --cloud-yaml "$CLOUD_CONFIG" \
+  "set -euo pipefail
+   umask 077
+   cp -a '${AUTHORITATIVE_MARKER}' '${RECEIPT_CONTAINER}/private/marker.before.json'
+   cp -a '${AUTHORITATIVE_CHAIN_SPEC}' '${RECEIPT_CONTAINER}/private/chain-spec.before.yaml'
+   cp -a '${AUTHORITATIVE_CHAIN_STATE}' '${RECEIPT_CONTAINER}/private/chain-state.before.json'
+   cp -a '${CHAIN_PREVIOUS_RUNTIME_IDENTITY}' '${RECEIPT_CONTAINER}/private/chain-previous-runtime-identity.json'
+   cp -a '${CHAIN_PREVIOUS_RUNTIME_PROVENANCE}' '${RECEIPT_CONTAINER}/private/chain-previous-runtime-provenance.json'
+   sha256sum \
+     '${RECEIPT_CONTAINER}/private/marker.before.json' \
+     '${RECEIPT_CONTAINER}/private/chain-spec.before.yaml' \
+     '${RECEIPT_CONTAINER}/private/chain-state.before.json' \
+     '${RECEIPT_CONTAINER}/private/chain-previous-runtime-identity.json' \
+     '${RECEIPT_CONTAINER}/private/chain-previous-runtime-provenance.json' \
+     >'${RECEIPT_CONTAINER}/public/runtime-authorities.before.sha256'"
 ```
 
 `RELEASE_EVIDENCE_DOCUMENT` is not an arbitrary seed manifest and is not the
@@ -358,30 +397,40 @@ python -m arnold_pipelines.megaplan cloud exec \
 ### 5.2 Rebind the terminal chain and marker before seed construction
 
 The launch-seed builder correctly rejects old marker or chain runtime
-identities. Rebind both durable authorities before rewriting selectors. First
-obtain `PREVIOUS_RUNTIME_SHA256` from the pre-mutation chain/marker comparison;
-the two observed values must be identical. The completed Custody chain uses
-the explicit terminal guards shown below. `runtime-rebind` additionally
+identities. Rebind both durable authorities directly to the candidate before
+rewriting selectors. Their previous identities need not be equal: each is its
+own compare-and-swap guard. Manufacturing an intermediate equality would erase
+the mismatch rather than explain it. The completed Custody chain uses the
+explicit terminal guards shown below. `runtime-rebind` additionally
 requires cursor index equal to milestone count, no active plan, canonical
 `last_state: done`, and the exact ordered set of `done` milestone records.
 
 ```bash
-export PREVIOUS_RUNTIME_SHA256="${PREVIOUS_RUNTIME_SHA256:?matching old chain/marker runtime digest}"
-
 python -m arnold_pipelines.megaplan cloud exec \
   --cloud-yaml "$CLOUD_CONFIG" \
   "set -euo pipefail
+   exec 9>/workspace/.megaplan/runtime-cutover.lock
+   flock -x 9
+   test \"\$(sha256sum '${AUTHORITATIVE_CHAIN_STATE}' | cut -d' ' -f1)\" = \
+     \"\$(sha256sum '${RECEIPT_CONTAINER}/private/chain-state.before.json' | cut -d' ' -f1)\"
+   test \"\$(jq -r '.metadata.execution_binding.runtime_binding.current_identity.content_sha256' '${AUTHORITATIVE_CHAIN_STATE}')\" = \
+     '${CHAIN_PREVIOUS_RUNTIME_SHA256}'
+   test \"\$(jq -r '.runtime_binding.current_identity.content_sha256' '${AUTHORITATIVE_MARKER}')\" = \
+     '${MARKER_PREVIOUS_RUNTIME_SHA256}'
+   test \"\$(jq -r '.last_state' '${AUTHORITATIVE_CHAIN_STATE}')\" = done
+   test -z \"\$(jq -r '.current_plan_name // empty' '${AUTHORITATIVE_CHAIN_STATE}')\"
    candidate_runtime=\"\$(jq -r '.content_sha256' '${RUNTIME_IDENTITY}')\"
    PYTHONSAFEPATH=1 PYTHONPATH='${RUNTIME_SRC}' '${RUNTIME_PYTHON}' -P -m \
      arnold_pipelines.megaplan chain runtime-rebind \
      --spec '${AUTHORITATIVE_CHAIN_SPEC}' \
-     --from-runtime-sha256 '${PREVIOUS_RUNTIME_SHA256}' \
+     --from-runtime-sha256 '${CHAIN_PREVIOUS_RUNTIME_SHA256}' \
      --to-runtime-sha256 \"\$candidate_runtime\" \
      --expected-current-milestone @terminal \
      --expected-current-plan @none \
      --direction cutover \
      --reason 'post-M11 content-addressed production promotion' \
-     --actor release-operator
+     --actor release-operator \
+     >'${RECEIPT_CONTAINER}/public/chain-runtime-rebind.json'
 
    marker_sha=\"\$(sha256sum '${AUTHORITATIVE_MARKER}' | cut -d' ' -f1)\"
    jq -er '.relaunch_command // .launch_command // empty' \
@@ -391,21 +440,34 @@ python -m arnold_pipelines.megaplan cloud exec \
      arnold_pipelines.megaplan.cloud.runtime_cutover \
      --marker '${AUTHORITATIVE_MARKER}' \
      --expect-marker-sha256 \"\$marker_sha\" \
-     --from-runtime-sha256 '${PREVIOUS_RUNTIME_SHA256}' \
+     --from-runtime-sha256 '${MARKER_PREVIOUS_RUNTIME_SHA256}' \
      --runtime-identity '${RUNTIME_IDENTITY}' \
      --relaunch-command-file '${RECEIPT_CONTAINER}/private/relaunch-command.txt' \
      --direction cutover \
      --reason 'post-M11 content-addressed production promotion' \
      --actor release-operator \
-     >'${RECEIPT_CONTAINER}/public/marker-runtime-rebind.json'"
+     >'${RECEIPT_CONTAINER}/public/marker-runtime-rebind.json'
+   test \"\$(jq -r '.metadata.execution_binding.runtime_binding.current_identity.content_sha256' '${AUTHORITATIVE_CHAIN_STATE}')\" = \
+     \"\$candidate_runtime\"
+   test \"\$(jq -r '.runtime_binding.current_identity.content_sha256' '${AUTHORITATIVE_MARKER}')\" = \
+     \"\$candidate_runtime\""
 ```
 
-Both operations are compare-and-swap guarded and preserve operational cursor
-fields. If the marker rebind fails after the chain rebind, stop before selector
-mutation or process restart; the launch-seed build remains fail-closed until
-the marker is retried or the chain is rolled back through `runtime-rebind`
-using the independently receipted old runtime. Never repair the mismatch by
-editing either JSON file.
+Both operations preserve operational cursor fields. The marker has a file-SHA
+CAS and lock. The chain has exact terminal, plan, and previous-runtime guards
+but currently lacks a state-file-SHA CLI guard. This terminal release therefore
+also holds the release lock, compares the checkpoint hash, and requires proof
+that no runner, repairer, or other chain-state writer is live.
+
+If marker rebind fails after chain rebind, stop before selector mutation or
+process restart. Roll the chain from the candidate digest back to
+`CHAIN_PREVIOUS_RUNTIME_SHA256` through `runtime-rebind --direction rollback`,
+supplying the checkpointed `chain-previous-runtime-identity.json` and
+`chain-previous-runtime-provenance.json`. If a later operation fails, roll the
+marker back separately to `MARKER_PREVIOUS_RUNTIME_SHA256` using the exact
+checkpointed marker identity and relaunch command, then roll the chain back as
+above. Verify both restored identities and receipt hashes. Never repair the
+mismatch by editing either JSON file.
 
 Acquire one host cutover lock. Write all three replacements to temporary files,
 `fsync` and rename them, then reload systemd. If any write fails, restore all
@@ -460,7 +522,10 @@ runtime_src="$7"; runtime_venv="$8"; runtime_python="$9"; final_sha="${10}"
 marker="${11}"; chain_spec="${12}"; seed_doc="${13}"
 supervisor_receipt="${14}"; launch_seed="${15}"
 
-exec 9>/run/lock/megaplan-runtime-cutover.lock
+# Same inode as /workspace/.megaplan/runtime-cutover.lock inside the container.
+# Reacquire it for the selector phase and revalidate the candidate bindings;
+# no writer may run in the short interval between terminal rebind and here.
+exec 9>/opt/megaplan-cloud/workspace/.megaplan/runtime-cutover.lock
 flock -x 9
 
 rollback_selectors() {
@@ -828,7 +893,8 @@ hot_env="$5"
 resident_env="$6"
 dropin="$7"
 
-exec 9>/run/lock/megaplan-runtime-cutover.lock
+# Same host/container mounted release lock used by the forward cutover.
+exec 9>/opt/megaplan-cloud/workspace/.megaplan/runtime-cutover.lock
 flock -x 9
 old_image="$(jq -r '.[0].Image' "$receipt/private/container-inspect.before.json")"
 
