@@ -102,3 +102,35 @@ bounded/recovery fixes, but closure still requires the exact release vector,
 validation inventory, runtime-equivalence proof, production canaries, watchdog
 re-enable, cleanup evidence, and Native S1 handoff manifest. The Native link is
 association-only so chain completion cannot manufacture release completion.
+
+## 2026-07-31 shard 007 release-discovery residual
+
+The exact no-debt discovery run at `e9c88f6f93` passed shards 005 and 006,
+then stopped on shard 007 with an exact 654-node inventory: 648 passed and six
+failed, with no skips, xfail, xpass, collection gap, or parser ambiguity.
+
+The failures were release-consolidation drift rather than reasons to restore
+compatibility surfaces:
+
+- three topology tests imported the intentionally retired
+  `arnold.pipelines.folder_audit` package;
+- an import scan required the intentionally retired
+  `arnold.pipelines._deliberation_example._hooks` module;
+- malformed evidence-pack checkpoint input leaked an implementation `KeyError`
+  before the typed schema validator could reject it; and
+- one placeholder assertion retained the old `verify` step kind after the
+  canonical projected-pipeline contract standardized adapter steps on
+  `native_phase`.
+
+The resolving change keeps the retired packages absent and explicitly
+nonimportable, moves real-pipeline topology stability coverage to the retained
+canonical evidence-pack pipeline, routes malformed checkpoint shapes through
+the schema validator's `ValueError`, and aligns the stale assertion with the
+existing native projection contract. It does not restore a shim, skip or xfail
+the failures, or weaken topology/import/schema assertions.
+
+Discovery custody, terminal receipts, logs, environment gates, and the frozen
+17,620-node inventory are preserved under
+`Arnold-validation-checkpoints/e9c88f6f93-shards005-037-discovery-20260731/`.
+The ticket remains open until the exact final release revision passes the
+complete frozen no-debt inventory and the other release acceptance conditions.

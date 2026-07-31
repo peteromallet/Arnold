@@ -1,8 +1,8 @@
 """Tests for :func:`arnold.pipeline.topology.compute_topology_hash`.
 
 Covers:
-* Stability — repeated ``folder_audit.build_pipeline()`` calls return
-  the same topology hash.
+* Stability — repeated builds of the retained canonical evidence-pack pipeline
+  return the same topology hash.
 * Edge-change sensitivity — changing a fixture graph edge changes the hash.
 * Vocabulary sensitivity — changing declared decision/override vocabularies
   changes the hash.
@@ -11,8 +11,6 @@ Covers:
 """
 
 from __future__ import annotations
-
-import pytest
 
 from arnold.pipeline.topology import compute_topology_hash
 from arnold.pipeline.types import (
@@ -24,7 +22,6 @@ from arnold.pipeline.types import (
     StepContext,
     StepResult,
 )
-
 
 # ---------------------------------------------------------------------------
 # Minimal step for constructing fixture pipelines
@@ -125,16 +122,16 @@ def _make_human_gate_pipeline(
 
 
 # ---------------------------------------------------------------------------
-# Stability — folder_audit.build_pipeline()
+# Stability — retained canonical shipped pipeline
 # ---------------------------------------------------------------------------
 
 
-class TestFolderAuditTopologyStability:
-    """The folder_audit graph must produce a stable topology hash."""
+class TestShippedPipelineTopologyStability:
+    """A retained canonical shipped graph must produce a stable topology hash."""
 
     def test_repeated_build_returns_same_hash(self) -> None:
         """Multiple calls to build_pipeline() yield the same topology hash."""
-        from arnold.pipelines.folder_audit import build_pipeline
+        from arnold.pipelines.evidence_pack import build_pipeline
 
         hashes = {compute_topology_hash(build_pipeline()) for _ in range(5)}
         assert len(hashes) == 1, (
@@ -143,7 +140,7 @@ class TestFolderAuditTopologyStability:
 
     def test_hash_is_sha256_prefixed(self) -> None:
         """The returned string has the expected format."""
-        from arnold.pipelines.folder_audit import build_pipeline
+        from arnold.pipelines.evidence_pack import build_pipeline
 
         h = compute_topology_hash(build_pipeline())
         assert h.startswith("sha256:"), f"Expected sha256: prefix, got {h[:20]!r}..."
@@ -153,7 +150,7 @@ class TestFolderAuditTopologyStability:
 
     def test_deterministic_across_process_boundary(self) -> None:
         """Same input → same hash (no randomness, no timestamp)."""
-        from arnold.pipelines.folder_audit import build_pipeline
+        from arnold.pipelines.evidence_pack import build_pipeline
 
         p1 = build_pipeline()
         p2 = build_pipeline()
