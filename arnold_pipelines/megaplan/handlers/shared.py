@@ -29,6 +29,7 @@ from arnold_pipelines.megaplan.custody.phase_wbc import (
     fail_phase_wbc,
     phase_wbc_required,
     phase_wbc_state,
+    suspend_phase_wbc,
 )
 from arnold_pipelines.megaplan.custody.worker_dispatch_wbc import build_worker_dispatch_spec
 from arnold_pipelines.megaplan.types import AgentMode, CliError, MOCK_ENV_VAR, PlanState, StepResponse
@@ -1049,24 +1050,51 @@ def _finish_step(
                 for emitted in (receipt, *extra_receipts)
                 if emitted is not None
             ]
-            complete_phase_wbc(
-                state=state,
-                plan_dir=plan_dir,
-                step=step,
-                agent=agent,
-                payload={
-                    "phase": step,
-                    "status": "completed",
-                    "summary": summary,
-                    "next_step": response.get("next_step"),
-                    "phase_result_ref": "phase_result.json",
-                    "boundary_receipt_id": receipt.boundary_id if receipt is not None else None,
-                    "boundary_receipt_ids": receipt_ids,
-                    "artifacts_written": list(artifacts),
-                    "output_file": output_file,
-                    "artifact_hash": artifact_hash,
-                },
-            )
+            if step == "prep" and str(response.get("prep_outcome")) == "awaiting_human":
+                clarification = state.get("clarification")
+                suspend_phase_wbc(
+                    state=state,
+                    plan_dir=plan_dir,
+                    step=step,
+                    agent=agent,
+                    checkpoint={
+                        "phase": step,
+                        "state": state.get("current_state"),
+                        "phase_result_ref": "phase_result.json",
+                        "output_file": output_file,
+                        "artifact_hash": artifact_hash,
+                        "clarification": (
+                            dict(clarification)
+                            if isinstance(clarification, dict)
+                            else None
+                        ),
+                    },
+                    cursor={
+                        "phase": step,
+                        "resume_action": "override:resume-clarify",
+                        "resume_state": "prepped",
+                        "next_phase": "plan",
+                    },
+                )
+            else:
+                complete_phase_wbc(
+                    state=state,
+                    plan_dir=plan_dir,
+                    step=step,
+                    agent=agent,
+                    payload={
+                        "phase": step,
+                        "status": "completed",
+                        "summary": summary,
+                        "next_step": response.get("next_step"),
+                        "phase_result_ref": "phase_result.json",
+                        "boundary_receipt_id": receipt.boundary_id if receipt is not None else None,
+                        "boundary_receipt_ids": receipt_ids,
+                        "artifacts_written": list(artifacts),
+                        "output_file": output_file,
+                        "artifact_hash": artifact_hash,
+                    },
+                )
     clear_active_step(state, run_id=run_id)
     save_state_merge_meta(plan_dir, state)
     return response

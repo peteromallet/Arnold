@@ -42,6 +42,9 @@ from arnold_pipelines.megaplan.runtime.execution_environment import (
     preflight_mutating_phase,
     preflight_phase,
 )
+from arnold_pipelines.megaplan.custody.phase_wbc import (
+    resume_clarification_phase_wbc_if_present,
+)
 from arnold_pipelines.megaplan._core import (
     add_or_increment_debt,
     append_history,
@@ -289,6 +292,16 @@ def _build_override_action_output(
         extras: list[tuple[str, Any]] = []
         if warnings:
             extras.append(("warnings", warnings))
+        reentry_invocation_id = (artifacts or {}).get(
+            "phase_wbc_reentry_invocation_id"
+        )
+        if isinstance(reentry_invocation_id, str) and reentry_invocation_id:
+            extras.append(
+                (
+                    "phase_wbc_reentry_invocation_id",
+                    reentry_invocation_id,
+                )
+            )
         return OverrideActionOutput(
             summary="Prep clarification resolved; plan phase is now ready to run.",
             state=STATE_PREPPED,
@@ -2046,12 +2059,25 @@ def _override_resume_clarify(
             "No answers found in notes; consider adding answers via "
             "'override add-note' before the plan phase."
         )
+    reentry_invocation_id = resume_clarification_phase_wbc_if_present(
+        state=state,
+        plan_dir=plan_dir,
+        agent=str(getattr(args, "actor", None) or "override:resume-clarify"),
+    )
     apply_state_projection(state, STATE_PREPPED, route_signal="resume-clarify")
     state.pop("clarification", None)
     _append_to_meta(
         state,
         "overrides",
-        {"action": "resume-clarify", "timestamp": now_utc()},
+        {
+            "action": "resume-clarify",
+            "timestamp": now_utc(),
+            **(
+                {"phase_wbc_reentry_invocation_id": reentry_invocation_id}
+                if reentry_invocation_id is not None
+                else {}
+            ),
+        },
     )
     save_state_merge_meta(plan_dir, state)
     try:
@@ -2067,6 +2093,8 @@ def _override_resume_clarify(
     }
     if warnings:
         response["warnings"] = warnings
+    if reentry_invocation_id is not None:
+        response["phase_wbc_reentry_invocation_id"] = reentry_invocation_id
     return response
 
 
