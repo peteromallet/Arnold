@@ -69,10 +69,25 @@ def _command(interpreter: Path, worktree: Path, *, spec: Path | None = None) -> 
     ]
 
 
-def _sleeping_popen(_command, **kwargs):
-    return subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(30)"], **kwargs
-    )
+@pytest.fixture
+def sleeping_popen():
+    """Own and reap every fake child launched by the canary test."""
+
+    children: list[subprocess.Popen] = []
+
+    def launch(_command, **kwargs):
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"], **kwargs
+        )
+        children.append(child)
+        return child
+
+    yield launch
+
+    for child in children:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=5)
 
 
 def _write_hashed(path: Path, payload: dict) -> None:
@@ -314,6 +329,7 @@ def test_default_gate_hydrates_real_grant_fence_lease_and_wbc(
 
 def test_real_relaunch_persists_exact_receipt_and_private_artifacts(
     tmp_path: Path,
+    sleeping_popen,
 ) -> None:
     base, root = _root(tmp_path)
     worktree = root / "worktree"
@@ -335,25 +351,22 @@ def test_real_relaunch_persists_exact_receipt_and_private_artifacts(
         authority={},
         base_root=base,
         authority_check=_authorized,
-        popen=_sleeping_popen,
+        popen=sleeping_popen,
     )
     launch = json.loads((root / "occurrence" / "launch.json").read_text())
-    try:
-        assert receipt["accepted"] is True
-        assert receipt["simple_fixer_outcome"] == "attempted"
-        assert launch["argv"][1] == "-P"
-        assert Path(launch["cwd"]) == worktree
-        occurrence_record = json.loads(
-            (root / "occurrence" / "occurrence.json").read_text()
-        )
-        persisted_hash = occurrence_record.pop("content_sha256")
-        from arnold_pipelines.megaplan.cloud.m11_live_canary import _digest
+    assert receipt["accepted"] is True
+    assert receipt["simple_fixer_outcome"] == "attempted"
+    assert launch["argv"][1] == "-P"
+    assert Path(launch["cwd"]) == worktree
+    occurrence_record = json.loads(
+        (root / "occurrence" / "occurrence.json").read_text()
+    )
+    persisted_hash = occurrence_record.pop("content_sha256")
+    from arnold_pipelines.megaplan.cloud.m11_live_canary import _digest
 
-        assert persisted_hash == _digest(occurrence_record)
-        assert (root / "occurrence" / "terminal-receipt.json").is_file()
-        assert (root / ".megaplan" / "repair-queue").is_dir()
-    finally:
-        os.kill(int(launch["pid"]), 9)
+    assert persisted_hash == _digest(occurrence_record)
+    assert (root / "occurrence" / "terminal-receipt.json").is_file()
+    assert (root / ".megaplan" / "repair-queue").is_dir()
 
 
 def test_relaunch_rejects_non_safe_path_and_escape(tmp_path: Path) -> None:
