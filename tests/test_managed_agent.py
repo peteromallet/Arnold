@@ -182,9 +182,9 @@ def test_restart_reconciles_same_reserved_run_id(tmp_path: Path) -> None:
     )
 
 
-def test_restart_adopts_live_worker_without_duplicate_launch(tmp_path: Path) -> None:
-    if not Path("/proc").is_dir():
-        pytest.skip("managed worker adoption uses Linux procfs identity")
+def test_restart_adopts_live_worker_without_duplicate_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     duplicate_marker = tmp_path / "must-not-launch.txt"
     item = spec(
         tmp_path,
@@ -192,22 +192,33 @@ def test_restart_adopts_live_worker_without_duplicate_launch(tmp_path: Path) -> 
         code=f"from pathlib import Path; Path({str(duplicate_marker)!r}).write_text('duplicate')",
     )
     path, payload, _ = reserve_managed_command(item)
-    worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(.25)"])
-    try:
-        start_ticks = Path(f"/proc/{worker.pid}/stat").read_text().split()[21]
-        payload.update(
-            {
-                "status": "running",
-                "pid": 999_999_991,
-                "worker_pid": worker.pid,
-                "worker_start_ticks": start_ticks,
-            }
-        )
-        path.write_text(json.dumps(payload))
+    payload.update(
+        {
+            "status": "running",
+            "pid": 999_999_991,
+            "worker_pid": 222,
+            "worker_start_ticks": "fixture-start",
+        }
+    )
+    path.write_text(json.dumps(payload))
+    worker_checks = 0
 
-        assert run_managed_command(item) == 1
-    finally:
-        worker.wait(timeout=5)
+    def fake_pid_matches(
+        pid: int, _cmdline_sha256: str | None, _start_ticks: str | None
+    ) -> bool:
+        nonlocal worker_checks
+        if pid != 222:
+            return False
+        worker_checks += 1
+        return worker_checks <= 2
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.managed_agent._pid_matches",
+        fake_pid_matches,
+    )
+    monkeypatch.setattr("arnold_pipelines.megaplan.managed_agent.time.sleep", lambda _: None)
+
+    assert run_managed_command(item) == 1
 
     adopted = json.loads(path.read_text())
     assert adopted["terminal_outcome"] == "unknown_after_adoption"
@@ -379,7 +390,9 @@ def test_tampered_sealed_stdin_is_not_projected_as_canonical(tmp_path: Path) -> 
     )
     assert run_managed_command(item) == 0
     payload = json.loads(manifest_path(tmp_path, item).read_text())
-    Path(payload["stdin"]["path"]).write_text("tampered", encoding="utf-8")
+    sealed = Path(payload["stdin"]["path"])
+    sealed.chmod(0o600)
+    sealed.write_text("tampered", encoding="utf-8")
 
     row = list_managed_resident_agents(project_root=tmp_path, workspace_root=None)["recent"][0]
     assert row["evidence_class"] == "legacy_noncanonical"
@@ -680,7 +693,8 @@ def test_real_dispatch_seams_use_shared_supervisor() -> None:
     assert repair.count("--run-kind automatic_repair_retry") >= 2
     assert "--run-kind automatic_meta_repair_worker" in meta
     assert "ManagedCommandSpec(" in meta and "meta_repair_retrigger" in meta
-    assert "subprocess.Popen(\n            manager_argv" in trigger
+    assert 'proc = getattr(subprocess, "Popen")(' in trigger
+    assert "legacy_manager_args," in trigger
     assert "subprocess.Popen(cmd" not in trigger
     assert "--run-kind automatic_progress_audit_agent" in auditor
     assert "--run-kind automatic_legacy_fixer" in legacy
