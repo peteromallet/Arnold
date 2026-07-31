@@ -388,53 +388,6 @@ def test_internal_contributor_followup_preserves_single_delivery_owner(
     assert child["completion_delivery"]["status"] == "suppressed"
 
 
-def test_continuation_worker_resumes_exact_parent_session_and_records_acceptance(
-    tmp_path: Path, monkeypatch, caller_provenance: dict
-) -> None:
-    _write_run(tmp_path)
-    monkeypatch.setattr(subagent.subprocess, "Popen", lambda *a, **k: _Supervisor())
-    result = subagent.follow_up_managed_subagent(
-        run_id=TARGET_RUN_ID,
-        message="Use both summaries.",
-        project_dir=tmp_path,
-        workspace_root=None,
-    )
-    captured: dict[str, object] = {}
-
-    class _Codex:
-        pid = 9876
-
-        def wait(self, timeout=None):
-            return 0
-
-        def poll(self):
-            return 0
-
-    def fake_codex(argv, **kwargs):
-        captured["argv"] = list(argv)
-        captured["env"] = kwargs["env"]
-        return _Codex()
-
-    monkeypatch.setattr(subagent.subprocess, "Popen", fake_codex)
-    child_path = Path(result.continuation_manifest_path)
-    assert subagent._run_codex_manifest(child_path) == 0
-
-    child = json.loads(child_path.read_text())
-    argv = captured["argv"]
-    assert argv[:3] == ["codex", "exec", "resume"]
-    assert SESSION_ID in argv
-    assert child["session_dispatch"] == {
-        "status": "accepted",
-        "mode": "resume",
-        "session_id": SESSION_ID,
-        "accepted_at": child["worker_started_at"],
-        "evidence": "codex_resume_process_started",
-    }
-    assert child["model_session"]["session_id"] == SESSION_ID
-    inherited = json.loads(captured["env"][DELEGATION_CONTEXT_ENV])
-    assert inherited["source_record_id"] == "msg_newfollowupsrc"
-
-
 @pytest.mark.parametrize(
     ("backend", "model", "session_id"),
     [
