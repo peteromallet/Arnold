@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import os
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -115,6 +117,57 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Record native golden trace fixtures to disk (multi-file directory format).",
     )
+
+
+@pytest.fixture
+def db_store_factory(request: pytest.FixtureRequest):
+    """Create a real DB store when the explicit DB test profile is selected."""
+
+    backend = request.config.getoption("--backend", default=None)
+    if backend != "db":
+        pytest.skip("--backend db not passed")
+    dsn = os.environ.get("SUPABASE_DB_URL")
+    if not dsn:
+        pytest.skip("SUPABASE_DB_URL not set")
+
+    from arnold_pipelines.megaplan.store import DBStore, deterministic_idempotency_key
+
+    actor_id = f"ci-actor-{uuid.uuid4().hex[:12]}"
+    bootstrap = DBStore(actor_id=None, dsn=dsn)
+    try:
+        bootstrap.create_automation_actor(
+            actor_id=actor_id,
+            name="CI Contract Actor",
+            granted_epic_ids="*",
+            actor_kind="cli",
+            idempotency_key=deterministic_idempotency_key(
+                "db-store-fixture", actor_id, "create_actor"
+            ),
+        )
+    finally:
+        bootstrap.close()
+    return lambda: DBStore(actor_id=actor_id, dsn=dsn)
+
+
+@pytest.fixture
+def editorial_store(request: pytest.FixtureRequest, tmp_path: Path):
+    """Provide the selected real editorial store without DB-to-file fallback."""
+
+    backend = request.config.getoption("--backend", default=None)
+    if backend == "db":
+        return request.getfixturevalue("db_store_factory")()
+
+    from arnold_pipelines.megaplan.store import FileStore
+
+    return FileStore(tmp_path / "store")
+
+
+@pytest.fixture
+def editorial_backend_name(request: pytest.FixtureRequest) -> str:
+    """Expose the actual backend selected by ``editorial_store``."""
+
+    backend = request.config.getoption("--backend", default=None)
+    return "db" if backend == "db" else "file"
 
 
 def read_json(path: Path) -> dict:
