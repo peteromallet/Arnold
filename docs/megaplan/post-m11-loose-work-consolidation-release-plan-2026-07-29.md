@@ -2,18 +2,55 @@
 
 Date: 2026-07-29
 
-Status: execution-ready specification once this document is committed and
-pushed on its protected planning branch. The working copy in the dirty local
-checkout is not by itself an authority.
+Decision review: 2026-07-31
+
+Status: decision-complete specification, but not an execution authorization.
+Execution requires this exact amended file to be committed and pushed on a
+protected planning ref. The working copy in the dirty local checkout is not by
+itself an authority.
+
+## Authority, roles, and dated facts
+
+The exact plan commit SHA, this file's Git blob SHA, and the ledger schema
+version are recorded in every inventory, checkpoint, approval manifest, action
+journal, validation receipt, and runtime binding manifest. Any change to this
+plan or to action semantics invalidates outstanding mutation approvals.
+
+Five roles are named by stable actor ID before execution:
+
+- cleanup operator: surveys, checkpoints, integrates, and executes approved
+  rows;
+- release owner: owns Git lineage, validation, and the final merge decision;
+- runtime owner: owns each service cutover and rollback;
+- evidence custodian: owns checkpoint storage, encryption keys, restore tests,
+  and retention;
+- destructive approver: approves exact deletion manifests and cannot be
+  inferred from the operator role.
+
+One person may hold several roles, but the cleanup operator cannot
+self-authorize a destructive action. Approval of this plan is not deletion
+approval.
+
+All paths, branch names, PR numbers, counts, SHAs, process identities, and
+classifications dated 2026-07-29 are historical discovery seeds. The refreshed
+post-M11 ledger is the sole authority for execution targets. If a named seed is
+absent or changed, the operator resurveys it; the operator never recreates the
+old ref or silently substitutes a similarly named target.
 
 ## Outcome
 
 Arnold ends with one permanent development and release line: `main`.
 
-A temporary branch named `release/post-m11-consolidation-20260729` will collect
-all completed, valuable loose work after custody M11 finishes. It will be tested,
-reviewed, merged into `main`, and then become deletion-ready itself. It is not a
-new long-lived trunk.
+A temporary branch named
+`consolidate/post-m11-<plan-sha12>-<base-sha12>` will collect all completed,
+valuable loose work after custody M11 finishes. Its name is generated from the
+authoritative plan commit and captured `origin/main` base. If that ref already
+exists, execution resumes it only when its ledger identity matches; otherwise
+execution fails closed. The branch will be tested, reviewed, merged into `main`,
+and then become deletion-ready itself. It is not a new long-lived trunk.
+
+The `consolidate/` namespace is deliberate: `release/*` refs are protected from
+cleanup and therefore cannot be used for an intentionally temporary branch.
 
 All other branches, worktrees, runtime candidates, cloud clones, stashes, patch
 files, and checkpoints must end in one of three states:
@@ -26,10 +63,10 @@ files, and checkpoints must end in one of three states:
 No branch, stash, worktree, cloud workspace, runtime candidate, or directory is
 deleted merely because it looks old, clean, or temporary.
 
-## Why cleanup must wait for M11
+## Quiescence gate and historical M11 seed
 
-The active custody run is still the authoritative source of unfinished M11
-work:
+At the 2026-07-29 snapshot, the active custody run was the authoritative source
+of unfinished M11 work:
 
 - checkout:
   `/workspace/custody-control-plane-20260714/Arnold`
@@ -44,9 +81,15 @@ work:
 - runtime-fix branch:
   `fix/simple-fixer-durable-runner-exit-20260729`
 
-The M11 checkout and runtime candidate both contain uncommitted work. They must
-not be switched, reset, cleaned, stashed, rebased, pruned, or deleted while the
-runner is live.
+These identities are resurvey seeds, not current execution targets. The
+operator resolves the accepted M11 and custody lineage from current PR/merge
+receipts, the committed chain manifest, and the acceptance manifest. A deleted
+milestone ref is not recreated. Missing or conflicting lineage blocks
+execution.
+
+If the resolved M11 checkout or runtime candidate contains uncommitted work, it
+must not be switched, reset, cleaned, stashed, rebased, pruned, or deleted while
+the runner is live.
 
 The first cleanup phase is a non-mutating quiescence and checkpoint phase. It
 starts only when all of the following are true:
@@ -63,10 +106,10 @@ manifest is generated only after the runtime fixer is landed into the custody
 base, that updated base is merged into M11, and the resulting exact SHA/runtime
 passes final acceptance again.
 
-## Current risk snapshot
+## Historical risk snapshot
 
-This is a planning snapshot, not a deletion ledger. It must be regenerated after
-M11 completes.
+This is a planning snapshot, not a deletion ledger or acceptance input. Every
+count and identity must be regenerated after M11 completes.
 
 ### Local machine
 
@@ -113,6 +156,18 @@ Custody M5A through M11 intentionally land on
 and the M11 source amendments have also landed there. M11 must first merge back
 to that integration line.
 
+Those names describe the intended graph, not permission to act on a stale ref.
+For every source row, the true base is resolved in this order:
+
+1. the current PR's `baseRefName` and exact base SHA;
+2. otherwise, the explicit integration ref in the committed epic/chain
+   manifest;
+3. otherwise, `blocked`.
+
+`main` is never inferred as a missing true base. The ledger records source ref,
+source SHA/range, true-base ref/SHA, PR identity, fork point, and accepted
+custody owner.
+
 The release sequence is:
 
 ```text
@@ -123,7 +178,7 @@ custody integration base <--- updated and reaccepted M11 milestone
         |
         +-----------------------------+
                                       |
-current origin/main ---> release/post-m11-consolidation-20260729
+current origin/main ---> consolidate/post-m11-<plan-sha12>-<base-sha12>
                                       |
                                       +--- merge custody integration FIRST
                                       +--- reviewed local completed payloads
@@ -148,8 +203,9 @@ cross-milestone merge decisions.
 
 Immediately after the live M11 execution becomes quiescent:
 
-1. record the candidate M11 SHA, integration-base SHA, runtime-candidate SHA,
-   runtime path, latest receipt IDs, and UTC checkpoint time;
+1. record the authoritative plan commit/blob, schema version, role bindings,
+   candidate M11 SHA, integration-base SHA, runtime-candidate SHA, runtime path,
+   latest receipt IDs, and UTC checkpoint time;
 2. prove the M11 processes and tmux session are no longer live;
 3. create a protected-state exclusion manifest containing path, canonical
    origin, Git common directory, branch/HEAD, payload hash, dependency owner,
@@ -166,79 +222,276 @@ Immediately after the live M11 execution becomes quiescent:
    - every registered and unregistered local worktree;
    - every local and remote branch;
    - every stash;
+   - submodules, tags, notes, replace/original refs, alternates, detached heads,
+     interrupted operations, and unreachable objects;
    - every open, draft, closed, and merged PR;
+   - fork PR heads, non-origin remotes, sibling variants, and other clones;
    - every cloud Git checkout;
+   - every non-Git cloud path and provider volume that contains an Arnold
+     workspace;
    - every runtime `.pth`, marker, service, PID, and tmux dependency;
    - every Codespace;
 6. redact credentials and secrets from every recorded path, URL, command, and
    artifact;
-7. fingerprint staged, unstaged, and untracked payloads separately and prove
-   that the current dirty local checkout is byte-identical before and after the
-   checkpoint.
+7. treat the current checkout as immutable input and fingerprint HEAD, the
+   complete index including conflict stages, staged, unstaged, untracked, and
+   relevant ignored payloads separately, including path type, mode, symlink
+   target, size, and content hash;
+8. prove that the current dirty local checkout is byte-identical before and
+   after checkpointing. No final-acceptance rule authorizes cleaning this
+   checkout in place.
 
 The regenerated ledger, not this snapshot, is the authority for per-item
 decisions.
 
-Before every later mutation batch, renew the protected leases and fail closed if
-any HEAD, payload hash, marker, PID, tmux session, `.pth`, or service dependency
-has changed.
+The execution lease has a 30-minute TTL, a 60-second heartbeat, an owner ID, and
+a monotonically increasing fencing token. Expiry alone never permits takeover:
+the successor must resurvey protected resources, prove the prior process is
+dead, reconcile any unknown action outcome, and acquire a new token.
+
+Immediately before each mutation, the executor revalidates the target's exact
+old ref/content/volume identity and every marker, PID, tmux session, `.pth`,
+mount, PR, or service dependency named by its row. A changed target fails
+closed. Ledger compare-and-swap is necessary but is never sufficient authority
+for a real-world mutation.
 
 ### 2. Make exposed work recoverable and prove restoration
 
-Before merging or deleting anything:
+Before classification or integration, perform only checkpoint and restore work:
 
-1. after byte-identical checkpoint verification, create and push an explicitly
-   nonterminal, nonaccepted candidate commit on the existing M11 milestone
-   branch; its commit message and ledger row must say that it cannot satisfy
-   completion;
-2. create and push an actual commit for the runtime-fixer payload on
-   `fix/simple-fixer-durable-runner-exit-20260729`;
-3. preserve each dirty local worktree independently;
-4. preserve each dirty cloud workspace independently;
-5. export stash patches and metadata without applying or dropping them;
-6. preserve the interrupted M6 merge state and its parents;
-7. create both:
+1. preserve each dirty local worktree independently;
+2. preserve each dirty cloud workspace independently;
+3. preserve each stash by immutable stash commit and all parent IDs, complete
+   trees, modes, binary/staged/untracked payloads, and base identity; export a
+   human-readable patch only as supplemental evidence, without applying or
+   dropping the stash;
+4. preserve the interrupted M6 merge's HEAD, operation marker files, complete
+   conflict-stage index, worktree payload, merge message, and parents;
+5. create both:
    - a verified Git bundle containing every local-only ref and required parent;
    - a second encrypted checkpoint in a different durable location containing
      staged, unstaged, untracked, stash, interrupted-operation, and
      non-Git-suitable evidence manifests;
-8. record content hashes for untracked and patch artifacts;
-9. assign a recovery ID to every checkpoint, document its restore command, and
-   restore-test a sample into an isolated directory;
-10. retain checkpoints until at least 30 days after final cleanup acceptance
-    and explicit expiry approval.
+6. record content hashes for untracked and patch artifacts;
+7. assign a recovery ID, immutable content hash, storage URI,
+   encryption/key-custodian record, manifest, and restore command to every
+   checkpoint;
+8. restore-test every unique dirty-worktree payload, relevant ignored or
+   untracked payload, stash, interrupted operation, cloud-only payload, and
+   runtime-evidence class into an isolated location and compare source and
+   restored hashes. Clean refs already present in the verified Git bundle do
+   not each need an independent full restore;
+9. retain checkpoints until at least 30 days after final cleanup acceptance,
+   while any linked `keep` exception remains open, and until a separate
+   content-addressed expiry manifest receives destructive approval.
 
 Checkpoints are safety belts, not final parking places. Every preserved payload
 must still receive a land-or-delete verdict.
 
-### 3. Complete the custody lineage
+The shared Hetzner provider volume is not a deletion target under this
+Arnold-only plan. Any volume containing a non-Arnold repository or any unknown
+path is out of scope for destruction. Only exact Arnold workspace paths may
+become deletion rows. Provider-volume destruction requires a separate
+volume-wide plan, inventory, restore-tested snapshot, and approval from every
+affected repository/data owner.
 
-1. merge the runtime-fixer branch into
-   `consolidate/arnold-runtime-activation-20260714` through review;
-2. merge that updated base into the M11 milestone branch without rewriting the
-   active M11 history;
-3. resolve overlaps using the M11 acceptance contract as authority;
-4. build a fresh content-addressed runtime from that exact post-fixer M11 SHA;
-5. run focused M11 and recovery suites, then the declared full acceptance
-   command manifest;
-6. generate the authoritative M11 completion manifest, proof map, receipts, and
+### 3. Operate through a resumable inventory and action ledger
+
+The cleanup ledger is versioned and separates:
+
+- repository stores;
+- checkouts/worktrees;
+- refs;
+- stashes and their immutable commit/parent IDs;
+- PR heads, including fork repository identity;
+- content-manifest payloads;
+- runtimes, services, processes, mounts, and other dependencies.
+
+Stable entity IDs use host identity, canonical origin set, normalized real path
+or immutable external identifier, entity kind, and Git common-directory/store
+identity. Mutable object IDs and payload hashes are row revisions, not entity
+identity. Aliases and shared stores are explicit links, not duplicate rows. A
+store-level deletion is forbidden while any checkout, ref, stash, PR,
+alternate, process, runtime, or other dependency links to it.
+
+A payload hash is SHA-256 over a canonical sorted manifest of paths, path types,
+modes, symlink targets, sizes, and content hashes, with staged, unstaged,
+untracked, relevant ignored, and conflict-stage content represented
+separately. Byte-identical and strict-subset relationships may share
+classification evidence, but every exact source path remains an independent
+mutation target.
+
+Each entity advances append-only through one of three explicit paths:
+
+```text
+surveyed -> checkpointed -> classified
+
+LAND:
+  classified -> ported -> unit-validated -> release-reachable
+    -> approval-ready -> source-deleted
+
+DELETE:
+  classified -> redundancy-validated -> approval-ready -> deleted
+
+KEEP:
+  classified -> kept -> resurvey-due -> surveyed
+```
+
+Any state may enter `blocked`, `failed`, or `quarantined`; approvals may enter
+`expired` or `rejected`. No row with one of those states may authorize a
+mutation.
+
+Transitions use atomic writes and compare-and-swap against the expected row
+revision. Every external action has a stable action ID, fencing token,
+precondition, and postcondition probe. A mutation is complete only after its
+postcondition is observed and journaled. If the process crashes after the
+external effect but before journaling, the row becomes `quarantined`; the
+executor reconciles the real target before retrying and reuses the same action
+ID. It never repeats an irreversible operation blindly.
+
+Work runs in bounded resumable batches with a single execution lease, stable
+cursors, UTC timestamps, tool/schema versions, and an append-only action
+journal. Partial failures stop the unexecuted remainder and resume from the
+last reconciled row.
+
+The ledger and journal must be committed or uploaded to a durable,
+remote-reachable, redacted artifact location before they can authorize a
+mutation.
+
+### 4. Classify everything
+
+Every row in the refreshed ledger receives one decisive verdict:
+
+- `LAND` with `merge-range`, `cherry-pick-shas`, or `port-paths`;
+- `DELETE` with positive redundancy evidence; or
+- `KEEP` with an explicit active dependency and retirement trigger.
+
+`DELETE` requires all of:
+
+- every payload is reachable from the accepted target or proven byte/patch
+  equivalent against its true base;
+- no unique staged, unstaged, untracked, ignored, stash, interrupted-operation,
+  or patch payload remains;
+- no open/draft PR, worktree pin, alternate, marker, process, runtime, mount, or
+  service dependency remains;
+- the exact target revision was revalidated immediately before mutation.
+
+Age, cleanliness, a merged PR, ancestry, or `git cherry +0` is supporting
+evidence, never sufficient by itself.
+
+`KEEP` is restricted to:
+
+- a genuinely active service/runtime dependency;
+- an open or draft PR that still represents intended work;
+- an interrupted operation;
+- a protected ref;
+- an explicitly active future effort that is not yet ready to land.
+
+Every `KEEP` row names an owner, user-facing purpose, current dependency, next
+action, retirement trigger, and `review_at` no more than 30 days away. An
+ownerless or unreviewed item cannot qualify as an active exception. Expiry
+causes resurvey and reclassification, never automatic deletion.
+
+The expected short-term exception candidates are:
+
+- the Critique Ledger v2 effort while CL2–CL5 remain intentionally unlaunched;
+- the Native Parity corrective epic after its milestone-gate bootstrap;
+- Native Workflow Platformization, which begins only after Native Parity;
+- live Superpom, Withings, and resident runtime sources until each is promoted
+  to the merged `main` runtime.
+
+Each candidate becomes `KEEP` only if the refreshed ledger supplies the required
+owner, dependency, next action, retirement trigger, and review date. Otherwise
+it receives `LAND`, `DELETE`, or `blocked`; the dated list grants no exception
+by itself.
+
+Cancelled predecessor branches, completed milestone heads, dormant runtime
+candidates, and historical `editible-install` remnants are not permanent
+exceptions.
+
+Supersession is proven only when the replacement is reachable from the accepted
+true base/target, covers the predecessor's user-facing behavior and required
+tests/evidence, and leaves no unique intended delta. Otherwise the unique delta
+lands or the predecessor remains `KEEP`.
+
+Every branch comparison uses its true PR/integration base. `main` is never
+silently substituted for an epic's actual base. Stashes are classified by
+immutable stash and parent commit IDs, never by unstable `stash@{N}` ordinals.
+There are no `uncertain` final rows: unresolved lineage or evidence is
+`blocked` until the specified investigation closes it.
+
+Before importing anything, publish the complete classification table and
+ordered integration strategy, then obtain explicit user authorization to
+execute that strategy. This is the Phase 2-to-Phase 3 decision gate; it does not
+authorize any deletion. The gate binds the exact plan/blob SHA, ledger/schema
+SHA, action IDs, source and destination identities, approver, timestamp, and
+seven-day expiry. Any bound change requires a refreshed gate.
+
+### 5. Freeze validation and complete the custody lineage
+
+Before creating source commits or merging anything, freeze a validation command
+manifest containing exact commands, selectors, working directories,
+interpreters, environment names, dependency/image digests, timeouts, phase
+budgets, expected exit codes, admitted skips, owners, and artifact paths. Record
+its schema and artifact SHA. A missing selector, undeclared skip, changed
+command, or exhausted budget is a failed gate, not an implicit waiver. Values
+are regenerated and then frozen; this dated plan does not freeze current command
+or timing facts.
+
+Then:
+
+1. if and only if the classified ledger proves the authoritative M11 payload is
+   still uncommitted, create and push an explicitly nonterminal, nonaccepted
+   candidate commit on the resolved M11 source branch; its commit message and
+   ledger row must say that it cannot satisfy completion. Do not manufacture a
+   replacement for a deleted or already-merged milestone ref;
+2. resolve the runtime-fixer payload and source ref. If it is still uncommitted,
+   create and push an actual commit on that resolved ref; if it is already
+   pushed or merged, record the existing full commit and do not create a
+   duplicate. The historical
+   `fix/simple-fixer-durable-runner-exit-20260729` name is only a seed;
+3. resolve the exact runtime-fixer commit, M11 source, and custody integration
+   ref from current receipts and the refreshed ledger;
+4. merge the fixer commit into the custody integration ref through review if
+   it is not already reachable there;
+5. if the resolved M11 source still contains unique intended payload, merge the
+   updated integration base into it without rewriting history. If the M11 ref
+   was deleted after a recorded merge, verify the merge receipt and exact tree
+   instead of recreating the ref;
+6. resolve overlaps using the M11 acceptance contract as authority;
+7. build a fresh content-addressed runtime from that exact post-fixer M11 SHA;
+8. run focused M11 and recovery suites, then the frozen full acceptance command
+   manifest;
+9. generate the authoritative M11 completion manifest, proof map, receipts, and
    runtime/source identity from that post-fixer SHA/runtime;
-7. reject any pre-fixer manifest as completion evidence;
-8. commit and push the final acceptance artifacts as a later acceptance commit
-   on top of the explicitly nonaccepted candidate commit;
-9. open and merge the M11 milestone PR back to the custody integration branch;
-10. verify that no accepted live-runtime change exists only on the Hetzner
+10. reject any pre-fixer manifest as completion evidence;
+11. commit and push the final acceptance artifacts as a later acceptance commit
+    on top of the explicitly nonaccepted candidate commit when item 1 created
+    one, or on top of the resolved accepted source history otherwise;
+12. open and merge the M11 milestone PR back to the custody integration branch
+    when a live milestone ref remains; otherwise verify the recorded merge
+    result;
+13. verify that no accepted live-runtime change exists only on the Hetzner
     volume.
 
-### 4. Create the one temporary consolidation branch
+The action journal records the full fixer commit, accepted M11 commit,
+M11-to-integration merge result, integration-to-consolidation merge result,
+final `main` merge commit, and runtime digest. Acceptance applies to an exact
+tree. Any later merge that changes that tree invalidates the earlier acceptance
+for release purposes and requires the frozen acceptance manifest to run again
+against the new merge result.
+
+### 6. Create the one temporary consolidation branch
 
 Create a new clean worktree from the freshly fetched `origin/main` tip and create
-`release/post-m11-consolidation-20260729`.
+`consolidate/post-m11-<plan-sha12>-<base-sha12>`.
 
 Do not create it from the current dirty local `main`, and do not perform
 integration inside an active cloud workspace.
 
-Import completed valuable work in this order:
+### 7. Integrate all classified `LAND` rows
+
+Import work in this order:
 
 1. merge the finished custody integration branch as the first reviewed unit,
    preserving its serial merge lineage;
@@ -262,79 +515,26 @@ For overlapping branches:
 
 Never merge a whole dirty checkout as one anonymous snapshot.
 
-### 5. Operate through a resumable inventory and action ledger
+Every `LAND` row declares exactly one integration action:
 
-The cleanup ledger is versioned and keyed by:
+- `merge-range` for an authoritative serial integration branch or a coherent
+  independent branch whose history should be preserved;
+- `cherry-pick-shas` for unique top-layer commits from a stacked branch or
+  post-squash residual;
+- `port-paths` for mixed, dirty, or partially superseded payloads.
 
-```text
-(host, canonical_origin, git_common_dir, checkout_path, object_id, payload_hash)
-```
+Each action names exact source/base SHAs or selected path hashes and its
+patch-equivalence evidence. Existing source, custody, and consolidation refs
+are never rebased or force-pushed during this cleanup. A changed
+base is merged append-only.
 
-It deduplicates shared repositories, worktrees, and stash stores by Git common
-directory and object ID. It also groups byte-identical and strict-subset
-payloads while retaining every exact source path.
+Dirty payloads are grouped into named source/test/fixture/documentation units.
+Raw outputs, caches, credentials, and regenerated artifacts are excluded unless
+the ledger explicitly classifies them as repository assets. Selected units are
+materialized and committed from an isolated source worktree; the live dirty
+checkout is never altered as an import mechanism.
 
-Each row advances append-only through:
-
-```text
-surveyed
-  -> checkpointed
-  -> classified
-  -> ported
-  -> validated
-  -> approval-ready
-  -> deleted
-```
-
-Transitions use atomic writes and compare-and-swap against the expected row
-hash. Changed rows are rejected and resurveyed; no executor may silently update
-its expected target. Work runs in bounded resumable batches with a single
-execution lease, stable cursors, UTC timestamps, tool/schema versions, and an
-append-only action journal. Partial failures resume from the last proven row.
-
-The ledger and journal must be committed or uploaded to a durable,
-remote-reachable, redacted artifact location before they can authorize a
-mutation.
-
-### 6. Classify everything else
-
-Every row in the refreshed ledger receives one decisive verdict:
-
-- `merge-then-delete`;
-- `cherry-pick-then-delete`;
-- `port-then-delete`;
-- `delete` with positive redundancy evidence; or
-- `keep` with an explicit active dependency and retirement trigger.
-
-`keep` is restricted to:
-
-- a genuinely active service/runtime dependency;
-- an open or draft PR that still represents intended work;
-- an explicitly staged future effort.
-
-The expected short-term exception list is:
-
-- the Critique Ledger v2 effort while CL2–CL5 remain intentionally unlaunched;
-- the Native Parity corrective epic after its milestone-gate bootstrap;
-- Native Workflow Platformization, which begins only after Native Parity;
-- live Superpom, Withings, and resident runtime sources until each is promoted
-  to the merged `main` runtime.
-
-Cancelled predecessor branches, completed milestone heads, dormant runtime
-candidates, and historical `editible-install` remnants are not permanent
-exceptions.
-
-Every branch comparison uses its true PR/integration base. `main` is never
-silently substituted for an epic's actual base. Stashes are classified once per
-Git common directory and object ID.
-
-### 7. Test and release to `main`
-
-Before the first import, freeze a validation command manifest containing exact
-commands, selectors, working directories, interpreters, environment names,
-timeouts, expected exit codes, admitted skips, and artifact paths. A missing
-selector, undeclared skip, changed command, or exhausted budget is a failed gate,
-not an implicit waiver.
+### 8. Test and release to `main`
 
 The consolidation branch must pass:
 
@@ -343,22 +543,34 @@ The consolidation branch must pass:
 3. resident, `/whats-cooking`, Superpom, and Withings focused tests;
 4. CLI, chain, status, resume, repair, runtime-provenance, and editable-install
    tests;
-5. the full practical repository suite;
+5. the named repository-wide suites in the frozen command manifest;
 6. a clean wheel/install smoke test where packaging behavior changed;
 7. `git diff --check`;
-8. a proof that every claimed completed payload is reachable from the release
-   branch.
+8. a proof that every claimed completed payload is reachable from the
+   consolidation branch.
 
 Then:
 
 1. fetch `origin/main` again and compare-and-swap the expected base SHA;
-2. if `main` advanced, merge it immediately and rerun the affected gates;
+2. if `main` advanced, stop, merge the new tip append-only, rerun the entire
+   frozen validation manifest, regenerate SHA-bound receipts, and renew review;
 3. open one reviewed release PR to `main`;
-4. merge it using the repository's normal protected-branch policy;
-5. tag or otherwise record the exact merged release SHA;
-6. verify the release branch contains no uncommitted or untracked source.
+4. capture required checks, approval count, stale-review dismissal, merge queue,
+   and allowed merge method, then merge only when approvals and checks bind the
+   exact PR head SHA;
+5. create an immutable annotated tag
+   `post-m11-consolidation-<final-main-sha12>` on the exact final `main` merge
+   commit and record the tag object, peeled commit, and runtime-manifest SHA;
+6. verify the consolidation branch contains no uncommitted or untracked source.
 
-### 8. Promote the merged runtime with canary and rollback
+Validation failures stop the affected import and all dependents. Integration
+failures are fixed and rerun. Infrastructure failures may be retried under the
+same frozen command. A baseline exception requires an owner, exact failure,
+durable ticket, expiry, and proof that no release blocker is waived. No
+release-blocking acceptance, provenance, recovery, packaging, or runtime
+failure may be waived.
+
+### 9. Promote the merged runtime with canary and rollback
 
 After the release PR merges:
 
@@ -367,8 +579,9 @@ After the release PR merges:
 2. validate its source hash, interpreter, editable `.pth`, and dependency set;
 3. write a content-addressed pre-cutover binding manifest containing every
    service/marker, old runtime, new runtime, acceptance check, rollback command,
-   and abort threshold;
-4. canary one non-critical binding first;
+   persistent-data compatibility rule, observation window, and abort threshold;
+4. restore-test each service's rollback binding in isolation, then canary one
+   non-critical binding first;
 5. cut over each remaining service independently through its supported
    custody/resident mechanism;
 6. after each cutover, verify its health and installed-runtime provenance;
@@ -381,14 +594,23 @@ After the release PR merges:
 An old checkout or runtime candidate is not deletion-ready while any live
 process or marker references it.
 
+The canary must remain healthy for at least 10 continuous minutes and three
+expected heartbeat/probe cycles, whichever is longer. Any critical probe
+failure, runtime/source provenance mismatch, or two consecutive missed expected
+heartbeats aborts the batch and triggers rollback. Rollback is successful only
+after the old immutable runtime identity and the full service probe set are
+verified. Old runtime bindings remain checkpointed and available for at least
+24 hours after the last successful cutover and one subsequent scheduled
+watchdog/auditor cycle.
+
 Cross-service rebinding is not assumed to be globally atomic. The action journal
 records each service transition and makes cutover/rollback resumable.
 
-### 9. Stage cleanup, then request deletion approval
+### 10. Stage cleanup, then request deletion approval
 
 Only after `main` and the promoted runtime contain all accepted work:
 
-1. remove stale worktree metadata;
+1. identify stale worktree metadata and prove the referenced path is absent;
 2. list clean worktrees whose commits are reachable or patch-equivalent;
 3. list merged local branches;
 4. list merged remote branches;
@@ -398,7 +620,24 @@ Only after `main` and the promoted runtime contain all accepted work:
 8. list obsolete draft/closed PRs;
 9. list unreachable objects eligible for normal later garbage collection.
 
-Generate content-addressed approval manifests in bounded batches of 20–50 rows.
+Approved actions execute lowest blast-radius first:
+
+1. remove a clean, checkpointed worktree or stale registration;
+2. delete its approved local ref;
+3. delete its approved remote ref;
+4. separately delete approved stashes and patch/original artifacts;
+5. stop (`down`) an approved dormant Arnold cloud workspace;
+6. delete an approved exact Arnold workspace directory or Codespace;
+7. leave shared Git stores, provider volumes, tags, odd refs, reflogs, and
+   unreachable objects intact for their separately scoped retention review.
+
+Branch, worktree, stash, workspace, Codespace, and GC approvals never cascade
+into one another.
+
+Generate content-addressed approval manifests containing at most 25 rows from
+one host and one action class. A filesystem directory, cloud workspace,
+Codespace, runtime, stash store, or any other non-ref target receives its own
+one-row manifest. The shared provider volume is never a target.
 Every row contains:
 
 - its path or ref;
@@ -413,15 +652,28 @@ Every row contains:
 
 The user may approve a whole manifest SHA while excluding named rows. This is
 exact per-item approval with usable batch ergonomics: approval binds every
-listed target and hash. The executor rejects globs, changed hashes, unlisted
-targets, expired leases, or missing dependencies and reports partial failures.
-There is no wildcard approval implied by approving this plan.
+listed target and hash. Approval also binds the authoritative plan/blob SHA,
+ledger/schema SHA, proposed action, destination/new SHA when applicable,
+approver, timestamp, and expiry. It expires after seven calendar days or
+immediately when any target hash, recommendation, destination, dependency,
+marker, process, PR state, lease, or manifest changes.
 
-### 10. Durable artifacts and evidence boundaries
+Immediately before action, the executor rechecks the target-level fencing token
+and precondition. It rejects globs, changed hashes, unlisted targets, expired
+approvals or leases, and missing dependencies. Each successful row is journaled
+before the next starts. A partial failure stops the unexecuted remainder; it
+does not blindly retry or attempt to undo irreversible completed deletions.
+After reconciliation, remaining rows require a fresh manifest if any bound
+state changed.
+
+There is no wildcard or conversational-default approval implied by approving
+this plan. Approval is never renewed implicitly.
+
+### 11. Durable artifacts and evidence boundaries
 
 Before execution, this plan must be committed and pushed on a protected planning
-branch. The following are also durable, versioned, timestamped, and
-remote-reachable:
+ref. Its commit and blob SHAs bind every downstream artifact. The following are
+also durable, versioned, timestamped, and remote-reachable:
 
 - source-ref and protected-state manifests;
 - inventory/classification ledger;
@@ -437,6 +689,13 @@ repository. Bulky or secret-bearing logs remain in encrypted external artifact
 storage and are referenced by recovery ID and content hash; secrets never enter
 Git.
 
+Secret inventory records secret-manager reference/version and consumer
+identity, never secret values. Command lines, environment captures, logs,
+archives, and volume manifests are scanned before publication. Encrypted
+recovery material names its key custodian and key-retrieval procedure. Before a
+secret-bearing source is deleted, the runtime owner rotates or revokes the
+credential where deletion would otherwise remove the only trusted copy.
+
 ## Release blockers versus follow-ups
 
 Release-blocking:
@@ -446,7 +705,8 @@ Release-blocking:
 - the authoritative completion manifest is generated from that exact state;
 - the custody integration branch is merged and validated as the first release
   unit;
-- every completed payload admitted to the release is reachable and tested;
+- every refreshed-ledger `LAND` payload is reachable from the exact final
+  branch head and has its declared validation receipt;
 - the merged `main` runtime passes canary and service cutover checks.
 
 Non-blocking follow-ups are allowed only when the authoritative M11/release
@@ -457,71 +717,73 @@ post-M11 observability improvements may remain follow-ups under that rule.
 The milestone-gate bootstrap and Native Parity corrective epic start only after
 M11 is merged to `main` with its validated manifest. Platformization remains
 strictly after Native Parity. Critique Ledger v2 remains a separate later
-integration line and does not enter this release branch as unfinished
+integration line and does not enter this consolidation branch as unfinished
 implementation.
 
-## Known first-pass classifications
+## Historical investigation seeds, not classifications
 
-These are provisional until the post-M11 resurvey.
+The 2026-07-29 survey identified the active M11/runtime sources, dirty local
+`main`, interrupted M6 recovery state, live resident/Superpom/Withings sources,
+Critique Ledger work, completed custody milestone heads, old Run Authority
+drafts, and hundreds of cloud checkouts as investigation areas.
 
-### Hard keep until ported
+The decision is that none of those dated rows is `KEEP`, `DELETE`, or `LAND`
+merely because it appeared in that survey. The refreshed ledger is the only
+classification table. It must rediscover the items, bind their current
+identities, and apply the decision policy in section 4.
 
-- active M11 checkout and its stashes;
-- active M11 runtime candidate and pinned runtime;
-- `/workspace/arnold` while the resident process uses it;
-- Superpom and Withings runtime sources still referenced by live configuration;
-- the local dirty `main` payload;
-- dirty local worktrees for historical Shannon compatibility, resident
-  schedules, and Critique Ledger;
-- the interrupted M6 recovery checkout;
-- dirty cloud custody, native-parity, maintenance, critique, resident, and
-  repair workspaces.
+The known supersession questions remain:
 
-### Strong deletion candidates after proof
+- whether Critique Ledger accountability v2 fully covers the paused predecessor
+  and draft PR after the landed CL1 handoff;
+- whether completed M10/M11 source-amendment heads contain any intended delta
+  not present in the accepted custody integration result;
+- whether M11's retirement evidence fully covers the responsibilities in the
+  old Run Authority drafts.
 
-The following local branches are already ancestors of the currently cached
-`origin/main`, but still require a fresh post-M11 equivalence check and clean
-worktree removal:
-
-- `chainfix`
-- `consolidate/editible-to-main-20260710`
-- `consolidate/loose-work-20260710`
-- `consolidate/resident-runtime-20260719`
-- `editible-install`
-- `fix/hot-context-integration`
-- `fix/workflow-cursor-recovery`
-- `merge/cloud-checkpoint-20260713`
-- `preserve/resident-b923802-20260719`
-- `push-editible-mergefix`
-- `push-main-mergefix`
-- `worktree-watchdog-snapshot-staleness`
-
-The roughly 291 clean cloud checkouts with no current ahead commit are only
-probable deletion candidates. Each must still pass dependency, stash,
-untracked, true-base, and patch-equivalence checks.
-
-### Explicit supersession
-
-- Critique Ledger accountability v2 supersedes the paused predecessor and draft
-  PR #295 after its CL1 handoff is verified;
-- completed M10 and M11 source-amendment heads become residue after the custody
-  release lands;
-- old Run Authority draft PRs #205 and #213 become closeable only when M11's
-  retirement manifest proves their responsibilities are covered.
+Each question receives a current evidence-backed verdict before any related
+source becomes approval-ready. No old branch list or checkout count is carried
+forward as deletion authority.
 
 ## Final acceptance
 
-Cleanup and release are complete only when:
+The frozen validation manifest includes a `final_acceptance` validator with
+`release` and `cleanup` modes. `release` mode verifies the exact final `main`
+SHA, all `LAND` reachability, tag/runtime/receipt bindings, clean canonical
+worktree, protected status of the original dirty checkout, and cutover/rollback
+receipts. `cleanup` mode additionally verifies zero prohibited ledger states,
+current `KEEP` ownership/review fields, approvals, deletion postconditions, and
+tombstones. Each mode exits nonzero on any failed predicate and emits a
+machine-readable receipt bound to the plan, ledger, final `main`, and runtime
+SHAs. Narrative reports cannot confer acceptance.
 
-- `main` contains every accepted completed payload;
-- local `main` is clean and matches `origin/main`;
-- the temporary release branch is merged and deletion-ready;
+### Release accepted
+
+Release is accepted only when `final_acceptance --mode release` succeeds and:
+
+- exact final `main` contains every ledger `LAND` payload;
+- the annotated release tag, final validation receipts, and promoted runtime all
+  bind that same final `main` commit;
+- the temporary consolidation branch is merged and deletion-ready;
+- a newly designated canonical local `main` worktree is clean and matches
+  `origin/main`; the pre-existing dirty checkout remains protected until its
+  own payload rows are landed or separately approved for deletion;
+- canary, service cutover, provenance, health, and rollback checks have passed.
+
+### Cleanup accepted
+
+Cleanup is accepted only when `final_acceptance --mode cleanup` succeeds and:
+
 - no completed functionality exists only in a worktree, stash, reflog, patch
   file, cloud volume, or runtime candidate;
 - no live service uses an old `editible-install` or volume-only source;
 - all inactive branches and workspaces have a decisive verdict;
-- only the explicit active-effort exception list remains;
+- there are zero `blocked`, `failed`, `quarantined`, `uncertain`,
+  expired-approval, dirty-consolidation, or unpushed-consolidation rows;
+- only current `KEEP` rows with owner, dependency, next action, retirement
+  trigger, and review date remain;
 - every deletion performed has an approval and a recoverability record;
+- every deletion has a verified postcondition and a durable tombstone row;
 - every ledger transition and runtime cutover is represented in the durable
   action/rollback journal;
 - the final report lists what landed, what was deleted, what remains active,
@@ -531,13 +793,18 @@ Cleanup and release are complete only when:
 
 - no `reset --hard`, `clean`, force worktree removal, or history rewrite on an
   active or dirty checkout;
+- no rebase or force-push of any source, custody, or consolidation ref;
 - no stash drop before its payload is landed or proven redundant;
-- no cloud workspace or volume deletion before remote reachability and runtime
-  dependency proof;
+- no stash mutation by `stash@{N}` ordinal; bind immutable stash/parent commit
+  IDs and approve stash deletion separately from branch deletion;
+- no exact cloud-workspace deletion before remote reachability, non-Git payload,
+  shared-store, and runtime-dependency proof;
+- no destruction of the shared provider volume under this Arnold-only plan;
 - no `git gc --prune=now`, reflog expiry, or unreachable-object pruning during
   consolidation;
 - no direct push to `main`;
 - no release cutover from an uncommitted runtime candidate;
 - no change to the current M11 editable install while M11 is running;
+- no execution from an uncommitted or blob-mismatched copy of this plan;
 - no mutation batch when a protected lease is expired or its expected hash,
   marker, PID, tmux, `.pth`, or service dependency has changed.
