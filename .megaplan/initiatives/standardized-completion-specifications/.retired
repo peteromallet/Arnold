@@ -1,0 +1,10 @@
+Retired as an independent launch target.
+
+Do not launch, initialize, resume, or deploy this initiative.
+The byte-preserved M1-M5 briefs are historical requirement sources, not active
+milestones. In particular, M2's historical authoritative-integration language
+is superseded: active Native C2 is shadow-only and S2R GO-0 is the sole live
+completion-kernel enablement.
+
+See SUPERSESSION_CROSSWALK.yaml for the accepted owners, the milestone-gate
+bootstrap dependency, executable proof-rule paths, and the active critical path.

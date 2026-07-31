@@ -102,8 +102,40 @@ described below.
 
 ## Policy And Control Fields
 
-`WorkflowPolicy` is a carrier for optional policy slots. The manifest names the
-slots and durable refs; the runner owns the concrete algorithms.
+`WorkflowPolicy` is the sole generated carrier for optional policy slots. Each
+populated slot contains or resolves one canonical `PolicyEnvelope`; raw
+implementation-specific configuration mappings are not an alternative
+authority.
+
+`PolicyEnvelope` contains:
+
+- `policy_kind`: stable qualified policy kind;
+- `schema_version`: exact policy schema/decoder version;
+- `values`: recursively immutable RFC-8785-canonical JSON values;
+- `scope`: declared workflow, call-site, step, effect, root-adapter, or
+  admission-binding scope;
+- `attachment_ref`: exact authored/lowered attachment coordinate;
+- `source_span`: authored provenance when source-defined;
+- `producer`: governed distribution/logical policy identity and version when
+  imported;
+- `precedence`: one declared precedence class plus the explicit overridden
+  envelope digest, if any; and
+- `policy_digest`: SHA-256 of the canonical envelope excluding this field.
+
+The compiler validates the typed slot schema before constructing the envelope.
+An inline/call-site envelope and its required policy contract are part of the
+owning component digest. An imported policy has its own executable identity;
+the caller records its direct contract requirement, while the graph lock pins
+the selected policy executable digest. Choosing a different compatible concrete
+policy/value changes the policy identity and graph-lock digest rather than
+silently rewriting the caller. Incompatible kind/schema/value/scope/attachment
+changes require migration, new attempt, or quarantine.
+
+Policy values cannot contain callables, open route tables, environment lookups,
+mutable containers, runtime plugin selectors, or hidden product branches.
+Route-affecting variants remain finite named discriminants handled visibly by
+the authored workflow. The runner owns concrete algorithms only behind these
+validated immutable envelopes.
 
 - `budget`: optional `BudgetPolicy` with `max_cost`, `max_seconds`,
   `max_attempts`, and `token_budget`.
