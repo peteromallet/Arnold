@@ -5620,6 +5620,15 @@ def _watchdog_is_repairing(evidence):
     return False
 
 def _should_be_running(payload):
+    # Explicit operator custody outranks status-shape heuristics. A superseded
+    # session is commonly both ``stopped`` and ``should_run: false``; treating
+    # every stopped session as resumable made the watchdog repeatedly relaunch
+    # intentionally retired work.
+    if payload.get("should_run") is False:
+        return False
+    operator_pause = payload.get("operator_pause")
+    if isinstance(operator_pause, dict) and operator_pause.get("active") is True:
+        return False
     status = payload.get("status")
     if status == "running":
         return True
