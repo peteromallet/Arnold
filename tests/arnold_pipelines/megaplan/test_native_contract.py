@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from arnold.pipeline.native import validate_pipeline_purity
 from arnold.pipeline.native.ir import NativePipeline, NativeProgram
 from arnold.pipeline.types import Pipeline as NeutralPipeline
 from arnold.workflow.source_compiler import lower_workflow_file
@@ -128,6 +129,38 @@ class TestCanonicalMegaplanNativeContract:
     These assertions verify that ``build_pipeline()`` exposes a
     ``native_program`` consistent with the subpipeline contract.
     """
+
+    def test_canonical_native_program_passes_routing_purity(self) -> None:
+        """The active native topology proof must pass the purity validator."""
+        from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
+
+        native_program = build_and_compile_pipeline().native_program
+        report = validate_pipeline_purity(native_program)
+
+        assert report.ok, [
+            diagnostic.code for diagnostic in report.diagnostics
+        ]
+
+    def test_canonical_dsl_routes_equal_native_topology_routes(self) -> None:
+        """The authored DSL and native projection expose the exact same routes."""
+        from arnold_pipelines.megaplan.pipeline import (
+            build_and_compile_pipeline,
+            build_pipeline,
+        )
+
+        authored_routes = {
+            (route.source, route.label, route.target)
+            for route in build_pipeline().routes
+        }
+        native_routes = {
+            (route["source"], route["label"], route["target"])
+            for route in (
+                build_and_compile_pipeline()
+                .native_program.routing_topology["routes"]
+            )
+        }
+
+        assert authored_routes == native_routes
 
     def test_canonical_has_native_program_like_subpipelines(self) -> None:
         """Canonical megaplan must carry native_program (same contract)."""
