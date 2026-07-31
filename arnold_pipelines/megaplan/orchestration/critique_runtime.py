@@ -73,6 +73,7 @@ from arnold_pipelines.megaplan.handlers.shared import (
     _finish_step,
     _load_bearing_decision_criteria_issues,
     _raise_step_validation_error,
+    _write_gate_json,
     _write_plan_version,
 )
 from arnold_pipelines.megaplan.handlers.tiebreaker import _build_tiebreaker_reprompt
@@ -1016,7 +1017,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 "preflight_results": {},
                 "orchestrator_guidance": "Light robustness routes critique to one revision pass.",
             }
-            atomic_write_json(plan_dir / "gate.json", minimal_gate)
+            _write_gate_json(plan_dir, minimal_gate, iteration=iteration)
             _write_gate_carry(plan_dir, minimal_gate, iteration=iteration)
             state["last_gate"] = {"recommendation": "ITERATE"}
         scope_flags_list = scope_creep_flags(registry, statuses=FLAG_BLOCKING_STATUSES)

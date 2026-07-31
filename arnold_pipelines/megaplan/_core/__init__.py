@@ -15,6 +15,7 @@ from .io import (
     atomic_write_bytes,
     atomic_write_json,
     atomic_write_text,
+    write_immutable_json,
     batch_artifact_index,
     batch_artifact_path,
     execute_batch_artifact_path,
@@ -369,6 +370,7 @@ __all__ = [
     "workflow_includes_step",
     "workflow_next",
     "workflow_transition",
+    "write_immutable_json",
     # State constants (re-exported for convenience)
     "STATE_EXECUTED",
     "STATE_REVIEWED",

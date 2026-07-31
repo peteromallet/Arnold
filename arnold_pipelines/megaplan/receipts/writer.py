@@ -12,12 +12,13 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, TypeVar, cast
 
 from arnold.workflow.boundary_evidence import BoundaryReceipt
-from arnold_pipelines.megaplan._core import atomic_write_json
+from arnold_pipelines.megaplan._core import atomic_write_json, write_immutable_json
 from arnold_pipelines.megaplan.receipts.schema import (
     AutomaticDispatchReceipt,
     DispatchMutationFacts,
     DispatchOutcome,
 )
+from arnold_pipelines.megaplan.runtime.artifacts import next_version
 
 log = logging.getLogger(__name__)
 _ProcessT = TypeVar("_ProcessT")
@@ -362,7 +363,7 @@ def write_boundary_receipt(
     receipt: BoundaryReceipt,
     *,
     project_dir: str | Path | None = None,
-) -> None:
+) -> Path | None:
     """Write a durable boundary receipt without raising.
 
     Persists ``plan_dir/boundary_receipts/{boundary_id}.json`` atomically
@@ -372,8 +373,12 @@ def write_boundary_receipt(
     """
     try:
         payload = receipt.to_dict()
-        boundary_id = receipt.boundary_id
+        boundary_id = _validate_dispatch_id(receipt.boundary_id)
         target_dir = plan_dir / "boundary_receipts"
+        history_dir = target_dir / "history" / boundary_id
+        history_version = next_version(history_dir)
+        history_path = history_dir / f"v{history_version}.json"
+        write_immutable_json(history_path, payload)
         atomic_write_json(target_dir / f"{boundary_id}.json", payload)
 
         audit_dir = Path(os.environ.get("MEGAPLAN_AUDIT_DIR") or (Path.home() / ".megaplan" / "audit"))
@@ -384,6 +389,7 @@ def write_boundary_receipt(
             should_mirror = os.environ.get("MEGAPLAN_REPO_AUDIT_MIRROR") == "1" or repo_audit_dir.exists()
             if should_mirror:
                 _append_jsonl(repo_audit_dir / "boundary_receipts.jsonl", payload)
+        return history_path
     except Exception as exc:
         log.warning("boundary receipt write failed: %s", exc, exc_info=True)
-        return
+        return None

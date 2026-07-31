@@ -61,6 +61,7 @@ from arnold_pipelines.megaplan._core import (
     set_active_step,
     sha256_file,
     sha256_text,
+    write_immutable_json,
     workflow_next,
 )
 from arnold_pipelines.megaplan._core.phase_runtime import (
@@ -849,16 +850,17 @@ def _emit_boundary_receipt_for_contract(
             ),
             details=details_dict,
         )
-        write_boundary_receipt(plan_dir, receipt, project_dir=project_dir)
+        history_path = write_boundary_receipt(plan_dir, receipt, project_dir=project_dir)
         if strict:
             receipt_path = plan_dir / "boundary_receipts" / f"{contract.boundary_id}.json"
-            if not receipt_path.exists():
+            if history_path is None or not receipt_path.exists():
                 raise RuntimeError(f"boundary receipt {contract.boundary_id!r} was not durably persisted")
             persisted = json.loads(receipt_path.read_text(encoding="utf-8"))
-            if persisted.get("boundary_id") != contract.boundary_id:
+            expected = receipt.to_dict()
+            historical = json.loads(history_path.read_text(encoding="utf-8"))
+            if persisted != expected or historical != expected:
                 raise RuntimeError(
-                    f"boundary receipt reread mismatch: expected {contract.boundary_id!r}, "
-                    f"observed {persisted.get('boundary_id')!r}"
+                    f"boundary receipt reread mismatch for {contract.boundary_id!r}"
                 )
         return receipt
     except Exception:
@@ -1090,8 +1092,15 @@ def _write_json_artifact(plan_dir: Path, filename: str, payload: dict[str, Any])
     return sha256_file(plan_dir / filename)
 
 
-def _write_gate_json(plan_dir: Path, payload: dict[str, Any]) -> str:
-    """Write gate.json through _write_json_artifact and return the hash."""
+def _write_gate_json(
+    plan_dir: Path,
+    payload: dict[str, Any],
+    *,
+    iteration: int | None = None,
+) -> str:
+    """Write the legacy gate projection and, when known, immutable evidence."""
+    if iteration is not None:
+        write_immutable_json(plan_dir / f"gate_v{iteration}.json", payload)
     return _write_json_artifact(plan_dir, "gate.json", payload)
 
 
