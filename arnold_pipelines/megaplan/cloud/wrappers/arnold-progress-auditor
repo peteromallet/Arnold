@@ -2653,6 +2653,37 @@ def _load_events(events_path):
     """
     events = []
     try:
+        from arnold_pipelines.megaplan.observability.event_checkpoint import (
+            EventCheckpointError,
+            read_bounded_event_projection,
+        )
+
+        projection = read_bounded_event_projection(
+            events_path.parent,
+            max_tail_events=EVENT_TAIL_MAX_LINES,
+            allow_rebuild=False,
+            publish_checkpoint=False,
+        )
+        return list(projection.events)
+    except ImportError:
+        pass
+    except EventCheckpointError as exc:
+        # Installed-wrapper compatibility while a new source tree is being
+        # promoted, and first-read compatibility before a writer has published
+        # the durable cursor.  The bounded byte-tail below remains the safe
+        # read-only fallback.  Invalid existing acceleration state remains
+        # fail-closed.
+        if str(exc) not in {
+            "checkpoint_missing",
+            "checkpoint_store_incarnation_missing",
+        }:
+            return events
+    except Exception:
+        # A corrupt/stale checkpoint must not be consumed.  The canonical
+        # helper already attempted a permitted cold rebuild; if that failed,
+        # return no positive evidence rather than trusting an unsafe cursor.
+        return events
+    try:
         size = events_path.stat().st_size
         with events_path.open("rb") as handle:
             truncated = size > EVENT_TAIL_MAX_BYTES

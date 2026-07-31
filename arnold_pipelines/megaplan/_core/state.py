@@ -1077,6 +1077,112 @@ def _validate_plan_state_for_persist(state: dict[str, Any], *, plan_dir: Path) -
         ) from exc
 
 
+def _execution_evidence_digest(plan_dir: Path, state: dict[str, Any]) -> str:
+    execution_path = plan_dir / "execution.json"
+    try:
+        return "sha256:" + hashlib.sha256(execution_path.read_bytes()).hexdigest()
+    except OSError:
+        history = state.get("history")
+        if isinstance(history, list):
+            for entry in reversed(history):
+                if not isinstance(entry, dict) or entry.get("step") != "execute":
+                    continue
+                artifact_hash = entry.get("artifact_hash")
+                if isinstance(artifact_hash, str) and artifact_hash:
+                    return artifact_hash
+    return "missing"
+
+
+def _reconcile_durable_phase_handoff(
+    plan_dir: Path,
+    state: dict[str, Any],
+) -> None:
+    """Arm or advance the execute-success → review custody receipt.
+
+    The receipt lives in the same atomically replaced ``state.json`` as the
+    ``executed`` transition.  A crash after that write therefore leaves either
+    review custody or an explicit recovery instruction; it cannot leave a bare
+    ``executed`` label behind a dead execute PID.
+    """
+
+    current_state = str(state.get("current_state") or "")
+    existing = state.get("pending_phase_handoff")
+    handoff = dict(existing) if isinstance(existing, dict) else None
+    history = state.get("history")
+    history_entries = history if isinstance(history, list) else []
+
+    if current_state == STATE_EXECUTED:
+        evidence_digest = _execution_evidence_digest(plan_dir, state)
+        handoff_id = "sha256:" + hashlib.sha256(
+            f"{plan_dir.name}\0execute\0review\0{evidence_digest}".encode("utf-8")
+        ).hexdigest()
+        if handoff is None or handoff.get("handoff_id") != handoff_id:
+            handoff = {
+                "schema_version": 1,
+                "handoff_id": handoff_id,
+                "from_phase": "execute",
+                "from_state": STATE_EXECUTED,
+                "to_phase": "review",
+                "status": "pending",
+                "armed_at": now_utc(),
+                "source_history_length": len(history_entries),
+                "execution_evidence_digest": evidence_digest,
+                "recovery_action": "resume_review",
+                "owner": "canonical_auto_runner",
+                "_non_authoritative": False,
+            }
+        active = state.get("active_step")
+        active_phase = active_phase_name(active) if isinstance(active, dict) else None
+        if active_phase == "review":
+            handoff["status"] = "claimed"
+            handoff.setdefault("claimed_at", now_utc())
+            handoff["claim_run_id"] = active.get("run_id")
+            handoff["claim_worker_pid"] = active.get("worker_pid")
+        elif active_phase == "execute":
+            # Execute is durably complete.  Its old worker can no longer own
+            # the next boundary even if a stale PID remains in the cache.
+            state.pop("active_step", None)
+            handoff["status"] = "recovery_required"
+            handoff["recovery_reason"] = "execute_complete_with_stale_execute_custody"
+        state["pending_phase_handoff"] = handoff
+        return
+
+    if handoff is None:
+        return
+
+    source_history_length = int(handoff.get("source_history_length") or 0)
+    review_crossed = any(
+        isinstance(entry, dict) and entry.get("step") == "review"
+        for entry in history_entries[source_history_length:]
+    )
+    if review_crossed or current_state in {"reviewed", "done", "complete", "completed"}:
+        resolved = {
+            **handoff,
+            "status": "crossed",
+            "crossed_at": now_utc(),
+            "crossed_to_state": current_state,
+        }
+        meta = state.get("meta")
+        meta = dict(meta) if isinstance(meta, dict) else {}
+        receipts = list(meta.get("phase_handoff_receipts") or [])
+        if not any(
+            isinstance(item, dict)
+            and item.get("handoff_id") == resolved["handoff_id"]
+            for item in receipts
+        ):
+            receipts.append(resolved)
+        meta["phase_handoff_receipts"] = receipts
+        state["meta"] = meta
+        state.pop("pending_phase_handoff", None)
+        return
+
+    # A failure before review crossed the boundary keeps the receipt live and
+    # recoverable.  Liveness, journal growth, or a fresh PID never resolve it.
+    handoff["status"] = "recovery_required"
+    handoff["recovery_reason"] = f"boundary_not_crossed_current_state={current_state or 'unknown'}"
+    state["pending_phase_handoff"] = handoff
+
+
 def _read_state_for_write(state_path: Path) -> dict[str, Any]:
     if not state_path.exists():
         return {}
@@ -1455,6 +1561,7 @@ def write_plan_state(
             meta = dict(meta) if isinstance(meta, dict) else {}
             meta.setdefault("resident_delegation", resident_delegation)
             next_state["meta"] = meta
+        _reconcile_durable_phase_handoff(plan_dir, next_state)
         if validate_current_state:
             _validate_plan_state_for_persist(next_state, plan_dir=plan_dir)
         if should_write:

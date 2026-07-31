@@ -2753,27 +2753,35 @@ def _terminal_completion_at(
 
     if not chain_complete or workspace is None or not current_plan:
         return None
-    events_path = workspace / ".megaplan" / "plans" / current_plan / "events.ndjson"
     try:
-        lines = events_path.read_text(encoding="utf-8").splitlines()
-    except OSError:
+        from arnold_pipelines.megaplan.observability.event_checkpoint import (
+            read_bounded_event_projection,
+        )
+
+        projection = read_bounded_event_projection(
+            workspace / ".megaplan" / "plans" / current_plan
+        )
+    except (OSError, RuntimeError):
         return None
-    terminal_at: datetime | None = None
-    for line in lines:
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(event, Mapping) or event.get("kind") != "plan_finished":
-            continue
-        payload = event.get("payload")
-        state = str(payload.get("state") or "").casefold() if isinstance(payload, Mapping) else ""
-        if state not in _TERMINAL_SUCCESS_STATES:
-            continue
-        observed_at = _parse_iso(event.get("ts_utc"))
-        if observed_at is not None and (terminal_at is None or observed_at > terminal_at):
-            terminal_at = observed_at
-    return _isoformat(terminal_at) if terminal_at is not None else None
+    candidates = [
+        projection.latest_by_kind.get(f"plan_finished:state={state}")
+        for state in _TERMINAL_SUCCESS_STATES
+    ]
+    event = max(
+        (item for item in candidates if isinstance(item, Mapping)),
+        key=lambda item: int(item.get("seq") or -1),
+        default={},
+    )
+    payload = event.get("payload") if isinstance(event, Mapping) else None
+    state = (
+        str(payload.get("state") or "").casefold()
+        if isinstance(payload, Mapping)
+        else ""
+    )
+    if state not in _TERMINAL_SUCCESS_STATES:
+        return None
+    observed_at = _parse_iso(event.get("ts_utc"))
+    return _isoformat(observed_at) if observed_at is not None else None
 
 
 def _has_current_repairable_failure(plan_state: Mapping[str, Any] | None) -> bool:

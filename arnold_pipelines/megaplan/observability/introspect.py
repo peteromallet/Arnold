@@ -22,7 +22,10 @@ from typing import Any, Mapping, Optional, Tuple
 
 from arnold_pipelines.megaplan.anchors import anchor_summary
 from arnold_pipelines.megaplan.control_interface import read_valid_targets
-from arnold_pipelines.megaplan.observability.events import EventKind, read_events
+from arnold_pipelines.megaplan.observability.events import EventKind
+from arnold_pipelines.megaplan.observability.event_checkpoint import (
+    read_bounded_event_projection,
+)
 from arnold_pipelines.megaplan.observability.liveness import (
     has_active_in_flight_llm,
     unmatched_llm_starts,
@@ -654,8 +657,10 @@ def build_introspect_payload(
     # Load state
     state = _load_state(plan_dir)
 
-    # Read all events
-    events = list(read_events(plan_dir))
+    # Fold only events appended after the durable supervision cursor.  The
+    # projection carries a bounded recent window for liveness correlation.
+    event_projection = read_bounded_event_projection(plan_dir)
+    events = list(event_projection.events)
 
     # ── Liveness ────────────────────────────────────────────────────────
     liveness, liveness_reason = _compute_liveness(events, plan_dir, state, now_ts)
@@ -881,6 +886,12 @@ def build_introspect_payload(
         "active_phase": active_phase,
         "block_details": block_details,
         "event_stats": event_stats,
+        "event_projection": {
+            "record_count": event_projection.record_count,
+            "last_seq": event_projection.last_seq,
+            "receipt": dict(event_projection.receipt),
+            "_non_authoritative": True,
+        },
         "in_flight_llm": in_flight_llm,
         "cost": {
             "total_usd": total_cost,

@@ -21,6 +21,9 @@ from arnold_pipelines.megaplan.source_cursor_contract import (
     DimensionCursor,
     SourceCursorVector,
 )
+from arnold_pipelines.megaplan.observability.event_checkpoint import (
+    read_bounded_event_projection,
+)
 
 _FINGERPRINT_ALGORITHM = "sha256"
 _TERMINAL_PLAN_STATES = {"done", "aborted", "cancelled"}
@@ -639,19 +642,19 @@ def _collect_event_cursors(plan_state_path: Path | None, plan_state: Mapping[str
     line_count = 0
     latest_gate_kind = ""
     if events_path.exists():
-        for line in events_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            line_count += 1
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(payload, dict):
-                continue
-            kind = _safe_text(payload.get("kind"))
-            if kind.startswith("gate"):
-                latest_gate_kind = kind
+        projection = read_bounded_event_projection(plan_state_path.parent)
+        line_count = projection.record_count
+        gate_events = [
+            event
+            for kind, event in projection.latest_by_kind.items()
+            if kind.startswith("gate")
+        ]
+        if gate_events:
+            latest_gate_kind = _safe_text(
+                max(gate_events, key=lambda item: int(item.get("seq") or -1)).get(
+                    "kind"
+                )
+            )
     resume_cursor = plan_state.get("resume_cursor")
     retry_strategy = ""
     if isinstance(resume_cursor, Mapping):
