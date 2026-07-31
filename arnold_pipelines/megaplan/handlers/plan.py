@@ -326,7 +326,6 @@ def _build_verifiability_flags(
     success_criteria: list[dict[str, Any]],
     worker_caps: dict[str, set[str]],
 ) -> list[dict[str, Any]]:
-    from arnold_pipelines.megaplan.audits.capabilities import ALL_CAPABILITIES
     from arnold_pipelines.megaplan.orchestration.verifiability import audit_criteria, validate_requires
 
     flags: list[dict[str, Any]] = []
@@ -344,6 +343,14 @@ def _build_verifiability_flags(
             f"requires={sorted(str(item) for item in requires)!r}"
         )
 
+    def audit_evidence(audit: Any) -> str:
+        return (
+            f"verifiability_audit: verdict={audit.verdict!r}; "
+            f"rationale={audit.rationale!r}; "
+            f"missing_capabilities={sorted(audit.missing_caps)!r}; "
+            f"source={criterion_evidence(audit.criterion_idx)}"
+        )
+
     issues = validate_requires(success_criteria)
     for issue_str in issues:
         is_unknown_cap = "unknown capability" in issue_str
@@ -354,35 +361,29 @@ def _build_verifiability_flags(
             "evidence": concern,
             "category": "verifiability",
             "severity_hint": "likely-significant" if is_unknown_cap else "likely-minor",
-            "evidence": issue_str,
             "status": "open",
         })
 
     audits = audit_criteria(success_criteria, worker_caps)
     for audit in audits:
         if audit.verdict == "unverifiable_no_worker":
-            concern = f"Criterion {audit.criterion_idx}: {audit.rationale} Missing: {', '.join(audit.missing_caps)}"
+            concern = audit_evidence(audit)
             flags.append({
                 "id": f"verifiability-{len(flags)}",
                 "concern": concern,
                 "evidence": concern,
                 "category": "verifiability",
                 "severity_hint": "likely-significant",
-                "evidence": criterion_evidence(audit.criterion_idx),
                 "status": "open",
             })
         elif audit.verdict == "human_only":
-            concern = (
-                f"Criterion {audit.criterion_idx}: requires human verification "
-                f"({', '.join(audit.missing_caps)})."
-            )
+            concern = audit_evidence(audit)
             flags.append({
                 "id": f"verifiability-{len(flags)}",
                 "concern": concern,
                 "evidence": concern,
                 "category": "verifiability",
                 "severity_hint": "likely-minor",
-                "evidence": criterion_evidence(audit.criterion_idx),
                 "status": "open",
             })
 
