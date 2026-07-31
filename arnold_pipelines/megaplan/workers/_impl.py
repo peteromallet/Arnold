@@ -2824,7 +2824,7 @@ def _mock_result(
 # empty trace. Update both sets to add a new step.
 _MOCK_SUPPORTED_STEPS: tuple[str, ...] = (
     "plan", "prep", "prep-triage", "prep-research", "prep-distill", "loop_plan",
-    "critique", "revise", "gate", "finalize",
+    "critique_evaluator", "critique", "revise", "gate", "finalize",
     "execute", "loop_execute", "review",
 )
 _MOCK_TRACE_OUTPUTS: dict[str, str] = {

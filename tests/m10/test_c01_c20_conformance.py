@@ -43,13 +43,7 @@ generate_conformance_receipt = _TOOL_MODULE.generate_conformance_receipt
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RECEIPT_PATH = REPO_ROOT / "evidence" / "m10-c01-c20-conformance.json"
-PLAN_META_PATH = (
-    REPO_ROOT
-    / ".megaplan"
-    / "plans"
-    / "m10-safe-retry-recovery-and-20260723-1122"
-    / "plan_v9.meta.json"
-)
+PLAN_META_PATH = REPO_ROOT / "tests" / "fixtures" / "m10_success_criteria.json"
 
 
 @pytest.fixture(scope="module")
@@ -89,6 +83,9 @@ class TestStep23AC01C04LaunchSchema:
         )
         assert receipt["bound_files"]["source/runtime_attestation"] == actual
         assert actual != "MISSING"
+        criteria_hash = _sha256_file("tests/fixtures/m10_success_criteria.json")
+        assert receipt["bound_files"]["criteria/m10_success_criteria"] == criteria_hash
+        assert criteria_hash != "MISSING"
 
     def test_c01_c03_source_seed_runtime_bound(self, receipt: dict) -> None:
         c = receipt["c01_c03"]

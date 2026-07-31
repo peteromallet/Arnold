@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -182,7 +183,7 @@ def test_tier_module_only_scale_reference_is_select_batch_tier():
     """
     import arnold_pipelines.megaplan.execute._binding.tier as mod
 
-    source = textwrap.dedent(open(mod.__file__).read())
+    source = textwrap.dedent(Path(mod.__file__).read_text(encoding="utf-8"))
     tree = ast.parse(source)
 
     # Acceptable names that may reference 1..10
