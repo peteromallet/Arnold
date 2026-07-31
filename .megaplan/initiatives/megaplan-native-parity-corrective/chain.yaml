@@ -23,7 +23,7 @@ launch_preconditions:
     kind: contains_text
     text: Megaplan Native Python and Reusable Workflow Platform Representation Report
 - name: golden source-to-runtime trace contract exists
-  path: .megaplan/initiatives/megaplan-native-parity-corrective/GOLDEN_TRACE_CONTRACT.md
+  path: .megaplan/initiatives/megaplan-native-parity-corrective/validation/GOLDEN_TRACE_CONTRACT.md
   check:
     kind: contains_text
     text: Native Megaplan golden source-to-runtime trace contract

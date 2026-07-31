@@ -19,7 +19,7 @@ Make prep through revise a load-bearing authored workflow using S2's generic
 constructs, relocate WBC producers to canonical lowered nodes/children, and
 delete or hard-fence the corresponding legacy route authorities.
 
-Incrementally fill `../GOLDEN_TRACE_CONTRACT.md`: make the prep -> plan prefix,
+Incrementally fill `../validation/GOLDEN_TRACE_CONTRACT.md`: make the prep -> plan prefix,
 `NP-GT-001`, and `NP-GT-002` green with same-run ordered/multiset traces.
 
 ## Mandatory internal stop/go boundary

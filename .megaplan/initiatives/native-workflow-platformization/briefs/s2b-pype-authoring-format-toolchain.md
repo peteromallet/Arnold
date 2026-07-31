@@ -20,7 +20,7 @@ model, or runtime meaning.
 ## Normative contract and inputs
 
 `docs/arnold/pype-authoring-contract.md` is the sole normative format authority.
-`../PLATFORM_CONTRACT.md` remains normative for lifecycle, composition,
+`../decisions/PLATFORM_CONTRACT.md` remains normative for lifecycle, composition,
 identity, admission, execution modes, and proof.
 
 Consume:

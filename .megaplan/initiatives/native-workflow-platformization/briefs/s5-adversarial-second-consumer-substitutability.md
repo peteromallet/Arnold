@@ -11,7 +11,7 @@ anything stable.
 
 ## Normative contract and inputs
 
-[`../PLATFORM_CONTRACT.md`](../PLATFORM_CONTRACT.md) remains normative, but its
+[`../decisions/PLATFORM_CONTRACT.md`](../decisions/PLATFORM_CONTRACT.md) remains normative, but its
 candidate version is intentionally revisable in this sprint through explicit,
 versioned amendments and migrated receipts. Consume the exact Native Parity
 handoff, the S1 candidate contract/corpus, S2A runtime, S2B authoring core,
