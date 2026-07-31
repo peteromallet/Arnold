@@ -452,28 +452,24 @@ def _select_chain_state(workspace: Path, plan_name: str, remote_spec: str) -> tu
 
 
 def _latest_acceptance_event(events_path: Path) -> dict[str, Any]:
-    latest: dict[str, Any] = {}
     try:
-        handle = events_path.open(encoding="utf-8", errors="replace")
-    except OSError:
-        return latest
-    with handle:
-        for line in handle:
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(event, dict) or event.get("kind") != "state_transition":
-                continue
-            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
-            latest = {
-                "seq": int(event.get("seq") or 0),
-                "ts_utc": str(event.get("ts_utc") or ""),
-                "kind": "state_transition",
-                "from": str(payload.get("from") or ""),
-                "to": str(payload.get("to") or ""),
-            }
-    return latest
+        from arnold_pipelines.megaplan.observability.event_checkpoint import (
+            latest_event_of_kind,
+        )
+
+        event = latest_event_of_kind(events_path.parent, "state_transition")
+    except (OSError, RuntimeError):
+        return {}
+    if not event:
+        return {}
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    return {
+        "seq": int(event.get("seq") or 0),
+        "ts_utc": str(event.get("ts_utc") or ""),
+        "kind": "state_transition",
+        "from": str(payload.get("from") or ""),
+        "to": str(payload.get("to") or ""),
+    }
 
 
 def _same_path(left: object, right: object) -> bool | None:
