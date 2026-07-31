@@ -30,6 +30,7 @@ pipeline-blind.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -44,6 +45,8 @@ from arnold.pipeline import (
     validate_payload_against_schema,
 )
 from arnold.execution.step_invocation import StepInvocation, StepInvocationAdapterRegistry
+
+logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------- #
@@ -525,18 +528,22 @@ def budget_model_input(
             max_input_tokens=limit,
             tokenizer_source="byte_estimate:fallback",
             degraded_reason="unknown_model_family",
+            hard_limit=max_input_tokens is not None,
         )
 
     defaults = _FAMILY_BUDGET_DEFAULTS[family]
-    source = defaults.tokenizer_source
-    token_count = _count_tokens_for_family(text, family)
-    if source == "hf:auto" and _TOKENIZER_CACHE.get(family.value) is None:
-        source = "byte_estimate:fallback"
+    token_count, source, exact = _count_tokens_for_family(text, family)
     return _checked_budget(
         family=family,
         input_tokens=token_count,
         max_input_tokens=max_input_tokens or defaults.max_input_tokens,
         tokenizer_source=source,
+        degraded_reason=None if exact else "estimated_token_count",
+        # A caller-supplied cap is an explicit execution contract. Family
+        # defaults are hard only when backed by the family's real tokenizer;
+        # a conservative fallback estimate must not manufacture a provider
+        # rejection (the provider still enforces its actual context window).
+        hard_limit=max_input_tokens is not None or exact,
     )
 
 
@@ -582,14 +589,26 @@ def _checked_budget(
     max_input_tokens: int,
     tokenizer_source: str,
     degraded_reason: str | None = None,
+    hard_limit: bool = True,
 ) -> ModelBudget:
     status = (
         BudgetStatus.DEGRADED_FALLBACK if degraded_reason else BudgetStatus.WITHIN_BUDGET
     )
     if input_tokens > max_input_tokens:
-        raise ModelBudgetError(
-            f"model input budget exceeded: {input_tokens} tokens > {max_input_tokens} tokens"
+        if hard_limit:
+            raise ModelBudgetError(
+                f"model input budget exceeded: {input_tokens} tokens > {max_input_tokens} tokens"
+            )
+        logger.warning(
+            "estimated model input budget exceeded; allowing provider validation: "
+            "%s estimated tokens > %s tokens for family=%s source=%s",
+            input_tokens,
+            max_input_tokens,
+            family.value if family is not None else None,
+            tokenizer_source,
         )
+        status = BudgetStatus.EXCEEDED
+        degraded_reason = "estimated_input_budget_exceeded"
     return ModelBudget(
         family=family,
         input_tokens=input_tokens,
@@ -600,23 +619,36 @@ def _checked_budget(
     )
 
 
-def _count_tokens_for_family(text: str, family: ModelFamily) -> int:
+def _count_tokens_for_family(
+    text: str, family: ModelFamily
+) -> tuple[int, str, bool]:
+    """Return ``(count, source, exact)`` for the selected family.
+
+    ``exact`` means the count came from the tokenizer configured for that
+    family. Conservative estimates remain visible but are not allowed to turn
+    a guessed family default into a false hard block.
+    """
+
     if family is ModelFamily.CODEX:
         try:
             import tiktoken  # type: ignore[import-not-found]
 
-            return len(tiktoken.get_encoding("o200k_base").encode(text))
+            return (
+                len(tiktoken.get_encoding("o200k_base").encode(text)),
+                "tiktoken:o200k_base",
+                True,
+            )
         except Exception:
-            return _fallback_token_count(text)
+            return _fallback_token_count(text), "byte_estimate:fallback", False
     if family is ModelFamily.CLAUDE:
-        return _fallback_token_count(text)
+        return _fallback_token_count(text), "claude_conservative_estimate", False
     tokenizer_name = _HF_TOKENIZERS.get(family)
     if tokenizer_name is None:
-        return _fallback_token_count(text)
+        return _fallback_token_count(text), "byte_estimate:fallback", False
     tokenizer = _lazy_hf_tokenizer(tokenizer_name, family)
     if tokenizer is None:
-        return _fallback_token_count(text)
-    return len(tokenizer.encode(text))
+        return _fallback_token_count(text), "byte_estimate:fallback", False
+    return len(tokenizer.encode(text)), f"hf:{tokenizer_name}", True
 
 
 def _lazy_hf_tokenizer(tokenizer_name: str, family: ModelFamily) -> Any | None:
