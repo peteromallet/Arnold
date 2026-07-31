@@ -1,0 +1,288 @@
+base_branch: editible-install
+
+anchors:
+  north_star: NORTHSTAR.md
+
+launch_preconditions:
+  - name: milestone-gate bootstrap completed and bound this exact downstream specification
+    kind: chain_completed
+    chain: .megaplan/initiatives/megaplan-chain-milestone-gates/chain.yaml
+    require_manifest: true
+    required_proof_artifacts:
+      - .megaplan/initiatives/megaplan-chain-milestone-gates/downstream-spec-readiness.json
+      - .megaplan/initiatives/megaplan-chain-milestone-gates/completion-crosswalk-readiness.json
+      - .megaplan/initiatives/megaplan-chain-milestone-gates/editable-runtime-readiness.json
+  - name: native parity completed and its validated manifest binds the exact platformization handoff
+    kind: chain_completed
+    chain: .megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml
+    require_manifest: true
+    required_proof_artifacts:
+      - .megaplan/initiatives/megaplan-native-parity-corrective/final-proof-map.json
+      - .megaplan/initiatives/megaplan-native-parity-corrective/platformization-handoff-manifest.json
+      - .megaplan/initiatives/megaplan-native-parity-corrective/completion-kernel-c1-manifest.json
+      - .megaplan/initiatives/megaplan-native-parity-corrective/completion-kernel-c2-manifest.json
+      - .megaplan/initiatives/megaplan-native-parity-corrective/completion-kernel-enablement-receipt.json
+      - .megaplan/initiatives/megaplan-native-parity-corrective/completion-divergence-ledger.json
+  - name: bootstrap produced launch-ready downstream chain specifications
+    path: .megaplan/initiatives/megaplan-chain-milestone-gates/downstream-spec-readiness.json
+  - name: bootstrap produced mechanically validated completion traceability
+    path: .megaplan/initiatives/megaplan-chain-milestone-gates/completion-crosswalk-readiness.json
+  - name: bootstrap attested the approved editable runtime identity
+    path: .megaplan/initiatives/megaplan-chain-milestone-gates/editable-runtime-readiness.json
+  - name: exact Native-to-Platformization handoff exists
+    path: .megaplan/initiatives/megaplan-native-parity-corrective/platformization-handoff-manifest.json
+  - name: Native C1 completion manifest exists
+    path: .megaplan/initiatives/megaplan-native-parity-corrective/completion-kernel-c1-manifest.json
+  - name: Native C2 completion manifest exists
+    path: .megaplan/initiatives/megaplan-native-parity-corrective/completion-kernel-c2-manifest.json
+  - name: sole Native S2R completion-kernel enablement receipt exists
+    path: .megaplan/initiatives/megaplan-native-parity-corrective/completion-kernel-enablement-receipt.json
+  - name: current content-addressed completion divergence ledger exists
+    path: .megaplan/initiatives/megaplan-native-parity-corrective/completion-divergence-ledger.json
+  - name: holistic native workflow representation report exists
+    path: docs/arnold/megaplan-native-representation-report.md
+    check:
+      kind: contains_text
+      text: Megaplan Native Python and Reusable Workflow Platform Representation Report
+  - name: platform contract exists
+    path: .megaplan/initiatives/native-workflow-platformization/PLATFORM_CONTRACT.md
+    check:
+      kind: contains_text
+      text: Native Workflow Platformization Contract
+  - name: platformization initiative source is committed and clean
+    kind: git_tracked
+    path: .megaplan/initiatives/native-workflow-platformization
+
+milestones:
+  - label: s1-component-standard-extraction-inventory
+    idea: .megaplan/initiatives/native-workflow-platformization/briefs/s1-component-standard-extraction-inventory.md
+    profile: apex
+    robustness: extreme
+    depth: max
+    with_prep: true
+    validate:
+      - kind: conformance_gate
+        validator: scripts/validate_native_workflow_platform_stage_gate.py
+        conformance: docs/arnold/native-workflow-platform-conformance.yaml
+        traceability: docs/arnold/native-workflow-platform-traceability.yaml
+        proof_map: .megaplan/initiatives/native-workflow-platformization/s1-proof-map.json
+        receipt: .megaplan/initiatives/native-workflow-platformization/.megaplan/evidence/s1-stage-validation-receipt.json
+    notes: >-
+      Consume the hashed Native Parity handoff; freeze the candidate descriptor,
+      conservative executable-closure digest, distribution/fork authority,
+      finite route discriminants, root-adapter ownership, sole machine
+      mode/disposition/store registry, lifecycle, composition, allowlist,
+      independent-profile and proof contracts plus executable negative and DX
+      corpora. Inventory the exact Native completion schemas, candidate-outcome
+      registry, adapters, proof corpus, current divergence-ledger hash,
+      legacy-writer retirement and Custody bounded-projection receipt, while
+      keeping enforcement dispositions distinct through one total generated
+      mapping. The standard remains experimental.
+
+  - label: s2a-enforced-composition-resolution-package-surface
+    idea: .megaplan/initiatives/native-workflow-platformization/briefs/s2a-enforced-composition-resolution-package-surface.md
+    profile: apex
+    robustness: extreme
+    depth: max
+    depends_on:
+      - s1-component-standard-extraction-inventory
+    validate:
+      - kind: conformance_gate
+        validator: scripts/validate_native_workflow_platform_stage_gate.py
+        conformance: docs/arnold/native-workflow-platform-conformance.yaml
+        traceability: docs/arnold/native-workflow-platform-traceability.yaml
+        proof_map: .megaplan/initiatives/native-workflow-platformization/s2a-proof-map.json
+        receipt: .megaplan/initiatives/native-workflow-platformization/.megaplan/evidence/s2a-stage-validation-receipt.json
+    transition:
+      kind: receipt_consuming_transition
+      transition_id: promote-product-neutral-workflow-runtime
+      handler: scripts/promote_native_workflow_platform_runtime.py
+      input_receipts:
+        - current_validation
+        - .megaplan/initiatives/megaplan-native-parity-corrective/completion-kernel-enablement-receipt.json
+      output_receipt: .megaplan/initiatives/native-workflow-platformization/.megaplan/evidence/s2a-runtime-promotion-receipt.json
+      verify:
+        kind: conformance_gate
+        validator: scripts/validate_native_workflow_platform_transition.py
+        conformance: docs/arnold/native-workflow-platform-conformance.yaml
+        traceability: docs/arnold/native-workflow-platform-traceability.yaml
+        proof_map: .megaplan/initiatives/native-workflow-platformization/s2a-proof-map.json
+        receipt: .megaplan/initiatives/native-workflow-platformization/.megaplan/evidence/s2a-post-transition-verification-receipt.json
+    notes: >-
+      Promote the accepted runtime/adapters in place without a fork; implement
+      product-neutral validation, lowering, lifecycle, admission, authority,
+      durable state, independent profile re-derivation and local-test semantics
+      against S1; prove real-store CAS, deterministic locks, authority/effect
+      joins and logical store/mode isolation, then require the exact accepted
+      readiness receipt in the typed canonical runtime-selection transition
+      and require the post-transition verifier before completion. Extract the
+      exact already-enabled Native completion admission/binding/evaluation/
+      evidence-scope/inspection implementation in place without forking the
+      acceptance transaction or performing another kernel enablement.
+
+  - label: s2b-pype-authoring-core
+    idea: .megaplan/initiatives/native-workflow-platformization/briefs/s2b-pype-authoring-format-toolchain.md
+    profile: apex
+    robustness: extreme
+    depth: max
+    with_prep: true
+    depends_on:
+      - s2a-enforced-composition-resolution-package-surface
+    validate:
+      - kind: conformance_gate
+        validator: scripts/validate_native_workflow_platform_stage_gate.py
+        conformance: docs/arnold/native-workflow-platform-conformance.yaml
+        traceability: docs/arnold/native-workflow-platform-traceability.yaml
+        proof_map: .megaplan/initiatives/native-workflow-platformization/s2b-proof-map.json
+        receipt: .megaplan/initiatives/native-workflow-platformization/.megaplan/evidence/s2b-stage-validation-receipt.json
+    notes: >-
+      Productize the S4-blocking one-workflow-per-file .pype core: static
+      frontend/linker, conservative executable-closure digest, governed
+      distribution/package identity, source correspondence, converter,
+      transactional refactors, completion-template derivation from canonical
+      identity/locks and install equivalence. Do not absorb S3 DX.
+
+  - label: s3-developer-experience-tooling
+    idea: .megaplan/initiatives/native-workflow-platformization/briefs/s3-developer-experience-tooling.md
+    profile: premium
+    robustness: thorough
+    depth: xhigh
+    with_prep: true
+    depends_on:
+      - s2b-pype-authoring-core
+    validate:
+      - kind: conformance_gate
+        validator: scripts/validate_native_workflow_platform_stage_gate.py
+        conformance: docs/arnold/native-workflow-platform-conformance.yaml
+        traceability: docs/arnold/native-workflow-platform-traceability.yaml
+        proof_map: .megaplan/initiatives/native-workflow-platformization/s3-proof-map.json
+        receipt: .megaplan/initiatives/native-workflow-platformization/.megaplan/evidence/s3-stage-validation-receipt.json
+    notes: >-
+      Complete the generic CLI/editor/navigation/format/lint/topology/preview,
+      completion inspection/generated machine-and-Markdown projections and test
+      experience over the exact S2B/S2A semantics; prove actionable diagnostics,
+      projection non-authority, unfamiliar-author tasks, benchmarks and no
+      manual generated metadata before reusable extraction.
+
+  - label: s4-isolated-extraction-recomposition
+    idea: .megaplan/initiatives/native-workflow-platformization/briefs/s4-isolated-extraction-recomposition.md
+    profile: partnered-5
+    robustness: thorough
+    depth: xhigh
+    depends_on:
+      - s3-developer-experience-tooling
+    validate:
+      - kind: conformance_gate
+        validator: scripts/validate_native_workflow_platform_stage_gate.py
+        conformance: docs/arnold/native-workflow-platform-conformance.yaml
+        traceability: docs/arnold/native-workflow-platform-traceability.yaml
+        proof_map: .megaplan/initiatives/native-workflow-platformization/s4-proof-map.json
+        receipt: .megaplan/initiatives/native-workflow-platformization/.megaplan/evidence/s4-stage-validation-receipt.json
+    transition:
+      kind: receipt_consuming_transition
+      transition_id: migrate-megaplan-to-shared-workflow-platform
+      handler: scripts/migrate_megaplan_to_native_workflow_platform.py
+      input_receipts:
+        - current_validation
+        - milestone_validation:s2a-enforced-composition-resolution-package-surface
+        - .megaplan/initiatives/megaplan-native-parity-corrective/completion-kernel-enablement-receipt.json
+      output_receipt: .megaplan/initiatives/native-workflow-platformization/.megaplan/evidence/s4-megaplan-binding-migration-receipt.json
+      verify:
+        kind: conformance_gate
+        validator: scripts/validate_native_workflow_platform_transition.py
+        conformance: docs/arnold/native-workflow-platform-conformance.yaml
+        traceability: docs/arnold/native-workflow-platform-traceability.yaml
+        proof_map: .megaplan/initiatives/native-workflow-platformization/s4-proof-map.json
+        receipt: .megaplan/initiatives/native-workflow-platformization/.megaplan/evidence/s4-post-transition-verification-receipt.json
+    notes: >-
+      Extract the first-wave patterns and exact Native completion candidate,
+      make Megaplan consume them with no duplicate completion writer, and prove
+      concurrent-instance isolation, shape-independent recomposition,
+      suspension/cancellation/replay safety, developer iteration and unchanged
+      Megaplan golden behavior. The active Megaplan binding/lock changes only
+      through the typed transition that consumes the exact readiness receipt,
+      and the post-transition S4 verifier must accept the selected binding.
+
+  - label: s5-adversarial-second-consumer-substitutability
+    idea: .megaplan/initiatives/native-workflow-platformization/briefs/s5-adversarial-second-consumer-substitutability.md
+    profile: apex
+    robustness: extreme
+    depth: max
+    with_prep: true
+    depends_on:
+      - s4-isolated-extraction-recomposition
+    validate:
+      - kind: conformance_gate
+        validator: scripts/validate_native_workflow_platform_stage_gate.py
+        conformance: docs/arnold/native-workflow-platform-conformance.yaml
+        traceability: docs/arnold/native-workflow-platform-traceability.yaml
+        proof_map: .megaplan/initiatives/native-workflow-platformization/s5-proof-map.json
+        receipt: .megaplan/initiatives/native-workflow-platformization/.megaplan/evidence/s5-stage-validation-receipt.json
+    notes: >-
+      Challenge the candidate standard with an executable independence
+      manifest/scan for an unrelated non-Megaplan consumer with different
+      completion obligations, a human/effect boundary and admitted rework or
+      analogous new work, novel composition shapes and an independently
+      originated implementation; permit generic
+      platform/component imports while proving zero Megaplan product coupling;
+      separately prove new-instance/resume compatibility, profile re-derivation,
+      allowlist replay/invalidation and cross-consumer observability.
+
+  - label: s6-certification-evolution-adoption
+    idea: .megaplan/initiatives/native-workflow-platformization/briefs/s6-certification-evolution-adoption.md
+    profile: premium
+    robustness: thorough
+    depth: xhigh
+    depends_on:
+      - s5-adversarial-second-consumer-substitutability
+    validate:
+      - kind: final_conformance_gate
+        validator: scripts/validate_native_workflow_platform_conformance.py
+        conformance: docs/arnold/native-workflow-platform-conformance.yaml
+        traceability: docs/arnold/native-workflow-platform-traceability.yaml
+        proof_map: .megaplan/initiatives/native-workflow-platformization/final-proof-map.json
+        receipt: .megaplan/initiatives/native-workflow-platformization/.megaplan/evidence/s6-final-validation-receipt.json
+    transition:
+      kind: receipt_consuming_transition
+      transition_id: publish-stable-workflow-platform
+      handler: scripts/publish_native_workflow_platform.py
+      input_receipts:
+        - current_validation
+        - milestone_validation:s5-adversarial-second-consumer-substitutability
+        - .megaplan/initiatives/native-workflow-platformization/.megaplan/evidence/s4-megaplan-binding-migration-receipt.json
+      output_receipt: .megaplan/initiatives/native-workflow-platformization/.megaplan/evidence/s6-stable-publication-receipt.json
+      verify:
+        kind: final_conformance_gate
+        validator: scripts/validate_native_workflow_platform_transition.py
+        conformance: docs/arnold/native-workflow-platform-conformance.yaml
+        traceability: docs/arnold/native-workflow-platform-traceability.yaml
+        proof_map: .megaplan/initiatives/native-workflow-platformization/final-proof-map.json
+        receipt: .megaplan/initiatives/native-workflow-platformization/.megaplan/evidence/s6-post-transition-verification-receipt.json
+    notes: >-
+      Incorporate the adversarial-consumer changes, freeze and certify the
+      stable public standard, canonical-workflow discovery/default selection/linking,
+      evolution and refactoring rules, DX baselines, registry states,
+      validator self-mutations and the content-addressed completion manifest.
+      Unproven abstractions remain experimental; the stable-publication
+      transition consumes exact final-readiness, and a post-transition final
+      verifier must accept the published state before completion. Preserve the
+      internal persisted-wire/decoder promise that began at Native S2R GO-0;
+      only the two-consumer-proven public authoring/API surface is published.
+
+on_failure:
+  retry: retry_milestone
+  escalate: bump_profile
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+
+merge_policy: auto
+prerequisite_policy: required
+validation_policy: required
+
+driver:
+  auto_approve: true
+  max_iterations: 90
+  require_clean_base: true
+  robustness: thorough
+  poll_sleep: 8.0

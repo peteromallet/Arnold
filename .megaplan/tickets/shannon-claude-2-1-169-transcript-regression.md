@@ -1,3 +1,19 @@
+---
+id: shannon-claude-2-1-169-transcript-regression
+title: Shannon transcript detection broken by Claude Code v2.1.169
+status: open
+source: human
+tags:
+- bug
+- shannon
+- claude
+- transcript
+codebase_id: null
+created_at: '2026-06-09T00:00:00+00:00'
+last_edited_at: '2026-07-30T19:00:00+00:00'
+epics: []
+---
+
 # Shannon transcript detection broken by Claude Code v2.1.169 (ai-title-only transcripts)
 
 Severity: BLOCKER for all vendor=claude phases (plan/execute/review) driven via Shannon.
