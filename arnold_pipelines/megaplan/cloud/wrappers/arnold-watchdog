@@ -118,7 +118,7 @@ REPAIR_DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
 STATUS_DIR="${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}"
 REPAIR_ENABLED="${ARNOLD_REPAIR_TRIGGER_ENABLED:-1}"
 CODEX_REPAIR_MODEL="${CLOUD_WATCHDOG_CODEX_REPAIR_MODEL:-gpt-5.6-sol}"
-PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-1}"
+PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-0}"
 CODEX_TIMEOUT="${CLOUD_WATCHDOG_CODEX_TIMEOUT_SECS:-7200}"
 REAP_AGE_SECS="${CLOUD_WATCHDOG_REAP_AGE_SECS:-7200}"
 REAP_ORPHAN_AGE_SECS="${CLOUD_WATCHDOG_REAP_ORPHAN_AGE_SECS:-3900}"
@@ -126,7 +126,7 @@ REAP_STALL_GRACE_SECS="${CLOUD_WATCHDOG_REAP_STALL_GRACE_SECS:-900}"
 REAP_STALL_IDLE_SECS="${CLOUD_WATCHDOG_REAP_STALL_IDLE_SECS:-600}"
 REPAIR_DATA_RETENTION_INTERVAL_SECS="${CLOUD_WATCHDOG_REPAIR_DATA_RETENTION_INTERVAL_SECS:-21600}"
 ENV_GONE_STRIKES="${CLOUD_WATCHDOG_ENV_GONE_STRIKES:-3}"
-SRC_DIR="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
+SRC_DIR="${MEGAPLAN_RUNTIME_SRC:-${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}}"
 SYNC_ENABLED="${CLOUD_WATCHDOG_SYNC_ENABLED:-1}"
 SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
 SYNC_REPO="${CLOUD_WATCHDOG_SYNC_REPO:-${MEGAPLAN_REPO:-}}"
@@ -4279,6 +4279,40 @@ PY
 
 stale_marker_relaunch_command() {
   local relaunch_command="${1:-}"
+  # A persisted relaunch command is historical data, never a publication or
+  # installation grant.  Older markers could carry remote writes or replace
+  # the selected runtime.  Regenerate those commands from the current wrapper,
+  # whose publication policy and runtime custody are evaluated now.
+  [[ "$relaunch_command" == *'source checkout dirty; using clean runtime mirror'* ]] && return 0
+  [[ "$relaunch_command" == *'source checkout has local commits not contained in origin/'* ]] && return 0
+  [[ "$relaunch_command" == *'attempting push'* ]] && return 0
+  [[ "$relaunch_command" == *'git -C "$SRC" push origin'* ]] && return 0
+  [[ "$relaunch_command" == *'pip install '* ]] && return 0
+  [[ "$relaunch_command" == *'pip3 install '* ]] && return 0
+  [[ "$relaunch_command" == *'python -m pip install '* ]] && return 0
+  [[ "$relaunch_command" == *'python3 -m pip install '* ]] && return 0
+  [[ "$relaunch_command" =~ git[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?(push|pull|fetch|clone|checkout|switch|reset|merge|rebase|commit) ]] && return 0
+  [[ "$relaunch_command" == *'git push '* ]] && return 0
+  [[ "$relaunch_command" == *'git pull '* ]] && return 0
+  [[ "$relaunch_command" == *'git fetch '* ]] && return 0
+  [[ "$relaunch_command" == *'git clone '* ]] && return 0
+  [[ "$relaunch_command" == *'git checkout '* ]] && return 0
+  [[ "$relaunch_command" == *'git switch '* ]] && return 0
+  [[ "$relaunch_command" == *'git reset '* ]] && return 0
+  [[ "$relaunch_command" == *'git merge '* ]] && return 0
+  [[ "$relaunch_command" == *'git rebase '* ]] && return 0
+  [[ "$relaunch_command" == *'git commit '* ]] && return 0
+  [[ "$relaunch_command" == *'rm '* ]] && return 0
+  [[ "$relaunch_command" == *'mv '* ]] && return 0
+  [[ "$relaunch_command" == *'cp '* ]] && return 0
+  [[ "$relaunch_command" == *'touch '* ]] && return 0
+  [[ "$relaunch_command" == *'mkdir '* ]] && return 0
+  [[ "$relaunch_command" == *'chmod '* ]] && return 0
+  [[ "$relaunch_command" == *'chown '* ]] && return 0
+  [[ "$relaunch_command" == *'tee '* ]] && return 0
+  [[ "$relaunch_command" == *'sed -i '* ]] && return 0
+  [[ "$relaunch_command" == *' >>'* ]] && return 0
+  [[ "$relaunch_command" == *' >'* ]] && return 0
   [[ "$relaunch_command" == *"[megaplan-refresh] refusing editable install refresh:"* ]] || return 1
   [[ "$relaunch_command" == *'source checkout dirty; using current source checkout at $SRC to avoid stale runtime mirror'* ]] && return 1
   [[ "$relaunch_command" == *'git -C "$MEGAPLAN_RUNTIME_SRC" merge-base --is-ancestor HEAD "origin/$REF"'* ]] && return 1
@@ -4289,7 +4323,7 @@ default_chain_relaunch_command() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
-  local log_relative repo runtime_src
+  local log_relative repo runtime_src repair_queue_root repair_marker_dir
   if [[ "$session" == "megaplan-chain" ]]; then
     log_relative=".megaplan/cloud-chain.log"
   else
@@ -4300,7 +4334,13 @@ default_chain_relaunch_command() {
     https://*@github.com/*) repo="https://github.com/${repo#*@github.com/}" ;;
   esac
   runtime_src="$workspace/.megaplan/runtime/editable-engine"
-  printf '{ set -e
+  repair_marker_dir="${MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
+  repair_queue_root="${ARNOLD_REPAIR_QUEUE_ROOT:-${repair_marker_dir%/*}/repair-queue}"
+  printf 'export ARNOLD_REPAIR_QUEUE_ROOT=%q
+export ARNOLD_REPAIR_MARKER_DIR=%q
+export ARNOLD_REPAIR_SESSION=%q
+export ARNOLD_REPAIR_RUN_KIND=%q
+{ set -e
 echo "[megaplan-refresh] $(date -Iseconds) starting"
 SRC=%q
 REPO=%q
@@ -4345,6 +4385,7 @@ else
 fi
 echo "[megaplan-refresh] done"
 true; } >> %q 2>&1 && if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}" MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
+    "$repair_queue_root" "$repair_marker_dir" "$session" "chain" \
     "$SRC_DIR" "$repo" "$SYNC_BRANCH" "$runtime_src" "$workspace/$log_relative" "$workspace" "$remote_spec" "$workspace" "$workspace/$log_relative"
 }
 
@@ -5044,13 +5085,17 @@ dispatch_kimi_repair() {
   local pgid_path repair_busy claim_status request_id blocker_id managed_identity incident_id
   local run_id_file launch_evidence child_pid inherited_goal_id inherited_goal_path
   local inherited_checkpoint_digest inherited_goal_blocker inherited_goal_request inherited_retry_sequence
-  local gate_json gate_open reason
+  local gate_json gate_open reason repair_run_kind
   local -a managed_cmd
   REPAIR_DISPATCH_RESULT="unavailable"
   REPAIR_DISPATCH_RUN_ID=""
   REPAIR_DISPATCH_MANIFEST=""
   request_id=""
   blocker_id=""
+  repair_run_kind="chain"
+  if [[ -n "${PLAN_STATUS_PLAN_NAME:-}" ]]; then
+    repair_run_kind="plan"
+  fi
   if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" ]]; then
     request_id="${PLAN_STATUS_REQUEST_ID:-}"
     blocker_id="${PLAN_STATUS_BLOCKER_ID:-}"
@@ -5258,6 +5303,11 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
     CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$$" \
+    ARNOLD_REPAIR_QUEUE_ROOT="${ARNOLD_REPAIR_QUEUE_ROOT:-${MARKER_DIR%/*}/repair-queue}" \
+    ARNOLD_REPAIR_MARKER_DIR="$MARKER_DIR" \
+    ARNOLD_REPAIR_SESSION="$session" \
+    ARNOLD_REPAIR_RUN_KIND="$repair_run_kind" \
+    ARNOLD_REPAIR_RUNTIME_SRC="$SRC_DIR" \
     ARNOLD_REPAIR_GOAL_ID="$inherited_goal_id" \
     ARNOLD_REPAIR_GOAL_PATH="$inherited_goal_path" \
     ARNOLD_REPAIR_CHECKPOINT_DIGEST="$inherited_checkpoint_digest" \
@@ -5269,6 +5319,11 @@ pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
     CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID="$$" \
+    ARNOLD_REPAIR_QUEUE_ROOT="${ARNOLD_REPAIR_QUEUE_ROOT:-${MARKER_DIR%/*}/repair-queue}" \
+    ARNOLD_REPAIR_MARKER_DIR="$MARKER_DIR" \
+    ARNOLD_REPAIR_SESSION="$session" \
+    ARNOLD_REPAIR_RUN_KIND="$repair_run_kind" \
+    ARNOLD_REPAIR_RUNTIME_SRC="$SRC_DIR" \
     ARNOLD_REPAIR_GOAL_ID="$inherited_goal_id" \
     ARNOLD_REPAIR_GOAL_PATH="$inherited_goal_path" \
     ARNOLD_REPAIR_CHECKPOINT_DIGEST="$inherited_checkpoint_digest" \
@@ -5868,10 +5923,15 @@ dispatch_meta_repair() {
   local report_items="$4"
   local trigger_label="${5:-}"
   local pgid_path repair_busy recursion_result request_id blocker_id incident_id parent_run_id managed_identity run_id_file launch_evidence child_pid
+  local repair_run_kind
   local -a managed_cmd
   REPAIR_DISPATCH_RESULT="unavailable"
   REPAIR_DISPATCH_RUN_ID=""
   REPAIR_DISPATCH_MANIFEST=""
+  repair_run_kind="chain"
+  if [[ -n "${PLAN_STATUS_PLAN_NAME:-}" ]]; then
+    repair_run_kind="plan"
+  fi
 
   # Feature-flag gate: META_REPAIR_ENABLED defaults on; explicit "0"/"false"/"no"/"off" disables it.
   case "${META_REPAIR_ENABLED_FLAG:-1}" in
@@ -6024,6 +6084,11 @@ PY
     PYTHONPATH="${WRAPPER_REPO_ROOT}:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
+    ARNOLD_REPAIR_QUEUE_ROOT="${ARNOLD_REPAIR_QUEUE_ROOT:-${MARKER_DIR%/*}/repair-queue}" \
+    ARNOLD_REPAIR_MARKER_DIR="$MARKER_DIR" \
+    ARNOLD_REPAIR_SESSION="$session" \
+    ARNOLD_REPAIR_RUN_KIND="$repair_run_kind" \
+    ARNOLD_REPAIR_RUNTIME_SRC="$SRC_DIR" \
     setsid "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   else
@@ -6031,6 +6096,11 @@ PY
     PYTHONPATH="${WRAPPER_REPO_ROOT}:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
     CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$request_id" \
     CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$blocker_id" \
+    ARNOLD_REPAIR_QUEUE_ROOT="${ARNOLD_REPAIR_QUEUE_ROOT:-${MARKER_DIR%/*}/repair-queue}" \
+    ARNOLD_REPAIR_MARKER_DIR="$MARKER_DIR" \
+    ARNOLD_REPAIR_SESSION="$session" \
+    ARNOLD_REPAIR_RUN_KIND="$repair_run_kind" \
+    ARNOLD_REPAIR_RUNTIME_SRC="$SRC_DIR" \
     "${managed_cmd[@]}" \
       >> "$LOG" 2>&1 < /dev/null &
   fi
