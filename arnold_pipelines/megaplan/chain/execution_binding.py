@@ -428,6 +428,40 @@ def _normalized_runtime_identity(identity: Mapping[str, Any]) -> dict[str, Any]:
     return value
 
 
+def _persisted_runtime_identity_sha256(identity: Mapping[str, Any]) -> str:
+    """Verify and return the digest stored by the authoritative state writer.
+
+    Older runtime identities included the independently verified Shannon
+    dependency receipt in their content-addressed payload.  Current semantic
+    comparison intentionally projects that field away, but a rebind's
+    ``from`` guard must still CAS the exact identity that is byte-persisted in
+    chain state.  Only that one known legacy extension is accepted.
+    """
+
+    allowed = set(_runtime_identity_core(identity)) | {
+        "content_sha256",
+        "shannon_dependencies",
+    }
+    unexpected = sorted(set(identity) - allowed)
+    if unexpected:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: persisted runtime identity has unsupported "
+            "fields: " + ", ".join(unexpected),
+        )
+    supplied = str(identity.get("content_sha256") or "")
+    payload = {key: value for key, value in identity.items() if key != "content_sha256"}
+    observed = _sha256_bytes(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+    if not _FULL_SHA256.fullmatch(supplied) or supplied != observed:
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: persisted runtime identity digest is invalid",
+        )
+    return supplied
+
+
 def _json_object(path: Path, *, label: str) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -1350,6 +1384,27 @@ def rebind_runtime_identity(
     ):
         raise CliError(RUNTIME_DRIFT_ERROR, "every runtime rebind guard is required")
 
+    metadata = dict(getattr(state, "metadata", {}) or {})
+    execution_binding = metadata.get("execution_binding")
+    execution_binding = (
+        execution_binding if isinstance(execution_binding, Mapping) else {}
+    )
+    persisted_runtime_binding = execution_binding.get("runtime_binding")
+    persisted_runtime_binding = (
+        persisted_runtime_binding
+        if isinstance(persisted_runtime_binding, Mapping)
+        else {}
+    )
+    persisted_identity = persisted_runtime_binding.get("current_identity")
+    if not isinstance(persisted_identity, Mapping):
+        raise CliError(
+            RUNTIME_DRIFT_ERROR,
+            "runtime rebind refused: persisted runtime identity is missing",
+        )
+    persisted_previous_sha256 = _persisted_runtime_identity_sha256(
+        persisted_identity
+    )
+
     external_identity = (
         _normalized_runtime_identity(verified_external_runtime_identity)
         if isinstance(verified_external_runtime_identity, Mapping)
@@ -1392,9 +1447,8 @@ def rebind_runtime_identity(
             RUNTIME_DRIFT_ERROR,
             f"runtime rebind refused: status is {report.get('status')!r}, not drift",
         )
-    previous = report.get("expected") or {}
     active = report.get("active") or {}
-    if previous.get("content_sha256") != expected_previous_runtime_sha256:
+    if persisted_previous_sha256 != expected_previous_runtime_sha256:
         raise CliError(RUNTIME_DRIFT_ERROR, "previous runtime SHA-256 does not match")
     if active.get("content_sha256") != expected_active_runtime_sha256:
         raise CliError(RUNTIME_DRIFT_ERROR, "active runtime SHA-256 does not match")
