@@ -6,6 +6,11 @@ declare Custody, Superpom, Withings, or the release complete merely because a
 process is alive. Completion requires the terminal projections and live probes
 below.
 
+> **Authority status (M11):** The `docker exec` invocations below are
+> non-authoritative transport for checkpointing, selector mutation, and
+> read-only probes inside the already selected container. They do not grant
+> repair authority or replace the canonical recovery delegation path.
+
 The procedure deliberately separates four identities:
 
 1. the reviewed Git commit;
