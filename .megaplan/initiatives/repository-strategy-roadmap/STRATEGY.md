@@ -22,6 +22,61 @@ Arnold builds intelligent pipelines out of many coordinated models. Its first to
 - Run state is durable and recoverable; custody and audit trails are first-class.
 - The strategy contract separates stable direction from the living roadmap.
 
+### Native workflow program sequence
+
+The authoritative rationale and ownership split live in
+[`docs/arnold/completion-spec-sequencing-and-ownership.md`](../../../docs/arnold/completion-spec-sequencing-and-ownership.md).
+The required native critical path is:
+
+1. accept and manifest the post-M11 Custody release;
+2. complete the one-sprint
+   [`megaplan-chain-milestone-gates`](../megaplan-chain-milestone-gates/)
+   bootstrap;
+3. run
+   [`megaplan-native-parity-corrective`](../megaplan-native-parity-corrective/)
+   through its ordered `S1 -> S2F -> C1 -> C2 -> S2R -> S3A -> S3B -> S4
+   -> S5A -> S5B -> S6 -> S7` chain; and
+4. only then run
+   [`native-workflow-platformization`](../native-workflow-platformization/)
+   through `S1 -> S2A -> S2B -> S3 -> S4 -> S5 -> S6`.
+
+The completion kernel is deliberately embedded as Native Parity C1/C2 after
+S2F establishes canonical subject identity and before S2R makes durable
+control primitives authoritative. The preserved
+[`standardized-completion-specifications`](../standardized-completion-specifications/)
+initiative is a normative requirement and traceability index only. It is
+retired, non-launchable, and must never become a competing chain or authority.
+
+The
+[`critique-ledger`](../critique-ledger/)
+initiative is a separate product integration line, not a fourth native
+substrate owner. Run it only on the accepted post-M11 release and, operationally,
+finish it before Native Parity begins; the latest safe boundary is before
+Native S3A migrates the critique path. This ordering avoids concurrent
+authority-changing cutovers while leaving the native completion-kernel
+dependency graph unchanged.
+
+### Usable exits and gates
+
+- **Post-M11 release:** the existing Megaplan product is usable on the
+  content-addressed released runtime before any follow-on initiative starts.
+- **Critique Ledger:** Megaplan remains usable throughout; exit requires the
+  cumulative finding ledger, replay/accountability proof, coordinated cutover,
+  and legacy writer/reader retirement to be accepted on that released base.
+- **Milestone-gate bootstrap:** existing workflows remain usable; exit is a
+  validated completion manifest plus content-addressed downstream-spec,
+  completion-crosswalk, and editable-runtime readiness. It prepares but does
+  not launch either downstream epic.
+- **Native Parity:** each authority-changing milestone must consume an accepted
+  predecessor receipt and pass its post-transition verifier. Epic exit leaves
+  Megaplan usable on the canonical `.pype` topology with the completion kernel
+  enabled, native execution/review/rework paths accepted, and competing legacy
+  authority retired.
+- **Native Workflow Platformization:** it starts only from the exact Native
+  Parity handoff. Epic exit leaves Megaplan as a proven consumer of the shared
+  workflow platform and permits a stable public completion/workflow API only
+  after isolated recomposition and an independent second-consumer proof.
+
 ## Constraints
 
 - Must work in dirty worktrees without cloud state for local validation.
@@ -37,11 +92,15 @@ Arnold builds intelligent pipelines out of many coordinated models. Its first to
 ## Now
 
 - [epic:repository-strategy-roadmap] Repository Strategy Roadmap
+- [epic:critique-ledger] Critique Loop / Cumulative Finding Ledger Implementation Epic
 
 ## Next
 
 - [ticket:01KTH21DTP1HR3ER5W7SRRJVV5] Prevent stale git pre-commit hook rot
+- [epic:megaplan-chain-milestone-gates] Megaplan milestone conformance-gate bootstrap
+- [epic:megaplan-native-parity-corrective] Megaplan Native Parity Corrective
 
 ## Later
 
 - [ticket:01KTH21EC489596QWBC3419JC9] Add compact megaplan monitor command for plan and chain health
+- [epic:native-workflow-platformization] Native Workflow Platformization
