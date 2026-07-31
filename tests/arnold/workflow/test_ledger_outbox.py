@@ -583,6 +583,88 @@ class TestOutboxAtomicity:
             if os.path.exists(path):
                 os.unlink(path)
 
+def test_divergent_duplicate_preserves_primary_error_when_cleanup_fails():
+    """A cleanup failure is chained as the cause, never masking the typed error.
+
+    Step 95: a failure in the cleanup path (the ROLLBACK or the best-effort
+    quarantine recording that follow divergence detection) must NEVER mask
+    the primary ``DivergentDuplicateError``. The cleanup/quarantine are not
+    authority operations, so their failure must surface as the *cause* while
+    the typed divergence error remains the primary outcome. We inject a
+    failure into the best-effort quarantine recording (imported lazily at
+    call time) and assert the typed error stays primary with the cleanup
+    failure chained, that no split-brain partial commit occurs, and that
+    retrying the same divergent event is deterministic.
+    """
+    import arnold.workflow.attempt_ledger_store as _als
+
+    path = _store_path()
+    original_quarantine = _als._record_divergent_duplicate_quarantine
+    try:
+        store = SqliteAttemptLedgerStore(path)
+        outbox = SqliteLedgerOutbox(store)
+        aid = _aid()
+        idempotency_key = "cleanup-fail-key"
+
+        original = _make_event(
+            attempt_id=aid,
+            sequence=1,
+            idempotency_key=idempotency_key,
+        )
+        outbox.append_event_with_outbox(
+            aid, original, _make_outbox_payloads(["topic.original"])
+        )
+
+        divergent = _make_completed_event(
+            attempt_id=aid,
+            sequence=2,
+            idempotency_key=idempotency_key,
+        )
+
+        cleanup_error = RuntimeError("simulated quarantine cleanup failure")
+
+        def _failing_quarantine(*args, **kwargs):
+            raise cleanup_error
+
+        _als._record_divergent_duplicate_quarantine = _failing_quarantine
+        try:
+            with pytest.raises(DivergentDuplicateError) as exc_info:
+                outbox.append_event_with_outbox(
+                    aid, divergent, _make_outbox_payloads(["topic.divergent"])
+                )
+        finally:
+            _als._record_divergent_duplicate_quarantine = original_quarantine
+
+        # Primary outcome is the typed divergence error; the cleanup failure
+        # is chained as its cause rather than masking it.
+        assert exc_info.value.__cause__ is cleanup_error
+        assert str(exc_info.value.__cause__) == "simulated quarantine cleanup failure"
+
+        # No split-brain: the original event/outbox are preserved and no
+        # extra outbox record was committed by the failed append.
+        assert store.event_count(aid) == 1
+        assert len(outbox.get_records_for_attempt(aid)) == 1
+
+        # Deterministic restart/replay: retrying the same divergent event
+        # (with quarantine healthy again) surfaces the same typed error and
+        # records exactly one quarantine diagnostic — no second effect.
+        with pytest.raises(DivergentDuplicateError):
+            outbox.append_event_with_outbox(
+                aid, divergent, _make_outbox_payloads(["topic.divergent"])
+            )
+        assert store.event_count(aid) == 1
+        quarantine_count = store.conn.execute(
+            "SELECT COUNT(*) FROM persistence_failure_diagnostics"
+            " WHERE attempt_id = ? AND failure_mode = 'divergent_duplicate'",
+            (aid,),
+        ).fetchone()[0]
+        assert quarantine_count == 1
+
+        store.close()
+    finally:
+        if os.path.exists(path):
+            os.unlink(path)
+
 
 # ── Lifecycle operations ──────────────────────────────────────────────────
 

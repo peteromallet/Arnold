@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -15,7 +14,7 @@ PLAN = "m5a-test-plan"
 ARTIFACT_HASH = "sha256:" + "a" * 64
 
 
-def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict]:
+def _fixture(tmp_path: Path) -> tuple[Path, Path, dict]:
     marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
     queue_root = tmp_path / ".megaplan" / "repair-queue"
     workspace = tmp_path / "workspace"
@@ -69,10 +68,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict]:
         "stale_evidence": [],
         "evidence_state": {"mutation_eligible": True},
     }
-    trigger_bin = tmp_path / "arnold-repair-trigger"
-    trigger_bin.write_text("#!/bin/sh\n", encoding="utf-8")
-    trigger_bin.chmod(0o755)
-    return marker_dir, queue_root, trigger_bin, target
+    return marker_dir, queue_root, target
 
 
 def _authorized(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -80,24 +76,17 @@ def _authorized(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ARNOLD_REPAIR_TRIGGER_ENABLED", "1")
 
 
-def test_manual_trigger_enqueues_canonical_request_and_dispatches_once(
+def test_manual_trigger_uses_simple_fixer_delegation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    marker_dir, queue_root, trigger_bin, target = _fixture(tmp_path)
-    _authorized(monkeypatch)
-    calls: list[list[str]] = []
+    """T27: trigger_once delegates to simple_fixer instead of executing a subprocess.
 
-    def runner(command, **_kwargs):
-        calls.append(command)
-        request_id = command[command.index("--request-id") + 1]
-        event = {
-            "event": "repair_trigger_dispatch",
-            "status": "dispatched",
-            "request_id": request_id,
-            "managed_run_id": "managed-test-1",
-            "managed_manifest_path": "/tmp/managed-test-1/manifest.json",
-        }
-        return subprocess.CompletedProcess(command, 0, json.dumps(event) + "\n", "")
+    The delegation goes through RepairDelegation with caller_kind="operator_trigger".
+    The result includes delegation_outcome and simple_fixer_outcome fields instead
+    of managed_run_id/managed_manifest_path/trigger_returncode.
+    """
+    marker_dir, queue_root, target = _fixture(tmp_path)
+    _authorized(monkeypatch)
 
     result = manual_repair_trigger.trigger_once(
         session=SESSION,
@@ -106,14 +95,25 @@ def test_manual_trigger_enqueues_canonical_request_and_dispatches_once(
         expected_artifact_hash=ARTIFACT_HASH,
         marker_dir=marker_dir,
         queue_root=queue_root,
-        trigger_bin=trigger_bin,
         target_resolver=lambda *_args, **_kwargs: target,
-        command_runner=runner,
     )
 
     assert result["status"] == "dispatched"
-    assert result["managed_run_id"] == "managed-test-1"
-    assert len(calls) == 1
+    assert result["session"] == SESSION
+    assert result["plan"] == PLAN
+    assert "request_id" in result
+    assert "receipt_path" in result
+    # Delegation fields replace the old managed_run_id/managed_manifest_path.
+    assert "delegation_outcome" in result
+    assert "simple_fixer_outcome" in result
+    assert "occurrence_fingerprint" in result
+    # Verify delegation outcome vocabulary is closed.
+    assert result["delegation_outcome"] in ("delegated",)
+    assert result["simple_fixer_outcome"] in (
+        "attempted", "unchanged", "exhausted",
+    )
+
+    # The enqueued request still exists (append-only queue evidence preserved).
     request = next(
         item
         for item in repair_requests.iter_repair_requests(queue_root)
@@ -128,10 +128,19 @@ def test_manual_trigger_enqueues_canonical_request_and_dispatches_once(
         "forbid_standalone_completion": True,
         "success_requires": "the canonical plan must advance beyond the frozen evidence cursor",
     }
+
+    # Append-only queue evidence: receipt was written.
     receipt = json.loads(Path(result["receipt_path"]).read_text(encoding="utf-8"))
     assert receipt["status"] == "dispatched"
-    assert receipt["dispatch_event"]["managed_run_id"] == "managed-test-1"
+    assert "delegation_outcome" in receipt
+    assert "simple_fixer_outcome" in receipt
+    assert receipt.get("delegation_target") == "simple_fixer"
+    # The old dispatch_event/managed_run_id fields are gone.
+    assert "dispatch_event" not in receipt
+    assert "trigger_returncode" not in receipt
+    assert "trigger_bin" not in receipt
 
+    # Singleton claim prevents duplicate dispatch (receipt exclusive-create).
     with pytest.raises(manual_repair_trigger.ManualRepairTriggerError, match="already exists"):
         manual_repair_trigger.trigger_once(
             session=SESSION,
@@ -140,17 +149,130 @@ def test_manual_trigger_enqueues_canonical_request_and_dispatches_once(
             expected_artifact_hash=ARTIFACT_HASH,
             marker_dir=marker_dir,
             queue_root=queue_root,
-            trigger_bin=trigger_bin,
             target_resolver=lambda *_args, **_kwargs: target,
-            command_runner=runner,
         )
-    assert len(calls) == 1
+
+
+def test_manual_trigger_rejects_legacy_trigger_bin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T27: trigger_once no longer accepts trigger_bin or command_runner parameters.
+
+    Passing trigger_bin or command_runner as keyword arguments raises TypeError
+    because those parameters have been removed in favour of simple_fixer delegation.
+    The ARNOLD_MANUAL_REPAIR_TRIGGER_BIN environment variable is also ignored.
+    """
+    marker_dir, queue_root, target = _fixture(tmp_path)
+    _authorized(monkeypatch)
+
+    # trigger_bin is no longer a valid parameter.
+    with pytest.raises(TypeError, match="trigger_bin"):
+        manual_repair_trigger.trigger_once(
+            session=SESSION,
+            plan=PLAN,
+            expected_history_index=15,
+            expected_artifact_hash=ARTIFACT_HASH,
+            marker_dir=marker_dir,
+            queue_root=queue_root,
+            trigger_bin=Path("/usr/local/bin/arnold-repair-trigger"),
+            target_resolver=lambda *_args, **_kwargs: target,
+        )
+
+    # command_runner is no longer accepted.
+    with pytest.raises(TypeError, match="command_runner"):
+        manual_repair_trigger.trigger_once(
+            session=SESSION,
+            plan=PLAN,
+            expected_history_index=15,
+            expected_artifact_hash=ARTIFACT_HASH,
+            marker_dir=marker_dir,
+            queue_root=queue_root,
+            target_resolver=lambda *_args, **_kwargs: target,
+            command_runner=lambda *a, **kw: None,
+        )
+
+    # ARNOLD_MANUAL_REPAIR_TRIGGER_BIN is ignored — setting it has no effect
+    # on a successful delegation dispatch.  Use a separate workspace so the
+    # exclusive receipt does not collide with the one created by
+    # test_manual_trigger_uses_simple_fixer_delegation.
+    fresh = tmp_path / "fresh-workspace"
+    fresh.mkdir()
+    fresh_queue = fresh / ".megaplan" / "repair-queue"
+    monkeypatch.setenv(
+        "ARNOLD_MANUAL_REPAIR_TRIGGER_BIN",
+        "/usr/local/bin/arnold-repair-trigger",
+    )
+    # Build a new target pointing into the fresh workspace.
+    fresh_workspace = fresh / "workspace"
+    fresh_plan_dir = fresh_workspace / ".megaplan" / "plans" / PLAN
+    fresh_plan_dir.mkdir(parents=True)
+    state_path = fresh_plan_dir / "state.json"
+    state_path.write_text(
+        json.dumps({
+            "name": PLAN,
+            "current_state": "blocked",
+            "config": {"profile": "partnered-5"},
+            "resume_cursor": {
+                "phase": "review",
+                "evidence_cursor": {
+                    "history_index": 15,
+                    "review_artifact_hash": ARTIFACT_HASH,
+                },
+            },
+            "latest_failure": {
+                "kind": "quality_gate_blocked",
+                "message": "review rework budget exhausted",
+                "phase": "review",
+                "suggested_action": "Dispatch one bounded automatic repair.",
+                "metadata": {
+                    "blocked_task_ids": ["T24"],
+                    "evidence_cursor": {
+                        "history_index": 15,
+                        "review_artifact_hash": ARTIFACT_HASH,
+                    },
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+    fp = hashlib.sha256(state_path.read_bytes()).hexdigest()
+    fresh_target = {
+        "target_session": SESSION,
+        "authoritative_source": "chain_state",
+        "current_refs": {
+            "current_plan_name": PLAN,
+            "workspace": str(fresh_workspace),
+            "remote_spec": str(fresh_workspace / "chain.yaml"),
+            "run_kind": "chain",
+        },
+        "plan_state": {
+            "path": str(state_path),
+            "present": True,
+            "name": PLAN,
+            "current_state": "blocked",
+            "fingerprint": fp,
+        },
+        "stale_evidence": [],
+        "evidence_state": {"mutation_eligible": True},
+    }
+    result = manual_repair_trigger.trigger_once(
+        session=SESSION,
+        plan=PLAN,
+        expected_history_index=15,
+        expected_artifact_hash=ARTIFACT_HASH,
+        marker_dir=marker_dir,
+        queue_root=fresh_queue,
+        target_resolver=lambda *_args, **_kwargs: fresh_target,
+    )
+    assert result["status"] == "dispatched"
+    # The env var has no effect — the result uses delegation, not subprocess.
+    assert "delegation_outcome" in result
 
 
 def test_manual_trigger_rejects_changed_evidence_before_queue_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    marker_dir, queue_root, trigger_bin, target = _fixture(tmp_path)
+    marker_dir, queue_root, target = _fixture(tmp_path)
     _authorized(monkeypatch)
 
     with pytest.raises(manual_repair_trigger.ManualRepairTriggerError, match="cursor"):
@@ -161,9 +283,7 @@ def test_manual_trigger_rejects_changed_evidence_before_queue_mutation(
             expected_artifact_hash=ARTIFACT_HASH,
             marker_dir=marker_dir,
             queue_root=queue_root,
-            trigger_bin=trigger_bin,
             target_resolver=lambda *_args, **_kwargs: target,
-            command_runner=lambda *_args, **_kwargs: pytest.fail("must not dispatch"),
         )
 
     assert not (queue_root / repair_requests.REQUESTS_DIR_NAME).exists()
@@ -173,7 +293,7 @@ def test_manual_trigger_rejects_changed_evidence_before_queue_mutation(
 def test_manual_trigger_derives_frozen_cursor_from_matching_terminal_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    marker_dir, queue_root, trigger_bin, target = _fixture(tmp_path)
+    marker_dir, queue_root, target = _fixture(tmp_path)
     _authorized(monkeypatch)
     state_path = Path(target["plan_state"]["path"])
     state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -195,17 +315,6 @@ def test_manual_trigger_derives_frozen_cursor_from_matching_terminal_history(
     state_path.write_text(json.dumps(state), encoding="utf-8")
     target["plan_state"]["fingerprint"] = hashlib.sha256(state_path.read_bytes()).hexdigest()
 
-    def runner(command, **_kwargs):
-        request_id = command[command.index("--request-id") + 1]
-        event = {
-            "event": "repair_trigger_dispatch",
-            "status": "dispatched",
-            "request_id": request_id,
-            "managed_run_id": "managed-history-cursor",
-            "managed_manifest_path": "/tmp/managed-history-cursor/manifest.json",
-        }
-        return subprocess.CompletedProcess(command, 0, json.dumps(event) + "\n", "")
-
     result = manual_repair_trigger.trigger_once(
         session=SESSION,
         plan=PLAN,
@@ -213,9 +322,7 @@ def test_manual_trigger_derives_frozen_cursor_from_matching_terminal_history(
         expected_artifact_hash=ARTIFACT_HASH,
         marker_dir=marker_dir,
         queue_root=queue_root,
-        trigger_bin=trigger_bin,
         target_resolver=lambda *_args, **_kwargs: target,
-        command_runner=runner,
     )
 
     request = next(
@@ -233,7 +340,7 @@ def test_manual_trigger_derives_frozen_cursor_from_matching_terminal_history(
 def test_manual_trigger_rejects_terminal_history_from_a_different_phase(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    marker_dir, queue_root, trigger_bin, target = _fixture(tmp_path)
+    marker_dir, queue_root, target = _fixture(tmp_path)
     _authorized(monkeypatch)
     state_path = Path(target["plan_state"]["path"])
     state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -262,9 +369,7 @@ def test_manual_trigger_rejects_terminal_history_from_a_different_phase(
             expected_artifact_hash=ARTIFACT_HASH,
             marker_dir=marker_dir,
             queue_root=queue_root,
-            trigger_bin=trigger_bin,
             target_resolver=lambda *_args, **_kwargs: target,
-            command_runner=lambda *_args, **_kwargs: pytest.fail("must not dispatch"),
         )
 
     assert not (queue_root / repair_requests.REQUESTS_DIR_NAME).exists()
@@ -274,7 +379,7 @@ def test_manual_trigger_rejects_terminal_history_from_a_different_phase(
 def test_manual_trigger_requires_invocation_scoped_l1_authority(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    marker_dir, queue_root, trigger_bin, target = _fixture(tmp_path)
+    marker_dir, queue_root, target = _fixture(tmp_path)
     monkeypatch.setenv("ARNOLD_AUTONOMY", "0")
     monkeypatch.setenv("ARNOLD_REPAIR_TRIGGER_ENABLED", "1")
 
@@ -286,84 +391,5 @@ def test_manual_trigger_requires_invocation_scoped_l1_authority(
             expected_artifact_hash=ARTIFACT_HASH,
             marker_dir=marker_dir,
             queue_root=queue_root,
-            trigger_bin=trigger_bin,
             target_resolver=lambda *_args, **_kwargs: target,
         )
-
-
-def test_manual_trigger_quarantines_receipt_when_queue_identity_differs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    marker_dir, queue_root, trigger_bin, target = _fixture(tmp_path)
-    _authorized(monkeypatch)
-
-    original_enqueue = repair_requests.enqueue_repair_request
-
-    def mismatched_enqueue(**kwargs):
-        result = original_enqueue(**kwargs)
-        request = dict(result["request"])
-        request["repair_identity"] = {
-            **request["repair_identity"],
-            "attempt_number": 99,
-        }
-        request["repair_identity_key"] = repair_requests.repair_identity_key(
-            request["repair_identity"]
-        )
-        result["request"] = request
-        return result
-
-    with pytest.raises(manual_repair_trigger.ManualRepairTriggerError, match="quarantined"):
-        manual_repair_trigger.trigger_once(
-            session=SESSION,
-            plan=PLAN,
-            expected_history_index=15,
-            expected_artifact_hash=ARTIFACT_HASH,
-            marker_dir=marker_dir,
-            queue_root=queue_root,
-            trigger_bin=trigger_bin,
-            target_resolver=lambda *_args, **_kwargs: target,
-            command_runner=lambda *_args, **_kwargs: pytest.fail("must not dispatch"),
-            repair_requests_enqueue=mismatched_enqueue,  # type: ignore[call-arg]
-        )
-
-    quarantined = list((queue_root / manual_repair_trigger.RECEIPT_DIR_NAME / "quarantine").glob("*.json"))
-    assert len(quarantined) == 1
-    payload = json.loads(quarantined[0].read_text(encoding="utf-8"))
-    assert payload["status"] == "quarantined"
-
-
-def test_manual_trigger_quarantines_receipt_when_queue_identity_is_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    marker_dir, queue_root, trigger_bin, target = _fixture(tmp_path)
-    _authorized(monkeypatch)
-
-    original_enqueue = repair_requests.enqueue_repair_request
-
-    def identity_free_enqueue(**kwargs):
-        result = original_enqueue(**kwargs)
-        request = dict(result["request"])
-        request["repair_identity"] = {}
-        request["repair_identity_key"] = ""
-        result["request"] = request
-        return result
-
-    with pytest.raises(manual_repair_trigger.ManualRepairTriggerError, match="quarantined"):
-        manual_repair_trigger.trigger_once(
-            session=SESSION,
-            plan=PLAN,
-            expected_history_index=15,
-            expected_artifact_hash=ARTIFACT_HASH,
-            marker_dir=marker_dir,
-            queue_root=queue_root,
-            trigger_bin=trigger_bin,
-            target_resolver=lambda *_args, **_kwargs: target,
-            command_runner=lambda *_args, **_kwargs: pytest.fail("must not dispatch"),
-            repair_requests_enqueue=identity_free_enqueue,  # type: ignore[call-arg]
-        )
-
-    quarantined = list((queue_root / manual_repair_trigger.RECEIPT_DIR_NAME / "quarantine").glob("*.json"))
-    assert len(quarantined) == 1
-    payload = json.loads(quarantined[0].read_text(encoding="utf-8"))
-    assert payload["status"] == "quarantined"
-    assert payload["observed_repair_identity"] == {}

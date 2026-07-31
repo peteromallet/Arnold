@@ -1,0 +1,61 @@
+{
+  "adapter_results": [
+    {
+      "acceptance_row": {
+        "detail": "M5 evidence validated; digest=sha256:57bf42d77...",
+        "digest": "sha256:61b5e91140a97b8d51539cb620343fbf7b0e59c9fb1654bfd26e26ab86532531",
+        "evidence_refs": [
+          ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/final-attestation.json"
+        ],
+        "expected_decision": "accepted",
+        "input_version_vector": {
+          "completion_manifest_sha256": "sha256:d1c5e318a15a5d8bc28d9bcf24fe593d9fbf9b0ddfd43c0ccb81126834210e55",
+          "final_attestation_sha256": "sha256:77bc397d8a82edf3b74a8b60710563141192b6fc28ca03b16a39df27f9d3976f",
+          "migration_matrix_sha256": "sha256:424445e363499a0b7b0cfff17d56974630d21547ffbdea365789db050a31e83e",
+          "proof_map_sha256": "sha256:790153b1ff5d5a3331829f4786a7fd90cd38dccaf0e3bcc5c7567a8d64ff1fbe",
+          "repository_subject_head": "8bb779dcaa08edcc92736eb265689ad894d8d839"
+        },
+        "owner": "T7",
+        "prerequisite_status": "satisfied",
+        "retirement_disposition": "pending"
+      },
+      "evidence_digest": "sha256:57bf42d7758ac8c170d9e3e157351506c1128659433a95e9147d88e269755b7a",
+      "failures": [],
+      "family": "m5",
+      "passed": true,
+      "source_path": ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/final-attestation.json"
+    }
+  ],
+  "content_sha256": "sha256:934e37516b72197f6517e3e4683c1c24466a9b13c07a98b3becf570e618b5348",
+  "failures": [],
+  "family": "m5",
+  "next_action": "M11 must resolve the currently INCOHERENT residual matrix rows and regenerate evidence/migration-matrix-reconciled.json; this does not rewrite or invalidate the authenticated M5 handoff.",
+  "observations": [
+    {
+      "actual": "INCOHERENT",
+      "detail": "This is M11 closure work, not a reason to invalidate the authenticated historical M5 handoff.",
+      "kind": "m11_residual_matrix_status",
+      "path": "evidence/migration-matrix-reconciled.json"
+    }
+  ],
+  "schema": "m11.predecessor-wrapper.v1",
+  "source_artifacts": [
+    {
+      "path": ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/final-attestation.json",
+      "sha256": "sha256:77bc397d8a82edf3b74a8b60710563141192b6fc28ca03b16a39df27f9d3976f"
+    },
+    {
+      "path": ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/completion-manifest.json",
+      "sha256": "sha256:d1c5e318a15a5d8bc28d9bcf24fe593d9fbf9b0ddfd43c0ccb81126834210e55"
+    },
+    {
+      "path": ".megaplan/initiatives/custody-control-plane/handoffs/m5-run-authority-receipt-reconciliation-and-retirement/proof-map.json",
+      "sha256": "sha256:790153b1ff5d5a3331829f4786a7fd90cd38dccaf0e3bcc5c7567a8d64ff1fbe"
+    },
+    {
+      "path": "evidence/migration-matrix-reconciled.json",
+      "sha256": "sha256:424445e363499a0b7b0cfff17d56974630d21547ffbdea365789db050a31e83e"
+    }
+  ],
+  "status": "satisfied"
+}

@@ -80,6 +80,10 @@ from arnold_pipelines.megaplan.orchestration.gate_checks import (
     run_gate_checks,
 )
 from arnold_pipelines.megaplan.orchestration.gate_signals import build_gate_signals
+from arnold_pipelines.megaplan.workflows.handler_contract import (
+    apply_response_projection,
+    apply_state_projection,
+)
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     ExitKind,
     PhaseResult,
@@ -377,7 +381,11 @@ def _routed_override_response(
         "state": action_output.state,
     }
     if _override_response_owns_next_step(action) and action_output.next_step is not None:
-        response["next_step"] = action_output.next_step
+        apply_response_projection(
+            response,
+            route_signal=str(action_output.route_signal or action),
+            next_step=action_output.next_step,
+        )
     if action_output.route_signal is not None:
         response["route_signal"] = action_output.route_signal
     for key, value in action_output.extras:
@@ -801,7 +809,7 @@ def _override_add_note(
 def _override_abort(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
-    state["current_state"] = STATE_ABORTED
+    apply_state_projection(state, STATE_ABORTED, route_signal="abort")
     _append_to_meta(
         state,
         "overrides",
@@ -936,7 +944,7 @@ def _override_adopt_execution(
     reason = args.reason or "Adopted complete execution artifact after post-worker recovery."
     timestamp = now_utc()
 
-    state["current_state"] = STATE_EXECUTED
+    apply_state_projection(state, STATE_EXECUTED, route_signal="adopt-execution")
     state.pop("resume_cursor", None)
     state.pop("active_step", None)
     adoption_record = {
@@ -1045,7 +1053,7 @@ def _override_force_proceed(
             "overrides",
             {"action": "force-proceed", "timestamp": now_utc(), "reason": args.reason},
         )
-        state["current_state"] = STATE_DONE
+        apply_state_projection(state, STATE_DONE, route_signal="force-proceed")
         save_state_merge_meta(plan_dir, state)
         return {
             "success": True,
@@ -1124,7 +1132,7 @@ def _override_force_proceed(
             plan_id=state["name"],
         )
     save_debt_registry(root, debt_registry)
-    state["current_state"] = STATE_GATED
+    apply_state_projection(state, STATE_GATED, route_signal="force-proceed")
     state["meta"].pop("user_approved_gate", None)
     state["last_gate"] = {}
     _append_to_meta(
@@ -1435,7 +1443,9 @@ def _override_recover_blocked(
         )
 
     previous_state = state["current_state"]
-    state["current_state"] = recovered_state
+    apply_state_projection(
+        state, recovered_state, route_signal="recover-blocked"
+    )
     state.pop("latest_failure", None)
     state.pop("active_step", None)
     archived_phase_result = _archive_stale_phase_result_for_resume(plan_dir)
@@ -2018,7 +2028,7 @@ def _override_resume_clarify(
             "No answers found in notes; consider adding answers via "
             "'override add-note' before the plan phase."
         )
-    state["current_state"] = STATE_PREPPED
+    apply_state_projection(state, STATE_PREPPED, route_signal="resume-clarify")
     state.pop("clarification", None)
     _append_to_meta(
         state,

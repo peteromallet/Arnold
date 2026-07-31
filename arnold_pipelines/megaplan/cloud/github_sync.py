@@ -270,7 +270,7 @@ def sync_persistent_problems(
                 incident_id=incident_id,
                 problem_id=problem_id,
                 evidence=event_evidence,
-                next_expected_event="six_hour_auditor.diagnosis",
+                next_expected_event="next_three_hour_auditor.diagnosis",
                 links=publication_links,
                 root=workspace_root,
             )

@@ -1,9 +1,15 @@
-"""Repair-runner adapter with broken-CLI resilience.
+"""Repair-runner adapter with broken-CLI resilience and delegation gating.
 
 M9: Repair eligibility classification consumes canonical source-cursor
 projections plus exact failure signatures.  Raw labels, mutable markers, or
 stale projections cannot grant repair eligibility — only verify-only
 acceptance against current evidence.
+
+Step 76-80: The runner no longer executes megaplan subcommands directly via
+subprocess.  It routes through the typed delegation shim so every repair
+attempt is either delegated to ``simple_fixer`` or emitted as typed
+zero-authority rejection.  Return-code success is never treated as accepted
+repair without canonical delegation.
 """
 
 from __future__ import annotations
@@ -14,6 +20,7 @@ import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple
@@ -25,6 +32,14 @@ from arnold_pipelines.megaplan.source_cursor_contract import (
 from arnold_pipelines.megaplan.run_state.quality_family import (
     QualityFamily,
     normalize_quality_family,
+)
+from arnold_pipelines.megaplan.cloud.repair_contract import (
+    append_attempt_record,
+)
+from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
+    RepairDelegationResult,
+    build_repair_delegation,
+    emit_zero_authority_rejection,
 )
 
 
@@ -301,9 +316,18 @@ class RepairRunner:
         self,
         executable_search_path: Sequence[str] | None = None,
         python_bin: str | None = None,
+        evidence_sidecar_dir: str | None = None,
+        evidence_session: str = "",
     ) -> None:
         self._search_path = executable_search_path
         self._python_bin = python_bin or shutil.which("python3") or shutil.which("python") or "python"
+        self._evidence_sidecar_dir = (
+            evidence_sidecar_dir
+            or os.environ.get("CLOUD_WATCHDOG_REPAIR_SIDECAR_DIR", "")
+        )
+        self._evidence_session = (
+            evidence_session or os.environ.get("SESSION", "")
+        )
 
     def _is_dry_run(self) -> bool:
         """An empty search path signals dry-run: do not execute anything."""
@@ -384,15 +408,28 @@ class RepairRunner:
         plan_dir: str | None = None,
         project_dir: str | None = None,
     ) -> RepairResult:
-        """Execute *command* and return a structured result."""
+        """Execute *command* and return a structured result.
+
+        Megaplan subcommands are gated through typed delegation (Step 76-80).
+        Direct subprocess execution is no longer accepted repair — every
+        megaplan subcommand must route through ``simple_fixer`` or emit
+        typed zero-authority rejection.
+        """
         argv, argv_cwd, is_megaplan_subcommand = self._argv_for_command(command)
         if not argv:
-            return RepairResult(
+            result = RepairResult(
                 status="command_unavailable",
                 stdout="",
                 stderr=f"executable not found or unsupported command: {command!r}",
                 rc=None,
             )
+            self._append_evidence(
+                command,
+                result,
+                project_dir=project_dir,
+                plan_dir=plan_dir,
+            )
+            return result
 
         cwd = argv_cwd or project_dir
         if cwd is None and plan_dir is not None:
@@ -402,11 +439,13 @@ class RepairRunner:
             except Exception:
                 pass
 
-        env = (
-            self._megaplan_subcommand_env(os.environ.copy())
-            if is_megaplan_subcommand
-            else os.environ.copy()
-        )
+        # ── Gate: megaplan subcommands route through delegation shim ──
+        if is_megaplan_subcommand:
+            return self._run_through_delegation(
+                command, argv, cwd, plan_dir=plan_dir, project_dir=project_dir
+            )
+
+        env = os.environ.copy()
         if cwd is not None:
             env["MEGAPLAN_PLAN_DIR"] = str(plan_dir) if plan_dir else cwd
             env["MEGAPLAN_PROJECT_DIR"] = cwd
@@ -421,27 +460,156 @@ class RepairRunner:
                 cwd=cwd,
                 env=env,
             )
+            # System commands (rm, kill, etc.) are non-authoritative telemetry.
+            # Return-code success is not accepted repair.
             status = "success" if result.returncode == 0 else "failed"
-            return RepairResult(
+            repair_result = RepairResult(
                 status=status,
                 stdout=result.stdout,
                 stderr=result.stderr,
                 rc=result.returncode,
             )
+            self._append_evidence(
+                command,
+                repair_result,
+                project_dir=cwd,
+                plan_dir=plan_dir,
+            )
+            return repair_result
         except (FileNotFoundError, OSError) as exc:
-            return RepairResult(
+            result = RepairResult(
                 status="command_unavailable",
                 stdout="",
                 stderr=f"could not execute {argv!r}: {exc}",
                 rc=None,
             )
+            self._append_evidence(
+                command,
+                result,
+                project_dir=cwd,
+                plan_dir=plan_dir,
+            )
+            return result
         except subprocess.TimeoutExpired:
-            return RepairResult(
+            result = RepairResult(
                 status="timeout",
                 stdout="",
                 stderr="command timed out after 300s",
                 rc=None,
             )
+            self._append_evidence(
+                command,
+                result,
+                project_dir=cwd,
+                plan_dir=plan_dir,
+            )
+            return result
+
+    def _run_through_delegation(
+        self,
+        command: str,
+        argv: list[str],
+        cwd: str | None,
+        *,
+        plan_dir: str | None,
+        project_dir: str | None,
+    ) -> RepairResult:
+        """Route a megaplan subcommand through typed delegation shim.
+
+        Direct subprocess execution is blocked.  The command is either
+        delegated to ``simple_fixer`` (canonical path) or rejected with
+        typed zero-authority rejection.  Return-code success from direct
+        execution is never treated as accepted repair.
+        """
+        recorded_at = datetime.now(timezone.utc).isoformat()
+        # Build a delegation — if we lack the exact F01 tuple, emit rejection.
+        delegation = build_repair_delegation(
+            caller_kind="wrapper",
+            caller_id=self._evidence_session or "repair-runner",
+            target=None,  # Runner lacks F01 tuple context — typed rejection
+        )
+        if delegation is None:
+            rejection: RepairDelegationResult = emit_zero_authority_rejection(
+                caller_kind="wrapper",
+                caller_id=self._evidence_session or "repair-runner",
+                reason=(
+                    "RepairRunner cannot construct exact F01 repair-occurrence "
+                    "tuple from command-line context — repair authority is never "
+                    "derived from labels, liveness signals, WBC receipts, or "
+                    "rebuildable projections"
+                ),
+            )
+            result = RepairResult(
+                status="command_unavailable",
+                stdout=str(rejection.to_dict()),
+                stderr=(
+                    f"megaplan subcommand {command!r} blocked: "
+                    f"typed zero-authority rejection (delegation_required)"
+                ),
+                rc=73,  # canonical rejection exit code
+            )
+            self._append_evidence(
+                command,
+                result,
+                project_dir=cwd or project_dir,
+                plan_dir=plan_dir,
+            )
+            return result
+
+        # Valid delegation exists — would route through delegate_to_simple_fixer.
+        # In the RepairRunner context we cannot execute the mutation here
+        # (the runner is a command executor, not a mutation boundary).
+        # Signal that the command was not executed directly — it must go
+        # through the canonical path.
+        result = RepairResult(
+            status="command_unavailable",
+            stdout=f"delegation required for {command!r}",
+            stderr=(
+                "RepairRunner requires canonical delegation path — "
+                "direct subprocess execution is not accepted repair"
+            ),
+            rc=73,
+        )
+        self._append_evidence(
+            command,
+            result,
+            project_dir=cwd or project_dir,
+            plan_dir=plan_dir,
+        )
+        return result
+
+    def _append_evidence(
+        self,
+        command: str,
+        result: RepairResult,
+        *,
+        project_dir: str | None,
+        plan_dir: str | None,
+    ) -> None:
+        if not self._evidence_sidecar_dir:
+            return
+        recorded_at = datetime.now(timezone.utc).isoformat()
+        append_attempt_record(
+            self._evidence_sidecar_dir,
+            {
+                "session_id": self._evidence_session,
+                "attempt_id": f"repair-runner:{recorded_at}",
+                "actor": "watchdog.repair_runner",
+                "command": command,
+                "state": (
+                    "succeeded"
+                    if result.status == "success"
+                    else "running"
+                    if result.status == "timeout"
+                    else "failed"
+                ),
+                "outcome": result.status,
+                "returncode": result.rc,
+                "project_dir": project_dir or "",
+                "plan_dir": plan_dir or "",
+                "recorded_at": recorded_at,
+            },
+        )
 
 
 __all__ = [

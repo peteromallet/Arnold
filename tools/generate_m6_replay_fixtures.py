@@ -110,6 +110,13 @@ def _redact_paths(text: str) -> str:
     return _WORKSPACE_PATH_RE.sub(_replace, text)
 
 
+def _redacted_repository_root() -> str:
+    """Return a host-independent token for the checkout root."""
+
+    stable_name = REPO_ROOT.name
+    return f"/repository/[REDACTED:{_sha256_hex(stable_name)[:12]}]"
+
+
 def _load_json(path: Path) -> dict[str, Any] | list[Any]:
     """Load and return JSON from *path*."""
     with open(path, "r", encoding="utf-8") as fh:
@@ -303,12 +310,16 @@ def _collect_repair_data() -> dict[str, Any]:
             hypothesis = dec.get("hypothesis", "")
             if hypothesis:
                 # Truncate long hypotheses
-                hypothesis_preview = hypothesis[:200]
+                hypothesis_preview = _redact_paths(hypothesis[:200])
             else:
                 hypothesis_preview = None
             decision_summaries.append({
                 "seq": d.get("seq"),
-                "hypothesis_class": hypothesis.split("\n")[0] if hypothesis else None,
+                "hypothesis_class": (
+                    _redact_paths(hypothesis.split("\n")[0])
+                    if hypothesis
+                    else None
+                ),
                 "hypothesis_preview": hypothesis_preview,
                 "reconciler_finding_count": len(dec.get("reconciler_findings", [])),
             })
@@ -368,7 +379,7 @@ def generate_transaction_spine(output_path: Path | None = None) -> dict[str, Any
 
     # Redact the repository root to avoid leaking the concrete checkout path.
     # The relative structure is preserved in the source_directory fields.
-    redacted_root = _redact_paths(str(REPO_ROOT))
+    redacted_root = _redacted_repository_root()
 
     fixture: dict[str, Any] = {
         "schema": "m6.transaction-spine-replay-fixture.v1",
@@ -626,10 +637,16 @@ def _collect_strategy_repair_data() -> dict[str, Any]:
         for d in decisions:
             dec = d.get("decision", {})
             hypothesis = dec.get("hypothesis", "")
-            hypothesis_preview = hypothesis[:200] if hypothesis else None
+            hypothesis_preview = (
+                _redact_paths(hypothesis[:200]) if hypothesis else None
+            )
             decision_summaries.append({
                 "seq": d.get("seq"),
-                "hypothesis_class": hypothesis.split("\n")[0] if hypothesis else None,
+                "hypothesis_class": (
+                    _redact_paths(hypothesis.split("\n")[0])
+                    if hypothesis
+                    else None
+                ),
                 "hypothesis_preview": hypothesis_preview,
                 "reconciler_finding_count": len(dec.get("reconciler_findings", [])),
             })
@@ -717,7 +734,7 @@ def generate_strategy_roadmap(output_path: Path | None = None) -> dict[str, Any]
     )
     composite_hash = _sha256_hex(composite_payload)
 
-    redacted_root = _redact_paths(str(REPO_ROOT))
+    redacted_root = _redacted_repository_root()
 
     fixture: dict[str, Any] = {
         "schema": "m6.strategy-roadmap-replay-fixture.v1",

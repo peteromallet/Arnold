@@ -10,15 +10,23 @@ Covers:
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
 from unittest import mock
 
 import pytest
 
-# Module under test
-from tools.verify_m6_prerequisites import (
+_TOOL_PATH = Path(__file__).resolve().parents[3] / "tools" / "verify_m6_prerequisites.py"
+_TOOL_SPEC = importlib.util.spec_from_file_location("_m6_prerequisite_tool", _TOOL_PATH)
+assert _TOOL_SPEC is not None and _TOOL_SPEC.loader is not None
+_TOOL_MODULE = importlib.util.module_from_spec(_TOOL_SPEC)
+sys.modules[_TOOL_SPEC.name] = _TOOL_MODULE
+_TOOL_SPEC.loader.exec_module(_TOOL_MODULE)
+
+from _m6_prerequisite_tool import (
     ACTIVATION_EVIDENCE_PATH,
     ALL_WBC_FILES,
     check_activation_receipt_evidence,

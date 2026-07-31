@@ -28,6 +28,13 @@ from typing import Any, Callable, Mapping, Optional
 
 from arnold_pipelines.megaplan.cloud.repair_contract import append_incident_record
 from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
+from arnold_pipelines.megaplan.cloud.simple_fixer import (
+    FORBIDDEN_AUTHORITY_SOURCES,
+    build_simple_fixer_occurrence,
+)
+from arnold_pipelines.megaplan.custody.contracts import (
+    F01_REPAIR_OCCURRENCE_FIELDS,
+)
 from arnold_pipelines.megaplan.incident.projection import build_brief, rebuild_projections
 from arnold_pipelines.megaplan.source_cursor_contract import (
     DimensionCursor,
@@ -51,6 +58,17 @@ from arnold_pipelines.megaplan.cloud.recovery_events import (
 # ── Step 15C: six-hour reconciliation backstop constants ───────────────
 
 SIX_HOURS_SECONDS = 6 * 3600
+
+# ── Step 47 (T33): next-three-hour reconciliation is the positive-proof ─
+# contract for auditor evidence.  The ``six_hour`` module / filename / field
+# names are retained ONLY as legacy compatibility aliases; they must never
+# mint repair authority on their own.  Positive proof now flows through the
+# next-three-hour reconciliation cadence, which is the schedule contract the
+# timer (``OnUnitActiveSec=3h``) and the terminal-receipt expectations
+# (``_AUDITOR_TERMINAL_RECEIPT_EXPECTATIONS`` -> ``next_three_hour``) encode.
+THREE_HOURS_SECONDS = 3 * 3600
+AUDITOR_RECONCILIATION_INTERVAL = "next_three_hour"
+LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY = True
 
 # ── auditor completion evidence constants ─────────────────────────────
 
@@ -148,6 +166,93 @@ def validate_audit_model_inputs(environ: dict[str, str]) -> str:
             f"six-hour auditor model pin conflict: {rendered}; required={AUDIT_CODEX_MODEL}"
         )
     return AUDIT_CODEX_MODEL
+
+
+# ── Step 46 (T32): canonical occurrence identity helpers ───────────────
+
+_AUDITOR_TERMINAL_RECEIPT_EXPECTATIONS: list[str] = [
+    "five_minute",
+    "one_hour",
+    "next_three_hour",
+]
+
+
+def _auditor_text(value: Any) -> str:
+    """Strip and stringify a possibly-absent value for the F01 tuple."""
+    return str(value or "").strip()
+
+
+def _auditor_mapping(value: Any) -> Mapping[str, Any]:
+    """Return *value* when it is a mapping, else an empty mapping."""
+    return value if isinstance(value, Mapping) else {}
+
+
+def _auditor_f01_fields(audit_item: Mapping[str, Any]) -> dict[str, str]:
+    """Extract the F01 repair-occurrence tuple from an audit finding.
+
+    Mirrors :func:`progress_auditor_escalation._finding_f01_fields` so the
+    auditor derives authority from the exact same occurrence contract that
+    the escalation and ownership policies use.
+    """
+
+    target = _auditor_mapping(audit_item.get("current_target"))
+    custody = _auditor_mapping(audit_item.get("repair_custody_summary"))
+    escalation = _auditor_mapping(audit_item.get("l3_escalation_gate"))
+    session_header = _auditor_mapping(audit_item.get("session_header"))
+    return {
+        "environment": _auditor_text(
+            target.get("environment") or audit_item.get("environment")
+        ),
+        "session": _auditor_text(audit_item.get("session")),
+        "chain": _auditor_text(
+            session_header.get("chain")
+            or target.get("chain")
+            or audit_item.get("chain")
+        ),
+        "plan_revision": _auditor_text(
+            target.get("plan_revision") or audit_item.get("plan_revision")
+        ),
+        "phase": _auditor_text(target.get("phase") or audit_item.get("phase")),
+        "task": _auditor_text(target.get("task") or audit_item.get("task")),
+        "attempt": _auditor_text(
+            target.get("attempt") or audit_item.get("iteration")
+        ),
+        "normalized_failure_kind": _auditor_text(
+            custody.get("normalized_failure_kind")
+            or audit_item.get("normalized_failure_kind")
+        ),
+        "blocker_or_phase_result_hash": _auditor_text(
+            custody.get("blocker_id")
+            or custody.get("blocker_or_phase_result_hash")
+        ),
+        "fence": _auditor_text(
+            escalation.get("fence")
+            or custody.get("fence")
+            or audit_item.get("fence")
+        ),
+    }
+
+
+def _auditor_forbidden_source(f01: Mapping[str, str]) -> str:
+    """Return the forbidden authority source implied by a partial F01 tuple.
+
+    Mirrors :func:`progress_auditor_escalation._forbidden_source_for_partial`.
+    When the exact F01 tuple cannot be satisfied, the residual identity must
+    derive from one of the four forbidden authority surfaces.  The mapping is
+    deterministic so callers record *why* authority was refused rather than
+    silently falling back to a non-occurrence identity.
+    """
+
+    fence = bool(_auditor_text(f01.get("fence")))
+    blocker = bool(_auditor_text(f01.get("blocker_or_phase_result_hash")))
+    kind = bool(_auditor_text(f01.get("normalized_failure_kind")))
+    if not fence and blocker:
+        return "wbc_receipt"
+    if not fence and kind:
+        return "liveness"
+    if not fence:
+        return "label"
+    return "rebuildable_projection"
 
 
 def enqueue_audit_repair_request(
@@ -262,6 +367,60 @@ def enqueue_audit_repair_request(
         "event_signature": f"six_hour_auditor:{layer}:{code}:attempt:{retry_ordinal}",
     }
     diagnosis = incident_audit.get("diagnosis") if isinstance(incident_audit.get("diagnosis"), dict) else {}
+    # ── Step 46 (T32): canonical occurrence-compatible identity ──────
+    # The auditor is a reconciliation backstop.  It must not mint authority
+    # from report state.  Build the canonical occurrence identity from the
+    # exact F01 repair-occurrence tuple; when the tuple is partial, record
+    # the forbidden authority source so downstream recovery joins never
+    # treat the partial identity as authoritative.
+    f01 = _auditor_f01_fields(audit_item)
+    occurrence = build_simple_fixer_occurrence(f01)
+    occurrence_fingerprint = ""
+    forbidden_authority_source = ""
+    if occurrence is not None:
+        occurrence_fingerprint = occurrence.occurrence_fingerprint
+    else:
+        forbidden_authority_source = _auditor_forbidden_source(f01)
+        if forbidden_authority_source not in FORBIDDEN_AUTHORITY_SOURCES:
+            forbidden_authority_source = "label"
+    custody_summary = _auditor_mapping(audit_item.get("repair_custody_summary"))
+    fence = f01.get("fence", "")
+    grant = _auditor_text(
+        escalation_gate.get("run_authority_grant_id")
+        or custody_summary.get("run_authority_grant_id")
+    )
+    lease_id = _auditor_text(
+        escalation_gate.get("lease_id") or custody_summary.get("lease_id")
+    )
+    epoch = _auditor_text(
+        escalation_gate.get("custody_epoch")
+        or custody_summary.get("custody_epoch")
+        or custody_summary.get("epoch")
+    )
+    evidence_cursor_digest = "sha256:" + sha256(
+        json.dumps(
+            evidence_cursor,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    occurrence_identity: dict[str, Any] = {
+        **{name: f01[name] for name in F01_REPAIR_OCCURRENCE_FIELDS},
+        "occurrence_fingerprint": occurrence_fingerprint,
+        "run_authority_grant_id": grant,
+        "coordinator_fence_token": fence,
+        "lease_id": lease_id,
+        "custody_epoch": epoch,
+        "evidence_cursor_digest": evidence_cursor_digest,
+        "root_cause_identity": root_cause_identity,
+        "retry_ordinal": retry_ordinal,
+        "terminal_receipt_expectations": list(
+            _AUDITOR_TERMINAL_RECEIPT_EXPECTATIONS
+        ),
+        "forbidden_authority_source": forbidden_authority_source,
+        "queue_authoritative": False,
+    }
     return enqueue_repair_request(
         queue_root=queue_root,
         session=session,
@@ -290,9 +449,11 @@ def enqueue_audit_repair_request(
             "repair_context_path": str(audit_item.get("l3_repair_context_path") or ""),
             "repair_context_digest": str(audit_item.get("l3_repair_context_digest") or ""),
             "route": escalation_gate.get("route") or {},
+            "occurrence_identity": occurrence_identity,
         },
         workspace=workspace,
         run_kind=str((audit_item.get("session_header") or {}).get("kind") or ""),
+        repair_identity=occurrence_identity,
     )
 
 
@@ -2441,6 +2602,11 @@ __all__ = [
     "SixHourAuditReport",
     "SixHourAuditor",
     "SIX_HOURS_SECONDS",
+    # Step 47 (T33): next-three-hour reconciliation is the positive-proof
+    # cadence; ``six_hour`` names remain only as legacy compatibility aliases.
+    "THREE_HOURS_SECONDS",
+    "AUDITOR_RECONCILIATION_INTERVAL",
+    "LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY",
     "LOGGER",
 ]
 

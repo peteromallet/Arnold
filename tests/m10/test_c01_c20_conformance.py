@@ -16,7 +16,9 @@ produced by ``tools/generate_m10_c01_c20_conformance.py``.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -25,9 +27,19 @@ from arnold_pipelines.megaplan.orchestration.criteria_verifiability import (
     check_criteria,
 )
 
-from tools.generate_m10_c01_c20_conformance import (
-    generate_conformance_receipt,
+_TOOL_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "tools"
+    / "generate_m10_c01_c20_conformance.py"
 )
+_TOOL_SPEC = importlib.util.spec_from_file_location(
+    "_m10_c01_c20_conformance_tool", _TOOL_PATH
+)
+assert _TOOL_SPEC is not None and _TOOL_SPEC.loader is not None
+_TOOL_MODULE = importlib.util.module_from_spec(_TOOL_SPEC)
+sys.modules[_TOOL_SPEC.name] = _TOOL_MODULE
+_TOOL_SPEC.loader.exec_module(_TOOL_MODULE)
+generate_conformance_receipt = _TOOL_MODULE.generate_conformance_receipt
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RECEIPT_PATH = REPO_ROOT / "evidence" / "m10-c01-c20-conformance.json"

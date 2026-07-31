@@ -48,6 +48,7 @@ never truncated and never used for control flow.
 from __future__ import annotations
 
 import hashlib
+import enum
 import json
 import os
 import uuid
@@ -55,6 +56,19 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple
+
+
+class WorkClass(str, enum.Enum):
+    """Compatibility classification used by natural-boundary producers."""
+
+    PRODUCTIVE = "productive"
+    REVIEW_PROOF = "review_proof"
+    QUEUE_IDLE = "queue_idle"
+    RETRY_WAIT = "retry_wait"
+    COMPACTION = "compaction"
+    VALIDATION = "validation"
+    REPAIR_VERIFICATION = "repair_verification"
+    REPLAY = "replay"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Stable event vocabulary
@@ -138,10 +152,57 @@ _GAP_CLASSES: FrozenSet[str] = frozenset({
 # ═══════════════════════════════════════════════════════════════════════════
 
 _WORK_LEDGER_FILE = "work_ledger.ndjson"
+LEDGER_FILE = _WORK_LEDGER_FILE
 
 
 def _ledger_path(plan_dir: Path) -> Path:
     return Path(plan_dir) / _WORK_LEDGER_FILE
+
+
+def _append_flat_work_record(
+    plan_dir: Path,
+    *,
+    work_class: WorkClass,
+    task_id: str | None = None,
+    batch_id: str | None = None,
+    attempt_id: str | None = None,
+    elapsed_ms: int | None = None,
+    model_calls: int | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+    total_tokens: int | None = None,
+    cost_usd: float | None = None,
+    accepted_output_delta: int | None = None,
+    unavailable_reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Append the M9 flat accounting row beside the legacy event API."""
+    record: Dict[str, Any] = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "work_class": work_class.value,
+        "elapsed_ms": elapsed_ms,
+        "model_calls": model_calls,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "cost_usd": cost_usd,
+        "accepted_output_delta": accepted_output_delta,
+    }
+    if task_id is not None:
+        record["task_id"] = task_id
+    if batch_id is not None:
+        record["batch_id"] = batch_id
+    if attempt_id is not None:
+        record["attempt_id"] = attempt_id
+    if unavailable_reason is not None:
+        record["unavailable_reason"] = unavailable_reason
+    if metadata:
+        record["metadata"] = dict(metadata)
+    path = _ledger_path(plan_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return record
 
 
 def _canonical_json_bytes(payload: Dict[str, Any]) -> bytes:
@@ -260,12 +321,16 @@ def read_work_ledger(plan_dir: Path) -> List[Dict[str, Any]]:
 def emit_validation(
     plan_dir: Path,
     *,
-    task_id: str,
-    job_id: str,
-    command: str,
-    exit_code: int,
-    duration_ms: int,
+    task_id: str | None = None,
+    job_id: str | None = None,
+    command: str | None = None,
+    exit_code: int | None = None,
+    duration_ms: int | None = None,
     evidence_hash: str = "",
+    batch_id: str | None = None,
+    attempt_id: str | None = None,
+    elapsed_ms: int | None = None,
+    metadata: dict[str, Any] | None = None,
     **extra: Any,
 ) -> Dict[str, Any]:
     """Emit a ``validation`` work‑ledger event.
@@ -274,8 +339,25 @@ def emit_validation(
     call was consumed.  The *evidence_hash* should be the content hash of the
     validation output artifact.
     """
+    if job_id is None or command is None or exit_code is None:
+        return _append_flat_work_record(
+            plan_dir,
+            work_class=WorkClass.VALIDATION,
+            task_id=task_id,
+            batch_id=batch_id,
+            attempt_id=attempt_id,
+            elapsed_ms=elapsed_ms if elapsed_ms is not None else duration_ms,
+            model_calls=0,
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            cost_usd=0.0,
+            unavailable_reason="subprocess_validation_no_model",
+            metadata=metadata,
+        )
+    identity = task_id or batch_id or attempt_id or "plan"
     payload: Dict[str, Any] = {
-        "task_id": task_id,
+        "task_id": identity,
         "job_id": job_id,
         "command": command,
         "exit_code": exit_code,
@@ -286,7 +368,7 @@ def emit_validation(
     return append_work_ledger_event(
         plan_dir,
         event_class="validation",
-        referenced_identity=task_id,
+        referenced_identity=identity,
         payload=payload,
     )
 
@@ -329,12 +411,21 @@ def emit_repair_verify(
 def emit_productive(
     plan_dir: Path,
     *,
-    task_id: str,
-    work_class: str,
-    duration_ms: int,
+    task_id: str | None = None,
+    work_class: str | None = None,
+    duration_ms: int | None = None,
     tokens: Optional[int] = None,
     cost_usd: Optional[float] = None,
     model_calls: Optional[int] = None,
+    batch_id: str | None = None,
+    attempt_id: str | None = None,
+    elapsed_ms: int | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+    total_tokens: int | None = None,
+    accepted_output_delta: int | None = None,
+    unavailable_reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
     **extra: Any,
 ) -> Dict[str, Any]:
     """Emit a ``productive`` work‑ledger event.
@@ -343,8 +434,26 @@ def emit_productive(
     or other value‑generating activity).  Optional *tokens*, *cost_usd*, and
     *model_calls* provide per‑event cost attribution.
     """
+    if elapsed_ms is not None or work_class is None or unavailable_reason is not None:
+        return _append_flat_work_record(
+            plan_dir,
+            work_class=WorkClass.PRODUCTIVE,
+            task_id=task_id,
+            batch_id=batch_id,
+            attempt_id=attempt_id,
+            elapsed_ms=elapsed_ms if elapsed_ms is not None else duration_ms,
+            model_calls=model_calls,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens if total_tokens is not None else tokens,
+            cost_usd=cost_usd,
+            accepted_output_delta=accepted_output_delta,
+            unavailable_reason=unavailable_reason,
+            metadata=metadata,
+        )
+    identity = task_id or batch_id or attempt_id or "plan"
     payload: Dict[str, Any] = {
-        "task_id": task_id,
+        "task_id": identity,
         "work_class": work_class,
         "duration_ms": duration_ms,
     }
@@ -358,7 +467,7 @@ def emit_productive(
     return append_work_ledger_event(
         plan_dir,
         event_class="productive",
-        referenced_identity=task_id,
+        referenced_identity=identity,
         payload=payload,
     )
 
@@ -402,11 +511,22 @@ def emit_unavailable_reason(
 def emit_review_proof(
     plan_dir: Path,
     *,
-    task_id: str,
-    review_kind: str,
-    duration_ms: int,
+    task_id: str | None = None,
+    review_kind: str | None = None,
+    duration_ms: int | None = None,
     verdict: str = "",
     reviewer_id: str = "",
+    batch_id: str | None = None,
+    attempt_id: str | None = None,
+    elapsed_ms: int | None = None,
+    model_calls: int | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+    total_tokens: int | None = None,
+    cost_usd: float | None = None,
+    accepted_output_delta: int | None = None,
+    unavailable_reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
     **extra: Any,
 ) -> Dict[str, Any]:
     """Emit a ``review_proof`` work‑ledger event.
@@ -415,8 +535,26 @@ def emit_review_proof(
     assessment, or proof generation.  *review_kind* should be one of
     ``"code_review"``, ``"quality_check"``, or ``"proof_generation"``.
     """
+    if elapsed_ms is not None or review_kind is None or unavailable_reason is not None:
+        return _append_flat_work_record(
+            plan_dir,
+            work_class=WorkClass.REVIEW_PROOF,
+            task_id=task_id,
+            batch_id=batch_id,
+            attempt_id=attempt_id,
+            elapsed_ms=elapsed_ms if elapsed_ms is not None else duration_ms,
+            model_calls=model_calls,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            cost_usd=cost_usd,
+            accepted_output_delta=accepted_output_delta,
+            unavailable_reason=unavailable_reason,
+            metadata=metadata,
+        )
+    identity = task_id or batch_id or attempt_id or "plan"
     payload: Dict[str, Any] = {
-        "task_id": task_id,
+        "task_id": identity,
         "review_kind": review_kind,
         "duration_ms": duration_ms,
     }
@@ -428,7 +566,7 @@ def emit_review_proof(
     return append_work_ledger_event(
         plan_dir,
         event_class="review_proof",
-        referenced_identity=task_id,
+        referenced_identity=identity,
         payload=payload,
     )
 
@@ -465,10 +603,15 @@ def emit_queue(
 def emit_retry_wait(
     plan_dir: Path,
     *,
-    task_id: str,
-    duration_ms: int,
-    attempt_number: int,
+    task_id: str | None = None,
+    duration_ms: int | None = None,
+    attempt_number: int = 1,
     wait_reason: str = "",
+    elapsed_ms: int | None = None,
+    batch_id: str | None = None,
+    attempt_id: str | None = None,
+    unavailable_reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
     **extra: Any,
 ) -> Dict[str, Any]:
     """Emit a ``retry_wait`` work‑ledger event.
@@ -477,18 +620,38 @@ def emit_retry_wait(
     cooldown, circuit delay).  *attempt_number* is the retry attempt that
     was waiting (1‑indexed).
     """
+    if elapsed_ms is not None or unavailable_reason is not None:
+        return _append_flat_work_record(
+            plan_dir,
+            work_class=WorkClass.RETRY_WAIT,
+            task_id=task_id,
+            batch_id=batch_id,
+            attempt_id=attempt_id,
+            elapsed_ms=elapsed_ms if elapsed_ms is not None else duration_ms,
+            model_calls=0,
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            cost_usd=0.0,
+            unavailable_reason=unavailable_reason or "retry_wait_no_model_no_output_delta",
+            metadata=metadata,
+        )
+    identity = task_id or batch_id or attempt_id or "plan"
     payload: Dict[str, Any] = {
-        "task_id": task_id,
-        "duration_ms": duration_ms,
+        "task_id": identity,
+        "duration_ms": duration_ms if duration_ms is not None else elapsed_ms,
         "attempt_number": attempt_number,
     }
     if wait_reason:
         payload["wait_reason"] = wait_reason
+    payload.update(dict(metadata or {}))
     payload.update(extra)
+    if unavailable_reason:
+        payload["unavailable_reason"] = unavailable_reason
     return append_work_ledger_event(
         plan_dir,
         event_class="retry_wait",
-        referenced_identity=task_id,
+        referenced_identity=identity,
         payload=payload,
     )
 
@@ -496,10 +659,15 @@ def emit_retry_wait(
 def emit_compaction(
     plan_dir: Path,
     *,
-    task_id: str,
-    duration_ms: int,
+    task_id: str | None = None,
+    duration_ms: int | None = None,
     compacted_tokens: Optional[int] = None,
     strategy: str = "",
+    elapsed_ms: int | None = None,
+    batch_id: str | None = None,
+    attempt_id: str | None = None,
+    unavailable_reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
     **extra: Any,
 ) -> Dict[str, Any]:
     """Emit a ``compaction`` work‑ledger event.
@@ -509,19 +677,34 @@ def emit_compaction(
     *strategy* describes the compaction method (e.g. ``"summary"``,
     ``"truncation"``).
     """
+    if elapsed_ms is not None or unavailable_reason is not None:
+        return _append_flat_work_record(
+            plan_dir,
+            work_class=WorkClass.COMPACTION,
+            task_id=task_id,
+            batch_id=batch_id,
+            attempt_id=attempt_id,
+            elapsed_ms=elapsed_ms if elapsed_ms is not None else duration_ms,
+            unavailable_reason=unavailable_reason,
+            metadata=metadata,
+        )
+    identity = task_id or batch_id or attempt_id or "plan"
     payload: Dict[str, Any] = {
-        "task_id": task_id,
-        "duration_ms": duration_ms,
+        "task_id": identity,
+        "duration_ms": duration_ms if duration_ms is not None else elapsed_ms,
     }
     if compacted_tokens is not None:
         payload["compacted_tokens"] = compacted_tokens
     if strategy:
         payload["strategy"] = strategy
+    payload.update(dict(metadata or {}))
     payload.update(extra)
+    if unavailable_reason:
+        payload["unavailable_reason"] = unavailable_reason
     return append_work_ledger_event(
         plan_dir,
         event_class="compaction",
-        referenced_identity=task_id,
+        referenced_identity=identity,
         payload=payload,
     )
 
@@ -529,10 +712,15 @@ def emit_compaction(
 def emit_replay(
     plan_dir: Path,
     *,
-    task_id: str,
-    duration_ms: int,
+    task_id: str | None = None,
+    duration_ms: int | None = None,
     fixture_path: str = "",
     exit_code: Optional[int] = None,
+    elapsed_ms: int | None = None,
+    batch_id: str | None = None,
+    attempt_id: str | None = None,
+    unavailable_reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
     **extra: Any,
 ) -> Dict[str, Any]:
     """Emit a ``replay`` work‑ledger event.
@@ -541,19 +729,34 @@ def emit_replay(
     proof generation.  *fixture_path* identifies the replayed fixture;
     *exit_code* is the replay subprocess exit code.
     """
+    if elapsed_ms is not None or unavailable_reason is not None:
+        return _append_flat_work_record(
+            plan_dir,
+            work_class=WorkClass.REPLAY,
+            task_id=task_id,
+            batch_id=batch_id,
+            attempt_id=attempt_id,
+            elapsed_ms=elapsed_ms if elapsed_ms is not None else duration_ms,
+            unavailable_reason=unavailable_reason,
+            metadata=metadata,
+        )
+    identity = task_id or batch_id or attempt_id or "plan"
     payload: Dict[str, Any] = {
-        "task_id": task_id,
-        "duration_ms": duration_ms,
+        "task_id": identity,
+        "duration_ms": duration_ms if duration_ms is not None else elapsed_ms,
     }
     if fixture_path:
         payload["fixture_path"] = fixture_path
     if exit_code is not None:
         payload["exit_code"] = exit_code
+    payload.update(dict(metadata or {}))
     payload.update(extra)
+    if unavailable_reason:
+        payload["unavailable_reason"] = unavailable_reason
     return append_work_ledger_event(
         plan_dir,
         event_class="replay",
-        referenced_identity=task_id,
+        referenced_identity=identity,
         payload=payload,
     )
 
@@ -647,6 +850,253 @@ def emit_transition(
         event_class="transition",
         referenced_identity=task_id,
         payload=payload,
+    )
+
+
+def _compat_identity(
+    task_id: str | None,
+    batch_id: str | None,
+    attempt_id: str | None,
+    fallback: str,
+) -> str:
+    return task_id or batch_id or attempt_id or fallback
+
+
+def emit_queue_idle(
+    plan_dir: Path,
+    *,
+    elapsed_ms: int | None = None,
+    task_id: str | None = None,
+    batch_id: str | None = None,
+    attempt_id: str | None = None,
+    unavailable_reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    return _append_flat_work_record(
+        plan_dir,
+        work_class=WorkClass.QUEUE_IDLE,
+        task_id=task_id,
+        batch_id=batch_id,
+        attempt_id=attempt_id,
+        elapsed_ms=elapsed_ms,
+        model_calls=0,
+        prompt_tokens=0,
+        completion_tokens=0,
+        total_tokens=0,
+        cost_usd=0.0,
+        unavailable_reason=unavailable_reason or "queue_idle_no_model_no_output_delta",
+        metadata=metadata,
+    )
+
+
+def emit_repair_verification(
+    plan_dir: Path,
+    *,
+    task_id: str | None = None,
+    batch_id: str | None = None,
+    attempt_id: str | None = None,
+    elapsed_ms: int | None = None,
+    unavailable_reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    identity = _compat_identity(task_id, batch_id, attempt_id, "plan")
+    details = dict(metadata or {})
+    receipt_hash = str(details.pop("receipt_hash", "unavailable"))
+    outcome = str(details.pop("outcome", "observed"))
+    return emit_repair_verify(
+        plan_dir,
+        task_id=identity,
+        receipt_hash=receipt_hash,
+        outcome=outcome,
+        duration_ms=elapsed_ms,
+        unavailable_reason=unavailable_reason,
+        **details,
+    )
+
+
+def emit_session_start(
+    plan_dir: Path,
+    *,
+    phase: str | None,
+    session_id: str | None,
+    agent: str | None = None,
+    model: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    if not session_id:
+        return
+    from arnold_pipelines.megaplan.observability.events import EventKind, emit
+
+    emit(
+        EventKind.SESSION_START,
+        plan_dir,
+        phase=phase,
+        payload={
+            "session_id": session_id,
+            "agent": agent,
+            "model": model,
+            **dict(metadata or {}),
+        },
+    )
+
+
+def emit_worker_inference(
+    plan_dir: Path,
+    *,
+    phase: str,
+    worker: Any,
+    work_class: WorkClass,
+    task_id: str | None = None,
+    batch_id: str | None = None,
+    attempt_id: str | None = None,
+    agent: str | None = None,
+    model_calls: int = 1,
+    accepted_output_delta: int | None = None,
+    unavailable_reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    identity = _compat_identity(task_id, batch_id, attempt_id, phase)
+    duration_ms = getattr(worker, "duration_ms", None)
+    total_tokens = getattr(worker, "total_tokens", None)
+    cost_usd = getattr(worker, "cost_usd", None)
+    details = {
+        "phase": phase,
+        "attempt_id": attempt_id,
+        "agent": agent,
+        "model": getattr(worker, "model_actual", None),
+        "accepted_output_delta": accepted_output_delta,
+        "unavailable_reason": unavailable_reason,
+        **dict(metadata or {}),
+    }
+    emit_session_start(
+        plan_dir,
+        phase=phase,
+        session_id=getattr(worker, "session_id", None),
+        agent=agent,
+        model=getattr(worker, "model_actual", None),
+        metadata={"attempt_id": attempt_id},
+    )
+    if work_class is WorkClass.REVIEW_PROOF:
+        return emit_review_proof(
+            plan_dir,
+            task_id=identity,
+            review_kind="quality_check",
+            elapsed_ms=duration_ms,
+            model_calls=model_calls,
+            tokens=total_tokens,
+            cost_usd=cost_usd,
+            **details,
+        )
+    return emit_productive(
+        plan_dir,
+        task_id=identity,
+        work_class=work_class.value,
+        elapsed_ms=duration_ms,
+        tokens=total_tokens,
+        cost_usd=cost_usd,
+        model_calls=model_calls,
+        **details,
+    )
+
+
+def emit_tool_activity(
+    plan_dir: Path,
+    *,
+    phase: str,
+    tool_name: str,
+    work_class: WorkClass = WorkClass.VALIDATION,
+    elapsed_ms: int | None = None,
+    task_id: str | None = None,
+    batch_id: str | None = None,
+    attempt_id: str | None = None,
+    unavailable_reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    if work_class is WorkClass.REPAIR_VERIFICATION:
+        return emit_repair_verification(
+            plan_dir,
+            task_id=task_id,
+            batch_id=batch_id,
+            attempt_id=attempt_id,
+            elapsed_ms=elapsed_ms,
+            unavailable_reason=unavailable_reason,
+            metadata={"phase": phase, "tool_name": tool_name, **dict(metadata or {})},
+        )
+    identity = _compat_identity(task_id, batch_id, attempt_id, phase)
+    return emit_tool(
+        plan_dir,
+        task_id=identity,
+        tool_name=tool_name,
+        duration_ms=elapsed_ms,
+        unavailable_reason=unavailable_reason,
+        phase=phase,
+        **dict(metadata or {}),
+    )
+
+
+def emit_git_activity(
+    plan_dir: Path,
+    *,
+    phase: str,
+    operation: str,
+    argv: list[str] | tuple[str, ...] | None = None,
+    elapsed_ms: int | None = None,
+    returncode: int | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    return emit_git(
+        plan_dir,
+        task_id=phase,
+        operation=operation,
+        duration_ms=elapsed_ms,
+        exit_code=returncode,
+        argv=list(argv or ()),
+        **dict(metadata or {}),
+    )
+
+
+def emit_transition_activity(
+    plan_dir: Path,
+    *,
+    phase: str | None,
+    transition: str,
+    from_state: str | None = None,
+    to_state: str | None = None,
+    elapsed_ms: int | None = 0,
+    metadata: dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    return emit_transition(
+        plan_dir,
+        task_id=phase or "transition",
+        from_state=from_state or "unknown",
+        to_state=to_state or transition,
+        duration_ms=elapsed_ms,
+        transition=transition,
+        **dict(metadata or {}),
+    )
+
+
+def emit_strategy_m4_baseline_events(plan_dir: Path) -> None:
+    """Preserve the known Strategy M4 implementation/review accounting split."""
+    emit_productive(
+        plan_dir,
+        elapsed_ms=7_397_000,
+        unavailable_reason="strategy_m4_historical_usage_unavailable",
+        metadata={
+            "phase": "execute",
+            "boundary": "strategy_m4_historical_baseline",
+            "duration_label": "2h03m17s",
+            "classification_guard": "productive_implementation_not_waste",
+        },
+    )
+    emit_review_proof(
+        plan_dir,
+        unavailable_reason="strategy_m4_historical_review_usage_unavailable",
+        metadata={
+            "phase": "review",
+            "boundary": "strategy_m4_historical_baseline",
+            "classification_guard": "required_review_not_waste",
+        },
     )
 
 

@@ -42,6 +42,7 @@ from arnold_pipelines.megaplan.cloud.recovery_events import (  # noqa: E402
     RecoveryEventStore,
 )
 from arnold_pipelines.megaplan.cloud.six_hour_auditor import (  # noqa: E402
+    AUDITOR_RECONCILIATION_INTERVAL,
     AuditSeverity,
     SixHourAuditor,
 )
@@ -201,12 +202,19 @@ def _build_slo_scenario(now: datetime) -> tuple[RecoveryEventStore, list[dict[st
     return store, requests, occurrences
 
 
-def _run_six_hour_backstop(
+def _run_next_three_hour_reconciliation(
     store: RecoveryEventStore,
     requests: list[dict[str, Any]],
     now: datetime,
 ) -> dict[str, Any]:
-    """Run the six-hour auditor and capture its reconciliation evidence."""
+    """Run the auditor and capture its next-three-hour reconciliation evidence.
+
+    Step 47 (T33): positive proof now flows through the next-three-hour
+    reconciliation cadence (``AUDITOR_RECONCILIATION_INTERVAL``).  The
+    historical ``six_hour`` spelling is retained ONLY as a compatibility
+    alias in the emitted receipt; it must not mint repair authority on its
+    own.
+    """
     escalations: list[dict[str, Any]] = []
 
     def sink(finding) -> None:
@@ -233,6 +241,7 @@ def _run_six_hour_backstop(
     ]
 
     return {
+        "reconciliation_interval": AUDITOR_RECONCILIATION_INTERVAL,
         "audit_id": report.audit_id,
         "ran_at": _iso(now),
         "events_checked": report.events_checked,
@@ -296,7 +305,15 @@ def generate_receipt() -> dict[str, Any]:
     slo_met = p95 is not None and p95 <= SLO_TARGET_SECONDS
     slo_exceeded_events = store.slo_violations(target_seconds=SLO_TARGET_SECONDS)
 
-    backstop = _run_six_hour_backstop(store, requests, now)
+    # Step 47 (T33): next-three-hour reconciliation carries the positive proof.
+    # The legacy ``six_hour_backstop`` key is retained as a full compatibility
+    # alias of the same payload (with compatibility markers) so existing
+    # consumers keep working; it must never mint repair authority on its own.
+    reconciliation = _run_next_three_hour_reconciliation(store, requests, now)
+    six_hour_backstop_alias = dict(reconciliation)
+    six_hour_backstop_alias["compatibility_alias_for"] = "next_three_hour_reconciliation"
+    six_hour_backstop_alias["legacy_cadence_label"] = "six_hour"
+    six_hour_backstop_alias["compatibility_only"] = True
 
     occurrence_ids = [ev.event_id for ev in occurrences]
     receipt = {
@@ -321,11 +338,14 @@ def generate_receipt() -> dict[str, Any]:
                 else "not required"
             ),
         },
-        "six_hour_backstop": backstop,
+        "next_three_hour_reconciliation": reconciliation,
+        "six_hour_backstop": six_hour_backstop_alias,
         "constraints": {
             "production_effects_action_off": True,
             "auditor_is_primary_mutator": False,
             "evidence_source": "installed_runtime_recovery_events_store",
+            "positive_proof_cadence": AUDITOR_RECONCILIATION_INTERVAL,
+            "six_hour_names_compatibility_only": True,
         },
     }
 
@@ -341,7 +361,8 @@ def main() -> int:
     RECEIPT_PATH.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     print(f"wrote {RECEIPT_PATH}")
     print(f"p95_seconds={receipt['p95_seconds']} slo_met={receipt['slo_met']}")
-    print(f"missed_event_findings={len(receipt['six_hour_backstop']['missed_event_findings'])}")
+    reconciliation = receipt["next_three_hour_reconciliation"]
+    print(f"missed_event_findings={len(reconciliation['missed_event_findings'])}")
     return 0
 
 

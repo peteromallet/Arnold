@@ -1,410 +1,960 @@
-"""Exact-version result contracts for Workflow Boundary Contract queries.
+"""Typed canonical query facade over the ``AttemptLedgerStore``.
 
-The types in this module are immutable, non-authoritative views of durable
-attempt-ledger evidence.  They deliberately have no dispatch, completion, or
-grant API: a verified query result can be used as evidence by a caller, but it
-is never a bearer token for an authority-increasing action.
+This module provides immutable WBC (Workflow Boundary Contract) query
+envelopes that wrap the durable gate and query results from
+:class:`AttemptLedgerStore` / :class:`SqliteAttemptLedgerStore`.  Each
+envelope is a non-authoritative projection — it carries exact identity,
+cursor, and evidence metadata but does NOT create or imply a second
+authority store, bearer authorization object, or dispatch grant.
 
-This module defines the result boundary only.  The store-backed query facade
-that proves where the evidence came from is layered on top of these contracts.
+Envelope states
+---------------
+
+Every envelope carries a ``status`` drawn from :class:`GateStatus`:
+
+* ``VERIFIED``    — durable evidence confirms the query condition.
+* ``INCOMPLETE``  — no matching evidence exists yet (normal in-flight).
+* ``INDETERMINATE`` — evidence is ambiguous or the query could not be
+  completed (corrupt JSON, store error, schema drift).
+* ``INCOHERENT``  — evidence contradicts the query contract (multiple
+  rows where at most one is expected, etc.).
+
+These are the same states used by :class:`StartGateResult`,
+:class:`TerminalGateResult`, and the store's gate methods — the WBC
+envelopes extend them with richer metadata without mutating semantics.
+
+Metadata carried by every envelope
+----------------------------------
+
+Every envelope optionally captures:
+
+* ``environment`` / ``session`` — runtime surface identifiers.
+* ``chain`` — plan chain identifier (e.g. ``CHAIN-01``).
+* ``plan_revision`` — manifest/topology revision.
+* ``phase`` / ``task`` — megaplan phase or task label.
+* ``attempt_id`` — the ledger attempt id being queried.
+* ``boundary_id`` — the boundary contract id when scoped.
+* ``ledger_sequence`` — the last durable sequence observed.
+* ``content_digest`` — integrity digest of the returned evidence
+  (sha256:…), computed over the canonical JSON of the inner result.
+* ``evidence_ids`` — set of diagnostic/reconciliation evidence ids
+  referenced in the result.
+* ``source_cursor`` — the :class:`SourceCursor` position observed by
+  the query caller (evidence-only; never authority).
+
+Facade contract
+---------------
+
+:class:`WbcQueries` is a read-only query facade.  It delegates every
+operation to the underlying :class:`AttemptLedgerStore`.  It never
+writes, reserves, appends, or mints authority.  Callers that need
+authority decisions must use the store's append/gate methods directly
+and cross-reference the query envelopes as evidence.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import re
-from dataclasses import asdict, dataclass
-from enum import StrEnum
-from typing import Any, ClassVar, TypeAlias
+from dataclasses import dataclass, field
+from typing import Any, Optional
 
-from arnold.workflow.attempt_ledger_store import SourceCursor
-from arnold.workflow.execution_attempt_ledger import (
-    LEDGER_SCHEMA_VERSION,
-    AttemptEventType,
-    LedgerEvent,
-    PersistenceStatus,
+from arnold.workflow.attempt_ledger_store import (
+    GapEntry,
+    GateStatus,
+    SourceCursor,
+    StartGateResult,
+    TerminalGateResult,
 )
+from arnold.workflow.execution_attempt_ledger import LedgerEvent
+
+# ── WBC query schema version ───────────────────────────────────────────────
+
+_WBC_QUERIES_SCHEMA: str = "arnold.workflow.wbc_queries.v1"
 
 
-WBC_QUERY_CONTRACT_VERSION = "arnold.workflow.wbc_query_result.v1"
-
-_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
-_TERMINAL_EVENT_TYPES = frozenset(
-    {
-        AttemptEventType.COMPLETED.value,
-        AttemptEventType.FAILED.value,
-        AttemptEventType.CANCELLED.value,
-    }
-)
+# ── Canonical JSON helper ──────────────────────────────────────────────────
 
 
-class WbcQueryStatus(StrEnum):
-    """Closed result states for exact-version WBC reads."""
-
-    VERIFIED = "verified"
-    INCOMPLETE = "incomplete"
-    INDETERMINATE = "indeterminate"
-    INCOHERENT = "incoherent"
+def _canonical_json(obj: Any) -> bytes:
+    """Serialize *obj* to canonical UTF-8 JSON (sorted keys, no trailing
+    newline) for digest computation."""
+    return json.dumps(obj, sort_keys=True, ensure_ascii=False).encode("utf-8")
 
 
-def _require_nonempty(value: str, field_name: str) -> None:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{field_name} must be a non-empty string")
+def _compute_digest(json_bytes: bytes) -> str:
+    """Return ``sha256:<hex>`` for the given canonical JSON bytes."""
+    return "sha256:" + hashlib.sha256(json_bytes).hexdigest()
 
 
-def _require_digest(value: str, field_name: str) -> None:
-    if not isinstance(value, str) or _DIGEST_RE.fullmatch(value) is None:
-        raise ValueError(
-            f"{field_name} must be 'sha256:' followed by 64 lowercase hex characters"
-        )
-
-
-def _canonical_digest(value: Any) -> str:
-    encoded = json.dumps(
-        value,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+# ── Immutable WBC query envelopes ──────────────────────────────────────────
 
 
 @dataclass(frozen=True)
-class WbcQueryDiagnostic:
-    """A stable diagnostic attached to a non-verified result."""
+class WbcStartEnvelope:
+    """Canonical query result for a STARTED-gate query.
 
-    code: str
-    message: str
+    Wraps a :class:`StartGateResult` with additional environment, cursor,
+    and evidence metadata.  This is a non-authoritative projection — it
+    does not grant dispatch or completion power.
+    """
+
+    status: GateStatus
+    """Gate status from the durable store query."""
+
+    started_event: Optional[LedgerEvent] = None
+    """The verified STARTED event when ``status`` is ``VERIFIED``, else ``None``."""
+
+    evidence: str = ""
+    """Human-readable evidence string from the underlying gate result."""
+
+    # ── metadata carried on every envelope ──────────────────────────────
+
+    attempt_id: str = ""
+    environment: Optional[str] = None
+    session: Optional[str] = None
+    chain: Optional[str] = None
+    plan_revision: Optional[str] = None
+    phase: Optional[str] = None
+    task: Optional[str] = None
+    boundary_id: Optional[str] = None
+    ledger_sequence: int = 0
+    content_digest: Optional[str] = None
     evidence_ids: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        _require_nonempty(self.code, "diagnostic.code")
-        _require_nonempty(self.message, "diagnostic.message")
-        _validate_evidence_ids(self.evidence_ids, "diagnostic.evidence_ids")
-
-
-@dataclass(frozen=True)
-class WbcEventRef:
-    """Digest-bound reference to one stored attempt-ledger event."""
-
-    attempt_id: str
-    event_id: str
-    sequence: int
-    event_type: str
-    content_digest: str
-    stored_schema_version: str
-
-    def __post_init__(self) -> None:
-        _require_nonempty(self.attempt_id, "event_ref.attempt_id")
-        _require_nonempty(self.event_id, "event_ref.event_id")
-        if not isinstance(self.sequence, int) or isinstance(self.sequence, bool):
-            raise TypeError("event_ref.sequence must be an integer")
-        if self.sequence < 1:
-            raise ValueError("event_ref.sequence must be positive")
-        _require_nonempty(self.event_type, "event_ref.event_type")
-        _require_digest(self.content_digest, "event_ref.content_digest")
-        _require_nonempty(
-            self.stored_schema_version, "event_ref.stored_schema_version"
-        )
+    source_cursor: Optional[SourceCursor] = None
 
     @classmethod
-    def from_event(cls, event: LedgerEvent) -> WbcEventRef:
-        """Create a reference from one exact, durable ledger event."""
-
-        if not isinstance(event, LedgerEvent):
-            raise TypeError(
-                "event must be a LedgerEvent, not a raw receipt or projection"
-            )
-        if event.persistence_status is not PersistenceStatus.DURABLE:
-            raise ValueError(
-                "event must be durably persisted before it can be referenced"
-            )
-        return cls(
-            attempt_id=event.identity.attempt_id,
-            event_id=event.idempotency_key,
-            sequence=event.sequence,
-            event_type=event.event_type.value,
-            content_digest=_canonical_digest(event.to_dict()),
-            stored_schema_version=event.event_schema_version,
-        )
-
-
-@dataclass(frozen=True)
-class WbcSourceCursor:
-    """Exact observed cursor for the durable source read."""
-
-    attempt_id: str
-    cursor_key: str
-    last_sequence: int
-    last_position: str | None
-    source_version: str
-
-    def __post_init__(self) -> None:
-        _require_nonempty(self.attempt_id, "source_cursor.attempt_id")
-        _require_nonempty(self.cursor_key, "source_cursor.cursor_key")
-        if not isinstance(self.last_sequence, int) or isinstance(
-            self.last_sequence, bool
-        ):
-            raise TypeError("source_cursor.last_sequence must be an integer")
-        if self.last_sequence < 0:
-            raise ValueError("source_cursor.last_sequence must be non-negative")
-        if self.last_position is not None and not isinstance(
-            self.last_position, str
-        ):
-            raise TypeError("source_cursor.last_position must be a string or None")
-        _require_nonempty(self.source_version, "source_cursor.source_version")
-
-    @classmethod
-    def from_store_cursor(
+    def from_gate_result(
         cls,
-        cursor: SourceCursor,
+        gate: StartGateResult,
         *,
-        source_version: str,
-    ) -> WbcSourceCursor:
-        if not isinstance(cursor, SourceCursor):
-            raise TypeError("cursor must be a SourceCursor, not raw mutable data")
+        attempt_id: str = "",
+        environment: Optional[str] = None,
+        session: Optional[str] = None,
+        chain: Optional[str] = None,
+        plan_revision: Optional[str] = None,
+        phase: Optional[str] = None,
+        task: Optional[str] = None,
+        boundary_id: Optional[str] = None,
+        ledger_sequence: int = 0,
+        evidence_ids: tuple[str, ...] = (),
+        source_cursor: Optional[SourceCursor] = None,
+    ) -> WbcStartEnvelope:
+        """Construct an envelope from a raw :class:`StartGateResult`.
+
+        When the gate is ``VERIFIED`` and ``started_event`` is present,
+        the ``content_digest`` is computed over the event's canonical
+        ``to_dict()`` representation.
+        """
+        content_digest: Optional[str] = None
+        if gate.status == GateStatus.VERIFIED and gate.started_event is not None:
+            content_digest = _compute_digest(
+                _canonical_json(gate.started_event.to_dict())
+            )
+
         return cls(
-            attempt_id=cursor.attempt_id,
-            cursor_key=cursor.cursor_key,
-            last_sequence=cursor.last_sequence,
-            last_position=cursor.last_position,
-            source_version=source_version,
+            status=gate.status,
+            started_event=gate.started_event,
+            evidence=gate.evidence,
+            attempt_id=attempt_id or gate.attempt_id,
+            environment=environment,
+            session=session,
+            chain=chain,
+            plan_revision=plan_revision,
+            phase=phase,
+            task=task,
+            boundary_id=boundary_id,
+            ledger_sequence=ledger_sequence,
+            content_digest=content_digest,
+            evidence_ids=evidence_ids,
+            source_cursor=source_cursor,
         )
 
 
-def _validate_evidence_ids(values: tuple[str, ...], field_name: str) -> None:
-    if not isinstance(values, tuple):
-        raise TypeError(f"{field_name} must be an immutable tuple")
-    if any(not isinstance(value, str) or not value.strip() for value in values):
-        raise ValueError(f"{field_name} entries must be non-empty strings")
-    if values != tuple(sorted(set(values))):
-        raise ValueError(f"{field_name} must be sorted and duplicate-free")
-
-
-def _verified_digest_payload(
-    *,
-    attempt_id: str,
-    contract_version: str,
-    start_event_ref: WbcEventRef,
-    terminal_event_ref: WbcEventRef,
-    source_cursor: WbcSourceCursor,
-    evidence_ids: tuple[str, ...],
-    stored_schema_version: str,
-) -> dict[str, Any]:
-    return {
-        "attempt_id": attempt_id,
-        "contract_version": contract_version,
-        "start_event_ref": asdict(start_event_ref),
-        "terminal_event_ref": asdict(terminal_event_ref),
-        "source_cursor": asdict(source_cursor),
-        "evidence_ids": evidence_ids,
-        "stored_schema_version": stored_schema_version,
-    }
-
-
 @dataclass(frozen=True)
-class _WbcQueryResultBase:
-    """Fields common to every WBC query result state."""
+class WbcTerminalEnvelope:
+    """Canonical query result for a terminal-gate query.
 
-    attempt_id: str
-    contract_version: str = WBC_QUERY_CONTRACT_VERSION
-    start_event_ref: WbcEventRef | None = None
-    terminal_event_ref: WbcEventRef | None = None
-    source_cursor: WbcSourceCursor | None = None
+    Wraps a :class:`TerminalGateResult` with additional environment,
+    cursor, and evidence metadata.  Non-authoritative projection.
+    """
+
+    status: GateStatus
+    terminal_event: Optional[LedgerEvent] = None
+    evidence: str = ""
+
+    attempt_id: str = ""
+    environment: Optional[str] = None
+    session: Optional[str] = None
+    chain: Optional[str] = None
+    plan_revision: Optional[str] = None
+    phase: Optional[str] = None
+    task: Optional[str] = None
+    boundary_id: Optional[str] = None
+    ledger_sequence: int = 0
+    content_digest: Optional[str] = None
     evidence_ids: tuple[str, ...] = ()
-    digest: str | None = None
-    stored_schema_version: str | None = None
-    diagnostics: tuple[WbcQueryDiagnostic, ...] = ()
-
-    status: ClassVar[WbcQueryStatus]
-
-    def __post_init__(self) -> None:
-        _require_nonempty(self.attempt_id, "attempt_id")
-        if self.contract_version != WBC_QUERY_CONTRACT_VERSION:
-            raise ValueError(
-                "contract_version must name the exact supported WBC query contract"
-            )
-        for field_name, ref in (
-            ("start_event_ref", self.start_event_ref),
-            ("terminal_event_ref", self.terminal_event_ref),
-        ):
-            if ref is not None and not isinstance(ref, WbcEventRef):
-                raise TypeError(f"{field_name} must be a WbcEventRef or None")
-            if ref is not None and ref.attempt_id != self.attempt_id:
-                raise ValueError(f"{field_name} belongs to a different attempt")
-        if self.source_cursor is not None and not isinstance(
-            self.source_cursor, WbcSourceCursor
-        ):
-            raise TypeError("source_cursor must be a WbcSourceCursor or None")
-        if (
-            self.source_cursor is not None
-            and self.source_cursor.attempt_id != self.attempt_id
-        ):
-            raise ValueError("source_cursor belongs to a different attempt")
-        _validate_evidence_ids(self.evidence_ids, "evidence_ids")
-        if self.digest is not None:
-            _require_digest(self.digest, "digest")
-        if self.stored_schema_version is not None:
-            _require_nonempty(self.stored_schema_version, "stored_schema_version")
-        if not isinstance(self.diagnostics, tuple):
-            raise TypeError("diagnostics must be an immutable tuple")
-        if any(
-            not isinstance(diagnostic, WbcQueryDiagnostic)
-            for diagnostic in self.diagnostics
-        ):
-            raise TypeError("diagnostics entries must be WbcQueryDiagnostic values")
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return a deterministic, JSON-compatible view of the result."""
-
-        value = asdict(self)
-        value["status"] = self.status.value
-        return value
-
-
-@dataclass(frozen=True)
-class WbcVerifiedResult(_WbcQueryResultBase):
-    """A complete, exact-version result over durable source evidence."""
-
-    status: ClassVar[WbcQueryStatus] = WbcQueryStatus.VERIFIED
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        if self.start_event_ref is None or self.terminal_event_ref is None:
-            raise ValueError("verified results require start and terminal event refs")
-        if self.source_cursor is None:
-            raise ValueError("verified results require an exact source cursor")
-        if not self.evidence_ids:
-            raise ValueError("verified results require exact evidence IDs")
-        if self.digest is None:
-            raise ValueError("verified results require a canonical digest")
-        if self.stored_schema_version != LEDGER_SCHEMA_VERSION:
-            raise ValueError(
-                "verified results require the exact supported stored schema version"
-            )
-        if self.diagnostics:
-            raise ValueError("verified results cannot suppress diagnostics")
-        if self.start_event_ref.event_type != AttemptEventType.STARTED.value:
-            raise ValueError("start_event_ref must reference a started event")
-        if self.terminal_event_ref.event_type not in _TERMINAL_EVENT_TYPES:
-            raise ValueError("terminal_event_ref must reference a terminal event")
-        if self.start_event_ref.sequence >= self.terminal_event_ref.sequence:
-            raise ValueError("terminal event must follow the started event")
-        for ref in (self.start_event_ref, self.terminal_event_ref):
-            if ref.stored_schema_version != self.stored_schema_version:
-                raise ValueError("event ref stored schema versions must agree")
-        if self.source_cursor.source_version != self.stored_schema_version:
-            raise ValueError("source cursor version must match stored schema version")
-        if self.source_cursor.last_sequence != self.terminal_event_ref.sequence:
-            raise ValueError("source cursor must bind the exact terminal sequence")
-        expected_digest = _canonical_digest(
-            _verified_digest_payload(
-                attempt_id=self.attempt_id,
-                contract_version=self.contract_version,
-                start_event_ref=self.start_event_ref,
-                terminal_event_ref=self.terminal_event_ref,
-                source_cursor=self.source_cursor,
-                evidence_ids=self.evidence_ids,
-                stored_schema_version=self.stored_schema_version,
-            )
-        )
-        if self.digest != expected_digest:
-            raise ValueError("digest does not match the exact verified evidence")
+    source_cursor: Optional[SourceCursor] = None
 
     @classmethod
-    def from_events(
+    def from_gate_result(
         cls,
+        gate: TerminalGateResult,
         *,
-        started_event: LedgerEvent,
-        terminal_event: LedgerEvent,
-        source_cursor: SourceCursor,
-        evidence_ids: tuple[str, ...],
-    ) -> WbcVerifiedResult:
-        """Build a verified result from typed durable evidence only."""
+        attempt_id: str = "",
+        environment: Optional[str] = None,
+        session: Optional[str] = None,
+        chain: Optional[str] = None,
+        plan_revision: Optional[str] = None,
+        phase: Optional[str] = None,
+        task: Optional[str] = None,
+        boundary_id: Optional[str] = None,
+        ledger_sequence: int = 0,
+        evidence_ids: tuple[str, ...] = (),
+        source_cursor: Optional[SourceCursor] = None,
+    ) -> WbcTerminalEnvelope:
+        """Construct an envelope from a raw :class:`TerminalGateResult`."""
+        content_digest: Optional[str] = None
+        if gate.status == GateStatus.VERIFIED and gate.terminal_event is not None:
+            content_digest = _compute_digest(
+                _canonical_json(gate.terminal_event.to_dict())
+            )
 
-        if not isinstance(evidence_ids, tuple):
-            raise TypeError("evidence_ids must be an immutable tuple")
-        start_ref = WbcEventRef.from_event(started_event)
-        terminal_ref = WbcEventRef.from_event(terminal_event)
-        cursor_ref = WbcSourceCursor.from_store_cursor(
-            source_cursor,
-            source_version=start_ref.stored_schema_version,
-        )
-        canonical_evidence_ids = tuple(sorted(set(evidence_ids)))
-        payload = _verified_digest_payload(
-            attempt_id=start_ref.attempt_id,
-            contract_version=WBC_QUERY_CONTRACT_VERSION,
-            start_event_ref=start_ref,
-            terminal_event_ref=terminal_ref,
-            source_cursor=cursor_ref,
-            evidence_ids=canonical_evidence_ids,
-            stored_schema_version=start_ref.stored_schema_version,
-        )
         return cls(
-            attempt_id=start_ref.attempt_id,
-            start_event_ref=start_ref,
-            terminal_event_ref=terminal_ref,
-            source_cursor=cursor_ref,
-            evidence_ids=canonical_evidence_ids,
-            digest=_canonical_digest(payload),
-            stored_schema_version=start_ref.stored_schema_version,
+            status=gate.status,
+            terminal_event=gate.terminal_event,
+            evidence=gate.evidence,
+            attempt_id=attempt_id or gate.attempt_id,
+            environment=environment,
+            session=session,
+            chain=chain,
+            plan_revision=plan_revision,
+            phase=phase,
+            task=task,
+            boundary_id=boundary_id,
+            ledger_sequence=ledger_sequence,
+            content_digest=content_digest,
+            evidence_ids=evidence_ids,
+            source_cursor=source_cursor,
         )
 
 
 @dataclass(frozen=True)
-class WbcIncompleteResult(_WbcQueryResultBase):
-    """The durable source is coherent but required evidence is absent."""
+class WbcLedgerEnvelope:
+    """Canonical query result for a full-ledger read.
 
-    status: ClassVar[WbcQueryStatus] = WbcQueryStatus.INCOMPLETE
+    Wraps the reconstructed :class:`ExecutionAttemptLedger` (or the raw
+    event list) with metadata.  When the ledger cannot be safely
+    reconstructed the ``status`` is set to ``INDETERMINATE`` or
+    ``INCOHERENT`` rather than returning a partial ledger.
+    """
 
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        _validate_non_verified(self)
-        if self.terminal_event_ref is not None:
-            raise ValueError("incomplete results cannot claim a terminal event")
+    status: GateStatus
+    ledger: Optional[Any] = None
+    events: tuple[LedgerEvent, ...] = ()
+    evidence: str = ""
 
+    attempt_id: str = ""
+    environment: Optional[str] = None
+    session: Optional[str] = None
+    chain: Optional[str] = None
+    plan_revision: Optional[str] = None
+    phase: Optional[str] = None
+    task: Optional[str] = None
+    boundary_id: Optional[str] = None
+    ledger_sequence: int = 0
+    content_digest: Optional[str] = None
+    evidence_ids: tuple[str, ...] = ()
+    source_cursor: Optional[SourceCursor] = None
 
-@dataclass(frozen=True)
-class WbcIndeterminateResult(_WbcQueryResultBase):
-    """The source cannot be read or version-bound strongly enough to decide."""
+    @classmethod
+    def from_ledger(
+        cls,
+        ledger: Any,
+        *,
+        attempt_id: str = "",
+        environment: Optional[str] = None,
+        session: Optional[str] = None,
+        chain: Optional[str] = None,
+        plan_revision: Optional[str] = None,
+        phase: Optional[str] = None,
+        task: Optional[str] = None,
+        boundary_id: Optional[str] = None,
+        source_cursor: Optional[SourceCursor] = None,
+    ) -> WbcLedgerEnvelope:
+        """Construct a ``VERIFIED`` envelope from a successfully read ledger."""
+        events = ledger.events
+        last_seq = events[-1].sequence if events else 0
+        content_digest = _compute_digest(_canonical_json(ledger.to_dict()))
 
-    status: ClassVar[WbcQueryStatus] = WbcQueryStatus.INDETERMINATE
+        return cls(
+            status=GateStatus.VERIFIED,
+            ledger=ledger,
+            events=events,
+            evidence=f"Ledger reconstructed with {len(events)} event(s).",
+            attempt_id=attempt_id or ledger.attempt_id,
+            environment=environment,
+            session=session,
+            chain=chain,
+            plan_revision=plan_revision,
+            phase=phase,
+            task=task,
+            boundary_id=boundary_id,
+            ledger_sequence=last_seq,
+            content_digest=content_digest,
+            source_cursor=source_cursor,
+        )
 
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        _validate_non_verified(self)
+    @classmethod
+    def indeterminate(
+        cls,
+        attempt_id: str,
+        reason: str,
+        *,
+        environment: Optional[str] = None,
+        session: Optional[str] = None,
+        chain: Optional[str] = None,
+        plan_revision: Optional[str] = None,
+        phase: Optional[str] = None,
+        task: Optional[str] = None,
+        boundary_id: Optional[str] = None,
+        source_cursor: Optional[SourceCursor] = None,
+    ) -> WbcLedgerEnvelope:
+        """Construct an ``INDETERMINATE`` envelope when the store cannot be read."""
+        return cls(
+            status=GateStatus.INDETERMINATE,
+            evidence=reason,
+            attempt_id=attempt_id,
+            environment=environment,
+            session=session,
+            chain=chain,
+            plan_revision=plan_revision,
+            phase=phase,
+            task=task,
+            boundary_id=boundary_id,
+            source_cursor=source_cursor,
+        )
 
-
-@dataclass(frozen=True)
-class WbcIncoherentResult(_WbcQueryResultBase):
-    """Durable evidence exists but contradicts the WBC contract."""
-
-    status: ClassVar[WbcQueryStatus] = WbcQueryStatus.INCOHERENT
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        _validate_non_verified(self)
-
-
-def _validate_non_verified(result: _WbcQueryResultBase) -> None:
-    if not result.diagnostics:
-        raise ValueError(f"{result.status.value} results require diagnostics")
-    if result.digest is not None:
-        raise ValueError(
-            f"{result.status.value} results cannot carry a verified digest"
+    @classmethod
+    def incomplete(
+        cls,
+        attempt_id: str,
+        *,
+        environment: Optional[str] = None,
+        session: Optional[str] = None,
+        chain: Optional[str] = None,
+        plan_revision: Optional[str] = None,
+        phase: Optional[str] = None,
+        task: Optional[str] = None,
+        boundary_id: Optional[str] = None,
+        source_cursor: Optional[SourceCursor] = None,
+    ) -> WbcLedgerEnvelope:
+        """Construct an ``INCOMPLETE`` envelope when the ledger is empty."""
+        return cls(
+            status=GateStatus.INCOMPLETE,
+            evidence="No events found in durable store.",
+            attempt_id=attempt_id,
+            environment=environment,
+            session=session,
+            chain=chain,
+            plan_revision=plan_revision,
+            phase=phase,
+            task=task,
+            boundary_id=boundary_id,
+            source_cursor=source_cursor,
         )
 
 
-WbcQueryResult: TypeAlias = (
-    WbcVerifiedResult
-    | WbcIncompleteResult
-    | WbcIndeterminateResult
-    | WbcIncoherentResult
+@dataclass(frozen=True)
+class WbcGapEnvelope:
+    """Canonical query result for sequence-gap detection.
+
+    Wraps the list of :class:`GapEntry` instances with metadata.
+    """
+
+    status: GateStatus
+    gaps: tuple[GapEntry, ...] = ()
+    evidence: str = ""
+
+    attempt_id: str = ""
+    environment: Optional[str] = None
+    session: Optional[str] = None
+    chain: Optional[str] = None
+    plan_revision: Optional[str] = None
+    phase: Optional[str] = None
+    task: Optional[str] = None
+    boundary_id: Optional[str] = None
+    ledger_sequence: int = 0
+    content_digest: Optional[str] = None
+    evidence_ids: tuple[str, ...] = ()
+    source_cursor: Optional[SourceCursor] = None
+
+    @classmethod
+    def from_gaps(
+        cls,
+        gaps: list[GapEntry],
+        attempt_id: str,
+        *,
+        environment: Optional[str] = None,
+        session: Optional[str] = None,
+        chain: Optional[str] = None,
+        plan_revision: Optional[str] = None,
+        phase: Optional[str] = None,
+        task: Optional[str] = None,
+        boundary_id: Optional[str] = None,
+        ledger_sequence: int = 0,
+        source_cursor: Optional[SourceCursor] = None,
+    ) -> WbcGapEnvelope:
+        """Construct an envelope from a list of :class:`GapEntry` items."""
+        gaps_tuple = tuple(gaps)
+        if gaps_tuple:
+            status = GateStatus.VERIFIED  # gaps are detected, not an error
+            evidence = f"Found {len(gaps_tuple)} gap(s) in event stream."
+        else:
+            status = GateStatus.INCOMPLETE  # no gaps found = no gap evidence
+            evidence = "No sequence gaps detected."
+
+        content_digest: Optional[str] = None
+        if gaps_tuple:
+            gap_dicts = [
+                {
+                    "attempt_id": g.attempt_id,
+                    "gap_start": g.gap_start,
+                    "gap_end": g.gap_end,
+                    "missing_count": g.missing_count,
+                }
+                for g in gaps_tuple
+            ]
+            content_digest = _compute_digest(_canonical_json(gap_dicts))
+
+        return cls(
+            status=status,
+            gaps=gaps_tuple,
+            evidence=evidence,
+            attempt_id=attempt_id,
+            environment=environment,
+            session=session,
+            chain=chain,
+            plan_revision=plan_revision,
+            phase=phase,
+            task=task,
+            boundary_id=boundary_id,
+            ledger_sequence=ledger_sequence,
+            content_digest=content_digest,
+            source_cursor=source_cursor,
+        )
+
+    @classmethod
+    def indeterminate(
+        cls,
+        attempt_id: str,
+        reason: str,
+        *,
+        environment: Optional[str] = None,
+        session: Optional[str] = None,
+        chain: Optional[str] = None,
+        plan_revision: Optional[str] = None,
+        phase: Optional[str] = None,
+        task: Optional[str] = None,
+        boundary_id: Optional[str] = None,
+        source_cursor: Optional[SourceCursor] = None,
+    ) -> WbcGapEnvelope:
+        """Construct an ``INDETERMINATE`` envelope when gap query fails."""
+        return cls(
+            status=GateStatus.INDETERMINATE,
+            evidence=reason,
+            attempt_id=attempt_id,
+            environment=environment,
+            session=session,
+            chain=chain,
+            plan_revision=plan_revision,
+            phase=phase,
+            task=task,
+            boundary_id=boundary_id,
+            source_cursor=source_cursor,
+        )
+
+
+@dataclass(frozen=True)
+class WbcSourceCursorEnvelope:
+    """Canonical query result for a source-cursor read.
+
+    Wraps the :class:`SourceCursor` (or its absence) with metadata.
+    """
+
+    status: GateStatus
+    cursor: Optional[SourceCursor] = None
+    evidence: str = ""
+
+    attempt_id: str = ""
+    cursor_key: str = "default"
+    environment: Optional[str] = None
+    session: Optional[str] = None
+    chain: Optional[str] = None
+    plan_revision: Optional[str] = None
+    phase: Optional[str] = None
+    task: Optional[str] = None
+    boundary_id: Optional[str] = None
+    ledger_sequence: int = 0
+    content_digest: Optional[str] = None
+    evidence_ids: tuple[str, ...] = ()
+    source_cursor: Optional[SourceCursor] = None
+
+    @classmethod
+    def from_cursor(
+        cls,
+        cursor: Optional[SourceCursor],
+        attempt_id: str,
+        cursor_key: str = "default",
+        *,
+        environment: Optional[str] = None,
+        session: Optional[str] = None,
+        chain: Optional[str] = None,
+        plan_revision: Optional[str] = None,
+        phase: Optional[str] = None,
+        task: Optional[str] = None,
+        boundary_id: Optional[str] = None,
+    ) -> WbcSourceCursorEnvelope:
+        """Construct an envelope from an optional :class:`SourceCursor`."""
+        if cursor is not None:
+            status = GateStatus.VERIFIED
+            evidence = (
+                f"Source cursor at sequence {cursor.last_sequence} "
+                f"(updated at {cursor.updated_at_ns})."
+            )
+            content_digest = _compute_digest(
+                _canonical_json(
+                    {
+                        "attempt_id": cursor.attempt_id,
+                        "cursor_key": cursor.cursor_key,
+                        "last_sequence": cursor.last_sequence,
+                        "last_position": cursor.last_position,
+                        "updated_at_ns": cursor.updated_at_ns,
+                    }
+                )
+            )
+            ledger_sequence = cursor.last_sequence
+        else:
+            status = GateStatus.INCOMPLETE
+            evidence = "No source cursor recorded for this attempt."
+            content_digest = None
+            ledger_sequence = 0
+
+        return cls(
+            status=status,
+            cursor=cursor,
+            evidence=evidence,
+            attempt_id=attempt_id,
+            cursor_key=cursor_key,
+            environment=environment,
+            session=session,
+            chain=chain,
+            plan_revision=plan_revision,
+            phase=phase,
+            task=task,
+            boundary_id=boundary_id,
+            ledger_sequence=ledger_sequence,
+            content_digest=content_digest,
+            source_cursor=cursor,
+        )
+
+
+# ── Facade: WbcQueries ─────────────────────────────────────────────────────
+
+
+class WbcQueries:
+    """Typed canonical query facade over an :class:`AttemptLedgerStore`.
+
+    This facade is a **read-only projection**.  Every method delegates to
+    the underlying store and wraps the result in a typed, immutable
+    envelope carrying exact identity, cursor, and evidence metadata.
+
+    It does NOT create a second authority store, bearer authorization
+    object, or dispatch grant.  It does not write, reserve, append, or
+    mint authority.  Callers that need authority decisions must use the
+    store's append/gate methods directly and cross-reference these
+    envelopes as evidence.
+
+    *context* is an optional metadata dictionary whose keys populate the
+    corresponding envelope fields (``environment``, ``session``, ``chain``,
+    ``plan_revision``, ``phase``, ``task``, ``boundary_id``).  Callers
+    should pass the relevant surface-level metadata so every envelope
+    carries full traceability.
+    """
+
+    def __init__(
+        self,
+        store: Any,
+        *,
+        context: Optional[dict[str, Any]] = None,
+    ) -> None:
+        self._store = store
+        self._context: dict[str, Any] = dict(context) if context else {}
+
+    # ── context helpers ─────────────────────────────────────────────────
+
+    def _ctx(self, **overrides: Any) -> dict[str, Any]:
+        """Merge the stored context with per-call overrides."""
+        merged = dict(self._context)
+        merged.update({k: v for k, v in overrides.items() if v is not None})
+        return merged
+
+    @staticmethod
+    def _ctx_str(ctx: dict[str, Any], key: str) -> Optional[str]:
+        val = ctx.get(key)
+        return str(val) if val is not None else None
+
+    # ── gate queries ────────────────────────────────────────────────────
+
+    def query_start_gate(
+        self,
+        attempt_id: str,
+        **ctx_overrides: Any,
+    ) -> WbcStartEnvelope:
+        """Query the durable STARTED gate and return an enriched envelope.
+
+        Delegates to :meth:`AttemptLedgerStore.start_verified`.
+        """
+        ctx = self._ctx(**ctx_overrides)
+        raw = self._store.start_verified(attempt_id)
+        source_cursor = self._read_source_cursor(attempt_id)
+
+        # Gather evidence ids from the started event's identity if present.
+        evidence_ids: tuple[str, ...] = ()
+        if raw.status == GateStatus.VERIFIED and raw.started_event is not None:
+            ev = raw.started_event
+            ids: list[str] = [ev.idempotency_key]
+            if ev.identity.attempt_id:
+                ids.append(ev.identity.attempt_id)
+            evidence_ids = tuple(ids)
+
+        ledger_sequence = (
+            raw.started_event.sequence
+            if raw.status == GateStatus.VERIFIED and raw.started_event is not None
+            else 0
+        )
+
+        return WbcStartEnvelope.from_gate_result(
+            raw,
+            attempt_id=attempt_id,
+            environment=self._ctx_str(ctx, "environment"),
+            session=self._ctx_str(ctx, "session"),
+            chain=self._ctx_str(ctx, "chain"),
+            plan_revision=self._ctx_str(ctx, "plan_revision"),
+            phase=self._ctx_str(ctx, "phase"),
+            task=self._ctx_str(ctx, "task"),
+            boundary_id=self._ctx_str(ctx, "boundary_id"),
+            ledger_sequence=ledger_sequence,
+            evidence_ids=evidence_ids,
+            source_cursor=source_cursor,
+        )
+
+    def query_terminal_gate(
+        self,
+        attempt_id: str,
+        **ctx_overrides: Any,
+    ) -> WbcTerminalEnvelope:
+        """Query the durable terminal gate and return an enriched envelope.
+
+        Delegates to :meth:`AttemptLedgerStore.terminal_or_indeterminate_verified`.
+        """
+        ctx = self._ctx(**ctx_overrides)
+        raw = self._store.terminal_or_indeterminate_verified(attempt_id)
+        source_cursor = self._read_source_cursor(attempt_id)
+
+        evidence_ids: tuple[str, ...] = ()
+        if raw.status == GateStatus.VERIFIED and raw.terminal_event is not None:
+            ev = raw.terminal_event
+            ids: list[str] = [ev.idempotency_key]
+            if ev.identity.attempt_id:
+                ids.append(ev.identity.attempt_id)
+            if ev.grant_ref.decision_id:
+                ids.append(ev.grant_ref.decision_id)
+            evidence_ids = tuple(ids)
+
+        ledger_sequence = (
+            raw.terminal_event.sequence
+            if raw.status == GateStatus.VERIFIED and raw.terminal_event is not None
+            else 0
+        )
+
+        return WbcTerminalEnvelope.from_gate_result(
+            raw,
+            attempt_id=attempt_id,
+            environment=self._ctx_str(ctx, "environment"),
+            session=self._ctx_str(ctx, "session"),
+            chain=self._ctx_str(ctx, "chain"),
+            plan_revision=self._ctx_str(ctx, "plan_revision"),
+            phase=self._ctx_str(ctx, "phase"),
+            task=self._ctx_str(ctx, "task"),
+            boundary_id=self._ctx_str(ctx, "boundary_id"),
+            ledger_sequence=ledger_sequence,
+            evidence_ids=evidence_ids,
+            source_cursor=source_cursor,
+        )
+
+    # ── ledger queries ──────────────────────────────────────────────────
+
+    def query_ledger(
+        self,
+        attempt_id: str,
+        **ctx_overrides: Any,
+    ) -> WbcLedgerEnvelope:
+        """Read the full attempt ledger and return an enriched envelope.
+
+        Delegates to :meth:`AttemptLedgerStore.read_ledger`.  Returns an
+        ``INDETERMINATE`` envelope on any store error.
+        """
+        ctx = self._ctx(**ctx_overrides)
+        source_cursor = self._read_source_cursor(attempt_id)
+
+        try:
+            ledger = self._store.read_ledger(attempt_id)
+        except Exception as exc:
+            return WbcLedgerEnvelope.indeterminate(
+                attempt_id,
+                f"Failed to read ledger: {exc}",
+                environment=self._ctx_str(ctx, "environment"),
+                session=self._ctx_str(ctx, "session"),
+                chain=self._ctx_str(ctx, "chain"),
+                plan_revision=self._ctx_str(ctx, "plan_revision"),
+                phase=self._ctx_str(ctx, "phase"),
+                task=self._ctx_str(ctx, "task"),
+                boundary_id=self._ctx_str(ctx, "boundary_id"),
+                source_cursor=source_cursor,
+            )
+
+        if ledger.is_empty:
+            return WbcLedgerEnvelope.incomplete(
+                attempt_id,
+                environment=self._ctx_str(ctx, "environment"),
+                session=self._ctx_str(ctx, "session"),
+                chain=self._ctx_str(ctx, "chain"),
+                plan_revision=self._ctx_str(ctx, "plan_revision"),
+                phase=self._ctx_str(ctx, "phase"),
+                task=self._ctx_str(ctx, "task"),
+                boundary_id=self._ctx_str(ctx, "boundary_id"),
+                source_cursor=source_cursor,
+            )
+
+        return WbcLedgerEnvelope.from_ledger(
+            ledger,
+            attempt_id=attempt_id,
+            environment=self._ctx_str(ctx, "environment"),
+            session=self._ctx_str(ctx, "session"),
+            chain=self._ctx_str(ctx, "chain"),
+            plan_revision=self._ctx_str(ctx, "plan_revision"),
+            phase=self._ctx_str(ctx, "phase"),
+            task=self._ctx_str(ctx, "task"),
+            boundary_id=self._ctx_str(ctx, "boundary_id"),
+            source_cursor=source_cursor,
+        )
+
+    def query_events(
+        self,
+        attempt_id: str,
+        **ctx_overrides: Any,
+    ) -> WbcLedgerEnvelope:
+        """Read the raw event list and return an enriched envelope.
+
+        Delegates to :meth:`AttemptLedgerStore.read_events`.  Returns an
+        ``INDETERMINATE`` envelope on any store error.
+        """
+        ctx = self._ctx(**ctx_overrides)
+        source_cursor = self._read_source_cursor(attempt_id)
+
+        try:
+            ledger = self._store.read_ledger(attempt_id)
+        except Exception as exc:
+            return WbcLedgerEnvelope.indeterminate(
+                attempt_id,
+                f"Failed to read events: {exc}",
+                environment=self._ctx_str(ctx, "environment"),
+                session=self._ctx_str(ctx, "session"),
+                chain=self._ctx_str(ctx, "chain"),
+                plan_revision=self._ctx_str(ctx, "plan_revision"),
+                phase=self._ctx_str(ctx, "phase"),
+                task=self._ctx_str(ctx, "task"),
+                boundary_id=self._ctx_str(ctx, "boundary_id"),
+                source_cursor=source_cursor,
+            )
+
+        if ledger.is_empty:
+            return WbcLedgerEnvelope.incomplete(
+                attempt_id,
+                environment=self._ctx_str(ctx, "environment"),
+                session=self._ctx_str(ctx, "session"),
+                chain=self._ctx_str(ctx, "chain"),
+                plan_revision=self._ctx_str(ctx, "plan_revision"),
+                phase=self._ctx_str(ctx, "phase"),
+                task=self._ctx_str(ctx, "task"),
+                boundary_id=self._ctx_str(ctx, "boundary_id"),
+                source_cursor=source_cursor,
+            )
+
+        return WbcLedgerEnvelope.from_ledger(
+            ledger,
+            attempt_id=attempt_id,
+            environment=self._ctx_str(ctx, "environment"),
+            session=self._ctx_str(ctx, "session"),
+            chain=self._ctx_str(ctx, "chain"),
+            plan_revision=self._ctx_str(ctx, "plan_revision"),
+            phase=self._ctx_str(ctx, "phase"),
+            task=self._ctx_str(ctx, "task"),
+            boundary_id=self._ctx_str(ctx, "boundary_id"),
+            source_cursor=source_cursor,
+        )
+
+    # ── gap queries ─────────────────────────────────────────────────────
+
+    def query_gaps(
+        self,
+        attempt_id: str,
+        **ctx_overrides: Any,
+    ) -> WbcGapEnvelope:
+        """Detect sequence gaps and return an enriched envelope.
+
+        Delegates to :meth:`AttemptLedgerStore.query_gaps`.
+        """
+        ctx = self._ctx(**ctx_overrides)
+        source_cursor = self._read_source_cursor(attempt_id)
+
+        try:
+            gaps = self._store.query_gaps(attempt_id)
+        except Exception as exc:
+            return WbcGapEnvelope.indeterminate(
+                attempt_id,
+                f"Failed to query gaps: {exc}",
+                environment=self._ctx_str(ctx, "environment"),
+                session=self._ctx_str(ctx, "session"),
+                chain=self._ctx_str(ctx, "chain"),
+                plan_revision=self._ctx_str(ctx, "plan_revision"),
+                phase=self._ctx_str(ctx, "phase"),
+                task=self._ctx_str(ctx, "task"),
+                boundary_id=self._ctx_str(ctx, "boundary_id"),
+                source_cursor=source_cursor,
+            )
+
+        # Determine ledger_sequence from the max persisted sequence.
+        try:
+            ledger_sequence = self._store.last_sequence(attempt_id)
+        except Exception:
+            ledger_sequence = 0
+
+        return WbcGapEnvelope.from_gaps(
+            gaps,
+            attempt_id,
+            environment=self._ctx_str(ctx, "environment"),
+            session=self._ctx_str(ctx, "session"),
+            chain=self._ctx_str(ctx, "chain"),
+            plan_revision=self._ctx_str(ctx, "plan_revision"),
+            phase=self._ctx_str(ctx, "phase"),
+            task=self._ctx_str(ctx, "task"),
+            boundary_id=self._ctx_str(ctx, "boundary_id"),
+            ledger_sequence=ledger_sequence,
+            source_cursor=source_cursor,
+        )
+
+    # ── source cursor queries ───────────────────────────────────────────
+
+    def query_source_cursor(
+        self,
+        attempt_id: str,
+        cursor_key: str = "default",
+        **ctx_overrides: Any,
+    ) -> WbcSourceCursorEnvelope:
+        """Read the source cursor and return an enriched envelope.
+
+        Delegates to :meth:`AttemptLedgerStore.query_source_cursor`.
+        """
+        ctx = self._ctx(**ctx_overrides)
+
+        try:
+            cursor = self._store.query_source_cursor(attempt_id, cursor_key)
+        except Exception:
+            cursor = None
+
+        return WbcSourceCursorEnvelope.from_cursor(
+            cursor,
+            attempt_id,
+            cursor_key=cursor_key,
+            environment=self._ctx_str(ctx, "environment"),
+            session=self._ctx_str(ctx, "session"),
+            chain=self._ctx_str(ctx, "chain"),
+            plan_revision=self._ctx_str(ctx, "plan_revision"),
+            phase=self._ctx_str(ctx, "phase"),
+            task=self._ctx_str(ctx, "task"),
+            boundary_id=self._ctx_str(ctx, "boundary_id"),
+        )
+
+    # ── diagnostic queries ──────────────────────────────────────────────
+
+    def query_persistence_diagnostics(
+        self,
+        attempt_id: str,
+    ) -> list[Any]:
+        """Read persistence-failure diagnostics (passthrough).
+
+        Delegates to :meth:`AttemptLedgerStore.query_persistence_diagnostics`.
+        Returns the raw diagnostic list — callers that need enriched
+        metadata should wrap in their own evidence envelope.
+        """
+        try:
+            return self._store.query_persistence_diagnostics(attempt_id)
+        except Exception:
+            return []
+
+    def query_reconciliation_state(
+        self,
+        attempt_id: str,
+    ) -> list[Any]:
+        """Read reconciliation diagnostics (passthrough).
+
+        Delegates to :meth:`AttemptLedgerStore.query_reconciliation_state`.
+        """
+        try:
+            return self._store.query_reconciliation_state(attempt_id)
+        except Exception:
+            return []
+
+    # ── internal helpers ────────────────────────────────────────────────
+
+    def _read_source_cursor(
+        self, attempt_id: str, cursor_key: str = "default"
+    ) -> Optional[SourceCursor]:
+        """Best-effort source cursor read; never raises."""
+        try:
+            return self._store.query_source_cursor(attempt_id, cursor_key)
+        except Exception:
+            return None
+
+
+# The M10 exact-version result contracts coexist with this predecessor
+# read-only facade.  Keeping both surfaces prevents the serial milestone merge
+# from turning a schema upgrade into an import-time compatibility break.
+from arnold.workflow.wbc_query_results import (
+    WBC_QUERY_CONTRACT_VERSION,
+    WbcEventRef,
+    WbcIncompleteResult,
+    WbcIncoherentResult,
+    WbcIndeterminateResult,
+    WbcQueryDiagnostic,
+    WbcQueryResult,
+    WbcQueryStatus,
+    WbcSourceCursor,
+    WbcVerifiedResult,
 )
 
+
+# ── Public API surface ─────────────────────────────────────────────────────
 
 __all__ = [
+    "WbcGapEnvelope",
+    "WbcLedgerEnvelope",
+    "WbcQueries",
+    "WbcSourceCursorEnvelope",
+    "WbcStartEnvelope",
+    "WbcTerminalEnvelope",
     "WBC_QUERY_CONTRACT_VERSION",
     "WbcEventRef",
     "WbcIncompleteResult",

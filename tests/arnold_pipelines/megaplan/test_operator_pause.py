@@ -111,6 +111,10 @@ def test_resume_reconciles_plan_authority_when_exiting_runner_overwrites_chain_p
 def test_cloud_session_pause_stops_only_owned_runner_and_repair(tmp_path: Path, monkeypatch) -> None:
     from arnold_pipelines.megaplan.cloud import operator_control
 
+    # The production target runner deliberately exports the managed queue root.
+    # This unit test exercises marker-relative defaulting, so isolate it from
+    # that ambient runner contract.
+    monkeypatch.delenv("ARNOLD_REPAIR_QUEUE_ROOT", raising=False)
     spec, _ = _chain(tmp_path)
     marker = tmp_path / "markers" / "demo.json"
     marker.parent.mkdir()

@@ -635,7 +635,7 @@ def test_generic_boundary_templates_no_megaplan_imports() -> None:
                 assert "megaplan" not in full.lower(), (
                     f"boundary_templates.py must not import megaplan: {full}"
                 )
-                if node.module:
+                if isinstance(node, ast.ImportFrom) and node.module:
                     assert "megaplan" not in node.module.lower(), (
                         f"boundary_templates.py must not import megaplan module: {node.module}"
                     )

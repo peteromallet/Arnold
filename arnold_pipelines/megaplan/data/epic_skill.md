@@ -1,3 +1,5 @@
+> **Authority status (M11):** Zero-authority history. All repair, audit, and deployment authority has been migrated to canonical delegation. This document is retained for reference only — it must not be used to materialize commands, grant authority, or drive automated actions.
+
 ---
 name: megaplan-epic
 description: Run an epic — a chain of sprint-sized megaplans driven sequentially via `megaplan chain`. Use when the work is bigger than ~2 weeks and needs to be decomposed into multiple plans with state, ordering, and failure semantics handled by the harness.

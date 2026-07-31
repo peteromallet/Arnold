@@ -243,6 +243,20 @@ _TERMINAL_EVENT_TYPE_VALUES: tuple[str, ...] = (
     AttemptEventType.CANCELLED.value,
 )
 
+_REQUIRED_PREDECESSOR_EVENT: dict[str, str] = {
+    AttemptEventType.COMPLETED.value: AttemptEventType.STARTED.value,
+    AttemptEventType.FAILED.value: AttemptEventType.STARTED.value,
+    AttemptEventType.RETRY_SCHEDULED.value: AttemptEventType.STARTED.value,
+    AttemptEventType.SUSPENDED.value: AttemptEventType.STARTED.value,
+    AttemptEventType.RESUMED.value: AttemptEventType.SUSPENDED.value,
+    AttemptEventType.CANCELLED.value: AttemptEventType.STARTED.value,
+    AttemptEventType.EXTERNAL_EFFECT_INTENT.value: AttemptEventType.STARTED.value,
+    AttemptEventType.EXTERNAL_EFFECT_OUTCOME.value: (
+        AttemptEventType.EXTERNAL_EFFECT_INTENT.value
+    ),
+    AttemptEventType.RECONCILIATION.value: AttemptEventType.PERSISTENCE_FAILED.value,
+}
+
 
 # ── Typed errors ──────────────────────────────────────────────────────────
 
@@ -264,11 +278,32 @@ class MonotonicSequenceError(AttemptLedgerError):
     """
 
 
+class SequenceGapError(AttemptLedgerError):
+    """Raised when an append would create a gap in an attempt event stream."""
+
+
+class CausalPredecessorError(AttemptLedgerError):
+    """Raised when an event does not name the immediately preceding sequence."""
+
+
 class PostTerminalAppendError(AttemptLedgerError):
     """Raised when any append is attempted after a terminal event.
 
     Covers both second-terminal attempts and post-terminal non-terminal
     events. The single terminal event is final.
+    """
+
+
+class DuplicateTerminalError(PostTerminalAppendError):
+    """Raised when a second terminal outcome is proposed for one attempt."""
+
+
+class MissingStartEventError(AttemptLedgerError):
+    """Raised when a terminal event is appended before a durable STARTED event.
+
+    A terminal receipt cannot establish that an attempt was admitted or
+    started.  Requiring the STARTED event in the same durable stream prevents a
+    terminal label or imported result from manufacturing attempt completion.
     """
 
 
@@ -1945,10 +1980,40 @@ class SqliteAttemptLedgerStore(AttemptLedgerStore):
             )
             if cur.fetchone() is not None:
                 conn.execute("ROLLBACK")
+                if event.event_type.value in _TERMINAL_EVENT_TYPE_VALUES:
+                    raise DuplicateTerminalError(
+                        f"Attempt {attempt_id!r} already has a terminal event; "
+                        f"a second terminal {event.event_type.value!r} is rejected."
+                    )
                 raise PostTerminalAppendError(
                     f"Attempt {attempt_id!r} already has a terminal event; "
-                    f"further appends are rejected (idempotency_key={event.idempotency_key!r})."
+                    f"no further events are allowed "
+                    f"(idempotency_key={event.idempotency_key!r})."
                 )
+
+            # Enforce the schema's lifecycle predecessor relation against the
+            # durable stream, not merely against the caller's proposed event.
+            required_predecessor = _REQUIRED_PREDECESSOR_EVENT.get(
+                event.event_type.value
+            )
+            if required_predecessor is not None:
+                cur.execute(
+                    "SELECT 1 FROM attempt_events "
+                    "WHERE attempt_id = ? AND event_type = ? LIMIT 1",
+                    (attempt_id, required_predecessor),
+                )
+                if cur.fetchone() is None:
+                    conn.execute("ROLLBACK")
+                    predecessor_label = (
+                        "STARTED"
+                        if required_predecessor == AttemptEventType.STARTED.value
+                        else repr(required_predecessor)
+                    )
+                    raise MissingStartEventError(
+                        f"Event {event.event_type.value!r} for attempt "
+                        f"{attempt_id!r} requires a durable "
+                        f"{predecessor_label} event."
+                    )
 
             # (5) Monotonic sequence — strictly greater than max.
             cur.execute(
@@ -1961,7 +2026,21 @@ class SqliteAttemptLedgerStore(AttemptLedgerStore):
                 conn.execute("ROLLBACK")
                 raise MonotonicSequenceError(
                     f"Event sequence {event.sequence} for attempt {attempt_id!r} "
-                    f"is not strictly greater than the current max {last_seq}."
+                    f"is not monotonic; current max is {last_seq}."
+                )
+            expected_sequence = last_seq + 1
+            if event.sequence != expected_sequence:
+                conn.execute("ROLLBACK")
+                raise SequenceGapError(
+                    f"Event sequence {event.sequence} for attempt {attempt_id!r} "
+                    f"would create a gap; expected {expected_sequence}."
+                )
+            if event.causal_predecessor_sequence != last_seq:
+                conn.execute("ROLLBACK")
+                raise CausalPredecessorError(
+                    f"Event causal_predecessor_sequence "
+                    f"{event.causal_predecessor_sequence} for attempt "
+                    f"{attempt_id!r} must equal current max sequence {last_seq}."
                 )
 
             # (6) INSERT.
@@ -1982,9 +2061,13 @@ VALUES (?, ?, ?, ?, ?, ?)
             )
             conn.execute("COMMIT")
         except (
+            CausalPredecessorError,
             DivergentDuplicateError,
+            DuplicateTerminalError,
+            MissingStartEventError,
             PostTerminalAppendError,
             MonotonicSequenceError,
+            SequenceGapError,
             ValueError,
         ):
             # Transaction already rolled back inside the handler for
@@ -2926,10 +3009,14 @@ __all__ = [
     "AttemptLedgerError",
     "AttemptLedgerStore",
     "AttemptReservation",
+    "CausalPredecessorError",
+    "DuplicateTerminalError",
     "GapEntry",
     "GateStatus",
+    "MissingStartEventError",
     "MonotonicSequenceError",
     "PostTerminalAppendError",
+    "SequenceGapError",
     "SourceCursor",
     "SqliteAttemptLedgerStore",
     "StartGateResult",

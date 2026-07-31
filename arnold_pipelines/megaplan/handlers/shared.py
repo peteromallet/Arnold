@@ -39,6 +39,10 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
     Deviation,
     ExitKind,
 )
+from arnold_pipelines.megaplan.workflows.handler_contract import (
+    apply_response_projection,
+    resolve_next_steps,
+)
 from arnold_pipelines.megaplan._core import (
     append_history,
     apply_session_update,
@@ -947,7 +951,7 @@ def _finish_step(
         )
     resolved_next = next_step
     if resolved_next is _AUTO_NEXT_STEP:
-        next_steps = workflow_next(state)
+        next_steps = resolve_next_steps(state)
         resolved_next = next_steps[0] if next_steps else None
     response: StepResponse = {
         "success": success,
@@ -966,7 +970,11 @@ def _finish_step(
         authority_step = _ROUTE_SIGNAL_AUTHORITY_STEP_ALIASES.get(step, step)
         route_target = resolve_lowered_route_target_for_signal(authority_step, route_signal)
     if route_target is not None:
-        response["next_step"] = route_target
+        apply_response_projection(
+            response,
+            route_signal=route_signal,
+            next_step=route_target,
+        )
     _attach_next_step_runtime(response)
     attach_agent_fallback(response, args)
     # Emit the canonical phase_result.json for the auto driver

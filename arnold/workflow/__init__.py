@@ -252,6 +252,7 @@ from arnold.workflow.boundary_conformance import (
     verify_semantic_findings_against_boundaries,
     verify_single_boundary,
 )
+from arnold.workflow.attempt_ledger_store import SqliteAttemptLedgerStore
 from arnold.workflow.wbc_queries import (
     WbcGapEnvelope,
     WbcLedgerEnvelope,
@@ -259,6 +260,12 @@ from arnold.workflow.wbc_queries import (
     WbcSourceCursorEnvelope,
     WbcStartEnvelope,
     WbcTerminalEnvelope,
+    WbcEventRef,
+    WbcQueryDiagnostic,
+    WbcQueryResult,
+    WbcQueryStatus,
+    WbcSourceCursor,
+    WbcVerifiedResult,
 )
 
 __all__ = [
@@ -504,11 +511,18 @@ __all__ = [
     "verify_semantic_findings_against_boundaries",
     "verify_single_boundary",
     "WorkflowBoundarySpec",
-    # WBC canonical query facade and envelopes
+    # WBC canonical query facade and results
+    "SqliteAttemptLedgerStore",
     "WbcGapEnvelope",
     "WbcLedgerEnvelope",
     "WbcQueries",
     "WbcSourceCursorEnvelope",
     "WbcStartEnvelope",
     "WbcTerminalEnvelope",
+    "WbcEventRef",
+    "WbcQueryDiagnostic",
+    "WbcQueryResult",
+    "WbcQueryStatus",
+    "WbcSourceCursor",
+    "WbcVerifiedResult",
 ]

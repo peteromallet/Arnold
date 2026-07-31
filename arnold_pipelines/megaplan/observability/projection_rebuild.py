@@ -50,8 +50,15 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from arnold.runtime.event_journal import (
+    CompactionManifest,
+    JournalDrift,
+    detect_journal_drift,
+    manifest_replay_digest_equal,
+    rebuild_compaction_manifest,
+)
 from arnold_pipelines.megaplan._core.io import (
     ProjectionCursor,
     _projection_canonical_dumps,
@@ -520,6 +527,154 @@ def compare_all_projections(
     return reports
 
 
+# ── Drift-aware rebuild (Step 19) ──────────────────────────────────────────
+
+
+def detect_source_journal_drift(source_path: Path) -> Tuple[JournalDrift, ...]:
+    """Detect drift in a projection's source journal from durable evidence.
+
+    Thin delegation to :func:`arnold.runtime.event_journal.detect_journal_drift`
+    that derives every finding purely from the durable ``events.ndjson``
+    records and the advisory ``.events.seq`` sidecar.  The projection rebuild
+    layer uses this to flag when source evidence itself has integrity issues
+    without ever treating a rebuilt projection as authority over drift.
+
+    Parameters
+    ----------
+    source_path:
+        Path to the directory containing ``events.ndjson`` and the
+        ``.events.seq`` sidecar.
+
+    Returns
+    -------
+    tuple[JournalDrift, ...]
+        Drift findings (possibly empty).
+    """
+    return tuple(detect_journal_drift(Path(source_path)))
+
+
+def rebuild_with_drift_check(
+    registry: ProjectionRegistry,
+    projection_id: str,
+    source_records: Sequence[Mapping[str, Any]] | None = None,
+    *,
+    existing_projection_view: Mapping[str, Any] | None = None,
+) -> RebuildComparisonReport:
+    """Rebuild a projection and annotate the report with source-journal drift.
+
+    This combines :func:`compare_rebuild` with :func:`detect_source_journal_drift`
+    so that a rebuild report carries both digest parity and drift findings.
+    The rebuild always proceeds from durable source records (self-healing from
+    durable append-only evidence); drift findings are **annotated** into the
+    report diagnostics as ``DRIFT_DETECTED`` lines but never block the rebuild
+    or become authority over the result.
+
+    Drift evidence is derived solely from the durable journal — never from
+    labels, liveness, WBC receipts, or rebuilt projections.
+    """
+    entry = registry._entries.get(projection_id)
+    if entry is None:
+        return compare_rebuild(
+            registry,
+            projection_id,
+            source_records=source_records,
+            existing_projection_view=existing_projection_view,
+        )
+
+    base_report = compare_rebuild(
+        registry,
+        projection_id,
+        source_records=source_records,
+        existing_projection_view=existing_projection_view,
+    )
+
+    drift_findings = detect_source_journal_drift(entry.source_path)
+    if drift_findings:
+        drift_lines = [
+            f"DRIFT_DETECTED:{f.drift_type}: {f.detail}" for f in drift_findings
+        ]
+        diagnostics = list(base_report.diagnostics) + drift_lines
+        return RebuildComparisonReport(
+            projection_id=base_report.projection_id,
+            parity=base_report.parity,
+            rebuild_digest=base_report.rebuild_digest,
+            existing_digest=base_report.existing_digest,
+            source_cursor=base_report.source_cursor,
+            diagnostics=tuple(diagnostics),
+        )
+    return base_report
+
+
+# ── Compaction manifest rebuildable-projection proof (Step 20-22) ──────────
+
+
+def verify_compaction_manifest_rebuildable(
+    manifest: CompactionManifest,
+    artifact_root: Path,
+) -> RebuildComparisonReport:
+    """Prove a compaction manifest is a rebuildable projection.
+
+    Rebuilds the manifest from durable evidence via
+    :func:`arnold.runtime.event_journal.rebuild_compaction_manifest` and
+    compares the rebuilt compacted digest against the manifest's recorded
+    ``compacted_digest`` (and the preserved digest and counts).
+
+    The manifest is **never** treated as authority: ``parity=True`` only
+    proves it faithfully projects the current durable evidence.  A
+    ``parity=False`` result means the manifest is stale, tampered, or
+    references an ambiguous legal-hold range — it must not be trusted as
+    authority and any drift is surfaced in ``diagnostics``.
+
+    Parameters
+    ----------
+    manifest:
+        A :class:`~arnold.runtime.event_journal.CompactionManifest` to verify.
+    artifact_root:
+        Directory containing the durable ``events.ndjson``.
+
+    Returns
+    -------
+    RebuildComparisonReport
+        ``rebuild_digest`` is the freshly re-derived compacted digest;
+        ``existing_digest`` is the manifest's recorded compacted digest;
+        ``parity`` is ``True`` only when the rebuild matches the manifest on
+        every durable field **and** no legal-hold drift was detected.
+    """
+    rebuilt, drift = rebuild_compaction_manifest(manifest, artifact_root)
+    projection_id = f"compaction:{manifest.from_seq}:{manifest.to_seq}"
+    if drift:
+        diagnostics = tuple(
+            f"DRIFT_DETECTED:{d.drift_type}: {d.detail}" for d in drift
+        )
+        return RebuildComparisonReport(
+            projection_id=projection_id,
+            parity=False,
+            rebuild_digest="",
+            existing_digest=manifest.compacted_digest,
+            source_cursor=None,
+            diagnostics=diagnostics,
+        )
+    assert rebuilt is not None  # no drift => a manifest was produced
+    parity = manifest_replay_digest_equal(manifest, rebuilt)
+    diagnostics: Tuple[str, ...] = ()
+    if not parity:
+        diagnostics = (
+            (
+                f"Compaction manifest digest mismatch: "
+                f"rebuild={rebuilt.compacted_digest[:16]}... "
+                f"vs manifest={manifest.compacted_digest[:16]}..."
+            ),
+        )
+    return RebuildComparisonReport(
+        projection_id=projection_id,
+        parity=parity,
+        rebuild_digest=rebuilt.compacted_digest,
+        existing_digest=manifest.compacted_digest,
+        source_cursor=None,
+        diagnostics=diagnostics,
+    )
+
+
 # ── Default source-record loader ───────────────────────────────────────────
 
 
@@ -557,5 +712,8 @@ __all__ = [
     "compare_all_projections",
     "compare_rebuild",
     "compute_projection_digest",
+    "detect_source_journal_drift",
     "rebuild_all_projections",
+    "rebuild_with_drift_check",
+    "verify_compaction_manifest_rebuildable",
 ]

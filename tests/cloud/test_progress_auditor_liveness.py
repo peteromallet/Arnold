@@ -111,20 +111,22 @@ def test_live_flags_without_session_or_process_identity_are_not_canonical_livene
     assert result["session_identity_present"] is False
     assert result["process_identity_present"] is False
 
-    def test_classify_runner_liveness_dead_produces_deterministic_evidence(self):
-        """Dead runner evidence must produce a deterministic evidence-bound reason."""
-        result = classify_runner_liveness(
-            {"live_status": "unknown"},
-            {},
-            ["canonical_launch_evidence_missing"],
-        )
-        assert result["state"] == "dead"
-        eid = _liveness_evidence_id(result["state"], result["source"], result["known"])
-        assert eid.startswith("liveness:sha256:")
 
-    def test_classify_runner_liveness_unknown_produces_deterministic_evidence(self):
-        """Unknown liveness must produce a deterministic evidence-bound reason."""
-        result = classify_runner_liveness({"live_status": "unknown"}, {}, [])
-        assert result["state"] == "unknown"
-        eid = _liveness_evidence_id(result["state"], result["source"], result["known"])
-        assert eid.startswith("liveness:sha256:")
+def test_classify_runner_liveness_dead_produces_deterministic_evidence() -> None:
+    """Dead runner evidence must produce a deterministic evidence-bound reason."""
+    result = classify_runner_liveness(
+        {"live_status": "unknown"},
+        {},
+        ["canonical_launch_evidence_missing"],
+    )
+    assert result["state"] == "dead"
+    eid = _liveness_evidence_id(result["state"], result["source"], result["known"])
+    assert eid.startswith("liveness:sha256:")
+
+
+def test_classify_runner_liveness_unknown_produces_deterministic_evidence() -> None:
+    """Unknown liveness must produce a deterministic evidence-bound reason."""
+    result = classify_runner_liveness({"live_status": "unknown"}, {}, [])
+    assert result["state"] == "unknown"
+    eid = _liveness_evidence_id(result["state"], result["source"], result["known"])
+    assert eid.startswith("liveness:sha256:")

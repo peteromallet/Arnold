@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 from urllib.parse import unquote, urlparse
 
 
@@ -53,6 +53,20 @@ def _git_revision(root: Path) -> str:
         text=True,
     )
     return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _git_is_clean(root: Path) -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(root), "status", "--porcelain=v1", "--untracked-files=all"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0 and not result.stdout.strip()
+
+
+def _safe_path_enabled() -> bool:
+    return bool(getattr(sys.flags, "safe_path", False))
 
 
 def _distribution() -> importlib.metadata.Distribution | None:
@@ -109,7 +123,14 @@ def _pth_identity() -> list[dict[str, Any]]:
             if not candidate.is_absolute():
                 candidate = path.parent / candidate
             entries.append(str(candidate.resolve(strict=False)))
-        records.append({"path": str(path), "entries": entries, "readable": True})
+        records.append(
+            {
+                "path": str(path),
+                "sha256": _sha256_file(path),
+                "entries": entries,
+                "readable": True,
+            }
+        )
     return records
 
 
@@ -120,9 +141,9 @@ def runtime_provenance(
 ) -> dict[str, Any]:
     import arnold
     import arnold_pipelines
-    import arnold_pipelines.megaplan
 
     import_root = Path(arnold_pipelines.__file__).resolve().parents[1]
+    megaplan_init = import_root / "arnold_pipelines" / "megaplan" / "__init__.py"
     editable_root, direct_url = _direct_url_identity()
     pth = _pth_identity()
     source_revision = _git_revision(import_root)
@@ -130,7 +151,10 @@ def runtime_provenance(
     imports = {
         "arnold": str(Path(arnold.__file__).resolve()),
         "arnold_pipelines": str(Path(arnold_pipelines.__file__).resolve()),
-        "megaplan": str(Path(arnold_pipelines.megaplan.__file__).resolve()),
+        # Provenance must remain inspectable for an independently receipted
+        # rollback checkout even when importing that older package would run
+        # incompatible registration side effects.
+        "megaplan": str(megaplan_init.resolve()),
     }
     errors: list[str] = []
     if expected is not None and import_root != expected:
@@ -203,6 +227,442 @@ def runtime_provenance_receipt(provenance: Mapping[str, Any]) -> dict[str, Any]:
         "runtime_identity": normalized_runtime_identity(provenance),
     }
     return {**core, "content_sha256": _canonical_sha256(core)}
+
+
+M11_BOUND_IDENTITY_SCHEMA = "arnold.megaplan.m11_bound_runtime_identity.v1"
+
+_M11_IDENTITY_COMPONENTS = (
+    "interpreter",
+    "editable_checkout",
+    "pth_files",
+    "imports",
+    "source_lineage",
+    "wrappers",
+    "supervisor_command",
+    "target_marker",
+)
+
+
+def m11_bound_runtime_identity(
+    *,
+    expected_root: Path | None = None,
+    expected_revision: str = "",
+    expected_interpreter: Path | None = None,
+    expected_interpreter_sha256: str = "",
+    expected_pth_hashes: Mapping[str, str] | None = None,
+    expected_import_paths: Mapping[str, str] | None = None,
+    supervisor_python: Path | None = None,
+    supervisor_argv: Sequence[str] | None = None,
+    expected_supervisor_argv: Sequence[str] | None = None,
+    wrapper_dir: Path | None = None,
+    expected_wrapper_hashes: Mapping[str, str] | None = None,
+    target_marker_path: Path | None = None,
+    expected_target_marker_sha256: str = "",
+    expected_target_fields: Mapping[str, Any] | None = None,
+    require_clean_checkout: bool = False,
+    require_safe_path: bool = False,
+    strict: bool = False,
+) -> dict[str, Any]:
+    """Validate bound runtime identity for M11 acceptance joins.
+
+    Validates all eight runtime identity components at init/resume:
+    interpreter, editable checkout, .pth files, imports, source lineage,
+    wrappers, supervisor command, and target marker.
+
+    Returns a content-addressed identity receipt with per-component
+    ``ok`` flags and ``errors`` lists.  An identity is ``valid`` only
+    when every component is ``ok`` — a single stale component makes the
+    whole identity invalid for M11 acceptance.
+    """
+    errors: list[str] = []
+    components: dict[str, dict[str, Any]] = {}
+    expected = expected_root.resolve() if expected_root is not None else None
+
+    if strict:
+        missing = []
+        for name, value in (
+            ("expected_root", expected_root),
+            ("expected_revision", expected_revision),
+            ("expected_interpreter", expected_interpreter),
+            ("expected_interpreter_sha256", expected_interpreter_sha256),
+            ("expected_pth_hashes", expected_pth_hashes),
+            ("expected_import_paths", expected_import_paths),
+            ("expected_wrapper_hashes", expected_wrapper_hashes),
+            ("supervisor_argv", supervisor_argv),
+            ("expected_supervisor_argv", expected_supervisor_argv),
+            ("target_marker_path", target_marker_path),
+            ("expected_target_marker_sha256", expected_target_marker_sha256),
+            ("expected_target_fields", expected_target_fields),
+        ):
+            if value is None or value == "" or value == {} or value == ():
+                missing.append(name)
+        if missing:
+            errors.append("strict_expectations_missing:" + ",".join(missing))
+        require_clean_checkout = True
+        require_safe_path = True
+
+    # --- 1. Interpreter ----------------------------------------------------
+    executable = Path(sys.executable).resolve(strict=True)
+    prefix = Path(sys.prefix).resolve(strict=True)
+    base_prefix = Path(sys.base_prefix).resolve(strict=True)
+    interpreter_ok = True
+    interpreter_errors: list[str] = []
+    if not executable.exists():
+        interpreter_ok = False
+        interpreter_errors.append("interpreter_executable_missing")
+    executable_sha256 = _sha256_file(executable) if executable.exists() else ""
+    if expected_interpreter is not None:
+        expected_executable = expected_interpreter.resolve(strict=False)
+        if executable != expected_executable:
+            interpreter_ok = False
+            interpreter_errors.append("interpreter_path_mismatch")
+    if expected_interpreter_sha256 and executable_sha256 != expected_interpreter_sha256:
+        interpreter_ok = False
+        interpreter_errors.append("interpreter_sha256_mismatch")
+    safe_path = _safe_path_enabled()
+    if require_safe_path and not safe_path:
+        interpreter_ok = False
+        interpreter_errors.append("python_safe_path_disabled")
+    components["interpreter"] = {
+        "executable": str(executable),
+        "sha256": executable_sha256,
+        "expected_executable": (
+            str(expected_interpreter.resolve(strict=False))
+            if expected_interpreter is not None
+            else ""
+        ),
+        "expected_sha256": expected_interpreter_sha256,
+        "prefix": str(prefix),
+        "base_prefix": str(base_prefix),
+        "venv": str(prefix) if prefix != base_prefix else "",
+        "safe_path": safe_path,
+        "ok": interpreter_ok,
+        "errors": interpreter_errors,
+    }
+    if not interpreter_ok:
+        errors.append("interpreter_invalid")
+
+    # --- 2. Editable checkout ----------------------------------------------
+    editable_root, direct_url = _direct_url_identity()
+    editable_ok = True
+    editable_errors: list[str] = []
+    if editable_root is None:
+        editable_ok = False
+        editable_errors.append("not_editable_install")
+    elif expected is not None:
+        import arnold_pipelines as _ap
+
+        actual_import_root = Path(_ap.__file__).resolve().parents[1]
+        if strict and editable_root != expected:
+            editable_ok = False
+            editable_errors.append("editable_root_mismatch")
+        elif not strict and editable_root != expected and actual_import_root != expected:
+            editable_ok = False
+            editable_errors.append("editable_root_mismatch")
+    components["editable_checkout"] = {
+        "root": str(editable_root) if editable_root is not None else "",
+        "direct_url": direct_url,
+        "ok": editable_ok,
+        "errors": editable_errors,
+    }
+    if not editable_ok:
+        errors.append("editable_checkout_invalid")
+
+    # --- 3. .pth files -----------------------------------------------------
+    pth = _pth_identity()
+    pth_ok = True
+    pth_errors: list[str] = []
+    if not pth:
+        pth_ok = False
+        pth_errors.append("no_pth_entries")
+    else:
+        for record in pth:
+            if not record.get("readable"):
+                pth_ok = False
+                pth_errors.append(f"pth_unreadable:{record.get('path')}")
+        # Verify pth entries point to valid directories (existence check)
+        # rather than requiring exact path matches, because editable installs
+        # may record metadata paths that differ from the actual import root.
+        if pth_ok:
+            pth_entries = [
+                entry
+                for record in pth
+                for entry in record.get("entries", [])
+                if isinstance(entry, str)
+            ]
+            if not pth_entries:
+                pth_ok = False
+                pth_errors.append("pth_no_path_entries")
+            elif not any(
+                Path(entry).resolve(strict=False).is_dir()
+                for entry in pth_entries
+            ):
+                pth_ok = False
+                pth_errors.append("pth_entry_dirs_missing")
+    observed_pth_hashes = {
+        str(Path(str(record.get("path") or "")).resolve(strict=False)): str(
+            record.get("sha256") or ""
+        )
+        for record in pth
+    }
+    if expected is not None and (strict or expected_pth_hashes is not None):
+        for record in pth:
+            for entry in record.get("entries", []):
+                if Path(str(entry)).resolve(strict=False) != expected:
+                    pth_ok = False
+                    pth_errors.append(f"pth_entry_root_mismatch:{entry}")
+    if expected_pth_hashes is not None:
+        normalized_expected_pth = {
+            str(Path(path).resolve(strict=False)): digest
+            for path, digest in expected_pth_hashes.items()
+        }
+        if observed_pth_hashes != normalized_expected_pth:
+            pth_ok = False
+            pth_errors.append("pth_set_or_hash_mismatch")
+    components["pth_files"] = {
+        "records": pth,
+        "observed_hashes": observed_pth_hashes,
+        "expected_hashes": dict(expected_pth_hashes or {}),
+        "ok": pth_ok,
+        "errors": pth_errors,
+    }
+    if not pth_ok:
+        errors.append("pth_files_invalid")
+
+    # --- 4. Imports --------------------------------------------------------
+    import arnold
+    import arnold_pipelines
+
+    imports_ok = True
+    imports_errors: list[str] = []
+    import_map = {
+        "arnold": str(Path(arnold.__file__).resolve()),
+        "arnold_pipelines": str(Path(arnold_pipelines.__file__).resolve()),
+        "megaplan": str(
+            (
+                Path(arnold_pipelines.__file__).resolve().parents[1]
+                / "arnold_pipelines"
+                / "megaplan"
+                / "__init__.py"
+            ).resolve()
+        ),
+    }
+    actual_import_root = Path(arnold_pipelines.__file__).resolve().parents[1]
+    for name, path_str in import_map.items():
+        if not Path(path_str).is_relative_to(actual_import_root):
+            imports_ok = False
+            imports_errors.append(f"import_not_relative_to_import_root:{name}")
+    # Also check against expected_root when it differs (cross-check)
+    if expected is not None:
+        if expected != actual_import_root:
+            for name, path_str in import_map.items():
+                if not Path(path_str).is_relative_to(expected):
+                    imports_ok = False
+                    imports_errors.append(f"import_not_relative_to_expected_root:{name}")
+    if expected_import_paths is not None:
+        normalized_expected_imports = {
+            name: str(Path(path).resolve(strict=False))
+            for name, path in expected_import_paths.items()
+        }
+        if import_map != normalized_expected_imports:
+            imports_ok = False
+            imports_errors.append("import_path_map_mismatch")
+    components["imports"] = {
+        "paths": import_map,
+        "expected_paths": dict(expected_import_paths or {}),
+        "ok": imports_ok,
+        "errors": imports_errors,
+    }
+    if not imports_ok:
+        errors.append("imports_invalid")
+
+    # --- 5. Source lineage -------------------------------------------------
+    import_root = Path(arnold_pipelines.__file__).resolve().parents[1]
+    source_revision = _git_revision(import_root)
+    source_ok = True
+    source_errors: list[str] = []
+    if not source_revision:
+        source_ok = False
+        source_errors.append("no_git_revision")
+    elif expected_revision and source_revision != expected_revision:
+        source_ok = False
+        source_errors.append("revision_mismatch")
+    source_clean = _git_is_clean(import_root)
+    if require_clean_checkout and not source_clean:
+        source_ok = False
+        source_errors.append("source_checkout_dirty")
+    components["source_lineage"] = {
+        "import_root": str(import_root),
+        "revision": source_revision,
+        "expected_revision": expected_revision,
+        "clean": source_clean,
+        "ok": source_ok,
+        "errors": source_errors,
+    }
+    if not source_ok:
+        errors.append("source_lineage_invalid")
+
+    # --- 6. Wrappers -------------------------------------------------------
+    wrappers_ok = True
+    wrappers_errors: list[str] = []
+    wrapper_entries: list[dict[str, Any]] = []
+    if wrapper_dir is not None and wrapper_dir.is_dir():
+        for path in sorted(wrapper_dir.glob("arnold-*")):
+            if path.is_file():
+                try:
+                    sha = _sha256_file(path)
+                except OSError:
+                    sha = ""
+                    wrappers_ok = False
+                    wrappers_errors.append(f"wrapper_unreadable:{path.name}")
+                wrapper_entries.append({
+                    "name": path.name,
+                    "path": str(path),
+                    "sha256": sha,
+                    "executable": os.access(path, os.X_OK),
+                })
+        if not wrapper_entries:
+            wrappers_ok = False
+            wrappers_errors.append("no_wrappers_found")
+    else:
+        wrappers_ok = False
+        wrappers_errors.append("wrapper_dir_not_configured")
+    observed_wrapper_hashes = {
+        entry["path"]: entry["sha256"] for entry in wrapper_entries
+    }
+    if expected_wrapper_hashes is not None:
+        normalized_expected_wrappers = {
+            str(Path(path).resolve(strict=False)): digest
+            for path, digest in expected_wrapper_hashes.items()
+        }
+        if observed_wrapper_hashes != normalized_expected_wrappers:
+            wrappers_ok = False
+            wrappers_errors.append("wrapper_set_or_hash_mismatch")
+        if any(not bool(entry["executable"]) for entry in wrapper_entries):
+            wrappers_ok = False
+            wrappers_errors.append("wrapper_not_executable")
+    components["wrappers"] = {
+        "entries": wrapper_entries,
+        "wrapper_dir": str(wrapper_dir) if wrapper_dir is not None else "",
+        "observed_hashes": observed_wrapper_hashes,
+        "expected_hashes": dict(expected_wrapper_hashes or {}),
+        "ok": wrappers_ok,
+        "errors": wrappers_errors,
+    }
+    if not wrappers_ok:
+        errors.append("wrappers_invalid")
+
+    # --- 7. Supervisor command ---------------------------------------------
+    supervisor_ok = True
+    supervisor_errors: list[str] = []
+    supervisor_info: dict[str, Any] = {
+        "python": "",
+        "exists": False,
+        "sha256": "",
+        "argv": list(supervisor_argv or ()),
+        "expected_argv": list(expected_supervisor_argv or ()),
+    }
+    if supervisor_python is not None:
+        sp = supervisor_python.resolve(strict=False)
+        supervisor_info["python"] = str(sp)
+        if sp.exists():
+            supervisor_info["exists"] = True
+            supervisor_info["sha256"] = _sha256_file(sp)
+        else:
+            supervisor_ok = False
+            supervisor_errors.append("supervisor_python_missing")
+    else:
+        supervisor_ok = False
+        supervisor_errors.append("supervisor_python_not_configured")
+    if expected_supervisor_argv is not None:
+        if tuple(supervisor_argv or ()) != tuple(expected_supervisor_argv):
+            supervisor_ok = False
+            supervisor_errors.append("supervisor_argv_mismatch")
+    if supervisor_python is not None and supervisor_argv:
+        argv_python = Path(supervisor_argv[0]).resolve(strict=False)
+        if argv_python != supervisor_python.resolve(strict=False):
+            supervisor_ok = False
+            supervisor_errors.append("supervisor_argv_python_mismatch")
+    components["supervisor_command"] = {
+        **supervisor_info,
+        "ok": supervisor_ok,
+        "errors": supervisor_errors,
+    }
+    if not supervisor_ok:
+        errors.append("supervisor_command_invalid")
+
+    # --- 8. Target marker --------------------------------------------------
+    target_ok = True
+    target_errors: list[str] = []
+    target_info: dict[str, Any] = {
+        "path": "",
+        "exists": False,
+        "sha256": "",
+        "fields": {},
+    }
+    if target_marker_path is not None:
+        tmp = target_marker_path.resolve(strict=False)
+        target_info["path"] = str(tmp)
+        if tmp.is_file():
+            target_info["exists"] = True
+            try:
+                target_info["sha256"] = _sha256_file(tmp)
+                payload = json.loads(tmp.read_text(encoding="utf-8"))
+                parsed_fields = (
+                    payload if isinstance(payload, dict) else {"_value": payload}
+                )
+                target_info["fields"] = (
+                    {
+                        key: parsed_fields.get(key)
+                        for key in (expected_target_fields or {})
+                    }
+                    if strict
+                    else parsed_fields
+                )
+            except (OSError, json.JSONDecodeError):
+                target_ok = False
+                target_errors.append("target_marker_unreadable_or_invalid_json")
+        else:
+            target_ok = False
+            target_errors.append("target_marker_missing")
+    else:
+        target_ok = False
+        target_errors.append("target_marker_not_configured")
+    if (
+        expected_target_marker_sha256
+        and target_info["sha256"] != expected_target_marker_sha256
+    ):
+        target_ok = False
+        target_errors.append("target_marker_sha256_mismatch")
+    for key, expected_value in (expected_target_fields or {}).items():
+        if target_info["fields"].get(key) != expected_value:
+            target_ok = False
+            target_errors.append(f"target_marker_field_mismatch:{key}")
+    components["target_marker"] = {
+        **target_info,
+        "ok": target_ok,
+        "errors": target_errors,
+    }
+    if not target_ok:
+        errors.append("target_marker_invalid")
+
+    # --- Assemble identity -------------------------------------------------
+    identity_core = {
+        "strict": strict,
+        "expected_root": str(expected) if expected is not None else "",
+        "expected_revision": expected_revision,
+        "components": components,
+        "component_names": list(_M11_IDENTITY_COMPONENTS),
+    }
+    valid = not errors
+    result: dict[str, Any] = {
+        "schema": M11_BOUND_IDENTITY_SCHEMA,
+        "valid": valid,
+        "errors": errors,
+        **identity_core,
+    }
+    result["content_sha256"] = _canonical_sha256(result)
+    return result
 
 
 def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:

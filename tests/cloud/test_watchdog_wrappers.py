@@ -575,7 +575,10 @@ def test_host_watchdog_ensure_starts_shell_wrapped_watchdog_and_verifies_livenes
 
     assert "tmux new-session -d -s watchdog -c /workspace" in text
     assert ". /workspace/.cloud-hot-env" in text
-    assert "exec /usr/local/bin/arnold-watchdog" in text
+    assert (
+        "exec /workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/"
+        "arnold-watchdog"
+    ) in text
     assert "tmux new-session -d -s watchdog -c /workspace exec /usr/local/bin/arnold-watchdog" not in text
     assert "watchdog_restart_failed_not_alive" in text
     assert text.count("tmux has-session -t watchdog") >= 2
@@ -1921,7 +1924,10 @@ def test_repair_loop_summary_renders_provider_profile_viability_block(tmp_path: 
     assert "set-profile` preserves the current premium vendor" in summary
 
 
-def test_repair_data_init_preserves_legacy_top_level_shape_via_contract(tmp_path: Path) -> None:
+def test_repair_data_init_preserves_legacy_top_level_shape_via_contract(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("ARNOLD_RESIDENT_DELEGATION_CONTEXT", raising=False)
     data_path = tmp_path / "repair-data.json"
     progress_path = tmp_path / "repair-progress.json"
     data_path.write_text(
@@ -5285,6 +5291,293 @@ def test_watchdog_relaunch_requires_substantive_health_before_reporting_restart(
     assert 'verified_health="$(verify_relaunch_health ' in text
     assert '"restart_failed" "tmux relaunch did not produce a healthy runner' in text
     assert 'dispatch_kimi_repair "$session" "$workspace" "$remote_spec"' in text
+
+
+def test_cloud_discover_relaunch_materializers_are_non_authoritative(
+    tmp_path: Path,
+) -> None:
+    """Step 52: every relaunch command arnold-cloud-discover emits is a
+    non-authoritative relaunch materializer.  A successful relaunch (rc=0)
+    cannot become accepted repair outside canonical simple_fixer delegation;
+    authority is never derived from a label, liveness signal, WBC receipt, or
+    rebuildable projection (SC19)."""
+    text = _wrapper("arnold-cloud-discover")
+    assert "_relaunch_materializer_authority_gate" in text
+    assert "forbidden_sources_present" in text
+    # Extract the embedded Python program.
+    py_start = text.index("<<'PY'\n") + len("<<'PY'\n")
+    py_end = text.index("\nPY\n", py_start)
+    program = text[py_start:py_end]
+    # Build a harness that mocks subprocess, exec's the program to define the
+    # relaunch generators and the gate, then classifies each command.
+    harness_lines = [
+        "import io, json, subprocess, sys, types",
+        "sys.argv = ['_cloud_discover', "
+        + repr(str(tmp_path))
+        + ", "
+        + repr(str(REPO_ROOT))
+        + "]",
+        "_fake = types.SimpleNamespace("
+        "returncode=0, stdout='', stderr='', pid=0, args=[])",
+        "subprocess.run = lambda *a, **k: _fake",
+        "ns = {'os': __import__('os')}",
+        "_saved = sys.stdout",
+        "sys.stdout = io.StringIO()",
+        "try:",
+        "    exec(compile("
+        + repr(program)
+        + ", 'cloud-discover', 'exec'), ns)",
+        "except SystemExit:",
+        "    pass",
+        "sys.stdout = _saved",
+        "_plan = ns['_plan_relaunch_command']('demo-plan', '/tmp/ws')",
+        "_chain = ns['_chain_relaunch_command']('origin/main', '/tmp/ws', 'demo')",
+        "_gate = ns['_relaunch_materializer_authority_gate']",
+        "_proofs = [",
+        "    {'label': 'plan', 'cmd': _plan, 'gate': _gate(_plan)},",
+        "    {'label': 'chain', 'cmd': _chain, 'gate': _gate(_chain)},",
+        "]",
+        "print(json.dumps(_proofs))",
+    ]
+    result = _run_embedded_python("\n".join(harness_lines))
+    assert result.returncode == 0, result.stderr
+    proofs = json.loads(result.stdout.strip())
+    assert len(proofs) == 2
+    for proof in proofs:
+        g = proof["gate"]
+        assert g["family"] != "", g
+        assert g["is_non_authoritative_family"] is True, g
+        assert g["is_repair_authority"] is False, g
+        assert g["can_become_accepted_repair_on_success"] is False, g
+        assert g["accepted_repair_requires_canonical_delegation"] is True, g
+        assert (
+            g["canonical_delegation_path"]
+            == "simple_fixer.singleton_claim.exact_f01_tuple"
+        ), g
+        assert g["forbidden_sources_present"] == [], g
+
+
+def test_watchdog_relaunch_materializers_are_non_authoritative() -> None:
+    """Step 53: every relaunch command and arnold-supervise bash -lc script
+    produced by arnold-watchdog is a non-authoritative relaunch materializer.
+    A successful relaunch (rc=0) cannot become accepted repair outside
+    canonical simple_fixer delegation; authority is never derived from a label,
+    liveness signal, WBC receipt, or rebuildable projection (SC19)."""
+    text = _wrapper("arnold-watchdog")
+    assert "relaunch_materializer_authority_gate() {" in text
+    assert 'relaunch_materializer_authority_gate "$quoted_command"' in text
+    functions = "\n\n".join(_extract_relaunch_functions("watchdog"))
+    gate = _extract_wrapper_function("relaunch_materializer_authority_gate")
+    bash_lines = [
+        'PLAN_AUTO="$(default_plan_relaunch_command "demo-plan" "/tmp/ws")"',
+        'PLAN_RESUME="$(resume_plan_relaunch_command "demo-plan" "/tmp/ws")"',
+        'CHAIN_START="$(default_chain_relaunch_command "demo-sess" "/tmp/ws" "origin/main")"',
+        '_quoted="$(printf \'%q\' "$PLAN_AUTO")"',
+        'SUPERVISE_WRAPPER="exec arnold-supervise \\"watchdog\\" bash -lc $_quoted"',
+        '_G1="$(relaunch_materializer_authority_gate "$PLAN_AUTO")"',
+        '_G2="$(relaunch_materializer_authority_gate "$PLAN_RESUME")"',
+        '_G3="$(relaunch_materializer_authority_gate "$CHAIN_START")"',
+        '_G4="$(relaunch_materializer_authority_gate "$SUPERVISE_WRAPPER")"',
+        "python3 - \"$_G1\" \"$_G2\" \"$_G3\" \"$_G4\" <<'EMIT_PY'",
+        "import json, sys",
+        'labels = ["default_plan_relaunch", "resume_plan_relaunch", "default_chain_relaunch", "arnold_supervise_bash_lc"]',
+        "proofs = []",
+        "for label, raw in zip(labels, sys.argv[1:]):",
+        "    gate = json.loads(raw)",
+        '    gate["_generator"] = label',
+        "    proofs.append(gate)",
+        "print(json.dumps(proofs))",
+        "EMIT_PY",
+    ]
+    script = "\n\n".join(
+        [
+            functions,
+            gate,
+            "SRC_DIR=" + repr(str(REPO_ROOT)),
+            "SYNC_BRANCH=editable-install",
+            "\n".join(bash_lines),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    proofs = json.loads(result.stdout.strip())
+    assert len(proofs) == 4
+    for proof in proofs:
+        assert proof["family"] != "", proof
+        assert proof["is_non_authoritative_family"] is True, proof
+        assert proof["is_repair_authority"] is False, proof
+        assert proof["can_become_accepted_repair_on_success"] is False, proof
+        assert proof["accepted_repair_requires_canonical_delegation"] is True, proof
+        assert (
+            proof["canonical_delegation_path"]
+            == "simple_fixer.singleton_claim.exact_f01_tuple"
+        ), proof
+        assert proof["forbidden_sources_present"] == [], proof
+
+
+# ── Step 55-58: child-agent launch authority gates ─────────────────────────
+
+# Watchdog child-agent launches (repair-loop, meta-repair, managed-agent, and
+# Kimi families) may NEVER become accepted repair outside canonical
+# simple_fixer delegation.  Authority is never derived from a label, a
+# liveness signal, a WBC receipt, or a rebuildable projection (SC38).
+
+_CHILD_AGENT_GATE_FORBIDDEN_VARS = (
+    "ARNOLD_REPAIR_AUTHORITY_LABEL",
+    "ARNOLD_REPAIR_LIVENESS_RECEIPT",
+    "ARNOLD_REPAIR_WBC_RECEIPT",
+    "ARNOLD_REPAIR_REBUILDABLE_PROJECTION",
+)
+
+_VALID_F01_OCCURRENCE = {
+    "environment": "cloud",
+    "session": "demo-session",
+    "chain": "origin/main",
+    "plan_revision": "rev-1",
+    "phase": "build",
+    "task": "T38",
+    "attempt": "1",
+    "normalized_failure_kind": "test_failure",
+    "blocker_or_phase_result_hash": "phase-result-hash-1",
+    "fence": "fence-1",
+}
+
+
+def _run_child_agent_gate(
+    env_overrides: dict[str, str] | None = None,
+    *,
+    caller_kind: str = "live_watchdog",
+    caller_id: str = "arnold-watchdog",
+) -> dict[str, object]:
+    """Extract and execute the watchdog child-agent launch authority gate.
+
+    The gate classifies a watchdog child-agent launch (repair-loop, meta-repair,
+    managed-agent, or Kimi family) and emits JSON with an ``outcome`` key in
+    ``{zero_authority_rejected, delegated, no_authority_claim}``.
+    """
+    func = _extract_wrapper_function("child_agent_launch_authority_or_reject")
+    unset_lines = "\n".join(
+        ["unset ARNOLD_REPAIR_F01_OCCURRENCE"]
+        + [f"unset {name}" for name in _CHILD_AGENT_GATE_FORBIDDEN_VARS]
+    )
+    export_lines = "\n".join(
+        f"export {name}={shlex.quote(value)}"
+        for name, value in (env_overrides or {}).items()
+    )
+    script = "\n".join(
+        [
+            func,
+            "WRAPPER_REPO_ROOT=" + shlex.quote(str(REPO_ROOT)),
+            unset_lines,
+            export_lines,
+            f"child_agent_launch_authority_or_reject {caller_kind} {caller_id}",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.strip())
+
+
+def _assert_child_agent_launch_never_authorizes_forbidden_sources() -> None:
+    """Shared SC38 behavioural proof: a forbidden authority source (label,
+    liveness signal, WBC receipt, or rebuildable projection) may NEVER produce
+    a delegated child-agent launch.  Only an exact, complete F01 occurrence
+    tuple can delegate, and even then with no child-agent fan-out."""
+    canonical = "simple_fixer.singleton_claim.exact_f01_tuple"
+
+    # Each forbidden source alone rejects with zero authority and no fan-out.
+    for name in _CHILD_AGENT_GATE_FORBIDDEN_VARS:
+        gate = _run_child_agent_gate({name: "forbidden-source-value"})
+        assert gate["outcome"] == "zero_authority_rejected", (name, gate)
+        assert gate["delegated"] is False, (name, gate)
+        assert gate["child_agent_fanout"] is False, (name, gate)
+        assert gate["canonical_delegation_path"] == canonical, (name, gate)
+
+    # A forbidden source combined with a valid F01 tuple still rejects — the
+    # forbidden authority source wins over any rebuildable projection.
+    gate = _run_child_agent_gate(
+        {
+            "ARNOLD_REPAIR_LIVENESS_RECEIPT": "liveness-receipt",
+            "ARNOLD_REPAIR_F01_OCCURRENCE": json.dumps(_VALID_F01_OCCURRENCE),
+        }
+    )
+    assert gate["outcome"] == "zero_authority_rejected", gate
+    assert gate["delegated"] is False, gate
+
+    # A partial F01 tuple (a rebuildable projection) cannot delegate.
+    gate = _run_child_agent_gate(
+        {"ARNOLD_REPAIR_F01_OCCURRENCE": json.dumps({"environment": "cloud", "session": ""})}
+    )
+    assert gate["outcome"] == "zero_authority_rejected", gate
+    assert gate["delegated"] is False, gate
+
+    # With no authority claim at all the launch is a typed no-claim (neither
+    # delegated nor fan-out), never silently authorized.
+    gate = _run_child_agent_gate()
+    assert gate["outcome"] == "no_authority_claim", gate
+    assert gate["delegated"] is False, gate
+    assert gate["child_agent_fanout"] is False, gate
+    assert gate["canonical_delegation_path"] == canonical, gate
+
+    # Only an exact, complete F01 occurrence tuple delegates, through the
+    # canonical singleton-claim path, with no child-agent fan-out.
+    gate = _run_child_agent_gate(
+        {"ARNOLD_REPAIR_F01_OCCURRENCE": json.dumps(_VALID_F01_OCCURRENCE)}
+    )
+    assert gate["outcome"] == "delegated", gate
+    assert gate["delegated"] is True, gate
+    assert gate["child_agent_fanout"] is False, gate
+    assert gate["canonical_delegation_path"] == canonical, gate
+    assert isinstance(gate.get("occurrence_fingerprint"), str)
+    assert gate["occurrence_fingerprint"], gate
+
+
+def test_watchdog_repair_loop_child_launch_rejected_or_delegated() -> None:
+    """Step 55: the watchdog repair-loop child launch (Kimi/managed-agent
+    background dispatch of ``PRIMARY_REPAIR_BIN``) may NEVER become accepted
+    repair outside canonical simple_fixer delegation.  Authority is never
+    derived from a label, liveness signal, WBC receipt, or rebuildable
+    projection (SC38)."""
+    text = _wrapper("arnold-watchdog")
+    # The gate must be wired into the repair-loop child dispatch path with a
+    # typed fail-closed branch that aborts on a zero-authority rejection.
+    assert "Step 55: the Kimi/repair-loop child launch may NEVER become accepted" in text
+    assert "T55-CHILD-AGENT-FANOUT-01" in text
+    assert (
+        '"$(child_agent_launch_authority_or_reject live_watchdog arnold-watchdog)"'
+        in text
+    )
+    _assert_child_agent_launch_never_authorizes_forbidden_sources()
+
+
+def test_watchdog_managed_agent_launch_rejected_or_delegated() -> None:
+    """Step 57: the watchdog managed-agent launch (Codex editable-install
+    repair) may NEVER become accepted repair outside canonical simple_fixer
+    delegation.  Authority is never derived from a label, liveness signal, WBC
+    receipt, or rebuildable projection (SC38)."""
+    text = _wrapper("arnold-watchdog")
+    assert "Step 57: managed-agent launches may NEVER become accepted" in text
+    assert "T57-MANAGED-AGENT-FANOUT-01" in text
+    assert (
+        '"$(child_agent_launch_authority_or_reject live_watchdog arnold-watchdog)"'
+        in text
+    )
+    _assert_child_agent_launch_never_authorizes_forbidden_sources()
+
+
+def test_watchdog_meta_repair_launch_rejected_or_delegated() -> None:
+    """Step 56: the watchdog meta-repair child launch may NEVER become accepted
+    repair outside canonical simple_fixer delegation.  Authority is never
+    derived from a label, liveness signal, WBC receipt, or rebuildable
+    projection (SC38)."""
+    text = _wrapper("arnold-watchdog")
+    assert "Step 56: the meta-repair child launch may NEVER become accepted" in text
+    assert "T56-META-CHILD-AGENT-FANOUT-01" in text
+    assert (
+        '"$(child_agent_launch_authority_or_reject live_watchdog arnold-watchdog)"'
+        in text
+    )
+    _assert_child_agent_launch_never_authorizes_forbidden_sources()
 
 
 def test_verify_relaunch_health_rejects_tmux_only_false_success() -> None:
@@ -16377,3 +16670,826 @@ def test_l1_l2_l3_prompts_preserve_profile_and_reject_cursorless_success() -> No
     assert "Missing profile preservation is a repair-system" in auditor
     for text in (repair_loop, meta_loop, auditor):
         assert "completed-repair-without-cursor-advance" in text
+
+
+def test_repair_loop_relaunch_materializers_are_non_authoritative() -> None:
+    """Step 54: every relaunch command and arnold-supervise bash -lc script
+    produced by arnold-repair-loop is a non-authoritative relaunch materializer.
+    A successful relaunch (rc=0) cannot become accepted repair outside canonical
+    simple_fixer delegation; authority is never derived from a label, liveness
+    signal, WBC receipt, or rebuildable projection (SC40)."""
+    text = _repair_wrapper()
+    assert "relaunch_materializer_authority_gate() {" in text
+    assert 'relaunch_materializer_authority_gate "$quoted_command"' in text
+    functions = "\n\n".join(_extract_relaunch_functions("repair"))
+    gate = _extract_repair_function("relaunch_materializer_authority_gate")
+    bash_lines = [
+        'PLAN_AUTO="$(default_plan_relaunch_command "demo-plan" "/tmp/ws")"',
+        'CHAIN_START="$(default_chain_relaunch_command "demo-sess" "/tmp/ws" "origin/main")"',
+        '_quoted_plan="$(printf %q "$PLAN_AUTO")"',
+        '_quoted_chain="$(printf %q "$CHAIN_START")"',
+        'SUPERVISE_PLAN="exec arnold-supervise "repair-loop" bash -lc $_quoted_plan"',
+        'SUPERVISE_CHAIN="exec arnold-supervise "repair-loop" bash -lc $_quoted_chain"',
+        '_G1="$(relaunch_materializer_authority_gate "$PLAN_AUTO")"',
+        '_G2="$(relaunch_materializer_authority_gate "$CHAIN_START")"',
+        '_G3="$(relaunch_materializer_authority_gate "$SUPERVISE_PLAN")"',
+        '_G4="$(relaunch_materializer_authority_gate "$SUPERVISE_CHAIN")"',
+        "python3 - \"$_G1\" \"$_G2\" \"$_G3\" \"$_G4\" <<'EMIT_PY'",
+        "import json, sys",
+        'labels = ["default_plan_relaunch", "default_chain_relaunch", "arnold_supervise_bash_lc", "arnold_supervise_bash_lc"]',
+        "proofs = []",
+        "for label, raw in zip(labels, sys.argv[1:]):",
+        "    gate = json.loads(raw)",
+        '    gate["_generator"] = label',
+        "    proofs.append(gate)",
+        "print(json.dumps(proofs))",
+        "EMIT_PY",
+    ]
+    script = "\n\n".join(
+        [
+            functions,
+            gate,
+            "SRC_DIR=" + repr(str(REPO_ROOT)),
+            "WRAPPER_REPO_ROOT=" + repr(str(REPO_ROOT)),
+            "ARNOLD_SRC=" + repr(str(REPO_ROOT)),
+            "SYNC_BRANCH=editable-install",
+            "\n".join(bash_lines),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    proofs = json.loads(result.stdout.strip())
+    assert len(proofs) == 4
+    for proof in proofs:
+        assert proof["family"] != "", proof
+        assert proof["is_non_authoritative_family"] is True, proof
+        assert proof["is_repair_authority"] is False, proof
+        assert proof["can_become_accepted_repair_on_success"] is False, proof
+        assert proof["accepted_repair_requires_canonical_delegation"] is True, proof
+        assert proof["canonical_delegation_path"] == "simple_fixer.singleton_claim.exact_f01_tuple", proof
+        assert proof["forbidden_sources_present"] == [], proof
+
+
+_F01_OCCURRENCE = json.dumps(
+    {
+        "environment": "env",
+        "session": "sess",
+        "chain": "chain",
+        "plan_revision": "rev",
+        "phase": "phase",
+        "task": "task",
+        "attempt": "1",
+        "normalized_failure_kind": "kind",
+        "blocker_or_phase_result_hash": "hash",
+        "fence": "fence",
+    }
+)
+
+
+def test_repair_loop_direct_claim_paths_rejected_or_delegated() -> None:
+    """Step 66: direct-claim / L1-mutation paths in arnold-repair-loop either
+    delegate to the simple_fixer singleton claim (exact F01 tuple) or emit a
+    typed zero-authority rejection. Authority is never derived from a label,
+    liveness signal, WBC receipt, or rebuildable projection (SC40)."""
+    text = _repair_wrapper()
+    assert "repair_loop_claim_authority_or_reject() {" in text
+    assert 'repair_loop_claim_authority_or_reject "wrapper"' in text
+    helper = _extract_repair_function("repair_loop_claim_authority_or_reject")
+    base = "\n\n".join(
+        [
+            helper,
+            "WRAPPER_REPO_ROOT=" + repr(str(REPO_ROOT)),
+        ]
+    )
+
+    # (a) forbidden authority source -> typed zero-authority rejection, no fan-out
+    script_a = base + (
+        "\nexport ARNOLD_REPAIR_AUTHORITY_LABEL=trusted-label\n"
+        'R="$(repair_loop_claim_authority_or_reject "wrapper" "arnold-repair-loop")"\n'
+        'printf \'%s\' "$R"'
+    )
+    res_a = _run_watchdog_shell(script_a)
+    assert res_a.returncode == 0, res_a.stderr
+    out_a = json.loads(res_a.stdout)
+    assert out_a["outcome"] == "zero_authority_rejected", out_a
+    assert out_a["delegated"] is False
+    assert out_a["child_agent_fanout"] is False
+    assert out_a["canonical_delegation_path"] == "simple_fixer.singleton_claim.exact_f01_tuple"
+
+    # (b) exact F01 occurrence -> delegated to simple_fixer singleton claim
+    script_b = base + (
+        "\nexport ARNOLD_REPAIR_F01_OCCURRENCE=" + repr(_F01_OCCURRENCE) + "\n"
+        'R="$(repair_loop_claim_authority_or_reject "wrapper" "arnold-repair-loop")"\n'
+        'printf \'%s\' "$R"'
+    )
+    res_b = _run_watchdog_shell(script_b)
+    assert res_b.returncode == 0, res_b.stderr
+    out_b = json.loads(res_b.stdout)
+    assert out_b["outcome"] == "delegated", out_b
+    assert out_b["delegated"] is True
+    assert out_b["child_agent_fanout"] is False
+    assert out_b["occurrence_fingerprint"].startswith("sha256:"), out_b
+
+    # (c) no forbidden source and no F01 -> neutral (no authority claim), proceeds
+    script_c = base + (
+        '\nR="$(repair_loop_claim_authority_or_reject "wrapper" "arnold-repair-loop")"\n'
+        'printf \'%s\' "$R"'
+    )
+    res_c = _run_watchdog_shell(script_c)
+    assert res_c.returncode == 0, res_c.stderr
+    out_c = json.loads(res_c.stdout)
+    assert out_c["outcome"] == "no_authority_claim", out_c
+
+
+def test_repair_loop_worker_launch_rejected_or_delegated() -> None:
+    """Step 67: primary (mechanical) and model-backed (Kimi) worker launches in
+    arnold-repair-loop either delegate to the simple_fixer singleton claim or
+    emit a typed zero-authority rejection. Authority is never derived from a
+    forbidden source (SC40)."""
+    text = _repair_wrapper()
+    assert "repair_loop_worker_launch_authority_or_reject() {" in text
+    assert 'repair_loop_worker_launch_authority_or_reject "materializer"' in text
+    helper = _extract_repair_function("repair_loop_worker_launch_authority_or_reject")
+    base = "\n\n".join(
+        [
+            helper,
+            "WRAPPER_REPO_ROOT=" + repr(str(REPO_ROOT)),
+        ]
+    )
+
+    # (a) forbidden source -> typed rejection
+    script_a = base + (
+        "\nexport ARNOLD_REPAIR_WBC_RECEIPT=well-behaved-client-ok\n"
+        'R="$(repair_loop_worker_launch_authority_or_reject "materializer" "arnold-repair-loop")"\n'
+        'printf \'%s\' "$R"'
+    )
+    res_a = _run_watchdog_shell(script_a)
+    assert res_a.returncode == 0, res_a.stderr
+    out_a = json.loads(res_a.stdout)
+    assert out_a["outcome"] == "zero_authority_rejected", out_a
+    assert out_a["delegated"] is False
+    assert out_a["child_agent_fanout"] is False
+
+    # (b) exact F01 -> delegated
+    script_b = base + (
+        "\nexport ARNOLD_REPAIR_F01_OCCURRENCE=" + repr(_F01_OCCURRENCE) + "\n"
+        'R="$(repair_loop_worker_launch_authority_or_reject "materializer" "arnold-repair-loop")"\n'
+        'printf \'%s\' "$R"'
+    )
+    res_b = _run_watchdog_shell(script_b)
+    assert res_b.returncode == 0, res_b.stderr
+    out_b = json.loads(res_b.stdout)
+    assert out_b["outcome"] == "delegated", out_b
+    assert out_b["delegated"] is True
+    assert out_b["child_agent_fanout"] is False
+    assert out_b["occurrence_fingerprint"].startswith("sha256:"), out_b
+
+
+def test_child_agent_launch_authority_or_reject_gates_watchdog_child_fanout() -> None:
+    """Steps 55-58: watchdog child-agent launches (repair-loop / Kimi,
+    meta-repair, and managed-agent families) may NEVER become accepted repair
+    outside canonical simple_fixer delegation.  Forbidden authority sources
+    emit a typed zero-authority rejection; an exact-F01 occurrence delegates
+    to the simple_fixer singleton claim; without an occurrence the launch is a
+    non-authoritative materializer that carries no child-agent fan-out (SC38)."""
+    text = _wrapper("arnold-watchdog")
+
+    # (0) the gate is defined and wired into all three dispatch families
+    assert "child_agent_launch_authority_or_reject() {" in text, \
+        "child_agent_launch_authority_or_reject must be defined"
+    # Step 55 — repair-loop / Kimi child launch gate
+    assert "T55-CHILD-AGENT-FANOUT-01" in text, \
+        "repair-loop child launch must fail-closed via T55 gate"
+    # Step 56 — meta-repair child launch gate
+    assert "T56-META-CHILD-AGENT-FANOUT-01" in text, \
+        "meta-repair child launch must fail-closed via T56 gate"
+    # Step 57 — managed-agent child launch gate
+    assert "T57-MANAGED-AGENT-FANOUT-01" in text, \
+        "managed-agent child launch must fail-closed via T57 gate"
+
+    helper = _extract_wrapper_function("child_agent_launch_authority_or_reject")
+    base = "\n\n".join(
+        [
+            helper,
+            "WRAPPER_REPO_ROOT=" + repr(str(REPO_ROOT)),
+        ]
+    )
+
+    # (a) forbidden authority source (label) -> typed zero-authority rejection
+    script_a = base + (
+        "\nexport ARNOLD_REPAIR_AUTHORITY_LABEL=forbidden\n"
+        'R="$(child_agent_launch_authority_or_reject "live_watchdog" "arnold-watchdog")"\n'
+        "printf '%s' \"$R\""
+    )
+    res_a = _run_watchdog_shell(script_a)
+    assert res_a.returncode == 0, res_a.stderr
+    out_a = json.loads(res_a.stdout)
+    assert out_a["outcome"] == "zero_authority_rejected", out_a
+    assert out_a["delegated"] is False
+    assert out_a["child_agent_fanout"] is False
+    assert out_a["canonical_delegation_path"] == "simple_fixer.singleton_claim.exact_f01_tuple"
+
+    # (b) no F01 occurrence -> no authority claim (non-authoritative materializer)
+    script_b = base + (
+        "\nunset ARNOLD_REPAIR_AUTHORITY_LABEL ARNOLD_REPAIR_LIVENESS_RECEIPT "
+        "ARNOLD_REPAIR_WBC_RECEIPT ARNOLD_REPAIR_REBUILDABLE_PROJECTION "
+        "ARNOLD_REPAIR_F01_OCCURRENCE\n"
+        'R="$(child_agent_launch_authority_or_reject "live_watchdog" "arnold-watchdog")"\n'
+        "printf '%s' \"$R\""
+    )
+    res_b = _run_watchdog_shell(script_b)
+    assert res_b.returncode == 0, res_b.stderr
+    out_b = json.loads(res_b.stdout)
+    assert out_b["outcome"] == "no_authority_claim", out_b
+    assert out_b["delegated"] is False
+    assert out_b["child_agent_fanout"] is False
+    assert out_b["canonical_delegation_path"] == "simple_fixer.singleton_claim.exact_f01_tuple"
+
+    # (c) exact F01 occurrence -> delegated to simple_fixer singleton claim
+    script_c = base + (
+        "\nexport ARNOLD_REPAIR_F01_OCCURRENCE=" + repr(_F01_OCCURRENCE) + "\n"
+        'R="$(child_agent_launch_authority_or_reject "live_watchdog" "arnold-watchdog")"\n'
+        "printf '%s' \"$R\""
+    )
+    res_c = _run_watchdog_shell(script_c)
+    assert res_c.returncode == 0, res_c.stderr
+    out_c = json.loads(res_c.stdout)
+    assert out_c["outcome"] == "delegated", out_c
+    assert out_c["delegated"] is True
+    assert out_c["child_agent_fanout"] is False
+    assert out_c["occurrence_fingerprint"].startswith("sha256:"), out_c
+
+    # (d) liveness receipt is also a forbidden authority source
+    script_d = base + (
+        "\nexport ARNOLD_REPAIR_LIVENESS_RECEIPT=forbidden\n"
+        'R="$(child_agent_launch_authority_or_reject "live_watchdog" "arnold-watchdog")"\n'
+        "printf '%s' \"$R\""
+    )
+    res_d = _run_watchdog_shell(script_d)
+    assert res_d.returncode == 0, res_d.stderr
+    out_d = json.loads(res_d.stdout)
+    assert out_d["outcome"] == "zero_authority_rejected", out_d
+    assert out_d["delegated"] is False
+    assert out_d["child_agent_fanout"] is False
+
+    # (e) WBC receipt is also a forbidden authority source
+    script_e = base + (
+        "\nexport ARNOLD_REPAIR_WBC_RECEIPT=forbidden\n"
+        'R="$(child_agent_launch_authority_or_reject "live_watchdog" "arnold-watchdog")"\n'
+        "printf '%s' \"$R\""
+    )
+    res_e = _run_watchdog_shell(script_e)
+    assert res_e.returncode == 0, res_e.stderr
+    out_e = json.loads(res_e.stdout)
+    assert out_e["outcome"] == "zero_authority_rejected", out_e
+    assert out_e["delegated"] is False
+    assert out_e["child_agent_fanout"] is False
+
+    # (f) rebuildable projection is also a forbidden authority source
+    script_f = base + (
+        "\nexport ARNOLD_REPAIR_REBUILDABLE_PROJECTION=forbidden\n"
+        'R="$(child_agent_launch_authority_or_reject "live_watchdog" "arnold-watchdog")"\n'
+        "printf '%s' \"$R\""
+    )
+    res_f = _run_watchdog_shell(script_f)
+    assert res_f.returncode == 0, res_f.stderr
+    out_f = json.loads(res_f.stdout)
+    assert out_f["outcome"] == "zero_authority_rejected", out_f
+    assert out_f["delegated"] is False
+    assert out_f["child_agent_fanout"] is False
+
+
+# ---------------------------------------------------------------------------
+# Steps 59-65 (T39): repair-state authority gate for claim writes, adoption,
+# existing-owner, stale cleanup, process reaping, retry loops, unchanged-
+# fingerprint escalation, and retry-budget mutation.  Each branch must fail
+# closed for forbidden authority sources (label / liveness / WBC receipt /
+# rebuildable projection) so replay or stale cleanup cannot be counted as
+# accepted progress.
+# ---------------------------------------------------------------------------
+
+_WATCHDOG_SRC = _wrapper("arnold-watchdog")
+
+
+def _extract_watchdog_fn(name: str) -> str:
+    start = _WATCHDOG_SRC.index(f"{name}() {{")
+    end = _WATCHDOG_SRC.index("\n}\n", start) + 3
+    return _WATCHDOG_SRC[start:end]
+
+
+def test_watchdog_repair_state_gate_function_exists() -> None:
+    """Step 59-65 prerequisite: the gate function is defined."""
+    fn = _extract_watchdog_fn("watchdog_repair_state_authority_or_reject")
+    assert "watchdog_repair_state_authority_or_reject" in fn
+    # Must check all four forbidden sources.
+    assert "ARNOLD_REPAIR_AUTHORITY_LABEL" in fn
+    assert "ARNOLD_REPAIR_LIVENESS_RECEIPT" in fn
+    assert "ARNOLD_REPAIR_WBC_RECEIPT" in fn
+    assert "ARNOLD_REPAIR_REBUILDABLE_PROJECTION" in fn
+    # Must emit typed outcomes.
+    assert "zero_authority_rejected" in fn
+
+
+@pytest.mark.parametrize(
+    "forbidden_env",
+    [
+        "ARNOLD_REPAIR_AUTHORITY_LABEL",
+        "ARNOLD_REPAIR_LIVENESS_RECEIPT",
+        "ARNOLD_REPAIR_WBC_RECEIPT",
+        "ARNOLD_REPAIR_REBUILDABLE_PROJECTION",
+    ],
+)
+def test_watchdog_repair_state_gate_rejects_forbidden_sources(
+    forbidden_env: str,
+) -> None:
+    """The gate must return zero_authority_rejected for each forbidden source."""
+    out = _run_repair_state_gate({forbidden_env: "forbidden"})
+    assert out["outcome"] == "zero_authority_rejected", out
+
+
+def test_watchdog_claim_write_and_adoption_gated() -> None:
+    """Steps 59-60: claim_active_repair_launch calls the state gate and fails
+    closed with T59-CLAIM-WRITE-01 / T60-CLAIM-ADOPTION-01 tags."""
+    fn = _extract_watchdog_fn("claim_active_repair_launch")
+    assert "watchdog_repair_state_authority_or_reject" in fn
+    assert "T59-CLAIM-WRITE-01" in fn
+    assert "T60-CLAIM-ADOPTION-01" in fn
+    assert "zero_authority_rejected" in fn
+
+
+def test_watchdog_stale_cleanup_gated() -> None:
+    """Step 61: release_failed_repair_launch_claim calls the state gate and
+    fails closed with T61-STALE-CLEANUP-01 tag."""
+    fn = _extract_watchdog_fn("release_failed_repair_launch_claim")
+    assert "watchdog_repair_state_authority_or_reject" in fn
+    assert "T61-STALE-CLEANUP-01" in fn
+    assert "zero_authority_rejected" in fn
+
+
+def test_watchdog_process_reaping_gated() -> None:
+    """Step 62: reap_stale_repairs calls the state gate and fails closed with
+    T62-PROCESS-REAP-01 tag."""
+    fn = _extract_watchdog_fn("reap_stale_repairs")
+    assert "watchdog_repair_state_authority_or_reject" in fn
+    assert "T62-PROCESS-REAP-01" in fn
+    assert "zero_authority_rejected" in fn
+
+
+def test_watchdog_retry_loop_and_fingerprint_escalation_gated() -> None:
+    """Steps 63-64: repair_unhealthy_session calls the state gate and fails
+    closed with T63-RETRY-LOOP-01 / T64-FINGERPRINT-01 tags."""
+    fn = _extract_watchdog_fn("repair_unhealthy_session")
+    assert "watchdog_repair_state_authority_or_reject" in fn
+    assert "T63-RETRY-LOOP-01" in fn
+    assert "T64-FINGERPRINT-01" in fn
+    assert "zero_authority_rejected" in fn
+
+
+def test_watchdog_retry_budget_mutation_gated() -> None:
+    """Step 65: dispatch_kimi_repair calls the state gate and fails closed with
+    T65-RETRY-BUDGET-01 tag."""
+    fn = _extract_watchdog_fn("dispatch_kimi_repair")
+    assert "watchdog_repair_state_authority_or_reject" in fn
+    assert "T65-RETRY-BUDGET-01" in fn
+    assert "zero_authority_rejected" in fn
+
+
+def test_watchdog_repair_state_gate_neutral_without_forbidden_sources() -> None:
+    """Without forbidden sources the gate must not reject (delegated or
+    no_authority_claim)."""
+    out = _run_repair_state_gate()
+    assert out["outcome"] in ("delegated", "no_authority_claim"), out
+    assert out["outcome"] != "zero_authority_rejected"
+
+
+# ── Step 59-65: watchdog repair-state authority gates (T39) ─────────────────
+#
+# Watchdog repair-state mutations (claim writes, claim adoption/existing-owner,
+# stale-state cleanup, process reaping, retry loops, unchanged-fingerprint
+# escalation, and retry-budget mutation) may NEVER become accepted repair
+# outside canonical simple_fixer delegation.  Authority is never derived from a
+# label, a liveness signal, a WBC receipt, or a rebuildable projection (SC39).
+
+_REPAIR_STATE_GATE_FORBIDDEN_VARS = (
+    "ARNOLD_REPAIR_AUTHORITY_LABEL",
+    "ARNOLD_REPAIR_LIVENESS_RECEIPT",
+    "ARNOLD_REPAIR_WBC_RECEIPT",
+    "ARNOLD_REPAIR_REBUILDABLE_PROJECTION",
+)
+
+_REPAIR_STATE_VALID_F01_OCCURRENCE = {
+    "environment": "cloud",
+    "session": "demo-session",
+    "chain": "origin/main",
+    "plan_revision": "rev-1",
+    "phase": "build",
+    "task": "T39",
+    "attempt": "1",
+    "normalized_failure_kind": "test_failure",
+    "blocker_or_phase_result_hash": "phase-result-hash-1",
+    "fence": "fence-1",
+}
+
+
+def _run_repair_state_gate(
+    env_overrides: dict[str, str] | None = None,
+    *,
+    caller_kind: str = "live_watchdog",
+    caller_id: str = "arnold-watchdog",
+) -> dict[str, object]:
+    """Extract and execute the watchdog repair-state authority gate.
+
+    The gate classifies a watchdog repair-state mutation (claim write, claim
+    adoption/existing-owner, stale-state cleanup, process reaping, retry loop,
+    unchanged-fingerprint escalation, or retry-budget mutation) and emits JSON
+    with an ``outcome`` key in
+    ``{zero_authority_rejected, delegated, no_authority_claim}``.
+    """
+    func = _extract_wrapper_function("watchdog_repair_state_authority_or_reject")
+    unset_lines = "\n".join(
+        ["unset ARNOLD_REPAIR_F01_OCCURRENCE"]
+        + [f"unset {name}" for name in _REPAIR_STATE_GATE_FORBIDDEN_VARS]
+    )
+    export_lines = "\n".join(
+        f"export {name}={shlex.quote(value)}"
+        for name, value in (env_overrides or {}).items()
+    )
+    script = "\n".join(
+        [
+            func,
+            "WRAPPER_REPO_ROOT=" + shlex.quote(str(REPO_ROOT)),
+            unset_lines,
+            export_lines,
+            f"watchdog_repair_state_authority_or_reject {caller_kind} {caller_id}",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.strip())
+
+
+def _assert_repair_state_never_authorizes_forbidden_sources() -> None:
+    """Shared SC39 behavioural proof: a forbidden authority source (label,
+    liveness signal, WBC receipt, or rebuildable projection) may NEVER produce
+    an accepted repair-state mutation.  Only an exact, complete F01 occurrence
+    tuple can delegate a repair-state mutation through the simple_fixer
+    singleton claim, and even then without rewriting history."""
+    canonical = "simple_fixer.singleton_claim.exact_f01_tuple"
+
+    # Each forbidden source alone rejects with zero authority and no mutation.
+    for name in _REPAIR_STATE_GATE_FORBIDDEN_VARS:
+        gate = _run_repair_state_gate({name: "forbidden-source-value"})
+        assert gate["outcome"] == "zero_authority_rejected", (name, gate)
+        assert gate["delegated"] is False, (name, gate)
+        assert gate["repair_state_mutation"] is False, (name, gate)
+        assert gate["canonical_delegation_path"] == canonical, (name, gate)
+
+    # A forbidden source combined with a valid F01 tuple still rejects — the
+    # forbidden authority source wins over any rebuildable projection.
+    gate = _run_repair_state_gate(
+        {
+            "ARNOLD_REPAIR_LIVENESS_RECEIPT": "liveness-receipt",
+            "ARNOLD_REPAIR_F01_OCCURRENCE": json.dumps(
+                _REPAIR_STATE_VALID_F01_OCCURRENCE
+            ),
+        }
+    )
+    assert gate["outcome"] == "zero_authority_rejected", gate
+    assert gate["delegated"] is False, gate
+    assert gate["repair_state_mutation"] is False, gate
+
+    # A partial F01 tuple (a rebuildable projection) cannot delegate.
+    gate = _run_repair_state_gate(
+        {
+            "ARNOLD_REPAIR_F01_OCCURRENCE": json.dumps(
+                {"environment": "cloud", "session": ""}
+            )
+        }
+    )
+    assert gate["outcome"] == "zero_authority_rejected", gate
+    assert gate["delegated"] is False, gate
+
+    # With no authority claim at all the mutation is a typed no-claim (neither
+    # delegated nor mutation), never silently authorized.
+    gate = _run_repair_state_gate()
+    assert gate["outcome"] == "no_authority_claim", gate
+    assert gate["delegated"] is False, gate
+    assert gate["repair_state_mutation"] is False, gate
+    assert gate["canonical_delegation_path"] == canonical, gate
+
+    # Only an exact, complete F01 occurrence tuple delegates, through the
+    # canonical singleton-claim path, binding to the current fence and custody
+    # epoch (occurrence fingerprint).
+    gate = _run_repair_state_gate(
+        {
+            "ARNOLD_REPAIR_F01_OCCURRENCE": json.dumps(
+                _REPAIR_STATE_VALID_F01_OCCURRENCE
+            )
+        }
+    )
+    assert gate["outcome"] == "delegated", gate
+    assert gate["delegated"] is True, gate
+    assert gate["repair_state_mutation"] is True, gate
+    assert gate["canonical_delegation_path"] == canonical, gate
+    assert isinstance(gate.get("occurrence_fingerprint"), str)
+    assert gate["occurrence_fingerprint"], gate
+
+
+def test_watchdog_claim_writes_are_bound_to_simple_fixer() -> None:
+    """Step 59: the watchdog claim-write family (direct repair-claim writes in
+    ``claim_active_repair_launch``) may NEVER become accepted repair outside
+    canonical simple_fixer delegation.  Authority is never derived from a label,
+    liveness signal, WBC receipt, or rebuildable projection (SC39)."""
+    text = _wrapper("arnold-watchdog")
+    # The gate must be wired into the claim-write path with a typed fail-closed
+    # branch that aborts on a zero-authority rejection.
+    assert (
+        "Steps 59-60: claim-write and claim-adoption/existing-owner families"
+        in text
+    )
+    assert "T59-CLAIM-WRITE-01" in text
+    assert "claim_active_repair_launch() {" in text
+    assert (
+        '"$(watchdog_repair_state_authority_or_reject live_watchdog arnold-watchdog)"'
+        in text
+    )
+    _assert_repair_state_never_authorizes_forbidden_sources()
+
+
+def test_watchdog_claim_adoption_and_existing_owner_are_bound_to_simple_fixer() -> None:
+    """Step 60: the watchdog claim-adoption and existing-owner family
+    (stale-claim adoption in ``claim_active_repair_launch``) may NEVER become
+    accepted repair outside canonical simple_fixer delegation.  Adoption is
+    bound to exact occurrence, current fence, and custody epoch.  Authority is
+    never derived from a label, liveness signal, WBC receipt, or rebuildable
+    projection (SC39)."""
+    text = _wrapper("arnold-watchdog")
+    assert (
+        "Steps 59-60: claim-write and claim-adoption/existing-owner families"
+        in text
+    )
+    assert "T60-CLAIM-ADOPTION-01" in text
+    assert (
+        '"$(watchdog_repair_state_authority_or_reject live_watchdog arnold-watchdog)"'
+        in text
+    )
+    _assert_repair_state_never_authorizes_forbidden_sources()
+
+
+def test_watchdog_stale_state_cleanup_is_non_authoritative() -> None:
+    """Step 61: the watchdog stale-state cleanup family
+    (``release_failed_repair_launch_claim``) may NEVER become accepted repair
+    outside canonical simple_fixer delegation.  Stale cleanup is converted to a
+    typed zero-authority outcome or exact-occurrence adoption without rewriting
+    history.  Authority is never derived from a label, liveness signal, WBC
+    receipt, or rebuildable projection (SC39)."""
+    text = _wrapper("arnold-watchdog")
+    assert "Step 61: stale-state cleanup family" in text
+    assert "T61-STALE-CLEANUP-01" in text
+    assert "release_failed_repair_launch_claim() {" in text
+    assert (
+        '"$(watchdog_repair_state_authority_or_reject live_watchdog arnold-watchdog)"'
+        in text
+    )
+    _assert_repair_state_never_authorizes_forbidden_sources()
+
+
+def test_watchdog_process_reaping_is_bound_to_custody_receipts() -> None:
+    """Step 62: the watchdog process-reaping family (``reap_stale_repairs``)
+    may NEVER become accepted repair outside canonical simple_fixer delegation.
+    Reaping is bound to custody receipts and cannot authorize repair
+    acceptance.  Authority is never derived from a label, liveness signal, WBC
+    receipt, or rebuildable projection (SC39)."""
+    text = _wrapper("arnold-watchdog")
+    assert "Step 62: process-reaping family" in text
+    assert "T62-PROCESS-REAP-01" in text
+    assert "reap_stale_repairs() {" in text
+    assert (
+        '"$(watchdog_repair_state_authority_or_reject live_watchdog arnold-watchdog)"'
+        in text
+    )
+    _assert_repair_state_never_authorizes_forbidden_sources()
+
+
+def test_watchdog_retry_loops_delegate_or_reject() -> None:
+    """Step 63: the watchdog retry-loop family (``repair_unhealthy_session``
+    retry relaunch) may NEVER become accepted repair outside canonical
+    simple_fixer delegation.  Retry loops are converted to singleton delegation
+    or typed rejection, and loop liveness cannot count as progress.  Authority
+    is never derived from a label, liveness signal, WBC receipt, or rebuildable
+    projection (SC39)."""
+    text = _wrapper("arnold-watchdog")
+    assert (
+        "Steps 63-64: retry-loop dispatch and unchanged-fingerprint escalation"
+        in text
+    )
+    assert "T63-RETRY-LOOP-01" in text
+    assert "repair_unhealthy_session() {" in text
+    assert (
+        '"$(watchdog_repair_state_authority_or_reject live_watchdog arnold-watchdog)"'
+        in text
+    )
+    _assert_repair_state_never_authorizes_forbidden_sources()
+
+
+def test_watchdog_unchanged_fingerprint_budget_escalates() -> None:
+    """Step 64: the watchdog unchanged-fingerprint family
+    (``repair_unhealthy_session`` fingerprint-budget escalation) may NEVER
+    become accepted repair outside canonical simple_fixer delegation.
+    Unchanged-fingerprint escalation is enforced through simple_fixer and
+    repeated replay cannot be counted as accepted progress.  Authority is never
+    derived from a label, liveness signal, WBC receipt, or rebuildable
+    projection (SC39)."""
+    text = _wrapper("arnold-watchdog")
+    assert (
+        "Steps 63-64: retry-loop dispatch and unchanged-fingerprint escalation"
+        in text
+    )
+    assert "T64-FINGERPRINT-01" in text
+    assert "repair_unhealthy_session() {" in text
+    assert (
+        '"$(watchdog_repair_state_authority_or_reject live_watchdog arnold-watchdog)"'
+        in text
+    )
+    _assert_repair_state_never_authorizes_forbidden_sources()
+
+
+def test_watchdog_retry_budget_mutation_is_bound_to_simple_fixer() -> None:
+    """Step 65: the watchdog retry-budget mutation family
+    (``dispatch_kimi_repair`` inherited retry-budget chain) may NEVER become
+    accepted repair outside canonical simple_fixer delegation.  Retry-budget
+    mutation is bound to exact occurrence and current fence.  Authority is never
+    derived from a label, liveness signal, WBC receipt, or rebuildable
+    projection (SC39)."""
+    text = _wrapper("arnold-watchdog")
+    assert "Step 65: retry-budget mutation family" in text
+    assert "T65-RETRY-BUDGET-01" in text
+    assert "dispatch_kimi_repair() {" in text
+    assert (
+        '"$(watchdog_repair_state_authority_or_reject live_watchdog arnold-watchdog)"'
+        in text
+    )
+    _assert_repair_state_never_authorizes_forbidden_sources()
+
+
+def test_repair_loop_stale_state_and_receipts_are_non_authoritative() -> None:
+    """Steps 70-71: stale-state, stale-receipt adoption, and stale-claim cleanup
+    paths in arnold-repair-loop are non-authoritative — they may NEVER become
+    accepted repair outside canonical simple_fixer delegation.  Authority is
+    never derived from a label, liveness signal, WBC receipt, or rebuildable
+    projection (SC41)."""
+    text = _repair_wrapper()
+    assert "repair_loop_repair_state_authority_or_reject() {" in text, \
+        "repair-loop must define the repair-state authority gate"
+    assert "T70-STALE-STATE-01" in text, \
+        "T70 stale-state adoption marker must be present"
+    assert "T71-STALE-CLAIM-01" in text, \
+        "T71 stale-claim cleanup marker must be present"
+    assert "repair_clear_stale_state_if_needed() {" in text, \
+        "stale-state cleanup function must exist"
+    assert (
+        'repair_loop_repair_state_authority_or_reject "wrapper"' in text
+    ), "stale-state path must gate through repair-state authority"
+
+    helper = _extract_repair_function("repair_loop_repair_state_authority_or_reject")
+    base = "\n\n".join(
+        [
+            helper,
+            "WRAPPER_REPO_ROOT=" + repr(str(REPO_ROOT)),
+        ]
+    )
+
+    # (a) forbidden authority source -> typed zero-authority rejection, no fan-out
+    script_a = base + (
+        "\nexport ARNOLD_REPAIR_AUTHORITY_LABEL=forbidden-label\n"
+        'R="$(repair_loop_repair_state_authority_or_reject "wrapper" "arnold-repair-loop")"\n'
+        'printf \'%s\' "$R"'
+    )
+    res_a = _run_watchdog_shell(script_a)
+    assert res_a.returncode == 0, res_a.stderr
+    out_a = json.loads(res_a.stdout)
+    assert out_a["outcome"] == "zero_authority_rejected", out_a
+    assert out_a["delegated"] is False, out_a
+    assert out_a["repair_state_mutation"] is False, out_a
+    assert (
+        out_a["canonical_delegation_path"]
+        == "simple_fixer.singleton_claim.exact_f01_tuple"
+    ), out_a
+
+    # (b) exact F01 occurrence -> delegated to simple_fixer singleton claim
+    script_b = base + (
+        "\nexport ARNOLD_REPAIR_F01_OCCURRENCE=" + repr(_F01_OCCURRENCE) + "\n"
+        'R="$(repair_loop_repair_state_authority_or_reject "wrapper" "arnold-repair-loop")"\n'
+        'printf \'%s\' "$R"'
+    )
+    res_b = _run_watchdog_shell(script_b)
+    assert res_b.returncode == 0, res_b.stderr
+    out_b = json.loads(res_b.stdout)
+    assert out_b["outcome"] == "delegated", out_b
+    assert out_b["delegated"] is True, out_b
+    assert out_b["repair_state_mutation"] is True, out_b
+    assert out_b["occurrence_fingerprint"].startswith("sha256:"), out_b
+
+    # (c) liveness receipt as forbidden source -> zero_authority_rejected
+    script_c = base + (
+        "\nexport ARNOLD_REPAIR_LIVENESS_RECEIPT=liveness-ok\n"
+        'R="$(repair_loop_repair_state_authority_or_reject "wrapper" "arnold-repair-loop")"\n'
+        'printf \'%s\' "$R"'
+    )
+    res_c = _run_watchdog_shell(script_c)
+    assert res_c.returncode == 0, res_c.stderr
+    out_c = json.loads(res_c.stdout)
+    assert out_c["outcome"] == "zero_authority_rejected", out_c
+    assert out_c["delegated"] is False, out_c
+    assert out_c["repair_state_mutation"] is False, out_c
+
+    # (d) no forbidden source and no F01 -> neutral (no authority claim)
+    script_d = base + (
+        '\nR="$(repair_loop_repair_state_authority_or_reject "wrapper" "arnold-repair-loop")"\n'
+        'printf \'%s\' "$R"'
+    )
+    res_d = _run_watchdog_shell(script_d)
+    assert res_d.returncode == 0, res_d.stderr
+    out_d = json.loads(res_d.stdout)
+    assert out_d["outcome"] == "no_authority_claim", out_d
+    assert out_d["delegated"] is False, out_d
+    assert out_d["repair_state_mutation"] is False, out_d
+
+
+def test_repair_loop_retry_loops_delegate_or_reject() -> None:
+    """Steps 73-75: retry-loop recurrence, unchanged-fingerprint escalation, and
+    retry-budget mutation paths in arnold-repair-loop either delegate through
+    the simple_fixer singleton claim or emit a typed zero-authority rejection.
+    Authority is never derived from a label, liveness signal, WBC receipt, or
+    rebuildable projection (SC41)."""
+    text = _repair_wrapper()
+    assert "repair_recurrence_prepare_attempt() {" in text, \
+        "retry recurrence function must exist"
+    assert "T73-RETRY-01" in text, \
+        "T73 retry-loop marker must be present"
+    assert "T74-FINGERPRINT-01" in text, \
+        "T74 unchanged-fingerprint escalation marker must be present"
+    assert "T75-BUDGET-01" in text, \
+        "T75 retry-budget mutation marker must be present"
+    assert (
+        'repair_loop_repair_state_authority_or_reject "wrapper"' in text
+    ), "retry path must gate through repair-state authority"
+
+    helper = _extract_repair_function("repair_loop_repair_state_authority_or_reject")
+    base = "\n\n".join(
+        [
+            helper,
+            "WRAPPER_REPO_ROOT=" + repr(str(REPO_ROOT)),
+        ]
+    )
+
+    # (a) forbidden authority source -> typed zero-authority rejection
+    script_a = base + (
+        "\nexport ARNOLD_REPAIR_WBC_RECEIPT=wbc-ok\n"
+        'R="$(repair_loop_repair_state_authority_or_reject "wrapper" "arnold-repair-loop")"\n'
+        'printf \'%s\' "$R"'
+    )
+    res_a = _run_watchdog_shell(script_a)
+    assert res_a.returncode == 0, res_a.stderr
+    out_a = json.loads(res_a.stdout)
+    assert out_a["outcome"] == "zero_authority_rejected", out_a
+    assert out_a["delegated"] is False, out_a
+    assert out_a["repair_state_mutation"] is False, out_a
+
+    # (b) exact F01 occurrence -> delegated to simple_fixer singleton claim
+    script_b = base + (
+        "\nexport ARNOLD_REPAIR_F01_OCCURRENCE=" + repr(_F01_OCCURRENCE) + "\n"
+        'R="$(repair_loop_repair_state_authority_or_reject "wrapper" "arnold-repair-loop")"\n'
+        'printf \'%s\' "$R"'
+    )
+    res_b = _run_watchdog_shell(script_b)
+    assert res_b.returncode == 0, res_b.stderr
+    out_b = json.loads(res_b.stdout)
+    assert out_b["outcome"] == "delegated", out_b
+    assert out_b["delegated"] is True, out_b
+    assert out_b["repair_state_mutation"] is True, out_b
+    assert out_b["occurrence_fingerprint"].startswith("sha256:"), out_b
+
+    # (c) rebuildable projection as forbidden source -> zero_authority_rejected
+    script_c = base + (
+        "\nexport ARNOLD_REPAIR_REBUILDABLE_PROJECTION=replay\n"
+        'R="$(repair_loop_repair_state_authority_or_reject "wrapper" "arnold-repair-loop")"\n'
+        'printf \'%s\' "$R"'
+    )
+    res_c = _run_watchdog_shell(script_c)
+    assert res_c.returncode == 0, res_c.stderr
+    out_c = json.loads(res_c.stdout)
+    assert out_c["outcome"] == "zero_authority_rejected", out_c
+    assert out_c["delegated"] is False, out_c
+    assert out_c["repair_state_mutation"] is False, out_c
+
+    # (d) no occurrence -> neutral, never silently authorized
+    script_d = base + (
+        '\nR="$(repair_loop_repair_state_authority_or_reject "wrapper" "arnold-repair-loop")"\n'
+        'printf \'%s\' "$R"'
+    )
+    res_d = _run_watchdog_shell(script_d)
+    assert res_d.returncode == 0, res_d.stderr
+    out_d = json.loads(res_d.stdout)
+    assert out_d["outcome"] == "no_authority_claim", out_d
+    assert out_d["repair_state_mutation"] is False, out_d

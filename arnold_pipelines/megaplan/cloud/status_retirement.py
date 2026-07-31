@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from dataclasses import dataclass
+
 
 STATUS_RETIREMENT_SCHEMA = "arnold.megaplan.deleted-workspace-status-retirement.v1"
 _SESSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
@@ -467,6 +469,102 @@ def _atomic_write_json(path: Path, value: Mapping[str, Any]) -> None:
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(tmp, path)
+
+
+# ── Step 97 (T46): non-destructive legacy retirement eligibility ────────────
+# This is an eligibility / recommendation record ONLY. It never deletes,
+# tombstones, or mutates any legacy artifact, evidence, or projection. Legacy
+# artifacts become eligible for retirement only after EVERY required M11 gate
+# passes; any single failing gate produces a typed ``eligible=False`` outcome.
+# No gate derives authority from a label, liveness, a WBC receipt, or a
+# rebuildable projection — each is fail-closed and computed by its producer.
+
+LEGACY_RETIREMENT_ELIGIBILITY_SCHEMA = "arnold.megaplan.legacy-retirement-eligibility.v1"
+
+#: The canonical, ordered set of M11 acceptance gates that must ALL pass before
+#: legacy artifacts become eligible for non-destructive retirement. Each gate
+#: is fail-closed and is computed by its own producer before being joined here.
+LEGACY_RETIREMENT_REQUIRED_GATES: tuple[str, ...] = (
+    "runtime_identity_bound",     # T3 — m11_bound_runtime_identity
+    "prerequisites_ready",        # T1/T2 — PrerequisiteStatus all satisfied
+    "predecessor_joins_complete", # T7/T8 — M10/M5/A7 adapters + audit cycles
+    "debt_gate_passed",           # T5 — no xfail/xpass/unexplained-skip/debt
+    "route_closure_complete",     # T45 Step 92 — zero unplanned/planned_pending
+    "recovery_slo_ready",         # T45 Steps 93-94 — p95 sample>=20, p95<300s
+    "wbc_static_runtime_equal",   # T46 Step 96 — exact static/runtime/WBC
+    "rollback_preserves_primary", # T46 Step 95 — DivergentDuplicateError chain
+)
+
+
+@dataclass(frozen=True)
+class LegacyRetirementEligibility:
+    """Step 97 (T46): non-destructive legacy retirement eligibility.
+
+    Pure decision data: this object NEVER deletes, tombstones, or mutates any
+    legacy artifact, evidence, projection, or file. ``eligible`` is ``True``
+    only when every gate in :data:`LEGACY_RETIREMENT_REQUIRED_GATES` is
+    ``True``; otherwise a typed ``eligible=False`` outcome names the blockers.
+    No authority is created from a label, liveness, a WBC receipt, or a
+    rebuildable projection.
+    """
+
+    schema: str
+    eligible: bool
+    required_gates: tuple[str, ...]
+    passing_gates: tuple[str, ...]
+    failing_gates: tuple[str, ...]
+    unknown_gates: tuple[str, ...]
+    blockers: tuple[str, ...]
+    destructive: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "eligible": self.eligible,
+            "required_gates": list(self.required_gates),
+            "passing_gates": list(self.passing_gates),
+            "failing_gates": list(self.failing_gates),
+            "unknown_gates": list(self.unknown_gates),
+            "blockers": list(self.blockers),
+            "destructive": self.destructive,
+        }
+
+
+def compute_legacy_retirement_eligibility(
+    gate_status: Mapping[str, bool],
+) -> LegacyRetirementEligibility:
+    """Step 97 (T46): generate non-destructive legacy retirement eligibility.
+
+    Requires EVERY gate in :data:`LEGACY_RETIREMENT_REQUIRED_GATES` to be
+    ``True`` for ``eligible=True``. Missing or ``False`` gates are recorded as
+    failing blockers (fail closed). Extra/unknown gates are reported for
+    transparency but never satisfy eligibility. This function performs NO
+    deletion, tombstone, or mutation of any artifact — it returns pure
+    decision data only.
+    """
+    required = LEGACY_RETIREMENT_REQUIRED_GATES
+    passing: list[str] = []
+    failing: list[str] = []
+    blockers: list[str] = []
+    for gate in required:
+        if gate_status.get(gate) is True:
+            passing.append(gate)
+        else:
+            failing.append(gate)
+            blockers.append(f"{gate}=false_or_missing")
+    known = set(required)
+    unknown = tuple(sorted(g for g in gate_status if g not in known))
+    eligible = not failing
+    return LegacyRetirementEligibility(
+        schema=LEGACY_RETIREMENT_ELIGIBILITY_SCHEMA,
+        eligible=eligible,
+        required_gates=required,
+        passing_gates=tuple(passing),
+        failing_gates=tuple(failing),
+        unknown_gates=unknown,
+        blockers=tuple(blockers),
+        destructive=False,
+    )
 
 
 def _parser() -> argparse.ArgumentParser:

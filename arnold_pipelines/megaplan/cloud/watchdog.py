@@ -102,6 +102,64 @@ class WatchdogResult:
         )
 
 
+def assess_watchdog_accepted_progress(
+    projection: dict[str, Any],
+    *,
+    chain_complete: bool,
+    is_fail_closed: bool,
+    has_declared_successors: bool,
+) -> dict[str, Any]:
+    """Classify accepted progress and surface contradictory repair activity.
+
+    Accepted milestone evidence is authoritative for progress classification;
+    process/status activity is not.  If a completed fail-closed chain still
+    advertises active repair state, return an explicit drift signal instead of
+    allowing the watchdog projection to obscure accepted completion.
+    """
+
+    accepted = projection.get("accepted_progress")
+    accepted_progress = (
+        isinstance(accepted, dict)
+        and accepted.get("acceptance_required") is True
+        and accepted.get("waiting_for_acceptance") is False
+        and (
+            accepted.get("final_milestone_accepted") is True
+            or bool(accepted.get("accepted_milestones"))
+        )
+    )
+    repair_activity = (
+        projection.get("status") in {"repairing", "reworking"}
+        or projection.get("repairing") is True
+        or (
+            isinstance(projection.get("repair_state"), dict)
+            and projection["repair_state"].get("active") is True
+        )
+    )
+    contradictory_repair = (
+        accepted_progress
+        and repair_activity
+        and chain_complete
+        and is_fail_closed
+        and has_declared_successors
+    )
+
+    return {
+        "activity_classification": (
+            "accepted_progress"
+            if accepted_progress
+            else "repair_activity"
+            if repair_activity
+            else "no_accepted_progress"
+        ),
+        "drift_detected": contradictory_repair,
+        "drift_reason": (
+            "accepted_progress_conflicts_with_repair_activity"
+            if contradictory_repair
+            else ""
+        ),
+    }
+
+
 # ── Watchdog wrapper ────────────────────────────────────────────────────────
 
 
@@ -304,5 +362,6 @@ __all__ = [
     "EscalationLevel",
     "EvidenceLevel",
     "WatchdogResult",
+    "assess_watchdog_accepted_progress",
     "run_watchdog_check",
 ]

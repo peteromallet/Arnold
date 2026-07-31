@@ -466,6 +466,41 @@ def resolve_batch_scope(
     )
 
 
+def batch_owned_write_paths(
+    plan_tasks: Iterable[Mapping[str, Any]],
+    *,
+    scope_task_ids: Iterable[str],
+) -> frozenset[str]:
+    """Union of declared ``write_set.paths`` for the tasks in a proven scope.
+
+    Pure over already-read plan task records: it never touches the filesystem
+    or reads ``finalize.json``.  Paths are normalized with the same rule the
+    per-task write-budget enforcer uses so callers can compare directly.
+
+    A task without a declared ``write_set`` contributes no owned paths — the
+    batch's collectively-owned surface is built only from admitted evidence.
+    """
+
+    scope_ids = {tid for tid in scope_task_ids if isinstance(tid, str)}
+    owned: set[str] = set()
+    for task in plan_tasks:
+        if not isinstance(task, Mapping):
+            continue
+        task_id = task.get("id")
+        if task_id not in scope_ids:
+            continue
+        write_set = task.get("write_set")
+        if not isinstance(write_set, Mapping):
+            continue
+        paths = write_set.get("paths")
+        if not isinstance(paths, list):
+            continue
+        for path in paths:
+            if isinstance(path, str) and path.strip():
+                owned.add(path.strip().replace("\\", "/").lstrip("./"))
+    return frozenset(owned)
+
+
 __all__ = [
     "BATCH_SCOPE_KEY",
     "BATCH_SCOPE_SCHEMA_VERSION",
@@ -476,6 +511,7 @@ __all__ = [
     "BatchScope",
     "BatchScopeQuarantine",
     "BatchScopeResolution",
+    "batch_owned_write_paths",
     "resolve_batch_authority_metadata",
     "resolve_batch_scope",
 ]

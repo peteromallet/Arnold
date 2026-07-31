@@ -311,3 +311,432 @@ def revalidate_dispatch_identity(
         fresh_identity=fresh_identity,
     )
     return verdict.permitted, verdict.reason, verdict
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# T23 / Step 36-37 — Recovery latency ledger
+# ═══════════════════════════════════════════════════════════════════════════
+
+import hashlib as _hashlib
+import json as _json
+from datetime import datetime as _datetime, timezone as _timezone
+from typing import Sequence as _Sequence
+
+
+@dataclass(frozen=True)
+class LatencyLedgerRow:
+    """One row in the recovery latency ledger.
+
+    Records a single durable blocked-occurrence or process-exit event
+    and its terminal accepted-repair or typed-escalation receipt, with
+    computed occurrence-to-terminal latency in seconds.
+    """
+
+    occurrence_fingerprint: str
+    """Exact occurrence fingerprint (sha256 over F01 tuple)."""
+
+    durable_event_kind: str
+    """``blocked_occurrence`` or ``process_exit``."""
+
+    durable_event_timestamp: str
+    """ISO-8601 timestamp when the durable event was recorded."""
+
+    terminal_receipt_kind: str
+    """``accepted_repair`` or ``typed_escalation``."""
+
+    terminal_receipt_timestamp: str
+    """ISO-8601 timestamp of the terminal receipt."""
+
+    terminal_receipt_id: str
+    """Content-addressed receipt identifier."""
+
+    latency_seconds: float
+    """Occurrence-to-terminal latency in seconds (may be negative if timestamps are misordered)."""
+
+    cohort_eligible: bool
+    """Whether this row is eligible for the M11 SLO cohort."""
+
+    eligibility_reason: str
+    """Why the row is eligible or ineligible."""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_event_and_receipt(
+        cls,
+        *,
+        occurrence_fingerprint: str,
+        durable_event_kind: str,
+        durable_event_timestamp: str,
+        terminal_receipt_kind: str,
+        terminal_receipt_timestamp: str,
+        terminal_receipt_id: str,
+        has_current_ra_grant: bool = True,
+        has_current_custody_lease: bool = True,
+        has_verifier_receipts: bool = True,
+    ) -> "LatencyLedgerRow":
+        """Build a ledger row from a durable event and its terminal receipt.
+
+        Cohort eligibility requires:
+        1. Current Run Authority grant/fence
+        2. Current Custody lease/epoch
+        3. Same-occurrence verifier receipts
+        """
+        try:
+            start = _datetime.fromisoformat(durable_event_timestamp)
+            end = _datetime.fromisoformat(terminal_receipt_timestamp)
+            latency = (end - start).total_seconds()
+        except (ValueError, TypeError):
+            latency = -1.0
+
+        eligible = True
+        reasons: list[str] = []
+        if not has_current_ra_grant:
+            eligible = False
+            reasons.append("no current Run Authority grant/fence")
+        if not has_current_custody_lease:
+            eligible = False
+            reasons.append("no current Custody lease/epoch")
+        if not has_verifier_receipts:
+            eligible = False
+            reasons.append("missing same-occurrence verifier receipts")
+        if latency < 0:
+            eligible = False
+            reasons.append("negative latency (misordered timestamps)")
+
+        return cls(
+            occurrence_fingerprint=occurrence_fingerprint,
+            durable_event_kind=durable_event_kind,
+            durable_event_timestamp=durable_event_timestamp,
+            terminal_receipt_kind=terminal_receipt_kind,
+            terminal_receipt_timestamp=terminal_receipt_timestamp,
+            terminal_receipt_id=terminal_receipt_id,
+            latency_seconds=latency,
+            cohort_eligible=eligible,
+            eligibility_reason="; ".join(reasons) if reasons else "eligible",
+        )
+
+
+@dataclass(frozen=True)
+class RecoveryLatencyLedger:
+    """The M11 recovery latency ledger.
+
+    Generated from durable blocked-occurrence / process-exit events and
+    their terminal accepted-repair or typed-escalation receipts.
+
+    Provides nearest-rank p95 computation over eligible cohort rows.
+    """
+
+    schema_version: int = 1
+    milestone: str = "M11"
+    rows: tuple[LatencyLedgerRow, ...] = ()
+
+    @property
+    def eligible_rows(self) -> tuple[LatencyLedgerRow, ...]:
+        return tuple(r for r in self.rows if r.cohort_eligible)
+
+    @property
+    def total_rows(self) -> int:
+        return len(self.rows)
+
+    @property
+    def sample_count(self) -> int:
+        return len(self.eligible_rows)
+
+    @property
+    def p95_seconds(self) -> float | None:
+        """Nearest-rank p95 over eligible cohort latencies.
+
+        Uses ``ceil(0.95 * N)`` over sorted ascending latencies.
+        Returns ``None`` when the sample count is zero.
+        """
+        if self.sample_count == 0:
+            return None
+        latencies = sorted(r.latency_seconds for r in self.eligible_rows)
+        import math
+        rank = math.ceil(0.95 * len(latencies))
+        # rank is 1-indexed
+        return float(latencies[min(rank, len(latencies)) - 1])
+
+    @property
+    def slo_met(self) -> bool:
+        """Whether the five-minute SLO is met.
+
+        Requires sample_count >= 20 and p95_seconds < 300.0.
+        """
+        if self.sample_count < 20:
+            return False
+        p95 = self.p95_seconds
+        return p95 is not None and p95 < 300.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "milestone": self.milestone,
+            "generated_at": _datetime.now(_timezone.utc).isoformat(),
+            "sample_count": self.sample_count,
+            "total_rows": len(self.rows),
+            "eligible_rows": self.sample_count,
+            "p95_seconds": self.p95_seconds,
+            "slo_met": self.slo_met,
+            "latency_ledger_rows": [r.to_dict() for r in self.rows],
+            "cohort_definition": (
+                "Eligible durable blocked-occurrence or process-exit events "
+                "whose occurrence identity has current Run Authority grant/fence, "
+                "current Custody lease/epoch, same-occurrence verifier receipts, "
+                "and a terminal accepted-repair or typed-escalation receipt."
+            ),
+            "p95_method": "nearest-rank ceil(0.95 * N) over sorted ascending latencies",
+            "slo_threshold_seconds": 300.0,
+            "minimum_cohort_size": 20,
+        }
+
+    def write(self, path: str | Path) -> None:
+        """Persist the ledger to a JSON file."""
+        dest = Path(path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(_json.dumps(self.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
+
+
+def generate_latency_ledger(
+    rows: _Sequence[LatencyLedgerRow] | None = None,
+    *,
+    events: _Sequence[Mapping[str, Any]] | None = None,
+    receipts: _Sequence[Mapping[str, Any]] | None = None,
+) -> RecoveryLatencyLedger:
+    """Generate the recovery latency ledger from durable events and receipts.
+
+    Accepts either pre-built :class:`LatencyLedgerRow` instances or raw
+    event/receipt sequences.  When raw sequences are provided, each event
+    is paired with its corresponding receipt by ``occurrence_fingerprint``.
+
+    Returns a :class:`RecoveryLatencyLedger` that can compute p95 and
+    check the five-minute SLO.
+    """
+    if rows is not None:
+        return RecoveryLatencyLedger(rows=tuple(rows))
+
+    if events is not None and receipts is not None:
+        # Pair events with receipts by occurrence_fingerprint
+        receipt_by_fp: dict[str, dict[str, Any]] = {}
+        for rec in receipts:
+            fp = str(rec.get("occurrence_fingerprint", ""))
+            if fp:
+                receipt_by_fp[fp] = dict(rec)
+
+        built_rows: list[LatencyLedgerRow] = []
+        for evt in events:
+            fp = str(evt.get("occurrence_fingerprint", ""))
+            if not fp:
+                continue
+            rec = receipt_by_fp.get(fp)
+            if rec is None:
+                continue
+            row = LatencyLedgerRow.from_event_and_receipt(
+                occurrence_fingerprint=fp,
+                durable_event_kind=str(evt.get("kind", "blocked_occurrence")),
+                durable_event_timestamp=str(evt.get("timestamp", "")),
+                terminal_receipt_kind=str(rec.get("kind", "accepted_repair")),
+                terminal_receipt_timestamp=str(rec.get("emitted_at", "")),
+                terminal_receipt_id=str(rec.get("receipt_id", "")),
+                has_current_ra_grant=bool(evt.get("has_current_ra_grant", True)),
+                has_current_custody_lease=bool(evt.get("has_current_custody_lease", True)),
+                has_verifier_receipts=bool(evt.get("has_verifier_receipts", True)),
+            )
+            built_rows.append(row)
+        return RecoveryLatencyLedger(rows=tuple(built_rows))
+
+    # No data — return an empty ledger
+    return RecoveryLatencyLedger()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Steps 93-94 — Recovery SLO proof with closed-routes gate
+#
+# The final M11 acceptance gate combines route-authority closure (Step 92)
+# with eligible-cohort nearest-rank p95 (Steps 93-94).  A positive proof
+# requires:
+#   1. All recovery routes closed (zero unplanned, zero planned_pending).
+#   2. At least 20 eligible occurrence-to-terminal cohort rows.
+#   3. Nearest-rank p95 under 300 seconds.
+#
+# When any precondition fails, ``blockers`` carries the typed reason(s)
+# instead of a positive ``slo_met``.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+#: The closed vocabulary of recovery-SLO blocker kinds.
+RECOVERY_SLO_BLOCKER_KINDS: frozenset[str] = frozenset({
+    "route_closure_pending",
+    "insufficient_cohort",
+    "p95_exceeds_threshold",
+})
+
+
+@dataclass(frozen=True)
+class RecoverySloBlocker:
+    """A typed reason why the recovery SLO proof cannot be issued."""
+
+    blocker_kind: str
+    detail: str
+
+    def __post_init__(self) -> None:
+        if self.blocker_kind not in RECOVERY_SLO_BLOCKER_KINDS:
+            raise ValueError(
+                f"unknown recovery_slo_blocker_kind: {self.blocker_kind!r}; "
+                f"expected one of {sorted(RECOVERY_SLO_BLOCKER_KINDS)}"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class RecoverySloProof:
+    """The M11 recovery SLO acceptance proof.
+
+    Combines route-authority closure (Step 92) with eligible-cohort
+    nearest-rank p95 (Steps 93-94).  A positive proof (``slo_met == True``)
+    requires closed routes, ≥ 20 eligible cohort rows, and p95 < 300 s.
+    When any precondition fails, ``blockers`` carries the typed reason(s).
+
+    The proof does not create authority from labels, liveness, WBC receipts,
+    or rebuildable projections — it only *reads* those as inputs to the
+    closure-cohort gate.
+    """
+
+    schema_version: int = 1
+    milestone: str = "M11"
+    routes_closed: bool = False
+    sample_count: int = 0
+    p95_seconds: float | None = None
+    minimum_cohort_size: int = 20
+    slo_threshold_seconds: float = 300.0
+    slo_met: bool = False
+    blockers: tuple[RecoverySloBlocker, ...] = ()
+    p95_method: str = "nearest-rank ceil(0.95 * N) over sorted ascending latencies"
+
+    @property
+    def has_typed_blocker(self) -> bool:
+        """True when at least one typed blocker is present."""
+        return len(self.blockers) > 0
+
+    def blocker_kinds(self) -> tuple[str, ...]:
+        return tuple(b.blocker_kind for b in self.blockers)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "milestone": self.milestone,
+            "routes_closed": self.routes_closed,
+            "sample_count": self.sample_count,
+            "p95_seconds": self.p95_seconds,
+            "minimum_cohort_size": self.minimum_cohort_size,
+            "slo_threshold_seconds": self.slo_threshold_seconds,
+            "slo_met": self.slo_met,
+            "blockers": [b.to_dict() for b in self.blockers],
+            "p95_method": self.p95_method,
+            "cohort_definition": (
+                "Eligible durable blocked-occurrence or process-exit events "
+                "whose occurrence identity has current Run Authority grant/fence, "
+                "current Custody lease/epoch, same-occurrence verifier receipts, "
+                "and a terminal accepted-repair or typed-escalation receipt."
+            ),
+        }
+
+
+def _evaluate_route_closure(route_closure: Mapping[str, Any]) -> bool:
+    """Return ``True`` only if the route-closure summary proves closure.
+
+    Authority is never derived from labels, liveness, WBC receipts, or
+    rebuildable projections — this function only *reads* the closure
+    summary's explicit counts and completeness flag.
+    """
+    if route_closure is None:
+        return False
+    unplanned = int(route_closure.get("unplanned_count", 0))
+    planned_pending = int(route_closure.get("planned_pending_count", 0))
+    closure_complete = bool(route_closure.get("closure_complete", False))
+    return closure_complete and unplanned == 0 and planned_pending == 0
+
+
+def compute_recovery_slo_proof(
+    ledger: RecoveryLatencyLedger,
+    *,
+    route_closure: Mapping[str, Any] | None = None,
+) -> RecoverySloProof:
+    """Compute the recovery SLO proof from a latency ledger and route closure.
+
+    Route closure (Step 92) is a precondition: if routes are not closed
+    (``unplanned_count > 0`` or ``planned_pending_count > 0``), a typed
+    ``route_closure_pending`` blocker is emitted and ``slo_met`` is ``False``
+    regardless of cohort size or p95 — the SLO may not be claimed while
+    unclosed routes can still materialize unguarded legacy repair authority.
+
+    The cohort (Step 93) requires eligible occurrence-to-terminal rows with
+    current Run Authority grant/fence, current Custody lease/epoch, and
+    same-occurrence verifier receipts.  Insufficient cohort (< 20) emits
+    ``insufficient_cohort``.
+
+    The p95 (Step 94) requires nearest-rank p95 < 300 seconds.  Exceeding the
+    threshold emits ``p95_exceeds_threshold``.
+    """
+    blockers: list[RecoverySloBlocker] = []
+
+    # ── Step 92 gate: route closure ────────────────────────────────────
+    routes_closed = _evaluate_route_closure(route_closure) if route_closure is not None else False
+    if not routes_closed:
+        if route_closure is not None:
+            unplanned = int(route_closure.get("unplanned_count", 0))
+            planned_pending = int(route_closure.get("planned_pending_count", 0))
+            detail = (
+                f"route closure incomplete: unplanned={unplanned}, "
+                f"planned_pending={planned_pending}"
+            )
+        else:
+            detail = "route closure summary not provided; cannot prove closure"
+        blockers.append(RecoverySloBlocker(
+            blocker_kind="route_closure_pending",
+            detail=detail,
+        ))
+
+    # ── Step 93 gate: eligible cohort ──────────────────────────────────
+    sample_count = ledger.sample_count if ledger is not None else 0
+    minimum_cohort_size = 20
+    if sample_count < minimum_cohort_size:
+        blockers.append(RecoverySloBlocker(
+            blocker_kind="insufficient_cohort",
+            detail=(
+                f"only {sample_count} eligible occurrence-to-terminal rows; "
+                f"require >= {minimum_cohort_size}"
+            ),
+        ))
+
+    # ── Step 94 gate: p95 threshold ────────────────────────────────────
+    p95 = ledger.p95_seconds if ledger is not None else None
+    if p95 is not None and p95 >= 300.0:
+        blockers.append(RecoverySloBlocker(
+            blocker_kind="p95_exceeds_threshold",
+            detail=f"nearest-rank p95={p95:.1f}s exceeds 300s threshold",
+        ))
+    elif sample_count >= 20 and p95 is None:
+        blockers.append(RecoverySloBlocker(
+            blocker_kind="p95_exceeds_threshold",
+            detail="p95 is None despite sufficient cohort",
+        ))
+
+    slo_met = (
+        routes_closed
+        and sample_count >= 20
+        and p95 is not None
+        and p95 < 300.0
+    )
+
+    return RecoverySloProof(
+        routes_closed=routes_closed,
+        sample_count=sample_count,
+        p95_seconds=p95,
+        slo_met=slo_met,
+        blockers=tuple(blockers),
+    )

@@ -215,7 +215,7 @@ def test_active_repair_claim_preserves_stale_lock_evidence(tmp_path: Path) -> No
     assert first.lock_dir.exists()
 
 
-def test_active_repair_claim_reports_live_pid_session_mismatch_without_reclaiming(
+def test_active_repair_claim_preserves_live_owner_without_reclaiming(
     tmp_path: Path,
 ) -> None:
     queue_dir = _queue_root(tmp_path)
@@ -243,7 +243,7 @@ def test_active_repair_claim_reports_live_pid_session_mismatch_without_reclaimin
         is_pid_live=lambda pid: pid in {os.getpid(), 556},
     )
 
-    assert stale.stale
+    assert stale.already_claimed
     assert stale.owner is not None
     assert stale.owner["pid"] == os.getpid()
     assert stale.owner["actor"] == "trigger-a"

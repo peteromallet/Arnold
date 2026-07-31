@@ -1,4 +1,10 @@
-"""Deterministic L2 terminal audit with no model dispatch."""
+"""Deterministic L2 terminal audit — routed through typed delegation shim.
+
+A terminal audit never directly executes a repair-loop binary.  Instead it
+routes every retrigger through the typed delegation shim (Step 76-80):
+``delegate_to_simple_fixer`` for canonical authority or
+``emit_zero_authority_rejection`` for non-authoritative paths.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +13,6 @@ import datetime as dt
 import json
 import os
 from pathlib import Path
-import subprocess
 from typing import Any, Sequence
 
 import yaml
@@ -22,6 +27,13 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     atomic_write_json,
     update_session_index,
     validate_repair_data,
+)
+from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
+    RepairDelegation,
+    RepairDelegationResult,
+    build_repair_delegation,
+    delegate_to_simple_fixer,
+    emit_zero_authority_rejection,
 )
 
 
@@ -162,18 +174,51 @@ def run_terminal_audit(
                 "pre_snapshot": pre_snapshot,
             }
         else:
-            command = [str(repair_loop_bin), session, pre_snapshot["workspace"]]
-            if pre_snapshot.get("remote_spec"):
-                command.append(pre_snapshot["remote_spec"])
-            completed = subprocess.run(
-                command,
-                cwd=pre_snapshot["workspace"],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=3600,
+            # Route retrigger through typed delegation shim (Step 76-80).
+            # Terminal audit never directly executes a repair-loop binary.
+            workspace = pre_snapshot["workspace"]
+            remote_spec = pre_snapshot.get("remote_spec", "")
+            command = [str(repair_loop_bin), session, workspace]
+            if remote_spec:
+                command.append(remote_spec)
+            returncode = None
+            stdout = ""
+            stderr = ""
+
+            delegation = build_repair_delegation(
+                caller_kind="terminal_audit",
+                caller_id=f"terminal-audit:{session}",
+                target=pre_snapshot.get("repair_target"),
             )
-            returncode = int(completed.returncode)
+            if delegation is None:
+                # Cannot construct exact F01 tuple — emit typed rejection.
+                rejection_result: RepairDelegationResult = emit_zero_authority_rejection(
+                    caller_kind="terminal_audit",
+                    caller_id=f"terminal-audit:{session}",
+                    reason="terminal audit cannot construct exact occurrence identity from snapshot",
+                )
+                returncode = 73  # canonical rejection exit code
+                stdout = str(rejection_result.to_dict())
+            else:
+                # Delegate to simple_fixer through canonical path.
+                queue_dir = str(marker_dir / "repair-queue")
+                delegation_result = delegate_to_simple_fixer(
+                    delegation,
+                    queue_dir=queue_dir,
+                    mutate=lambda occ: f"terminal-audit-retriggered:{session}",
+                    actor=f"terminal-audit:{session}",
+                    request_id=f"terminal-audit-{session}",
+                    session_id=session,
+                    kind="terminal_audit_retrigger",
+                )
+                if delegation_result.delegated:
+                    returncode = 0
+                    stdout = str(delegation_result.to_dict())
+                else:
+                    returncode = 73
+                    stdout = str(delegation_result.to_dict())
+                    stderr = f"delegation outcome: {delegation_result.outcome}"
+
             sidecar = validate_repair_data(repair_data_dir / f"{session}.repair-data.json")
             post_snapshot = capture_terminal_snapshot(session, marker_dir)
             first_progress_at = post_snapshot.get("captured_at") or dt.datetime.now(
@@ -188,9 +233,9 @@ def run_terminal_audit(
                 retriggered=True,
                 retrigger_result=RetriggerExecutionResult(
                     tuple(command),
-                    returncode,
-                    str(completed.stdout or ""),
-                    str(completed.stderr or ""),
+                    returncode or 73,
+                    stdout,
+                    stderr,
                 ),
                 post_retrigger_verification={
                     "outcome": sidecar.get("outcome", ""),

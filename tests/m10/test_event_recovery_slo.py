@@ -10,7 +10,9 @@ Verifies that ``evidence/m10-recovery-slo-receipt.json``:
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -24,10 +26,20 @@ from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
     AuditSeverity,
     SixHourAuditor,
 )
-from tools.generate_m10_recovery_slo_receipt import (
-    SLO_TARGET_SECONDS,
-    generate_receipt,
+_TOOL_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "tools"
+    / "generate_m10_recovery_slo_receipt.py"
 )
+_TOOL_SPEC = importlib.util.spec_from_file_location(
+    "_m10_recovery_slo_tool", _TOOL_PATH
+)
+assert _TOOL_SPEC is not None and _TOOL_SPEC.loader is not None
+_TOOL_MODULE = importlib.util.module_from_spec(_TOOL_SPEC)
+sys.modules[_TOOL_SPEC.name] = _TOOL_MODULE
+_TOOL_SPEC.loader.exec_module(_TOOL_MODULE)
+SLO_TARGET_SECONDS = _TOOL_MODULE.SLO_TARGET_SECONDS
+generate_receipt = _TOOL_MODULE.generate_receipt
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RECEIPT_PATH = REPO_ROOT / "evidence" / "m10-recovery-slo-receipt.json"
@@ -242,3 +254,67 @@ class TestRecoverySloStoreBehavior:
         # Event store should be unchanged.
         assert len(store.all_events()) == 1
         assert report.escalated_count >= 1
+
+
+# ── Step 47 (T33): legacy six-hour-only evidence is not SLO-proof ────────
+
+
+def _is_slo_proof_sufficient(receipt_data: dict) -> bool:
+    """Gate logic: proof is sufficient only when next-three-hour
+    reconciliation carries the positive proof.  A six-hour-only receipt
+    (one that omits ``next_three_hour_reconciliation``) is rejected even if
+    it still carries the legacy ``six_hour_backstop`` section.
+    """
+    if "next_three_hour_reconciliation" not in receipt_data:
+        return False
+    reconciliation = receipt_data["next_three_hour_reconciliation"]
+    if not isinstance(reconciliation, dict):
+        return False
+    if reconciliation.get("reconciliation_interval") != "next_three_hour":
+        return False
+    # Positive proof requires the reconciliation to have actually run.
+    if not reconciliation.get("events_checked"):
+        return False
+    return True
+
+
+def test_legacy_six_hour_only_evidence_is_not_slo_proof(receipt: dict) -> None:
+    """Step 47 (T33): a six-hour-only receipt must not be accepted as SLO proof.
+
+    The regenerated receipt must carry positive proof under
+    ``next_three_hour_reconciliation``; the ``six_hour_backstop`` section is
+    retained only as a compatibility alias.  A receipt that exposes only the
+    legacy six-hour section (no ``next_three_hour_reconciliation``) must be
+    rejected by the gate, so M11 joins cannot ingest six-hour-only proof the
+    new gates reject.
+    """
+    constraints = receipt["constraints"]
+
+    # The regenerated receipt is NOT six-hour-only: it carries the positive
+    # proof under next-three-hour reconciliation.
+    assert "next_three_hour_reconciliation" in receipt
+    assert _is_slo_proof_sufficient(receipt) is True
+
+    # The six-hour section is explicitly a compatibility alias, not authority.
+    six_hour = receipt["six_hour_backstop"]
+    assert six_hour.get("compatibility_only") is True
+    assert six_hour.get("compatibility_alias_for") == "next_three_hour_reconciliation"
+
+    # Constraints record the cadence migration.
+    assert constraints.get("positive_proof_cadence") == "next_three_hour"
+    assert constraints.get("six_hour_names_compatibility_only") is True
+
+    # A six-hour-only receipt (next_three_hour_reconciliation stripped) must
+    # be rejected — it is not SLO-proof on its own.
+    six_hour_only = {k: v for k, v in receipt.items() if k != "next_three_hour_reconciliation"}
+    assert "next_three_hour_reconciliation" not in six_hour_only
+    assert _is_slo_proof_sufficient(six_hour_only) is False
+
+    # A receipt whose reconciliation points at the legacy six-hour cadence
+    # must also be rejected.
+    mislabelled = dict(receipt)
+    mislabelled["next_three_hour_reconciliation"] = {
+        **receipt["next_three_hour_reconciliation"],
+        "reconciliation_interval": "six_hour",
+    }
+    assert _is_slo_proof_sufficient(mislabelled) is False

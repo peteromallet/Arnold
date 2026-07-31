@@ -249,3 +249,113 @@ def test_authorized_controller_noops_before_repair_dispatch_for_healthy_owner(
     assert item["repair_dispatched"] is False
     assert result["l3_escalation_summary"]["dispatched"] == 0
     assert not (queue / "requests").exists()
+
+
+def test_ownership_suppression_cannot_authorize_legacy_dispatch() -> None:
+    """Step 45: owner suppression binds to exact occurrence, current fence,
+    and custody epoch; queue state is non-authoritative and suppression can
+    never authorize a legacy dispatch path (e.g. the six_hour_auditor label).
+    """
+
+    from arnold_pipelines.megaplan.cloud.simple_fixer import (
+        build_simple_fixer_occurrence,
+    )
+    from arnold_pipelines.megaplan.cloud.progress_auditor_ownership import (
+        ownership_occurrence_authority,
+    )
+
+    f01 = {
+        "environment": "production",
+        "session": "target-session",
+        "chain": "demo",
+        "plan_revision": "rev-7",
+        "phase": "execute",
+        "task": "oauth-token-refresh",
+        "attempt": "3",
+        "normalized_failure_kind": "token_refresh_timeout",
+        "blocker_or_phase_result_hash": "blocker:v1:target",
+        "fence": "fence-2026-07-15T01",
+    }
+    expected = build_simple_fixer_occurrence(f01)
+    assert expected is not None
+
+    finding = {
+        "session": "target-session",
+        "plan": "target-plan",
+        "current_target": {
+            "target_id": "target-session:target-plan",
+            "environment": "production",
+            "chain": "demo",
+            "plan_revision": "rev-7",
+            "phase": "execute",
+            "task": "oauth-token-refresh",
+            "attempt": "3",
+        },
+        "repair_custody_summary": {
+            "blocker_id": "blocker:v1:target",
+            "normalized_failure_kind": "token_refresh_timeout",
+            "fence": "fence-2026-07-15T01",
+            "custody_epoch": "epoch-9",
+        },
+        "l3_escalation_gate": {
+            "fence": "fence-2026-07-15T01",
+            "custody_epoch": "epoch-9",
+        },
+    }
+
+    valid_ownership = {
+        "schema_version": OWNERSHIP_SCHEMA,
+        "decision": "existing_owner_no_new_launch",
+        "suppress_new_repair_launch": True,
+        "healthy_aligned_run_ids": ["managed-existing-owner"],
+        "occurrence_fingerprint": expected.occurrence_fingerprint,
+        "fence": "fence-2026-07-15T01",
+        "custody_epoch": "epoch-9",
+    }
+
+    # Occurrence-bound suppression: the owner's occurrence, fence, and epoch
+    # all match the finding's exact contract tuple.
+    authority = ownership_occurrence_authority(valid_ownership, finding, now=NOW)
+    assert authority["suppression_occurrence_bound"] is True
+    assert authority["occurrence_match"] is True
+    assert authority["fence_match"] is True
+    assert authority["epoch_match"] is True
+    assert authority["queue_authoritative"] is False
+    # Suppression never authorizes a dispatch — it only suppresses.
+    assert authority["can_authorize_dispatch"] is False
+
+    # Stale custody epoch: the queue may still report an active owner, but
+    # the epoch no longer matches the finding's current epoch — suppression
+    # must not bind.
+    stale = dict(valid_ownership)
+    stale["custody_epoch"] = "epoch-3"
+    stale_authority = ownership_occurrence_authority(stale, finding, now=NOW)
+    assert stale_authority["suppression_occurrence_bound"] is False
+    assert stale_authority["epoch_match"] is False
+    assert stale_authority["can_authorize_dispatch"] is False
+    assert stale_authority["queue_authoritative"] is False
+
+    # Wrong occurrence: a different occurrence fingerprint must not suppress.
+    wrong = dict(valid_ownership)
+    wrong["occurrence_fingerprint"] = "sha256:differentoccurrence"
+    wrong_authority = ownership_occurrence_authority(wrong, finding, now=NOW)
+    assert wrong_authority["suppression_occurrence_bound"] is False
+    assert wrong_authority["occurrence_match"] is False
+
+    # Queue-only ownership (no occurrence fingerprint): queue state is
+    # non-authoritative and cannot bind suppression to the occurrence.
+    queue_only = dict(valid_ownership)
+    queue_only.pop("occurrence_fingerprint")
+    queue_authority = ownership_occurrence_authority(queue_only, finding, now=NOW)
+    assert queue_authority["suppression_occurrence_bound"] is False
+    assert queue_authority["queue_authoritative"] is False
+    assert queue_authority["occurrence_match"] is False
+
+    # Even an occurrence-bound suppression cannot authorize a legacy dispatch
+    # path (the six_hour_auditor label source).
+    legacy = ownership_occurrence_authority(
+        valid_ownership, finding, now=NOW, dispatch_source="six_hour_auditor"
+    )
+    assert legacy["suppression_occurrence_bound"] is True
+    assert legacy["can_authorize_dispatch"] is False
+    assert legacy["legacy_dispatch_blocked"] is True

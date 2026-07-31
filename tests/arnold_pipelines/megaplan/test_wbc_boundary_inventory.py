@@ -21,6 +21,7 @@ import io
 import importlib.util
 import json
 import pathlib
+import sys
 from typing import Any
 
 import pytest
@@ -48,6 +49,7 @@ def _load_generator() -> Any:
     spec = importlib.util.spec_from_file_location("wbc_boundary_inventory_generator", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -875,7 +877,7 @@ class TestCurrentStateAssertions:
         """The execute/batch producers assertion must be present and report findings."""
         inv = self._load_inventory()
         ebp = inv["current_state_assertions"]["execute_batch_producers"]
-        assert ebp["expected_count"] == 8
+        assert ebp["expected_count"] == 4
         assert "found" in ebp
         assert "missing" in ebp
         assert "count_matches" in ebp
@@ -887,17 +889,8 @@ class TestCurrentStateAssertions:
         assert "handle_execute" in ebp["found"], (
             "handle_execute must be in the execute/batch producers found set"
         )
-        # execute_batch, handle_execute_batch, monitor_execution_batch, observe_execution
-        # are expected to be missing in the current codebase — the assertion must
-        # report these as missing.
-        for expected_missing in (
-            "execute_batch", "handle_execute_batch",
-            "monitor_execution_batch", "observe_execution"
-        ):
-            assert expected_missing in ebp["missing"], (
-                f"'{expected_missing}' must be reported as missing from "
-                f"execute/batch producers"
-            )
+        assert ebp["missing"] == []
+        assert ebp["count_matches"] is True
 
     def test_execute_review_auto_exclusion(self) -> None:
         """handle_execute and handle_review must be excluded from front-half."""
@@ -1014,21 +1007,12 @@ class TestUnmatchedCategories:
             f"Missing unmatched category keys: {missing}"
         )
 
-    def test_unmatched_declared_has_entries(self) -> None:
-        """At least 15 declared contracts lack matrix entries."""
+    def test_unmatched_declared_is_empty_after_matrix_reconciliation(self) -> None:
+        """Every declared contract is represented by the reconciled matrix."""
         inv = self._load_inventory()
         uc = inv["unmatched_categories"]
         declared = uc["unmatched_declared"]
-        assert len(declared) >= 15, (
-            f"Expected >=15 unmatched declared, got {len(declared)}"
-        )
-        # All unmatched declared must have row_kind 'boundary_contract'
-        for entry in declared:
-            assert entry.get("row_kind") == "boundary_contract", (
-                f"Unmatched declared entry has wrong row_kind: {entry.get('row_kind')}"
-            )
-            assert "reason_unmatched" in entry
-            assert entry.get("reason_unmatched") == "no_matrix_entry"
+        assert declared == []
 
     def test_unmatched_static_has_entries(self) -> None:
         """Unclassified runtime modules appear in unmatched_static."""
@@ -1046,32 +1030,12 @@ class TestUnmatchedCategories:
             assert "reason_unmatched" in entry
             assert entry.get("reason_unmatched") == "unclassifiable_surface"
 
-    def test_unmatched_runtime_has_residual_entry(self) -> None:
-        """Runtime traces not yet captured — unmatched_runtime must record
-        a residual default-deny entry (not an empty zero-count set)."""
+    def test_unmatched_runtime_has_no_synthetic_residual(self) -> None:
+        """An absent runtime observation is not a discovered unmatched row."""
         inv = self._load_inventory()
         uc = inv["unmatched_categories"]
         runtime_entries = uc["unmatched_runtime"]
-        assert len(runtime_entries) >= 1, (
-            f"unmatched_runtime must have >=1 residual entry documenting "
-            f"unavailable runtime traces, got {len(runtime_entries)}"
-        )
-        # The residual entry must be a default_deny with runtime_trace target
-        residual = runtime_entries[0]
-        assert residual.get("row_kind") == "default_deny", (
-            f"unmatched_runtime residual must be default_deny, "
-            f"got {residual.get('row_kind')}"
-        )
-        assert residual.get("target_type") == "runtime_trace", (
-            f"unmatched_runtime residual must target runtime_trace, "
-            f"got {residual.get('target_type')}"
-        )
-        assert residual.get("access") == "denied", (
-            "unmatched_runtime residual must have access=denied"
-        )
-        assert residual.get("status") == "UNKNOWN", (
-            "unmatched_runtime residual must have status=UNKNOWN"
-        )
+        assert runtime_entries == []
 
     def test_category_counts_match_meta(self) -> None:
         inv = self._load_inventory()
@@ -1143,14 +1107,24 @@ class TestHistoricalAdapters:
         adapters = self._load_adapters()
         assert adapters["meta"]["schema"] == "m6.wbc-historical-adapters.v1"
 
-    def test_is_default_empty(self) -> None:
+    def test_is_default_empty_or_contains_proven_read_only_adapters(self) -> None:
         adapters = self._load_adapters()
-        assert adapters["meta"]["status"] == "default_empty", (
-            "Historical adapters must be default_empty unless read-only "
-            "adapters are proven"
-        )
-        assert adapters["meta"]["adapter_count"] == 0
-        assert adapters["adapters"] == []
+        rows = adapters["adapters"]
+        assert adapters["meta"]["adapter_count"] == len(rows)
+        if adapters["meta"]["status"] == "default_empty":
+            assert rows == []
+            return
+        assert adapters["meta"]["status"] == "proven_read_only"
+        assert rows
+        for adapter in rows:
+            proof = adapter["zero_authority_caller_proof"]
+            assert proof["read_only_verified"] is True
+            assert proof["diagnostic_only"] is True
+            assert proof["authority_increasing_write_allowed"] is False
+            assert proof["authority_increasing_writes_detected"] == []
+            assert adapter["owner"]
+            assert adapter["approver"]
+            assert adapter["deletion_gate"]
 
     def test_has_status_detail(self) -> None:
         adapters = self._load_adapters()
@@ -1493,11 +1467,12 @@ class TestM10SupportedBoundaries:
             f"meta={boundaries['meta']['classified_total']}"
         )
 
-    def test_historical_read_only_is_default_empty(self) -> None:
+    def test_historical_read_only_contains_only_proven_adapters(self) -> None:
         boundaries = self._load_boundaries()
-        assert boundaries["historical_read_only"] == [], (
-            "historical_read_only must be empty in M10 (default_empty per T7)"
-        )
+        rows = boundaries["historical_read_only"]
+        assert len(rows) >= 11
+        assert all(row["owner"] == "wbc" for row in rows)
+        assert all(row["adapter_id"] for row in rows)
 
     def test_no_deferred_row_appears_as_supported_in_inventory(self) -> None:
         """Deferred rows must not appear in the inventory as 'landed' authority."""

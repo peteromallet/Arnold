@@ -323,6 +323,16 @@ class PhaseResult:
 
     # ── helpers ─────────────────────────────────────────────────────────
 
+    def __post_init__(self) -> None:
+        # M11 Step 12: blocked_by_prereq MUST carry at least one typed blocked task.
+        # Stale-completed filtering may remove all tasks — classify empty
+        # contradictions as invalid rather than silently reinterpreting.
+        if self.exit_kind == ExitKind.blocked_by_prereq.value and not self.blocked_tasks:
+            raise ValueError(
+                "PhaseResult: blocked_by_prereq requires at least one blocked_task; "
+                "empty blocked_tasks with blocked_by_prereq is classification_incompatible"
+            )
+
     @property
     def exit_kind_enum(self) -> ExitKind:
         return ExitKind(self.exit_kind)
@@ -589,6 +599,18 @@ def _validate_phase_result_structure(
             "parse_error",
             "phase_result.blocked_tasks must be a list",
         )
+
+    # M11 Step 12: blocked_by_prereq MUST carry at least one typed blocked task.
+    # An empty blocked_tasks list with blocked_by_prereq exit_kind is a
+    # classification contradiction — treat as invalid_phase_result.
+    ek_val = str(payload.get("exit_kind", ""))
+    if ek_val == "blocked_by_prereq" and len(bts) == 0:
+        raise CliError(
+            "invalid_phase_result",
+            "phase_result: blocked_by_prereq requires at least one blocked_task; "
+            "empty blocked_tasks with blocked_by_prereq is classification_incompatible",
+        )
+
     for i, bt in enumerate(bts):
         if not isinstance(bt, dict):
             raise CliError(

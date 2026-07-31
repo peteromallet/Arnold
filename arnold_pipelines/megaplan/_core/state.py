@@ -274,6 +274,14 @@ def read_heartbeat_projection_snapshot(
         data = json.loads(snapshot_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
+    if (
+        isinstance(data, dict)
+        and "projection" not in data
+        and isinstance(data.get("data"), dict)
+    ):
+        # Preserve the heartbeat reader's original envelope vocabulary while
+        # accepting the shared projection writer's generic ``data`` field.
+        data["projection"] = dict(data["data"])
     return data if isinstance(data, dict) else None
 
 

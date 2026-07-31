@@ -1,3 +1,5 @@
+> **Authority status (M11):** Zero-authority history. All repair, audit, and deployment authority has been migrated to canonical delegation. This document is retained for reference only — it must not be used to materialize commands, grant authority, or drive automated actions.
+
 ---
 name: progress-auditor-debug
 description: Interpret a Hetzner 6-hour progress-auditor report, decide what it surfaced correctly, find inefficiencies or weirdness it missed, and turn every miss into a deterministic gather reason plus regression test. Use with $megaplan-cloud when audit findings repeat as PASSIVE/STALE/INEFFICIENT, green checks hide repair churn, or the auditor seems blind to stale repair-data, meta-repair launch failures, wrapper drift, PR merge drift, or deterministic failure loops.

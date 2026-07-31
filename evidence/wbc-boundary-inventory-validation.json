@@ -1,21 +1,52 @@
 {
+  "blocked_by_prerequisites": false,
   "checks": [
     {
-      "detail": "C1 source_to_owner_matrix.json content hash is unchanged across the generation run.",
-      "id": "matrix_unchanged",
+      "after": "5778c4064f53ada1b884d50225d95ab12bb9f487dfa98586e8cc488ebd33d386",
+      "before": "5778c4064f53ada1b884d50225d95ab12bb9f487dfa98586e8cc488ebd33d386",
+      "id": "c1_matrix_unchanged",
       "passes": true
     },
     {
-      "detail": "All required discovery sections are present in the inventory artifact.",
-      "id": "discovery_sections_emitted",
+      "description": "All declared boundary contracts must have a matrix entry",
+      "detail": "All 50 declared contracts are matched to matrix entries",
+      "id": "declared_contracts_complete",
+      "passes": true,
+      "unmatched_count": 0
+    },
+    {
+      "actual": 1328,
+      "description": "Row count >= sum of source_counts",
+      "detail": "Row count 1328 >= source sum 1328",
+      "expected_min": 1328,
+      "id": "row_count_consistency",
       "passes": true
     },
     {
-      "detail": "Generated support rows remain fail-closed: no manifest-derived row is marked supported unless exact declaration/static/writer/runtime equality is proven.",
-      "id": "support_rows_fail_closed",
+      "description": "Every unclassified runtime_module must have a default_deny row",
+      "detail": "All 487 unclassified modules covered by default_deny rows",
+      "id": "static_discovery_coverage",
+      "passes": true,
+      "static_unmatched_count": 487,
+      "uncovered_count": 0
+    },
+    {
+      "description": "Every inventory row must name an owner",
+      "detail": "All rows have a valid owner",
+      "id": "owner_coverage",
+      "missing_owner_count": 0,
       "passes": true
+    },
+    {
+      "description": "Schema-only entries must be tracked in unmatched_schema_only",
+      "detail": "0 schema-only entries tracked in unmatched_schema_only set",
+      "id": "schema_only_visibility",
+      "passes": true,
+      "schema_only_count": 0
     }
   ],
-  "generated_at": "2026-07-21T00:01:43.840472+00:00",
-  "schema": "m8.wbc-boundary-inventory-validation.v1"
+  "inventory_content_hash": "583d241291243ae76bbeb3a144d6d9d71c21d28b83dba07943b7fe0f05e34ce9",
+  "passes": true,
+  "prerequisite_status": "INCOHERENT",
+  "schema": "m6.wbc-boundary-inventory-validation.v1"
 }

@@ -3,6 +3,11 @@ name: megaplan
 description: AI agent harness for coordinating Claude and GPT to make and execute extremely robust plans.
 ---
 
+> **Authority status (M11):** Zero-authority history. This generated skill copy
+> is retained for reference only. All repair and audit authority has been
+> migrated to canonical delegation. Content must not be used to materialize
+> commands, grant authority, or drive automated actions.
+
 # Megaplan
 
 > **Before you invoke megaplan, run the `megaplan-prep` skill.** It's the front door for every run: it sizes the work (one plan vs. an epic), shapes the brief, and picks the profile (intelligence tier), robustness level, and thinking depth. Do not run `<launcher> init` without it.

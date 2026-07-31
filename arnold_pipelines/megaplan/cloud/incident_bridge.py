@@ -44,6 +44,10 @@ _EVENT_PREFIXES = {
     "managed_repair_claim": "mcl",
     "meta_repair_classification": "mrc",
     "meta_repair_attempt": "mra",
+    # ── next-three-hour auditor (canonical) ──
+    "next_three_hour_auditor_diagnosis": "n3h",
+    "next_three_hour_auditor_audit_complete": "n3c",
+    # ── six-hour auditor (legacy compatibility only) ──
     "six_hour_auditor_diagnosis": "sha",
     "six_hour_auditor_audit_complete": "shc",
     "github_issue_published": "ghp",
@@ -61,19 +65,32 @@ _AUDIT_COMPLETE_OUTCOMES = {
     "auditor_human_escalation",
 }
 
+# Canonical next-three-hour handoffs: diagnosis and reconciliation only.
+# Repair authority (immediate_repair, meta_repair) is NOT in this set — the
+# auditor diagnoses and escalates but never moves repair authority itself.
+_NEXT_THREE_HOUR_AUDITOR_HANDOFFS = {
+    None,
+    "next_three_hour_auditor.audit_complete",
+    "next_three_hour_auditor.diagnosis",
+    "github_sync.publish",
+}
+
+# Legacy six-hour handoff set kept for backward-compatible wrappers only.
+# Repair authority (immediate_repair, meta_repair) is **removed** per T34 —
+# the six-hour auditor may diagnose and escalate but never moves repair
+# authority itself.
 _SIX_HOUR_AUDITOR_HANDOFFS = {
     None,
-    "immediate_repair.repair_attempt",
-    "meta_repair.repair_attempt",
     "github_sync.publish",
     "six_hour_auditor.diagnosis",
+    "next_three_hour_auditor.diagnosis",
 }
 
 _GITHUB_SYNC_HANDOFFS = {
     None,
     "github_sync.publish",
     "github_sync.retry",
-    "six_hour_auditor.diagnosis",
+    "next_three_hour_auditor.diagnosis",
 }
 
 _INCIDENT_LEDGER_RELATIVE = Path(".megaplan") / "incident-ledger"
@@ -510,6 +527,123 @@ def append_meta_repair_attempt(
     return _append(root, event)
 
 
+def append_next_three_hour_auditor_diagnosis(
+    *,
+    incident_id: str,
+    summary: str,
+    outcome: str = "diagnosed",
+    evidence: list[Any] | None = None,
+    session_id: str | None = None,
+    problem_id: str | None = None,
+    parent_event_ids: list[str] | None = None,
+    trigger_event_id: str | None = None,
+    deadline_ts: str | None = None,
+    next_expected_event: str | None = "next_three_hour_auditor.audit_complete",
+    decision: dict[str, Any] | None = None,
+    links: dict[str, Any] | None = None,
+    root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Append a next-three-hour auditor diagnosis event.
+
+    This is the canonical diagnosis helper.  The auditor diagnoses and
+    records findings but does **not** hand off to repair authority —
+    ``_NEXT_THREE_HOUR_AUDITOR_HANDOFFS`` excludes immediate_repair and
+    meta_repair.
+    """
+    _require_handoff(
+        next_expected_event,
+        allowed=_NEXT_THREE_HOUR_AUDITOR_HANDOFFS | {"next_three_hour_auditor.audit_complete"},
+        helper="append_next_three_hour_auditor_diagnosis",
+    )
+    event: dict[str, Any] = {
+        "schema_version": 1,
+        "event_id": _new_event_id(_EVENT_PREFIXES["next_three_hour_auditor_diagnosis"]),
+        "ts": _utc_now_iso(),
+        "type": "next_three_hour_auditor.diagnosis",
+        "actor": "next_three_hour_auditor",
+        "scope": "repair_system",
+        "outcome": outcome,
+        "summary": summary,
+        "evidence": evidence if evidence is not None else [],
+        "parent_event_ids": parent_event_ids if parent_event_ids is not None else [],
+        "trigger_event_id": trigger_event_id,
+        "next_expected_event": next_expected_event,
+        "deadline_ts": deadline_ts,
+        "incident_id": incident_id,
+    }
+    if session_id:
+        event["session_id"] = session_id
+    if problem_id:
+        event["problem_id"] = problem_id
+    if decision is not None:
+        event["decision"] = decision
+    if links is not None:
+        event["links"] = links
+    return _append(root, event)
+
+
+def append_next_three_hour_auditor_audit_complete(
+    *,
+    incident_id: str,
+    summary: str,
+    outcome: str,
+    evidence: list[Any] | None = None,
+    session_id: str | None = None,
+    problem_id: str | None = None,
+    parent_event_ids: list[str] | None = None,
+    trigger_event_id: str | None = None,
+    deadline_ts: str | None = None,
+    next_expected_event: str | None = None,
+    decision: dict[str, Any] | None = None,
+    links: dict[str, Any] | None = None,
+    root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Append a next-three-hour auditor audit_complete handoff event.
+
+    This is the canonical audit-complete helper.  Handoffs are restricted
+    to diagnosis / reconciliation targets; repair authority is never
+    moved by the auditor.
+    """
+    _require_allowed_outcome(
+        outcome,
+        allowed=_AUDIT_COMPLETE_OUTCOMES,
+        helper="append_next_three_hour_auditor_audit_complete",
+    )
+    _require_handoff(
+        next_expected_event,
+        allowed=_NEXT_THREE_HOUR_AUDITOR_HANDOFFS,
+        helper="append_next_three_hour_auditor_audit_complete",
+    )
+    event: dict[str, Any] = {
+        "schema_version": 1,
+        "event_id": _new_event_id(_EVENT_PREFIXES["next_three_hour_auditor_audit_complete"]),
+        "ts": _utc_now_iso(),
+        "type": "next_three_hour_auditor.audit_complete",
+        "actor": "next_three_hour_auditor",
+        "scope": "repair_system",
+        "outcome": outcome,
+        "summary": summary,
+        "evidence": evidence if evidence is not None else [],
+        "parent_event_ids": parent_event_ids if parent_event_ids is not None else [],
+        "trigger_event_id": trigger_event_id,
+        "next_expected_event": next_expected_event,
+        "deadline_ts": deadline_ts,
+        "incident_id": incident_id,
+    }
+    if session_id:
+        event["session_id"] = session_id
+    if problem_id:
+        event["problem_id"] = problem_id
+    if decision is not None:
+        event["decision"] = decision
+    if links is not None:
+        event["links"] = links
+    return _append(root, event)
+
+
+# ── Legacy six-hour wrappers (compatibility only) ──────────────────────
+
+
 def append_six_hour_auditor_diagnosis(
     *,
     incident_id: str,
@@ -526,7 +660,15 @@ def append_six_hour_auditor_diagnosis(
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Append a six-hour auditor diagnosis event."""
+    """Legacy compatibility wrapper — prefer :func:`append_next_three_hour_auditor_diagnosis`.
+
+    The six-hour auditor names are retained for backward compatibility
+    only (T33).  New code should use the next-three-hour equivalents.
+    This wrapper records a ``six_hour_auditor.diagnosis`` event type so
+    existing ledger readers are not broken, but it validates handoffs
+    against the legacy set which **still** allows repair-authority
+    handoffs for compatibility with old callers.
+    """
     _require_handoff(
         next_expected_event,
         allowed=_SIX_HOUR_AUDITOR_HANDOFFS | {"six_hour_auditor.audit_complete"},
@@ -575,7 +717,14 @@ def append_six_hour_auditor_audit_complete(
     links: dict[str, Any] | None = None,
     root: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Append a six-hour auditor audit_complete handoff event."""
+    """Legacy compatibility wrapper — prefer :func:`append_next_three_hour_auditor_audit_complete`.
+
+    The six-hour auditor names are retained for backward compatibility
+    only (T33).  New code should use the next-three-hour equivalents.
+    This wrapper records a ``six_hour_auditor.audit_complete`` event type
+    so existing ledger readers are not broken, but it validates handoffs
+    against the legacy set.
+    """
     _require_allowed_outcome(
         outcome,
         allowed=_AUDIT_COMPLETE_OUTCOMES,
@@ -1099,6 +1248,8 @@ __all__ = [
     "append_managed_repair_claim",
     "append_meta_repair_attempt",
     "append_meta_repair_classification",
+    "append_next_three_hour_auditor_audit_complete",
+    "append_next_three_hour_auditor_diagnosis",
     "append_recovery_observation",
     "append_repair_retriggered",
     "append_six_hour_auditor_audit_complete",

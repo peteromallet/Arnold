@@ -1,3 +1,5 @@
+> **Authority status (M11):** Zero-authority history. All auditor authority has been migrated to canonical delegation. These briefs are retained as non-runnable telemetry — they must not be used to launch repair actions, grant authority, or materialize commands.
+
 You are a DeepSeek subagent in a research swarm. Work read-only.
 
 Goal: enumerate signals around chain truth vs plan truth. Include chain state files, chain-health progress markers, plan state, events.ndjson, cloud-chain logs, completed[] semantics, current_milestone_index, PR state, and stale plan shadows.

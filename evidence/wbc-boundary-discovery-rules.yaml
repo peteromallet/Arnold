@@ -572,3 +572,31 @@ categories:
     description: "Compatibility adapter bridging legacy and current schemas."
   unknown:
     description: "Surface that could not be classified. Recorded as unmatched."
+
+producer_call_names:
+  - _emit_batch_boundary_receipt
+  - _emit_boundary_receipt
+  - _emit_execute_boundary_receipt
+  - append_event
+  - cancel_attempt
+  - complete_attempt
+  - fail_attempt
+  - record_effect_intent
+  - record_effect_outcome
+  - resume_attempt
+  - schedule_retry
+  - start_attempt
+  - suspend_attempt
+  - write_boundary_receipt
+historical_adapter_ids:
+  - legacy-chain-state-reader
+  - legacy-supervisor-state-reader
+  - legacy-bakeoff-state-reader
+  - legacy-status-snapshot-reader
+  - legacy-heartbeat-state-reader
+  - legacy-repair-lock-reader
+  - historical-process-reader
+  - historical-prose-reader
+  - historical-token-reader
+  - historical-marker-reader
+  - historical-mutable-receipt-reader

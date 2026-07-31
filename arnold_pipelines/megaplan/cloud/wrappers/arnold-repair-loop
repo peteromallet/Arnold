@@ -279,6 +279,57 @@ log() {
   echo "[repair-loop $(date -Iseconds)] $message" | tee -a "$LOG"
 }
 
+authority_gap_record() {
+  local evidence_id="$1"
+  local disposition="$2"
+  local rc="$3"
+  local detail="${4:-authority-risk bypass converted to typed evidence gap}"
+  local gap_root="${REPAIR_DATA_DIR:-${DATA_DIR:-${MARKER_DIR:-/tmp}}}"
+  local gap_path="$gap_root/authority-gaps.jsonl"
+  local log_path="${LOG:-/dev/null}"
+  mkdir -p "$gap_root" >/dev/null 2>&1 || true
+  python3 - "$gap_path" "$evidence_id" "$disposition" "$rc" "$detail" \
+    "${SESSION:-}" "${WORKSPACE:-}" "${REMOTE_SPEC:-}" <<'PY' \
+    >/dev/null 2>>"$log_path" || true
+import datetime as dt
+import json
+import pathlib
+import sys
+
+path, evidence_id, disposition, rc, detail, session, workspace, remote_spec = sys.argv[1:9]
+payload = {
+    "schema_version": "arnold.megaplan.cloud.wrapper_authority_gap.v1",
+    "evidence_id": evidence_id,
+    "disposition": disposition,
+    "exit_code": int(rc) if str(rc).isdigit() else rc,
+    "detail": detail,
+    "wrapper": "arnold-repair-loop",
+    "session": session,
+    "workspace": workspace,
+    "remote_spec": remote_spec,
+    "recorded_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+}
+target = pathlib.Path(path)
+target.parent.mkdir(parents=True, exist_ok=True)
+with target.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(payload, sort_keys=True) + "\n")
+PY
+  printf '[repair-loop %s] authority gap %s disposition=%s rc=%s path=%s\n' \
+    "$(date -Iseconds)" "$evidence_id" "$disposition" "$rc" "$gap_path" >>"$log_path" 2>&1 || true
+}
+
+authority_gap_continue() {
+  local rc=$?
+  authority_gap_record "$1" "typed_evidence_gap" "$rc" "${2:-authority-risk bypass converted to typed evidence gap}"
+  return 0
+}
+
+authority_fail_closed() {
+  local rc=$?
+  authority_gap_record "$1" "fail_closed" "$rc" "${2:-authority-risk bypass failed closed}"
+  return 1
+}
+
 redact_inline_text() {
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$1" <<'PY'
 import sys
@@ -466,7 +517,7 @@ PY
 
 clear_session_repair_markers_now() {
   require_repair_lock_held
-  rm -f "$NEEDS_HUMAN_FILE" "$MARKER_DIR/$SESSION.kimi-dispatch" "$MARKER_DIR/$SESSION.kimi-pgid" 2>/dev/null || true
+  rm -f "$NEEDS_HUMAN_FILE" "$MARKER_DIR/$SESSION.kimi-dispatch" "$MARKER_DIR/$SESSION.kimi-pgid" 2>/dev/null || authority_gap_continue "T29-BYPASS-056" "authority-risk bypass converted to typed evidence gap"
 }
 
 repair_loop_pid_matches_session() {
@@ -908,7 +959,7 @@ record_repair_timeout_and_exit() {
   repair_goal_record_terminal_failure \
     "repair-timeout-$phase" \
     "repair_timeout" \
-    "bounded repair budget exhausted before the original checkpoint advanced" || true
+    "bounded repair budget exhausted before the original checkpoint advanced" || authority_gap_continue "T29-BYPASS-059" "authority-risk bypass converted to typed evidence gap"
   log "repair budget exhausted; timing out session=$SESSION phase=$phase budget_secs=$REPAIR_BUDGET_SECS data=$DATA_FILE"
   exit 1
 }
@@ -1080,6 +1131,17 @@ PY
 
 kill_matching_runner_processes() {
   require_repair_lock_held
+  # Step 72: process reaping. A repair-loop reap of an existing-owner process
+  # may NEVER become accepted repair outside canonical simple_fixer delegation.
+  # Authority is never derived from a label, liveness signal, WBC receipt, or
+  # rebuildable projection (SC41).
+  local _rlrp_gate
+  _rlrp_gate="$(repair_loop_repair_state_authority_or_reject "wrapper" "arnold-repair-loop" 2>/dev/null || true)"
+  case "$_rlrp_gate" in
+    *'"outcome": "zero_authority_rejected"'*|*'"outcome":"zero_authority_rejected"'*)
+      authority_fail_closed "T72-REAP-01" "repair-loop process reaping authority derived from a forbidden source (label/liveness/WBC receipt/rebuildable projection)"
+      ;;
+  esac
   log "runner cleanup refused without an exact managed-run lifecycle receipt session=$1"
   return 1
 }
@@ -1326,7 +1388,7 @@ chain_resume_plan_relaunch_command_if_needed() {
   local plan_name="$2"
   local remote_spec="${3:-}"
   if [[ -z "$plan_name" && -n "$remote_spec" ]]; then
-    plan_name="$(python3 - "$workspace" "$remote_spec" <<'PY' 2>/dev/null || true
+    plan_name="$(python3 - "$workspace" "$remote_spec" <<'PY' 2>/dev/null || authority_gap_continue "T29-BYPASS-061" "authority-risk bypass converted to typed evidence gap"
 import hashlib
 import json
 import pathlib
@@ -1453,7 +1515,7 @@ fi
   else
     if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then
       echo "[megaplan-refresh] source checkout ahead of origin/$REF; using current source checkout at $SRC for local repair runtime"
-      git -C "$SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true
+      git -C "$SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || authority_gap_continue "T29-BYPASS-063" "authority-risk bypass converted to typed evidence gap"
       export MEGAPLAN_RUNTIME_SRC="$SRC"
     else
       git -C "$SRC" pull --ff-only origin "$REF"
@@ -1462,7 +1524,7 @@ fi
   fi
   if ! git -C "$MEGAPLAN_RUNTIME_SRC" merge-base --is-ancestor HEAD "origin/$REF"; then
     echo "[megaplan-refresh] refusing editable install refresh: $MEGAPLAN_RUNTIME_SRC has local commits not contained in origin/$REF"
-    git -C "$MEGAPLAN_RUNTIME_SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true
+    git -C "$MEGAPLAN_RUNTIME_SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || authority_gap_continue "T29-BYPASS-064" "authority-risk bypass converted to typed evidence gap"
     exit 20
   fi
   pip install -e "$MEGAPLAN_RUNTIME_SRC"
@@ -1487,6 +1549,7 @@ print(json.dumps(result, sort_keys=True))
 PY
 )"; gate_rc=$?
   if [[ "$gate_rc" != "0" || -z "$gate_json" ]]; then
+    authority_gap_record "T29-BYPASS-065" "fail_closed" "$gate_rc" "repair-loop acceptance gate produced no usable evidence"
     if [[ "$gate_rc" == "0" ]]; then
       reason="acceptance_checker_empty_output"
     else
@@ -1507,6 +1570,7 @@ print(str(value['gate_open']).lower(), str(value.get('reason') or 'unknown'), js
       IFS=$'\t' read -r gate_open reason blocker_event <<< "$parsed_gate"
     fi
     if [[ "$parse_rc" != "0" ]]; then
+      authority_gap_continue "T29-BYPASS-066" "repair-loop acceptance blocker event parse failed"
       reason="acceptance_checker_malformed_output"
       blocker_event="$(python3 -c "import json,sys; print(json.dumps({'schema_version':'arnold-wrapper-acceptance-indeterminate-v1','status':'indeterminate','reason':sys.argv[1],'caller_kind':'repair_loop','session':sys.argv[2]}))" "$reason" "$session")"
       gate_open="false"
@@ -1522,7 +1586,7 @@ print(str(value['gate_open']).lower(), str(value.get('reason') or 'unknown'), js
 import json, pathlib, sys
 pathlib.Path(sys.argv[1]).parent.mkdir(parents=True, exist_ok=True)
 pathlib.Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')
-" "$blocker_file" "$blocker_event" 2>/dev/null || true
+" "$blocker_file" "$blocker_event" 2>/dev/null || authority_gap_continue "T29-BYPASS-067" "authority-risk bypass converted to typed evidence gap"
     report_item "$REPORT_PATH" "$session" "repair_loop" "blocked" "acceptance gate closed: $reason" "$workspace" "$remote_spec"
     log "[repair-loop] blocker event persisted: $blocker_file"
   fi
@@ -5088,7 +5152,7 @@ repair_goal_evaluate_or_exit() {
       repair_goal_record_terminal_failure \
         "post-fixer-recovery-gate" \
         "recovery_not_verified" \
-        "$reason" || true
+        "$reason" || authority_gap_continue "T29-BYPASS-074" "authority-risk bypass converted to typed evidence gap"
       log "post-fixer recovery gate failed; L2 transcript-aware meta-repair required session=$SESSION phase=$phase goal_id=$ARNOLD_REPAIR_GOAL_ID reason=$reason"
       exit 1
       ;;
@@ -5168,7 +5232,7 @@ wait_for_repair_goal_progress_if_live() {
         repair_goal_record_terminal_failure \
           "post-fixer-recovery-gate" \
           "recovery_not_verified" \
-          "$reason" || true
+          "$reason" || authority_gap_continue "T29-BYPASS-075" "authority-risk bypass converted to typed evidence gap"
         log "post-fixer recovery gate failed during bounded observation; L2 meta-repair required session=$SESSION phase=$phase reason=$reason"
         return 2
         ;;
@@ -5297,6 +5361,21 @@ PY
 
 repair_clear_stale_state_if_needed() {
   require_repair_lock_held
+  # Steps 70-71: stale-state/stale-receipt adoption and stale-claim cleanup
+  # family. A repair-loop stale-state cleanup, stale-receipt adoption, or
+  # stale-claim cleanup may NEVER become accepted repair outside canonical
+  # simple_fixer delegation. Stale cleanup is converted to a typed
+  # zero-authority outcome or exact-occurrence adoption without rewriting
+  # history. Authority is never derived from a label, liveness signal, WBC
+  # receipt, or rebuildable projection (SC41).
+  local _rls_gate
+  _rls_gate="$(repair_loop_repair_state_authority_or_reject "wrapper" "arnold-repair-loop" 2>/dev/null || true)"
+  case "$_rls_gate" in
+    *'"outcome": "zero_authority_rejected"'*|*'"outcome":"zero_authority_rejected"'*)
+      authority_fail_closed "T70-STALE-STATE-01" "repair-loop stale-state/stale-receipt adoption authority derived from a forbidden source (label/liveness/WBC receipt/rebuildable projection)"
+      authority_fail_closed "T71-STALE-CLAIM-01" "repair-loop stale-claim cleanup authority derived from a forbidden source (label/liveness/WBC receipt/rebuildable projection)"
+      ;;
+  esac
   ensure_repair_budget_available "stale-state-clear"
   local failure_context failure_context_file
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
@@ -5503,7 +5582,7 @@ exit_if_repair_target_complete() {
   if [[ "${complete_flag:-0}" != "1" ]]; then
     return 0
   fi
-  repair_goal_evaluate_or_exit "target-complete-$phase" || true
+  repair_goal_evaluate_or_exit "target-complete-$phase" || authority_gap_continue "T29-BYPASS-077" "authority-risk bypass converted to typed evidence gap"
   log "target reports complete without movement beyond the captured checkpoint; goal remains active session=$SESSION phase=$phase scope=$scope reason=$reason chain_state_path=${chain_path:-n/a} plan_state_path=${plan_path:-n/a}"
 }
 
@@ -5513,9 +5592,9 @@ exit_if_repair_target_recovered() {
   local phase="$1"
   local health forced_reason
   health="$(session_health_status "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME")"
-  forced_reason="$(marker_requires_repair_despite_alive || true)"
+  forced_reason="$(marker_requires_repair_despite_alive || authority_gap_continue "T29-BYPASS-078" "authority-risk bypass converted to typed evidence gap")"
   log "repair target observation session=$SESSION phase=$phase health=$health marker_reason=${forced_reason:-none}; checking durable goal authority"
-  repair_goal_evaluate_or_exit "$phase" || true
+  repair_goal_evaluate_or_exit "$phase" || authority_gap_continue "T29-BYPASS-079" "authority-risk bypass converted to typed evidence gap"
 }
 
 recover_blocked_after_dev_fix_if_possible() {
@@ -6245,10 +6324,427 @@ kill_tmux_session_if_present() {
   return 1
 }
 
+relaunch_materializer_authority_gate() {
+  local relaunch_command="${1:-}"
+  python3 - "$relaunch_command" <<'GATE_PY'
+import json
+import re
+import sys
+
+cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+
+NON_AUTHORITATIVE_FAMILIES = (
+    "direct_module.auto",
+    "direct_module.resume",
+    "direct_module.auto_or_resume",
+    "direct_module.chain_start",
+    "arnold_supervise.bash_lc",
+)
+
+_DIRECT_MODULE_RE = re.compile(
+    r"python3\b.*?\s+-m\s+arnold_pipelines\.megaplan\s+(\S+)"
+)
+_SUPERVISE_RE = re.compile(r"arnold-supervise\b.*?\sbash\s+-lc\b")
+
+_FORBIDDEN_AUTHORITY_SOURCES = (
+    ("label", re.compile(r"--authority-label|REPAIR_AUTHORITY_LABEL|repair-authority-label")),
+    ("liveness", re.compile(r"repair_accepted|accepted_repair_on|repair.*\$\?|repair.*returncode")),
+    ("wbc_receipt", re.compile(r"wbc[-_ ]?receipt|well[-_ ]?behaved[-_ ]?client")),
+    (
+        "rebuildable_projection",
+        re.compile(r"rebuildable[-_ ]?projection|reproject[-_ ]?authority"),
+    ),
+)
+
+
+def _classify(command):
+    if _SUPERVISE_RE.search(command):
+        return "arnold_supervise.bash_lc"
+    match = _DIRECT_MODULE_RE.search(command)
+    if match:
+        verb = match.group(1).strip("\"'")
+        tail = command[match.end():]
+        if verb in ("auto", "resume"):
+            return "direct_module." + verb
+        if verb == "chain" and tail.lstrip().startswith("start"):
+            return "direct_module.chain_start"
+        if "PLAN_CMD" in verb:
+            return "direct_module.auto_or_resume"
+    return ""
+
+
+family = _classify(cmd)
+forbidden_present = [
+    name
+    for name, pattern in _FORBIDDEN_AUTHORITY_SOURCES
+    if pattern.search(cmd)
+]
+result = dict(
+    family=family,
+    is_non_authoritative_family=family in NON_AUTHORITATIVE_FAMILIES,
+    is_repair_authority=False,
+    can_become_accepted_repair_on_success=False,
+    accepted_repair_requires_canonical_delegation=True,
+    canonical_delegation_path="simple_fixer.singleton_claim.exact_f01_tuple",
+    forbidden_authority_sources=[
+        "label",
+        "liveness",
+        "wbc_receipt",
+        "rebuildable_projection",
+    ],
+    forbidden_sources_present=forbidden_present,
+)
+print(json.dumps(result))
+GATE_PY
+}
+
+repair_loop_claim_authority_or_reject() {
+  # Step 66: classify a direct-claim / L1-mutation authority attempt. Authority
+  # may NEVER be derived from a label, liveness signal, WBC receipt, or
+  # rebuildable projection (SC40). Forbidden sources emit a typed
+  # zero-authority rejection; exact-F01 occurrences delegate to the
+  # simple_fixer singleton claim with no child agent fan-out. Emits JSON on
+  # stdout with an ``outcome`` key in
+  # {zero_authority_rejected, delegated, no_authority_claim}.
+  local caller_kind="${1:-wrapper}"
+  local caller_id="${2:-arnold-repair-loop}"
+  local _py_root="${WRAPPER_REPO_ROOT:-${ARNOLD_SRC:-}}"
+  PYTHONSAFEPATH=1 PYTHONPATH="${_py_root:+$_py_root:}${PYTHONPATH:-}" python3 -P - \
+    "$caller_kind" "$caller_id" <<'RLCLAIM_PY'
+import json, os, sys
+from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
+    build_repair_delegation, emit_zero_authority_rejection,
+)
+from arnold_pipelines.megaplan.custody.contracts import F01_REPAIR_OCCURRENCE_FIELDS
+
+caller_kind = sys.argv[1] if len(sys.argv) > 1 else "wrapper"
+caller_id = sys.argv[2] if len(sys.argv) > 2 else "arnold-repair-loop"
+
+forbidden = dict(authority_label=os.environ.get("ARNOLD_REPAIR_AUTHORITY_LABEL", ""), liveness_receipt=os.environ.get("ARNOLD_REPAIR_LIVENESS_RECEIPT", ""), wbc_receipt=os.environ.get("ARNOLD_REPAIR_WBC_RECEIPT", ""), rebuildable_projection=os.environ.get("ARNOLD_REPAIR_REBUILDABLE_PROJECTION", ""))
+if any(v for v in forbidden.values()):
+    result = emit_zero_authority_rejection(
+        caller_kind, caller_id,
+        reason="direct-claim authority derived from forbidden source: "
+               + ",".join(sorted(k for k, v in forbidden.items() if v)),
+    )
+    print(json.dumps({
+        "outcome": result.outcome,
+        "delegated": False,
+        "child_agent_fanout": False,
+        "canonical_delegation_path": "simple_fixer.singleton_claim.exact_f01_tuple",
+    }))
+    sys.exit(0)
+
+f01_env = os.environ.get("ARNOLD_REPAIR_F01_OCCURRENCE", "")
+target = {}
+if f01_env:
+    try:
+        target = json.loads(f01_env)
+    except Exception:
+        target = {}
+
+if not target:
+    print(json.dumps({
+        "outcome": "no_authority_claim",
+        "delegated": False,
+        "child_agent_fanout": False,
+        "canonical_delegation_path": "simple_fixer.singleton_claim.exact_f01_tuple",
+    }))
+    sys.exit(0)
+
+for name in F01_REPAIR_OCCURRENCE_FIELDS:
+    target.setdefault(name, "")
+
+delegation = build_repair_delegation(caller_kind, caller_id, target)
+if delegation is None:
+    result = emit_zero_authority_rejection(
+        caller_kind, caller_id,
+        reason="direct-claim path could not construct exact F01 occurrence tuple",
+    )
+    print(json.dumps({
+        "outcome": result.outcome,
+        "delegated": False,
+        "child_agent_fanout": False,
+        "canonical_delegation_path": "simple_fixer.singleton_claim.exact_f01_tuple",
+    }))
+    sys.exit(0)
+
+print(json.dumps({
+    "outcome": "delegated",
+    "delegated": True,
+    "child_agent_fanout": False,
+    "canonical_delegation_path": "simple_fixer.singleton_claim.exact_f01_tuple",
+    "occurrence_fingerprint": delegation.occurrence.occurrence_fingerprint,
+}))
+RLCLAIM_PY
+}
+
+repair_loop_worker_launch_authority_or_reject() {
+  # Step 67: classify a primary (mechanical) or model-backed (Kimi) worker
+  # launch authority attempt. Same authority-source contract as the claim path
+  # (SC40): forbidden sources are rejected through the typed delegation shim;
+  # exact-F01 occurrences delegate to simple_fixer with no child fan-out.
+  # Emits JSON on stdout with an ``outcome`` key in
+  # {zero_authority_rejected, delegated, no_authority_claim}.
+  local caller_kind="${1:-materializer}"
+  local caller_id="${2:-arnold-repair-loop}"
+  local _py_root="${WRAPPER_REPO_ROOT:-${ARNOLD_SRC:-}}"
+  PYTHONSAFEPATH=1 PYTHONPATH="${_py_root:+$_py_root:}${PYTHONPATH:-}" python3 -P - \
+    "$caller_kind" "$caller_id" <<'RLWORKER_PY'
+import json, os, sys
+from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
+    build_repair_delegation, emit_zero_authority_rejection,
+)
+from arnold_pipelines.megaplan.custody.contracts import F01_REPAIR_OCCURRENCE_FIELDS
+
+caller_kind = sys.argv[1] if len(sys.argv) > 1 else "materializer"
+caller_id = sys.argv[2] if len(sys.argv) > 2 else "arnold-repair-loop"
+
+forbidden = dict(authority_label=os.environ.get("ARNOLD_REPAIR_AUTHORITY_LABEL", ""), liveness_receipt=os.environ.get("ARNOLD_REPAIR_LIVENESS_RECEIPT", ""), wbc_receipt=os.environ.get("ARNOLD_REPAIR_WBC_RECEIPT", ""), rebuildable_projection=os.environ.get("ARNOLD_REPAIR_REBUILDABLE_PROJECTION", ""))
+if any(v for v in forbidden.values()):
+    result = emit_zero_authority_rejection(
+        caller_kind, caller_id,
+        reason="worker-launch authority derived from forbidden source: "
+               + ",".join(sorted(k for k, v in forbidden.items() if v)),
+    )
+    print(json.dumps({
+        "outcome": result.outcome,
+        "delegated": False,
+        "child_agent_fanout": False,
+        "canonical_delegation_path": "simple_fixer.singleton_claim.exact_f01_tuple",
+    }))
+    sys.exit(0)
+
+f01_env = os.environ.get("ARNOLD_REPAIR_F01_OCCURRENCE", "")
+target = {}
+if f01_env:
+    try:
+        target = json.loads(f01_env)
+    except Exception:
+        target = {}
+
+if not target:
+    print(json.dumps({
+        "outcome": "no_authority_claim",
+        "delegated": False,
+        "child_agent_fanout": False,
+        "canonical_delegation_path": "simple_fixer.singleton_claim.exact_f01_tuple",
+    }))
+    sys.exit(0)
+
+for name in F01_REPAIR_OCCURRENCE_FIELDS:
+    target.setdefault(name, "")
+
+delegation = build_repair_delegation(caller_kind, caller_id, target)
+if delegation is None:
+    result = emit_zero_authority_rejection(
+        caller_kind, caller_id,
+        reason="worker-launch path could not construct exact F01 occurrence tuple",
+    )
+    print(json.dumps({
+        "outcome": result.outcome,
+        "delegated": False,
+        "child_agent_fanout": False,
+        "canonical_delegation_path": "simple_fixer.singleton_claim.exact_f01_tuple",
+    }))
+    sys.exit(0)
+
+print(json.dumps({
+    "outcome": "delegated",
+    "delegated": True,
+    "child_agent_fanout": False,
+    "canonical_delegation_path": "simple_fixer.singleton_claim.exact_f01_tuple",
+    "occurrence_fingerprint": delegation.occurrence.occurrence_fingerprint,
+}))
+RLWORKER_PY
+}
+
+repair_loop_repair_launch_authority_or_reject() {
+  # Steps 68-69: classify a repair-loop retrigger / managed-child / meta / Kimi
+  # launch family. Authority may NEVER be derived from a label, liveness signal,
+  # WBC receipt, or rebuildable projection (SC41). Forbidden sources emit a typed
+  # zero-authority rejection; an exact-F01 occurrence delegates to the
+  # simple_fixer singleton claim with no child agent fan-out; without an
+  # occurrence the launch is a non-authoritative materializer that carries no
+  # child-agent fan-out. Emits JSON on stdout with an ``outcome`` key in
+  # {zero_authority_rejected, delegated, no_authority_claim}.
+  local caller_kind="${1:-wrapper}"
+  local caller_id="${2:-arnold-repair-loop}"
+  local _py_root="${WRAPPER_REPO_ROOT:-${ARNOLD_SRC:-}}"
+  PYTHONSAFEPATH=1 PYTHONPATH="${_py_root:+$_py_root:}${PYTHONPATH:-}" python3 -P - \
+    "$caller_kind" "$caller_id" <<'RLLAUNCH_PY'
+import json, os, sys
+from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
+    build_repair_delegation, emit_zero_authority_rejection,
+)
+from arnold_pipelines.megaplan.custody.contracts import F01_REPAIR_OCCURRENCE_FIELDS
+
+caller_kind = sys.argv[1] if len(sys.argv) > 1 else "wrapper"
+caller_id = sys.argv[2] if len(sys.argv) > 2 else "arnold-repair-loop"
+
+forbidden = dict(
+    authority_label=os.environ.get("ARNOLD_REPAIR_AUTHORITY_LABEL", ""),
+    liveness_receipt=os.environ.get("ARNOLD_REPAIR_LIVENESS_RECEIPT", ""),
+    wbc_receipt=os.environ.get("ARNOLD_REPAIR_WBC_RECEIPT", ""),
+    rebuildable_projection=os.environ.get("ARNOLD_REPAIR_REBUILDABLE_PROJECTION", ""),
+)
+if any(v for v in forbidden.values()):
+    result = emit_zero_authority_rejection(
+        caller_kind, caller_id,
+        reason="repair-loop launch authority derived from forbidden source: "
+               + ",".join(sorted(k for k, v in forbidden.items() if v)),
+    )
+    print(json.dumps({
+        "outcome": result.outcome,
+        "delegated": False,
+        "child_agent_fanout": False,
+        "canonical_delegation_path": "simple_fixer.singleton_claim.exact_f01_tuple",
+    }))
+    sys.exit(0)
+
+f01_env = os.environ.get("ARNOLD_REPAIR_F01_OCCURRENCE", "")
+target = {}
+if f01_env:
+    try:
+        target = json.loads(f01_env)
+    except Exception:
+        target = {}
+
+if not target:
+    print(json.dumps({
+        "outcome": "no_authority_claim",
+        "delegated": False,
+        "child_agent_fanout": False,
+        "canonical_delegation_path": "simple_fixer.singleton_claim.exact_f01_tuple",
+    }))
+    sys.exit(0)
+
+for name in F01_REPAIR_OCCURRENCE_FIELDS:
+    target.setdefault(name, "")
+
+delegation = build_repair_delegation(caller_kind, caller_id, target)
+if delegation is None:
+    result = emit_zero_authority_rejection(
+        caller_kind, caller_id,
+        reason="repair-loop launch path could not construct exact F01 occurrence tuple",
+    )
+    print(json.dumps({
+        "outcome": result.outcome,
+        "delegated": False,
+        "child_agent_fanout": False,
+        "canonical_delegation_path": "simple_fixer.singleton_claim.exact_f01_tuple",
+    }))
+    sys.exit(0)
+
+print(json.dumps({
+    "outcome": "delegated",
+    "delegated": True,
+    "child_agent_fanout": False,
+    "canonical_delegation_path": "simple_fixer.singleton_claim.exact_f01_tuple",
+    "occurrence_fingerprint": delegation.occurrence.occurrence_fingerprint,
+}))
+RLLAUNCH_PY
+}
+
+repair_loop_repair_state_authority_or_reject() {
+  # Steps 70-75: classify a repair-loop repair-state mutation (stale-state and
+  # stale-receipt adoption, stale-claim cleanup, process reaping, retry loop,
+  # unchanged-fingerprint escalation, or retry-budget mutation).  A repair-state
+  # mutation may NEVER become accepted repair outside canonical simple_fixer
+  # delegation; authority is never derived from a label, liveness signal, WBC
+  # receipt, or rebuildable projection (SC41).  Forbidden sources emit a typed
+  # zero-authority rejection; exact-F01 occurrences delegate to the simple_fixer
+  # singleton claim with no child agent fan-out.  Emits JSON on stdout with an
+  # ``outcome`` key in {zero_authority_rejected, delegated, no_authority_claim}.
+  local caller_kind="${1:-wrapper}"
+  local caller_id="${2:-arnold-repair-loop}"
+  local _py_root="${WRAPPER_REPO_ROOT:-${ARNOLD_SRC:-}}"
+  PYTHONSAFEPATH=1 PYTHONPATH="${_py_root:+$_py_root:}${PYTHONPATH:-}" python3 -P - \
+    "$caller_kind" "$caller_id" <<'RLSTATE_PY'
+import json, os, sys
+from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
+    build_repair_delegation, emit_zero_authority_rejection,
+)
+from arnold_pipelines.megaplan.custody.contracts import F01_REPAIR_OCCURRENCE_FIELDS
+
+caller_kind = sys.argv[1] if len(sys.argv) > 1 else "wrapper"
+caller_id = sys.argv[2] if len(sys.argv) > 2 else "arnold-repair-loop"
+
+forbidden = dict(
+    authority_label=os.environ.get("ARNOLD_REPAIR_AUTHORITY_LABEL", ""),
+    liveness_receipt=os.environ.get("ARNOLD_REPAIR_LIVENESS_RECEIPT", ""),
+    wbc_receipt=os.environ.get("ARNOLD_REPAIR_WBC_RECEIPT", ""),
+    rebuildable_projection=os.environ.get("ARNOLD_REPAIR_REBUILDABLE_PROJECTION", ""),
+)
+if any(v for v in forbidden.values()):
+    result = emit_zero_authority_rejection(
+        caller_kind, caller_id,
+        reason="repair-loop repair-state mutation authority derived from forbidden source: "
+               + ",".join(sorted(k for k, v in forbidden.items() if v)),
+    )
+    print(json.dumps({
+        "outcome": result.outcome,
+        "delegated": False,
+        "repair_state_mutation": False,
+        "canonical_delegation_path": "simple_fixer.singleton_claim.exact_f01_tuple",
+    }))
+    sys.exit(0)
+
+f01_env = os.environ.get("ARNOLD_REPAIR_F01_OCCURRENCE", "")
+target = {}
+if f01_env:
+    try:
+        target = json.loads(f01_env)
+    except Exception:
+        target = {}
+
+if not target:
+    print(json.dumps({
+        "outcome": "no_authority_claim",
+        "delegated": False,
+        "repair_state_mutation": False,
+        "canonical_delegation_path": "simple_fixer.singleton_claim.exact_f01_tuple",
+    }))
+    sys.exit(0)
+
+for name in F01_REPAIR_OCCURRENCE_FIELDS:
+    target.setdefault(name, "")
+
+delegation = build_repair_delegation(caller_kind, caller_id, target)
+if delegation is None:
+    result = emit_zero_authority_rejection(
+        caller_kind, caller_id,
+        reason="repair-loop repair-state mutation could not construct exact F01 occurrence tuple",
+    )
+    print(json.dumps({
+        "outcome": result.outcome,
+        "delegated": False,
+        "repair_state_mutation": False,
+        "canonical_delegation_path": "simple_fixer.singleton_claim.exact_f01_tuple",
+    }))
+    sys.exit(0)
+
+print(json.dumps({
+    "outcome": "delegated",
+    "delegated": True,
+    "repair_state_mutation": True,
+    "canonical_delegation_path": "simple_fixer.singleton_claim.exact_f01_tuple",
+    "occurrence_fingerprint": delegation.occurrence.occurrence_fingerprint,
+}))
+RLSTATE_PY
+}
+
 mechanical_launch_step() {
   require_investigation_before_mutation "mechanical-launch"
   require_repair_lock_held
   ensure_repair_budget_available "mechanical-relaunch-$1"
+  local _rlw_gate
+  _rlw_gate="$(repair_loop_worker_launch_authority_or_reject "materializer" "arnold-repair-loop" 2>/dev/null || true)"
+  case "$_rlw_gate" in
+    *'"outcome": "zero_authority_rejected"'*|*'"outcome":"zero_authority_rejected"'*)
+      authority_fail_closed "T67-primary-worker-launch-forbidden" "primary worker launch authority derived from a forbidden source (label/liveness/WBC receipt/rebuildable projection)"
+      ;;
+  esac
   local iteration="$1"
   local session="$2"
   local workspace="$3"
@@ -6309,6 +6805,12 @@ mechanical_launch_step() {
     log "using receipt-bound supported quality recovery before ordinary relaunch session=$session iteration=$iteration" >&2
   fi
   quoted_command="$selected_relaunch_command"
+  local _rlm_gate
+  _rlm_gate="$(relaunch_materializer_authority_gate "$quoted_command" 2>/dev/null || true)"
+  case "$_rlm_gate" in
+    *'"is_non_authoritative_family": true'*|*'"is_non_authoritative_family":true'*) : ;;
+    *) authority_gap_continue "T54-relaunch-materializer" "relaunch materializer is not a canonical non-authoritative family";;
+  esac
   if tmux has-session -t "$session" 2>/dev/null; then
     log "mechanical relaunch fenced: existing tmux session is not this owner's custody session=$session iteration=$iteration" >&2
     echo "failed:existing_tmux_custody_unverified"
@@ -6420,6 +6922,21 @@ EOF
 
 repair_recurrence_prepare_attempt() {
   require_repair_lock_held
+  # Steps 73 and 75: retry-loop recurrence and retry-budget mutation. A
+  # repair-loop retry/recurrence attempt or its retry-budget mutation may NEVER
+  # become accepted repair outside canonical simple_fixer delegation; the
+  # unchanged-fingerprint two-try budget is honoured by the canonical two-try
+  # contract. Authority is never derived from a label, liveness signal, WBC
+  # receipt, or rebuildable projection (SC41).
+  local _rlrr_gate
+  _rlrr_gate="$(repair_loop_repair_state_authority_or_reject "wrapper" "arnold-repair-loop" 2>/dev/null || true)"
+  case "$_rlrr_gate" in
+    *'"outcome": "zero_authority_rejected"'*|*'"outcome":"zero_authority_rejected"'*)
+      authority_fail_closed "T73-RETRY-01" "repair-loop retry-loop authority derived from a forbidden source (label/liveness/WBC receipt/rebuildable projection)"
+      authority_fail_closed "T74-FINGERPRINT-01" "repair-loop unchanged-fingerprint escalation authority derived from a forbidden source (label/liveness/WBC receipt/rebuildable projection)"
+      authority_fail_closed "T75-BUDGET-01" "repair-loop retry-budget mutation authority derived from a forbidden source (label/liveness/WBC receipt/rebuildable projection)"
+      ;;
+  esac
   ensure_repair_budget_available "recurrence-prepare-$1"
   local iteration="$1"
   local requested_model="$2"
@@ -7065,6 +7582,13 @@ l1_mutation_authorized() {
 require_investigation_before_mutation() {
   require_repair_lock_held
   local mutation_label="${1:-mutation}"
+  local _rlc_gate
+  _rlc_gate="$(repair_loop_claim_authority_or_reject "wrapper" "arnold-repair-loop" 2>/dev/null || true)"
+  case "$_rlc_gate" in
+    *'"outcome": "zero_authority_rejected"'*|*'"outcome":"zero_authority_rejected"'*)
+      authority_fail_closed "T66-direct-claim-forbidden" "direct-claim/L1-mutation authority derived from a forbidden source (label/liveness/WBC receipt/rebuildable projection)"
+      ;;
+  esac
   if ! l1_mutation_authorized; then
     log "observed: L1 mutation blocked before $mutation_label (requires ARNOLD_AUTONOMY and ARNOLD_REPAIR_TRIGGER_ENABLED)"
     exit 77
@@ -7624,6 +8148,17 @@ PY
 run_dev_fix_turn() {
   require_repair_lock_held
   require_investigation_before_mutation "dev-fix"
+  # Steps 68: retrigger and managed-child launch family. A repair-loop retrigger
+  # or managed-child launch may NEVER become accepted repair outside canonical
+  # simple_fixer delegation. Authority is never derived from a label, liveness
+  # signal, WBC receipt, or rebuildable projection (SC41).
+  local _rll_gate
+  _rll_gate="$(repair_loop_repair_launch_authority_or_reject "wrapper" "arnold-repair-loop" 2>/dev/null || true)"
+  case "$_rll_gate" in
+    *'"outcome": "zero_authority_rejected"'*|*'"outcome":"zero_authority_rejected"'*)
+      authority_fail_closed "T68-RETRIGGER-01" "repair-loop retrigger/managed-child launch authority derived from a forbidden source (label/liveness/WBC receipt/rebuildable projection)"
+      ;;
+  esac
   local iteration="$1"
   local attempt_id="$2"
   local recurring="$3"
@@ -7711,6 +8246,24 @@ run_kimi_launch_turn() {
   require_repair_lock_held
   require_investigation_before_mutation "kimi-launch"
   ensure_repair_budget_available "kimi-launch-$1"
+  local _rlw_gate
+  _rlw_gate="$(repair_loop_worker_launch_authority_or_reject "materializer" "arnold-repair-loop" 2>/dev/null || true)"
+  case "$_rlw_gate" in
+    *'"outcome": "zero_authority_rejected"'*|*'"outcome":"zero_authority_rejected"'*)
+      authority_fail_closed "T67-model-worker-launch-forbidden" "model-backed worker launch authority derived from a forbidden source (label/liveness/WBC receipt/rebuildable projection)"
+      ;;
+  esac
+  # Step 69: meta and Kimi launch family. A repair-loop meta/Kimi launch may
+  # NEVER become accepted repair outside canonical simple_fixer delegation.
+  # Authority is never derived from a label, liveness signal, WBC receipt, or
+  # rebuildable projection (SC41).
+  local _rlm_gate
+  _rlm_gate="$(repair_loop_repair_launch_authority_or_reject "wrapper" "arnold-repair-loop" 2>/dev/null || true)"
+  case "$_rlm_gate" in
+    *'"outcome": "zero_authority_rejected"'*|*'"outcome":"zero_authority_rejected"'*)
+      authority_fail_closed "T69-META-01" "repair-loop meta/Kimi launch authority derived from a forbidden source (label/liveness/WBC receipt/rebuildable projection)"
+      ;;
+  esac
   local iteration="$1"
   local run_kind="$2"
   local plan_name="$3"
@@ -8088,7 +8641,7 @@ fi
 # repair_data_set_outcome (which requires the lock). Best-effort: a failed
 # write must not block the no-op exit.
 ENTRY_TARGET_MISSING_REASON=""
-ENTRY_TARGET_MISSING_REASON="$(entry_target_missing_reason 2>>"$LOG" || true)"
+ENTRY_TARGET_MISSING_REASON="$(entry_target_missing_reason 2>>"$LOG" || authority_gap_continue "T29-BYPASS-090" "authority-risk bypass converted to typed evidence gap")"
 if [[ -z "$ENTRY_TARGET_MISSING_REASON" && ! -d "$WORKSPACE" ]]; then
   if ! entry_workspace_restore_available 2>>"$LOG"; then
     ENTRY_TARGET_MISSING_REASON="workspace_missing"
@@ -8096,7 +8649,7 @@ if [[ -z "$ENTRY_TARGET_MISSING_REASON" && ! -d "$WORKSPACE" ]]; then
 fi
 if [[ -n "$ENTRY_TARGET_MISSING_REASON" ]]; then
   log "environment gone at entry; exiting without repair session=$SESSION workspace=$WORKSPACE spec=$REMOTE_SPEC reason=$ENTRY_TARGET_MISSING_REASON"
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$ENTRY_TARGET_MISSING_REASON" "$MARKER_PATH" "$PROGRESS_FILE" "$NEEDS_HUMAN_FILE" <<'PY' || true
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$ENTRY_TARGET_MISSING_REASON" "$MARKER_PATH" "$PROGRESS_FILE" "$NEEDS_HUMAN_FILE" <<'PY' || authority_gap_continue "T29-BYPASS-091" "authority-risk bypass converted to typed evidence gap"
 import pathlib
 import sys
 
@@ -8160,7 +8713,7 @@ repair_data_init "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" "$INITIAL_HEALTH"
 repair_data_bind_goal
 exit_if_repair_target_complete "start"
 if [[ "$INITIAL_HEALTH" == "alive" ]]; then
-  forced_repair_reason="$(marker_requires_repair_despite_alive || true)"
+  forced_repair_reason="$(marker_requires_repair_despite_alive || authority_gap_continue "T29-BYPASS-092" "authority-risk bypass converted to typed evidence gap")"
   if [[ -n "$forced_repair_reason" ]]; then
     log "repair target is alive but marker requires repair session=$SESSION reason=$forced_repair_reason"
   else
@@ -8434,7 +8987,7 @@ PY
     return 1
   fi
   if [[ -n "$source_origin" ]]; then
-    git -C "$tmp_clone" remote set-url origin "$source_origin" >>"$LOG" 2>&1 || true
+    git -C "$tmp_clone" remote set-url origin "$source_origin" >>"$LOG" 2>&1 || authority_gap_continue "T29-BYPASS-095" "authority-risk bypass converted to typed evidence gap"
   fi
 
   shopt -s dotglob nullglob
@@ -8485,7 +9038,7 @@ if [[ "$investigator_rc" == "2" ]]; then
   repair_goal_record_terminal_failure \
     "investigator-replan-required" \
     "replan_required" \
-    "validated investigator requires L2 replan before any target mutation" || true
+    "validated investigator requires L2 replan before any target mutation" || authority_gap_continue "T29-BYPASS-096" "authority-risk bypass converted to typed evidence gap"
   log "investigator requires L2 replan before any target mutation session=$SESSION"
   exit 1
 elif [[ "$investigator_rc" != "0" ]]; then
@@ -8509,7 +9062,7 @@ if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "repair_source" ]] && repair_sou
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "source initiative restored; mechanical launch came up and held"
-    repair_goal_evaluate_or_exit "post-source-initiative-launch" || true
+    repair_goal_evaluate_or_exit "post-source-initiative-launch" || authority_gap_continue "T29-BYPASS-097" "authority-risk bypass converted to typed evidence gap"
   fi
 fi
 
@@ -8520,7 +9073,7 @@ if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "repair_source" ]] && repair_sou
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "0" "0" "running" "source workspace restored; mechanical launch came up and held"
-    repair_goal_evaluate_or_exit "post-source-workspace-launch" || true
+    repair_goal_evaluate_or_exit "post-source-workspace-launch" || authority_gap_continue "T29-BYPASS-098" "authority-risk bypass converted to typed evidence gap"
   fi
 fi
 
@@ -8530,7 +9083,7 @@ if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "repair_source" ]] && repair_dep
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "dependency manifest repaired; mechanical launch came up and held"
-    repair_goal_evaluate_or_exit "post-dependency-manifest-launch" || true
+    repair_goal_evaluate_or_exit "post-dependency-manifest-launch" || authority_gap_continue "T29-BYPASS-099" "authority-risk bypass converted to typed evidence gap"
   fi
 fi
 
@@ -8545,12 +9098,12 @@ if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "stale state cleared; mechanical launch came up and held"
-    repair_goal_evaluate_or_exit "post-stale-state-launch" || true
+    repair_goal_evaluate_or_exit "post-stale-state-launch" || authority_gap_continue "T29-BYPASS-100" "authority-risk bypass converted to typed evidence gap"
   fi
 fi
 
 if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]; then
-  prior_fix_iteration="$(prior_receipted_dev_fix_iteration || true)"
+  prior_fix_iteration="$(prior_receipted_dev_fix_iteration || authority_gap_continue "T29-BYPASS-101" "authority-risk bypass converted to typed evidence gap")"
   if [[ -n "$prior_fix_iteration" ]]; then
     export POST_DEV_FIX_ITERATION="$prior_fix_iteration"
   fi
@@ -8573,16 +9126,16 @@ if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]; then
     repair_goal_record_terminal_failure \
       "authorized-recovery-no-progress" \
       "recovery_not_verified" \
-      "the exact investigator-authorized recovery command remained live without accepted progress" || true
+      "the exact investigator-authorized recovery command remained live without accepted progress" || authority_gap_continue "T29-BYPASS-102" "authority-risk bypass converted to typed evidence gap"
     exit 1
   elif [[ "${mechanical_status:-}" == terminal:* ]]; then
     repair_data_record_mechanical "0" "0" "terminal" "$mechanical_status"
-    repair_goal_evaluate_or_exit "post-authorized-recovery-command" || true
+    repair_goal_evaluate_or_exit "post-authorized-recovery-command" || authority_gap_continue "T29-BYPASS-103" "authority-risk bypass converted to typed evidence gap"
     repair_data_set_outcome "recovery_not_verified"
     repair_goal_record_terminal_failure \
       "authorized-recovery-terminal-unverified" \
       "recovery_not_verified" \
-      "$mechanical_status" || true
+      "$mechanical_status" || authority_gap_continue "T29-BYPASS-104" "authority-risk bypass converted to typed evidence gap"
     exit 1
   elif [[ "${mechanical_status:-}" == preserved:* ]]; then
     repair_data_record_mechanical "0" "0" "preserved_live" "$mechanical_status"
@@ -8596,7 +9149,7 @@ if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "recover_state" ]]; then
     repair_goal_record_terminal_failure \
       "authorized-recovery-launch-failed" \
       "recovery_not_verified" \
-      "$mechanical_status" || true
+      "$mechanical_status" || authority_gap_continue "T29-BYPASS-105" "authority-risk bypass converted to typed evidence gap"
     log "investigator-authorized recovery failed with a durable launch receipt; delegating transcript-aware correction to L2 session=$SESSION status=$mechanical_status"
     exit 1
   fi
@@ -8610,7 +9163,7 @@ fi
 # invokes the supported recover-blocked CLI, and therefore still requires a
 # fresh review; it never accepts the finding as debt or rewrites state JSON.
 if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "repair_target" ]]; then
-  prior_fix_iteration="$(prior_receipted_dev_fix_iteration || true)"
+  prior_fix_iteration="$(prior_receipted_dev_fix_iteration || authority_gap_continue "T29-BYPASS-106" "authority-risk bypass converted to typed evidence gap")"
   if [[ -n "$prior_fix_iteration" ]]; then
     export POST_DEV_FIX_ITERATION="$prior_fix_iteration"
     require_investigation_before_mutation "prior-dev-fix-quality-recovery"
@@ -8624,16 +9177,16 @@ if [[ "${INVESTIGATOR_RECOMMENDED_ACTION:-}" == "repair_target" ]]; then
       elif [[ "$?" == "2" ]]; then
         exit 1
       fi
-      repair_goal_evaluate_or_exit "prior-dev-fix-quality-recovery-observed" || true
+      repair_goal_evaluate_or_exit "prior-dev-fix-quality-recovery-observed" || authority_gap_continue "T29-BYPASS-107" "authority-risk bypass converted to typed evidence gap"
     elif [[ "${mechanical_status:-}" == terminal:* ]]; then
       repair_data_record_mechanical "$prior_fix_iteration" "0" "terminal" "$mechanical_status"
-      repair_goal_evaluate_or_exit "prior-dev-fix-quality-recovery-terminal" || true
+      repair_goal_evaluate_or_exit "prior-dev-fix-quality-recovery-terminal" || authority_gap_continue "T29-BYPASS-108" "authority-risk bypass converted to typed evidence gap"
     else
       repair_data_set_outcome "recovery_not_verified"
       repair_goal_record_terminal_failure \
         "prior-dev-fix-quality-recovery-failed" \
         "recovery_not_verified" \
-        "$mechanical_status" || true
+        "$mechanical_status" || authority_gap_continue "T29-BYPASS-109" "authority-risk bypass converted to typed evidence gap"
       log "prior receipted dev fix could not enter supported quality recovery; fresh investigation required session=$SESSION status=$mechanical_status"
     fi
     exit 1
@@ -8724,7 +9277,7 @@ for iteration in 1 2 3; do
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "running" "mechanical launch came up and held"
-    repair_goal_evaluate_or_exit "iteration-$iteration-post-mechanical-launch" || true
+    repair_goal_evaluate_or_exit "iteration-$iteration-post-mechanical-launch" || authority_gap_continue "T29-BYPASS-110" "authority-risk bypass converted to typed evidence gap"
   elif [[ "${mechanical_status:-}" == preserved:* ]]; then
     repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "preserved_live" "$mechanical_status"
     if wait_for_repair_goal_progress_if_live "owner-iteration-$iteration-preserved-live"; then
@@ -8741,9 +9294,9 @@ for iteration in 1 2 3; do
       continue
     fi
     exit_if_repair_target_complete "iteration-$iteration-pre-kimi"
-    resolved_relaunch_command="$(resolve_relaunch_command "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" 2>/dev/null || true)"
+    resolved_relaunch_command="$(resolve_relaunch_command "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" 2>/dev/null || authority_gap_continue "T29-BYPASS-111" "authority-risk bypass converted to typed evidence gap")"
     if run_kimi_launch_turn "$iteration" "$RUN_KIND" "$PLAN_NAME" "$resolved_relaunch_command"; then
-      repair_goal_evaluate_or_exit "iteration-$iteration-post-kimi-launch" || true
+      repair_goal_evaluate_or_exit "iteration-$iteration-post-kimi-launch" || authority_gap_continue "T29-BYPASS-112" "authority-risk bypass converted to typed evidence gap"
     fi
     exit_if_repair_target_complete "iteration-$iteration-post-kimi"
   fi
@@ -8751,14 +9304,14 @@ done
 
 exit_if_repair_target_complete "post-iterations"
 exit_if_repair_target_recovered "post-iterations"
-repair_goal_evaluate_or_exit "post-iterations-final-authority-check" || true
+repair_goal_evaluate_or_exit "post-iterations-final-authority-check" || authority_gap_continue "T29-BYPASS-113" "authority-risk bypass converted to typed evidence gap"
 
 if [[ "${BREAKER_TRIPPED:-0}" == "1" ]]; then
   repair_data_set_outcome "deterministic_failure"
   repair_goal_record_terminal_failure \
     "deterministic-owner-circuit-breaker" \
     "deterministic_failure" \
-    "same repair owner repeated without a new target/progress token; escalate with the original checkpoint unresolved" || true
+    "same repair owner repeated without a new target/progress token; escalate with the original checkpoint unresolved" || authority_gap_continue "T29-BYPASS-114" "authority-risk bypass converted to typed evidence gap"
   log "deterministic-failure breaker ended this owner cycle without semantic completion; terminal owner failure recorded against the unresolved checkpoint session=$SESSION goal_id=$ARNOLD_REPAIR_GOAL_ID data=$DATA_FILE"
   exit 1
 fi

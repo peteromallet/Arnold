@@ -457,3 +457,96 @@ class TestReviewQualityBlockFailure:
         assert result["kind"] == "review_quality_blocked_unknown"
         assert result["metadata"]["repairability"] == "unknown"
         assert result["metadata"]["deterministic"] is False
+
+
+# ── M11 Step 23: Runtime provenance and REVIEW ID rejection ──────────────
+
+
+class TestM11ReviewRuntimeProvenance:
+    """Verify _attach_next_step_runtime exists, REVIEW IDs are rejected,
+    and review routing outcomes are bound to runtime provenance."""
+
+    def test_verify_attach_next_step_runtime_exists(self) -> None:
+        """Step 23: _verify_attach_next_step_runtime proves the function exists."""
+        from arnold_pipelines.megaplan.handlers.review import (
+            _verify_attach_next_step_runtime,
+        )
+
+        result = _verify_attach_next_step_runtime()
+        assert result["present"] is True
+        assert result["callable"] is True
+        assert result["function"] == "_attach_next_step_runtime"
+        assert result["module"] == "arnold_pipelines.megaplan.handlers.shared"
+
+    def test_is_synthetic_review_task_id_detects_prefix(self) -> None:
+        """Step 23: _is_synthetic_review_task_id detects REVIEW- prefix."""
+        from arnold_pipelines.megaplan.handlers.review import (
+            _is_synthetic_review_task_id,
+        )
+
+        assert _is_synthetic_review_task_id("REVIEW-check_001") is True
+        assert _is_synthetic_review_task_id("REVIEW-abc") is True
+        assert _is_synthetic_review_task_id("T1") is False
+        assert _is_synthetic_review_task_id("r:REVIEW-check_001") is False
+        assert _is_synthetic_review_task_id("") is False
+
+    def test_reject_runnable_review_ids_replaces_synthetic(self) -> None:
+        """Step 23: _reject_runnable_review_ids replaces REVIEW- with r: prefix."""
+        from arnold_pipelines.megaplan.handlers.review import (
+            _reject_runnable_review_ids,
+        )
+
+        result = _reject_runnable_review_ids(
+            ["T1", "REVIEW-check_001", "T2", "REVIEW-abc"]
+        )
+        assert result == ["T1", "r:REVIEW-check_001", "T2", "r:REVIEW-abc"]
+
+    def test_reject_runnable_review_ids_preserves_non_synthetic(self) -> None:
+        """Step 23: non-synthetic task IDs pass through unchanged."""
+        from arnold_pipelines.megaplan.handlers.review import (
+            _reject_runnable_review_ids,
+        )
+
+        result = _reject_runnable_review_ids(["T1", "T2", "T3"])
+        assert result == ["T1", "T2", "T3"]
+
+    def test_reject_runnable_review_ids_empty_list(self) -> None:
+        """Step 23: empty list is handled correctly."""
+        from arnold_pipelines.megaplan.handlers.review import (
+            _reject_runnable_review_ids,
+        )
+
+        result = _reject_runnable_review_ids([])
+        assert result == []
+
+    def test_bind_review_routing_provenance_adds_to_response(self) -> None:
+        """Step 23: _bind_review_routing_provenance adds provenance to response."""
+        from arnold_pipelines.megaplan.handlers.review import (
+            _bind_review_routing_provenance,
+        )
+
+        response: dict = {"success": True, "step": "review", "next_step": "done"}
+        _bind_review_routing_provenance(response, verify_runtime=True)
+
+        assert "review_routing_provenance" in response
+        prov = response["review_routing_provenance"]
+        assert prov["schema"] == "arnold.megaplan.review_routing_provenance.v1"
+        assert "_attach_next_step_runtime" in prov
+        rt = prov["_attach_next_step_runtime"]
+        assert rt["present"] is True
+        assert rt["callable"] is True
+        assert rt["function"] == "_attach_next_step_runtime"
+
+    def test_bind_review_routing_provenance_no_verify(self) -> None:
+        """Step 23: with verify_runtime=False, no runtime proof is attached."""
+        from arnold_pipelines.megaplan.handlers.review import (
+            _bind_review_routing_provenance,
+        )
+
+        response: dict = {"success": True, "step": "review", "next_step": "execute"}
+        _bind_review_routing_provenance(response, verify_runtime=False)
+
+        assert "review_routing_provenance" in response
+        prov = response["review_routing_provenance"]
+        assert prov["schema"] == "arnold.megaplan.review_routing_provenance.v1"
+        assert "_attach_next_step_runtime" not in prov

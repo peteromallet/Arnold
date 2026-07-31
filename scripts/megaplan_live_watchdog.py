@@ -4,6 +4,11 @@
 Scans the machine for likely-live Megaplan/Arnold runs, classifies their
 health via the ``live-supervisor`` Arnold pipeline, and orchestrates a bounded
 repair/relaunch/recheck loop for problem incidents.
+
+Step 76-80: Repair execution is gated through typed delegation.  The
+RepairRunner no longer directly executes megaplan subcommands — every repair
+attempt is routed through the delegation shim and return-code success is
+never treated as accepted repair without canonical delegation.
 """
 
 from __future__ import annotations

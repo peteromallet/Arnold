@@ -4,6 +4,9 @@ import argparse
 from pathlib import Path
 
 from arnold_pipelines.megaplan.orchestration import tiebreaker_runtime as _runtime
+from arnold_pipelines.megaplan.workflows.handler_contract import (
+    apply_response_projection,
+)
 from arnold_pipelines.megaplan.types import PlanState, StepResponse
 from arnold_pipelines.megaplan.workflows.planning import resolve_lowered_route_target_for_signal
 
@@ -51,7 +54,11 @@ def _apply_legacy_tiebreaker_bridge(
         phase_id = default_node_id
     next_step = _bridge_tiebreaker_next_step(phase_id, response.get("route_signal"))
     if next_step is not None:
-        response["next_step"] = next_step
+        apply_response_projection(
+            response,
+            route_signal=str(response.get("route_signal") or "legacy_bridge"),
+            next_step=next_step,
+        )
     return response
 
 

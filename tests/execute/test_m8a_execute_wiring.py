@@ -23,6 +23,9 @@ from arnold_pipelines.megaplan._core.io import (
 from arnold_pipelines.megaplan.execute.batch import (
     CliError,
     _guard_execute_batch_admission,
+    _partition_review_rework_tasks,
+    _review_rework_context,
+    _review_rework_task_ids,
 )
 from arnold_pipelines.megaplan.orchestration.task_feasibility import (
     assert_admitted_task_feasibility,
@@ -1303,3 +1306,78 @@ def test_guard_preserves_backward_compat_without_seed_epoch_in_state() -> None:
 
     # Must not raise even though finalize_data has no seed_epoch either.
     _guard_execute_batch_admission(finalize_data, state)
+
+
+def test_large_review_rework_wave_is_partitioned_without_loss() -> None:
+    """The ceiling bounds each dispatch rather than rejecting the review."""
+    task_ids = [f"T{index}" for index in range(1, 9)]
+
+    subwaves = _partition_review_rework_tasks(task_ids, ceiling=5)
+
+    assert subwaves == [task_ids[:5], task_ids[5:]]
+    assert [task_id for wave in subwaves for task_id in wave] == task_ids
+    assert all(len(wave) <= 5 for wave in subwaves)
+
+
+def test_bulk_review_target_keeps_issue_context_in_each_relevant_subwave() -> None:
+    """A bulk finding must not disappear when its top-level task is elsewhere."""
+    review_data = {
+        "rework_items": [
+            {
+                "task_id": "T33",
+                "target": {
+                    "kind": "bulk",
+                    "id": "production-topology",
+                    "task_ids": ["T33", "T35", "T43"],
+                },
+                "issue": "Production cadence still uses the obsolete six-hour anchor.",
+                "expected": "Use the accepted three-hour topology.",
+                "actual": "The generated schedule still says six hours.",
+                "evidence_file": "tests/test_schedule.py",
+            }
+        ]
+    }
+    finalize_data = {
+        "tasks": [
+            {"id": "T33", "files_changed": ["src/schedule.py"]},
+            {"id": "T35", "files_changed": ["src/generator.py"]},
+            {"id": "T43", "files_changed": ["tests/test_schedule.py"]},
+        ]
+    }
+
+    runnable, unrunnable = _review_rework_task_ids(review_data, finalize_data)
+    context = _review_rework_context(review_data, finalize_data, ["T35", "T43"])
+
+    assert runnable == ["T33", "T35", "T43"]
+    assert unrunnable == []
+    assert len(context["rework_items"]) == 1
+    assert context["rework_items"][0]["task_ids"] == ["T35", "T43"]
+    assert context["rework_items"][0]["issue"] == review_data["rework_items"][0]["issue"]
+
+
+def test_bulk_review_target_tracks_nonconvergence_for_every_target_task() -> None:
+    """Auto-driver convergence accounting must use the same target expansion."""
+    from arnold_pipelines.megaplan.auto import _review_rework_signatures_by_task
+
+    review_data = {
+        "review_verdict": "needs_rework",
+        "rework_items": [
+            {
+                "task_id": "REVIEW",
+                "target": {
+                    "kind": "manifest",
+                    "id": "review_evidence.json",
+                    "task_ids": ["T1", "T46"],
+                },
+                "flag_id": "manifest-freshness",
+                "issue": "The review evidence manifest is stale.",
+            }
+        ],
+    }
+
+    signatures = _review_rework_signatures_by_task(review_data)
+
+    assert signatures == {
+        "T1": {"flag:manifest-freshness"},
+        "T46": {"flag:manifest-freshness"},
+    }

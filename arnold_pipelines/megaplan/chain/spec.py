@@ -2022,7 +2022,7 @@ def _cursor_from_path(path: Path) -> ProjectionCursor:
         source_path=str(resolved),
         source_record_count=record_count,
         source_digest=source_digest,
-        last_appended_at=now_utc(),
+        computed_at=now_utc(),
     )
 
 

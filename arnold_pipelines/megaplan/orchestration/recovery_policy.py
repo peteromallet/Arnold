@@ -790,6 +790,59 @@ class RecoveryPolicy:
             reason="unclassified error",
         )
 
+    def classify_with_circuit(
+        self,
+        error: Any,
+        layer: str,
+        *,
+        circuit: Any,
+        context_retries_used: int = 0,
+        external_retries_used: int = 0,
+        blocked_retries_used: int = 0,
+        phase: str = "",
+        task_id: str | None = None,
+        batch_id: str | None = None,
+        attempt_id: str | None = None,
+        blocker: Any = None,
+        provider: str | None = None,
+        ref_metadata: str | None = None,
+        fence: str | None = None,
+    ) -> RecoveryDecision:
+        """Consult the plan circuit before authorizing the classified action."""
+        from arnold_pipelines.megaplan.orchestration.plan_circuit import (
+            normalize_failure_signature,
+        )
+
+        signature = normalize_failure_signature(
+            error,
+            task_id=task_id,
+            batch_id=batch_id,
+            attempt_id=attempt_id,
+            blocker=blocker,
+            provider=provider,
+            ref_metadata=ref_metadata,
+            fence=fence,
+        )
+        circuit_decision = circuit.record_failure(signature)
+        if circuit_decision.is_open:
+            return RecoveryDecision(
+                action="halt",
+                halt_kind="circuit_open",
+                reason=(
+                    f"Circuit open for failure class '{signature.failure_class}' "
+                    f"(occurrence {circuit_decision.occurrence_count}/"
+                    f"{circuit_decision.threshold})"
+                ),
+            )
+        return self.classify(
+            error,
+            layer,
+            context_retries_used=context_retries_used,
+            external_retries_used=external_retries_used,
+            blocked_retries_used=blocked_retries_used,
+            phase=phase,
+        )
+
     # ------------------------------------------------------------------
     # Helpers — shape-driven, no isinstance gymnastics.
     # ------------------------------------------------------------------

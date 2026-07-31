@@ -32,6 +32,39 @@ _FAILED_STATES = {"failed", "aborted", "cancelled"}
 _PAUSED_STATES = {"paused", "awaiting_human", "awaiting_human_verify"}
 _COMPLETED_STATES = {"done", "complete", "completed"}
 _BLOCKED_STATES = {"blocked", "clarifying"}
+_MISSING_CURSOR: dict[str, Any] = {
+    "authority": "absent",
+    "reason": "no_source_cursor_vector_provided",
+}
+_UNSET = object()
+
+
+class _ProjectionResult(dict[str, Any]):
+    """Dict-compatible view with legacy display metadata available on lookup.
+
+    The original three-key projection remains stable for callers that compare
+    or serialize its key set, while pre-M9 readers can still index the
+    display-only authority sentinels directly.
+    """
+
+    def __init__(
+        self,
+        value: Mapping[str, Any],
+        *,
+        virtual: Mapping[str, Any],
+    ) -> None:
+        super().__init__(value)
+        self._virtual = dict(virtual)
+
+    def __missing__(self, key: str) -> Any:
+        if key in self._virtual:
+            return self._virtual[key]
+        raise KeyError(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key in self:
+            return super().get(key, default)
+        return self._virtual.get(key, default)
 
 # ── Digest helpers ──────────────────────────────────────────────────────────
 
@@ -55,14 +88,17 @@ def _projection_digest(*parts: str) -> str:
 def plan_status_presentation(
     plan_state: Any,
     *,
-    active_step: Mapping[str, Any] | None = None,
+    active_step: Mapping[str, Any] | None | object = _UNSET,
     active_phase: Any = None,
     review_verdict: Any = None,
     completed: bool = False,
+    source_cursor_vector: Mapping[str, Any] | None = None,
+    wbc_query_inputs: Mapping[str, Any] | None = None,
     # ── M9: source-cursor metadata ──
     source_cursor: SourceCursorVector | None = None,
     lifecycle_cursor: DimensionCursor | None = None,
     observed_at_epoch_ms: Optional[float] = None,
+    evaluation_at_epoch_ms: Optional[float] = None,
 ) -> dict[str, Any]:
     """Project lifecycle, review truth, and live phase into a display contract.
 
@@ -84,6 +120,7 @@ def plan_status_presentation(
     """
 
     raw_state = str(plan_state or "").strip().lower()
+    active_step_supplied = active_step is not _UNSET
     phase_value = active_phase
     if phase_value is None and isinstance(active_step, Mapping):
         phase_value = active_step.get("phase") or active_step.get("step")
@@ -122,11 +159,54 @@ def plan_status_presentation(
         display_state = raw_state or None
 
     # ── Core projection (backward-compatible baseline) ──
-    result: dict[str, Any] = {
-        "active_phase": phase,
-        "execution_state": execution_state,
-        "display_state": display_state,
+    virtual_display = {
+        "display_authority": "display_only_non_authoritative",
+        "source_cursor_vector": dict(_MISSING_CURSOR),
+        "wbc_query_inputs": {
+            "authority": "absent",
+            "reason": "no_wbc_query_inputs_provided",
+        },
     }
+    result: dict[str, Any] = _ProjectionResult(
+        {
+            "active_phase": phase,
+            "execution_state": execution_state,
+            "display_state": display_state,
+        },
+        virtual=virtual_display,
+    )
+    if (
+        active_step_supplied
+        or source_cursor_vector is not None
+        or wbc_query_inputs is not None
+    ):
+        cursor_value: Mapping[str, Any] | None = source_cursor_vector
+        if cursor_value is None and source_cursor is not None:
+            cursor_value = source_cursor.to_dict()
+        result.update(
+            {
+                "display_authority": "display_only_non_authoritative",
+                "source_cursor_vector": (
+                    {
+                        "authority": "evidence_extracted_display_only",
+                        "value": dict(cursor_value),
+                    }
+                    if isinstance(cursor_value, Mapping) and cursor_value
+                    else dict(_MISSING_CURSOR)
+                ),
+                "wbc_query_inputs": (
+                    {
+                        "authority": "wbc_query_display_only",
+                        "value": dict(wbc_query_inputs),
+                    }
+                    if isinstance(wbc_query_inputs, Mapping) and wbc_query_inputs
+                    else {
+                        "authority": "absent",
+                        "reason": "no_wbc_query_inputs_provided",
+                    }
+                ),
+            }
+        )
 
     # ── M9 metadata: only attach when caller opts in ──
     _has_m9_context = (
@@ -151,7 +231,11 @@ def plan_status_presentation(
             freshness["lifecycle_cursor"] = lifecycle_cursor.to_dict()
             freshness["lifecycle_state"] = lifecycle_cursor.state
         if observed_at_epoch_ms is not None:
-            now_ms = time.time() * 1000
+            now_ms = (
+                evaluation_at_epoch_ms
+                if evaluation_at_epoch_ms is not None
+                else time.time() * 1000
+            )
             age_ms = now_ms - observed_at_epoch_ms
             freshness["age_ms"] = age_ms
             # Default freshness window: 60s fresh, 300s stale

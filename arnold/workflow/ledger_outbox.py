@@ -393,18 +393,36 @@ class SqliteLedgerOutbox(LedgerOutbox):
                 if divergences:
                     # End the append/outbox transaction before opening the
                     # separate quarantine transaction on this connection.
-                    conn.execute("ROLLBACK")
-                    _record_divergent_duplicate_quarantine(
-                        self._store, attempt_id, event.idempotency_key,
-                        divergences, stored_json, event_json,
-                    )
+                    #
+                    # Step 95: the cleanup ROLLBACK and the best-effort
+                    # quarantine are NOT authority operations — a cleanup
+                    # failure (e.g. an already-ended transaction or a commit
+                    # error) must NEVER mask the primary DivergentDuplicateError
+                    # raised below. We capture any cleanup exception and chain
+                    # it as the cause while keeping the typed divergence error
+                    # as the primary outcome. This preserves deterministic
+                    # restart/replay: a retry of the same divergent event
+                    # surfaces the same typed error and creates no second
+                    # terminal row/effect.
+                    cleanup_cause: Exception | None = None
+                    try:
+                        conn.execute("ROLLBACK")
+                    except Exception as exc:  # cleanup-only; never mask primary
+                        cleanup_cause = exc
+                    try:
+                        _record_divergent_duplicate_quarantine(
+                            self._store, attempt_id, event.idempotency_key,
+                            divergences, stored_json, event_json,
+                        )
+                    except Exception as exc:  # quarantine is best-effort evidence
+                        cleanup_cause = cleanup_cause or exc
                     raise DivergentDuplicateError(
                         attempt_id=attempt_id,
                         idempotency_key=event.idempotency_key,
                         divergences=divergences,
                         stored_event_json=stored_json,
                         new_event_json=event_json,
-                    )
+                    ) from cleanup_cause
                 # Exact duplicate — roll back and return existing.
                 conn.execute("ROLLBACK")
                 existing = _deserialize_ledger_event(json.loads(stored_json))

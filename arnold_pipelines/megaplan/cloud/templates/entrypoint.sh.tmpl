@@ -192,7 +192,7 @@ fi
 
 # Launch heartbeat in its own tmux session.
 if ! tmux has-session -t heartbeat 2>/dev/null; then
-  tmux new-session -d -s heartbeat -c /workspace "bash -lc '/usr/local/bin/arnold-heartbeat'"
+  tmux new-session -d -s heartbeat -c /workspace "bash -lc '/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-heartbeat'"
   echo "heartbeat watchdog running in tmux session 'heartbeat'"
 fi
 
@@ -200,7 +200,7 @@ fi
 # markers hourly and wakes stopped chain runners without disturbing live ones.
 if ! tmux has-session -t watchdog 2>/dev/null; then
   tmux new-session -d -s watchdog -c /workspace \
-    "bash -lc 'set -a; [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env; set +a; exec /usr/local/bin/arnold-watchdog'"
+    "bash -lc 'set -a; [[ ! -f /workspace/.cloud-hot-env ]] || . /workspace/.cloud-hot-env; set +a; exec /workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog'"
   echo "cloud watchdog running in tmux session 'watchdog'"
 fi
 

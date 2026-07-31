@@ -15,7 +15,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
-import subprocess
+import re
 import time
 from typing import Any
 
@@ -35,6 +35,9 @@ from arnold_pipelines.megaplan.cloud.progress_auditor_ownership import (
 from arnold_pipelines.megaplan.cloud.repair_contract import append_escalation_record
 from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
     enqueue_audit_repair_request,
+)
+from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
+    emit_zero_authority_rejection,
 )
 
 
@@ -190,22 +193,88 @@ def _append_l3_evidence(
     return append_escalation_record(_sidecar_dir(state_root), payload)
 
 
-def _default_trigger_runner(argv: Sequence[str]) -> TriggerResult:
-    try:
-        completed = subprocess.run(
-            list(argv),
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return TriggerResult(returncode=127, stdout="", stderr=f"{exc.__class__.__name__}: {exc}")
-    return TriggerResult(
-        returncode=completed.returncode,
-        stdout=completed.stdout,
-        stderr=completed.stderr,
-    )
+# ── Step 43: trigger argv shim validation ────────────────────────────────────
+#
+# Arbitrary trigger argv execution (the legacy default subprocess runner path)
+# has been retired.  The controller no longer spawns a child process from
+# caller-supplied argv.  Instead, argv that reaches the production dispatch
+# path (``trigger_runner is None``) is classified against a closed rejection
+# vocabulary and emitted as a typed zero-authority outcome through the
+# repair-delegation shim.  Authority is never derived from labels, liveness,
+# WBC receipts, or rebuildable projections: recognition only narrows the typed
+# rejection reason and never constitutes authority.
+
+#: Closed vocabulary of trigger-argv rejection kinds.
+TRIGGER_ARGV_REJECTION_KINDS: tuple[str, ...] = (
+    "legacy_binary_name",
+    "shell_token",
+    "caller_runner",
+    "deep_superfixer_identity",
+)
+
+#: Legacy binary/script names whose presence in argv is a retired authority
+#: surface.  The canonical path is simple_fixer delegation, not a subprocess
+#: trigger binary.
+_LEGACY_TRIGGER_BINARY_NAMES: tuple[str, ...] = (
+    "arnold-repair-trigger",
+    "arnold-repair-loop",
+    "arnold-watchdog",
+    "arnold-auditor",
+    "arnold-meta",
+)
+
+#: Legacy binary-selection flags from the retired wrapper contract.
+_LEGACY_TRIGGER_BINARY_FLAGS: tuple[str, ...] = (
+    "--repair-bin",
+    "--meta-repair-bin",
+)
+
+#: Shell metacharacters that turn an argv token into an injection vector.
+_SHELL_TOKEN_PATTERN = re.compile(r"[;&|`$<>]|\|\||&&|\$\(|\$\{|\n|\r")
+
+#: Markers that identify a direct caller-runner or module launch rather than a
+#: canonical delegation surface.
+_CALLER_RUNNER_MARKERS: tuple[str, ...] = (
+    "repairrunner",
+    "subprocess.popen",
+    "subprocess.run",
+    "os.system",
+    "python -m arnold_pipelines",
+    "arnold_pipelines.megaplan.cloud.",
+)
+
+#: Deep-superfixer / deep-repair identity markers that are not typed occurrence
+#: outcomes of a canonical repair.
+_DEEP_SUPERFIXER_MARKERS: tuple[str, ...] = (
+    "superfixer",
+    "deep_repair",
+    "deep-repair",
+)
+
+
+def _classify_trigger_argv(trigger_argv: Sequence[str]) -> str | None:
+    """Classify caller-supplied trigger argv against the closed rejection set.
+
+    Returns the rejection kind (a member of
+    :data:`TRIGGER_ARGV_REJECTION_KINDS`) when the argv carries a recognized
+    command-authority bypass marker, or ``None`` when no marker is recognized.
+    Recognition never constitutes authority: a ``None`` return on the
+    production path still results in a typed rejection because arbitrary
+    subprocess execution has been retired in favour of simple_fixer delegation.
+    """
+    for token in trigger_argv:
+        lowered = str(token).lower()
+        if any(name in lowered for name in _LEGACY_TRIGGER_BINARY_NAMES):
+            return "legacy_binary_name"
+        if any(flag in lowered for flag in _LEGACY_TRIGGER_BINARY_FLAGS):
+            return "legacy_binary_name"
+        if _SHELL_TOKEN_PATTERN.search(str(token)):
+            return "shell_token"
+        if any(marker in lowered for marker in _CALLER_RUNNER_MARKERS):
+            return "caller_runner"
+        if any(marker in lowered for marker in _DEEP_SUPERFIXER_MARKERS):
+            return "deep_superfixer_identity"
+    return None
 
 
 def _trigger_event(stdout: str, request_id: str) -> dict[str, Any]:
@@ -398,13 +467,17 @@ def run_escalation_controller(
 ) -> dict[str, Any]:
     """Evaluate findings and, if authorized, invoke canonical repair custody.
 
-    ``trigger_argv`` must identify ``arnold-repair-trigger``.  The controller
-    appends ``--request-id`` so the resulting run is correlated with this exact
-    finding rather than whichever global queue entry happens to sort first.
+    Arbitrary ``trigger_argv`` execution has been retired (Step 43).  When no
+    ``trigger_runner`` is supplied (the production path), the controller no
+    longer spawns a subprocess: argv is classified against a closed rejection
+    vocabulary and emitted as a typed zero-authority outcome via the
+    repair-delegation shim.  A caller-supplied ``trigger_runner`` remains a
+    controlled test seam for managed-launch validation and still receives
+    ``--request-id`` so the resulting run is correlated with this exact finding.
     """
 
     selected = policy or EscalationPolicy()
-    runner = trigger_runner or _default_trigger_runner
+    runner = trigger_runner
     result = dict(payload)
     findings = [dict(item) for item in payload.get("findings") or [] if isinstance(item, dict)]
     green_checks = [dict(item) for item in payload.get("green_checks") or [] if isinstance(item, dict)]
@@ -642,6 +715,40 @@ def run_escalation_controller(
                 finalize_record(record)
                 continue
 
+            # Step 43: arbitrary trigger argv execution has been retired.  The
+            # production dispatch path (no caller-supplied trigger_runner)
+            # classifies argv through the closed rejection vocabulary and emits
+            # a typed zero-authority rejection via the delegation shim instead
+            # of spawning a child process.  A caller-supplied trigger_runner
+            # remains a controlled test seam for managed-launch validation, so
+            # existing managed-launch receipts keep flowing through it.
+            if runner is None:
+                rejection_kind = _classify_trigger_argv(trigger_argv) or (
+                    "retired_subprocess_authority"
+                )
+                rejection = emit_zero_authority_rejection(
+                    "controller",
+                    request_id or str(gate.get("escalation_id") or ""),
+                    reason=(
+                        "noncanonical trigger argv rejected by shim validation: "
+                        f"{rejection_kind}"
+                    ),
+                )
+                record.update(
+                    {
+                        "decision": "trigger_argv_rejected",
+                        "reason": (
+                            "trigger argv authority bypass rejected; arbitrary "
+                            "subprocess dispatch has been retired in favour of "
+                            "canonical simple_fixer delegation"
+                        ),
+                        "trigger_argv_rejection_kind": rejection_kind,
+                        "delegation_outcome": rejection.outcome,
+                    }
+                )
+                finalize_record(record)
+                continue
+
             trigger = runner([*trigger_argv, "--request-id", request_id])
             event = _trigger_event(trigger.stdout, request_id)
             record["trigger_returncode"] = trigger.returncode
@@ -769,6 +876,7 @@ def run_file_controller(
 
 __all__ = [
     "CONTROLLER_SCHEMA",
+    "TRIGGER_ARGV_REJECTION_KINDS",
     "TriggerResult",
     "run_escalation_controller",
     "run_file_controller",

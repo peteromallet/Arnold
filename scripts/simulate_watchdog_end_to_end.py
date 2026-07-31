@@ -6,10 +6,14 @@ fake megaplan CLI, and verifies the watchdog:
 
   1. Detects the blocked plan
   2. Assesses issue difficulty and selects a repair model
-  3. Executes the repair (auto/resume)
+  3. Repairs are gated through typed delegation (Step 76-80) — direct execution
+     is blocked and return-code success is not accepted repair
   4. Relaunches the plan
   5. Waits and rechecks
   6. Confirms the plan is now running
+
+All repair attempts are non-authoritative telemetry.  Accepted repair requires
+canonical delegation through the typed delegation shim.
 """
 
 from __future__ import annotations

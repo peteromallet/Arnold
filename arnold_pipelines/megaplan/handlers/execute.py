@@ -68,6 +68,10 @@ from .shared import (
     worker_module,
 )
 from arnold_pipelines.megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
+from arnold_pipelines.megaplan.workflows.handler_contract import (
+    apply_response_projection,
+    apply_state_projection,
+)
 from arnold_pipelines.megaplan.orchestration.task_feasibility import (
     assert_admitted_task_feasibility,
 )
@@ -1026,9 +1030,12 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             )
             _record_execute_blocked(plan_dir, response)
             state = read_plan_state_cached(plan_dir, mode="authority")
-            response["route_signal"] = blocked_projection["route_signal"]
-            response["state"] = blocked_projection["state"]
-            response["next_step"] = blocked_projection["next_step"]
+            apply_response_projection(
+                response,
+                route_signal=blocked_projection["route_signal"],
+                state=blocked_projection["state"],
+                next_step=blocked_projection["next_step"],
+            )
             _attach_next_step_runtime(response)
         else:
             state["latest_failure"] = None
@@ -1050,11 +1057,18 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 terminal = evaluate_no_review_terminal(robustness="bare")
                 terminal_projection = _no_review_terminal_projection(terminal.outcome)
                 next_state = terminal_projection["state"]
-                state["current_state"] = next_state
+                apply_state_projection(
+                    state,
+                    next_state,
+                    route_signal=terminal_projection["route_signal"],
+                )
                 save_state_merge_meta(plan_dir, state)
-                response["route_signal"] = terminal_projection["route_signal"]
-                response["state"] = next_state
-                response["next_step"] = terminal_projection["next_step"]
+                apply_response_projection(
+                    response,
+                    route_signal=terminal_projection["route_signal"],
+                    state=next_state,
+                    next_step=terminal_projection["next_step"],
+                )
                 _attach_next_step_runtime(response)
                 _emit_execute_boundary_receipt(
                     boundary_id="execute_no_review_terminal",
@@ -1126,11 +1140,18 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             artifacts = response.get("artifacts")
             if isinstance(artifacts, list) and "review.json" not in artifacts:
                 artifacts.append("review.json")
-            state["current_state"] = next_state
+            apply_state_projection(
+                state,
+                next_state,
+                route_signal=terminal_projection["route_signal"],
+            )
             save_state_merge_meta(plan_dir, state)
-            response["route_signal"] = terminal_projection["route_signal"]
-            response["state"] = next_state
-            response["next_step"] = terminal_projection["next_step"]
+            apply_response_projection(
+                response,
+                route_signal=terminal_projection["route_signal"],
+                state=next_state,
+                next_step=terminal_projection["next_step"],
+            )
             _attach_next_step_runtime(response)
             _emit_execute_boundary_receipt(
                 boundary_id="execute_no_review_terminal",

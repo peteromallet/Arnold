@@ -1,6 +1,6 @@
 {
-  "composite_hash": "856d9988975f2766df6516ad87bda409e62cc0d1acde93112eade87463bd8101",
-  "generated_at": "2026-07-19T22:34:46.749789+00:00",
+  "composite_hash": "1089dc5e25998374e60a4fd814f305a7a51bd35051bfda12a96893431cc0a6a2",
+  "generated_at": "2026-07-31T00:31:58.099179+00:00",
   "generator": "tools/generate_m6_replay_fixtures.py",
   "limitations": {
     "missing_original_workspace": {
@@ -22,12 +22,12 @@
       "pattern": "/workspace/[REDACTED:<sha256-prefix>]"
     }
   },
-  "repository_root": "/workspace/[REDACTED:6899d7db6ccd]",
+  "repository_root": "/repository/[REDACTED:5bf0194c0eca]",
   "schema": "m6.transaction-spine-replay-fixture.v1",
   "section_hashes": {
     "handoff_documents": "5f1d9c3dece0084e26e3d26fa2bbc75fb772887924e3b95cbba1fa73d7320182",
-    "incident_summaries": "7f74b25067bbf4b06dd4d1ac1e9979e404654acc5b6d24b340360ab6148f7e36",
-    "repair_data": "b1cf8f3b0ca0b7d511ad2981031ea5ac45b65468501f7669c11a4ef8222f5daf"
+    "incident_summaries": "9de9dfa6b203040ffec8c383ca176349353de719652ed98bf80a9d6764b85abd",
+    "repair_data": "2fe5e78f47b360fb5603d7a4bce9b42d3996ff66567cd7a1a186920c435eb749"
   },
   "sections": {
     "handoff_documents": {
@@ -56,11 +56,11 @@
       "source_directory": ".megaplan/initiatives/megaplan-maintenance/handoff"
     },
     "incident_summaries": {
-      "content_hash": "936de0f416a6aa55d3192abea4f87dff8dc888e431ac98c12621862080144567",
+      "content_hash": "812a8ea22e77665e25565eebd100d20c78d02a07ea2252f6923bf8153e028acc",
       "incident_count": 10,
       "incidents": [
         {
-          "content_sha256": "23a2b290fc013dfa105f425876339cb6f0c53d95fe74eeb79ae4dada9ca7cce0",
+          "content_sha256": "1b511ccb635e04acfd0217e52fd4c20254f71c0f2468ec09ee20b95f747fa3a8",
           "incident_id": "inc-canonical-run-state-control-plane",
           "latest_actor": "six_hour_auditor",
           "outcome": "audit_cycle_complete",
@@ -72,7 +72,7 @@
           "status": "present"
         },
         {
-          "content_sha256": "11238a90aee46e7def000186f529d4b953518a20a16e66fa3edd524c42a1f31d",
+          "content_sha256": "197ad5c30dce906059541fa250a640e1e84f1ab059d332e26b7142c6dd7e4a05",
           "incident_id": "inc-custody-control-plane",
           "latest_actor": "repair_system",
           "outcome": "recovered",
@@ -84,29 +84,42 @@
           "status": "present"
         },
         {
-          "content_sha256": "940e446bb6b32962870cab1fc6dd5dcf69f43a5154bf5155926200bb557a55fa",
+          "content_sha256": "52b4204fbad83e642fad1520bf16500c4bd0a3af1dad01493338164c7283a7f3",
           "incident_id": "inc-custody-control-plane-20260714",
-          "latest_actor": "watchdog",
-          "outcome": "recursion_blocked",
+          "latest_actor": "github_sync",
+          "outcome": "published",
           "problem_ids": [
+            "problem-035056e1a4ef",
+            "problem-131f0402607c",
+            "problem-3e8a86739467",
+            "problem-40e14c0d5ae2",
+            "problem-502bd7717e4a",
             "problem-51b6859a7c76",
             "problem-5b2d4b8c99c1",
             "problem-6356292eb79a",
             "problem-67a765759422",
             "problem-690ba3ad3bda",
+            "problem-6d4cc15766bd",
             "problem-72f87afd3954",
             "problem-8f475cf8e677",
+            "problem-964fc8e741bb",
             "problem-a923a5d15e23",
             "problem-bca9d501eede",
+            "problem-bd43205325d0",
+            "problem-d01d1f0e8f89",
+            "problem-d93c1fe6a35c",
             "problem-dd5016fd3ab4",
-            "problem-e20c45ae0eb0"
+            "problem-e20c45ae0eb0",
+            "problem-ed95e12660eb",
+            "problem-fbf4fe499c42",
+            "problem-fc037a661409"
           ],
           "schema_version": 1,
-          "state": "dispatch",
+          "state": "github_sync.issue_published",
           "status": "present"
         },
         {
-          "content_sha256": "2280bebaf188b630581fde6e33c1e0e3a0b6eaf5fae204e9361a58143c18e07e",
+          "content_sha256": "c74ac0d10f63deb2bcb9a86c0824eb7a660169f2a3f066763f52f7bc42562b36",
           "incident_id": "inc-demo-session",
           "latest_actor": "github_sync",
           "outcome": "published",
@@ -123,7 +136,7 @@
           "status": "present"
         },
         {
-          "content_sha256": "614cde1e081fe324ba83e37706c1a49379651833dcca4bad6e77e08ca68acd12",
+          "content_sha256": "187a13307f949ea1d108bfae23800d5b93f8768b77196d543edb1a57e03fb40f",
           "incident_id": "inc-megaplan-north-star-sense-checks-revise-design",
           "latest_actor": "immediate_repair",
           "outcome": "partial_liveness",
@@ -135,7 +148,7 @@
           "status": "present"
         },
         {
-          "content_sha256": "95f60b995cb17a331059a66d75b4a90bbac57abf440c4e7fba791004a408a2b5",
+          "content_sha256": "3bfe7c24272e4aff7b10a9e54686abc7da927b6e98dcb9d7eeb1717481a7a1e8",
           "incident_id": "inc-repository-strategy-roadmap",
           "latest_actor": "github_sync",
           "outcome": "published",
@@ -147,7 +160,7 @@
           "status": "present"
         },
         {
-          "content_sha256": "443fe6cb664f9ad3ea3d0e2b39b3381d81e796f08d502681ca1e9f3de03b5734",
+          "content_sha256": "70e90b283f7a27c1a9612db0b1c8e6bbaadc2ebc40c9c85cb9a06b61763b7acf",
           "incident_id": "inc-runauthority-epic-cloud",
           "latest_actor": "github_sync",
           "outcome": "published",
@@ -159,7 +172,7 @@
           "status": "present"
         },
         {
-          "content_sha256": "8f4d2798246e0949a5b61b6ba296faee5a71250717c4d520e835bab9e30cd07f",
+          "content_sha256": "b6f6cf516c7f33c91375b5ae4517c01b980f0e13970988e4a41967866388620b",
           "incident_id": "inc-superfixer-alive-but-failed-recovery",
           "latest_actor": "immediate_repair",
           "outcome": "partial_liveness",
@@ -172,7 +185,7 @@
           "status": "present"
         },
         {
-          "content_sha256": "dd460cfabef3c06db9e38bcb6f58b15adb68426d4c3296bcbba2bd0dae5f8436",
+          "content_sha256": "2643c5985c0cdb994c60fdc2b23a566fe99159e1ae801a4e364dd836e6dfba9f",
           "incident_id": "inc-workflow-boundary-contracts-corrective-20260710",
           "latest_actor": "six_hour_auditor",
           "outcome": "auditor_human_escalation",
@@ -196,7 +209,7 @@
           "status": "present"
         },
         {
-          "content_sha256": "9cee654fd2eae16104609aa76793805a2be2d1cff6240cf27e2d1634eb7c3ef1",
+          "content_sha256": "0b4f2cd0f047513083200dc61b7a95a9ffcda3ff886662b97400d2bf1f9d891c",
           "incident_id": "incident-42",
           "latest_actor": "github_sync",
           "outcome": "published",
@@ -208,8 +221,28 @@
           "status": "present"
         }
       ],
-      "problem_count": 26,
+      "problem_count": 38,
       "problems": [
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 62,
+          "problem_id": "problem-035056e1a4ef",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 1,
+          "problem_id": "problem-131f0402607c",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
         {
           "linked_incident_ids": [
             "inc-workflow-boundary-contracts-corrective-20260710"
@@ -232,6 +265,26 @@
         },
         {
           "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 3,
+          "problem_id": "problem-3e8a86739467",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 1,
+          "problem_id": "problem-40e14c0d5ae2",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
             "inc-workflow-boundary-contracts-corrective-20260710"
           ],
           "occurrence_count": 21,
@@ -242,10 +295,20 @@
         },
         {
           "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 1,
+          "problem_id": "problem-502bd7717e4a",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
             "inc-custody-control-plane-20260714",
             "inc-workflow-boundary-contracts-corrective-20260710"
           ],
-          "occurrence_count": 11,
+          "occurrence_count": 44,
           "problem_id": "problem-51b6859a7c76",
           "recurred_after_fix": false,
           "status": "present",
@@ -255,7 +318,7 @@
           "linked_incident_ids": [
             "inc-custody-control-plane-20260714"
           ],
-          "occurrence_count": 10,
+          "occurrence_count": 28,
           "problem_id": "problem-5b2d4b8c99c1",
           "recurred_after_fix": false,
           "status": "present",
@@ -265,7 +328,7 @@
           "linked_incident_ids": [
             "inc-custody-control-plane-20260714"
           ],
-          "occurrence_count": 1,
+          "occurrence_count": 3,
           "problem_id": "problem-6356292eb79a",
           "recurred_after_fix": false,
           "status": "present",
@@ -276,7 +339,7 @@
             "inc-custody-control-plane-20260714",
             "inc-workflow-boundary-contracts-corrective-20260710"
           ],
-          "occurrence_count": 30,
+          "occurrence_count": 56,
           "problem_id": "problem-67a765759422",
           "recurred_after_fix": false,
           "status": "present",
@@ -296,7 +359,7 @@
           "linked_incident_ids": [
             "inc-custody-control-plane-20260714"
           ],
-          "occurrence_count": 1,
+          "occurrence_count": 4,
           "problem_id": "problem-690ba3ad3bda",
           "recurred_after_fix": false,
           "status": "present",
@@ -308,6 +371,16 @@
           ],
           "occurrence_count": 3,
           "problem_id": "problem-6a1177eb343e",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 4,
+          "problem_id": "problem-6d4cc15766bd",
           "recurred_after_fix": false,
           "status": "present",
           "status_field": "open"
@@ -351,7 +424,7 @@
             "inc-superfixer-alive-but-failed-recovery",
             "inc-workflow-boundary-contracts-corrective-20260710"
           ],
-          "occurrence_count": 19,
+          "occurrence_count": 23,
           "problem_id": "problem-72f87afd3954",
           "recurred_after_fix": false,
           "status": "present",
@@ -390,6 +463,16 @@
         },
         {
           "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 1,
+          "problem_id": "problem-964fc8e741bb",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
             "inc-demo-session"
           ],
           "occurrence_count": 59,
@@ -402,7 +485,7 @@
           "linked_incident_ids": [
             "inc-custody-control-plane-20260714"
           ],
-          "occurrence_count": 9,
+          "occurrence_count": 17,
           "problem_id": "problem-a923a5d15e23",
           "recurred_after_fix": false,
           "status": "present",
@@ -423,7 +506,7 @@
             "inc-custody-control-plane-20260714",
             "inc-workflow-boundary-contracts-corrective-20260710"
           ],
-          "occurrence_count": 6,
+          "occurrence_count": 29,
           "problem_id": "problem-bca9d501eede",
           "recurred_after_fix": false,
           "status": "present",
@@ -431,9 +514,10 @@
         },
         {
           "linked_incident_ids": [
+            "inc-custody-control-plane-20260714",
             "inc-workflow-boundary-contracts-corrective-20260710"
           ],
-          "occurrence_count": 1,
+          "occurrence_count": 9,
           "problem_id": "problem-bd43205325d0",
           "recurred_after_fix": false,
           "status": "present",
@@ -466,6 +550,26 @@
             "inc-custody-control-plane-20260714"
           ],
           "occurrence_count": 1,
+          "problem_id": "problem-d01d1f0e8f89",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 8,
+          "problem_id": "problem-d93c1fe6a35c",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 13,
           "problem_id": "problem-dd5016fd3ab4",
           "recurred_after_fix": false,
           "status": "present",
@@ -476,8 +580,38 @@
             "inc-custody-control-plane-20260714",
             "inc-workflow-boundary-contracts-corrective-20260710"
           ],
-          "occurrence_count": 26,
+          "occurrence_count": 33,
           "problem_id": "problem-e20c45ae0eb0",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 1,
+          "problem_id": "problem-ed95e12660eb",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 1,
+          "problem_id": "problem-fbf4fe499c42",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 6,
+          "problem_id": "problem-fc037a661409",
           "recurred_after_fix": false,
           "status": "present",
           "status_field": "open"
@@ -487,7 +621,7 @@
       "source_directory": ".megaplan/incident-ledger/summaries/incidents"
     },
     "repair_data": {
-      "content_hash": "1b38e0339c32b76ab7602432a9651e38ffaa29583562c6aaf7276587de6ebc54",
+      "content_hash": "1cdbbefb5beeccc7ee4cf8346c88947a2ef21c28932c0f0ff4641fe6bdba1248",
       "incident_summaries": [
         {
           "decision_count": 2,
@@ -515,7 +649,7 @@
           "session_id": "custody-control-plane"
         },
         {
-          "decision_count": 31,
+          "decision_count": 92,
           "decisions": [
             {
               "hypothesis_class": null,
@@ -702,9 +836,375 @@
               "hypothesis_preview": null,
               "reconciler_finding_count": 0,
               "seq": 617
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 622
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 624
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 626
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 628
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 630
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 637
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 640
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog repeatedly observes stops; repair-trigger accepts custody but does not claim it; immediate repair records `fixer_infrastructure_failure` without a valid",
+              "reconciler_finding_count": 10,
+              "seq": 641
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog repeatedly observes stops; repair-trigger accepts custody but does not claim it; immediate repair records `fixer_infrastructure_failure` without a valid",
+              "reconciler_finding_count": 10,
+              "seq": 642
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 662
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 664
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 670
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 672
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 674
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 676
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 678
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 680
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 685
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 690
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 695
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 698
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 701
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 734
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 745
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 746
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 759
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 760
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 762
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 763
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 764
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 765
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 767
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 768
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 769
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 770
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 772
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 773
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 774
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 775
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 777
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 778
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 779
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 780
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 782
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 783
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 784
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 785
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 787
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 788
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 789
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 790
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 792
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 793
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 794
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 795
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 797
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 798
+            },
+            {
+              "hypothesis_class": "OpenAI Codex v0.144.3",
+              "hypothesis_preview": "OpenAI Codex v0.144.3\n--------\nworkdir: /workspace/[REDACTED:6899d7db6ccd]\nmodel: gpt-5.6-sol\nprovider: openai\napproval: never\nsandbox: read-only\nreasoning effort: high\nreasoning summari",
+              "reconciler_finding_count": 12,
+              "seq": 799
+            },
+            {
+              "hypothesis_class": "OpenAI Codex v0.144.3",
+              "hypothesis_preview": "OpenAI Codex v0.144.3\n--------\nworkdir: /workspace/[REDACTED:6899d7db6ccd]\nmodel: gpt-5.6-sol\nprovider: openai\napproval: never\nsandbox: read-only\nreasoning effort: high\nreasoning summari",
+              "reconciler_finding_count": 12,
+              "seq": 800
+            },
+            {
+              "hypothesis_class": "OpenAI Codex v0.144.3",
+              "hypothesis_preview": "OpenAI Codex v0.144.3\n--------\nworkdir: /workspace/[REDACTED:6899d7db6ccd]\nmodel: gpt-5.6-sol\nprovider: openai\napproval: never\nsandbox: read-only\nreasoning effort: high\nreasoning summari",
+              "reconciler_finding_count": 12,
+              "seq": 802
+            },
+            {
+              "hypothesis_class": "OpenAI Codex v0.144.3",
+              "hypothesis_preview": "OpenAI Codex v0.144.3\n--------\nworkdir: /workspace/[REDACTED:6899d7db6ccd]\nmodel: gpt-5.6-sol\nprovider: openai\napproval: never\nsandbox: read-only\nreasoning effort: high\nreasoning summari",
+              "reconciler_finding_count": 12,
+              "seq": 803
             }
           ],
-          "event_count": 101,
+          "event_count": 284,
           "session_id": "custody-control-plane-20260714"
         },
         {

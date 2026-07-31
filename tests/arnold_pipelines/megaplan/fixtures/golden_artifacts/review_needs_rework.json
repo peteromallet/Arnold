@@ -75,7 +75,7 @@
       "notes": "On cap exhaustion: verdict=blocked or escalated; override handler may produce additional artifacts"
     }
   ],
-  "native_trace_files": ["events.ndjson", "state.json", "stages.json", "artifacts.json", "checkpoint.json"],
+  "native_trace_files": ["events.ndjson", "state.json", "stages.json", "artifacts.json", "checkpoint.json", "tree.json"],
   "obligated_scenarios": {
     "committed": [
       {

@@ -12,6 +12,9 @@ from arnold_pipelines.megaplan.cloud import operator_control
 def test_resume_injects_managed_repair_route_into_tmux_session(
     tmp_path: Path, monkeypatch
 ) -> None:
+    # The production target runner deliberately exports the managed queue root.
+    # This test covers the fallback derived from the marker location.
+    monkeypatch.delenv("ARNOLD_REPAIR_QUEUE_ROOT", raising=False)
     workspace = tmp_path / "workspace"
     marker_dir = tmp_path / ".megaplan" / "cloud-sessions"
     marker_path = marker_dir / "demo.json"

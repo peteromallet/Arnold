@@ -104,15 +104,16 @@ without capturing live Python frames. Key trace fields:
 - ``attempt_start``, ``step_outcome``, ``attempt_end`` — timing and outcome.
 
 The audit skeleton is the evidence layer for conformance verification, not a
-debug log. See [`audit.py`](../../arnold/pipeline/native/audit.py) for the
-`AuditRecord` dataclass and `AuditHooks` producer.
+debug log. Audit records and their runtime producer are derived from the
+compiled workflow; workflow authors do not instantiate or configure them.
 
 ## Path Resume
 
 Resume targets a specific call-site path in the trace tree, not a bare stage
 name. Paths are tree-shaped (e.g., ``root/second-review/review-verdict``) and
 derived from authored ``id=`` values. Resume uses ``start_from_trace`` from
-``arnold.pipeline.native`` with a target path and trace directory.
+the generated runtime adapter with a target path and trace directory; authors
+do not import the execution implementation directly.
 
 Path identity is stable across refactors and does not depend on runtime object
 identity. Replay reuses the same static path plus recorded iteration

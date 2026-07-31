@@ -409,3 +409,45 @@ def test_meta_investigator_gets_one_bounded_schema_correction_retry() -> None:
         "preserve_live is valid only when a correct live worker is actually present"
         in wrapper
     )
+
+
+def test_meta_repair_retrigger_rejected_or_delegated() -> None:
+    """Step 76-80: meta-repair retrigger routes through typed delegation or emits rejection.
+
+    The retrigger must never treat subprocess return-code success as accepted
+    repair.  It routes through run_managed_command (typed delegation) and
+    verifies through load_authoritative_post_retrigger_verification.  Return-code 0
+    without verified delegation outcome is treated as rejection (returncode 73).
+    """
+    wrapper = _meta_repair_wrapper()
+
+    # The retrigger section must route through typed delegation — not direct
+    # subprocess execution of the repair-loop binary.
+    assert "does NOT accept subprocess return-code success as accepted" in wrapper
+    assert "routes through typed delegation via run_managed_command" in wrapper
+    assert "load_authoritative_post_retrigger_verification" in wrapper
+    assert "Return-code 0 without verified" in wrapper
+    assert "delegation outcome is treated as rejection" in wrapper
+    assert "returncode 73" in wrapper
+
+    # Must use run_managed_command (the typed delegation path), not raw subprocess.
+    assert "run_managed_command" in wrapper
+
+    # Must carry the VERIFIER_REJECTION_RETURNCODE sentinel.
+    assert "VERIFIER_REJECTION_RETURNCODE = 73" in wrapper
+
+    # Must reference the canonical repair-data artifact for verification.
+    assert "canonical repair-data artifact" in wrapper
+
+    # Must never launch the repair-loop binary directly as a fire-and-forget
+    # subprocess whose returncode determines success.
+    retrigger_section_start = wrapper.index(
+        "retrigger ordinary repair after successful install sync (Step 76-80)"
+    )
+    retrigger_section = wrapper[retrigger_section_start:]
+    # The retrigger section must not contain a bare subprocess.run or os.system
+    # that executes the repair-loop binary directly.
+    assert "subprocess.run" not in retrigger_section or (
+        "subprocess.run" in retrigger_section
+        and "run_managed_command" in retrigger_section
+    ), "retrigger must route through run_managed_command, not bare subprocess"

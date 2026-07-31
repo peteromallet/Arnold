@@ -1,10 +1,50 @@
 from __future__ import annotations
 
+import ast
+import importlib.util
 import json
+import sys
 import textwrap
 from pathlib import Path
 
-from tools import generate_wbc_boundary_inventory as inventory_tool
+_GENERATOR_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "tools"
+    / "generate_wbc_boundary_inventory.py"
+)
+_GENERATOR_SPEC = importlib.util.spec_from_file_location(
+    "m8_wbc_boundary_inventory_generator", _GENERATOR_PATH
+)
+assert _GENERATOR_SPEC is not None and _GENERATOR_SPEC.loader is not None
+inventory_tool = importlib.util.module_from_spec(_GENERATOR_SPEC)
+sys.modules[_GENERATOR_SPEC.name] = inventory_tool
+_GENERATOR_SPEC.loader.exec_module(inventory_tool)
+
+
+def test_source_segment_index_matches_stdlib_for_unicode_and_multiline_nodes() -> None:
+    source_lf = textwrap.dedent(
+        '''\
+        def example():
+            label = "café"
+            return submit(
+                label,
+                boundary_id="execute_batch_checkpoint",
+            )
+        '''
+    )
+    sources = (
+        source_lf,
+        source_lf.replace("\n", "\r\n"),
+        source_lf.replace('"café"', '"café\\fvalue"'),
+    )
+    for source in sources:
+        tree = ast.parse(source)
+        segments = inventory_tool._SourceSegments(source)
+
+        for node in ast.walk(tree):
+            if getattr(node, "end_lineno", None) is None:
+                continue
+            assert segments.get(node) == ast.get_source_segment(source, node)
 
 
 def _module_scan_from_source(

@@ -46,6 +46,10 @@ def _import_module(module_name: str, file_name: str) -> Any:
         str(TOOLS_DIR / file_name),
     )
     mod = _iu.module_from_spec(spec)
+    # Match normal import semantics.  Dataclass and other annotation-aware
+    # decorators resolve the module namespace through ``sys.modules`` while
+    # the module body is executing.
+    sys.modules[module_name] = mod
     spec.loader.exec_module(mod)
     return mod
 

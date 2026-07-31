@@ -33,6 +33,8 @@ from arnold_pipelines.megaplan.cloud.incident_bridge import (
     append_github_issue_publish_failed,
     append_github_issue_published,
     append_meta_repair_attempt,
+    append_next_three_hour_auditor_audit_complete,
+    append_next_three_hour_auditor_diagnosis,
     append_recovery_observation,
     append_six_hour_auditor_audit_complete,
     append_six_hour_auditor_diagnosis,
@@ -408,7 +410,7 @@ def test_bridge_append_six_hour_auditor_diagnosis_creates_event(tmp_path: Path) 
         summary="Audit found stale repair evidence",
         session_id="session-audit",
         problem_id="prob-audit",
-        next_expected_event="meta_repair.repair_attempt",
+        next_expected_event="next_three_hour_auditor.diagnosis",
         decision={"layers": [{"code": "stale_repair"}]},
         root=tmp_path,
     )
@@ -416,7 +418,7 @@ def test_bridge_append_six_hour_auditor_diagnosis_creates_event(tmp_path: Path) 
     assert result["kind"] == "incident.six_hour_auditor.diagnosis"
     assert result["payload"]["actor"] == "six_hour_auditor"
     assert result["payload"]["type"] == "six_hour_auditor.diagnosis"
-    assert result["payload"]["next_expected_event"] == "meta_repair.repair_attempt"
+    assert result["payload"]["next_expected_event"] == "next_three_hour_auditor.diagnosis"
     assert result["payload"]["decision"] == {"layers": [{"code": "stale_repair"}]}
 
 
@@ -469,6 +471,176 @@ def test_bridge_append_six_hour_auditor_audit_complete_rejects_invalid_handoff(t
         )
 
 
+# ── T34: six-hour auditor rejects repair authority events ─────────────
+
+
+def test_incident_bridge_rejects_six_hour_authority_events(tmp_path: Path) -> None:
+    """T34/Step 48: six-hour auditor helpers reject repair authority handoffs.
+
+    The six-hour auditor may diagnose and escalate (github_sync.publish,
+    next_three_hour_auditor.diagnosis, six_hour_auditor.diagnosis) but must
+    NOT hand off to immediate_repair or meta_repair — those are repair authority
+    movements that belong to the canonical next-three-hour reconciliation path.
+    """
+    # ── Diagnosis rejects immediate_repair handoff ─────────────────────
+    with pytest.raises(ValueError, match="next_expected_event must be one of"):
+        append_six_hour_auditor_diagnosis(
+            incident_id="inc-600",
+            summary="Should reject repair handoff",
+            next_expected_event="immediate_repair.repair_attempt",
+            root=tmp_path,
+        )
+
+    # ── Diagnosis rejects meta_repair handoff ──────────────────────────
+    with pytest.raises(ValueError, match="next_expected_event must be one of"):
+        append_six_hour_auditor_diagnosis(
+            incident_id="inc-601",
+            summary="Should reject meta repair handoff",
+            next_expected_event="meta_repair.repair_attempt",
+            root=tmp_path,
+        )
+
+    # ── Audit complete rejects immediate_repair handoff ────────────────
+    with pytest.raises(ValueError, match="next_expected_event must be one of"):
+        append_six_hour_auditor_audit_complete(
+            incident_id="inc-602",
+            summary="Should reject repair handoff",
+            outcome="escalated",
+            next_expected_event="immediate_repair.repair_attempt",
+            root=tmp_path,
+        )
+
+    # ── Audit complete rejects meta_repair handoff ─────────────────────
+    with pytest.raises(ValueError, match="next_expected_event must be one of"):
+        append_six_hour_auditor_audit_complete(
+            incident_id="inc-603",
+            summary="Should reject meta repair handoff",
+            outcome="escalated",
+            next_expected_event="meta_repair.repair_attempt",
+            root=tmp_path,
+        )
+
+    # ── Diagnosis still allows canonical handoffs ──────────────────────
+    # github_sync.publish
+    result = append_six_hour_auditor_diagnosis(
+        incident_id="inc-604",
+        summary="Valid escalation to github",
+        next_expected_event="github_sync.publish",
+        root=tmp_path,
+    )
+    assert result["payload"]["next_expected_event"] == "github_sync.publish"
+
+    # next_three_hour_auditor.diagnosis
+    result = append_six_hour_auditor_diagnosis(
+        incident_id="inc-605",
+        summary="Valid handoff to next-three-hour diagnosis",
+        next_expected_event="next_three_hour_auditor.diagnosis",
+        root=tmp_path,
+    )
+    assert result["payload"]["next_expected_event"] == "next_three_hour_auditor.diagnosis"
+
+
+# ── Next-three-hour auditor tests ──────────────────────────────────────
+
+
+def test_bridge_append_next_three_hour_auditor_diagnosis_creates_event(tmp_path: Path) -> None:
+    result = append_next_three_hour_auditor_diagnosis(
+        incident_id="inc-410",
+        summary="Three-hour audit found stale repair evidence",
+        session_id="session-n3h",
+        problem_id="prob-n3h",
+        next_expected_event="next_three_hour_auditor.audit_complete",
+        decision={"layers": [{"code": "stale_repair"}]},
+        root=tmp_path,
+    )
+
+    assert result["kind"] == "incident.next_three_hour_auditor.diagnosis"
+    assert result["payload"]["actor"] == "next_three_hour_auditor"
+    assert result["payload"]["type"] == "next_three_hour_auditor.diagnosis"
+    assert result["payload"]["next_expected_event"] == "next_three_hour_auditor.audit_complete"
+    assert result["payload"]["decision"] == {"layers": [{"code": "stale_repair"}]}
+
+
+def test_bridge_append_next_three_hour_auditor_diagnosis_rejects_repair_handoff(
+    tmp_path: Path,
+) -> None:
+    """Next-three-hour diagnosis must NOT hand off to repair authority."""
+    with pytest.raises(ValueError, match="next_expected_event must be one of"):
+        append_next_three_hour_auditor_diagnosis(
+            incident_id="inc-411",
+            summary="Should reject repair handoff",
+            next_expected_event="immediate_repair.repair_attempt",
+            root=tmp_path,
+        )
+
+
+@pytest.mark.parametrize(
+    ("outcome", "next_expected_event"),
+    [
+        ("recovered", None),
+        ("escalated", "github_sync.publish"),
+        ("audit_cycle_complete", "next_three_hour_auditor.diagnosis"),
+        ("auditor_human_escalation", None),
+    ],
+)
+def test_bridge_append_next_three_hour_auditor_audit_complete_allows_expected_handoffs(
+    tmp_path: Path,
+    outcome: str,
+    next_expected_event: str | None,
+) -> None:
+    result = append_next_three_hour_auditor_audit_complete(
+        incident_id="inc-412",
+        summary="Three-hour audit cycle recorded",
+        outcome=outcome,
+        next_expected_event=next_expected_event,
+        deadline_ts="2026-07-04T00:00:00+00:00",
+        root=tmp_path,
+    )
+
+    assert result["kind"] == "incident.next_three_hour_auditor.audit_complete"
+    assert result["payload"]["outcome"] == outcome
+    assert result["payload"]["next_expected_event"] == next_expected_event
+
+
+def test_bridge_append_next_three_hour_auditor_audit_complete_rejects_invalid_outcome(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="outcome must be one of"):
+        append_next_three_hour_auditor_audit_complete(
+            incident_id="inc-413",
+            summary="Three-hour audit cycle recorded",
+            outcome="failed",
+            root=tmp_path,
+        )
+
+
+def test_bridge_append_next_three_hour_auditor_audit_complete_rejects_invalid_handoff(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="next_expected_event must be one of"):
+        append_next_three_hour_auditor_audit_complete(
+            incident_id="inc-414",
+            summary="Three-hour audit cycle recorded",
+            outcome="escalated",
+            next_expected_event="immediate_repair.repair_attempt",
+            root=tmp_path,
+        )
+
+
+def test_bridge_append_next_three_hour_auditor_audit_complete_rejects_repair_handoff(
+    tmp_path: Path,
+) -> None:
+    """Next-three-hour audit_complete must NOT hand off to repair authority."""
+    with pytest.raises(ValueError, match="next_expected_event must be one of"):
+        append_next_three_hour_auditor_audit_complete(
+            incident_id="inc-415",
+            summary="Should reject meta_repair handoff",
+            outcome="escalated",
+            next_expected_event="meta_repair.repair_attempt",
+            root=tmp_path,
+        )
+
+
 def test_bridge_append_github_issue_events_create_schema_valid_records(tmp_path: Path) -> None:
     published = append_github_issue_published(
         incident_id="inc-404",
@@ -478,7 +650,7 @@ def test_bridge_append_github_issue_events_create_schema_valid_records(tmp_path:
         number=77,
         url="https://github.com/acme/repo/issues/77",
         action="created",
-        next_expected_event="six_hour_auditor.diagnosis",
+        next_expected_event="next_three_hour_auditor.diagnosis",
         root=tmp_path,
     )
     failed = append_github_issue_publish_failed(
