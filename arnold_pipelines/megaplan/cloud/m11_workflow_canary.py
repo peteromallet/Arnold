@@ -1,11 +1,8 @@
-"""Honest pending contract for the deployed M11 workflow canary.
+"""Admission and CLI for the honest deployed M11 workflow canary.
 
-The current deployed runner does not expose one immutable, canonically joined
-evidence set covering journal lineage, acceptance snapshots, WBC gates,
-suspension/reentry, and declared tiebreaker routing.  Therefore this module
-admits an exact deployment/runtime obligation but deliberately cannot produce
-an accepting verdict.  It replaces credential-gated placeholder tests without
-laundering caller-authored observations into release proof.
+The producer and verifier deliberately live in separate modules.  The runner
+can create and freeze canonical workflow evidence but cannot author a verdict;
+the verifier is read-only over that evidence and alone owns ``verdict.json``.
 """
 
 from __future__ import annotations
@@ -24,7 +21,6 @@ from arnold_pipelines.megaplan.cloud.m11_live_canary import (
     _atomic_json,
     _digest,
     _inside,
-    _load_hashed_json,
     _load_json,
     _load_runtime_json,
     _sha256_file,
@@ -34,18 +30,11 @@ from arnold_pipelines.megaplan.cloud.m11_live_canary import (
 
 WORKFLOW_CANARY_PREFIX = "m11-workflow-"
 ADMISSION_KIND = "deployed_workflow_canary_admission"
-VERDICT_KIND = "deployed_workflow_canary_pending_verdict"
 REQUIRED_SCENARIOS = (
     "fresh_plan",
     "resume_from_suspension",
     "three_gate_iterations",
     "tiebreaker",
-)
-UNSUPPORTED_REASON = (
-    "the deployed CLI does not yet produce one immutable canonical evidence "
-    "bundle joining journal run/manifest identity, committed acceptance "
-    "snapshot, backend-neutral WBC start/resume/terminal gates, suspension "
-    "checkpoint/reentry, and declared tiebreaker decision routing"
 )
 _REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
 
@@ -159,8 +148,7 @@ def admit_deployed_workflow_canary(
         },
         "required_scenarios": list(REQUIRED_SCENARIOS),
         "admitted_at": _utc_now(),
-        "status": "admitted_pending_runner_support",
-        "unsupported_reason": UNSUPPORTED_REASON,
+        "status": "admitted",
     }
     admission["content_sha256"] = _digest(admission)
     _atomic_json(
@@ -171,61 +159,19 @@ def admit_deployed_workflow_canary(
     return admission
 
 
-def emit_pending_deployed_workflow_canary_verdict(
-    *,
-    root: str | Path,
-    base_root: str | Path = CANARY_BASE,
-) -> dict[str, Any]:
-    """Emit the only truthful verdict supported by the current deployment."""
-
-    private_root = validate_workflow_canary_root(root, base_root=base_root)
-    admission = _load_hashed_json(private_root / "workflow-canary" / "admission.json")
-    if admission.get("kind") != ADMISSION_KIND:
-        raise CanarySafetyError("workflow canary admission kind mismatch")
-    runtime_path = _inside(
-        private_root, admission["runtime_receipt"]["path"], name="runtime receipt"
-    )
-    if _sha256_file(runtime_path) != admission["runtime_receipt"]["sha256"]:
-        raise CanarySafetyError("runtime receipt changed after admission")
-    verdict = {
-        "schema": SCHEMA,
-        "kind": VERDICT_KIND,
-        "job_id": admission["job_id"],
-        "admission_sha256": admission["content_sha256"],
-        "deployment": admission["deployment"],
-        "runtime_receipt": admission["runtime_receipt"],
-        "scenarios": [
-            {
-                "scenario_id": scenario_id,
-                "status": "pending",
-                "unsupported_reason": UNSUPPORTED_REASON,
-            }
-            for scenario_id in REQUIRED_SCENARIOS
-        ],
-        "deployed_proof_status": "pending",
-        "passed": False,
-        "unsupported_reason": UNSUPPORTED_REASON,
-    }
-    verdict["content_sha256"] = _digest(verdict)
-    _atomic_json(
-        private_root / "workflow-canary" / "verdict.json",
-        verdict,
-        exclusive=True,
-    )
-    return verdict
-
-
 def verify_deployed_workflow_canary(
     *,
     root: str | Path,
     base_root: str | Path = CANARY_BASE,
 ) -> dict[str, Any]:
-    """Compatibility name for the fail-closed pending verdict."""
+    """Independently rederive and write the verifier-owned verdict."""
 
-    return emit_pending_deployed_workflow_canary_verdict(
-        root=root,
-        base_root=base_root,
+    private_root = validate_workflow_canary_root(root, base_root=base_root)
+    from .m11_workflow_canary_verifier import (
+        verify_and_write_deployed_workflow_canary,
     )
+
+    return verify_and_write_deployed_workflow_canary(root=private_root)
 
 
 def _main(argv: Sequence[str] | None = None) -> int:
@@ -234,6 +180,9 @@ def _main(argv: Sequence[str] | None = None) -> int:
     admit = commands.add_parser("admit")
     admit.add_argument("--root", type=Path, required=True)
     admit.add_argument("--config", type=Path, required=True)
+    run = commands.add_parser("run")
+    run.add_argument("--root", type=Path, required=True)
+    run.add_argument("--project-dir", type=Path, required=True)
     verify = commands.add_parser("verify")
     verify.add_argument("--root", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -242,9 +191,17 @@ def _main(argv: Sequence[str] | None = None) -> int:
         config = _load_json(_inside(private_root, args.config, name="admission config"))
         payload = admit_deployed_workflow_canary(root=private_root, **config)
         exit_code = 0
+    elif args.command == "run":
+        from .m11_workflow_canary_runner import run_deployed_workflow_canary
+
+        payload = run_deployed_workflow_canary(
+            root=private_root,
+            project_dir=args.project_dir.resolve(),
+        )
+        exit_code = 0
     else:
-        payload = emit_pending_deployed_workflow_canary_verdict(root=private_root)
-        exit_code = 1
+        payload = verify_deployed_workflow_canary(root=private_root)
+        exit_code = 0
     print(json.dumps(payload, sort_keys=True))
     return exit_code
 

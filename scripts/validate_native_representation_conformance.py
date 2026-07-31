@@ -178,14 +178,16 @@ def _validate_paths_exist(paths: list[str], *, repo_root: Path, field: str, row_
 
 
 def _is_valid_deployed_canary_verdict(path: Path) -> bool:
-    """No accepting verdict schema exists until canonical live joins ship.
+    """Rederive the canonical evidence instead of trusting verdict shape."""
 
-    Shape, labels, and a recomputed self-hash are intentionally insufficient.
-    The pending contract cannot authorize a ``verified`` conformance claim.
-    """
+    try:
+        from arnold_pipelines.megaplan.cloud.m11_workflow_canary_verifier import (
+            validate_stored_deployed_workflow_canary_verdict,
+        )
 
-    del path
-    return False
+        return validate_stored_deployed_workflow_canary_verdict(path)
+    except Exception:
+        return False
 
 
 def validate_deployed_canary_proof_claim(
