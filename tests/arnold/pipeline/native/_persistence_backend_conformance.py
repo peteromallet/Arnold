@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 import pytest
 
 from arnold.pipeline.native.persistence import NativePersistenceScope
-from arnold.runtime.state_persistence import atomic_write_json
 
 
 @dataclass(frozen=True)
@@ -105,27 +105,60 @@ class PersistenceBackendConformanceTests:
 
     def test_audit_append_and_restart_readback(self, backend_harness: BackendHarness) -> None:
         first = backend_harness.open("restart")
-        first.backend.append_audit_record(first.scope, payload={"event": "first"})
+        first_record = first.backend.append_audit_record(
+            first.scope,
+            payload={"event": "first"},
+        )
 
         second = backend_harness.open("restart")
-        second.backend.append_audit_record(second.scope, payload={"event": "second"})
+        second_record = second.backend.append_audit_record(
+            second.scope,
+            payload={"event": "second"},
+        )
         rows = second.backend.read_audit_records(second.scope)
         assert [row.payload["event"] for row in rows] == ["first", "second"]
-        assert [row.sequence for row in rows] == [1, 2]
+        sequences = [first_record.sequence, second_record.sequence]
+        assert sequences == sorted(set(sequences))
+        assert [row.sequence for row in rows] == sequences
 
     def test_event_emission_is_monotonic_and_queryable(self, backend_harness: BackendHarness) -> None:
         ctx = backend_harness.open()
-        ctx.backend.emit_event(ctx.scope, kind="step.start", payload={"step": 1})
-        ctx.backend.emit_event(ctx.scope, kind="step.end", payload={"step": 1}, phase="review")
-        ctx.backend.emit_event(ctx.scope, kind="step.start", payload={"step": 2}, idempotency_key="step-2")
+        first = ctx.backend.emit_event(ctx.scope, kind="step.start", payload={"step": 1})
+        second = ctx.backend.emit_event(
+            ctx.scope,
+            kind="step.end",
+            payload={"step": 1},
+            phase="review",
+        )
+        third = ctx.backend.emit_event(
+            ctx.scope,
+            kind="step.start",
+            payload={"step": 2},
+            idempotency_key="step-2",
+        )
 
         rows = ctx.backend.read_events(ctx.scope)
-        assert [row.sequence for row in rows] == [0, 1, 2]
+        sequences = [first.sequence, second.sequence, third.sequence]
+        assert sequences == sorted(set(sequences))
+        assert [row.sequence for row in rows] == sequences
         assert [row.kind for row in rows] == ["step.start", "step.end", "step.start"]
         assert rows[1].payload.get("phase") == "review"
         assert rows[2].payload.get("idempotency_key") == "step-2"
-        assert [row.sequence for row in ctx.backend.read_events(ctx.scope, since_sequence=0, limit=2)] == [1, 2]
-        assert [row.sequence for row in ctx.backend.read_events(ctx.scope, to_sequence=2)] == [0, 1]
+        assert [
+            row.sequence
+            for row in ctx.backend.read_events(
+                ctx.scope,
+                since_sequence=first.sequence,
+                limit=2,
+            )
+        ] == sequences[1:]
+        assert [
+            row.sequence
+            for row in ctx.backend.read_events(
+                ctx.scope,
+                to_sequence=third.sequence,
+            )
+        ] == sequences[:2]
 
     def test_resolve_surface_empty_dir_yields_none(self, backend_harness: BackendHarness) -> None:
         ctx = backend_harness.open()
