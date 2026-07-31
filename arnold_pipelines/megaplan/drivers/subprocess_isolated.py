@@ -108,13 +108,22 @@ class SubprocessIsolatedDriver:
             stderr=subprocess.PIPE,
             env=None,
         )
-        exit_code, stdout, stderr, _state = _supervise_subprocess(
-            proc,
-            ctx.plan_dir,
-            self.idle_cap,
-            effective_wall_cap,
-            args=self.argv,
-        )
+        try:
+            exit_code, stdout, stderr, _state = _supervise_subprocess(
+                proc,
+                ctx.plan_dir,
+                self.idle_cap,
+                effective_wall_cap,
+                args=self.argv,
+            )
+        finally:
+            # ``spawn`` gives this driver ownership of the parent-side pipe
+            # handles.  The supervisor drains them, but draining does not close
+            # the BufferedReaders; leaving that to garbage collection emits
+            # two ResourceWarnings per step under strict warning policy.
+            for stream in (proc.stdout, proc.stderr):
+                if stream is not None:
+                    stream.close()
         return StepResult(
             next="halt",
             state_patch={
