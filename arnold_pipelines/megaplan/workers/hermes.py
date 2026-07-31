@@ -612,13 +612,27 @@ def _install_content_tool_call_normalizer(AIAgent) -> None:
     original_api_call = AIAgent._interruptible_api_call
     original_streaming_api_call = AIAgent._interruptible_streaming_api_call
 
+    def _without_null_tool_fields(api_kwargs: dict) -> dict:
+        """Omit optional tool fields set to ``None`` before provider calls."""
+        if not any(api_kwargs.get(key) is None for key in ("tools", "tool_choice")):
+            return api_kwargs
+        normalized = dict(api_kwargs)
+        for key in ("tools", "tool_choice"):
+            if normalized.get(key) is None:
+                normalized.pop(key, None)
+        return normalized
+
     def _api_call_with_content_tool_calls(self, api_kwargs: dict):
-        response = original_api_call(self, api_kwargs)
+        response = original_api_call(self, _without_null_tool_fields(api_kwargs))
         _normalize_response_content_tool_calls(response)
         return response
 
     def _streaming_api_call_with_content_tool_calls(self, api_kwargs: dict, *, on_first_delta: callable = None):
-        response = original_streaming_api_call(self, api_kwargs, on_first_delta=on_first_delta)
+        response = original_streaming_api_call(
+            self,
+            _without_null_tool_fields(api_kwargs),
+            on_first_delta=on_first_delta,
+        )
         _normalize_response_content_tool_calls(response)
         return response
 
