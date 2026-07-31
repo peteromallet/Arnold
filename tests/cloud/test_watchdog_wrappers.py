@@ -9465,14 +9465,15 @@ def test_arnold_discord_dm_wrapper_redacts_payload_before_rendering(tmp_path: Pa
     env.pop("DISCORD_BOT_TOKEN", None)
     env.pop("DISCORD_DM_USER_ID", None)
     env.pop("PYTEST_CURRENT_TEST", None)
-    result = subprocess.run(
-        ["python3", str(WRAPPER_DIR / "arnold-discord-dm")],
-        stdin=payload_path.open("r", encoding="utf-8"),
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
+    with payload_path.open("r", encoding="utf-8") as payload_input:
+        result = subprocess.run(
+            ["python3", str(WRAPPER_DIR / "arnold-discord-dm")],
+            stdin=payload_input,
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
 
     assert result.returncode == 0, result.stderr
     wrapper_result = json.loads(result.stdout)
