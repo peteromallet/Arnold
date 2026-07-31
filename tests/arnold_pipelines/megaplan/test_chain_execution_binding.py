@@ -788,6 +788,125 @@ def test_runtime_cutover_accepts_exact_completed_terminal_cursor(
             assert state.to_dict()[field] == before[field]
 
 
+def test_runtime_cutover_cas_uses_verified_legacy_persisted_digest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, original_runtime, drift = _terminal_runtime_drift_case(
+        tmp_path, monkeypatch
+    )
+    legacy_runtime = json.loads(json.dumps(original_runtime))
+    legacy_runtime["shannon_dependencies"] = {
+        "schema": "arnold.megaplan.shannon_dependencies.v1",
+        "ready": True,
+        "content_sha256": "c" * 64,
+    }
+    legacy_payload = {
+        key: value
+        for key, value in legacy_runtime.items()
+        if key != "content_sha256"
+    }
+    legacy_runtime["content_sha256"] = _canonical_sha256(legacy_payload)
+    state.metadata["execution_binding"]["runtime_binding"][
+        "current_identity"
+    ] = legacy_runtime
+
+    cutover = rebind_runtime_identity(
+        spec_path,
+        state,
+        expected_previous_runtime_sha256=legacy_runtime["content_sha256"],
+        expected_active_runtime_sha256=drift["runtime_binding"]["active"][
+            "content_sha256"
+        ],
+        expected_current_milestone="@terminal",
+        expected_current_plan="@none",
+        reason="accept the exact legacy persisted runtime digest",
+    )
+
+    assert cutover["runtime_binding"]["status"] == "match"
+    assert cutover["event"]["from_runtime_sha256"] == legacy_runtime[
+        "content_sha256"
+    ]
+
+
+def test_runtime_cutover_rejects_normalized_alias_for_legacy_persisted_digest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path, state, original_runtime, drift = _terminal_runtime_drift_case(
+        tmp_path, monkeypatch
+    )
+    legacy_runtime = json.loads(json.dumps(original_runtime))
+    legacy_runtime["shannon_dependencies"] = {"ready": True}
+    legacy_runtime["content_sha256"] = _canonical_sha256(
+        {
+            key: value
+            for key, value in legacy_runtime.items()
+            if key != "content_sha256"
+        }
+    )
+    state.metadata["execution_binding"]["runtime_binding"][
+        "current_identity"
+    ] = legacy_runtime
+
+    with pytest.raises(CliError, match="previous runtime SHA-256 does not match"):
+        rebind_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=original_runtime["content_sha256"],
+            expected_active_runtime_sha256=drift["runtime_binding"]["active"][
+                "content_sha256"
+            ],
+            expected_current_milestone="@terminal",
+            expected_current_plan="@none",
+            reason="reject a normalized alias instead of the persisted digest",
+        )
+
+
+@pytest.mark.parametrize("tamper", ["digest", "unknown_field"])
+def test_runtime_cutover_rejects_unverified_persisted_runtime_extensions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper: str,
+) -> None:
+    spec_path, state, original_runtime, drift = _terminal_runtime_drift_case(
+        tmp_path, monkeypatch
+    )
+    persisted = json.loads(json.dumps(original_runtime))
+    if tamper == "digest":
+        persisted["shannon_dependencies"] = {"ready": True}
+    else:
+        persisted["unexpected_extension"] = {"ready": True}
+        persisted["content_sha256"] = _canonical_sha256(
+            {
+                key: value
+                for key, value in persisted.items()
+                if key != "content_sha256"
+            }
+        )
+    state.metadata["execution_binding"]["runtime_binding"][
+        "current_identity"
+    ] = persisted
+
+    message = (
+        "persisted runtime identity digest is invalid"
+        if tamper == "digest"
+        else "unsupported fields"
+    )
+    with pytest.raises(CliError, match=message):
+        rebind_runtime_identity(
+            spec_path,
+            state,
+            expected_previous_runtime_sha256=persisted["content_sha256"],
+            expected_active_runtime_sha256=drift["runtime_binding"]["active"][
+                "content_sha256"
+            ],
+            expected_current_milestone="@terminal",
+            expected_current_plan="@none",
+            reason="reject an unauthenticated persisted identity",
+        )
+
+
 @pytest.mark.parametrize(
     ("invalid_state", "message"),
     [
