@@ -1157,7 +1157,7 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
         _normalize_settled_decisions(gate_summary)
         _merge_resolution_tradeoffs_into_payload(gate_summary, worker.payload)
         _write_gate_carry(plan_dir, gate_summary, iteration=iteration)
-        gate_hash = _write_gate_json(plan_dir, gate_summary)
+        gate_hash = _write_gate_json(plan_dir, gate_summary, iteration=iteration)
         try:
             from arnold_pipelines.megaplan.observability.work_ledger import (
                 WorkClass,

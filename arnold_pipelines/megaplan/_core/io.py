@@ -391,6 +391,48 @@ def atomic_write_json(path: Path, data: Any, *, _plan_dir: Path | None = None) -
     atomic_write_text(path, json_dump(data), _plan_dir=_plan_dir)
 
 
+def write_immutable_json(path: Path, data: Any) -> None:
+    """Create one JSON artifact without ever replacing existing bytes.
+
+    Replaying the exact same write is idempotent.  Reusing an immutable
+    identity for different bytes is an integrity error.
+    """
+    content = json_dump(data).encode("utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temp_path = Path(temp_name)
+    try:
+        try:
+            remaining = memoryview(content)
+            while remaining:
+                written = os.write(fd, remaining)
+                if written <= 0:
+                    raise OSError("short write while staging immutable artifact")
+                remaining = remaining[written:]
+            _fsync_file_descriptor(fd)
+        finally:
+            os.close(fd)
+
+        try:
+            os.link(temp_path, path, follow_symlinks=False)
+        except FileExistsError:
+            if path.is_file() and not path.is_symlink() and path.read_bytes() == content:
+                return
+            raise RuntimeError(
+                f"immutable artifact identity already contains different bytes: {path}"
+            )
+        fsync_dir(path.parent)
+    finally:
+        try:
+            temp_path.unlink(missing_ok=True)
+        finally:
+            fsync_dir(path.parent)
+
+
 def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 

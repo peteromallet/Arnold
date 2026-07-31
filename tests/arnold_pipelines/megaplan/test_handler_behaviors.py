@@ -28,6 +28,71 @@ from arnold_pipelines.megaplan.handlers.structured_output import (
 from arnold_pipelines.megaplan.workers import WorkerResult
 
 
+def test_gate_evidence_versions_preserve_old_decisions_and_legacy_latest(
+    tmp_path: Path,
+) -> None:
+    from arnold_pipelines.megaplan.handlers.shared import _write_gate_json
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    first = {"recommendation": "ITERATE", "rationale": "first pass"}
+    second = {"recommendation": "PROCEED", "rationale": "third pass"}
+
+    _write_gate_json(plan_dir, first, iteration=1)
+    _write_gate_json(plan_dir, second, iteration=3)
+
+    assert json.loads((plan_dir / "gate_v1.json").read_text()) == first
+    assert json.loads((plan_dir / "gate_v3.json").read_text()) == second
+    assert json.loads((plan_dir / "gate.json").read_text()) == second
+
+
+def test_gate_evidence_resume_is_idempotent_but_conflicting_reuse_fails(
+    tmp_path: Path,
+) -> None:
+    from arnold_pipelines.megaplan.handlers.shared import _write_gate_json
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    original = {"recommendation": "ITERATE", "rationale": "stable"}
+    conflicting = {"recommendation": "PROCEED", "rationale": "replacement"}
+
+    _write_gate_json(plan_dir, original, iteration=2)
+    immutable_bytes = (plan_dir / "gate_v2.json").read_bytes()
+    _write_gate_json(plan_dir, original, iteration=2)
+
+    assert (plan_dir / "gate_v2.json").read_bytes() == immutable_bytes
+    with pytest.raises(RuntimeError, match="immutable artifact identity"):
+        _write_gate_json(plan_dir, conflicting, iteration=2)
+    assert json.loads((plan_dir / "gate_v2.json").read_text()) == original
+    assert json.loads((plan_dir / "gate.json").read_text()) == original
+
+
+def test_immutable_gate_staging_failure_never_publishes_partial_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold_pipelines.megaplan._core import io
+
+    target = tmp_path / "gate_v1.json"
+    real_write = io.os.write
+    calls = 0
+
+    def partial_then_fail(fd: int, content: bytes | memoryview) -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return real_write(fd, bytes(content[:4]))
+        raise OSError("injected staging failure")
+
+    monkeypatch.setattr(io.os, "write", partial_then_fail)
+
+    with pytest.raises(OSError, match="injected staging failure"):
+        io.write_immutable_json(target, {"recommendation": "PROCEED"})
+
+    assert not target.exists()
+    assert list(tmp_path.glob(".gate_v1.json.*.tmp")) == []
+
+
 def test_evaluator_promotion_does_not_erase_nonempty_worker_verdict() -> None:
     from arnold_pipelines.megaplan.orchestration.critique_runtime import (
         _prefer_nonempty_evaluator_payload,
