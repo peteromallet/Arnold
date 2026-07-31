@@ -16,11 +16,6 @@ contract is deferred to M10.
 
 from __future__ import annotations
 
-# M9: _non_authoritative marker — control-path decisions in this module
-# are projection-backed (non-authoritative) until M10 integrates live
-# reread of Run Authority grant/fence + Custody lease/epoch + WBC evidence.
-_m9_non_authoritative = True
-
 import argparse
 import base64
 import hashlib
@@ -29,7 +24,6 @@ import logging
 import os
 import re
 import shlex
-import signal
 import socket
 import subprocess
 import sys
@@ -59,7 +53,7 @@ from arnold.runtime.envelope import (
 from arnold_pipelines.megaplan._core.phase_runtime import _pid_alive
 from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.handlers.shared import _warn_best_effort_emit_failure, _warn_read_fallback
-from arnold_pipelines.megaplan.runtime.process import kill_group, spawn
+from arnold_pipelines.megaplan.runtime.process import kill_group
 from arnold_pipelines.megaplan.observability.events import (
     EventKind,
     emit as emit_event,
@@ -81,9 +75,7 @@ from arnold_pipelines.megaplan.orchestration.authority_readers import (
     effective_execute_completed_task_ids,
 )
 from arnold_pipelines.megaplan.orchestration.recovery_policy import (
-    CIRCUIT_OPEN_THRESHOLD,
     CircuitState,
-    FailureClass,
     RecoveryPolicy,
     circuit_transition,
     classify_failure_class,
@@ -126,6 +118,11 @@ from arnold_pipelines.megaplan.planning.state import (
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
 )
+
+# M9: _non_authoritative marker — control-path decisions in this module
+# are projection-backed (non-authoritative) until M10 integrates live
+# reread of Run Authority grant/fence + Custody lease/epoch + WBC evidence.
+_m9_non_authoritative = True
 
 
 DEFAULT_STALL_THRESHOLD = 5
@@ -1053,30 +1050,17 @@ def _override_adopt_execution_in_process(
     plan: str,
     reason: str,
 ) -> tuple[int, str, str]:
-    try:
-        from arnold_pipelines.megaplan._core.io import json_dump
-        from arnold_pipelines.megaplan.handlers.override import handle_override
-
-        response = handle_override(
-            root,
-            argparse.Namespace(
-                override_action="adopt-execution",
-                plan=plan,
-                reason=reason,
-            ),
-        )
-        return 0, json_dump(response), ""
-    except CliError as error:
-        payload: dict[str, Any] = {
-            "success": False,
-            "error": error.code,
-            "message": error.message,
-        }
-        if error.extra:
-            payload["details"] = dict(error.extra)
-        return error.exit_code, "", json.dumps(payload)
-    except Exception as error:  # noqa: BLE001 - match CLI failure surface.
-        return 1, "", f"{type(error).__name__}: {error}"
+    return _run_override_command(
+        [
+            "override",
+            "adopt-execution",
+            "--plan",
+            plan,
+            "--reason",
+            reason,
+        ],
+        cwd=root,
+    )
 
 
 def _with_project_dir_arg(args: list[str], project_dir: Path) -> list[str]:
@@ -6325,18 +6309,6 @@ def drive(
                     reason=reason,
                     last_phase=last_phase,
                     blocking_reasons=[reason],
-                )
-                _emit_work_boundary(
-                    "retry_wait",
-                    phase=next_step,
-                    elapsed_ms=0,
-                    metadata={
-                        "retry": blocked_retry_count,
-                        "max_retries": max_blocked_retries,
-                        "retry_strategy": "fresh_session",
-                        "exit_kind": ek,
-                        "blocking_reasons": deviations_list,
-                    },
                 )
             elif ek == ExitKind.blocked_by_quality.value:
                 # Quality-gate block — retry with cap, using result.deviations

@@ -3,7 +3,6 @@ import warnings
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from arnold.pipeline.native.ir import NativeProgram
 from arnold_pipelines.megaplan.registry import (
@@ -31,7 +30,7 @@ def _make_good_pipeline(tmp_path: Path) -> Path:
         "arnold_api_version = '1.0'\n"
         "capabilities = ('test',)\n"
         "def build_pipeline():\n"
-        "    from arnold_pipelines.megaplan.step_types import Pipeline\n"
+        "    from arnold.pipeline.types import Pipeline\n"
         "    return Pipeline(stages={}, entry='done')\n",
         encoding="utf-8",
     )
@@ -77,7 +76,7 @@ def _make_native_projected_pipeline(tmp_path: Path) -> Path:
         "capabilities = ('test',)\n"
         "def build_pipeline():\n"
         "    from arnold.pipeline.native.ir import NativeProgram\n"
-        "    from arnold_pipelines.megaplan.step_types import Pipeline\n"
+        "    from arnold.pipeline.types import Pipeline\n"
         "    return Pipeline(stages={}, entry='', native_program=NativeProgram(name='native-projected'))\n",
         encoding="utf-8",
     )
@@ -100,7 +99,7 @@ def _make_graph_compat_pipeline(tmp_path: Path) -> Path:
         "    def run_native_pipeline(self, **kwargs):\n"
         "        return {'ok': True, 'kwargs': kwargs}\n"
         "def build_pipeline():\n"
-        "    from arnold_pipelines.megaplan.step_types import Pipeline\n"
+        "    from arnold.pipeline.types import Pipeline\n"
         "    return Pipeline(stages={}, entry='', resource_bundles=(_Runner(),))\n",
         encoding="utf-8",
     )
@@ -337,13 +336,6 @@ def test_manifest_discovery_does_not_exec_valid_module_by_default(
     assert [d.status for d in result] == ["discovered"]
 
 
-@pytest.mark.skip(
-    reason=(
-        "Tests legacy PipelineRegistry APIs (registration_kind_for, disposition_for, "
-        "graph_compatibility resource bundles) that were removed when "
-        "arnold/pipelines/megaplan/ was deleted."
-    )
-)
 def test_registry_keeps_native_graph_compat_and_rejected_dispositions_separate(
     tmp_path: Path,
     monkeypatch,
@@ -368,9 +360,15 @@ def test_registry_keeps_native_graph_compat_and_rejected_dispositions_separate(
     (user_dir / "SKILL.md").write_text("shared skill\n", encoding="utf-8")
 
     from arnold_pipelines.megaplan.runtime import discovery as discovery_mod
+    import arnold_pipelines.megaplan.registry as registry_mod
 
     monkeypatch.setattr(
         discovery_mod,
+        "BLESSED_ALLOWLIST",
+        (str(native_module.resolve()), str(graph_module.resolve())),
+    )
+    monkeypatch.setattr(
+        registry_mod,
         "BLESSED_ALLOWLIST",
         (str(native_module.resolve()), str(graph_module.resolve())),
     )
@@ -383,8 +381,6 @@ def test_registry_keeps_native_graph_compat_and_rejected_dispositions_separate(
         names = registry.names()
 
     assert names == ("graph-compat", "native-projected")
-    assert registry.registration_kind_for("native-projected") == "native"
-    assert registry.registration_kind_for("graph-compat") == "graph_compatibility"
 
     native_pipeline = registry.get("native-projected")
     assert native_pipeline is not None
@@ -392,7 +388,7 @@ def test_registry_keeps_native_graph_compat_and_rejected_dispositions_separate(
     native_meta = registry.metadata_for("native-projected")
     assert native_meta["driver"] == ("native", "test")
     assert native_meta["manifest_hash"].startswith("sha256:")
-    assert native_meta["registration_kind"] == "native"
+    assert native_meta["compatibility_classification"] == "native"
 
     graph_pipeline = registry.get("graph-compat")
     assert graph_pipeline is not None
@@ -401,10 +397,13 @@ def test_registry_keeps_native_graph_compat_and_rejected_dispositions_separate(
     assert graph_pipeline.resource_bundles[0].run_native_pipeline()["ok"] is True
     graph_meta = registry.metadata_for("graph-compat")
     assert graph_meta["driver"] == ("graph", "compat")
-    assert graph_meta["registration_kind"] == "graph_compatibility"
+    assert graph_meta["compatibility_classification"] == "graph_compatibility"
 
-    rejected = registry.disposition_for("bad-missing-manifest-field")
-    assert rejected is not None
+    rejected = next(
+        disposition
+        for disposition in discovery_mod.scan_python_pipelines()
+        if disposition.path == bad_module
+    )
     assert rejected.status == "rejected"
     assert rejected.manifest is None
     assert "missing required field 'default_profile'" in rejected.reason

@@ -158,7 +158,6 @@ def test_validate_manifest_rejects_duplicate_coverage_and_missing_split_children
 
 
 def test_cli_summary_reports_disposition_and_package_counts(tmp_path: Path) -> None:
-    module = _load_module()
     repo_root, manifest_path = _init_repo(
         tmp_path,
         {

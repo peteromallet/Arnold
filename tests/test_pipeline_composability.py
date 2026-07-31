@@ -17,7 +17,7 @@ Five specific claims the brief makes that need explicit tests:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import ClassVar
 from pathlib import Path
 from typing import Any
