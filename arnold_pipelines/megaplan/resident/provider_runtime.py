@@ -65,7 +65,7 @@ def claude_tools_for(toolsets: tuple[str, ...]) -> str:
 
 
 def provider_execution_contract(
-    *, backend: str, toolsets: str, max_tokens: int, timeout_s: float
+    *, backend: str, toolsets: str, max_tokens: int, timeout_s: float | None
 ) -> dict[str, Any]:
     normalized = normalize_toolsets(toolsets)
     capabilities = managed_agent_capabilities(backend)
@@ -76,7 +76,7 @@ def provider_execution_contract(
         )
     if max_tokens <= 0:
         raise ValueError("max_tokens must be positive")
-    if timeout_s <= 0:
+    if timeout_s is not None and timeout_s <= 0:
         raise ValueError("provider timeout must be positive")
     return {
         "schema_version": "arnold-managed-provider-capabilities-v1",
@@ -87,8 +87,8 @@ def provider_execution_contract(
             "tool_policy_enforcement": capabilities.generic_tool_policy,
             "max_tokens": int(max_tokens),
             "max_tokens_enforcement": capabilities.max_output_tokens,
-            "timeout_s": float(timeout_s),
-            "timeout_enforcement": capabilities.provider_timeout,
+            "timeout_s": float(timeout_s) if timeout_s is not None else None,
+            "timeout_enforcement": capabilities.provider_timeout if timeout_s is not None else "not_configured",
         },
     }
 
