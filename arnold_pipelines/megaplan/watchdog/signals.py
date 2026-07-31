@@ -23,6 +23,9 @@ from arnold_pipelines.megaplan.pipelines.live_supervisor.model import (
     SignalBundle,
 )
 from arnold_pipelines.megaplan.observability.liveness import has_active_in_flight_llm
+from arnold_pipelines.megaplan.observability.event_checkpoint import (
+    read_bounded_event_projection,
+)
 from arnold_pipelines.megaplan.watchdog.worker_identity import (
     LivenessState,
     ProcessCorrelationSnapshot,
@@ -40,22 +43,11 @@ def _read_json(path: Path) -> Any | None:
 
 
 def _read_events(plan_dir: Path) -> list[dict]:
-    events_file = plan_dir / "events.ndjson"
-    if not events_file.is_file():
-        return []
-    events: list[dict] = []
     try:
-        for line in events_file.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                events.append(json.loads(line))
-            except Exception:
-                continue
+        projection = read_bounded_event_projection(plan_dir)
     except Exception:
         return []
-    return events
+    return list(projection.events)
 
 
 def _parse_iso(ts: str) -> float | None:

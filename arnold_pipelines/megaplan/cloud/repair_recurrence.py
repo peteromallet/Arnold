@@ -694,6 +694,7 @@ def build_advancement_snapshot(
         "execute_empty_batch": _empty_execute_batch_summary(context),
         "canonical_cursor": {
             "plan": _plan_identity(context),
+            "recovered_phase": _as_text(plan_failure.get("phase")),
             "completed_count": _as_int(chain_state.get("completed_count")),
             "current_milestone_index": _as_int(chain_state.get("current_milestone_index")),
             "current_state": _as_text(
@@ -710,6 +711,14 @@ def has_advancement(
     previous: Mapping[str, Any] | None,
     current: Mapping[str, Any],
 ) -> bool:
+    """Return whether recovery crossed a durable workflow boundary.
+
+    Process liveness, LLM heartbeats, and journal growth prove that a worker is
+    active; they do not prove that the phase which triggered recovery finished.
+    Counting those signals as advancement resets the recurrence breaker as soon
+    as a relaunched phase starts, allowing the same runner to die at the phase
+    handoff indefinitely without reaching meta-repair.
+    """
     if not previous:
         return False
     prev = _as_dict(previous)
@@ -732,8 +741,55 @@ def has_advancement(
     curr_index = _as_int(curr_cursor.get("current_milestone_index"))
     if prev_index is not None and curr_index is not None and curr_index > prev_index:
         return True
-    if _as_text(prev_cursor.get("current_state")).lower() not in {"done", "complete", "completed"}:
-        if _as_text(curr_cursor.get("current_state")).lower() in {"done", "complete", "completed"}:
+
+    state_rank = {
+        "initialized": 0,
+        "prepped": 1,
+        "planned": 2,
+        "critiqued": 3,
+        "gated": 4,
+        "revised": 5,
+        "finalized": 6,
+        "executed": 7,
+        "reviewed": 8,
+        "done": 9,
+        "complete": 9,
+        "completed": 9,
+    }
+    phase_target_rank = {
+        "prep": 1,
+        "plan": 2,
+        "critique": 3,
+        "gate": 4,
+        "revise": 5,
+        "finalize": 6,
+        "execute": 7,
+        "review": 8,
+        "feedback": 9,
+    }
+    current_rank = state_rank.get(
+        _as_text(curr_cursor.get("current_state")).lower()
+    )
+    recovered_phase = _as_text(
+        prev_cursor.get("recovered_phase") or prev.get("phase")
+    ).lower()
+    recovered_rank = phase_target_rank.get(recovered_phase)
+    if recovered_rank is not None:
+        # Success is evidence *past* the boundary that repair targeted.  An
+        # execute recovery reaching only ``executed`` has not transferred
+        # custody to review and must not reset recurrence.
+        return current_rank is not None and current_rank > recovered_rank
+
+    if _as_text(prev_cursor.get("current_state")).lower() not in {
+        "done",
+        "complete",
+        "completed",
+    }:
+        if _as_text(curr_cursor.get("current_state")).lower() in {
+            "done",
+            "complete",
+            "completed",
+        }:
             return True
     return False
 
