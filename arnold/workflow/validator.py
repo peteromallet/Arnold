@@ -35,8 +35,11 @@ from typing import Any, Mapping
 from arnold.pipeline.contracts import BindResult, RepairGradient, bind
 from arnold.pipeline.declaration_lowering import lower_stage_declarations
 from arnold.agent.costing.model_resource_capabilities import prove_stage_required_capabilities
-from arnold.execution.step_invocation import StepInvocationAdapterRegistry
 from arnold.pipeline.types import Port, PortRef, ReadRef, WriteRef
+from arnold.workflow.invocation_validation import (
+    DefaultInvocationRegistryView,
+    InvocationRegistryView,
+)
 
 
 CONTRACT_ERROR_CODE_MAP: dict[str, str] = {
@@ -583,7 +586,7 @@ def validate(
     pipeline: Any,
     options: ValidationOptions | None = None,
     *,
-    adapter_registry: StepInvocationAdapterRegistry | None = None,
+    adapter_registry: InvocationRegistryView | None = None,
     context: ManifestValidationContext | None = None,
 ) -> Diagnostics:
     """Run the full graph-shape validation over *pipeline*.
@@ -831,7 +834,7 @@ def _capability_evidence_details(proof: Any) -> list[dict[str, Any]]:
 def validate_invocation_requirements(
     pipeline: Any,
     *,
-    adapter_registry: StepInvocationAdapterRegistry | None = None,
+    adapter_registry: InvocationRegistryView | None = None,
 ) -> Diagnostics:
     """Validate invocation kinds and fail-closed required capabilities.
 
@@ -842,7 +845,11 @@ def validate_invocation_requirements(
     """
     diag = Diagnostics()
     stages: Mapping[str, Any] = getattr(pipeline, "stages", {}) or {}
-    registry = adapter_registry if adapter_registry is not None else StepInvocationAdapterRegistry()
+    registry = (
+        adapter_registry
+        if adapter_registry is not None
+        else DefaultInvocationRegistryView()
+    )
 
     for stage_name in sorted(stages):
         stage = stages[stage_name]

@@ -1,0 +1,73 @@
+{
+  "root_path": "root",
+  "nodes": [
+    {
+      "path": "root",
+      "parent_path": null,
+      "run_path": "root",
+      "step_path": null,
+      "parent_run_path": null,
+      "call_site_path": [],
+      "kind": "pipeline",
+      "name": "root",
+      "children": [
+        "root/draft",
+        "root/tighten",
+        "root/emit"
+      ],
+      "metadata": {
+        "program_name": "jokes",
+        "program_stable_id": null,
+        "status": "running"
+      }
+    },
+    {
+      "path": "root/draft",
+      "parent_path": "root",
+      "run_path": "root",
+      "step_path": "root/draft",
+      "parent_run_path": null,
+      "call_site_path": [],
+      "kind": "phase",
+      "name": "draft",
+      "children": [],
+      "metadata": {
+        "pc": 0,
+        "op": "phase",
+        "stage_id": "draft__pc0"
+      }
+    },
+    {
+      "path": "root/tighten",
+      "parent_path": "root",
+      "run_path": "root",
+      "step_path": "root/tighten",
+      "parent_run_path": null,
+      "call_site_path": [],
+      "kind": "phase",
+      "name": "tighten",
+      "children": [],
+      "metadata": {
+        "pc": 1,
+        "op": "phase",
+        "stage_id": "tighten__pc1"
+      }
+    },
+    {
+      "path": "root/emit",
+      "parent_path": "root",
+      "run_path": "root",
+      "step_path": "root/emit",
+      "parent_run_path": null,
+      "call_site_path": [],
+      "kind": "phase",
+      "name": "emit",
+      "children": [],
+      "metadata": {
+        "pc": 2,
+        "op": "phase",
+        "stage_id": "emit__pc2"
+      }
+    }
+  ]
+}

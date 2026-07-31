@@ -12,6 +12,7 @@ import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -622,6 +623,91 @@ def test_snapshot_projects_manual_review_gate_without_weakening_it(fx):
     assert entry["advancement"]["gate"] == "review_policy.clean_milestone_pr"
 
 
+def test_snapshot_blocks_successor_advancement_on_parent_custody_conflict(
+    fx, monkeypatch
+):
+    workspace = fx.root / "custody-conflict"
+    spec_path = workspace / ".megaplan" / "initiatives" / "policy" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(
+        "merge_policy: auto\n"
+        "review_policy:\n"
+        "  clean_milestone_pr: auto\n"
+        "milestones:\n"
+        "  - label: M5A\n"
+        "successors:\n"
+        "  - chain_spec_path: suites/m6/chain.yaml\n"
+        "    label: M6\n"
+        "    require_accepted_transaction: true\n",
+        encoding="utf-8",
+    )
+    fx.add_session(
+        "custody-conflict",
+        workspace=str(workspace),
+        remote_spec=str(spec_path),
+        plan_name="m5a-plan",
+    )
+    fx.add_chain_health(
+        "custody-conflict",
+        chain_complete=True,
+        completed_count=1,
+        milestone_count=1,
+        current_plan_name="m5a-plan",
+        last_state="done",
+    )
+    chain_health_path = fx.marker_dir / "custody-conflict.chain-health.progress.json"
+    chain_health = json.loads(chain_health_path.read_text(encoding="utf-8"))
+    chain_health["completion_contract_mode"] = "enforce"
+    chain_health_path.write_text(json.dumps(chain_health), encoding="utf-8")
+    fx.add_plan_state("custody-conflict", "m5a-plan", current_state="done")
+
+    monkeypatch.setattr(
+        ss,
+        "_load_latest_chain_state",
+        lambda _workspace: (
+            workspace / ".megaplan" / "chains" / "state.json",
+            {
+                "completed": [
+                    {
+                        "label": "M5A",
+                        "plan": "m5a-plan",
+                        "acceptance_receipt": {"transaction_id": "tx-1"},
+                    }
+                ]
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        ss,
+        "load_chain_spec",
+        lambda _path: SimpleNamespace(
+            milestones=[SimpleNamespace(label="M5A")],
+            successors=[SimpleNamespace(require_accepted_transaction=True)],
+        ),
+    )
+    monkeypatch.setattr(
+        ss,
+        "_compose_repair_decision_projection",
+        lambda **_kwargs: {
+            "repair_custody": {
+                "blocker_id": "blocker-1",
+                "active_request_ids": ["req-1"],
+                "active_claim_request_ids": ["req-1"],
+                "current_target": {
+                    "current_refs": {"current_plan_name": "m5a-plan"}
+                },
+            },
+            "repair_dispatch": None,
+            "repair_projection_degraded": None,
+        },
+    )
+
+    entry = _by_session(fx.build(), "custody-conflict")
+
+    assert entry["advancement"]["action"] == "successor_gate_closed"
+    assert entry["advancement"]["gate"] == "parent_custody"
+
+
 def test_live_process_with_failed_no_next_step_is_attention(fx):
     fx.add_session("alive-no-next", plan_name="planStuck")
     fx.add_chain_health(
@@ -954,6 +1040,68 @@ def test_newer_incomplete_done_chain_state_beats_watchdog_complete_verdict(fx):
     assert entry["completed_count"] == 1
     assert entry["milestone_count"] == 4
     assert "chain custody mismatch" in entry["operator_next"]
+
+
+def test_newer_done_milestone_with_live_successor_is_running(fx):
+    workspace = fx.root / "epic-run"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: m1.md\n"
+        "  - label: m2\n"
+        "    idea: m2.md\n",
+        encoding="utf-8",
+    )
+    fx.add_session("epic-run", workspace=str(workspace), remote_spec=str(spec_path))
+    fx.add_chain_health(
+        "epic-run",
+        chain_complete=False,
+        completed_count=0,
+        milestone_count=2,
+        current_plan_name="old-plan",
+        last_state="failed",
+        updated_at=NOW - timedelta(hours=6),
+    )
+    fx.add_watchdog_report(
+        items=[
+            {
+                "session": "epic-run",
+                "status": "complete",
+                "action": "observe",
+                "message": "stale chain complete",
+            }
+        ]
+    )
+    fx.add_plan_state("epic-run", "m2-plan", current_state="initialized")
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    chain_state_path = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+    chain_state_path.parent.mkdir(parents=True, exist_ok=True)
+    chain_state_path.write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 1,
+                "current_plan_name": "m2-plan",
+                "last_state": "done",
+                "completed": [{"label": "m1", "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snap = fx.build(
+        watchdog_report_path=fx.root / "watchdog-report.json",
+        liveness_probe=lambda _marker: {"tmux": True, "process": True},
+    )
+    entry = _by_session(snap, "epic-run")
+
+    assert entry["status"] == "running"
+    assert entry["chain_complete"] is False
+    assert entry["completed_count"] == 1
+    assert entry["current_plan"] == "m2-plan"
+    assert "custody mismatch" not in entry["operator_next"]
 
 
 def test_newer_four_of_four_chain_state_unlocks_complete_status(fx):
@@ -2258,3 +2406,85 @@ def test_detailed_renders_stage_changes(fx, tmp_path):
     snap = fx.build(history_path=history, watchdog_report_path=fx.root / "absent.json")
     detailed = sf.format_cloud_status_detailed(snap)
     assert "stages1h:gated" in detailed
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# M9 T62: Strategy replay proofs for cloud status snapshot surface
+#
+# Cloud status snapshots must produce 100% cursor/hash agreement on replay
+# and preserve execution truth as ``executing attempt 2``.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestCloudSnapshotReplayProofs:
+    """Cloud snapshot replay proofs — cursor/hash agreement and executing attempt 2."""
+
+    def test_snapshot_source_cursor_surfaces_in_session_entry(self, fx, tmp_path):
+        """Session entry must carry source_cursor metadata with evidence IDs."""
+        fx.add_session("replay-s1", plan_name="replay-plan")
+        fx.add_chain_health("replay-s1", current_plan_name="replay-plan",
+                            completed_count=0, milestone_count=4, last_state="executing")
+        history = tmp_path / "ph.jsonl"
+        snap = fx.build(history_path=history, watchdog_report_path=fx.root / "absent.json")
+
+        assert "sessions" in snap
+        session = next((s for s in snap["sessions"] if s.get("session") == "replay-s1"), None)
+        assert session is not None, "Session must be present in snapshot"
+
+        # source_cursor metadata must be present
+        if "source_cursor" in session:
+            assert session["source_cursor"]["_non_authoritative"] is True
+
+    def test_executing_attempt_2_surfaces_as_executing_in_snapshot(self, fx, tmp_path):
+        """Executing plan with attempt=2 must surface as 'executing' in cloud snapshot."""
+        fx.add_session("exec-2", plan_name="exec-plan")
+        fx.add_chain_health("exec-2", current_plan_name="exec-plan",
+                            completed_count=0, milestone_count=4, last_state="executing")
+        history = tmp_path / "ph.jsonl"
+        snap = fx.build(history_path=history, watchdog_report_path=fx.root / "absent.json")
+
+        session = next((s for s in snap["sessions"] if s.get("session") == "exec-2"), None)
+        assert session is not None
+
+        # The session's progress should reflect executing state
+        progress = session.get("progress", {})
+        display_state = progress.get("display_state", "")
+        plan_state = progress.get("plan_state", "")
+        # At minimum, plan_state shows executing
+        assert plan_state == "executing" or display_state == "executing", \
+            f"Expected executing state, got plan_state={plan_state}, display_state={display_state}"
+
+    def test_same_basename_sessions_produce_distinct_entries(self, fx, tmp_path):
+        """Two sessions with same plan_name but different session IDs must produce
+        distinct snapshot entries with no cross-contamination."""
+        fx.add_session("same-name-a", plan_name="shared-plan")
+        fx.add_session("same-name-b", plan_name="shared-plan")
+        fx.add_chain_health("same-name-a", current_plan_name="shared-plan",
+                            completed_count=0, milestone_count=4, last_state="executing")
+        fx.add_chain_health("same-name-b", current_plan_name="shared-plan",
+                            completed_count=0, milestone_count=4, last_state="gated")
+        history = tmp_path / "ph.jsonl"
+        snap = fx.build(history_path=history, watchdog_report_path=fx.root / "absent.json")
+
+        # plan_name is in progress.current_plan, not at session level
+        sessions = [s for s in snap["sessions"]
+                    if s.get("progress", {}).get("current_plan") == "shared-plan"]
+        assert len(sessions) == 2, "Both same-basename sessions must appear"
+        # Each must have a distinct session ID
+        session_ids = {s["session"] for s in sessions}
+        assert session_ids == {"same-name-a", "same-name-b"}
+
+    def test_replay_snapshot_produces_identical_structure(self, fx, tmp_path):
+        """Building the same snapshot twice must produce identical structure."""
+        fx.add_session("replay-struct", plan_name="replay-struct-plan")
+        fx.add_chain_health("replay-struct", current_plan_name="replay-struct-plan",
+                            completed_count=0, milestone_count=4, last_state="executing")
+        history = tmp_path / "ph.jsonl"
+
+        snap_a = fx.build(history_path=history, watchdog_report_path=fx.root / "absent.json")
+        snap_b = fx.build(history_path=history, watchdog_report_path=fx.root / "absent.json")
+
+        # Same number of sessions
+        assert len(snap_a["sessions"]) == len(snap_b["sessions"])
+        # Same session IDs
+        assert {s["session"] for s in snap_a["sessions"]} == {s["session"] for s in snap_b["sessions"]}

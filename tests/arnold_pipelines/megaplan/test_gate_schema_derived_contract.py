@@ -17,10 +17,14 @@ from arnold_pipelines.megaplan.model_seam import (
     ModelStructuralAuditError,
     capture_step_output,
 )
+from arnold_pipelines.megaplan.north_star_actions import NORTH_STAR_ACTION_SCHEMA
 from arnold_pipelines.megaplan.orchestration.gate_checks import build_gate_artifact
-from arnold_pipelines.megaplan.prompts.gate import _write_gate_template
+from arnold_pipelines.megaplan.prompts.gate import (
+    _north_star_action_contract_instruction,
+    _write_gate_template,
+)
 from arnold_pipelines.megaplan.schema_projection import schema_property_names
-from arnold_pipelines.megaplan.schemas import SCHEMAS
+from arnold_pipelines.megaplan.schemas import SCHEMAS, strict_schema
 from arnold_pipelines.megaplan.workers import WorkerResult
 from arnold_pipelines.megaplan.workers.hermes import clean_parsed_payload
 
@@ -45,6 +49,9 @@ def _payload(**updates: object) -> dict[str, object]:
         "flag_resolutions": [],
         "accepted_tradeoffs": [],
         "north_star_actions": [],
+        "tiebreaker_flag_ids": [],
+        "tiebreaker_fuzzy_group_id": "",
+        "tiebreaker_question": "",
     }
     payload.update(updates)
     return payload
@@ -104,6 +111,118 @@ def test_gate_rejects_unknown_top_level_fields_instead_of_stripping_them() -> No
 
     with pytest.raises(ModelStructuralAuditError, match="model_commentary"):
         capture_step_output(_invocation(), payload)
+
+
+def test_gate_reader_enforces_worker_strict_action_inventory() -> None:
+    action = {
+        "id": "NSA7",
+        "question_id": "Q7",
+        "question": "What must change?",
+        "concern": "The receipt is missing.",
+        "category": "correctness",
+        "action_type": "must_fix",
+        "severity": "significant",
+        "severity_source": "model",
+        "evidence": "The canonical artifact has no receipt.",
+        "plan_refs": ["Step 7"],
+        "required_change": "Persist and bind the receipt.",
+    }
+    action.pop("question_id")
+
+    with pytest.raises(ModelStructuralAuditError, match="question_id"):
+        capture_step_output(_invocation(), _payload(north_star_actions=[action]))
+
+
+def test_scratch_promotion_rejects_unknown_gate_field(tmp_path) -> None:
+    payload = _payload(model_commentary="must remain a producer error")
+    scratch = tmp_path / "gate_output.json"
+    seed = json.dumps(_payload())
+    scratch.write_text(json.dumps(payload), encoding="utf-8")
+    worker = WorkerResult(payload=_payload(), raw_output="", duration_ms=1, cost_usd=0.0)
+
+    with pytest.raises(ValueError, match="model_commentary"):
+        promote_scratch(
+            tmp_path,
+            "gate_output.json",
+            schema_property_names(
+                SCHEMAS["gate.json"],
+                contract="gate scratch promotion",
+            ),
+            worker,
+            seed_json=seed,
+        )
+
+
+def test_gate_prompt_north_star_contract_matches_strict_worker_schema() -> None:
+    strict_action_schema = strict_schema(NORTH_STAR_ACTION_SCHEMA)
+    required = strict_action_schema["required"]
+
+    instruction = _north_star_action_contract_instruction()
+
+    for field in required:
+        assert f'"{field}"' in instruction
+    assert "Do not omit fields" in instruction
+    assert '"question_id": "route-authority"' in instruction
+    assert '"required_change": "Make the canonical route' in instruction
+    assert '"severity_source": "schema"' in instruction
+
+
+def test_exact_incident_incomplete_north_star_action_fails_strict_worker_audit() -> None:
+    captured_action = {
+        "id": "NSA-M10-1",
+        "concern": "The plan leaves retry ownership ambiguous.",
+        "category": "live_plan_topology_resume_risk",
+        "action_type": "change_plan",
+        "severity": "blocking",
+        "evidence": "Phase 3 does not name the resume authority.",
+        "plan_refs": ["Phase 3 - Step 2"],
+    }
+    payload = _payload(
+        recommendation="ITERATE",
+        north_star_actions=[captured_action],
+        tiebreaker_question="",
+        tiebreaker_flag_ids=[],
+        tiebreaker_fuzzy_group_id="",
+    )
+    strict_gate_schema = strict_schema(SCHEMAS["gate.json"])
+
+    with pytest.raises(ModelStructuralAuditError) as exc:
+        capture_step_output(
+            StepInvocation(
+                kind="model",
+                metadata={
+                    "validation_step": "gate",
+                    "compatibility_validation_step": "gate",
+                    "capture_schema": strict_gate_schema,
+                },
+            ),
+            payload,
+        )
+    diagnostic = str(exc.value)
+    for missing_field in (
+        "question",
+        "question_id",
+        "required_change",
+        "severity_source",
+    ):
+        assert f"/north_star_actions/0/{missing_field}" in diagnostic
+
+
+def test_fresh_gate_summary_clears_stale_artifact_recovery_marker() -> None:
+    artifact = build_gate_artifact(_signals(), _payload(), override_forced=False)
+    state: dict[str, object] = {
+        "config": {"auto_approve": False},
+        "meta": {
+            "gate_artifact_recovery": {
+                "reason": "adopted passing gate.json after worker failure"
+            },
+            "preserved": "value",
+        },
+    }
+
+    _sync_legacy_last_gate_for_workflow(state, artifact)  # type: ignore[arg-type]
+
+    assert state["meta"] == {"preserved": "value"}
 
 
 def test_new_required_gate_field_survives_capture_and_every_persistence_projection(

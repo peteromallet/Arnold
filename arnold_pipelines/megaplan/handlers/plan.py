@@ -23,6 +23,7 @@ from .shared import (
     _merge_imported_decision_criteria,
     _write_json_artifact,
     _write_plan_version,
+    activate_phase_wbc,
     phase_result_guard,
 )
 
@@ -275,8 +276,9 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
             )
 
             run_id = set_active_step(state, step="prep", agent="prep-orchestration", mode="orchestrated")
-            save_state_merge_meta(plan_dir, state)
             try:
+                activate_phase_wbc(state=state, plan_dir=plan_dir, step="prep", agent="prep-orchestration")
+                save_state_merge_meta(plan_dir, state)
                 orchestration = run_prep_orchestration(state, plan_dir, root=root)
             except Exception:
                 clear_active_step(state, run_id=run_id)
@@ -328,6 +330,20 @@ def _build_verifiability_flags(
     from arnold_pipelines.megaplan.orchestration.verifiability import audit_criteria, validate_requires
 
     flags: list[dict[str, Any]] = []
+
+    def criterion_evidence(index: int) -> str:
+        if index < 0 or index >= len(success_criteria):
+            return f"success_criteria[{index}] is unavailable"
+        criterion = success_criteria[index]
+        requires = criterion.get("requires", [])
+        if not isinstance(requires, list):
+            requires = []
+        return (
+            f"success_criteria[{index}]: criterion={criterion.get('criterion', '?')!r}; "
+            f"priority={criterion.get('priority', '')!r}; "
+            f"requires={sorted(str(item) for item in requires)!r}"
+        )
+
     issues = validate_requires(success_criteria)
     for issue_str in issues:
         is_unknown_cap = "unknown capability" in issue_str
@@ -338,6 +354,7 @@ def _build_verifiability_flags(
             "evidence": concern,
             "category": "verifiability",
             "severity_hint": "likely-significant" if is_unknown_cap else "likely-minor",
+            "evidence": issue_str,
             "status": "open",
         })
 
@@ -351,6 +368,7 @@ def _build_verifiability_flags(
                 "evidence": concern,
                 "category": "verifiability",
                 "severity_hint": "likely-significant",
+                "evidence": criterion_evidence(audit.criterion_idx),
                 "status": "open",
             })
         elif audit.verdict == "human_only":
@@ -364,6 +382,7 @@ def _build_verifiability_flags(
                 "evidence": concern,
                 "category": "verifiability",
                 "severity_hint": "likely-minor",
+                "evidence": criterion_evidence(audit.criterion_idx),
                 "status": "open",
             })
 

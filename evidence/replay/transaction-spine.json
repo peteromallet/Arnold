@@ -1,0 +1,1496 @@
+{
+  "composite_hash": "1089dc5e25998374e60a4fd814f305a7a51bd35051bfda12a96893431cc0a6a2",
+  "generated_at": "2026-07-31T00:31:58.099179+00:00",
+  "generator": "tools/generate_m6_replay_fixtures.py",
+  "limitations": {
+    "missing_original_workspace": {
+      "description": "The original Transaction Spine workspace (/workspace/agent-edit-verifiable-transaction-spine/) is not available in this checkout. Preserved handoff documents, incident summaries, and repair data from the committed incident ledger serve as the best available evidence. Live plan state, chain logs, and raw repair artifacts from the original workspace cannot be independently verified from this fixture.",
+      "mitigations": [
+        "Handoff documents are committed under .megaplan/initiatives/",
+        "Incident summaries are regenerated from the committed ledger",
+        "Repair data redacts unstable workspace paths"
+      ],
+      "severity": "limitation"
+    },
+    "path_redaction": {
+      "applied_to": [
+        "handoff_documents",
+        "incident_summaries",
+        "repair_data"
+      ],
+      "description": "All absolute /workspace/ paths have been redacted with stable content-hash tokens to prevent leakage of unstable workspace layout while preserving structural comparison.",
+      "pattern": "/workspace/[REDACTED:<sha256-prefix>]"
+    }
+  },
+  "repository_root": "/repository/[REDACTED:5bf0194c0eca]",
+  "schema": "m6.transaction-spine-replay-fixture.v1",
+  "section_hashes": {
+    "handoff_documents": "5f1d9c3dece0084e26e3d26fa2bbc75fb772887924e3b95cbba1fa73d7320182",
+    "incident_summaries": "9de9dfa6b203040ffec8c383ca176349353de719652ed98bf80a9d6764b85abd",
+    "repair_data": "2fe5e78f47b360fb5603d7a4bce9b42d3996ff66567cd7a1a186920c435eb749"
+  },
+  "sections": {
+    "handoff_documents": {
+      "content_hash": "09ea2e26208c2e97c3e968682173c4ae434111634c1cf99420f95d2fce6ae871",
+      "documents": [
+        {
+          "char_count": 10356,
+          "content_sha256": "ddd64f5de54c0d65d7f6aabc149ad859160eefdb2f7e20b28b283a528ecfc97b",
+          "kind": "active-epics-latency-synthesis",
+          "line_count": 180,
+          "path": ".megaplan/initiatives/megaplan-maintenance/handoff/active-epics-latency-synthesis-20260714.md",
+          "redacted_content_preview": "# Active epics latency synthesis\n\nSnapshot: **July 14, 2026 at 10:34:17 UTC (+00:00)**\n\nAuditable runs:\n\n- Transaction Spine contributor: `subagent-20260714-101356-39ea719f`\n- Strategy Roadmap contributor: `subagent-20260714-101356-fc5f6cae`\n- Synthesis owner: `subagent-20260714-101421-463e5e9c`\n\n## Verified outcome\n\nBoth contributor manifests reached `completed`, and their durable results and\nevidence reports were consumed. At the snapshot, the canonical display state\nfor both active plans was `executing`; neither plan was restarted or killed.\n\nTransaction Spine attempt 4 had a fresh active-step start at 10:33:58 and\nactivity at 10:34:02. Strategy Roadmap attempt 2 had activity at 10:34:13 and\nintrospection reported a one-second-old event. Transaction introspection\nnevertheless reported `stalled` from a 990-second-old event. This contradicts\nthe active-step evidence and reproduces the non-atomic compatibility-journal\nrace found by the Transaction Spine investigation. An earlier Strategy read at\n10:28:07 produced the same false-stall shape while its journal, state, and token\nheartbeats were updating. Canonical `display_state` plus direct activity\nevidence therefore governs this snapshot; raw liveness is degraded until the\nprojection fix is deployed.\n\n## Consolidated causal model\n\n### Legitimate workload\n\n- Strategy M4 produced 8,327 additions and 41 deletions across 20 files. Its\n  2h03m17s first execute was 99.6% enclosed by 15 worker calls; this was mostly\n  real implementation rather than queue idle. The 7m56s review found five\n  deterministic defects missed by scoped passing tests and should remain.\n- Transaction Spine's stopped attempts also produced real implementation and\n  two useful repairs. The three stopped execute attempts consumed 3h27m40s,\n  $3.12684, and 40.7M input tokens, but that total must not be labelled waste.\n\n### Instance-specific avoidable latency\n\n- Transaction Spine admitted a 30-task, 29-edge serial chain. Complexity-7 T7\n  and T12 each ex",
+          "status": "present"
+        },
+        {
+          "char_count": 14104,
+          "content_sha256": "721e4a023bb7a5199cb8af078d2aea21719d1844f79bf2ac3198c983dd3c2c05",
+          "kind": "agent-edit-transaction-spine-retry-root-cause",
+          "line_count": 229,
+          "path": ".megaplan/initiatives/megaplan-maintenance/handoff/agent-edit-transaction-spine-retry-root-cause-20260714.md",
+          "redacted_content_preview": "# Agent Edit Transaction Spine retry root-cause investigation\n\nSnapshot: **July 14, 2026 10:25:31 UTC (+00:00)**\n\nScope: exact cloud session `agent-edit-verifiable-transaction-spine` and plan\n`sprint-2-transactional-apply-20260714-0336`. This record distinguishes durable\nobservations from inference and missing telemetry. No active chain, service, or\nunrelated checkout state was changed.\n\n## Outcome\n\nThe epic was still executing attempt 4 at the snapshot (81% epic, 62% plan), not\ncomplete. Its three blocked execute attempts consumed **3h27m40.174s of metered\nexecution, $3.12684198492, 40,735,907 input tokens, and 411,560 output tokens**.\nThose attempts produced substantial implementation progress, so this is not all\nwaste. Two externally repaired retries added **1h49m35.933s block-to-restart\nlatency**, dominated by **1h38m43.535s waiting for hourly watchdog detection**.\n\nThe immediate repeated cause was deterministic: two complexity-7 tasks, T7 and\nT12, reached the same 90-tool-iteration ceiling after implementation work but\nbefore their proof-test contracts were complete. The systemic causes were a\nfully serial 30-task plan admitted without a turn-budget feasibility gate,\nhourly rather than event-driven recovery, repair results that cannot become\nverified task checkpoints, stale repair-request identity, incomplete repair\nterminalization, and ambiguous terminal/control-plane projections.\n\nA separate systemic control-plane defect was reproduced: every event, including\nheartbeats, rewrote the complete compatibility `events.ndjson` projection with a\nnon-atomic write. On this plan, about 12,316 events and a 26.13 MB projection\nimply roughly **137.125 GiB of cumulative compatibility-projection writes**.\nDuring one rewrite, introspection read a partial 2,570-event prefix and falsely\nreported a stalled plan; a later read saw 12,296 events and progressing liveness.\nExact wall-time attributable to this I/O is not instrumented.\n\n## Exact failure and retry chain\n\n| Attempt | UT",
+          "status": "present"
+        }
+      ],
+      "schema": "m6.transaction-spine.handoff-documents.v1",
+      "source_directory": ".megaplan/initiatives/megaplan-maintenance/handoff"
+    },
+    "incident_summaries": {
+      "content_hash": "812a8ea22e77665e25565eebd100d20c78d02a07ea2252f6923bf8153e028acc",
+      "incident_count": 10,
+      "incidents": [
+        {
+          "content_sha256": "1b511ccb635e04acfd0217e52fd4c20254f71c0f2468ec09ee20b95f747fa3a8",
+          "incident_id": "inc-canonical-run-state-control-plane",
+          "latest_actor": "six_hour_auditor",
+          "outcome": "audit_cycle_complete",
+          "problem_ids": [
+            "problem-bef9405c197d"
+          ],
+          "schema_version": 1,
+          "state": "six_hour_auditor.audit_complete",
+          "status": "present"
+        },
+        {
+          "content_sha256": "197ad5c30dce906059541fa250a640e1e84f1ab059d332e26b7142c6dd7e4a05",
+          "incident_id": "inc-custody-control-plane",
+          "latest_actor": "repair_system",
+          "outcome": "recovered",
+          "problem_ids": [
+            "problem-bef9405c197d"
+          ],
+          "schema_version": 1,
+          "state": "verified_recovered",
+          "status": "present"
+        },
+        {
+          "content_sha256": "52b4204fbad83e642fad1520bf16500c4bd0a3af1dad01493338164c7283a7f3",
+          "incident_id": "inc-custody-control-plane-20260714",
+          "latest_actor": "github_sync",
+          "outcome": "published",
+          "problem_ids": [
+            "problem-035056e1a4ef",
+            "problem-131f0402607c",
+            "problem-3e8a86739467",
+            "problem-40e14c0d5ae2",
+            "problem-502bd7717e4a",
+            "problem-51b6859a7c76",
+            "problem-5b2d4b8c99c1",
+            "problem-6356292eb79a",
+            "problem-67a765759422",
+            "problem-690ba3ad3bda",
+            "problem-6d4cc15766bd",
+            "problem-72f87afd3954",
+            "problem-8f475cf8e677",
+            "problem-964fc8e741bb",
+            "problem-a923a5d15e23",
+            "problem-bca9d501eede",
+            "problem-bd43205325d0",
+            "problem-d01d1f0e8f89",
+            "problem-d93c1fe6a35c",
+            "problem-dd5016fd3ab4",
+            "problem-e20c45ae0eb0",
+            "problem-ed95e12660eb",
+            "problem-fbf4fe499c42",
+            "problem-fc037a661409"
+          ],
+          "schema_version": 1,
+          "state": "github_sync.issue_published",
+          "status": "present"
+        },
+        {
+          "content_sha256": "c74ac0d10f63deb2bcb9a86c0824eb7a660169f2a3f066763f52f7bc42562b36",
+          "incident_id": "inc-demo-session",
+          "latest_actor": "github_sync",
+          "outcome": "published",
+          "problem_ids": [
+            "problem-6a1177eb343e",
+            "problem-6e386e382223",
+            "problem-6eaee57d9632",
+            "problem-9e338df241c5",
+            "problem-b3c4cc0b2599",
+            "problem-c7e2d7ad616b"
+          ],
+          "schema_version": 1,
+          "state": "github_sync.issue_published",
+          "status": "present"
+        },
+        {
+          "content_sha256": "187a13307f949ea1d108bfae23800d5b93f8768b77196d543edb1a57e03fb40f",
+          "incident_id": "inc-megaplan-north-star-sense-checks-revise-design",
+          "latest_actor": "immediate_repair",
+          "outcome": "partial_liveness",
+          "problem_ids": [
+            "problem-72f87afd3954"
+          ],
+          "schema_version": 1,
+          "state": "repair_attempt",
+          "status": "present"
+        },
+        {
+          "content_sha256": "3bfe7c24272e4aff7b10a9e54686abc7da927b6e98dcb9d7eeb1717481a7a1e8",
+          "incident_id": "inc-repository-strategy-roadmap",
+          "latest_actor": "github_sync",
+          "outcome": "published",
+          "problem_ids": [
+            "problem-72f87afd3954"
+          ],
+          "schema_version": 1,
+          "state": "github_sync.issue_published",
+          "status": "present"
+        },
+        {
+          "content_sha256": "70e90b283f7a27c1a9612db0b1c8e6bbaadc2ebc40c9c85cb9a06b61763b7acf",
+          "incident_id": "inc-runauthority-epic-cloud",
+          "latest_actor": "github_sync",
+          "outcome": "published",
+          "problem_ids": [
+            "problem-72f87afd3954"
+          ],
+          "schema_version": 1,
+          "state": "github_sync.issue_published",
+          "status": "present"
+        },
+        {
+          "content_sha256": "b6f6cf516c7f33c91375b5ae4517c01b980f0e13970988e4a41967866388620b",
+          "incident_id": "inc-superfixer-alive-but-failed-recovery",
+          "latest_actor": "immediate_repair",
+          "outcome": "partial_liveness",
+          "problem_ids": [
+            "problem-72f87afd3954",
+            "problem-bef9405c197d"
+          ],
+          "schema_version": 1,
+          "state": "repair_attempt",
+          "status": "present"
+        },
+        {
+          "content_sha256": "2643c5985c0cdb994c60fdc2b23a566fe99159e1ae801a4e364dd836e6dfba9f",
+          "incident_id": "inc-workflow-boundary-contracts-corrective-20260710",
+          "latest_actor": "six_hour_auditor",
+          "outcome": "auditor_human_escalation",
+          "problem_ids": [
+            "problem-3bc7a5eaa27e",
+            "problem-3c52277cbfc5",
+            "problem-461ac04158b3",
+            "problem-51b6859a7c76",
+            "problem-67a765759422",
+            "problem-72932d0eb948",
+            "problem-72f87afd3954",
+            "problem-8628c3b9c119",
+            "problem-8f475cf8e677",
+            "problem-90fb37f640af",
+            "problem-bca9d501eede",
+            "problem-bd43205325d0",
+            "problem-e20c45ae0eb0"
+          ],
+          "schema_version": 1,
+          "state": "six_hour_auditor.audit_complete",
+          "status": "present"
+        },
+        {
+          "content_sha256": "0b4f2cd0f047513083200dc61b7a95a9ffcda3ff886662b97400d2bf1f9d891c",
+          "incident_id": "incident-42",
+          "latest_actor": "github_sync",
+          "outcome": "published",
+          "problem_ids": [
+            "problem-68a048c70af7"
+          ],
+          "schema_version": 1,
+          "state": "github_sync.issue_published",
+          "status": "present"
+        }
+      ],
+      "problem_count": 38,
+      "problems": [
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 62,
+          "problem_id": "problem-035056e1a4ef",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 1,
+          "problem_id": "problem-131f0402607c",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-workflow-boundary-contracts-corrective-20260710"
+          ],
+          "occurrence_count": 53,
+          "problem_id": "problem-3bc7a5eaa27e",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-workflow-boundary-contracts-corrective-20260710"
+          ],
+          "occurrence_count": 4,
+          "problem_id": "problem-3c52277cbfc5",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 3,
+          "problem_id": "problem-3e8a86739467",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 1,
+          "problem_id": "problem-40e14c0d5ae2",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-workflow-boundary-contracts-corrective-20260710"
+          ],
+          "occurrence_count": 21,
+          "problem_id": "problem-461ac04158b3",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 1,
+          "problem_id": "problem-502bd7717e4a",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714",
+            "inc-workflow-boundary-contracts-corrective-20260710"
+          ],
+          "occurrence_count": 44,
+          "problem_id": "problem-51b6859a7c76",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 28,
+          "problem_id": "problem-5b2d4b8c99c1",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 3,
+          "problem_id": "problem-6356292eb79a",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714",
+            "inc-workflow-boundary-contracts-corrective-20260710"
+          ],
+          "occurrence_count": 56,
+          "problem_id": "problem-67a765759422",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "incident-42"
+          ],
+          "occurrence_count": 43,
+          "problem_id": "problem-68a048c70af7",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 4,
+          "problem_id": "problem-690ba3ad3bda",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-demo-session"
+          ],
+          "occurrence_count": 3,
+          "problem_id": "problem-6a1177eb343e",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 4,
+          "problem_id": "problem-6d4cc15766bd",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-demo-session"
+          ],
+          "occurrence_count": 238,
+          "problem_id": "problem-6e386e382223",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-demo-session"
+          ],
+          "occurrence_count": 6,
+          "problem_id": "problem-6eaee57d9632",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-workflow-boundary-contracts-corrective-20260710"
+          ],
+          "occurrence_count": 3,
+          "problem_id": "problem-72932d0eb948",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714",
+            "inc-megaplan-north-star-sense-checks-revise-design",
+            "inc-repository-strategy-roadmap",
+            "inc-runauthority-epic-cloud",
+            "inc-superfixer-alive-but-failed-recovery",
+            "inc-workflow-boundary-contracts-corrective-20260710"
+          ],
+          "occurrence_count": 23,
+          "problem_id": "problem-72f87afd3954",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-workflow-boundary-contracts-corrective-20260710"
+          ],
+          "occurrence_count": 1,
+          "problem_id": "problem-8628c3b9c119",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714",
+            "inc-workflow-boundary-contracts-corrective-20260710"
+          ],
+          "occurrence_count": 4,
+          "problem_id": "problem-8f475cf8e677",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-workflow-boundary-contracts-corrective-20260710"
+          ],
+          "occurrence_count": 3,
+          "problem_id": "problem-90fb37f640af",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 1,
+          "problem_id": "problem-964fc8e741bb",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-demo-session"
+          ],
+          "occurrence_count": 59,
+          "problem_id": "problem-9e338df241c5",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 17,
+          "problem_id": "problem-a923a5d15e23",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-demo-session"
+          ],
+          "occurrence_count": 4,
+          "problem_id": "problem-b3c4cc0b2599",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714",
+            "inc-workflow-boundary-contracts-corrective-20260710"
+          ],
+          "occurrence_count": 29,
+          "problem_id": "problem-bca9d501eede",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714",
+            "inc-workflow-boundary-contracts-corrective-20260710"
+          ],
+          "occurrence_count": 9,
+          "problem_id": "problem-bd43205325d0",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-canonical-run-state-control-plane",
+            "inc-custody-control-plane",
+            "inc-superfixer-alive-but-failed-recovery"
+          ],
+          "occurrence_count": 7,
+          "problem_id": "problem-bef9405c197d",
+          "recurred_after_fix": true,
+          "status": "present",
+          "status_field": "fixed"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-demo-session"
+          ],
+          "occurrence_count": 3,
+          "problem_id": "problem-c7e2d7ad616b",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 1,
+          "problem_id": "problem-d01d1f0e8f89",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 8,
+          "problem_id": "problem-d93c1fe6a35c",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 13,
+          "problem_id": "problem-dd5016fd3ab4",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714",
+            "inc-workflow-boundary-contracts-corrective-20260710"
+          ],
+          "occurrence_count": 33,
+          "problem_id": "problem-e20c45ae0eb0",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 1,
+          "problem_id": "problem-ed95e12660eb",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 1,
+          "problem_id": "problem-fbf4fe499c42",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        },
+        {
+          "linked_incident_ids": [
+            "inc-custody-control-plane-20260714"
+          ],
+          "occurrence_count": 6,
+          "problem_id": "problem-fc037a661409",
+          "recurred_after_fix": false,
+          "status": "present",
+          "status_field": "open"
+        }
+      ],
+      "schema": "m6.transaction-spine.incident-summaries.v1",
+      "source_directory": ".megaplan/incident-ledger/summaries/incidents"
+    },
+    "repair_data": {
+      "content_hash": "1cdbbefb5beeccc7ee4cf8346c88947a2ef21c28932c0f0ff4641fe6bdba1248",
+      "incident_summaries": [
+        {
+          "decision_count": 2,
+          "decisions": [
+            {
+              "hypothesis_class": "INEFFICIENT",
+              "hypothesis_preview": "INEFFICIENT\n\nPipeline friction map: the repair stack is enabled and alive, but it is over-reacting to stale execute-era artifacts while under-trusting fresher ledger/plan evidence; chain log/state mir",
+              "reconciler_finding_count": 10,
+              "seq": 223
+            },
+            {
+              "hypothesis_class": "INEFFICIENT",
+              "hypothesis_preview": "INEFFICIENT\n\nPipeline friction map: the repair stack is enabled and alive, but it is over-reacting to stale execute-era artifacts while under-trusting fresher ledger/plan evidence; chain log/state mir",
+              "reconciler_finding_count": 10,
+              "seq": 224
+            }
+          ],
+          "event_count": 3,
+          "session_id": "canonical-run-state-control-plane"
+        },
+        {
+          "decision_count": 0,
+          "decisions": [],
+          "event_count": 1,
+          "session_id": "custody-control-plane"
+        },
+        {
+          "decision_count": 92,
+          "decisions": [
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 12,
+              "seq": 522
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 12,
+              "seq": 523
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 532
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 534
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 536
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 538
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 540
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 542
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 11,
+              "seq": 543
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 11,
+              "seq": 544
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 549
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 551
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 552
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 555
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 560
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 564
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 567
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 11,
+              "seq": 568
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 11,
+              "seq": 569
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 577
+            },
+            {
+              "hypothesis_class": "NO_NEW_LAUNCH",
+              "hypothesis_preview": "NO_NEW_LAUNCH\nCanonical live owner managed-automatic-repair-d08ac564a512f3d3e9ba has stable objective alignment; the six-hour auditor recorded a no-op and launched no reviewer or repair agent.",
+              "reconciler_finding_count": 10,
+              "seq": 579
+            },
+            {
+              "hypothesis_class": "NO_NEW_LAUNCH",
+              "hypothesis_preview": "NO_NEW_LAUNCH\nCanonical live owner managed-automatic-repair-d08ac564a512f3d3e9ba has stable objective alignment; the six-hour auditor recorded a no-op and launched no reviewer or repair agent.",
+              "reconciler_finding_count": 10,
+              "seq": 580
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPrimary failure: **L1 dispatcher custody loss**, compounded by **L2 meta-repair nonconvergence**. L3 auditor appears operational and correctly remains read-only.\n\nPipeline friction map",
+              "reconciler_finding_count": 10,
+              "seq": 582
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPrimary failure: **L1 dispatcher custody loss**, compounded by **L2 meta-repair nonconvergence**. L3 auditor appears operational and correctly remains read-only.\n\nPipeline friction map",
+              "reconciler_finding_count": 10,
+              "seq": 583
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nThe plan-level gate failure is stale, but the session-level condition is an Arnold repair-system defect requiring the central repair authority.\n\nPipeline friction map: watchdog repeate",
+              "reconciler_finding_count": 10,
+              "seq": 585
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nThe plan-level gate failure is stale, but the session-level condition is an Arnold repair-system defect requiring the central repair authority.\n\nPipeline friction map: watchdog repeate",
+              "reconciler_finding_count": 10,
+              "seq": 586
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 592
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog repeatedly observes the stop; repair-trigger accepts requests into a non-dispatcher nested queue; L1 proceeds without a valid investigation receipt; the",
+              "reconciler_finding_count": 10,
+              "seq": 597
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog repeatedly observes the stop; repair-trigger accepts requests into a non-dispatcher nested queue; L1 proceeds without a valid investigation receipt; the",
+              "reconciler_finding_count": 10,
+              "seq": 598
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 614
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 617
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 622
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 624
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 626
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 628
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 630
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 637
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 640
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog repeatedly observes stops; repair-trigger accepts custody but does not claim it; immediate repair records `fixer_infrastructure_failure` without a valid",
+              "reconciler_finding_count": 10,
+              "seq": 641
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog repeatedly observes stops; repair-trigger accepts custody but does not claim it; immediate repair records `fixer_infrastructure_failure` without a valid",
+              "reconciler_finding_count": 10,
+              "seq": 642
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 662
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 664
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 670
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 672
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 674
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 676
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 678
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 680
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 685
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 690
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 695
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 698
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 701
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 734
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 745
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 746
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 759
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 760
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 762
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 763
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 764
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 765
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 767
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 768
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 769
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 770
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 772
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 773
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 774
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 775
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 777
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 778
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 779
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 780
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 782
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 783
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 784
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 785
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 787
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 788
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 789
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 790
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 792
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 793
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 794
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 795
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 797
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 10,
+              "seq": 798
+            },
+            {
+              "hypothesis_class": "OpenAI Codex v0.144.3",
+              "hypothesis_preview": "OpenAI Codex v0.144.3\n--------\nworkdir: /workspace/[REDACTED:6899d7db6ccd]\nmodel: gpt-5.6-sol\nprovider: openai\napproval: never\nsandbox: read-only\nreasoning effort: high\nreasoning summari",
+              "reconciler_finding_count": 12,
+              "seq": 799
+            },
+            {
+              "hypothesis_class": "OpenAI Codex v0.144.3",
+              "hypothesis_preview": "OpenAI Codex v0.144.3\n--------\nworkdir: /workspace/[REDACTED:6899d7db6ccd]\nmodel: gpt-5.6-sol\nprovider: openai\napproval: never\nsandbox: read-only\nreasoning effort: high\nreasoning summari",
+              "reconciler_finding_count": 12,
+              "seq": 800
+            },
+            {
+              "hypothesis_class": "OpenAI Codex v0.144.3",
+              "hypothesis_preview": "OpenAI Codex v0.144.3\n--------\nworkdir: /workspace/[REDACTED:6899d7db6ccd]\nmodel: gpt-5.6-sol\nprovider: openai\napproval: never\nsandbox: read-only\nreasoning effort: high\nreasoning summari",
+              "reconciler_finding_count": 12,
+              "seq": 802
+            },
+            {
+              "hypothesis_class": "OpenAI Codex v0.144.3",
+              "hypothesis_preview": "OpenAI Codex v0.144.3\n--------\nworkdir: /workspace/[REDACTED:6899d7db6ccd]\nmodel: gpt-5.6-sol\nprovider: openai\napproval: never\nsandbox: read-only\nreasoning effort: high\nreasoning summari",
+              "reconciler_finding_count": 12,
+              "seq": 803
+            }
+          ],
+          "event_count": 284,
+          "session_id": "custody-control-plane-20260714"
+        },
+        {
+          "decision_count": 0,
+          "decisions": [],
+          "event_count": 313,
+          "session_id": "demo-session"
+        },
+        {
+          "decision_count": 0,
+          "decisions": [],
+          "event_count": 43,
+          "session_id": "demo-session"
+        },
+        {
+          "decision_count": 0,
+          "decisions": [],
+          "event_count": 1,
+          "session_id": "megaplan-north-star-sense-checks-revise-design"
+        },
+        {
+          "decision_count": 4,
+          "decisions": [
+            {
+              "hypothesis_class": "ESCALATE",
+              "hypothesis_preview": "ESCALATE\n\nPipeline friction map: watchdog sees a live worker; immediate repair left an unverified `partial_liveness` record; meta-repair correctly suppressed dispatch because execution resumed; the au",
+              "reconciler_finding_count": 10,
+              "seq": 494
+            },
+            {
+              "hypothesis_class": "ESCALATE",
+              "hypothesis_preview": "ESCALATE\n\nPipeline friction map: watchdog sees a live worker; immediate repair left an unverified `partial_liveness` record; meta-repair correctly suppressed dispatch because execution resumed; the au",
+              "reconciler_finding_count": 10,
+              "seq": 495
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog correctly observes a live session; repair-trigger/immediate-repair repeatedly records `partial_liveness` without completing verification; meta-repair co",
+              "reconciler_finding_count": 10,
+              "seq": 512
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog correctly observes a live session; repair-trigger/immediate-repair repeatedly records `partial_liveness` without completing verification; meta-repair co",
+              "reconciler_finding_count": 10,
+              "seq": 513
+            }
+          ],
+          "event_count": 10,
+          "session_id": "repository-strategy-roadmap"
+        },
+        {
+          "decision_count": 0,
+          "decisions": [],
+          "event_count": 2,
+          "session_id": "runauthority-epic-cloud"
+        },
+        {
+          "decision_count": 0,
+          "decisions": [],
+          "event_count": 4,
+          "session_id": "superfixer-alive-but-failed-recovery"
+        },
+        {
+          "decision_count": 35,
+          "decisions": [
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 351
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 355
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 358
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 363
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 368
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 373
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 378
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 383
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 388
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 393
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 398
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 403
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 408
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 413
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 418
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 423
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 428
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 433
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 438
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 443
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 448
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 453
+            },
+            {
+              "hypothesis_class": "ESCALATE",
+              "hypothesis_preview": "ESCALATE\n\nPipeline friction map: watchdog repeatedly detected the same dead review worker; immediate repair re-dispatched without convergence; meta-repair eventually produced a real `ESCALATE` verdict",
+              "reconciler_finding_count": 10,
+              "seq": 455
+            },
+            {
+              "hypothesis_class": "ESCALATE",
+              "hypothesis_preview": "ESCALATE\n\nPipeline friction map: watchdog repeatedly detected the same dead review worker; immediate repair re-dispatched without convergence; meta-repair eventually produced a real `ESCALATE` verdict",
+              "reconciler_finding_count": 10,
+              "seq": 456
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 472
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 473
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 475
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 476
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog detected a stopped session, but later `alive` observations and milestone advancement never reconciled that incident. Immediate/meta-repair evidence rema",
+              "reconciler_finding_count": 11,
+              "seq": 479
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog detected a stopped session, but later `alive` observations and milestone advancement never reconciled that incident. Immediate/meta-repair evidence rema",
+              "reconciler_finding_count": 11,
+              "seq": 480
+            },
+            {
+              "hypothesis_class": null,
+              "hypothesis_preview": null,
+              "reconciler_finding_count": 0,
+              "seq": 489
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog and immediate repair repeatedly acted on dead workers; meta-repair produced a real `ESCALATE` verdict but commit custody rejected its uncommitted change",
+              "reconciler_finding_count": 10,
+              "seq": 496
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog and immediate repair repeatedly acted on dead workers; meta-repair produced a real `ESCALATE` verdict but commit custody rejected its uncommitted change",
+              "reconciler_finding_count": 10,
+              "seq": 497
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog repeatedly detected stale/dead workers; immediate repair produced 26 runs and many `repair_exhausted` outcomes; meta-repair reached a real `ESCALATE` ve",
+              "reconciler_finding_count": 11,
+              "seq": 514
+            },
+            {
+              "hypothesis_class": "REPAIR_REQUEST",
+              "hypothesis_preview": "REPAIR_REQUEST\n\nPipeline friction map: watchdog repeatedly detected stale/dead workers; immediate repair produced 26 runs and many `repair_exhausted` outcomes; meta-repair reached a real `ESCALATE` ve",
+              "reconciler_finding_count": 11,
+              "seq": 515
+            }
+          ],
+          "event_count": 142,
+          "session_id": "workflow-boundary-contracts-corrective-20260710"
+        }
+      ],
+      "redacted": true,
+      "schema": "m6.transaction-spine.repair-data.v1",
+      "source_path": ".megaplan/incident-ledger/incidents.json",
+      "status": "present",
+      "total_incidents": 10
+    }
+  }
+}

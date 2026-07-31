@@ -580,6 +580,17 @@ def _bind_repair_claim(manifest: dict[str, Any]) -> None:
     request_id = str(links.get("repair_request_id") or "")
     if not queue_dir or not blocker_id or not request_id:
         return
+    repair_identity_key = str(links.get("repair_identity_key") or "").strip()
+    repair_identity_json = str(links.get("repair_identity_json") or "").strip()
+    repair_identity: dict[str, Any] | None = None
+    if repair_identity_json:
+        try:
+            parsed_repair_identity = json.loads(repair_identity_json)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("repair claim identity is not valid JSON") from exc
+        if not isinstance(parsed_repair_identity, Mapping):
+            raise RuntimeError("repair claim identity must be a JSON object")
+        repair_identity = dict(parsed_repair_identity)
     from arnold_pipelines.megaplan.cloud.repair_requests import (
         active_repair_claim_lock_dir,
         bind_managed_run_to_active_claim,
@@ -594,6 +605,8 @@ def _bind_repair_claim(manifest: dict[str, Any]) -> None:
         managed_manifest_path=str(manifest["manifest_path"]),
         expected_owner_pid=int(os.environ.get("CLOUD_WATCHDOG_REPAIR_CLAIM_OWNER_PID") or 0) or None,
         new_owner_pid=os.getpid(),
+        repair_identity=repair_identity,
+        expected_repair_identity_key=repair_identity_key,
     )
     if not bound:
         raise RuntimeError("repair claim could not be fenced to managed run")
@@ -607,7 +620,10 @@ def _bind_repair_claim(manifest: dict[str, Any]) -> None:
         "fenced_managed_run_id": str(manifest["run_id"]),
         "owner_pid": os.getpid(),
         "bound_at": utc_now(),
+        "repair_identity_key": repair_identity_key,
     }
+    if repair_identity is not None:
+        manifest["repair_claim"]["repair_identity"] = repair_identity
 
 
 def _emit_attempt(manifest: Mapping[str, Any]) -> tuple[str, str] | None:

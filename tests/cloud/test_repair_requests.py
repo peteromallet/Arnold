@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -23,6 +24,21 @@ def _signature(**overrides: str) -> dict[str, str]:
     }
     base.update(overrides)
     return base
+
+
+def _repair_identity(*, attempt_number: int = 1, fence_token: str = "fence-1") -> dict[str, object]:
+    return {
+        "environment_id": "/workspace/demo",
+        "session_id": "demo",
+        "chain_id": "/workspace/demo/chain.yaml",
+        "plan_revision": "sha256:plan-rev-1",
+        "phase": "execute",
+        "task_id": "T1",
+        "attempt_number": attempt_number,
+        "failure_kind": "execute_failed",
+        "blocker_digest": "blocker:v1:demo",
+        "coordinator_fence_token": fence_token,
+    }
 
 
 def _queue_root(tmp_path: Path) -> Path:
@@ -199,7 +215,7 @@ def test_active_repair_claim_preserves_stale_lock_evidence(tmp_path: Path) -> No
     assert first.lock_dir.exists()
 
 
-def test_active_repair_claim_reports_live_pid_session_mismatch_without_reclaiming(
+def test_active_repair_claim_preserves_live_owner_without_reclaiming(
     tmp_path: Path,
 ) -> None:
     queue_dir = _queue_root(tmp_path)
@@ -227,7 +243,7 @@ def test_active_repair_claim_reports_live_pid_session_mismatch_without_reclaimin
         is_pid_live=lambda pid: pid in {os.getpid(), 556},
     )
 
-    assert stale.stale
+    assert stale.already_claimed
     assert stale.owner is not None
     assert stale.owner["pid"] == os.getpid()
     assert stale.owner["actor"] == "trigger-a"
@@ -523,6 +539,20 @@ def test_request_id_for_differs_with_different_sessions() -> None:
     assert id_1 != id_2
 
 
+def test_request_id_for_differs_with_different_repair_identity() -> None:
+    id_1 = repair_requests.request_id_for(
+        session="demo",
+        problem_signature=_signature(),
+        repair_identity=_repair_identity(attempt_number=1),
+    )
+    id_2 = repair_requests.request_id_for(
+        session="demo",
+        problem_signature=_signature(),
+        repair_identity=_repair_identity(attempt_number=2),
+    )
+    assert id_1 != id_2
+
+
 # ---------------------------------------------------------------------------
 # write_decision and decision records
 # ---------------------------------------------------------------------------
@@ -657,6 +687,128 @@ def test_phase_failure_persists_replay_stable_claim_identity(tmp_path: Path) -> 
     assert claim.claimed
     assert claim.owner is not None
     assert claim.owner["blocker_id"] == request["blocker_id"]
+
+
+def test_completed_repair_request_preserves_legacy_identity_and_profile_contract(
+    tmp_path: Path,
+) -> None:
+    queue_dir = _queue_root(tmp_path)
+    target = {
+        "plan_name": "m9-rebuildable-projections-20260722-0431",
+        "configured_profile": "partnered-5",
+        "recovery_contract": {
+            "preserve_configured_profile": True,
+            "required_cursor_advance": True,
+            "success_requires": (
+                "active execution state plus chain-owned M9 batch or transition receipt"
+            ),
+            "forbid_standalone_completion": True,
+        },
+    }
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="custody-control-plane-20260714",
+        source="resident_authorized_recovery",
+        workspace=tmp_path,
+        run_kind="chain",
+        target=target,
+        problem_signature={
+            "failure_kind": "completed_repair_without_cursor_advance",
+            "current_state": "planned",
+            "phase_or_step": "critique",
+            "milestone_or_plan": "m9-rebuildable-projections-20260722-0431",
+            "gate_recommendation": "continue the legal transition",
+            "blocked_task_id": "phase:critique",
+        },
+        root_cause_hint="ordinary repair returned without canonical advancement",
+    )
+    request = queued["request"]
+    fingerprint = repair_contract.normalize_blocker_fingerprint_v1(
+        request["blocker_fingerprint"]
+    )
+    assert fingerprint is not None
+    legacy_payload = {
+        "prefix": repair_contract.BLOCKER_FINGERPRINT_V1_PREFIX,
+        "fingerprint": fingerprint,
+    }
+    legacy_digest = hashlib.sha256(
+        json.dumps(
+            legacy_payload, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    request["blocker_id"] = f"{repair_contract.BLOCKER_ID_V1_PREFIX}{legacy_digest}"
+
+    assert repair_contract.blocker_id_matches_fingerprint(
+        request["blocker_id"], request["blocker_fingerprint"]
+    )
+    assert repair_requests.has_claimable_repair_request_contract(request)
+
+    missing_profile_clause = json.loads(json.dumps(request))
+    missing_profile_clause["target"]["recovery_contract"].pop(
+        "preserve_configured_profile"
+    )
+    assert not repair_requests.has_claimable_repair_request_contract(
+        missing_profile_clause
+    )
+    assert repair_requests.repair_request_contract_violations(
+        missing_profile_clause
+    ) == ["missing_preserve_configured_profile"]
+
+
+def test_completed_repair_recurrence_remains_visible_to_l2_l3_backstops(
+    tmp_path: Path,
+) -> None:
+    queue_dir = _queue_root(tmp_path)
+    plan_name = "m9-rebuildable-projections-20260722-0431"
+    queued = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="custody-control-plane-20260714",
+        source="resident_authorized_recovery",
+        workspace=tmp_path,
+        run_kind="chain",
+        target={
+            "plan_name": plan_name,
+            "configured_profile": "partnered-5",
+            "recovery_contract": {
+                "preserve_configured_profile": True,
+                "required_cursor_advance": True,
+                "success_requires": "active execution plus chain-owned receipt",
+                "forbid_standalone_completion": True,
+            },
+        },
+        problem_signature={
+            "failure_kind": "completed_repair_without_cursor_advance",
+            "current_state": "planned",
+            "phase_or_step": "critique",
+            "milestone_or_plan": plan_name,
+            "gate_recommendation": "continue the legal transition",
+            "blocked_task_id": "phase:critique",
+        },
+        root_cause_hint="recurrence",
+    )
+    request_id = queued["request"]["request_id"]
+    for _ in range(3):
+        repair_requests.record_unclaimed_request_failure(
+            queue_dir,
+            request_id=request_id,
+            reason="ordinary repair completed without cursor advancement",
+        )
+
+    projection = repair_contract.project_repair_custody(
+        plan_state={"name": plan_name, "current_state": "planned"},
+        current_target={
+            "target_session": "custody-control-plane-20260714",
+            "current_refs": {
+                "current_plan_name": plan_name,
+                "plan_current_state": "planned",
+            },
+        },
+        queue_root=queue_dir,
+    )
+
+    assert projection["accepted_unclaimed_request_ids"] == [request_id]
+    assert projection["claim_alert_request_ids"] == [request_id]
+    assert projection["retry_budget"]["claim_alerted"] is True
 
 
 def test_replay_mints_claimable_successor_for_identity_free_legacy_request(
@@ -870,6 +1022,96 @@ def test_timestamp_drift_does_not_create_multiple_requests_for_same_signature(tm
     assert len(requests) == 1
     # The stored request keeps the original timestamp
     assert requests[0]["created_at"] == "2026-07-01T10:00:00Z"
+
+
+def test_exact_repair_identity_prevents_coalescing_across_attempts(tmp_path: Path) -> None:
+    queue_dir = _queue_root(tmp_path)
+    first = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo",
+        source="test",
+        problem_signature=_signature(blocked_task_id="T1"),
+        root_cause_hint="same blocker new attempt",
+        repair_identity=_repair_identity(attempt_number=1, fence_token="fence-1"),
+    )
+    second = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo",
+        source="test",
+        problem_signature=_signature(blocked_task_id="T1"),
+        root_cause_hint="same blocker new attempt",
+        repair_identity=_repair_identity(attempt_number=2, fence_token="fence-2"),
+    )
+
+    assert first["status"] == "queued"
+    assert second["status"] == "queued"
+    requests = repair_requests.iter_repair_requests(queue_dir)
+    assert len(requests) == 2
+    assert requests[0]["repair_identity_key"] != requests[1]["repair_identity_key"]
+
+
+def test_exact_repair_identity_does_not_coalesce_with_legacy_identity_free_request(
+    tmp_path: Path,
+) -> None:
+    queue_dir = _queue_root(tmp_path)
+    legacy = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo",
+        source="test",
+        problem_signature=_signature(blocked_task_id="T1"),
+        root_cause_hint="legacy request without exact identity",
+    )
+    exact = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo",
+        source="test",
+        problem_signature=_signature(blocked_task_id="T1"),
+        root_cause_hint="same blocker with exact identity",
+        repair_identity=_repair_identity(attempt_number=1, fence_token="fence-1"),
+    )
+
+    assert legacy["status"] == "queued"
+    assert exact["status"] == "queued"
+    requests = repair_requests.iter_repair_requests(queue_dir)
+    assert len(requests) == 2
+    assert {
+        request["repair_identity_key"] for request in requests
+    } == {
+        "",
+        repair_requests.repair_identity_key(_repair_identity(attempt_number=1, fence_token="fence-1")),
+    }
+
+
+def test_bind_managed_run_to_active_claim_rejects_mismatched_repair_identity(
+    tmp_path: Path,
+) -> None:
+    queue_dir = _queue_root(tmp_path)
+    identity = _repair_identity(attempt_number=1, fence_token="fence-1")
+    claim = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id="blocker:v1:bind",
+        request_id="req-bind",
+        actor="trigger-a",
+        session="demo-session",
+        repair_identity=identity,
+        pid=111,
+        is_pid_live=lambda pid: pid == 111,
+    )
+
+    assert claim.claimed
+    assert not repair_requests.bind_managed_run_to_active_claim(
+        queue_dir,
+        blocker_id="blocker:v1:bind",
+        request_id="req-bind",
+        managed_run_id="managed-1",
+        managed_manifest_path="/tmp/managed-1/manifest.json",
+        expected_owner_pid=111,
+        new_owner_pid=222,
+        repair_identity=_repair_identity(attempt_number=2, fence_token="fence-2"),
+    )
+    owner = json.loads((claim.lock_dir / "owner.json").read_text(encoding="utf-8"))
+    assert owner["pid"] == 111
+    assert owner.get("managed_agent_run_id", "") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -1207,3 +1449,155 @@ def test_write_repair_verdict_decision_minimal_fields(tmp_path: Path) -> None:
     # No blocker/path fields when not provided
     assert "blocker=" not in decision["reason"]
     assert "path=" not in decision["reason"]
+
+
+# ---------------------------------------------------------------------------
+# Step 13A — exact repair identity, removed synthetic WBC defaults, pending
+# and escalation coverage.
+# ---------------------------------------------------------------------------
+
+
+def test_enqueue_without_repair_identity_records_pending_shadow_lease(
+    tmp_path: Path,
+) -> None:
+    """Enqueueing without repair identity yields a *pending* shadow lease.
+
+    Step 13A removed the synthetic ``repair-run-*``/``wbc-ref-*``/``grant-*``
+    placeholders.  A pre-dispatch enqueue must not mint a lease whose
+    occurrence/WBC/grant identity does not correspond to a real dispatched run;
+    instead the lease is recorded ``pending`` until dispatch supplies exact
+    identity.
+    """
+
+    queue_dir = _queue_root(tmp_path)
+    lease_dir = tmp_path / ".megaplan" / "custody-leases"
+    result = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo-session",
+        problem_signature=_signature(),
+        source="execute",
+        workspace=str(tmp_path),
+        lease_store_dir=str(lease_dir),
+    )
+    assert result["status"] == "queued"
+    shadow = result["m7_custody_lease"]
+    assert shadow["m7_lease_status"] == "pending"
+    assert "incomplete" in shadow["m7_lease_detail"]
+    # No synthetic occurrence/epoch was fabricated.
+    assert shadow["m7_lease_event_id"] == ""
+    assert shadow["m7_lease_epoch"] == 0
+    # The request record carries an (empty) repair_identity block.
+    request = result["request"]
+    assert request["repair_identity"] == {}
+
+
+def test_enqueue_with_full_repair_identity_binds_shadow_lease(tmp_path: Path) -> None:
+    """A full repair-identity tuple binds a real (non-synthetic) shadow lease."""
+
+    queue_dir = _queue_root(tmp_path)
+    lease_dir = tmp_path / ".megaplan" / "custody-leases"
+    identity = {
+        "run_id": "run-abc",
+        "run_revision": "rev-001",
+        "coordinator_attempt_id": "coord-7",
+        "run_authority_grant_id": "grant-9",
+        "coordinator_fence_token": 5,
+        "wbc_attempt_reference": "wbc-real-1",
+        "global_logical_effect_key": "glek-xyz",
+        "lease_id": "repair-req-special",
+        "custody_epoch": 2,
+        "owner_host": "worker-host",
+        "owner_pid": 4242,
+        "owner_boot_id": "boot-aa",
+    }
+    result = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo-session",
+        problem_signature=_signature(),
+        source="execute",
+        workspace=str(tmp_path),
+        lease_store_dir=str(lease_dir),
+        repair_identity=identity,
+    )
+    assert result["status"] == "queued"
+    request = result["request"]
+    # All supplied identity fields are carried on the record.
+    for field, expected in identity.items():
+        assert request["repair_identity"][field] == expected
+    shadow = result["m7_custody_lease"]
+    assert shadow["m7_lease_status"] == "acquired"
+    assert shadow["m7_lease_epoch"] == 1
+    assert shadow["m7_lease_event_id"]
+
+
+def test_shadow_acquire_pending_when_wbc_attempt_reference_missing(
+    tmp_path: Path,
+) -> None:
+    """A partial identity tuple (missing wbc_attempt_reference) is pending."""
+
+    from arnold_pipelines.megaplan.custody.lease_store import CustodyLeaseStore
+    from arnold_pipelines.megaplan.custody.contracts import CustodyTargetKey
+
+    lease_dir = tmp_path / ".megaplan" / "custody-leases"
+    store = CustodyLeaseStore(lease_dir)
+    target = CustodyTargetKey(
+        environment="dev",
+        session="demo-session",
+        chain="m3",
+        plan_revision="rev-1",
+        phase="execute",
+        task="T1",
+        attempt="1",
+        normalized_failure_kind="execute_failed",
+        blocker_or_phase_result_hash="h",
+        fence="fence-1",
+    )
+    result = repair_requests._shadow_acquire_custody_lease(
+        lease_store=store,
+        lease_id="repair-req-partial",
+        target=target,
+        owner_host="worker-host",
+        owner_pid="100",
+        owner_boot_id="boot-1",
+        run_id="run-1",
+        run_revision="rev-1",
+        coordinator_attempt_id="coord-1",
+        run_authority_grant_id="grant-1",
+        coordinator_fence_token=3,
+        # wbc_attempt_reference intentionally omitted
+    )
+    assert result["m7_lease_status"] == "pending"
+    assert "incomplete" in result["m7_lease_detail"]
+
+
+def test_pending_request_then_escalates_after_unclaimed_handoffs(tmp_path: Path) -> None:
+    """A pending (identity-incomplete) request escalates if never claimed."""
+
+    queue_dir = _queue_root(tmp_path)
+    result = repair_requests.enqueue_repair_request(
+        queue_root=queue_dir,
+        session="demo-session",
+        problem_signature=_signature(),
+        source="execute",
+        workspace=str(tmp_path),
+    )
+    assert result["status"] == "queued"
+    request_id = result["request"]["request_id"]
+
+    escalated = repair_requests.record_unclaimed_request_failure(
+        queue_dir,
+        request_id=request_id,
+        reason="no worker bound repair identity",
+        max_retries=2,
+    )
+    assert escalated["status"] == "retryable"
+    assert escalated["retry_count"] == 1
+
+    final = repair_requests.record_unclaimed_request_failure(
+        queue_dir,
+        request_id=request_id,
+        reason="no worker bound repair identity",
+        max_retries=2,
+    )
+    assert final["status"] == "alerted"
+    assert final["alert"]["decision"] == "claim_alert"

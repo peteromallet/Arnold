@@ -16,6 +16,8 @@ from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
     validate_audit_model_inputs,
 )
 from arnold_pipelines.megaplan.cloud.incident_bridge import IncidentStoreWriter
+from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records
+from arnold_pipelines.megaplan.cloud.simple_fixer import FORBIDDEN_AUTHORITY_SOURCES
 
 
 def _event(**overrides: object) -> dict[str, object]:
@@ -394,6 +396,147 @@ def test_deterministic_superfixer_cycle_routes_to_global_queue_and_keeps_workspa
     assert request["target"]["route"]["requested_difficulty"] == 9
     assert request["target"]["repair_context_digest"] == "c" * 64
     assert not (workspace / ".megaplan" / "repair-queue").exists()
+
+
+def test_auditor_enqueue_uses_canonical_occurrence_identity(
+    tmp_path: Path,
+) -> None:
+    """Step 46 (T32): auditor enqueue produces an occurrence-compatible
+    identity carrying grant/fence, lease/epoch, evidence cursor digest,
+    root-cause identity, retry ordinal, and terminal receipt expectations.
+
+    When the exact F01 tuple is satisfied the canonical occurrence
+    fingerprint is set.  When the tuple is partial the forbidden authority
+    source is recorded so no authority is minted from report state.
+    """
+
+    workspace = tmp_path / "occurrence-workspace"
+    workspace.mkdir()
+    queue_root = tmp_path / ".megaplan" / "repair-queue"
+
+    base_evidence = {
+        "actionable": True,
+        "accepted_unclaimed_count": 1,
+        "accepted_unclaimed_request_ids": ["abc123"],
+        "claim_count": 0,
+        "attempt_count": 0,
+        "repair_outcome": "repair_exhausted",
+        "repair_age_min": 180,
+        "runner_dead": True,
+        "chain_incomplete": True,
+        "absent_or_stale_l2": True,
+        "retry_budget": {"claim_retries_used": 2, "claim_alerted": False},
+    }
+    base_gate = {
+        "eligible": True,
+        "decision": "true_stall",
+        "escalation_id": "l3-escalation:occurrence-test",
+        "evidence_digest": "e" * 64,
+        "route": {"requested_difficulty": 9},
+    }
+
+    # ── Complete F01 tuple → occurrence-compatible identity ───────────
+    complete_item = {
+        "plan": "demo-plan",
+        "session": "demo-session-complete",
+        "workspace": str(workspace),
+        "session_header": {"kind": "chain", "chain": "demo-chain"},
+        "deterministic_superfixer_evidence": base_evidence,
+        "l3_escalation_gate": {
+            **base_gate,
+            "fence": "fence-token-abc",
+        },
+        "current_target": {
+            "environment": "prod",
+            "chain": "demo-chain",
+            "plan_revision": "rev-1",
+            "phase": "phase-A",
+            "task": "task-42",
+            "attempt": "3",
+        },
+        "repair_custody_summary": {
+            "normalized_failure_kind": "stale_l1_l2_cycle",
+            "blocker_id": "blocker-hash-001",
+            "fence": "fence-token-abc",
+            "custody_epoch": "epoch-7",
+            "lease_id": "lease-99",
+            "run_authority_grant_id": "grant-grant-1",
+        },
+    }
+
+    result = enqueue_audit_repair_request(complete_item, queue_root=queue_root)
+    assert result is not None
+    assert result["status"] == "queued"
+    request = result["request"]
+
+    # The target carries the canonical occurrence identity block.
+    oid = request["target"]["occurrence_identity"]
+    assert oid["occurrence_fingerprint"]  # canonical fingerprint is set
+    assert oid["session"] == "demo-session-complete"
+    assert oid["environment"] == "prod"
+    assert oid["chain"] == "demo-chain"
+    assert oid["plan_revision"] == "rev-1"
+    assert oid["phase"] == "phase-A"
+    assert oid["task"] == "task-42"
+    assert oid["attempt"] == "3"
+    assert oid["normalized_failure_kind"] == "stale_l1_l2_cycle"
+    assert oid["blocker_or_phase_result_hash"] == "blocker-hash-001"
+    assert oid["fence"] == "fence-token-abc"
+    assert oid["coordinator_fence_token"] == "fence-token-abc"
+    assert oid["run_authority_grant_id"] == "grant-grant-1"
+    assert oid["lease_id"] == "lease-99"
+    assert oid["custody_epoch"] == "epoch-7"
+    assert oid["root_cause_identity"] == "l3-escalation:occurrence-test"
+    assert oid["retry_ordinal"] == 1
+    assert oid["forbidden_authority_source"] == ""  # complete → no forbidden source
+    assert oid["queue_authoritative"] is False
+    assert oid["evidence_cursor_digest"].startswith("sha256:")
+    assert oid["terminal_receipt_expectations"] == [
+        "five_minute",
+        "one_hour",
+        "next_three_hour",
+    ]
+
+    # The repair_identity block carries the normalized F01 tuple + custody.
+    ri = request["repair_identity"]
+    assert ri["session"] == "demo-session-complete"
+    assert ri["fence"] == "fence-token-abc"
+    assert ri["coordinator_fence_token"] == "fence-token-abc"
+    assert ri["lease_id"] == "lease-99"
+    assert ri["custody_epoch"] == "epoch-7"
+    assert ri["run_authority_grant_id"] == "grant-grant-1"
+    assert ri["evidence_cursor_digest"].startswith("sha256:")
+    assert ri["terminal_receipt_expectations"] == [
+        "five_minute",
+        "one_hour",
+        "next_three_hour",
+    ]
+
+    # ── Partial F01 tuple → forbidden authority source recorded ───────
+    queue_root2 = tmp_path / "workspace2" / ".megaplan" / "repair-queue"
+    partial_item = {
+        "plan": "demo-plan",
+        "session": "demo-session-partial",
+        "workspace": str(tmp_path / "workspace2"),
+        "session_header": {"kind": "chain"},
+        "deterministic_superfixer_evidence": base_evidence,
+        "l3_escalation_gate": base_gate,
+        # No current_target or repair_custody_summary → partial F01 tuple.
+    }
+
+    result2 = enqueue_audit_repair_request(partial_item, queue_root=queue_root2)
+    assert result2 is not None
+    assert result2["status"] == "queued"
+    request2 = result2["request"]
+
+    oid2 = request2["target"]["occurrence_identity"]
+    assert oid2["occurrence_fingerprint"] == ""  # partial → no fingerprint
+    assert oid2["forbidden_authority_source"] in FORBIDDEN_AUTHORITY_SOURCES
+    assert oid2["queue_authoritative"] is False
+    # The partial identity is still enqueued (reconciliation backstop) but
+    # the forbidden source is recorded so no authority is minted from it.
+    assert oid2["root_cause_identity"] == "l3-escalation:occurrence-test"
+    assert oid2["retry_ordinal"] == 1
 
 
 def test_audit_incident_emits_layer_findings_without_mutating_state() -> None:
@@ -1268,6 +1411,7 @@ class TestSixHourAuditorCompletionEvidenceConstruction:
         assert evidence.repair_dispatch_refs == ("req-1", "req-2", "req-3")
         assert evidence.escalation_verdict_count == 2
         assert evidence.escalation_verdict_refs == ("reconciler:DRIFT_DETECTED", "watchdog:watchdog_report_stale")
+        assert evidence.drift_findings == ()
         assert len(evidence.missing_repair_verdict_findings) == 1
         assert len(evidence.stale_repair_data_findings) == 1
 
@@ -1312,6 +1456,9 @@ class TestSixHourAuditorCompletionEvidenceRoundTrip:
             repair_dispatch_refs=("dispatch/req-a.json",),
             escalation_verdict_count=1,
             escalation_verdict_refs=("reconciler:DRIFT_DETECTED",),
+            drift_findings=(
+                {"layer": "reconciler", "code": "DRIFT_DETECTED", "source_pair": "resolver_vs_ledger"},
+            ),
             missing_repair_verdict_findings=(
                 {"layer": "meta_repair", "code": "meta_repair_missing_evidence",
                  "status": "error", "severity": "error", "message": "m",
@@ -1360,6 +1507,17 @@ class TestBuildAuditorCompletionEvidence:
         assert evidence.audited_window_hours == 6.0
         assert evidence.repair_dispatch_count == 1
         assert evidence.repair_dispatch_refs == ("dispatch/req-1.json",)
+        assert evidence.drift_findings == (
+            {
+                "layer": "reconciler",
+                "code": "DRIFT_DETECTED",
+                "source_pair": "",
+                "contradiction": "",
+                "recommendation": "auditor_escalate_to_human",
+                "observed": {},
+                "expected": {},
+            },
+        )
 
     def test_build_extracts_escalation_verdicts(self) -> None:
         findings = [
@@ -1479,3 +1637,84 @@ class TestSaveAuditorCompletionEvidence:
             json.loads(dest.read_text(encoding="utf-8"))
         )
         assert reloaded == evidence
+
+    def test_save_appends_incident_sidecar_record(self, tmp_path: Path) -> None:
+        evidence = SixHourAuditorCompletionEvidence(
+            outcome="auditor_human_escalation",
+            next_expected_event="human_approval.pr_merge",
+            escalation_verdict_refs=("reconciler:DRIFT_DETECTED",),
+            drift_findings=(
+                {
+                    "layer": "reconciler",
+                    "code": "DRIFT_DETECTED",
+                    "source_pair": "l2_fix_vs_resolver",
+                    "contradiction": "false_fixed_l2_result",
+                    "recommendation": "immediate_repair.repair_attempt",
+                    "observed": {"resolver_canonical_state": "RUNNING"},
+                    "expected": {"brief_outcome": "started"},
+                },
+            ),
+            evidence_timestamp="2026-07-13T16:30:00Z",
+        )
+        dest = tmp_path / "auditor-evidence.json"
+        sidecar_dir = tmp_path / "repair-data.d"
+
+        save_auditor_completion_evidence(
+            dest,
+            evidence,
+            sidecar_dir=sidecar_dir,
+            session="progress_auditor",
+        )
+
+        records = read_jsonl_records(sidecar_dir / "incidents" / "incidents.jsonl")
+        assert records[-1]["session"] == "progress_auditor"
+        assert records[-1]["kind"] == "auditor_6h_completion"
+        assert records[-1]["summary"] == "auditor_human_escalation"
+        assert records[-1]["drift_findings"] == [
+            {
+                "layer": "reconciler",
+                "code": "DRIFT_DETECTED",
+                "source_pair": "l2_fix_vs_resolver",
+                "contradiction": "false_fixed_l2_result",
+                "recommendation": "immediate_repair.repair_attempt",
+                "observed": {"resolver_canonical_state": "RUNNING"},
+                "expected": {"brief_outcome": "started"},
+            }
+        ]
+
+
+# ── Step 47 (T33): six-hour names are compatibility-only ─────────────────
+
+
+def test_six_hour_names_are_compatibility_only() -> None:
+    """The ``six_hour`` module/field names must be legacy compatibility only.
+
+    Step 47 (T33): positive proof has moved to next-three-hour
+    reconciliation.  The module must (a) declare the six-hour names as
+    compatibility-only, (b) expose the next-three-hour reconciliation
+    interval as the positive-proof cadence, and (c) never derive the
+    reconciliation interval from the six-hour constant.
+    """
+    import arnold_pipelines.megaplan.cloud.six_hour_auditor as mod
+
+    # (a) The module explicitly marks six-hour names as compatibility-only.
+    assert mod.LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY is True
+
+    # (b) The positive-proof cadence is next-three-hour, exported in __all__.
+    assert mod.AUDITOR_RECONCILIATION_INTERVAL == "next_three_hour"
+    assert "AUDITOR_RECONCILIATION_INTERVAL" in mod.__all__
+    assert "THREE_HOURS_SECONDS" in mod.__all__
+    assert "LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY" in mod.__all__
+
+    # (c) The reconciliation cadence is strictly shorter than the legacy
+    # six-hour backstop window; six-hour may not masquerade as the cadence.
+    assert mod.THREE_HOURS_SECONDS == 3 * 3600
+    assert mod.SIX_HOURS_SECONDS == 6 * 3600
+    assert mod.THREE_HOURS_SECONDS < mod.SIX_HOURS_SECONDS
+    assert mod.AUDITOR_RECONCILIATION_INTERVAL != "six_hour"
+
+    # (d) The reconciliation interval must not be derived from a label,
+    # liveness signal, WBC receipt, or rebuildable projection — it is a fixed
+    # schedule constant (SC33).
+    forbidden = {str(s) for s in FORBIDDEN_AUTHORITY_SOURCES}
+    assert mod.AUDITOR_RECONCILIATION_INTERVAL not in forbidden

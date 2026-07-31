@@ -1,6 +1,11 @@
+> **Authority status (M11):** Zero-authority history. All auditor authority has
+> been migrated to canonical delegation. These briefs are retained as
+> non-runnable telemetry — they must not be used to launch repair actions,
+> grant authority, or materialize commands.
+
 You are a DeepSeek subagent in a research swarm. Work read-only.
 
-Goal: enumerate every useful signal the 6-hour progress auditor could surface about megaplan execution lifecycle itself: init, prep, plan, critique, gate, finalize, execute, review, feedback, chain advance, PR publication, and resume/retry.
+Goal: enumerate every useful signal the next-three-hour progress auditor could surface about megaplan execution lifecycle itself: init, prep, plan, critique, gate, finalize, execute, review, feedback, chain advance, PR publication, and resume/retry.
 
 Context:
 - Repo: /Users/peteromalley/Documents/Arnold

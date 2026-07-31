@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Literal, NotRequired, TypedDict
 
@@ -97,12 +98,40 @@ def _hash_if_present(path: Path) -> list[str]:
         return []
 
 
+def registered_plan_artifact_path(plan_dir: Path, iteration: int) -> Path:
+    """Resolve the latest registered plan artifact for ``iteration``.
+
+    Recovery can register a byte-distinct same-iteration plan under an
+    alternate filename.  Receipts must follow the durable plan-version record
+    rather than silently falling back to the primary ``plan_vN.md`` alias.
+    """
+    fallback = plan_dir / f"plan_v{iteration}.md"
+    try:
+        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        records = state.get("plan_versions") if isinstance(state, dict) else None
+        if not isinstance(records, list):
+            return fallback
+        for record in reversed(records):
+            if not isinstance(record, dict) or record.get("version") != iteration:
+                continue
+            filename = record.get("file")
+            if not isinstance(filename, str) or not filename.endswith(".md"):
+                return fallback
+            candidate = plan_dir / filename
+            if candidate.resolve().parent != plan_dir.resolve():
+                return fallback
+            return candidate
+    except (OSError, ValueError, TypeError):
+        pass
+    return fallback
+
+
 def upstream_artifact_hashes(plan_dir: Path, phase: str, iteration: int) -> list[str]:
     """Return ordered hashes of the artifacts that fed a phase receipt."""
     if phase == "plan":
         return []
     if phase == "critique":
-        return _hash_if_present(plan_dir / f"plan_v{iteration}.md")
+        return _hash_if_present(registered_plan_artifact_path(plan_dir, iteration))
     if phase == "gate":
         hashes: list[str] = []
         for index in range(1, iteration + 1):

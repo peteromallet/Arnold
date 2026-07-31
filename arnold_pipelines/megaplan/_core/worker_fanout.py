@@ -38,6 +38,7 @@ from arnold_pipelines.megaplan.fallback_chains import (
 )
 from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan.model_seam import ModelBudgetError, ModelTier, render_step_message
+from arnold_pipelines.megaplan.custody.worker_dispatch_wbc import build_worker_dispatch_spec
 from arnold_pipelines.megaplan.types import (
     AgentMode,
     PlanState,
@@ -601,6 +602,22 @@ def _dispatch_worker_unit_attempt(
     options = dict(worker_options or {})
     if len(unit.configured_specs) > 1:
         options["_suppress_ambient_agent_fallback"] = True
+    wbc_dispatch = build_worker_dispatch_spec(
+        plan_dir=plan_dir,
+        state=state,
+        step=unit.step,
+        phase_step=state.get("active_step", {}).get("_phase_wbc", {}).get("step")
+        if isinstance(state.get("active_step"), dict)
+        else None,
+        agent=unit.resolved.agent,
+        selected_spec=unit.configured_specs[unit.attempt_index],
+        route_kind="subprocess",
+        attempt_index=unit.attempt_index,
+        configured_specs=unit.configured_specs,
+        attempted_specs=unit.attempted_specs,
+        failed_attempt_reasons=unit.failed_attempt_reasons,
+        fallback_trigger=unit.fallback_trigger,
+    )
     worker, _agent, _mode, _refreshed = run_step_with_worker(
         unit.step,
         state,
@@ -628,6 +645,7 @@ def _dispatch_worker_unit_attempt(
         ledger_attempted_specs=unit.attempted_specs,
         ledger_failed_attempt_reasons=unit.failed_attempt_reasons,
         ledger_fallback_trigger=unit.fallback_trigger,
+        wbc_dispatch=wbc_dispatch,
     )
     return worker
 

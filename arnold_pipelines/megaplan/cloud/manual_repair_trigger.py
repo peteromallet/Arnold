@@ -3,11 +3,19 @@
 This command is intentionally narrower than the watchdog.  It resolves one
 cloud session through the normal current-target resolver, verifies the exact
 frozen plan/evidence cursor supplied by the operator, enqueues the same repair
-request shape used by terminal lifecycle handling, and asks
-``arnold-repair-trigger`` to process only that request ID.
+request shape used by terminal lifecycle handling, and delegates to the
+canonical ``simple_fixer`` through the repair delegation shim.
 
 It never edits plan or chain state, and a deterministic receipt prevents the
 same evidence cursor from being manually dispatched twice.
+
+M7 shadow validation is wired into ``trigger_once`` before delegation
+so that stale-authority paths are diagnosed before the fixer is invoked.
+Production enforcement is always disabled.
+
+Legacy ``/usr/local/bin/arnold-repair-trigger`` and
+``ARNOLD_MANUAL_REPAIR_TRIGGER_BIN`` authority have been retired in favour
+of typed simple_fixer delegation with append-only queue evidence.
 """
 
 from __future__ import annotations
@@ -16,7 +24,6 @@ import argparse
 import hashlib
 import json
 import os
-import subprocess
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
@@ -25,11 +32,32 @@ from typing import Any
 
 from arnold_pipelines.megaplan.cloud import feature_flags, repair_requests
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+from arnold_pipelines.megaplan.cloud.simple_fixer import SimpleFixerOccurrence
+from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
+    RepairDelegation,
+    delegate_to_simple_fixer,
+    emit_zero_authority_rejection,
+)
+from arnold_pipelines.megaplan.custody.contracts import (
+    CustodyTargetKey,
+    F01_REPAIR_OCCURRENCE_FIELDS,
+    build_custody_target_key,
+)
+
+# ── M7 shadow validator import (enforcement always disabled) ────────────────
+try:
+    from arnold_pipelines.megaplan.custody.action_validator import (
+        validate_action_boundary_simple,
+    )
+    _M7_VALIDATOR_AVAILABLE = True
+except ImportError:
+    _M7_VALIDATOR_AVAILABLE = False
 
 
 RECEIPT_SCHEMA = "arnold-manual-repair-trigger-v1"
 RECEIPT_DIR_NAME = "manual-triggers"
 ALLOWED_PLAN_STATES = frozenset({"blocked", "failed"})
+ALLOWED_HISTORY_FAILURE_RESULTS = frozenset({"blocked", "error", "failed"})
 
 
 class ManualRepairTriggerError(RuntimeError):
@@ -85,7 +113,27 @@ def _evidence_cursor(state: Mapping[str, Any], failure: Mapping[str, Any]) -> di
     for candidate in candidates:
         if isinstance(candidate, Mapping):
             return dict(candidate)
-    return {}
+    history = state.get("history")
+    if not isinstance(history, Sequence) or isinstance(history, (str, bytes)) or not history:
+        return {}
+    latest = history[-1]
+    if not isinstance(latest, Mapping):
+        return {}
+    failure_phase = _text(failure.get("phase"))
+    history_phase = _text(latest.get("step"))
+    history_result = _text(latest.get("result"))
+    artifact_hash = _text(latest.get("artifact_hash"))
+    if (
+        not failure_phase
+        or history_phase != failure_phase
+        or history_result not in ALLOWED_HISTORY_FAILURE_RESULTS
+        or not artifact_hash
+    ):
+        return {}
+    return {
+        "history_index": len(history) - 1,
+        "review_artifact_hash": artifact_hash,
+    }
 
 
 def _receipt_id(*, session: str, plan: str, history_index: int, artifact_hash: str) -> str:
@@ -124,20 +172,136 @@ def _write_json_atomic(path: Path, payload: Mapping[str, Any], *, exclusive: boo
             pass
 
 
-def _dispatch_event(stdout: str, request_id: str) -> dict[str, Any] | None:
-    for line in stdout.splitlines():
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(payload, dict):
-            continue
-        if (
-            payload.get("event") == "repair_trigger_dispatch"
-            and payload.get("request_id") == request_id
-        ):
-            return payload
-    return None
+def _build_manual_trigger_occurrence_target(
+    *,
+    session: str,
+    plan: str,
+    workspace: str,
+    remote_spec: str,
+    run_kind: str,
+    expected_history_index: int,
+    expected_artifact_hash: str,
+    failure_kind: str,
+    phase_or_step: str,
+    blocked_task_id: str,
+) -> CustodyTargetKey | None:
+    """Build a :class:`CustodyTargetKey` from the manual trigger context.
+
+    Returns ``None`` when the exact F01 tuple cannot be satisfied — this is
+    the boundary at which ``manual_repair_trigger_rejected`` is emitted.
+    Authority is never derived from labels, liveness, WBC receipts, or
+    rebuildable projections.
+    """
+    fields: dict[str, str] = {}
+    for name in F01_REPAIR_OCCURRENCE_FIELDS:
+        fields[name] = ""
+    fields["environment"] = (workspace or "manual-trigger").strip()
+    fields["session"] = (session or "").strip()
+    fields["chain"] = (remote_spec or plan or "").strip()
+    fields["plan_revision"] = (plan or "").strip()
+    fields["phase"] = (phase_or_step or "").strip()
+    fields["task"] = (blocked_task_id or "").strip()
+    fields["attempt"] = str(expected_history_index).strip()
+    fields["normalized_failure_kind"] = (failure_kind or "terminal_blocked").strip()
+    fields["blocker_or_phase_result_hash"] = (expected_artifact_hash or "").strip()
+    fields["fence"] = str(expected_history_index).strip()
+    return build_custody_target_key(**fields)
+
+
+# ── M7 shadow validator helper (T15) ────────────────────────────────────────
+
+
+def _shadow_validate_manual_trigger_boundary(
+    *,
+    session: str,
+    plan: str,
+    expected_history_index: int,
+    expected_artifact_hash: str,
+    request_id: str,
+) -> dict[str, Any]:
+    """Run the M7 shadow validator before manual repair trigger dispatch (non-blocking).
+
+    Builds a best-effort ``CustodyTargetKey`` from the manual trigger context,
+    calls ``validate_action_boundary_simple`` with ``action_type=\"repair\"``,
+    and returns typed conflict/fence/reconcile diagnostics.  Never raises —
+    all errors are captured as diagnostic metadata.
+
+    Production enforcement is always disabled; this is a shadow-only call.
+    """
+    if not _M7_VALIDATOR_AVAILABLE:
+        return {
+            "m7_validator_available": False,
+            "reason": "action_validator module not importable",
+        }
+
+    import hashlib as _hashlib
+
+    try:
+        target_dict = {
+            "environment": "manual-trigger",
+            "session": session or "unknown",
+            "chain": plan or "unknown",
+            "plan_revision": plan or "unknown",
+            "phase": "manual_trigger",
+            "task": request_id or "unknown",
+            "attempt": str(expected_history_index),
+            "normalized_failure_kind": "manual_trigger",
+            "blocker_or_phase_result_hash": _hashlib.sha256(
+                f"{session}:{plan}:{expected_artifact_hash}".encode("utf-8")
+            ).hexdigest()[:16],
+            "fence": str(expected_history_index),
+        }
+
+        result = validate_action_boundary_simple(
+            action_type="repair",
+            target=target_dict,
+            run_authority_grant_id="manual_repair_trigger",
+            coordinator_fence_token=expected_history_index,
+            wbc_attempt_reference=request_id,
+        )
+
+        typed_events: list[dict[str, Any]] = []
+        for check in result.checks:
+            outcome = check.outcome.value
+            if outcome == "conflict":
+                typed_events.append({
+                    "event_type": "conflict",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+            elif outcome == "fenced":
+                typed_events.append({
+                    "event_type": "fence",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+            elif outcome in ("stale", "expired"):
+                typed_events.append({
+                    "event_type": "reconcile",
+                    "source": check.source,
+                    "detail": check.detail,
+                    "observed_at": check.observed_at,
+                })
+
+        return {
+            "m7_validator_available": True,
+            "gate_result": result.gate_result.value,
+            "enforcement_enabled": result.enforcement_enabled,
+            "shadow_mode": result.is_shadow,
+            "typed_events": typed_events,
+            "checks_summary": {
+                c.source: c.outcome.value for c in result.checks
+            },
+            "validated_at": result.validated_at,
+        }
+    except Exception as exc:
+        return {
+            "m7_validator_available": True,
+            "error": f"{type(exc).__name__}: {exc}",
+            "typed_events": [],
+        }
 
 
 def trigger_once(
@@ -149,11 +313,19 @@ def trigger_once(
     marker_dir: Path,
     queue_root: Path,
     repair_data_dir: Path | None = None,
-    trigger_bin: Path = Path("/usr/local/bin/arnold-repair-trigger"),
     target_resolver: Callable[..., dict[str, Any]] = resolve_current_target,
-    command_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> dict[str, Any]:
-    """Validate, enqueue, and dispatch one exact canonical repair request."""
+    """Validate, enqueue, and delegate one exact canonical repair request.
+
+    Builds a typed ``RepairDelegation`` with ``caller_kind=\"operator_trigger\"``
+    and delegates to the canonical ``simple_fixer`` through the repair
+    delegation shim.  When an exact-occurrence identity cannot be
+    constructed the function emits ``manual_repair_trigger_rejected``
+    and preserves the append-only queue evidence receipt.
+
+    Legacy subprocess dispatch and env-var override authority have been
+    retired; all trigger paths now flow through the delegation shim.
+    """
 
     session = _text(session)
     plan = _text(plan)
@@ -167,8 +339,6 @@ def trigger_once(
             "L1 mutation is not authorized; set invocation-scoped ARNOLD_AUTONOMY=1 and "
             "ARNOLD_REPAIR_TRIGGER_ENABLED=1"
         )
-    if not trigger_bin.is_file() or not os.access(trigger_bin, os.X_OK):
-        raise ManualRepairTriggerError(f"canonical repair trigger is unavailable: {trigger_bin}")
 
     queue_root = repair_requests.validate_queue_root(queue_root)
     target = target_resolver(
@@ -217,13 +387,15 @@ def trigger_once(
     if not workspace.is_absolute() or not workspace.is_dir():
         raise ManualRepairTriggerError("resolver workspace is unavailable")
     metadata = _mapping(failure.get("metadata"))
+    configured_profile = _text(_mapping(state.get("config")).get("profile"))
+    phase_or_step = _text(failure.get("phase"))
     problem_signature = {
         "failure_kind": _text(failure.get("kind")) or "terminal_blocked",
         "current_state": current_state,
-        "phase_or_step": _text(failure.get("phase")),
+        "phase_or_step": phase_or_step,
         "milestone_or_plan": plan,
         "gate_recommendation": _text(failure.get("suggested_action")),
-        "blocked_task_id": _blocked_task_id(metadata),
+        "blocked_task_id": _blocked_task_id(metadata) or f"phase:{phase_or_step}",
     }
     root_cause_hint = _text(failure.get("message")) or "plan entered a blocked terminal state"
     request_id = repair_requests.request_id_for(
@@ -252,11 +424,28 @@ def trigger_once(
         "plan_state_fingerprint": _text(plan_summary.get("fingerprint")),
         "request_id": request_id,
         "queue_root": str(queue_root),
-        "trigger_bin": str(trigger_bin),
+        "delegation_target": "simple_fixer",
     }
     _write_json_atomic(receipt_path, receipt, exclusive=True)
 
     try:
+        repair_target = {
+            "plan_dir": str(plan_path.parent),
+            "plan_name": plan,
+            "workspace_path": str(workspace),
+            "remote_spec": remote_spec,
+            "evidence_cursor": dict(cursor),
+            "recovery_contract": {
+                "preserve_configured_profile": True,
+                "required_cursor_advance": True,
+                "forbid_standalone_completion": True,
+                "success_requires": (
+                    "the canonical plan must advance beyond the frozen evidence cursor"
+                ),
+            },
+        }
+        if configured_profile:
+            repair_target["configured_profile"] = configured_profile
         queued = repair_requests.enqueue_repair_request(
             queue_root=queue_root,
             marker_dir=marker_dir,
@@ -264,13 +453,7 @@ def trigger_once(
             source="manual_terminal_failure_retrigger",
             workspace=workspace,
             run_kind=run_kind,
-            target={
-                "plan_dir": str(plan_path.parent),
-                "plan_name": plan,
-                "workspace_path": str(workspace),
-                "remote_spec": remote_spec,
-                "evidence_cursor": dict(cursor),
-            },
+            target=repair_target,
             problem_signature=problem_signature,
             root_cause_hint=root_cause_hint,
         )
@@ -280,44 +463,99 @@ def trigger_once(
         if queued.get("status") not in {"queued", "coalesced"}:
             raise ManualRepairTriggerError(f"repair request was not accepted: {queued.get('status')}")
 
-        command = [
-            str(trigger_bin),
-            "--marker-dir",
-            str(marker_dir),
-            "--queue-root",
-            str(queue_root),
-            "--request-id",
-            request_id,
-        ]
-        if repair_data_dir is not None:
-            command.extend(["--repair-data-dir", str(repair_data_dir)])
-        completed = command_runner(
-            command,
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=30,
+        # ── M7 shadow validation before delegation (T15) ────────────────────
+        m7_shadow = _shadow_validate_manual_trigger_boundary(
+            session=session,
+            plan=plan,
+            expected_history_index=expected_history_index,
+            expected_artifact_hash=artifact_hash,
+            request_id=request_id,
         )
-        event = _dispatch_event(completed.stdout or "", request_id)
-        dispatched = bool(
-            completed.returncode == 0
-            and event is not None
-            and event.get("status") == "dispatched"
+        receipt["m7_shadow_validation"] = m7_shadow
+
+        # ── Build delegation and delegate to simple_fixer ──────────────────
+        occurrence_target = _build_manual_trigger_occurrence_target(
+            session=session,
+            plan=plan,
+            workspace=str(workspace),
+            remote_spec=remote_spec,
+            run_kind=run_kind,
+            expected_history_index=expected_history_index,
+            expected_artifact_hash=artifact_hash,
+            failure_kind=problem_signature["failure_kind"],
+            phase_or_step=phase_or_step,
+            blocked_task_id=problem_signature["blocked_task_id"],
         )
+
+        if occurrence_target is None:
+            # Cannot satisfy the exact F01 tuple — emit a typed rejection
+            # that preserves the append-only queue evidence receipt.
+            rejection = emit_zero_authority_rejection(
+                "operator_trigger",
+                request_id,
+                reason=(
+                    "manual repair trigger cannot build exact-occurrence "
+                    "identity from available context; all ten F01 fields "
+                    "must be non-empty"
+                ),
+            )
+            receipt.update(
+                {
+                    "status": "manual_repair_trigger_rejected",
+                    "completed_at": _utc_now(),
+                    "request_status": queued.get("status"),
+                    "request_path": queued.get("path"),
+                    "delegation_outcome": "manual_repair_trigger_rejected",
+                    "delegation_evidence": rejection.evidence,
+                }
+            )
+            _write_json_atomic(receipt_path, receipt)
+            raise ManualRepairTriggerError(
+                f"manual repair trigger rejected: cannot build exact-occurrence "
+                f"identity; receipt: {receipt_path}"
+            )
+
+        delegation = RepairDelegation(
+            caller_kind="operator_trigger",
+            caller_id=request_id,
+            target=occurrence_target,
+        )
+
+        # The mutation action for the simple_fixer is the trigger
+        # dispatch itself — it records the queued request and advances
+        # the occurrence state.
+        def _trigger_mutation(occ: SimpleFixerOccurrence) -> str:
+            return occ.occurrence_fingerprint
+
+        delegation_result = delegate_to_simple_fixer(
+            delegation,
+            queue_dir=str(queue_root),
+            mutate=_trigger_mutation,
+            actor="manual_repair_trigger",
+            request_id=request_id,
+            session_id=session,
+            kind="immediate_trigger",
+            verifier_slot="",
+        )
+
+        dispatched = delegation_result.delegated
         receipt.update(
             {
                 "status": "dispatched" if dispatched else "dispatch_failed",
                 "completed_at": _utc_now(),
                 "request_status": queued.get("status"),
                 "request_path": queued.get("path"),
-                "trigger_returncode": completed.returncode,
-                "dispatch_event": event or {},
+                "delegation_outcome": delegation_result.outcome,
+                "simple_fixer_outcome": delegation_result.simple_fixer_outcome,
+                "delegation_evidence": delegation_result.evidence,
             }
         )
         _write_json_atomic(receipt_path, receipt)
         if not dispatched:
             raise ManualRepairTriggerError(
-                f"canonical trigger did not establish a dispatch; receipt: {receipt_path}"
+                f"canonical trigger did not establish a dispatch; "
+                f"delegation outcome: {delegation_result.outcome}; "
+                f"receipt: {receipt_path}"
             )
     except Exception as exc:
         if receipt.get("status") == "dispatching":
@@ -336,9 +574,10 @@ def trigger_once(
         "session": session,
         "plan": plan,
         "request_id": request_id,
-        "managed_run_id": _text(_mapping(receipt.get("dispatch_event")).get("managed_run_id")),
-        "managed_manifest_path": _text(
-            _mapping(receipt.get("dispatch_event")).get("managed_manifest_path")
+        "delegation_outcome": receipt.get("delegation_outcome", ""),
+        "simple_fixer_outcome": receipt.get("simple_fixer_outcome", ""),
+        "occurrence_fingerprint": (
+            receipt.get("delegation_evidence", {}).get("occurrence_fingerprint", "")
         ),
         "receipt_path": str(receipt_path),
     }
@@ -369,16 +608,6 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=(Path(value) if (value := os.getenv("CLOUD_WATCHDOG_REPAIR_DATA_DIR")) else None),
     )
-    parser.add_argument(
-        "--trigger-bin",
-        type=Path,
-        default=Path(
-            os.getenv(
-                "ARNOLD_MANUAL_REPAIR_TRIGGER_BIN",
-                "/usr/local/bin/arnold-repair-trigger",
-            )
-        ),
-    )
     return parser.parse_args(argv)
 
 
@@ -393,7 +622,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             marker_dir=args.marker_dir,
             queue_root=args.queue_root,
             repair_data_dir=args.repair_data_dir,
-            trigger_bin=args.trigger_bin,
         )
     except ManualRepairTriggerError as exc:
         print(json.dumps({"status": "failed", "error": str(exc)}, sort_keys=True))

@@ -19,7 +19,9 @@ semantic-health work.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import StrEnum
+from typing import Collection
 
 from arnold.workflow.boundary_evidence import BoundaryContract, BoundaryPhase
 from arnold.workflow.boundary_templates import (
@@ -109,6 +111,18 @@ REPAIR_META_COMPLETE_ROW_ID = "repair.meta_complete.1"
 # ── Auditor completion stable row ID namespace ──────────────────────────
 
 AUDITOR_6H_COMPLETE_ROW_ID = "auditor.6h_complete.1"
+
+# ── Next-three-hour reconciliation vocabulary (M11 Step 50) ──────────────
+# The six-hour filenames and field names (AUDITOR_6H_COMPLETE_ROW_ID,
+# auditor_6h_completion, "6h") are retained as compatibility-only
+# identifiers/exact-version evidence. Positive proof of the reconciliation
+# cadence now flows through NEXT_THREE_HOUR_RECONCILIATION. The
+# reconciliation label is a schedule/evidence fact — it MUST NOT be promoted
+# into repair authority, and incomplete reconciliation prerequisites fail
+# closed. Mirrors arnold_pipelines.megaplan.cloud.six_hour_auditor (T33).
+NEXT_THREE_HOUR_RECONCILIATION = "next_three_hour"
+AUDITOR_RECONCILIATION_INTERVAL = NEXT_THREE_HOUR_RECONCILIATION
+LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY = True
 
 # ── Cloud custody stable row ID namespace ───────────────────────────────
 
@@ -545,9 +559,17 @@ auditor_completion_template = BoundaryContract(
     receipt_required=True,
     authority_required=True,
     details={
-        "description": "Auditor completion boundary template: 6h auditor verdict set produced.",
+        "description": (
+            "Auditor completion boundary template: next-three-hour auditor "
+            "reconciliation verdict set produced (six-hour names retained as "
+            "compatibility-only exact-version evidence)."
+        ),
         "auditor_kind": "auditor_completion",
-        "time_window": "6h",
+        "time_window": NEXT_THREE_HOUR_RECONCILIATION,
+        "reconciliation_interval": NEXT_THREE_HOUR_RECONCILIATION,
+        "legacy_six_hour_names_compatibility_only": (
+            LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY
+        ),
         "verdict_refs": (),
     },
 )
@@ -1609,9 +1631,18 @@ auditor_6h_completion = BoundaryContract(
     receipt_required=True,
     authority_required=True,
     details={
-        "description": "6h auditor completion boundary: auditor produces verdict set within 6h window.",
+        "description": (
+            "Auditor reconciliation completion boundary: auditor produces "
+            "verdict set within the next-three-hour reconciliation window "
+            "(six-hour identifiers retained as compatibility-only "
+            "exact-version evidence)."
+        ),
         "auditor_kind": "six_hour_auditor",
-        "time_window": "6h",
+        "time_window": NEXT_THREE_HOUR_RECONCILIATION,
+        "reconciliation_interval": NEXT_THREE_HOUR_RECONCILIATION,
+        "legacy_six_hour_names_compatibility_only": (
+            LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY
+        ),
         "verdict_refs": ("auditor_verdict.json",),
         "profile_kind": "auditor_completion",
         "template_ref": "template.auditor_completion",
@@ -2166,10 +2197,148 @@ def _is_empty_value(value: object) -> bool:
     return False
 
 
+# ── Step 96 (T46): WBC static/runtime equality gate ────────────────────────
+# WBC rows are exact-version evidence only. Equality among generated call
+# sites, runtime traces, and exact-version WBC rows is proven ONLY after
+# prerequisite readiness (Steps 2, 50, 92, 95). Incomplete prerequisites
+# produce only ``m11_prerequisite_incomplete`` — no positive equality is ever
+# claimed from a label, liveness, a WBC receipt, or a rebuildable projection.
+# This is aggregation/decision data: it never writes authority.
+
+
+#: Typed outcome emitted when M11 prerequisites are incomplete.
+M11_PREREQUISITE_INCOMPLETE = "m11_prerequisite_incomplete"
+#: Typed outcome emitted when static/runtime/WBC equality is proven.
+WBC_STATIC_RUNTIME_EQUAL = "equal"
+#: Typed outcome emitted when the three sources disagree.
+WBC_STATIC_RUNTIME_MISMATCH = "mismatch"
+
+
+@dataclass(frozen=True)
+class WbcStaticRuntimeEqualityResult:
+    """Step 96: typed WBC static/runtime equality outcome.
+
+    Pure decision data: it is never an authority writer. ``equal`` is a derived
+    set comparison over generated call sites, runtime traces, and exact-version
+    WBC rows; it is never satisfied by a label, liveness, a WBC receipt, or a
+    rebuildable projection alone. The ``outcome`` is one of ``"equal"``,
+    ``"mismatch"``, or ``m11_prerequisite_incomplete``.
+    """
+
+    outcome: str
+    equal: bool
+    missing_runtime: tuple[str, ...]
+    extra_runtime: tuple[str, ...]
+    wbc_not_in_static: tuple[str, ...]
+    static_not_in_wbc: tuple[str, ...]
+    reason: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "outcome": self.outcome,
+            "equal": self.equal,
+            "missing_runtime": list(self.missing_runtime),
+            "extra_runtime": list(self.extra_runtime),
+            "wbc_not_in_static": list(self.wbc_not_in_static),
+            "static_not_in_wbc": list(self.static_not_in_wbc),
+            "reason": self.reason,
+        }
+
+
+def check_wbc_static_runtime_equality(
+    *,
+    generated_call_sites: Collection[str],
+    runtime_traces: Collection[str],
+    wbc_rows: Collection[str],
+    prerequisites_ready: bool,
+) -> WbcStaticRuntimeEqualityResult:
+    """Require exact equality among generated call sites, runtime traces, and
+    exact-version WBC rows — but only after M11 prerequisites are ready.
+
+    Step 96: WBC rows are exact-version evidence only. If prerequisites are not
+    ready the ONLY outcome is ``m11_prerequisite_incomplete``; no positive
+    equality is claimed even when the three sources happen to agree (fail
+    closed). When prerequisites are ready the three sources must agree exactly
+    (as sets); otherwise a typed ``mismatch`` outcome enumerates the
+    differences. No authority is created from a label, liveness, a WBC receipt,
+    or a rebuildable projection.
+    """
+    static = frozenset(str(s) for s in generated_call_sites)
+    runtime = frozenset(str(s) for s in runtime_traces)
+    wbc = frozenset(str(s) for s in wbc_rows)
+
+    missing_runtime = tuple(sorted(runtime - static))
+    extra_runtime = tuple(sorted(static - runtime))
+    wbc_not_in_static = tuple(sorted(wbc - static))
+    static_not_in_wbc = tuple(sorted(static - wbc))
+
+    if not prerequisites_ready:
+        return WbcStaticRuntimeEqualityResult(
+            outcome=M11_PREREQUISITE_INCOMPLETE,
+            equal=False,
+            missing_runtime=missing_runtime,
+            extra_runtime=extra_runtime,
+            wbc_not_in_static=wbc_not_in_static,
+            static_not_in_wbc=static_not_in_wbc,
+            reason=(
+                "M11 prerequisites not ready; WBC static/runtime equality is "
+                "not proven — m11_prerequisite_incomplete"
+            ),
+        )
+
+    if (
+        not missing_runtime
+        and not extra_runtime
+        and not wbc_not_in_static
+        and not static_not_in_wbc
+    ):
+        return WbcStaticRuntimeEqualityResult(
+            outcome=WBC_STATIC_RUNTIME_EQUAL,
+            equal=True,
+            missing_runtime=(),
+            extra_runtime=(),
+            wbc_not_in_static=(),
+            static_not_in_wbc=(),
+            reason=(
+                "generated call sites, runtime traces, and exact-version WBC "
+                "rows agree exactly"
+            ),
+        )
+
+    reasons: list[str] = []
+    if missing_runtime:
+        reasons.append(f"runtime not generated: {list(missing_runtime)}")
+    if extra_runtime:
+        reasons.append(f"generated not exercised at runtime: {list(extra_runtime)}")
+    if wbc_not_in_static:
+        reasons.append(f"WBC rows not in generated: {list(wbc_not_in_static)}")
+    if static_not_in_wbc:
+        reasons.append(
+            f"generated/runtime not covered by exact-version WBC rows: "
+            f"{list(static_not_in_wbc)}"
+        )
+    return WbcStaticRuntimeEqualityResult(
+        outcome=WBC_STATIC_RUNTIME_MISMATCH,
+        equal=False,
+        missing_runtime=missing_runtime,
+        extra_runtime=extra_runtime,
+        wbc_not_in_static=wbc_not_in_static,
+        static_not_in_wbc=static_not_in_wbc,
+        reason="; ".join(reasons),
+    )
+
+
 __all__ = [
     "AdapterTemplateKind",
     "ADAPTER_REQUIRED_FIELD_PROFILES",
     "ADAPTER_REQUIRED_FIELD_PROFILES_BY_KIND",
+    "AUDITOR_RECONCILIATION_INTERVAL",
+    "LEGACY_SIX_HOUR_NAMES_COMPATIBILITY_ONLY",
+    "M11_PREREQUISITE_INCOMPLETE",
+    "NEXT_THREE_HOUR_RECONCILIATION",
+    "WBC_STATIC_RUNTIME_EQUAL",
+    "WBC_STATIC_RUNTIME_MISMATCH",
+    "WbcStaticRuntimeEqualityResult",
     "ApprovalBoundary",
     "ArtifactHandoffBoundary",
     "BOUNDARY_CONTRACTS",
@@ -2210,6 +2379,7 @@ __all__ = [
     "chain_milestone_template",
     "challenger_to_synthesis",
     "check_contract_conformance",
+    "check_wbc_static_runtime_equality",
     "classify_boundary_kind",
     "cloud_custody_blocked_relaunch_failure",
     "cloud_custody_complete",

@@ -260,3 +260,214 @@ def test_resume_single_pending_frontier_never_expands_to_all_task_ids() -> None:
 
     assert batches_to_run == [["T1"]]
     assert all_task_ids not in batches_to_run
+
+
+# ---------------------------------------------------------------------------
+# M8A — Safe-wave reporting: deterministic batch metadata
+# ---------------------------------------------------------------------------
+
+
+def test_safe_wave_metadata_is_deterministic() -> None:
+    """Each wave's task IDs and order must be deterministic on recompilation."""
+    tasks = [
+        {"id": "T1", "depends_on": []},
+        {"id": "T2", "depends_on": ["T1"]},
+        {"id": "T3", "depends_on": ["T1"]},
+        {"id": "T4", "depends_on": ["T2", "T3"]},
+        {"id": "T5", "depends_on": ["T4"]},
+        {"id": "T6", "depends_on": ["T5"]},
+        {"id": "T7", "depends_on": ["T5"]},
+        {"id": "T8", "depends_on": ["T6", "T7"]},
+    ]
+    first = compute_task_batches(tasks)
+    second = compute_task_batches(tasks)
+
+    assert first == second
+    # Each wave should have exactly the same task IDs in the same order
+    assert first == [["T1"], ["T2", "T3"], ["T4"], ["T5"], ["T6", "T7"], ["T8"]]
+
+
+def test_safe_wave_count_matches_expected_dag_depth() -> None:
+    """The number of waves equals the longest dependency chain length."""
+    tasks = [
+        {"id": "T1", "depends_on": []},
+        {"id": "T2", "depends_on": ["T1"]},
+        {"id": "T3", "depends_on": ["T1"]},
+        {"id": "T4", "depends_on": ["T2", "T3"]},
+        {"id": "T5", "depends_on": ["T4"]},
+    ]
+    batches = compute_task_batches(tasks)
+    # Should have at most 4 waves for a 5-task chain (T1 -> T4 -> T5 max depth 4)
+    assert 3 <= len(batches) <= 5
+    # Every task must appear exactly once
+    flat = [tid for batch in batches for tid in batch]
+    assert sorted(flat) == ["T1", "T2", "T3", "T4", "T5"]
+
+
+def test_safe_wave_split_oversized_preserves_order() -> None:
+    """Oversized batch splitting must not reorder tasks within a wave."""
+    tasks = [
+        {"id": f"T{i}", "depends_on": []} for i in range(1, 7)
+    ]
+    batches = compute_task_batches(tasks)
+    assert batches == [["T1", "T2", "T3", "T4", "T5", "T6"]]
+
+    split = split_oversized_batches(batches, max_size=2)
+    assert split == [["T1", "T2"], ["T3", "T4"], ["T5", "T6"]]
+
+    # Original order must be preserved in each sub-batch
+    for sub in split:
+        indices = [tasks.index(next(t for t in tasks if t["id"] == tid)) for tid in sub]
+        assert indices == sorted(indices)
+
+
+def test_safe_wave_empty_tasks_yields_empty_batches() -> None:
+    """An empty task list produces an empty batch list (no crash)."""
+    assert compute_task_batches([]) == []
+
+
+def test_safe_wave_stable_task_id_digest_is_order_independent() -> None:
+    """stable_task_id_digest is stable regardless of input order."""
+    digest_a = stable_task_id_digest(["T3", "T1", "T2"])
+    digest_b = stable_task_id_digest(["T1", "T2", "T3"])
+    digest_c = stable_task_id_digest(["T2", "T3", "T1"])
+    assert digest_a == digest_b == digest_c
+    assert len(digest_a) == 12  # 6 hex bytes (sha256 truncated to 48 bits)
+
+
+# ---------------------------------------------------------------------------
+# M8A — Complexity 7/8/9 split behavior in batch dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_split_high_complexity_batches_isolates_complexity_7_8_9() -> None:
+    """Each complexity >=7 task gets its own batch; others stay grouped."""
+    from arnold_pipelines.megaplan._core import split_high_complexity_batches
+
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T1",
+                "complexity": 4,
+                "checkpoint": {"required": False, "max_interval_seconds": 300, "records": []},
+            },
+            {
+                "id": "T7",
+                "complexity": 7,
+                "checkpoint": {
+                    "required": True,
+                    "max_interval_seconds": 300,
+                    "records": [
+                        "completed_subobjectives",
+                        "remaining_subobjectives",
+                        "output_hashes",
+                        "test_state",
+                    ],
+                },
+            },
+            {
+                "id": "T8",
+                "complexity": 8,
+                "checkpoint": {
+                    "required": True,
+                    "max_interval_seconds": 300,
+                    "records": [
+                        "completed_subobjectives",
+                        "remaining_subobjectives",
+                        "output_hashes",
+                        "test_state",
+                    ],
+                },
+            },
+            {
+                "id": "T2",
+                "complexity": 5,
+                "checkpoint": {"required": False, "max_interval_seconds": 300, "records": []},
+            },
+            {
+                "id": "T9",
+                "complexity": 9,
+                "checkpoint": {
+                    "required": True,
+                    "max_interval_seconds": 300,
+                    "records": [
+                        "completed_subobjectives",
+                        "remaining_subobjectives",
+                        "output_hashes",
+                        "test_state",
+                    ],
+                },
+            },
+            {
+                "id": "T3",
+                "complexity": 3,
+                "checkpoint": {"required": False, "max_interval_seconds": 300, "records": []},
+            },
+        ],
+    }
+
+    input_batches = [["T1", "T7", "T8", "T2", "T9", "T3"]]
+    result = split_high_complexity_batches(input_batches, finalize_data, max_tasks_per_batch=5)
+
+    # Each high-complexity task in its own batch
+    assert ["T7"] in result
+    assert ["T8"] in result
+    assert ["T9"] in result
+    # Remaining non-high-complexity tasks stay grouped
+    non_high = [batch for batch in result if batch not in (["T7"], ["T8"], ["T9"])]
+    flat_non_high = [tid for batch in non_high for tid in batch]
+    assert sorted(flat_non_high) == ["T1", "T2", "T3"]
+
+
+def test_split_high_complexity_batches_preserves_task_identity() -> None:
+    """Splitting must never mutate task checkpoints, complexity, or other fields."""
+    from arnold_pipelines.megaplan._core import split_high_complexity_batches
+
+    original_task = {
+        "id": "T7",
+        "complexity": 7,
+        "objective": "Implement custody repair adapter.",
+        "checkpoint": {
+            "required": True,
+            "max_interval_seconds": 300,
+            "records": [
+                "completed_subobjectives",
+                "remaining_subobjectives",
+                "output_hashes",
+                "test_state",
+            ],
+        },
+    }
+    finalize_data = {"tasks": [dict(original_task), {"id": "T1", "complexity": 3}]}
+    input_batches = [["T7", "T1"]]
+
+    result = split_high_complexity_batches(input_batches, finalize_data)
+
+    # T7 must be isolated
+    assert ["T7"] in result
+    # The original task dict must be unchanged
+    assert finalize_data["tasks"][0] == original_task
+
+
+def test_split_high_complexity_batches_noop_when_no_high_complexity() -> None:
+    """When no tasks have complexity >=7, batches are returned unchanged."""
+    from arnold_pipelines.megaplan._core import split_high_complexity_batches
+
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "complexity": 3},
+            {"id": "T2", "complexity": 5},
+            {"id": "T3", "complexity": 6},
+        ],
+    }
+    input_batches = [["T1", "T2"], ["T3"]]
+    result = split_high_complexity_batches(input_batches, finalize_data)
+    assert result == input_batches
+
+
+def test_split_high_complexity_batches_handles_empty_input() -> None:
+    """Empty or None inputs are returned unchanged."""
+    from arnold_pipelines.megaplan._core import split_high_complexity_batches
+
+    assert split_high_complexity_batches([], {}) == []
+    assert split_high_complexity_batches([], {"tasks": []}) == []

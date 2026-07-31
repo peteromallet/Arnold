@@ -22,6 +22,7 @@ from arnold.execution.hooks import ExecutorHooks
 from arnold.pipeline.types import Pipeline, StepContext
 from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.execution.operations import OperationRegistry
+from arnold.workflow.native_wbc import begin_native_wbc_attempt
 
 __all__ = [
     "run_pipeline",
@@ -50,12 +51,40 @@ def run_pipeline(
         They are deferred to a follow-up milestone where they have a real
         consumer (``auto.py`` convergence).
     """
-    return _executor_run_pipeline(
-        pipeline,
-        initial_state,
-        envelope,
-        registry=registry,
-        parallel_safe=parallel_safe,
-        hooks=hooks,
-        initial_context=initial_context,
+    attempt = begin_native_wbc_attempt(
+        envelope.artifact_root,
+        producer_family="arnold_pipeline",
+        surface="runner",
+        run_id=envelope.run_id,
+        plugin_id=envelope.plugin_id,
+        manifest_hash=envelope.manifest_hash,
+        subject={"entry": pipeline.entry, "native": pipeline.native_program is not None},
+        metadata={"entrypoint": "arnold.pipeline.run_pipeline"},
     )
+    try:
+        attempt.effect(
+            "dispatch_executor",
+            {"native": pipeline.native_program is not None, "entry": pipeline.entry},
+        )
+        result = _executor_run_pipeline(
+            pipeline,
+            initial_state,
+            envelope,
+            registry=registry,
+            parallel_safe=parallel_safe,
+            hooks=hooks,
+            initial_context=initial_context,
+        )
+    except BaseException as exc:
+        attempt.terminal(
+            status="failed",
+            outcome="error",
+            payload={"error_type": exc.__class__.__name__, "error": str(exc)},
+        )
+        raise
+    attempt.terminal(
+        status="completed",
+        outcome="result",
+        payload={"result_type": type(result).__name__},
+    )
+    return result

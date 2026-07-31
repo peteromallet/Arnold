@@ -140,6 +140,39 @@ def test_false_success_without_live_canonical_runner_escalates_with_transcript_r
     assert all(item["exists"] is True and len(item["sha256"]) == 64 for item in refs)
 
 
+def test_terminal_chain_completion_does_not_require_a_live_runner(
+    tmp_path: Path,
+) -> None:
+    goal_path, _, _, _ = _recovery_fixture(tmp_path)
+    workspace = tmp_path / "workspace"
+    chain_path = workspace / ".megaplan" / "plans" / ".chains" / "chain.json"
+    chain = json.loads(chain_path.read_text(encoding="utf-8"))
+    chain.update(
+        {
+            "current_plan_name": "",
+            "current_milestone_index": 2,
+            "completed": [{"plan": "m5"}, {"plan": "m6"}],
+            "last_state": "done",
+        }
+    )
+    _write_json(chain_path, chain)
+
+    result = evaluate_repair_goal(
+        goal_path, action="terminal-chain-reconciliation"
+    )
+
+    assert result["status"] != GOAL_ACTIVE
+    assert result["semantic_completion"] is True
+    assert result["evaluation"]["recovery_gate_accepted"] is True
+    receipt = result["recovery_acceptance"]
+    assert receipt["accepted"] is True
+    assert receipt["requirements"]["live_canonical_runner"] is False
+    assert receipt["requirements"]["bounded_continued_progress"] is False
+    assert receipt["terminal_completion"]["applicability"] == (
+        "chain_terminal_success"
+    )
+
+
 def test_bounded_followup_without_continued_progress_fails_closed(
     tmp_path: Path, monkeypatch
 ) -> None:

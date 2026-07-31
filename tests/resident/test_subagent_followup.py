@@ -801,6 +801,26 @@ def test_continuation_worker_resumes_exact_parent_session_and_records_acceptance
     assert child["model_session"]["session_id"] == SESSION_ID
     inherited = json.loads(captured["env"][DELEGATION_CONTEXT_ENV])
     assert inherited["source_record_id"] == "msg_newfollowupsrc"
+    custody_events = [
+        json.loads(line)
+        for line in Path(child["custody_evidence_path"]).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert any(
+        event["event_kind"] == "start"
+        and event["evidence"] == "manifest_committed_before_process_launch"
+        for event in custody_events
+    )
+    assert any(
+        event["event_kind"] == "effect"
+        and event["evidence"] == "codex_resume_process_started"
+        for event in custody_events
+    )
+    assert any(
+        event["event_kind"] == "terminal"
+        and event["evidence"] == "managed_codex_worker_waited"
+        for event in custody_events
+    )
 
 
 def test_live_followup_queues_exact_parent_interrupt_and_retry_is_idempotent(
@@ -820,12 +840,14 @@ def test_live_followup_queues_exact_parent_interrupt_and_retry_is_idempotent(
         return _Supervisor()
 
     monkeypatch.setattr(subagent.subprocess, "Popen", fake_popen)
+    exact_message = "  Interrupt the current turn and continue in this session.  "
     kwargs = {
         "run_id": TARGET_RUN_ID,
-        "message": "Interrupt the current turn and continue in this session.",
+        "message": exact_message,
         "project_dir": tmp_path,
         "workspace_root": None,
         "idempotency_key": "request-42",
+        "require_live": True,
     }
     first = subagent.follow_up_managed_subagent(**kwargs)
     second = subagent.follow_up_managed_subagent(**kwargs)
@@ -838,10 +860,31 @@ def test_live_followup_queues_exact_parent_interrupt_and_retry_is_idempotent(
     assert record["state_history"][-1]["evidence"] == (
         "continuation_queued_to_interrupt_active_parent"
     )
+    assert Path(record["message_path"]).read_text() == exact_message + "\n"
     child = json.loads(Path(first.continuation_manifest_path).read_text())
     assert child["continuation_wait"]["status"] == "pending_parent_terminal"
     assert child["continuation_wait"]["interrupt_parent_on_session_ready"] is True
     assert child["parent_run_id"] == TARGET_RUN_ID
+
+
+def test_live_only_followup_rejects_terminal_target_without_launch(
+    tmp_path: Path, monkeypatch, caller_provenance: dict
+) -> None:
+    _write_run(tmp_path, status="completed")
+    monkeypatch.setattr(
+        subagent.subprocess,
+        "Popen",
+        lambda *args, **kwargs: pytest.fail("terminal target launched a continuation"),
+    )
+
+    with pytest.raises(subagent.SubagentFollowupError, match="is not live"):
+        subagent.follow_up_managed_subagent(
+            run_id=TARGET_RUN_ID,
+            message="Do not resume a terminal target from the live-only surface.",
+            project_dir=tmp_path,
+            workspace_root=None,
+            require_live=True,
+        )
 
 
 def test_continuation_interrupts_only_exact_active_supervisor_before_resume(

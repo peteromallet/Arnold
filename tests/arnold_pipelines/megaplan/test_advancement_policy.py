@@ -146,6 +146,13 @@ def _make_successor(
     )
 
 
+def _parent_custody(subject_id: str) -> dict[str, list[str]]:
+    return {
+        "accepted_subject_ids": [subject_id],
+        "active_repair_subject_ids": [subject_id],
+    }
+
+
 class TestAdvancementSuccessorGate:
     """Successor gate wired through assess_advancement (chain_complete path)."""
 
@@ -265,6 +272,24 @@ class TestAdvancementSuccessorGate:
         )
         assert result.action == "successor_gate_closed"
         assert result.gate == "successor_acceptance"
+
+    def test_parent_custody_conflict_blocks_successor_advancement(self) -> None:
+        policy = AdvancementPolicy("auto", "auto", True, "chain_yaml")
+        successors = [_make_successor(label="M5A")]
+        result = assess_advancement(
+            policy,
+            current_state="done",
+            chain_complete=True,
+            successors=successors,
+            completion_contract_mode="enforce",
+            completed_count=1,
+            has_final_acceptance_receipt=True,
+            final_milestone_label="M5",
+            parent_custody=_parent_custody("m5-plan"),
+        )
+
+        assert result.action == "successor_gate_closed"
+        assert result.gate == "parent_custody"
 
     def test_shadow_mode_passes_absent_receipt(self) -> None:
         """Shadow mode: absent receipt does not block (gate always open)."""

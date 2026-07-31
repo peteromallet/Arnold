@@ -61,7 +61,15 @@ No Megaplan re-exports appear here; this is the neutral surface.
 """
 
 from arnold.pipeline.audit_policy import AuditMode, AuditPolicyHook, select_audit_mode
-from arnold.agent.costing.media_cost import UsageExtraction, normalize_usage_extraction
+from arnold.agent.costing.media_cost import (
+    MediaPricingEntry,
+    UsageExtraction,
+    compute_media_cost,
+    normalize_usage_extraction,
+)
+from arnold.agent.costing.token_cost import (
+    PricingEntry, estimate_usage_cost, normalize_usage,
+)
 from arnold.pipeline.native.decorators import decision, phase, pipeline, step, workflow
 from arnold.pipeline.content_validation import (
     ContentValidator,
@@ -273,7 +281,9 @@ __all__ = [
     "NATIVE_CURSOR_VERSION",
     "NullNativeRuntimeHooks",
     "Pipeline",
+    "MediaPricingEntry",
     "PipelineIdRegistry",
+    "PricingEntry",
     "PipelineIdRegistryError",
     "PipelineVerdict",
     "Port",
@@ -328,6 +338,7 @@ __all__ = [
     "coerce",
     "decide_step_io_read",
     "decide_step_io_write",
+    "compute_media_cost",
     "derive_binding_map",
     "derive_tenant_id",
     "decision_blocks_read",
@@ -341,6 +352,7 @@ __all__ = [
     "legal_coercions",
     "load_step_io_policy",
     "load_pipeline_id_registry",
+    "estimate_usage_cost",
     "load_pipeline_id_registries",
     "majority_vote",
     "max_iters",
@@ -362,6 +374,7 @@ __all__ = [
     "reduce_contract_results",
     "register_schema",
     "resolve_registry_runtime_identity",
+    "normalize_usage",
     "RESUME_CURSOR_FILENAME",
     "RESUME_REVERIFY_DECLARATION_KEY",
     "RESUME_REVERIFY_EXTENSION_KEY",

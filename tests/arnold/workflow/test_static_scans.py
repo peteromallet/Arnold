@@ -109,6 +109,7 @@ def _is_python_authoring_rejected_example(paragraph: str) -> bool:
             "outside v1",
             "rejected",
             "source diagnostic",
+            "hand-authored",
         )
     )
 
@@ -126,6 +127,8 @@ def _python_authoring_guidance_violations(relative: Path, text: str) -> list[str
 def _contains_python_authoring_banned_guidance(paragraph: str, term: str) -> bool:
     if term == "_pipeline":
         return re.search(r"(?<![A-Za-z0-9])_pipeline(?![A-Za-z0-9])", paragraph) is not None
+    if term == "stages":
+        return re.search(r"(?:/stages/|\.stages\b|`stages`|\bstages\.py\b)", paragraph) is not None
     return term in paragraph
 
 

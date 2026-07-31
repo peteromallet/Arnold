@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# arnold-kimi-goal-operator — non-authoritative telemetry agent launcher.
+#
+# Step 76-80: This wrapper never executes direct repair.  Every agent launch
+# is recorded as non-runnable telemetry.  Repair authority requires canonical
+# delegation through the typed delegation shim; return-code success from
+# direct agent execution is not accepted repair.
 set -uo pipefail
 set -m   # job control: background subshells get separate process groups
 
@@ -87,12 +93,13 @@ capture() {
 write_report() {
   local status="$1"
   local message="$2"
-  python3 - "$REPORT" "$status" "$message" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_DIR" <<'PY'
+  local non_authoritative="${3:-true}"
+  python3 - "$REPORT" "$status" "$message" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_DIR" "$non_authoritative" <<'PY'
 import datetime as dt
 import json
 import sys
 
-path, status, message, session, workspace, remote_spec, run_dir = sys.argv[1:]
+path, status, message, session, workspace, remote_spec, run_dir, non_auth = sys.argv[1:]
 payload = {
     "timestamp_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
     "status": status,
@@ -101,6 +108,8 @@ payload = {
     "workspace": workspace,
     "remote_spec": remote_spec,
     "run_dir": run_dir,
+    "non_authoritative_telemetry": non_auth.lower() in ("true", "1", "yes"),
+    "canonical_delegation_required": True,
 }
 with open(path, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2, sort_keys=True)

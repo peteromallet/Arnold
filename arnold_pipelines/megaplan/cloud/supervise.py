@@ -8,11 +8,14 @@ blockers but must not invent approvals or force destructive git operations.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shlex
 import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+from arnold_pipelines.megaplan.custody.process_adapter_wbc import begin_process_adapter_attempt
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +245,9 @@ def enqueue_supervisor_repair_request(
     """Queue an exhausted supervised run in the validated central queue."""
 
     from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
-    from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
+    from arnold_pipelines.megaplan.cloud.repair_requests import (
+        enqueue_occurrence_bound_repair_request,
+    )
 
     # ``remote_spec`` identifies the chain, not its current repair target.  The
     # central queue compares ``target.plan_name``/``milestone_or_plan`` with the
@@ -283,7 +288,32 @@ def enqueue_supervisor_repair_request(
         current_plan_name=current_plan_name,
     )
 
-    return enqueue_repair_request(
+    # ── Step 39 (T25): Build exact occurrence identity for
+    # supervised-run-exhausted enqueue.  The F01 tuple binds this
+    # request to the exact repair occurrence so downstream recovery
+    # joins can identify the same tuple.
+    workspace_str = str(workspace)
+    fence_token = _derive_supervise_fence_token(log_path)
+    plan_revision = _derive_supervise_plan_revision(
+        marker_dir, current_plan_name
+    )
+
+    occurrence_identity = {
+        "environment": workspace_str,
+        "session": session,
+        "chain": remote_spec,
+        "plan_revision": plan_revision,
+        "phase": "arnold-supervise",
+        "task": "phase:arnold-supervise",
+        "attempt": _derive_supervise_attempt(log_path),
+        "normalized_failure_kind": "supervised_run_exhausted",
+        "blocker_or_phase_result_hash": _derive_supervise_blocker_hash(
+            log_path, reason
+        ),
+        "fence": fence_token,
+    }
+
+    return enqueue_occurrence_bound_repair_request(
         queue_root=queue_root,
         marker_dir=marker_dir,
         session=session,
@@ -293,7 +323,90 @@ def enqueue_supervisor_repair_request(
         target=target,
         problem_signature=problem_signature,
         root_cause_hint={"reason": reason, "supervise_log": log_path},
+        occurrence_identity=occurrence_identity,
+        evidence_cursor_digest=_derive_supervise_evidence_cursor_digest(
+            log_path, marker_dir
+        ),
+        terminal_receipt_expectations=[
+            "five_minute",
+            "one_hour",
+            "next_three_hour",
+        ],
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Step 39 (T25) — Occurrence identity derivation helpers for supervise enqueue
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _derive_supervise_fence_token(log_path: str) -> str:
+    """Derive a fence token from the supervise log file."""
+    try:
+        stat = Path(log_path).stat()
+        return f"fence:{stat.st_mtime_ns}:{stat.st_size}"
+    except OSError:
+        return "fence:unknown"
+
+
+def _derive_supervise_plan_revision(
+    marker_dir: str | Path, current_plan_name: str
+) -> str:
+    """Derive a plan revision from the marker directory."""
+    marker = Path(marker_dir)
+    if current_plan_name:
+        # Try reading the plan's state.json to extract plan_revision.
+        try:
+            plan_dir = marker / "plans" / current_plan_name
+            if not plan_dir.is_dir():
+                plan_dir = marker / current_plan_name
+            data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                rev = data.get("plan_revision") or data.get("revision") or ""
+                if rev:
+                    return str(rev).strip()
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            pass
+    # Fallback.
+    digest = hashlib.sha256(
+        f"{marker}:{current_plan_name}".encode("utf-8")
+    ).hexdigest()[:16]
+    return f"sha256:{digest}"
+
+
+def _derive_supervise_attempt(log_path: str) -> str:
+    """Derive attempt number from supervise log modification count."""
+    try:
+        stat = Path(log_path).stat()
+        # Simple heuristic: each write increments st_mtime_ns,
+        # use it as a proxy for attempt count.
+        return str(stat.st_nlink or 1)
+    except OSError:
+        return "1"
+
+
+def _derive_supervise_blocker_hash(log_path: str, reason: str) -> str:
+    """Derive a blocker hash from supervise context."""
+    parts = [log_path, reason]
+    digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
+def _derive_supervise_evidence_cursor_digest(
+    log_path: str, marker_dir: str | Path
+) -> str:
+    """Derive evidence cursor digest from supervise and marker state."""
+    parts: list[str] = []
+    for path_str in (log_path, str(marker_dir)):
+        try:
+            stat = Path(path_str).stat()
+            parts.append(f"{path_str}:{stat.st_mtime_ns}:{stat.st_size}")
+        except OSError:
+            parts.append(f"{path_str}:absent")
+    if not parts:
+        return ""
+    digest = hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
 
 
 # ---------------------------------------------------------------------------
@@ -325,13 +438,47 @@ def cloud_supervise_tick(
     )
     from arnold_pipelines.megaplan.cloud import feature_flags
 
+    attempt = begin_process_adapter_attempt(
+        root,
+        producer_family="cloud_supervision_adapter",
+        adapter_name="cloud_supervise_tick",
+        surface="tick",
+        start_details={
+            "spec_provider": getattr(spec, "provider", None),
+            "session": getattr(args, "session", None),
+        },
+    )
+
+    def _report(**kwargs: Any) -> dict[str, Any]:
+        report = _tick_report(**kwargs)
+        if report.get("acted"):
+            attempt.effect(
+                "mutation_requested",
+                details={
+                    "event": report.get("event"),
+                    "next_action": report.get("next_action"),
+                    "effective_status": report.get("effective_status"),
+                },
+            )
+        attempt.terminal(
+            status=str(report.get("effective_status") or "unknown"),
+            outcome="succeeded" if bool(report.get("success")) else "indeterminate",
+            details={
+                "event": report.get("event"),
+                "next_action": report.get("next_action"),
+                "acted": bool(report.get("acted")),
+                "refused_reason": report.get("refused_reason"),
+            },
+        )
+        return report
+
     # ------------------------------------------------------------------
     # (a) Read initial chain status
     # ------------------------------------------------------------------
     try:
         payload = cloud_chain_status_payload(root, args, spec, provider)
     except Exception as exc:
-        return _tick_report(
+        return _report(
             success=False,
             event="supervisor_error",
             spec="",
@@ -369,7 +516,7 @@ def cloud_supervise_tick(
 
     def l1_mutation_blocked_report(action: str) -> dict[str, Any]:
         """Return a truthful observation when an L1 effect is unauthorized."""
-        return _tick_report(
+        return _report(
             success=True,
             event="supervisor_blocked",
             spec=remote_spec,
@@ -515,7 +662,7 @@ def cloud_supervise_tick(
     # (d) Block mutations on provider consistency mismatch
     # ------------------------------------------------------------------
     if provider_consistency.get("status") == "mismatch":
-        return _tick_report(
+        return _report(
             success=True,
             event="supervisor_blocked",
             spec=remote_spec,
@@ -542,7 +689,7 @@ def cloud_supervise_tick(
 
     # --- running → noop ---
     if status == "running":
-        return _tick_report(
+        return _report(
             success=True,
             event="supervisor_tick",
             spec=remote_spec,
@@ -562,7 +709,7 @@ def cloud_supervise_tick(
 
     # --- complete / done → done ---
     if status == "complete":
-        return _tick_report(
+        return _report(
             success=True,
             event="supervisor_tick",
             spec=remote_spec,
@@ -582,7 +729,7 @@ def cloud_supervise_tick(
 
     # --- human_prerequisite → blocked ---
     if status == "human_prerequisite":
-        return _tick_report(
+        return _report(
             success=True,
             event="supervisor_blocked",
             spec=remote_spec,
@@ -602,7 +749,7 @@ def cloud_supervise_tick(
 
     # --- quality_gate → blocked ---
     if status == "quality_gate":
-        return _tick_report(
+        return _report(
             success=True,
             event="supervisor_blocked",
             spec=remote_spec,
@@ -642,7 +789,7 @@ def cloud_supervise_tick(
                     resolved_workspace, remote_spec, session_name=resolved_session
                 )
                 ssh_meth(restart_cmd)
-                return _tick_report(
+                return _report(
                     success=True,
                     event="supervisor_advanced",
                     spec=remote_spec,
@@ -660,7 +807,7 @@ def cloud_supervise_tick(
                     human_verification=human_verification,
                 )
             except Exception as exc:
-                return _tick_report(
+                return _report(
                     success=False,
                     event="supervisor_error",
                     spec=remote_spec,
@@ -679,7 +826,7 @@ def cloud_supervise_tick(
                 )
         else:
             # PR not merged — blocked
-            return _tick_report(
+            return _report(
                 success=True,
                 event="supervisor_blocked",
                 spec=remote_spec,
@@ -711,7 +858,7 @@ def cloud_supervise_tick(
                     resolved_workspace, remote_spec, session_name=resolved_session
                 )
                 ssh_meth(restart_cmd)
-                return _tick_report(
+                return _report(
                     success=True,
                     event="supervisor_restarted",
                     spec=remote_spec,
@@ -729,7 +876,7 @@ def cloud_supervise_tick(
                     human_verification=human_verification,
                 )
             except Exception as exc:
-                return _tick_report(
+                return _report(
                     success=False,
                     event="supervisor_error",
                     spec=remote_spec,
@@ -755,7 +902,7 @@ def cloud_supervise_tick(
                     f"stale bookkeeping but runner status is '{runner_status}'; "
                     "supervisor will not force-restart a live runner"
                 )
-            return _tick_report(
+            return _report(
                 success=True,
                 event="supervisor_blocked",
                 spec=remote_spec,
@@ -781,7 +928,7 @@ def cloud_supervise_tick(
     if status == "awaiting_human_verify":
         # (a) Verification facts unavailable / invalid / missing semantics → block
         if human_verification.get("status") != "available":
-            return _tick_report(
+            return _report(
                 success=True,
                 event="supervisor_blocked",
                 spec=remote_spec,
@@ -807,7 +954,7 @@ def cloud_supervise_tick(
         if not human_verification.get("all_deferred_must_verified", False):
             pending_count: int = human_verification.get("pending", 0)
             verified_count: int = human_verification.get("verified", 0)
-            return _tick_report(
+            return _report(
                 success=True,
                 event="supervisor_blocked",
                 spec=remote_spec,
@@ -847,7 +994,7 @@ def cloud_supervise_tick(
                     session_name=resolved_session,
                 )
                 ssh_meth(restart_cmd)
-                return _tick_report(
+                return _report(
                     success=True,
                     event="supervisor_restarted",
                     spec=remote_spec,
@@ -865,7 +1012,7 @@ def cloud_supervise_tick(
                     human_verification=human_verification,
                 )
             except Exception as exc:
-                return _tick_report(
+                return _report(
                     success=False,
                     event="supervisor_error",
                     spec=remote_spec,
@@ -888,7 +1035,7 @@ def cloud_supervise_tick(
 
         # (d) All verified AND runner is alive → noop / running
         if ssh_meth is None:
-            return _tick_report(
+            return _report(
                 success=True,
                 event="supervisor_blocked",
                 spec=remote_spec,
@@ -908,7 +1055,7 @@ def cloud_supervise_tick(
                 extra_repo_sync=extra_repo_sync_info,
                 human_verification=human_verification,
             )
-        return _tick_report(
+        return _report(
             success=True,
             event="supervisor_tick",
             spec=remote_spec,
@@ -929,7 +1076,7 @@ def cloud_supervise_tick(
     # ------------------------------------------------------------------
     # Fallback — unknown status
     # ------------------------------------------------------------------
-    return _tick_report(
+    return _report(
         success=True,
         event="supervisor_tick",
         spec=remote_spec,

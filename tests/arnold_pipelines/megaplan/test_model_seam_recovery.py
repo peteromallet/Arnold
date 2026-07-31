@@ -215,7 +215,10 @@ def test_gate_capture_preserves_schema_owned_north_star_actions_and_rejects_unkn
         "flag_resolutions": [],
         "accepted_tradeoffs": [],
         "north_star_actions": north_star_actions,
-        "model_note": "unknown top-level data must still be stripped",
+        "tiebreaker_flag_ids": [],
+        "tiebreaker_fuzzy_group_id": "",
+        "tiebreaker_question": "",
+        "model_note": "unknown top-level data must be rejected",
     }
 
     with pytest.raises(ModelStructuralAuditError, match="model_note"):
@@ -238,6 +241,9 @@ def test_gate_capture_with_schema_valid_north_star_action_is_stable_across_retri
         "flag_resolutions": [],
         "accepted_tradeoffs": [],
         "north_star_actions": [action],
+        "tiebreaker_flag_ids": [],
+        "tiebreaker_fuzzy_group_id": "",
+        "tiebreaker_question": "",
     }
 
     for _attempt in range(40):

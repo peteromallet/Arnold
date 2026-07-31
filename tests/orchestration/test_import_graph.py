@@ -249,6 +249,16 @@ def test_missing_declared_pytest_selector_forces_full_suite(tmp_path: Path) -> N
     assert radius["missing_test_selectors"] == ["tests/test_missing.py"]
 
 
+def test_root_smoke_script_is_not_classified_as_pytest_test(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo, "_smoke_trace_test.py", "raise SystemExit('script only')\n")
+
+    radius = compute_default_blast_radius(["_smoke_trace_test.py"], repo)
+
+    assert radius["strategy"] == "full"
+    assert radius["selectors"] == []
+
+
 def test_resolve_baseline_test_selection_folds_always_run_into_scoped_command(
     tmp_path: Path,
 ) -> None:
@@ -463,6 +473,34 @@ def test_resolve_baseline_test_selection_ignores_non_path_selector_when_paths_ex
     assert result["mode"] == "scoped"
     assert result["command_override"] == "pytest tests/test_feature.py"
     assert "ignored non-path selector kind(s) marker" in result["reason"]
+
+
+def test_resolve_baseline_test_selection_keeps_scoped_contract_with_stale_missing_metadata(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write(tmp_path, "tests/test_feature.py")
+    state = _make_state(plan_dir)
+    _write_plan_meta(
+        plan_dir,
+        1,
+        {
+            "strategy": "scoped",
+            "confidence": "low",
+            "selectors": [{"kind": "path", "value": "tests/test_feature.py"}],
+            "changed_surfaces": ["pkg/util.py"],
+            "missing_test_selectors": ["tests/test_missing.py"],
+            "always_run": [],
+            "full_suite_fallback": True,
+            "rationale": "Scoped selectors remain authoritative even when stale missing metadata exists.",
+        },
+    )
+
+    result = resolve_baseline_test_selection(plan_dir, state)
+
+    assert result["mode"] == "scoped"
+    assert result["command_override"] == "pytest tests/test_feature.py"
 
 
 def test_resolve_baseline_test_selection_rejects_non_path_selector_without_paths(

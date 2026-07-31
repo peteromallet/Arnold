@@ -1,0 +1,23 @@
+{
+  "schema": "m10.f01-f17-completion-index.v1",
+  "schema_version": 1,
+  "generated_at": "2026-07-28T00:00:00Z",
+  "status": "reconciled",
+  "owner": "M10",
+  "version_vector": {
+    "m10_fault_matrix": "evidence/m10-f01-f17-fault-matrix.json"
+  },
+  "source_path": "evidence/m10-f01-f17-fault-matrix.json",
+  "effective_status": "reconciled",
+  "description": "F01-F17 completion index. All 17 fault scenarios are provisionally reconciled with M10 action-off constraints. Final reconciliation deferred to M11 genuine-block candidate execution.",
+  "scenarios_completed": [
+    "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08",
+    "F09", "F10", "F11", "F12", "F13", "F14", "F15", "F16", "F17"
+  ],
+  "scenarios_action_off": [
+    "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08",
+    "F09", "F10", "F11", "F12", "F13", "F14", "F15", "F16", "F17"
+  ],
+  "provisional": true,
+  "reconciliation_target": "M11 genuine-block candidate execution"
+}

@@ -3,6 +3,11 @@ name: megaplan
 description: Run the canonical Megaplan planning pipeline from its Arnold plugin home.
 ---
 
+> **Authority status (M11):** This skill document is retained as zero-authority
+> history. All repair, audit, and deployment authority has been migrated to
+> canonical delegation. Content must not be used to materialize commands,
+> grant authority, or drive automated repair actions.
+
 # Megaplan
 
 Use this pipeline for high-rigor planning workflows that need prep, plan,

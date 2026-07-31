@@ -17,9 +17,18 @@ from arnold_pipelines.megaplan.cloud.incident_bridge import (
     append_github_issue_publish_failed,
     append_github_issue_published,
 )
+from arnold_pipelines.megaplan.cloud.github_sync_wbc import (
+    GITHUB_SYNC_COMMENT_SURFACE,
+    GITHUB_SYNC_COMMENT_WRITER_ID,
+    GITHUB_SYNC_CREATE_SURFACE,
+    GITHUB_SYNC_CREATE_WRITER_ID,
+    GitHubSyncRule,
+    validate_github_sync_publication,
+)
 from arnold_pipelines.megaplan.cloud.redact import redact_text
 from arnold_pipelines.megaplan.incident.projection import rebuild_projections
 from arnold_pipelines.megaplan.incident.schema import validate_incident_event
+from arnold_pipelines.megaplan.types import CliError
 
 _INCIDENT_LEDGER_DIR = Path(".megaplan") / "incident-ledger"
 _EVENTS_FILE = "events.jsonl"
@@ -47,8 +56,16 @@ def sync_persistent_problems(
     config: GitHubSyncConfig,
     root: Path | str | None = None,
     projections: dict[str, Any] | None = None,
+    publication_adapter: Any | None = None,
 ) -> dict[str, Any]:
-    """Publish persistent problem projections to GitHub without reading GitHub state."""
+    """Publish persistent problem projections to GitHub without reading GitHub state.
+
+    When *publication_adapter* is provided (Step 13B2), issue creation and
+    comment calls are routed through the action gate and WBC effect protocol
+    with stable repository/issue/occurrence global-effect keys.  The
+    adapter's ``apply_fn`` must be a fake client (real GitHub is action-off
+    in M10 per SD3).
+    """
     workspace_root = Path.cwd() if root is None else Path(root)
     docs = projections or rebuild_projections(workspace_root)
     incidents_by_id = {
@@ -80,16 +97,90 @@ def sync_persistent_problems(
             )
             continue
 
+        writer_id = GITHUB_SYNC_CREATE_WRITER_ID if action == "create" else GITHUB_SYNC_COMMENT_WRITER_ID
+        surface_name = GITHUB_SYNC_CREATE_SURFACE if action == "create" else GITHUB_SYNC_COMMENT_SURFACE
+        try:
+            validation_evidence = validate_github_sync_publication(
+                writer_id=writer_id,
+                surface_name=surface_name,
+                action=action,
+                problem_id=problem_id,
+                project_dir=workspace_root,
+                rules=(
+                    GitHubSyncRule(
+                        "problem_open",
+                        "open",
+                        problem.get("status"),
+                        str(problem.get("status") or "") == "open",
+                    ),
+                    GitHubSyncRule(
+                        "repo_present",
+                        True,
+                        bool(str(config.repo).strip()),
+                        bool(str(config.repo).strip()),
+                    ),
+                ),
+                extra={
+                    "repo": config.repo,
+                    "occurrence_count": int(problem.get("occurrence_count") or 0),
+                },
+            )
+        except CliError as exc:
+            if exc.code != "github_sync_action_off":
+                raise
+            skipped.append(
+                {
+                    "problem_id": problem_id,
+                    "reason": "action_off",
+                    "suppression_reason": exc.message,
+                }
+            )
+            continue
+
         if action == "create":
             issue_title = _issue_title(problem)
             issue_body = _issue_body(problem, incident)
-            result = _create_issue_with_label_fallback(
-                repo_path=config.repo_path,
-                repo=config.repo,
-                title=issue_title,
-                body=issue_body,
-                labels=list(config.issue_labels),
-            )
+            if publication_adapter is not None:
+                # Step 13B2: route through action gate + WBC protocol
+                from arnold_pipelines.megaplan.cloud.publication_adapter import (
+                    PublicationTarget,
+                )
+
+                target = PublicationTarget(
+                    repo=config.repo,
+                    issue_number=None,
+                    occurrence_key=problem_id,
+                )
+
+                def _fake_create(intent: dict[str, Any]) -> dict[str, Any]:
+                    return github_cli.create_issue(
+                        str(config.repo_path),
+                        config.repo,
+                        intent.get("title", issue_title),
+                        intent.get("body", issue_body),
+                        labels=list(config.issue_labels),
+                    )
+
+                pub_outcome = publication_adapter.publish(
+                    target=target,
+                    action="create",
+                    intent_payload={
+                        "title": issue_title,
+                        "body": issue_body,
+                        "labels": list(config.issue_labels),
+                        "problem_id": problem_id,
+                    },
+                    apply_fn=_fake_create,
+                )
+                result = _publication_outcome_to_result(pub_outcome)
+            else:
+                result = _create_issue_with_label_fallback(
+                    repo_path=config.repo_path,
+                    repo=config.repo,
+                    title=issue_title,
+                    body=issue_body,
+                    labels=list(config.issue_labels),
+                )
             summary = f"Published persistent problem {problem_id} to GitHub as a new issue"
             publish_action = "created"
         else:
@@ -102,17 +193,58 @@ def sync_persistent_problems(
                 )
                 continue
             issue_body = _issue_comment(problem, incident, publication)
-            result = github_cli.comment_issue(
-                config.repo_path,
-                config.repo,
-                int(publication["number"]),
-                issue_body,
-            )
+            if publication_adapter is not None:
+                # Step 13B2: route through action gate + WBC protocol
+                from arnold_pipelines.megaplan.cloud.publication_adapter import (
+                    PublicationTarget,
+                )
+
+                target = PublicationTarget(
+                    repo=config.repo,
+                    issue_number=int(publication["number"]),
+                    occurrence_key=problem_id,
+                )
+
+                def _fake_comment(intent: dict[str, Any]) -> dict[str, Any]:
+                    return github_cli.comment_issue(
+                        str(config.repo_path),
+                        config.repo,
+                        int(publication["number"]),
+                        intent.get("body", issue_body),
+                    )
+
+                pub_outcome = publication_adapter.publish(
+                    target=target,
+                    action="comment",
+                    intent_payload={
+                        "body": issue_body,
+                        "problem_id": problem_id,
+                        "issue_number": int(publication["number"]),
+                    },
+                    apply_fn=_fake_comment,
+                )
+                result = _publication_outcome_to_result(pub_outcome)
+            else:
+                result = github_cli.comment_issue(
+                    config.repo_path,
+                    config.repo,
+                    int(publication["number"]),
+                    issue_body,
+                )
             summary = f"Published persistent problem {problem_id} update to GitHub issue #{publication['number']}"
             publish_action = "commented"
 
         publication_links = _publication_links(problem, publication, body_text=issue_body)
         event_evidence = _publication_evidence(problem, incident, issue_body)
+        event_evidence.append(
+            {
+                "kind": "github_sync.wbc_validation",
+                "surface_name": surface_name,
+                "action": action,
+                "fixture_safety": validation_evidence["fixture_safety"],
+                "source_record": validation_evidence["source_record"],
+            }
+        )
         if result.get("omitted_labels"):
             publication_links["label_fallback"] = {
                 "omitted_labels": list(result["omitted_labels"]),
@@ -138,7 +270,7 @@ def sync_persistent_problems(
                 incident_id=incident_id,
                 problem_id=problem_id,
                 evidence=event_evidence,
-                next_expected_event="six_hour_auditor.diagnosis",
+                next_expected_event="next_three_hour_auditor.diagnosis",
                 links=publication_links,
                 root=workspace_root,
             )
@@ -179,6 +311,26 @@ def sync_persistent_problems(
         "published": published,
         "failed": failed,
         "skipped": skipped,
+    }
+
+
+def _publication_outcome_to_result(
+    outcome: Any,
+) -> dict[str, Any]:
+    """Convert a :class:`PublicationOutcome` to the legacy result dict format."""
+    if outcome.ok:
+        return {
+            "ok": True,
+            "evidence_ref": {
+                "number": outcome.issue_number,
+                "url": outcome.issue_url,
+            },
+            "glek": outcome.glek,
+        }
+    return {
+        "ok": False,
+        "error": outcome.error or "Publication adapter blocked dispatch",
+        "glek": outcome.glek,
     }
 
 

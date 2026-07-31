@@ -224,10 +224,17 @@ def _run_trigger(
     lock_dir: Path | None = None,
     env_overrides: dict[str, str] | None = None,
     meta_repair_bin: Path | None = None,
+    request_id: str = "",
 ) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
     env["ARNOLD_CLOUD_HOT_ENV"] = str(marker_dir / "missing-hot-env")
+    env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
+    # Repair-bin resolution comes from the validated supervisor environment,
+    # not from a CLI override (the wrapper rejects --repair-bin/--meta-repair-bin
+    # CLI tokens).  Existing tests inject the stub bin through these env vars.
+    env["ARNOLD_REPAIR_TRIGGER_REPAIR_BIN"] = str(repair_bin)
+    env["ARNOLD_REPAIR_TRIGGER_META_REPAIR_BIN"] = str(meta_repair_bin or repair_bin)
     if enabled:
         env["ARNOLD_REPAIR_TRIGGER_ENABLED"] = "1"
     else:
@@ -240,6 +247,10 @@ def _run_trigger(
         env.pop("ARNOLD_AUTONOMY", None)
     else:
         env["ARNOLD_AUTONOMY"] = "1" if (enabled if autonomy is None else autonomy) else "0"
+    if enabled:
+        # L3 dispatch requires both autonomy and the audit-autofix authority
+        # bit; isolate positive tests from a paused production cloud env.
+        env["ARNOLD_AUDIT_AUTOFIX_ENABLED"] = "1"
     cmd = [
         sys.executable,
         str(TRIGGER),
@@ -247,13 +258,11 @@ def _run_trigger(
         str(marker_dir),
         "--queue-root",
         str(_queue_root(marker_dir.parent / "workspace")),
-        "--repair-bin",
-        str(repair_bin),
-        "--meta-repair-bin",
-        str(meta_repair_bin or repair_bin),
     ]
     if lock_dir is not None:
         cmd.extend(["--lock-dir", str(lock_dir)])
+    if request_id:
+        cmd.extend(["--request-id", request_id])
     return subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)
 
 
@@ -425,7 +434,7 @@ def test_terminal_request_ids_preserve_self_coalesced_owner_and_skip_distinct_du
     assert "duplicate-request" in terminal_ids
 
 
-def test_failed_dispatched_attempt_relaunches_as_distinct_managed_retry(
+def test_repeated_l1_dispatch_stays_on_the_same_canonical_simple_fixer_occurrence(
     tmp_path: Path,
 ) -> None:
     marker_dir = tmp_path / "markers"
@@ -477,6 +486,8 @@ def test_failed_dispatched_attempt_relaunches_as_distinct_managed_retry(
         },
         root_cause_hint="critique_finding_identity_reused",
     )
+    # L1 occurrence repair is owned by simple_fixer.  The legacy repair-loop
+    # executable is intentionally irrelevant, including on a repeated trigger.
     repair_bin = _failing_repair_stub(tmp_path)
 
     first_result = _run_trigger(marker_dir, repair_bin, enabled=True)
@@ -485,34 +496,22 @@ def test_failed_dispatched_attempt_relaunches_as_distinct_managed_retry(
         for event in _events(first_result)
         if event["event"] == "repair_trigger_dispatch"
     )
-    first_manifest = _read_terminal_manifest_eventually(
-        Path(first_dispatch["managed_manifest_path"])
-    )
 
     second_result = _run_trigger(marker_dir, repair_bin, enabled=True)
-    second_dispatch = next(
-        event
-        for event in _events(second_result)
-        if event["event"] == "repair_trigger_dispatch"
-    )
-    second_manifest = _read_terminal_manifest_eventually(
-        Path(second_dispatch["managed_manifest_path"])
-    )
+    second_events = _events(second_result)
 
     assert first_result.returncode == 0, first_result.stderr
     assert second_result.returncode == 0, second_result.stderr
-    assert first_manifest["status"] == "failed"
-    assert second_manifest["status"] == "failed"
-    assert first_dispatch["attempt_ordinal"] == 1
-    assert second_dispatch["attempt_ordinal"] == 2
-    assert second_dispatch["managed_run_id"] != first_dispatch["managed_run_id"]
-    assert second_manifest["retry_of_run_id"] == first_dispatch["managed_run_id"]
-    assert second_dispatch["request_id"] == queued["request"]["request_id"]
+    assert first_dispatch["delegation_outcome"] == "delegated"
+    assert first_dispatch["attempt"]["command"] == "simple_fixer_delegation"
+    assert not any(
+        event["event"] == "repair_trigger_dispatch" for event in second_events
+    )
     attempts = repair_requests.iter_repair_attempts(_queue_root(workspace))
     assert [attempt["managed_run_id"] for attempt in attempts] == [
-        first_dispatch["managed_run_id"],
-        second_dispatch["managed_run_id"],
+        queued["request"]["request_id"],
     ]
+    assert {attempt["repair_layer"] for attempt in attempts} == {"l1"}
 
 
 def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) -> None:
@@ -530,97 +529,68 @@ def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) ->
     dispatch_event = next(
         event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
     )
-    managed_manifest = Path(dispatch_event["managed_manifest_path"])
-    managed = _read_json_eventually(managed_manifest)
-    assert managed["run_id"] == dispatch_event["managed_run_id"]
-    assert managed["schema_version"] == "arnold-managed-agent-run-v2"
-    assert managed["launch_provenance"]["transport"] == "automatic_system"
-    assert managed["links"]["repair_request_id"] == queued["request"]["request_id"]
-    assert managed["links"]["blocker_id"] == queued["request"]["blocker_id"]
+    # Canonical simple_fixer delegation does not spawn subprocesses or write
+    # legacy managed-agent manifest files; it records a typed delegation
+    # outcome and attempt metadata in the durable repair queue.
+    assert dispatch_event["delegation_outcome"] == "delegated"
+    assert dispatch_event["status"] == "dispatched"
+    assert dispatch_event["attempt"]["command"] == "simple_fixer_delegation"
+    assert dispatch_event["attempt"]["managed_manifest_path"]
+    assert dispatch_event["attempt"]["managed_run_id"]
     dispatched = [item for item in _decisions(marker_dir) if item["decision"] == "dispatched"]
     assert len(dispatched) == 1
-    payload = _read_json_eventually(tmp_path / "repair-args.json")
-    assert payload["argv"] == ["demo", str(workspace), str(spec)]
-    assert payload["request_id"] == queued["request"]["request_id"]
-    assert payload["claim_owner_pid"].isdigit()
-    assert payload["queue_root"] == str(_queue_root(workspace))
-    assert payload["marker_dir"] == str(marker_dir)
-    assert payload["repair_session"] == "demo"
-    assert payload["repair_run_kind"] == "chain"
+    assert dispatched[0]["reason"] == "dispatched canonical simple_fixer delegation"
+    assert dispatched[0]["related_request_id"] == queued["request"]["request_id"]
+    assert not (tmp_path / "repair-args.json").exists()
     assert not (marker_dir.parent / "repair-queue").exists()
 
 
-def test_m6_phase_failure_persisted_identity_reaches_claim_and_autofixer_launch(
-    tmp_path: Path,
-) -> None:
+def test_exact_trigger_claims_taskless_lifecycle_phase_failure(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     workspace = tmp_path / "workspace"
-    plan_name = "m6-exact-contract-and-20260716-1303"
-    spec = _write_marker(marker_dir, workspace, plan_name=plan_name)
-    _write_chain_state_for_spec(workspace, spec, current_plan_name=plan_name)
-    plan_dir = workspace / ".megaplan" / "plans" / plan_name
-    plan_dir.mkdir(parents=True)
-    (plan_dir / "state.json").write_text(
-        json.dumps(
-            {
-                "name": plan_name,
-                "current_state": "blocked",
-                "resume_cursor": {
-                    "phase": "critique",
-                    "retry_strategy": "repair_phase_contract",
-                },
-                "latest_failure": {
-                    "kind": "deterministic_phase_failure",
-                    "phase": "critique",
-                    "message": "duplicate worker-local flag IDs and blank evidence",
-                    "metadata": {"count": 3, "max_attempts": 3},
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
+    spec = _write_marker(marker_dir, workspace)
+    _write_chain_state_for_spec(workspace, spec)
     queued = repair_requests.enqueue_repair_request(
         queue_root=_queue_root(workspace),
         marker_dir=marker_dir,
         session="demo",
         source="lifecycle_failure",
-        workspace=workspace,
-        run_kind="chain",
-        target={
-            "plan_dir": str(plan_dir),
-            "plan_name": plan_name,
-            "workspace_path": str(workspace),
-            "retry_strategy": "repair_phase_contract",
-        },
         problem_signature={
             "failure_kind": "deterministic_phase_failure",
             "current_state": "blocked",
-            "phase_or_step": "critique",
-            "milestone_or_plan": plan_name,
+            "phase_or_step": "finalize",
+            "milestone_or_plan": "m3",
             "gate_recommendation": "repair the deterministic phase contract",
             "blocked_task_id": "",
         },
-        root_cause_hint="duplicate worker-local flag IDs and blank evidence",
-        created_at="2026-07-16T13:35:03Z",
+        target={"plan_name": "m3"},
+        root_cause_hint="finalize contract failed",
+        workspace=workspace,
+        run_kind="chain",
+        created_at="2026-07-22T04:48:40Z",
     )
+    request_id = queued["request"]["request_id"]
 
-    result = _run_trigger(marker_dir, _repair_stub(tmp_path), enabled=True)
+    result = _run_trigger(
+        marker_dir,
+        _repair_stub(tmp_path),
+        enabled=True,
+        request_id=request_id,
+    )
 
     assert result.returncode == 0, result.stderr
-    request = queued["request"]
-    assert request["problem_signature"]["blocked_task_id"] == "phase:critique"
-    dispatch = next(
-        event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
-    )
-    manifest = _read_json_eventually(Path(dispatch["managed_manifest_path"]))
-    assert manifest["links"]["repair_request_id"] == request["request_id"]
-    assert manifest["links"]["blocker_id"] == request["blocker_id"]
+    events = _events(result)
+    assert any(event["event"] == "repair_trigger_dispatch" for event in events), events
+    dispatch = next(event for event in events if event["event"] == "repair_trigger_dispatch")
+    assert dispatch["request_id"] == request_id
+    blocker_id = dispatch["attempt"]["blocker_id"]
+    assert blocker_id.startswith("blocker:v2:")
     claim_path = repair_requests.active_repair_claim_lock_dir(
-        _queue_root(workspace), request["blocker_id"]
+        _queue_root(workspace), blocker_id
     ) / "owner.json"
     claim = _read_json_eventually(claim_path)
-    assert claim["request_id"] == request["request_id"]
-    assert claim["blocker_id"] == request["blocker_id"]
+    assert claim["request_id"] == request_id
+    assert claim["blocker_id"] == blocker_id
 
 
 def test_trigger_suppresses_dispatch_claim_when_worker_is_unavailable(
@@ -708,27 +678,27 @@ def test_l3_actionable_finding_reaches_claim_attempt_and_terminal_decision(
 
     assert result.returncode == 0, result.stderr
     assert "repair_trigger_dispatch" in result.stdout, result.stdout + result.stderr
-    attempt = _read_json_eventually(tmp_path / "repair-args.json")
-    assert attempt["request_id"] == request["request_id"]
-    assert attempt["blocker_id"]
-    assert attempt["outcome"] == "complete"
     dispatch_event = next(
         event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
     )
+    # Typed L3 repair retains the managed-agent route; only L1 occurrence
+    # repair delegates to the canonical simple_fixer.
     assert dispatch_event["repair_layer"] == "l3"
-    assert attempt["argv"] == ["demo", "l3_progress_auditor"]
-    managed = _read_json_eventually(Path(dispatch_event["managed_manifest_path"]))
-    assert managed["run_kind"] == "automatic_root_cause_repair"
-    assert managed["model"] == "gpt-5.6-sol"
-    assert managed["difficulty"] == 9
-    assert managed["authority"]["child_difficulty_ceiling"] == 9
-    assert managed["links"]["audit_escalation_id"] == "l3-escalation-demo-m3"
+    launched = _read_json_eventually(tmp_path / "repair-args.json")
+    manifest = _read_json_eventually(Path(dispatch_event["managed_manifest_path"]))
+    assert launched["argv"] == ["demo", "l3_progress_auditor"]
+    assert launched["request_id"] == request["request_id"]
+    assert manifest["run_kind"] == "automatic_root_cause_repair"
+    assert manifest["model"] == "gpt-5.6-sol"
+    assert manifest["reasoning_effort"] == "high"
+    assert manifest["difficulty"] == 9
     claim_path = repair_requests.active_repair_claim_lock_dir(
-        _queue_root(workspace), attempt["blocker_id"]
+        _queue_root(workspace), dispatch_event["attempt"]["blocker_id"]
     ) / "owner.json"
     claim = _read_json_eventually(claim_path)
     assert claim["request_id"] == request["request_id"]
-    assert claim["blocker_id"] == attempt["blocker_id"]
+    assert claim["blocker_id"] == dispatch_event["attempt"]["blocker_id"]
+    assert claim["repair_identity_key"] == request["repair_identity_key"]
     decisions = [
         item["decision"]
         for item in _decisions(marker_dir)
@@ -738,20 +708,11 @@ def test_l3_actionable_finding_reaches_claim_attempt_and_terminal_decision(
     custody_attempts = repair_requests.iter_repair_attempts(_queue_root(workspace))
     assert len(custody_attempts) == 1
     assert custody_attempts[0]["request_id"] == request["request_id"]
-    assert custody_attempts[0]["blocker_id"] == attempt["blocker_id"]
+    assert custody_attempts[0]["blocker_id"] == dispatch_event["attempt"]["blocker_id"]
     assert custody_attempts[0]["repair_layer"] == "l3"
     assert custody_attempts[0]["status"] == "launched"
-    assert custody_attempts[0]["managed_run_id"] == dispatch_event["managed_run_id"]
-    assert custody_attempts[0]["managed_manifest_path"] == dispatch_event["managed_manifest_path"]
-    attempt_history = [
-        json.loads(line)
-        for line in (tmp_path / "repair-attempts.jsonl").read_text(encoding="utf-8").splitlines()
-    ]
-    assert len(attempt_history) == 1
-    assert attempt_history[0]["attempt_id"] == attempt["attempt_id"]
-    assert attempt_history[0]["request_id"] == attempt["request_id"]
-    assert attempt_history[0]["blocker_id"] == attempt["blocker_id"]
-    assert attempt_history[0]["outcome"] == "complete"
+    assert custody_attempts[0]["managed_run_id"] == dispatch_event["attempt"]["managed_run_id"]
+    assert custody_attempts[0]["managed_manifest_path"] == dispatch_event["attempt"]["managed_manifest_path"]
     assert request["target"]["evidence_cursor"]["accepted_request_ids"] == ["legacy-request"]
     assert request["target"]["retry_budget"]["remaining_attempts"] == 2
 
@@ -875,6 +836,20 @@ def test_trigger_consumes_human_gate_request_from_explicit_central_queue(tmp_pat
     marker_dir = tmp_path / "markers"
     workspace = tmp_path / "workspace"
     _write_marker(marker_dir, workspace)
+    # Step 40 (T26): human-gate enqueue requires a complete F01 occurrence
+    # identity so the request cannot become repair authority on its own.
+    occurrence_identity = {
+        "environment": "ci",
+        "session": "demo",
+        "chain": "demo",
+        "plan_revision": "r1",
+        "phase": "execute",
+        "task": "T1",
+        "attempt": "1",
+        "normalized_failure_kind": "blocked_recovery_not_resolved",
+        "blocker_or_phase_result_hash": "a" * 64,
+        "fence": "fence-1",
+    }
     queued = repair_requests.enqueue_human_gate_repair_request(
         queue_root=_queue_root(workspace),
         marker_dir=workspace / ".megaplan" / "plans" / "m3",
@@ -886,6 +861,7 @@ def test_trigger_consumes_human_gate_request_from_explicit_central_queue(tmp_pat
         artifact_stage="execute",
         step_name="approval",
         prompt="operator approval required",
+        occurrence_identity=occurrence_identity,
     )
     assert queued is not None
 
@@ -931,12 +907,14 @@ def test_trigger_real_wrapper_master_path_mutation_matrix(
     assert result.returncode == 0, result.stderr
     authorized = master_enabled and path_enabled
     if authorized:
-        _read_json_eventually(tmp_path / "repair-args.json")
-        effects = tmp_path / "repair-effects"
-        assert {path.name for path in effects.iterdir()} == {
-            "subprocess", "state", "source", "commit", "push"
-        }
+        # Canonical delegation does not invoke legacy subprocess stubs;
+        # verify the typed delegation outcome instead of repair-args.json.
         assert '"status": "dispatched"' in result.stdout
+        dispatch_event = next(
+            event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
+        )
+        assert dispatch_event["delegation_outcome"] == "delegated"
+        assert not (tmp_path / "repair-args.json").exists()
         return
 
     after = {
@@ -1293,10 +1271,13 @@ def test_trigger_loads_hot_env_for_systemd_latency_path(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "repair_trigger_dispatch" in result.stdout
-    payload = _read_json_eventually(tmp_path / "repair-args.json")
-    assert payload["argv"] == ["demo", str(workspace), str(spec)]
-    assert payload["request_id"] == queued["request"]["request_id"]
-    assert payload["claim_owner_pid"].isdigit()
+    dispatch_event = next(
+        event for event in _events(result) if event["event"] == "repair_trigger_dispatch"
+    )
+    # Canonical delegation: verify typed outcome, not legacy subprocess stub.
+    assert dispatch_event["delegation_outcome"] == "delegated"
+    assert dispatch_event["request_id"] == queued["request"]["request_id"]
+    assert not (tmp_path / "repair-args.json").exists()
 
 
 def test_trigger_coalesces_pending_duplicate_files_under_lock(tmp_path: Path) -> None:
@@ -1480,3 +1461,126 @@ def test_trigger_exits_cleanly_when_lock_is_busy(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert '"status": "busy"' in result.stdout
     assert not (tmp_path / "repair-args.json").exists()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Step 42 (T28): entrypoint delegation to the simple_fixer shim and
+# retirement of CLI repair-bin override authority.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _load_trigger_module():
+    """Load the hyphenated wrapper as a module (name is not importable)."""
+    import importlib.util
+    import importlib.machinery
+
+    loader = importlib.machinery.SourceFileLoader(
+        "arnold_repair_trigger_mod", str(TRIGGER)
+    )
+    spec = importlib.util.spec_from_loader("arnold_repair_trigger_mod", loader)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_repair_trigger_wrapper_delegates_to_simple_fixer(tmp_path: Path) -> None:
+    """The wrapper entrypoint delegates an exact occurrence to simple_fixer.
+
+    Mirrors the Step 41 ``manual_repair_trigger`` delegation path: the wrapper
+    builds a typed ``RepairDelegation`` (caller_kind="operator_trigger") with
+    the exact F01 tuple and routes it through the repair-delegation shim so the
+    canonical runner records the occurrence.  No authority is created from
+    labels, liveness, WBC receipts, or rebuildable projections.
+    """
+    from arnold_pipelines.megaplan.custody.contracts import CustodyTargetKey
+
+    module = _load_trigger_module()
+    queue_dir = tmp_path / ".megaplan" / "repair-queue"
+    queue_dir.mkdir(parents=True, exist_ok=True)
+    occurrence_target = CustodyTargetKey(
+        environment="/workspace/demo",
+        session="demo",
+        chain="/workspace/demo/chain.yaml",
+        plan_revision="sha256:plan-rev-1",
+        phase="execute",
+        task="T1",
+        attempt="1",
+        normalized_failure_kind="blocked_step",
+        blocker_or_phase_result_hash="sha256:blocker-1",
+        fence="fence-1",
+    )
+    result = module._delegate_repair_to_simple_fixer(
+        occurrence_target=occurrence_target,
+        queue_dir=queue_dir,
+        request_id="req-trigger-1",
+        session="demo",
+    )
+    assert result.delegated is True
+    assert result.outcome == "delegated"
+    assert result.delegation.caller_kind == "operator_trigger"
+    assert result.delegation.caller_id == "req-trigger-1"
+
+
+def test_repair_trigger_wrapper_rejects_legacy_repair_bins(tmp_path: Path) -> None:
+    """CLI --repair-bin/--meta-repair-bin overrides are rejected at the entrypoint.
+
+    The wrapper no longer derives child-launch authority from caller-supplied
+    CLI bin overrides; repair-bin resolution must come from the validated
+    supervisor environment.  Both the space-separated and ``=``-joined forms are
+    rejected with a typed event and a non-zero exit.
+    """
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    repair_bin = tmp_path / "repair-loop"
+    repair_bin.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+    env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
+    env["ARNOLD_CLOUD_HOT_ENV"] = str(marker_dir / "missing-hot-env")
+    env["ARNOLD_REPAIR_TRIGGER_ENABLED"] = "0"
+    env["ARNOLD_AUTONOMY"] = "0"
+
+    # ── space-separated --repair-bin + --meta-repair-bin ──────────────────
+    cmd = [
+        sys.executable,
+        str(TRIGGER),
+        "--marker-dir",
+        str(marker_dir),
+        "--queue-root",
+        str(_queue_root(tmp_path / "workspace")),
+        "--repair-bin",
+        str(repair_bin),
+        "--meta-repair-bin",
+        str(repair_bin),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)
+    assert result.returncode != 0, "wrapper must reject --repair-bin CLI override"
+    events = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+    rejection = [
+        e for e in events if e.get("event") == "repair_trigger_legacy_override_rejected"
+    ]
+    assert rejection, f"expected legacy override rejection event, got: {events}"
+    flags = rejection[0].get("forbidden_flags") or []
+    assert "--repair-bin" in flags
+    assert "--meta-repair-bin" in flags
+
+    # ── equals-joined --repair-bin=... form ──────────────────────────────
+    cmd_eq = [
+        sys.executable,
+        str(TRIGGER),
+        "--marker-dir",
+        str(marker_dir),
+        "--queue-root",
+        str(_queue_root(tmp_path / "workspace")),
+        f"--repair-bin={repair_bin}",
+    ]
+    result_eq = subprocess.run(cmd_eq, capture_output=True, text=True, env=env, check=False)
+    assert result_eq.returncode != 0
+    events_eq = [json.loads(line) for line in result_eq.stdout.splitlines() if line.strip()]
+    rejection_eq = [
+        e for e in events_eq if e.get("event") == "repair_trigger_legacy_override_rejected"
+    ]
+    assert rejection_eq, f"expected legacy override rejection for =-joined form, got: {events_eq}"
+    assert any("--repair-bin=" in str(f) for f in (rejection_eq[0].get("forbidden_flags") or []))

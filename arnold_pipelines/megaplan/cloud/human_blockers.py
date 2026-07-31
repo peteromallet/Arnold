@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time as _time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum, auto
@@ -25,6 +26,10 @@ from arnold_pipelines.megaplan.observability.events import (
     format_signature_line,
 )
 from arnold_pipelines.megaplan.run_state.decision_contract import typed_human_gate
+from arnold_pipelines.megaplan.source_cursor_contract import (
+    DimensionCursor,
+    SourceCursorVector,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +44,7 @@ class BlockerVerdict(Enum):
     STALE_MISMATCH = auto()      # Needs-human sidecar references a *previous* plan
     AMBIGUOUS_BLOCKER = auto()   # Resolver evidence is missing/incomplete — treat conservatively as blocker
     MECHANICAL_BLOCKER = auto()  # Mechanical/liveness gate, not a genuine human blocker — distinct non-success
+    INDETERMINATE = auto()       # Source evidence vectors disagree — drift detected, cannot resolve
 
 
 @dataclass(frozen=True)
@@ -49,6 +55,10 @@ class HumanBlockerClassification:
     :class:`~arnold_pipelines.megaplan.authority.views.HumanGateView`
     serialized to a dict so that stale/superseded diagnostics are
     source-addressable without granting the view enforcement authority.
+
+    M9: Carries source-cursor vectors for traceability.  Drift and
+    evidence IDs are emitted when source evidence disagrees deterministically.
+    ``manual_review`` is never a dispatch policy and unknown fails safe.
     """
 
     verdict: BlockerVerdict
@@ -59,6 +69,14 @@ class HumanBlockerClassification:
     resolver_record: dict[str, Any] | None = None
     needs_human_payload: dict[str, Any] | None = None
     human_gate_view: dict[str, Any] | None = None
+    # ── M9: source-cursor vectors ──
+    source_cursor: dict[str, Any] | None = None
+    source_cursor_vector_id: str = ""
+    source_cursor_vector: dict[str, Any] | None = None
+    evidence_gaps: dict[str, Any] = field(default_factory=dict)
+    # ── M9: drift evidence when source records disagree ──
+    drift: list[dict[str, Any]] = field(default_factory=list)
+    drift_evidence_ids: list[str] = field(default_factory=list)
 
     @property
     def is_true_blocker(self) -> bool:
@@ -81,8 +99,13 @@ class HumanBlockerClassification:
         return self.verdict == BlockerVerdict.MECHANICAL_BLOCKER
 
     @property
+    def is_indeterminate(self) -> bool:
+        """True when source evidence vectors disagree deterministically."""
+        return self.verdict == BlockerVerdict.INDETERMINATE
+
+    @property
     def should_block(self) -> bool:
-        """Return True if escalation should be held (true blocker, ambiguous, or mechanical).
+        """Return True if escalation should be held (true blocker, ambiguous, mechanical, or indeterminate).
 
         Only a confirmed stale mismatch returns False.
         """
@@ -90,6 +113,7 @@ class HumanBlockerClassification:
             BlockerVerdict.TRUE_BLOCKER,
             BlockerVerdict.AMBIGUOUS_BLOCKER,
             BlockerVerdict.MECHANICAL_BLOCKER,
+            BlockerVerdict.INDETERMINATE,
         )
 
 
@@ -99,13 +123,17 @@ HumanBlockerDispatchGate = Literal["human_required", "broken_superfixer", "clear
 def dispatch_gate_for_human_blocker(
     classification: HumanBlockerClassification | None,
 ) -> HumanBlockerDispatchGate:
-    """Map human-blocker evidence into the shared repair-dispatch gate."""
+    """Map human-blocker evidence into the shared repair-dispatch gate.
+
+    ``manual_review`` is never a dispatch policy and unknown fails safe.
+    INDETERMINATE (drift detected) is treated as broken_superfixer.
+    """
 
     if classification is None:
         return "clear"
     if classification.is_true_blocker:
         return "human_required"
-    if classification.is_mechanical or classification.is_ambiguous:
+    if classification.is_mechanical or classification.is_ambiguous or classification.is_indeterminate:
         return "broken_superfixer"
     return "clear"
 
@@ -169,6 +197,7 @@ def classify_needs_human_blocker(
     needs_human_path: str | Path | None = None,
     needs_human_payload: Mapping[str, Any] | None = None,
     resolver_record: Mapping[str, Any] | None = None,
+    source_cursor_vector: Mapping[str, Any] | None = None,
     session_is_live: Any = None,
     pid_is_live: Any = None,
 ) -> HumanBlockerClassification:
@@ -180,6 +209,10 @@ def classify_needs_human_blocker(
     Only verified current-target human gates classify as TRUE_BLOCKER.
     Stale markers, mechanical/liveness gates, and ambiguous evidence remain
     distinct non-success classifications.
+
+    M9: Uses source-cursor vectors for traceability.  Drift and evidence IDs
+    are emitted when source evidence disagrees deterministically.
+    ``manual_review`` is never a dispatch policy and unknown fails safe.
 
     Stale and superseded diagnostics are additionally routed through a
     read-only :class:`~arnold_pipelines.megaplan.authority.views.HumanGateView`
@@ -201,10 +234,13 @@ def classify_needs_human_blocker(
         pid_is_live: Optional PID-liveness probe.
 
     Returns:
-        A :class:`HumanBlockerClassification` with the conservative verdict
-        and an optional read-only ``human_gate_view`` dict.
+        A :class:`HumanBlockerClassification` with the conservative verdict,
+        an optional read-only ``human_gate_view`` dict, and M9 source-cursor
+        metadata with drift evidence IDs.
     """
     rationale: list[str] = []
+    drift_entries: list[dict[str, Any]] = []
+    drift_evidence_ids: list[str] = []
 
     # --- resolve the needs-human path and payload -----------------------------------
     resolved_path = _resolve_needs_human_path(session, repair_data_dir, needs_human_path)
@@ -220,6 +256,15 @@ def classify_needs_human_blocker(
             rationale=("needs-human sidecar missing or unreadable — conservatively treating as blocker",),
             needs_human_payload=None,
             human_gate_view=None,
+            source_cursor=None,
+            source_cursor_vector_id="",
+            source_cursor_vector=_format_source_cursor(source_cursor_vector),
+            evidence_gaps=_collect_human_blocker_evidence_gaps(
+                has_payload=False,
+                has_resolver=False,
+            ),
+            drift=[],
+            drift_evidence_ids=[],
         )
 
     # --- resolve the evidence record -----------------------------------------------
@@ -236,6 +281,7 @@ def classify_needs_human_blocker(
             session,
             marker_dir=marker_dir,
             repair_data_dir=effective_repair_data_dir,
+            source_cursor_vector=source_cursor_vector,
             session_is_live=session_is_live,
             pid_is_live=pid_is_live,
         )
@@ -248,22 +294,47 @@ def classify_needs_human_blocker(
         resolver_record=record,
     )
 
+    # --- M9: build source-cursor vector from resolver record ---
+    _source_cursor_dict: dict[str, Any] | None = None
+    _source_cursor_vector_id = ""
+    _resolver_cursor = record.get("source_cursor")
+    if isinstance(_resolver_cursor, Mapping):
+        _source_cursor_dict = dict(_resolver_cursor)
+        _source_cursor_vector_id = str(_resolver_cursor.get("vector_id", ""))
+    # Also try to get cursor from the resolver's top-level cursor if available
+    if not _source_cursor_dict:
+        _resolver_cursor = record.get("source_cursor")
+        if isinstance(_resolver_cursor, Mapping):
+            _source_cursor_dict = dict(_resolver_cursor)
+            _source_cursor_vector_id = str(_resolver_cursor.get("vector_id", ""))
+
     # --- check for explicit stale_needs_human_plan_ref in stale_evidence ------------
     stale_kinds = {e.get("kind") for e in record.get("stale_evidence", []) if isinstance(e, dict)}
     has_stale_needs_human = "stale_needs_human_plan_ref" in stale_kinds
 
     resolver_plan_refs = record.get("needs_human", {}).get("plan_refs", [])
     resolver_current_plan = record.get("current_refs", {}).get("current_plan_name", "")
+    has_current_target_proof = False
 
-    # --- classification logic ------------------------------------------------------
-    if has_stale_needs_human:
-        # Resolver explicitly found a stale plan ref mismatch
-        rationale.append(
-            f"resolver found stale needs-human plan reference "
-            f"(needs-human plans={resolver_plan_refs}, current={resolver_current_plan})"
-        )
+    # --- M9: detect drift between needs-human payload and resolver ---
+    payload_plan_name = _safe_marker_text(payload.get("plan_name"))
+    payload_current_plan = _safe_marker_text(payload.get("current_plan_name"))
+    if payload_plan_name and resolver_current_plan and payload_plan_name != resolver_current_plan:
+        drift_entry = {
+            "field": "plan_name",
+            "payload_value": payload_plan_name,
+            "resolver_value": resolver_current_plan,
+            "kind": "source_disagreement",
+        }
+        drift_entry["evidence_id"] = "sha256:" + hashlib.sha256(
+            json.dumps(drift_entry, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        drift_entries.append(drift_entry)
+        drift_evidence_ids.append(drift_entry["evidence_id"])
+
+    def _make_classification(verdict: BlockerVerdict) -> HumanBlockerClassification:
         return HumanBlockerClassification(
-            verdict=BlockerVerdict.STALE_MISMATCH,
+            verdict=verdict,
             session=session,
             current_plan=current_plan,
             needs_human_path=needs_human_path_str,
@@ -271,7 +342,37 @@ def classify_needs_human_blocker(
             resolver_record=record,
             needs_human_payload=payload,
             human_gate_view=human_gate_view,
+            source_cursor=_source_cursor_dict,
+            source_cursor_vector_id=_source_cursor_vector_id,
+            source_cursor_vector=_format_source_cursor(source_cursor_vector),
+            evidence_gaps=_collect_human_blocker_evidence_gaps(
+                has_payload=True,
+                has_resolver=True,
+                stale_kinds=stale_kinds,
+                resolver_plan_refs=list(resolver_plan_refs),
+                current_plan=current_plan,
+                has_current_target_proof=has_current_target_proof,
+            ),
+            drift=list(drift_entries),
+            drift_evidence_ids=list(drift_evidence_ids),
         )
+
+    # --- classification logic ------------------------------------------------------
+    # If drift was detected between payload and resolver, emit INDETERMINATE
+    if drift_entries:
+        rationale.append(
+            f"deterministic source disagreement detected between needs-human payload "
+            f"and resolver record (drift_evidence_ids={drift_evidence_ids})"
+        )
+        return _make_classification(BlockerVerdict.INDETERMINATE)
+
+    if has_stale_needs_human:
+        # Resolver explicitly found a stale plan ref mismatch
+        rationale.append(
+            f"resolver found stale needs-human plan reference "
+            f"(needs-human plans={resolver_plan_refs}, current={resolver_current_plan})"
+        )
+        return _make_classification(BlockerVerdict.STALE_MISMATCH)
 
     # Check if the current plan appears in the needs-human plan refs
     current_in_refs = current_plan in resolver_plan_refs if resolver_plan_refs else None
@@ -281,16 +382,7 @@ def classify_needs_human_blocker(
             f"needs-human sidecar references plans {resolver_plan_refs} "
             f"but current plan is {current_plan!r}"
         )
-        return HumanBlockerClassification(
-            verdict=BlockerVerdict.STALE_MISMATCH,
-            session=session,
-            current_plan=current_plan,
-            needs_human_path=needs_human_path_str,
-            rationale=tuple(rationale),
-            resolver_record=record,
-            needs_human_payload=payload,
-            human_gate_view=human_gate_view,
-        )
+        return _make_classification(BlockerVerdict.STALE_MISMATCH)
 
     if not resolver_plan_refs:
         # Resolver plan_refs are empty or None — cannot confirm either way
@@ -298,16 +390,7 @@ def classify_needs_human_blocker(
             "resolver did not produce plan_refs from needs-human sidecar "
             f"(resolver_current_plan={resolver_current_plan!r}) — conservatively treating as blocker"
         )
-        return HumanBlockerClassification(
-            verdict=BlockerVerdict.AMBIGUOUS_BLOCKER,
-            session=session,
-            current_plan=current_plan,
-            needs_human_path=needs_human_path_str,
-            rationale=tuple(rationale),
-            resolver_record=record,
-            needs_human_payload=payload,
-            human_gate_view=human_gate_view,
-        )
+        return _make_classification(BlockerVerdict.AMBIGUOUS_BLOCKER)
 
     # --- current plan IS in refs → verify with current-target proof ----------------
     # Require current-target proof: the resolver must have an authoritative source
@@ -334,16 +417,7 @@ def classify_needs_human_blocker(
             f"current-target proof (authoritative_source={authoritative_source!r}, "
             f"plan_state_present={plan_state_present}, chain_state_present={chain_state_present})"
         )
-        return HumanBlockerClassification(
-            verdict=BlockerVerdict.AMBIGUOUS_BLOCKER,
-            session=session,
-            current_plan=current_plan,
-            needs_human_path=needs_human_path_str,
-            rationale=tuple(rationale),
-            resolver_record=record,
-            needs_human_payload=payload,
-            human_gate_view=human_gate_view,
-        )
+        return _make_classification(BlockerVerdict.AMBIGUOUS_BLOCKER)
 
     # --- current-target proof established → check for mechanical/liveness gate ------
     if _is_mechanical_blocker(payload, record):
@@ -351,16 +425,7 @@ def classify_needs_human_blocker(
             f"needs-human references current plan {current_plan!r} but evidence indicates "
             f"a mechanical/liveness gate rather than a genuine human blocker"
         )
-        return HumanBlockerClassification(
-            verdict=BlockerVerdict.MECHANICAL_BLOCKER,
-            session=session,
-            current_plan=current_plan,
-            needs_human_path=needs_human_path_str,
-            rationale=tuple(rationale),
-            resolver_record=record,
-            needs_human_payload=payload,
-            human_gate_view=human_gate_view,
-        )
+        return _make_classification(BlockerVerdict.MECHANICAL_BLOCKER)
 
     # --- human-required is an allowlist, never an ambiguity fallback ----------------
     gate = typed_human_gate(payload)
@@ -369,32 +434,14 @@ def classify_needs_human_blocker(
             "current marker has no allowlisted typed human decision; preserving it as "
             "ambiguous control-plane evidence rather than claiming human action is required"
         )
-        return HumanBlockerClassification(
-            verdict=BlockerVerdict.AMBIGUOUS_BLOCKER,
-            session=session,
-            current_plan=current_plan,
-            needs_human_path=needs_human_path_str,
-            rationale=tuple(rationale),
-            resolver_record=record,
-            needs_human_payload=payload,
-            human_gate_view=human_gate_view,
-        )
+        return _make_classification(BlockerVerdict.AMBIGUOUS_BLOCKER)
 
     # --- genuine TRUE_BLOCKER: typed gate + current-target proof + plan match --------
     rationale.append(
         f"needs-human sidecar references current plan {current_plan!r} "
         f"with typed gate {gate.name} and current-target proof (source={authoritative_source})"
     )
-    return HumanBlockerClassification(
-        verdict=BlockerVerdict.TRUE_BLOCKER,
-        session=session,
-        current_plan=current_plan,
-        needs_human_path=needs_human_path_str,
-        rationale=tuple(rationale),
-        resolver_record=record,
-        needs_human_payload=payload,
-        human_gate_view=human_gate_view,
-    )
+    return _make_classification(BlockerVerdict.TRUE_BLOCKER)
 
 
 def build_needs_human_marker(
@@ -1059,6 +1106,81 @@ def _build_current_pointer(
         "plan_name": plan_name,
         "run_kind": repair_payload.get("run_kind"),
     }
+
+
+def _format_source_cursor(
+    cursor_vector: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Format canonical source-cursor evidence without granting authority."""
+    if isinstance(cursor_vector, Mapping) and cursor_vector:
+        return {
+            "authority": "evidence_extracted_display_only",
+            "value": dict(cursor_vector),
+        }
+    if cursor_vector is not None:
+        return {
+            "authority": "absent",
+            "reason": "no_source_cursor_vector_provided",
+        }
+    return None
+
+
+def _collect_human_blocker_evidence_gaps(
+    *,
+    has_payload: bool,
+    has_resolver: bool,
+    stale_kinds: set[str] | None = None,
+    resolver_plan_refs: list[str] | None = None,
+    current_plan: str = "",
+    has_current_target_proof: bool = False,
+) -> dict[str, Any]:
+    """Return predecessor-compatible, non-authoritative blocker evidence gaps."""
+    gaps: dict[str, Any] = {}
+    kinds = stale_kinds or set()
+    refs = resolver_plan_refs or []
+    if not has_payload:
+        gaps["needs_human_payload"] = {
+            "gap": "needs_human_payload_missing",
+            "reason": "needs-human sidecar missing or unreadable",
+            "evidence_status": "missing",
+        }
+    if not has_resolver:
+        gaps["resolver_record"] = {
+            "gap": "resolver_record_missing",
+            "reason": "no resolver evidence record available for current-target proof",
+            "evidence_status": "missing",
+        }
+    if "stale_needs_human_plan_ref" in kinds:
+        gaps["needs_human_plan_ref"] = {
+            "gap": "stale_needs_human_plan_ref",
+            "reason": "needs-human sidecar references an older plan",
+            "evidence_status": "stale",
+        }
+    if has_payload and has_resolver and not refs:
+        gaps["plan_refs"] = {
+            "gap": "plan_refs_empty",
+            "reason": "resolver did not produce plan_refs from needs-human sidecar",
+            "evidence_status": "degraded",
+        }
+    if has_payload and has_resolver and refs and current_plan and current_plan not in refs:
+        gaps["plan_mismatch"] = {
+            "gap": "current_plan_not_in_needs_human_refs",
+            "reason": (
+                f"needs-human sidecar references plans {refs} "
+                f"but current plan is {current_plan!r}"
+            ),
+            "evidence_status": "stale",
+        }
+    if has_payload and has_resolver and refs and not has_current_target_proof:
+        gaps["current_target_proof"] = {
+            "gap": "current_target_proof_missing",
+            "reason": (
+                "needs-human references current plan but resolver lacks "
+                "current-target proof (no plan/chain state or live evidence)"
+            ),
+            "evidence_status": "degraded",
+        }
+    return gaps
 
 
 def _safe_marker_text(value: object) -> str:

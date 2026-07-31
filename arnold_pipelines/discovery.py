@@ -236,6 +236,8 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "docs_path": "arnold_pipelines/evidence_pack/SKILL.md",
         "disposition": "migrate",
         "migrated": True,
+        "builder_contract": "native",
+        "diagnostic": "Returns a native Pipeline with a NativeProgram.",
     },
     "arnold_pipelines/_template": {
         "id": "my-pipeline",

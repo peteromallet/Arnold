@@ -41,7 +41,7 @@ from .query_relationship import (
     load_query_relationship,
     relationship_store_root,
 )
-from .reply_chain import build_reply_provenance, render_reply_context
+from .reply_chain import build_reply_provenance, render_reply_context, reply_chain_projection
 from .timezone import TimezoneService, localize_text_timestamps, timezone_prompt_instruction
 
 
@@ -139,6 +139,11 @@ class ResidentRuntime:
         *,
         authorization_decision: AuthorizationDecision | None = None,
     ) -> None:
+        from arnold_pipelines.megaplan.cloud.runtime_attestation import (
+            require_configured_runtime_launch,
+        )
+
+        require_configured_runtime_launch("resident")
         decision = authorization_decision or self.authorizer.authorize_inbound(event.subject)
         if not decision.allowed:
             if decision.audit is not None:
@@ -470,10 +475,12 @@ class ResidentRuntime:
                 "continuation_run_id": result.continuation_run_id,
                 "route": result.route,
                 "delivery_owner_run_id": result.delivery_owner_run_id,
+                "followup_evidence_path": result.evidence_path,
                 "launch_anchor": target.launch_anchor,
                 "launch_anchor_field": target.launch_anchor_field,
                 "window_seconds": 900,
                 "idempotent_replay": result.idempotent_replay,
+                "reply_chain_custody": reply_chain_projection(provenance),
             },
             idempotency_key=deterministic_idempotency_key(
                 "resident-subagent-followup-routed", persisted.message.id
@@ -1106,6 +1113,26 @@ class ResidentRuntime:
             return
         self._record_tool_calls(turn.id, response)
         processing_continues = _response_has_detached_subagent(response)
+        if response.metadata.get("turn_handoff") == "durable_subagents":
+            self.emitter.log_system_event(
+                level="info",
+                category="system",
+                event_type="resident_managed_child_handoff",
+                message="Resident turn transferred delivery to durable managed-child custody",
+                details={
+                    "turn_id": turn.id,
+                    "launched_run_ids": list(response.metadata.get("launched_run_ids") or []),
+                    "delivery_owner_run_ids": list(
+                        response.metadata.get("managed_child_delivery_owner_run_ids") or []
+                    ),
+                    "custody_evidence_paths": list(
+                        response.metadata.get("managed_child_custody_evidence_paths") or []
+                    ),
+                },
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-managed-child-handoff", turn.id
+                ),
+            )
         final_message_id = None
         if response.final_text:
             safe_text = _localize_user_text(redact_text(response.final_text), hot_context)

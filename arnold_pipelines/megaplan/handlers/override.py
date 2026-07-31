@@ -80,13 +80,21 @@ from arnold_pipelines.megaplan.orchestration.gate_checks import (
     run_gate_checks,
 )
 from arnold_pipelines.megaplan.orchestration.gate_signals import build_gate_signals
+from arnold_pipelines.megaplan.workflows.handler_contract import (
+    apply_response_projection,
+    apply_state_projection,
+)
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     ExitKind,
     PhaseResult,
     atomic_write_phase_result,
     read_phase_result,
 )
-from arnold_pipelines.megaplan.replan_state import reset_replan_loop_state
+from arnold_pipelines.megaplan.replan_state import (
+    blocked_iterate_gate_replan_allowed,
+    invalidate_replan_derived_artifacts,
+    reset_replan_loop_state,
+)
 from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effort_emit_failure, _write_gate_json
 
 
@@ -373,7 +381,11 @@ def _routed_override_response(
         "state": action_output.state,
     }
     if _override_response_owns_next_step(action) and action_output.next_step is not None:
-        response["next_step"] = action_output.next_step
+        apply_response_projection(
+            response,
+            route_signal=str(action_output.route_signal or action),
+            next_step=action_output.next_step,
+        )
     if action_output.route_signal is not None:
         response["route_signal"] = action_output.route_signal
     for key, value in action_output.extras:
@@ -594,14 +606,33 @@ def _handle_routed_override(
             )
         raise CliError("invalid_transition", result.reason or "routed override rejected")
     persisted_state = load_plan(root, args.plan)[1]
+    archived_phase_result: str | None = None
+    if args.override_action == "recover-blocked":
+        archived_phase_result = _archive_stale_phase_result_for_resume(plan_dir)
+        if archived_phase_result is not None:
+            meta = persisted_state.get("meta")
+            overrides = meta.get("overrides") if isinstance(meta, dict) else None
+            if isinstance(overrides, list) and overrides:
+                latest_override = overrides[-1]
+                if (
+                    isinstance(latest_override, dict)
+                    and latest_override.get("action") == "recover-blocked"
+                ):
+                    latest_override["archived_phase_result"] = archived_phase_result
+                    from arnold_pipelines.megaplan._core.state import write_plan_state
+
+                    write_plan_state(plan_dir, mode="replace", state=persisted_state)
     _emit_routed_override_events(args.override_action, plan_dir=plan_dir, state=persisted_state, args=args)
-    return _routed_override_response(
+    response = _routed_override_response(
         args.override_action,
         plan_dir=plan_dir,
         state=persisted_state,
         args=args,
         artifacts=dict(result.artifacts),
     )
+    if archived_phase_result is not None:
+        response["archived_phase_result"] = archived_phase_result
+    return response
 
 
 def _resolved_default_phase_spec(phase: str, state: PlanState, root: Path) -> str:
@@ -780,7 +811,7 @@ def _override_add_note(
 def _override_abort(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
-    state["current_state"] = STATE_ABORTED
+    apply_state_projection(state, STATE_ABORTED, route_signal="abort")
     _append_to_meta(
         state,
         "overrides",
@@ -915,7 +946,7 @@ def _override_adopt_execution(
     reason = args.reason or "Adopted complete execution artifact after post-worker recovery."
     timestamp = now_utc()
 
-    state["current_state"] = STATE_EXECUTED
+    apply_state_projection(state, STATE_EXECUTED, route_signal="adopt-execution")
     state.pop("resume_cursor", None)
     state.pop("active_step", None)
     adoption_record = {
@@ -1024,7 +1055,7 @@ def _override_force_proceed(
             "overrides",
             {"action": "force-proceed", "timestamp": now_utc(), "reason": args.reason},
         )
-        state["current_state"] = STATE_DONE
+        apply_state_projection(state, STATE_DONE, route_signal="force-proceed")
         save_state_merge_meta(plan_dir, state)
         return {
             "success": True,
@@ -1103,7 +1134,7 @@ def _override_force_proceed(
             plan_id=state["name"],
         )
     save_debt_registry(root, debt_registry)
-    state["current_state"] = STATE_GATED
+    apply_state_projection(state, STATE_GATED, route_signal="force-proceed")
     state["meta"].pop("user_approved_gate", None)
     state["last_gate"] = {}
     _append_to_meta(
@@ -1138,7 +1169,8 @@ def _override_replan(
 ) -> StepResponse:
     allowed = {STATE_GATED, STATE_FINALIZED, STATE_CRITIQUED, STATE_FAILED}
     previous_state = state["current_state"]
-    if previous_state not in allowed:
+    blocked_gate_replan = blocked_iterate_gate_replan_allowed(state)
+    if previous_state not in allowed and not blocked_gate_replan:
         raise CliError(
             "invalid_transition",
             f"replan requires state {', '.join(sorted(allowed))}, got '{previous_state}'",
@@ -1169,6 +1201,10 @@ def _override_replan(
         state,
         reason=reason,
     )
+    artifact_invalidation = invalidate_replan_derived_artifacts(
+        plan_dir,
+        timestamp=timestamp,
+    )
     reset_replan_loop_state(state, target_state=STATE_PLANNED)
     save_state_merge_meta(plan_dir, state)
     try:
@@ -1191,6 +1227,8 @@ def _override_replan(
     }
     if source_reconciliation is not None:
         response["canonical_source_binding"] = source_reconciliation
+    if artifact_invalidation is not None:
+        response["artifact_invalidation"] = artifact_invalidation
     return response
 
 
@@ -1402,7 +1440,9 @@ def _override_recover_blocked(
             "recover-blocked requires every current blocker to be explicitly resolved as non-terminal",
             extra={
                 "resume_cursor": resume_cursor,
-                "phase_result_exit_kind": phase_result.exit_kind,
+                "phase_result_exit_kind": (
+                    phase_result.exit_kind if phase_result is not None else None
+                ),
                 "blocker_ids": [
                     blocker["blocker_id"] for blocker in unresolved_blockers
                 ],
@@ -1414,7 +1454,9 @@ def _override_recover_blocked(
         )
 
     previous_state = state["current_state"]
-    state["current_state"] = recovered_state
+    apply_state_projection(
+        state, recovered_state, route_signal="recover-blocked"
+    )
     state.pop("latest_failure", None)
     state.pop("active_step", None)
     archived_phase_result = _archive_stale_phase_result_for_resume(plan_dir)
@@ -2004,7 +2046,7 @@ def _override_resume_clarify(
             "No answers found in notes; consider adding answers via "
             "'override add-note' before the plan phase."
         )
-    state["current_state"] = STATE_PREPPED
+    apply_state_projection(state, STATE_PREPPED, route_signal="resume-clarify")
     state.pop("clarification", None)
     _append_to_meta(
         state,

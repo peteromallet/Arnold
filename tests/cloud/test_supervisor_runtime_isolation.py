@@ -126,20 +126,69 @@ python3 -c 'import arnold_pipelines; print(arnold_pipelines.__file__)'
     assert result.stdout.strip().startswith(str(REPO_ROOT / "arnold_pipelines"))
 
 
+def test_unprepared_ambient_install_never_impersonates_isolated_runtime(
+    tmp_path: Path,
+) -> None:
+    """An arbitrary installed Arnold needs the matching prepare receipt."""
+
+    script = f"""
+source {str(WRAPPERS / 'arnold-supervisor-runtime-lib')!r}
+arnold_supervisor_runtime_init test-component {str(REPO_ROOT)!r}
+printf 'isolated=%s\\n' "$MEGAPLAN_SUPERVISOR_ISOLATED"
+python3 -c 'import arnold_pipelines; print(arnold_pipelines.__file__)'
+"""
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env.update(
+        {
+            "MEGAPLAN_SUPERVISOR_PYTHON": sys.executable,
+            "MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED": "1",
+            "MEGAPLAN_SUPERVISOR_RUNTIME_ROOT": str(tmp_path / "unprepared"),
+            "MEGAPLAN_SUPERVISOR_STATUS_DIR": str(tmp_path / "status"),
+            "MEGAPLAN_RUNTIME_ATTESTATION_REQUIRED": "0",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", "-c", script],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "isolated=0" in result.stdout
+    assert str(REPO_ROOT / "arnold_pipelines") in result.stdout
+
+
 def test_watchdog_fails_before_heartbeat_when_runtime_is_not_ready(tmp_path: Path) -> None:
     status_dir = tmp_path / "status"
+    not_ready_python = tmp_path / "not-ready-python"
+    not_ready_python.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    not_ready_python.chmod(0o755)
+    watchdog = _text("arnold-watchdog")
+    assert watchdog.index("arnold_supervisor_runtime_init watchdog") < watchdog.index(
+        '"watchdog.heartbeat"'
+    )
+    script = f"""
+source {str(WRAPPERS / 'arnold-supervisor-runtime-lib')!r}
+arnold_supervisor_runtime_init watchdog {str(REPO_ROOT)!r} || exit $?
+mkdir -p {str(status_dir)!r}
+touch {str(status_dir / 'watchdog.heartbeat')!r}
+"""
     env = os.environ.copy()
     env.update(
         {
             "CLOUD_WATCHDOG_ARNOLD_SRC": str(REPO_ROOT),
             "CLOUD_WATCHDOG_STATUS_DIR": str(status_dir),
-            "MEGAPLAN_SUPERVISOR_PYTHON": "/bin/false",
+            "MEGAPLAN_SUPERVISOR_PYTHON": str(not_ready_python),
             "MEGAPLAN_SUPERVISOR_RUNTIME_REQUIRED": "1",
             "MEGAPLAN_SUPERVISOR_STATUS_DIR": str(status_dir),
         }
     )
     result = subprocess.run(
-        ["bash", str(WRAPPERS / "arnold-watchdog"), "--once"],
+        ["bash", "-c", script],
         env=env,
         text=True,
         capture_output=True,
@@ -418,3 +467,12 @@ def test_runtime_prepare_uses_staging_and_atomic_symlink_swap() -> None:
     assert 'mktemp -d "$ROOT/.staging.' in helper
     assert 'mv -Tf "$link_tmp" "$CURRENT"' in helper
     assert "runtime_ready \"$stage/bin/python3\"" in helper
+
+
+def test_runtime_prepare_receipt_binds_source_sha_and_import_paths() -> None:
+    helper = _text("arnold-supervisor-runtime")
+    assert 'source_revision="$(git -C "$SOURCE" rev-parse HEAD)"' in helper
+    assert '"source_revision": source_revision' in helper
+    assert '"imports": imports' in helper
+    assert "supervisor import escaped runtime" in helper
+    assert 'receipt_ready "$CURRENT/bin/python3"' in helper

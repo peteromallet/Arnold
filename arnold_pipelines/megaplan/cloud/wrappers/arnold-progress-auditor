@@ -92,6 +92,7 @@ if [[ "${ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_ACTIVE:-0}" != "1" \
   export ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH="$progress_auditor_snapshot"
   exec bash "$progress_auditor_snapshot" "$@"
 fi
+ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH="${BASH_SOURCE[0]:-$0}"
 trap 'rm -f -- "$ARNOLD_PROGRESS_AUDITOR_SNAPSHOT_PATH"' EXIT
 
 WRAPPER_REPO_ROOT="$(cd "$(dirname "$ARNOLD_PROGRESS_AUDITOR_ORIGIN")/../../../.." && pwd)"
@@ -160,7 +161,10 @@ AUDIT_GITHUB_LABELS="${MEGAPLAN_AUDIT_GITHUB_LABELS:-incident-control-plane,pers
 RECOVERY_ENABLED="${MEGAPLAN_AUDIT_RECOVERY_ENABLED:-1}"
 RECOVERY_SYNC_ENABLED="${MEGAPLAN_AUDIT_RECOVERY_SYNC_ENABLED:-0}"
 WATCHDOG_BIN="${MEGAPLAN_AUDIT_WATCHDOG_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog}"
-REPAIR_TRIGGER_BIN="${MEGAPLAN_AUDIT_REPAIR_TRIGGER_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"
+# Step 51: the legacy REPAIR_TRIGGER_BIN argv handoff has been retired.  The
+# progress-auditor wrapper repair-trigger handoff now routes through the shared
+# repair-delegation shim (see the L3 escalation controller below); the
+# arnold-repair-trigger binary is no longer plumbed by this wrapper.
 ESCALATION_STATE_ROOT="${MEGAPLAN_AUDIT_ESCALATION_STATE_ROOT:-/workspace/.megaplan/progress-auditor-escalations}"
 
 # Legacy direct DeepSeek launcher contract retained here for watchdog contract
@@ -578,6 +582,7 @@ def _merge(
 
 
 entries: dict[tuple[str, str], dict] = {}
+discovery_indeterminate: list[dict] = []
 
 # (a) Marker-discovered workspaces.
 for marker_path in sorted(pathlib.Path(marker_dir).glob("*.json")):
@@ -587,9 +592,28 @@ for marker_path in sorted(pathlib.Path(marker_dir).glob("*.json")):
         continue
     workspace_raw = payload.get("workspace") or payload.get("workspace_dir")
     if not workspace_raw:
+        discovery_indeterminate.append(
+            {
+                "schema_version": "arnold-progress-auditor-discovery-v1",
+                "status": "indeterminate",
+                "reason": "workspace_identity_missing",
+                "session": str(payload.get("session") or marker_path.stem),
+                "marker_path": str(marker_path),
+            }
+        )
         continue
     workspace = pathlib.Path(workspace_raw)
     if not workspace.is_dir():
+        discovery_indeterminate.append(
+            {
+                "schema_version": "arnold-progress-auditor-discovery-v1",
+                "status": "indeterminate",
+                "reason": "missing_workspace",
+                "session": str(payload.get("session") or marker_path.stem),
+                "workspace": str(workspace),
+                "marker_path": str(marker_path),
+            }
+        )
         continue
     session = payload.get("session") or marker_path.stem
     updated = payload.get("updated_at") or payload.get("created_at") or ""
@@ -666,6 +690,14 @@ for entry in entries.values():
 
 with open(out, "w", encoding="utf-8") as handle:
     for entry in sorted(entries.values(), key=lambda item: (item["workspace"], item["plan"])):
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+
+discovery_path = pathlib.Path(out).with_name("discovery-indeterminate.jsonl")
+with discovery_path.open("w", encoding="utf-8") as handle:
+    for entry in sorted(
+        discovery_indeterminate,
+        key=lambda item: (item.get("session", ""), item.get("marker_path", "")),
+    ):
         handle.write(json.dumps(entry, sort_keys=True) + "\n")
 PY
 
@@ -2614,6 +2646,7 @@ def _repair_custody_summary(session, plan_state, current_target):
         "active_request_ids": projection.get("active_request_ids") or [],
         "accepted_unclaimed_request_ids": projection.get("accepted_unclaimed_request_ids") or [],
         "coalesced_without_live_owner": projection.get("coalesced_without_live_owner") or [],
+        "invalid_contract_requests": projection.get("invalid_contract_requests") or [],
         "request_status_counts": projection.get("request_status_counts") or {},
         "claim_count": projection.get("claim_count") or 0,
         "attempt_count": projection.get("attempt_count") or 0,
@@ -3872,6 +3905,61 @@ def _chain_state_looks_terminal(chain_current):
             return True
     return False
 
+def _coherent_terminal_success(ev):
+    """Return true only when plan and chain independently agree on completion."""
+    if not isinstance(ev, dict):
+        return False
+    plan_state = str(ev.get("current_state") or "").strip().lower()
+    if plan_state not in {"done", "complete", "completed", "finalized"}:
+        return False
+    chain_current = (
+        (ev.get("chain_state_summary") or {}).get("current")
+        if isinstance(ev.get("chain_state_summary"), dict)
+        else {}
+    )
+    if not isinstance(chain_current, dict) or not chain_current:
+        return False
+    if chain_current.get("chain_complete") is False:
+        return False
+    if str(chain_current.get("last_state") or "").strip().lower() not in {
+        "done",
+        "complete",
+        "completed",
+    }:
+        return False
+    if str(chain_current.get("current_plan_name") or "").strip():
+        return False
+    if str(chain_current.get("pr_state") or "").strip().lower() not in {
+        "",
+        "merged",
+        "closed",
+    }:
+        return False
+    try:
+        completed_count = int(chain_current.get("completed_count"))
+    except (TypeError, ValueError):
+        return False
+    try:
+        total = int(chain_current.get("total_milestones"))
+    except (TypeError, ValueError):
+        # Legacy chain journals did not persist the milestone list.  Their
+        # terminal cursor is still coherent when the zero-based "next
+        # milestone" index equals the append-only completed record count.
+        try:
+            total = int(chain_current.get("current_milestone_index"))
+        except (TypeError, ValueError):
+            return False
+    if total <= 0 or completed_count != total:
+        return False
+    plan_name = str(ev.get("plan") or "").strip()
+    return any(
+        isinstance(item, dict)
+        and str(item.get("plan") or "").strip() == plan_name
+        and str(item.get("status") or "").strip().lower()
+        in {"done", "complete", "completed", "finalized"}
+        for item in (chain_current.get("completed") or [])
+    )
+
 def _chain_state_looks_nonterminal(chain_current):
     if not isinstance(chain_current, dict) or not chain_current:
         return False
@@ -4239,6 +4327,31 @@ def _stale_unclaimed_repair_custody_reason(ev):
             f"after retry exhaustion request_ids={','.join(str(item) for item in unclaimed[:5])}"
         )
     return ""
+
+def _invalid_repair_request_contract_reason(ev):
+    custody = ev.get("repair_custody_summary") if isinstance(ev, dict) else {}
+    custody = custody if isinstance(custody, dict) else {}
+    chain_current = (ev.get("chain_state_summary") or {}).get("current") if isinstance(ev.get("chain_state_summary"), dict) else {}
+    if not _chain_state_looks_nonterminal(chain_current):
+        return ""
+    records = custody.get("invalid_contract_requests") or []
+    matching = [
+        item
+        for item in records
+        if isinstance(item, dict)
+        and item.get("failure_kind") == "completed_repair_without_cursor_advance"
+        and "missing_preserve_configured_profile" in (item.get("violations") or [])
+    ]
+    if not matching:
+        return ""
+    item = matching[0]
+    return (
+        "repair_request_contract_invalid: completed-repair recovery request is "
+        "missing preserve_configured_profile "
+        f"request_id={item.get('request_id') or 'unknown'} "
+        f"blocker_id={item.get('blocker_id') or 'unknown'} "
+        f"configured_profile={item.get('configured_profile') or 'missing'}"
+    )
 
 def _nested_repair_queue_custody_drift_reason(ev):
     custody = ev.get("repair_custody_summary") if isinstance(ev, dict) else {}
@@ -5402,11 +5515,35 @@ for entry in plans:
         or ""
     ).strip()
     finding_state = str(ev.get("current_state") or "").strip().lower()
+    terminal_current_success = bool(
+        run_kind == "chain"
+        and _coherent_terminal_success(ev)
+        and (
+            not authoritative_plan
+            or authoritative_plan == str(ev.get("plan") or "").strip()
+        )
+    )
     completed_shadow = bool(
         finding_state in {"done", "complete", "completed", "finalized"}
         and authoritative_plan
         and authoritative_plan != str(ev.get("plan") or "").strip()
     )
+    if terminal_current_success:
+        # Historical churn explains how a chain reached its terminal state; it
+        # is not evidence that the successfully completed chain is still
+        # repairable.  Clear only history-derived signals here.  Fresh
+        # session-wide deterministic contradictions (watchdog disagreement,
+        # active repair custody, ghost repair state, etc.) are evaluated below
+        # and can still produce a finding.
+        reasons = []
+        corroboration = []
+        soft_corroboration = []
+        ev["suppression"] = {
+            "reason": "authoritative_terminal_success_historical_evidence_suppressed",
+            "authoritative_plan": authoritative_plan,
+            "authoritative_chain_path": chain_current.get("path"),
+            "authoritative_chain_state": chain_current.get("last_state"),
+        }
     session_reasons = []
     session_evidence_scope = bool(ev.get("session_evidence_scope"))
     if session_evidence_scope and meta_summary.get("missing_meta_run_evidence"):
@@ -5417,7 +5554,7 @@ for entry in plans:
             f"meta-repair trigger {meta_summary.get('trigger')} has only failed launch/no-output evidence "
             f"(bad_records={meta_summary.get('failed_meta_record_count')} bad_run_logs={meta_summary.get('failed_meta_run_count')})"
         )
-    for deterministic_reason in ((
+    session_deterministic_reasons = (
         _meta_record_no_verdict_reason(ev),
         _meta_repair_launch_failure_reason(ev),
         _watchdog_chain_health_disagreement_reason(ev),
@@ -5429,6 +5566,7 @@ for entry in plans:
         _repair_complete_incomplete_chain_reason(ev),
         _green_with_recent_repair_churn_reason(ev),
         _stale_unclaimed_repair_custody_reason(ev),
+        _invalid_repair_request_contract_reason(ev),
         _nested_repair_queue_custody_drift_reason(ev),
         _queue_coalesced_without_live_owner_reason(ev),
         _deterministic_failure_exhaustion_reason(ev),
@@ -5436,7 +5574,11 @@ for entry in plans:
         _liveness_without_acceptance_progress_reason(ev),
         _repair_dispatch_during_preserve_live_reason(ev),
         _stale_l1_l2_cycle_reason(ev),
-    ) if session_evidence_scope else ()):
+    ) if session_evidence_scope else ()
+    for deterministic_reason in session_deterministic_reasons:
+        if deterministic_reason:
+            session_reasons.append(deterministic_reason)
+    for deterministic_reason in (
         _marker_present_stopped_without_chain_state_reason(ev),
         _dependency_independent_launch_gap_reason(ev),
         stranded_replan_reason(
@@ -5448,7 +5590,17 @@ for entry in plans:
     ):
         if deterministic_reason:
             session_reasons.append(deterministic_reason)
-    if not completed_shadow:
+    if completed_shadow:
+        reasons = []
+        corroboration = []
+        soft_corroboration = []
+        ev["suppression"] = {
+            "reason": "completed_plan_shadow_plan_local_evidence_suppressed",
+            "authoritative_plan": authoritative_plan,
+            "authoritative_chain_path": chain_current.get("path"),
+            "authoritative_chain_state": chain_current.get("last_state"),
+        }
+    elif not terminal_current_success:
         wrapper_drift = _installed_wrapper_drift_reason(ev)
         if wrapper_drift:
             session_reasons.append(wrapper_drift)
@@ -5461,16 +5613,6 @@ for entry in plans:
         ):
             if deterministic_reason:
                 reasons.append(deterministic_reason)
-    else:
-        reasons = []
-        corroboration = []
-        soft_corroboration = []
-        ev["suppression"] = {
-            "reason": "completed_plan_shadow_plan_local_evidence_suppressed",
-            "authoritative_plan": authoritative_plan,
-            "authoritative_chain_path": chain_current.get("path"),
-            "authoritative_chain_state": chain_current.get("last_state"),
-        }
     reasons.extend(session_reasons)
     unresolved_actions = (ev.get("user_action_context") or {}).get("unresolved_user_actions") or []
     if (run_kind == "plan" or chain_last_state == "awaiting_human") and unresolved_actions:
@@ -5884,6 +6026,12 @@ Evaluate these questions in order:
   delegated subagents, wrote a meta record, committed/pushed when allowed, and
   retriggered ordinary repair. If any of those did not happen, classify
   META_REPAIR_FAILURE and fix the meta-repairer/watchdog dispatch path first.
+- Verify the ordinary-repair and meta-repair briefs retain an explicit
+  profile-preservation clause. Missing profile preservation is a repair-system
+  contract failure; profile observation never authorizes profile mutation.
+- Classify any terminal repair success without canonical plan/chain cursor
+  advancement as 'completed-repair-without-cursor-advance' and route it through
+  the L2/L3 false-success backstop.
 - Treat meta-repair artifacts as negative evidence when they contain only
   launch/trust/no-output failures such as "Not inside a trusted directory",
   "--skip-git-repo-check was not specified", "Codex meta-repair orchestrator
@@ -6571,34 +6719,62 @@ record_incident_audits "$GATHER_DIR/findings.json"
 
 # Explicit effect phase. Deterministic gather/report above never creates repair
 # custody. This controller is pure when authority is absent; when authorized it
-# can enqueue only a coherent true-stall receipt and delegates launch/claiming
-# to the canonical central trigger.
+# can enqueue only a coherent true-stall receipt. Step 51 reroutes the
+# progress-auditor wrapper repair-trigger handoff through the shared
+# repair-delegation shim: the legacy arnold-repair-trigger argv is no longer
+# plumbed as trigger_argv, so the wrapper boundary cannot launch repair
+# authority.  Repair authority remains with the canonical simple_fixer
+# delegation that processes the occurrence-compatible queue identities
+# produced by the controller (Steps 43/46).  Audit reporting, human
+# escalation, GitHub sync, and model audit behaviour are intentionally left
+# non-authoritative and are NOT routed through this shim.
 L3_ESCALATION_RESULT="$(
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
     "$GATHER_DIR/findings.json" \
     "$ESCALATION_STATE_ROOT" \
     "$REPAIR_QUEUE_ROOT" \
-    "$AUDIT_MUTATION_AUTHORIZED_FLAG" \
-    "$REPAIR_TRIGGER_BIN" <<'PY'
+    "$AUDIT_MUTATION_AUTHORIZED_FLAG" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.progress_auditor_controller import run_file_controller
+from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation import (
+    emit_zero_authority_rejection,
+)
 
-findings, state_root, queue_root, authorized, trigger = sys.argv[1:6]
+findings, state_root, queue_root, authorized = sys.argv[1:5]
 result = run_file_controller(
     Path(findings),
     state_root=Path(state_root),
     queue_root=Path(queue_root),
     authorized=authorized == "1",
-    trigger_argv=[trigger],
+    trigger_argv=(),
+)
+# Step 51: route the progress-auditor wrapper repair-trigger handoff through
+# the shared repair-delegation shim.  The auditor wrapper boundary never
+# holds an exact F01 occurrence tuple at this point (the controller above
+# performs the true-stall gate and enqueues an occurrence-compatible
+# identity), so the handoff emits a typed zero-authority rejection via the
+# shim instead of invoking a repair-trigger binary.  Repair authority stays
+# with the canonical simple_fixer delegation that drains the queue.
+repair_handoff = emit_zero_authority_rejection(
+    "terminal_audit",
+    "arnold-progress-auditor",
+    reason=(
+        "wrapper repair-trigger handoff routed through shared repair "
+        "delegation shim; auditor boundary holds no exact F01 occurrence "
+        "tuple, so repair authority remains with canonical simple_fixer "
+        "delegation"
+    ),
 )
 summary = result.get("l3_escalation_summary") or {}
 print(json.dumps({
     "authorized": bool(summary.get("authorized")),
     "evaluated": int(summary.get("evaluated") or 0),
     "dispatched": int(summary.get("dispatched") or 0),
+    "repair_handoff_outcome": repair_handoff.outcome,
+    "repair_handoff_routed_through_shim": True,
 }, sort_keys=True))
 PY
 )" || L3_ESCALATION_RESULT='{"authorized":false,"evaluated":0,"dispatched":0,"controller_error":true}'
@@ -7290,6 +7466,8 @@ save_auditor_completion_evidence(
     evidence_out,
     evidence,
     redactor=redact_text,
+    sidecar_dir=str(Path(repair_data_dir).with_name(f"{Path(repair_data_dir).name}.d")),
+    session="progress_auditor",
 )
 PY
 

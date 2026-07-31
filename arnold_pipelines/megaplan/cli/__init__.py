@@ -201,10 +201,30 @@ def build_parser() -> argparse.ArgumentParser:
     _add_vendor_critic_args(init_parser)
     init_parser.add_argument("--phase-model", action="append", default=None)
     init_parser.add_argument("--idea-file", default=None)
+    init_parser.add_argument(
+        "--mode",
+        choices=("code", "doc", "metaplan", "creative", "joke"),
+        default=None,
+    )
+    init_parser.add_argument("--output", default=None)
     init_parser.add_argument("idea", nargs="?")
+
+    init_parser.add_argument("--north-star", default=None, metavar="PATH")
+    anchors_parser = subparsers.add_parser("anchors")
+    anchors_subparsers = anchors_parser.add_subparsers(dest="anchors_action", required=True)
+    anchors_show = anchors_subparsers.add_parser("show")
+    anchors_show.add_argument("--plan", required=True)
+    anchors_show.add_argument("--json", dest="as_json", action="store_true", default=False)
+    anchors_show.add_argument(
+        "--type",
+        dest="anchor_type",
+        choices=["north_star"],
+        default="north_star",
+    )
 
     for command in ("prep", "plan", "critique", "gate", "revise", "finalize", "execute", "review"):
         sub = subparsers.add_parser(command)
+
         sub.add_argument("--plan", required=False)
         sub.add_argument("--fresh", action="store_true", default=False)
         sub.add_argument("--persist", action="store_true", default=False)

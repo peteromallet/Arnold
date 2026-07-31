@@ -143,6 +143,25 @@ Always rejected:
 - Worktree or plan-directory deletion.
 - Any command not in the allowlist.
 
+## Delegation gating (Step 76-80)
+
+Megaplan repair subcommands (`doctor`, `auto`, `resume`, `chain`) are **never**
+executed directly via subprocess.  Every repair attempt is routed through the
+typed delegation shim (`repair_delegation.py`):
+
+- **Canonical path**: `delegate_to_simple_fixer` — requires exact F01
+  repair-occurrence tuple; delegates to `simple_fixer` with singleton claim,
+  no-child-agent gate, and two-try unchanged-fingerprint budget.
+
+- **Typed rejection**: `emit_zero_authority_rejection` — when the caller
+  cannot construct an exact occurrence identity (e.g., only has a label,
+  liveness signal, WBC receipt, or rebuildable projection), the repair is
+  blocked with a typed outcome instead of being silently accepted.
+
+Return-code success from direct subprocess execution is **never** treated as
+accepted repair.  All repair attempts that bypass delegation are recorded as
+non-authoritative telemetry.
+
 ## Degraded mode
 
 When repair-agent credentials or model launchers are unavailable, the pipeline

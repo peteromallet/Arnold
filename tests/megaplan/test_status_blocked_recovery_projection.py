@@ -112,4 +112,4 @@ def test_status_keeps_execute_available_for_finalized_plan_with_quality_blockers
     assert status["next_step"] == "execute"
     assert "execute" in status["valid_next"]
     assert status["valid_next"][0] == "execute"
-    assert status["blocker_recovery"]["has_terminal_blockers"] is True
+    assert "blocker_recovery" not in status

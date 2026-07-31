@@ -208,6 +208,7 @@ def test_watchdog_pr_reconciliation_fetches_missing_merge_and_relaunches_auto_ch
             f"MERGE_SHA={merge_sha!r}",
             f"CHAIN_PATH={str(chain_path)!r}",
             f"ADVANCED_FLAG={str(advanced_flag)!r}",
+            f"SUPERVISE_BIN={str(WRAPPER_DIR / 'arnold-supervise')!r}",
             """
 log() { printf '%s\n' "$*" >> "$CALL_LOG"; }
 report_item() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"; }
@@ -234,7 +235,13 @@ tmux() {
   case "$1" in
     has-session) return 1 ;;
     kill-session) return 0 ;;
-    new-session) bash "$LAUNCH_SCRIPT"; return $? ;;
+    new-session)
+      sed "s|/usr/local/bin/arnold-supervise|$SUPERVISE_BIN|" \
+        "$LAUNCH_SCRIPT" > "$LAUNCH_SCRIPT.packaged"
+      mv "$LAUNCH_SCRIPT.packaged" "$LAUNCH_SCRIPT"
+      bash "$LAUNCH_SCRIPT"
+      return $?
+      ;;
   esac
   return 0
 }
@@ -249,6 +256,8 @@ tmux() {
         extra_env={
             "ARNOLD_AUTONOMY": "1",
             "ARNOLD_REPAIR_TRIGGER_ENABLED": "1",
+            "ARNOLD_SUPERVISE_LOG": str(tmp_path / "supervise.log"),
+            "MEGAPLAN_RUNTIME_SRC": str(REPO_ROOT),
         },
     )
 

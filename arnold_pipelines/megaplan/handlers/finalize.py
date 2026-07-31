@@ -49,12 +49,19 @@ from arnold_pipelines.megaplan.finalize_contract import FINALIZE_MODEL_OUTPUT_SC
 from arnold_pipelines.megaplan.observability.evaluand import read_evaluand_events
 from arnold_pipelines.megaplan.runtime.schema_registry_adapter import create_step_io_contract_context
 from arnold_pipelines.megaplan.orchestration.plan_contracts import normalize_contract_payload
+from arnold_pipelines.megaplan.workflows.handler_contract import apply_state_projection
 from arnold_pipelines.megaplan.orchestration.test_selection import (
     compute_test_blast_radius,
     resolve_baseline_test_selection,
 )
 from arnold_pipelines.megaplan.orchestration.task_feasibility import (
     compile_task_feasibility,
+)
+from arnold_pipelines.megaplan.orchestration.task_splitter import (
+    split_high_complexity_tasks,
+)
+from arnold_pipelines.megaplan.orchestration.validation_compiler import (
+    compile_validation_jobs as compile_validation_contract,
 )
 from arnold_pipelines.megaplan.orchestration.critique_custody import (
     CritiqueCustodyError,
@@ -1581,9 +1588,30 @@ def _require_explicit_finalize_baseline_selection(test_selection: dict[str, Any]
 def _route_finalize_baseline_selection_failure_to_revise(
     plan_dir: Path,
     state: PlanState,
-    worker: WorkerResult,
-    error: FinalizeBaselineSelectionError,
+    args: argparse.Namespace | WorkerResult,
+    worker: WorkerResult | FinalizeBaselineSelectionError,
+    agent: str | None = None,
+    mode: str | None = None,
+    refreshed: bool = False,
+    error: FinalizeBaselineSelectionError | None = None,
 ) -> StepResponse:
+    # Keep the pre-WBC direct-call contract available to repository consumers
+    # while routing production and WBC-aware callers through the canonical
+    # phase completion boundary.
+    if isinstance(args, WorkerResult):
+        if not isinstance(worker, FinalizeBaselineSelectionError):
+            raise TypeError("legacy finalize fallback requires a selection error")
+        error = worker
+        worker = args
+        args = argparse.Namespace(plan=state.get("name", ""))
+        active_step = state.get("active_step")
+        active = active_step if isinstance(active_step, Mapping) else {}
+        agent = str(active.get("agent") or "finalizer")
+        mode = str(active.get("mode") or "default")
+    if error is None or not isinstance(worker, WorkerResult):
+        raise TypeError("finalize fallback requires a worker result and selection error")
+    agent = agent or "finalizer"
+    mode = mode or "default"
     projection = _finalize_revise_fallback_projection()
     message = _finalize_baseline_contract_message(error.test_selection)
     prior_gate_contract: dict[str, Any] = {}
@@ -1656,7 +1684,9 @@ def _route_finalize_baseline_selection_failure_to_revise(
         SCHEMAS["gate.json"],
         contract="finalize revise gate persistence",
     )
-    state["current_state"] = projection["state"]
+    apply_state_projection(
+        state, projection["state"], route_signal=projection["route_signal"]
+    )
     from arnold_pipelines.megaplan.handlers.gate import (
         _build_gate_carry,
         _sync_legacy_last_gate_for_workflow,
@@ -1692,6 +1722,32 @@ def _route_finalize_baseline_selection_failure_to_revise(
             "test_selection": error.test_selection,
         },
     )
+    response = _finish_step(
+        plan_dir,
+        state,
+        args,
+        step="finalize",
+        worker=worker,
+        agent=agent,
+        mode=mode,
+        refreshed=refreshed,
+        summary=message,
+        artifacts=["gate.json", "gate_carry.json", "finalize_revise_feedback.json"],
+        output_file="finalize_revise_feedback.json",
+        artifact_hash=sha256_file(plan_dir / "finalize_revise_feedback.json"),
+        result="plan_contract_revise_needed",
+        success=False,
+        next_step=projection["next_step"],
+        response_fields={
+            "result": "plan_contract_revise_needed",
+            "route_signal": projection["route_signal"],
+            "details": {
+                "code": "missing_scoped_baseline_test_contract",
+                "test_selection": error.test_selection,
+            },
+            "iteration": state["iteration"],
+        },
+    )
     record_step_failure(
         plan_dir,
         state,
@@ -1705,32 +1761,34 @@ def _route_finalize_baseline_selection_failure_to_revise(
         ),
         duration_ms=worker.duration_ms,
     )
-    response: StepResponse = {
-        "success": False,
-        "step": "finalize",
-        "result": "plan_contract_revise_needed",
-        "route_signal": projection["route_signal"],
-        "summary": message,
-        "artifacts": ["gate.json", "gate_carry.json", "finalize_revise_feedback.json"],
-        "next_step": projection["next_step"],
-        "state": projection["state"],
-        "iteration": state["iteration"],
-        "details": {
-            "code": "missing_scoped_baseline_test_contract",
-            "test_selection": error.test_selection,
-        },
-    }
-    _attach_next_step_runtime(response)
     return response
 
 
 def _route_finalize_task_feasibility_failure_to_revise(
     plan_dir: Path,
     state: PlanState,
-    worker: WorkerResult,
-    error: TaskFeasibilityError,
+    args: argparse.Namespace | WorkerResult,
+    worker: WorkerResult | TaskFeasibilityError,
+    agent: str | None = None,
+    mode: str | None = None,
+    refreshed: bool = False,
+    error: TaskFeasibilityError | None = None,
 ) -> StepResponse:
     """Persist final-stage sense-check evidence and route an infeasible DAG to revise."""
+    if isinstance(args, WorkerResult):
+        if not isinstance(worker, TaskFeasibilityError):
+            raise TypeError("legacy feasibility fallback requires a feasibility error")
+        error = worker
+        worker = args
+        args = argparse.Namespace(plan=state.get("name", ""))
+        active_step = state.get("active_step")
+        active = active_step if isinstance(active_step, Mapping) else {}
+        agent = str(active.get("agent") or "finalizer")
+        mode = str(active.get("mode") or "default")
+    if error is None or not isinstance(worker, WorkerResult):
+        raise TypeError("feasibility fallback requires a worker result and feasibility error")
+    agent = agent or "finalizer"
+    mode = mode or "default"
 
     projection = _finalize_revise_fallback_projection()
     diagnostics = error.report.get("diagnostics", [])
@@ -1800,7 +1858,9 @@ def _route_finalize_task_feasibility_failure_to_revise(
         SCHEMAS["gate.json"],
         contract="finalize feasibility revise gate persistence",
     )
-    state["current_state"] = projection["state"]
+    apply_state_projection(
+        state, projection["state"], route_signal=projection["route_signal"]
+    )
     from arnold_pipelines.megaplan.handlers.gate import (
         _build_gate_carry,
         _sync_legacy_last_gate_for_workflow,
@@ -1828,6 +1888,38 @@ def _route_finalize_task_feasibility_failure_to_revise(
             "report_artifact": "task_feasibility.json",
         },
     )
+    artifacts = [
+            "task_feasibility.json",
+            "gate.json",
+            "gate_carry.json",
+            "finalize_revise_feedback.json",
+    ]
+    response = _finish_step(
+        plan_dir,
+        state,
+        args,
+        step="finalize",
+        worker=worker,
+        agent=agent,
+        mode=mode,
+        refreshed=refreshed,
+        summary=message,
+        artifacts=artifacts,
+        output_file="finalize_revise_feedback.json",
+        artifact_hash=sha256_file(plan_dir / "finalize_revise_feedback.json"),
+        result="plan_contract_revise_needed",
+        success=False,
+        next_step=projection["next_step"],
+        response_fields={
+            "result": "plan_contract_revise_needed",
+            "route_signal": projection["route_signal"],
+            "iteration": state["iteration"],
+            "details": {
+                "code": "finalized_task_feasibility_failed",
+                "diagnostic_codes": codes,
+            },
+        },
+    )
     record_step_failure(
         plan_dir,
         state,
@@ -1841,24 +1933,6 @@ def _route_finalize_task_feasibility_failure_to_revise(
         ),
         duration_ms=worker.duration_ms,
     )
-    response: StepResponse = {
-        "success": False,
-        "step": "finalize",
-        "result": "plan_contract_revise_needed",
-        "route_signal": projection["route_signal"],
-        "summary": message,
-        "artifacts": [
-            "task_feasibility.json",
-            "gate.json",
-            "gate_carry.json",
-            "finalize_revise_feedback.json",
-        ],
-        "next_step": projection["next_step"],
-        "state": projection["state"],
-        "iteration": state["iteration"],
-        "details": {"code": "finalized_task_feasibility_failed", "diagnostic_codes": codes},
-    }
-    _attach_next_step_runtime(response)
     return response
 
 
@@ -1953,6 +2027,25 @@ def _reject_finalize_unresolved_north_star(plan_dir: Path, state: PlanState) -> 
         raise error
 
 
+def _split_finalize_tasks(
+    payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Split demanding tasks and normalize read-only proof subtasks."""
+    tasks, diagnostics = split_high_complexity_tasks(payload)
+    for task in tasks:
+        if (
+            isinstance(task, dict)
+            and isinstance(task.get("id"), str)
+            and task["id"].endswith("_proof")
+            and task.get("kind") == "test"
+            and isinstance(task.get("write_set"), dict)
+            and task["write_set"].get("paths") == []
+        ):
+            task["kind"] = "audit"
+    payload["tasks"] = tasks
+    return [diagnostic.as_dict() for diagnostic in diagnostics]
+
+
 def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: PlanState) -> str:
     contract_payload = normalize_contract_payload(
         {
@@ -1974,12 +2067,36 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
         _ensure_user_actions_post_gate_task(payload, state)
     _apply_programmatic_coverage(payload, plan_dir, state)
     _normalize_task_complexity(payload)
+    splitter_diagnostics = _split_finalize_tasks(payload)
+    validation_compilation = compile_validation_contract(payload)
+    # ── M8A T4: Compile harness-owned validation jobs after handler task
+    # mutations and before the first feasibility pass so the task contract
+    # hash reconciles the generated jobs from the start.  The model emits
+    # validation_jobs: []; the handler owns derivation.
+    from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+        compile_validation_jobs,
+    )
+    payload["validation_jobs"] = compile_validation_jobs(payload)
+    # ───────────────────────────────────────────────────────────────────
+    # ── M10 Step 7H-b (item 1): thread the gate step's seed_epoch
+    # attestation into the payload before compile_task_feasibility so the
+    # finalized receipt binds the launch-seed epoch (plan_hash) and persists
+    # it into finalize.json for execute-entry epoch fencing.  When the
+    # attestation is absent (pre-M10 gate) the payload is left untouched so
+    # prior behavior is preserved.
+    _seed_epoch = state.get("seed_epoch")
+    if _seed_epoch is not None:
+        payload["seed_epoch"] = _seed_epoch
     if state["config"].get("mode", "code") == "code":
         feasibility = compile_task_feasibility(payload, state.get("config", {}))
         atomic_write_json(plan_dir / "task_feasibility.json", feasibility)
         if not feasibility["admitted"]:
             raise TaskFeasibilityError(feasibility)
-        payload["graph_report"] = feasibility
+        payload["graph_report"] = {
+            **feasibility,
+            "splitter_diagnostics": splitter_diagnostics,
+            "validation_compilation": validation_compilation,
+        }
 
     if state["config"].get("mode") in {"doc", "joke"}:
         payload["baseline_test_failures"] = None
@@ -2022,6 +2139,12 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
         _ensure_verification_task(payload, state)
     _attach_calibration_route_reports(plan_dir, payload, state)
     _write_capability_claims_from_finalize(plan_dir, payload, state)
+    splitter_diagnostics.extend(_split_finalize_tasks(payload))
+    # Baseline selection and the final verification-task normalization above
+    # may change the selectors that harness-owned jobs must execute.  Compile
+    # again at the persistence boundary so validation_jobs is derived from the
+    # exact final task/test contract rather than the pre-baseline draft.
+    payload["validation_jobs"] = compile_validation_jobs(payload)
     _reconcile_validation_after_mutation(payload)
     # Finalization and baseline helpers may mutate the graph after the first
     # feasibility pass. Recompile at the final persistence boundary and bind
@@ -2031,7 +2154,11 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
         atomic_write_json(plan_dir / "task_feasibility.json", feasibility)
         if not feasibility["admitted"]:
             raise TaskFeasibilityError(feasibility)
-        payload["graph_report"] = feasibility
+        payload["graph_report"] = {
+            **feasibility,
+            "splitter_diagnostics": splitter_diagnostics,
+            "validation_compilation": validation_compilation,
+        }
     clearance_path = plan_dir / "critique_clearance.json"
     if clearance_path.exists():
         bind_finalize_custody(plan_dir, payload, read_json(clearance_path))
@@ -2158,12 +2285,24 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
         worker.payload = promoted_payload
 
         # ── T9: Structured promotion evidence ────────────────────
+        # Step 7C: compute and carry the finalize schema hash
+        from arnold_pipelines.megaplan.handlers.schema_parity import canonical_schema_hash
+        from arnold_pipelines.megaplan.schemas import SCHEMAS as _schemas
+
+        _finalize_schema = _schemas.get("finalize.json")
+        _finalize_schema_hash = (
+            canonical_schema_hash(_finalize_schema)
+            if isinstance(_finalize_schema, dict)
+            else None
+        )
+
         promotion_evidence = build_promotion_evidence(
             plan_dir,
             scratch_status,
             phase_identity="finalize",
             scratch_filename=scratch_filename,
             worker_payload_used=scratch_status in ("missing", "unmodified"),
+            producer_schema_hash=_finalize_schema_hash,
         )
         if promotion_evidence:
             LOGGER.debug(
@@ -2186,19 +2325,31 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
             return _route_finalize_task_feasibility_failure_to_revise(
                 plan_dir,
                 state,
+                args,
                 worker,
+                agent,
+                mode,
+                refreshed,
                 error,
             )
         except FinalizeBaselineSelectionError as error:
             return _route_finalize_baseline_selection_failure_to_revise(
                 plan_dir,
                 state,
+                args,
                 worker,
+                agent,
+                mode,
+                refreshed,
                 error,
             )
         success_projection = _finalize_success_projection()
         _ensure_execution_baseline(state)
-        state["current_state"] = success_projection["state"]
+        apply_state_projection(
+            state,
+            success_projection["state"],
+            route_signal=success_projection["route_signal"],
+        )
         return _finish_step(
             plan_dir, state, args,
             step="finalize",
@@ -2213,3 +2364,91 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
             next_step=success_projection["next_step"],
             response_fields={"route_signal": success_projection["route_signal"]},
         )
+
+
+# ---------------------------------------------------------------------------
+# Validation process custody — lifecycle cutover enforcement (Step 17)
+# ---------------------------------------------------------------------------
+
+
+def enforce_process_custody_cutover(
+    plan_dir: Path,
+    *,
+    trigger: str,
+) -> list[dict[str, Any]]:
+    """Resolve and apply adopt-or-terminate decisions for validation processes.
+
+    Reads custody receipts recorded under ``plan_dir / "process_custody"`` and,
+    for each, resolves a cutover decision (adopt or terminate) and applies it.
+
+    Adopt decisions are no-ops (the exact job is retained).  Terminate
+    decisions reap the recorded process group, but only when the acting process
+    can be located by exact provenance (PID + process-group match); a missing
+    or ambiguous target never authorizes a signal (fail-closed custody
+    invariant).  In all cases the original recorded validation outcome is
+    preserved.
+
+    This function is fail-open at the finalize boundary: any internal error is
+    logged and the function returns the partial set of decisions so a custody
+    bookkeeping issue never aborts the finalize step.
+
+    Authority to act flows from the durable launch provenance recorded in each
+    receipt (this run launched that process group) — never from labels,
+    liveness, or WBC receipts.
+    """
+    from arnold_pipelines.megaplan.runtime.process import (
+        ProcessCustodyReceipt,
+        apply_cutover_decision,
+        resolve_cutover,
+    )
+
+    receipt_dir = plan_dir / "process_custody"
+    if not receipt_dir.is_dir():
+        return []
+
+    decisions: list[dict[str, Any]] = []
+    for receipt_file in sorted(receipt_dir.glob("*.json")):
+        try:
+            payload = read_json(receipt_file)
+            if not isinstance(payload, dict):
+                continue
+            receipt = ProcessCustodyReceipt.from_dict(payload)
+        except Exception as exc:
+            LOGGER.warning(
+                "process_custody: skipping unparseable receipt %s: %s",
+                receipt_file.name,
+                exc,
+            )
+            continue
+
+        # Observe the live process by exact provenance only.  A PID that no
+        # longer exists or whose process group differs is treated as "not the
+        # exact job" — resolve_cutover will decide terminate, but
+        # apply_cutover_decision will only signal when a concrete handle is
+        # available (fail-closed).
+        live_pgid: int | None = receipt.process_group_id
+        live_command_hash: str | None = receipt.command_hash
+        process_handle = None
+        if receipt.process_group_id is not None:
+            try:
+                os.kill(receipt.process_group_id, 0)  # liveness probe, no signal
+            except (ProcessLookupError, PermissionError, OSError):
+                live_pgid = None
+
+        decision = resolve_cutover(
+            receipt,
+            trigger=trigger,
+            live_command_hash=live_command_hash,
+            live_process_group_id=live_pgid,
+        )
+        apply_cutover_decision(decision, process=process_handle)
+        decisions.append(
+            {
+                "receipt_id": receipt.receipt_id,
+                "action": decision.action,
+                "trigger": decision.trigger,
+                "preserved_outcome": decision.preserved_outcome,
+                "reason": decision.reason,
+            }
+        )
+    return decisions

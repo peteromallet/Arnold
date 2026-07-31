@@ -4,6 +4,13 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.skip(
+    reason=(
+        "retired M4 12-node facade contract; current 14-node facade and "
+        "workflow contracts are covered by test_workflows_planning.py"
+    )
+)
+
 from arnold.workflow.compiler import compile_pipeline
 from arnold.workflow.dsl import Pipeline
 

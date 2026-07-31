@@ -477,7 +477,7 @@ def test_detected_rollup_unaffected_by_layer3_breaker() -> None:
     assert result["detected"] == (result["layer1"]["detected"] or result["layer2"]["detected"])
 
 
-def test_live_merged_pr_overrides_stale_state_file_and_resets_no_advance(
+def test_live_merged_pr_does_not_reset_same_occurrence_recurrence(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -520,9 +520,9 @@ def test_live_merged_pr_overrides_stale_state_file_and_resets_no_advance(
     )
 
     assert current["external_checks"]["pr"]["merged"] is True
-    assert updated["advancement_since_last_dispatch"] is True
-    assert updated["layer2_recurrence"] is False
-    assert updated["no_advance_count"] == 1
+    assert updated["advancement_since_last_dispatch"] is False
+    assert updated["layer2_recurrence"] is True
+    assert updated["no_advance_count"] == 3
 
 
 def test_phase_churn_without_milestone_progress_counts_as_no_advance() -> None:
@@ -584,7 +584,7 @@ def test_external_unavailable_falls_back_to_state_milestone_progress_with_log() 
     assert updated["layer2_recurrence"] is False
 
 
-def test_git_branch_advancement_resets_no_advance_without_state_counter_change() -> None:
+def test_git_branch_advancement_does_not_reset_without_canonical_cursor_delta() -> None:
     previous = {
         **repair_recurrence.build_advancement_snapshot(_failure_context(), run_kind="chain"),
         "external_checks": {
@@ -616,8 +616,8 @@ def test_git_branch_advancement_resets_no_advance_without_state_counter_change()
         window_seconds=3600,
     )
 
-    assert updated["advancement_since_last_dispatch"] is True
-    assert updated["layer2_recurrence"] is False
+    assert updated["advancement_since_last_dispatch"] is False
+    assert updated["layer2_recurrence"] is True
 
 
 def test_completed_session_state_is_progress_when_external_checks_unavailable() -> None:
@@ -636,7 +636,7 @@ def test_completed_session_state_is_progress_when_external_checks_unavailable() 
     assert updated["layer2_recurrence"] is False
 
 
-def test_plan_event_growth_resets_no_advance_without_state_counter_change(tmp_path: Path) -> None:
+def test_plan_event_growth_does_not_reset_without_canonical_cursor_delta(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
     plan_dir.mkdir(parents=True)
@@ -684,5 +684,58 @@ def test_plan_event_growth_resets_no_advance_without_state_counter_change(tmp_pa
     )
 
     assert current["plan_activity"]["liveness"] == "progressing"
-    assert updated["advancement_since_last_dispatch"] is True
-    assert updated["layer2_recurrence"] is False
+    assert updated["advancement_since_last_dispatch"] is False
+    assert updated["layer2_recurrence"] is True
+
+
+# ── Recurrence minimum interval enforcement tests ────────────────────────
+
+
+def test_recurrence_minimum_interval_returns_default() -> None:
+    interval = repair_recurrence.recurrence_minimum_interval_seconds()
+    assert interval == 120  # 2 minutes
+    assert isinstance(interval, int)
+
+
+def test_recurrence_minimum_interval_respects_override() -> None:
+    interval = repair_recurrence.recurrence_minimum_interval_seconds(min_interval=300)
+    assert interval == 300
+
+
+def test_recurrence_minimum_interval_clamps_below_default() -> None:
+    """Overrides below the default floor are clamped up."""
+    interval = repair_recurrence.recurrence_minimum_interval_seconds(min_interval=30)
+    assert interval == 120  # clamped to default floor
+
+
+def test_last_dispatch_none_not_within_interval() -> None:
+    assert not repair_recurrence.last_dispatch_within_minimum_interval(None)
+
+
+def test_last_dispatch_empty_string_not_within_interval() -> None:
+    assert not repair_recurrence.last_dispatch_within_minimum_interval("")
+
+
+def test_last_dispatch_recent_is_within_interval() -> None:
+    now = dt.datetime(2026, 7, 1, 12, 0, 0, tzinfo=dt.timezone.utc)
+    last = "2026-07-01T11:59:00+00:00"  # 1 minute ago
+    assert repair_recurrence.last_dispatch_within_minimum_interval(
+        last, now=now, min_interval=120
+    )
+
+
+def test_last_dispatch_old_is_not_within_interval() -> None:
+    now = dt.datetime(2026, 7, 1, 12, 0, 0, tzinfo=dt.timezone.utc)
+    last = "2026-07-01T11:55:00+00:00"  # 5 minutes ago
+    assert not repair_recurrence.last_dispatch_within_minimum_interval(
+        last, now=now, min_interval=120
+    )
+
+
+def test_last_dispatch_at_boundary_is_not_within_interval() -> None:
+    """Exactly at the interval boundary should return False (elapsed >= interval)."""
+    now = dt.datetime(2026, 7, 1, 12, 2, 0, tzinfo=dt.timezone.utc)
+    last = "2026-07-01T12:00:00+00:00"  # exactly 2 minutes ago
+    assert not repair_recurrence.last_dispatch_within_minimum_interval(
+        last, now=now, min_interval=120
+    )

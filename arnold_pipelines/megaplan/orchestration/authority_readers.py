@@ -61,7 +61,11 @@ from arnold_pipelines.megaplan.orchestration.task_satisfaction import (
     TaskSatisfactionResult,
     is_task_satisfied,
 )
-from arnold_pipelines.run_authority import ContractError, reduce_run_authority
+from arnold_pipelines.run_authority import (
+    CASExpectation,
+    ContractError,
+    reduce_run_authority,
+)
 
 # ── Route disposition vocabulary ──────────────────────────────────────────
 
@@ -601,6 +605,62 @@ def accepted_attempt_execution_projection(
     )
 
 
+
+def _all_batch_artifact_waves_sorted(plan_dir: Path) -> list[Path]:
+    """Return every batch artifact *wave* file, newest-fence first.
+
+    Unlike :func:`list_batch_artifacts` (which returns one preferred file
+    per batch directory), this yields **all** ``tasks_*.json`` files across
+    every batch directory.  This is necessary because different wave files
+    within the same batch directory may cover disjoint task subsets; the
+    single preferred file drops accepted authority for tasks that only
+    appear in earlier waves.
+
+    The result is sorted newest-fence-first (falling back to mtime for
+    legacy artifacts) so callers can iterate and skip superseded attempts.
+    """
+    waves: list[Path] = []
+    batches_root = plan_dir / "execute_batches"
+    if batches_root.is_dir():
+        for entry in sorted(batches_root.iterdir()):
+            if not entry.is_dir():
+                continue
+            for child in sorted(entry.iterdir()):
+                if (
+                    child.is_file()
+                    and child.name.startswith("tasks_")
+                    and child.suffix == ".json"
+                ):
+                    waves.append(child)
+    for legacy_path in plan_dir.glob("execution_batch_*.json"):
+        if legacy_path.is_file():
+            waves.append(legacy_path)
+
+    def _wave_key(p: Path) -> tuple[int, int, int, str]:
+        fence_token = -1
+        has_dispatch_identity = 0
+        try:
+            payload = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            payload = {}
+        if isinstance(payload, Mapping):
+            dispatch_identity = payload.get("dispatch_identity")
+            if isinstance(dispatch_identity, Mapping):
+                has_dispatch_identity = 1
+                fence = dispatch_identity.get("fence")
+                raw_token = fence.get("token") if isinstance(fence, Mapping) else None
+                if isinstance(raw_token, int) and not isinstance(raw_token, bool):
+                    fence_token = raw_token
+        try:
+            mtime_ns = p.stat().st_mtime_ns
+        except OSError:
+            mtime_ns = -1
+        return (has_dispatch_identity, fence_token, mtime_ns, p.name)
+
+    waves.sort(key=_wave_key, reverse=True)
+    return waves
+
+
 def _collect_accepted_attempt_authority(
     plan_dir: Path,
 ) -> tuple[
@@ -618,7 +678,8 @@ def _collect_accepted_attempt_authority(
     run_identity: tuple[str, str] | None = None
     saw_validation_projection = False
 
-    for artifact_path in list_batch_artifacts(plan_dir):
+    collected_subject_ids: set[str] = set()
+    for artifact_path in _all_batch_artifact_waves_sorted(plan_dir):
         try:
             payload = json.loads(artifact_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
@@ -652,14 +713,25 @@ def _collect_accepted_attempt_authority(
             envelope = _entry_envelope(entry, validation, by_digest, by_subject)
             if envelope is None or not isinstance(envelope.claim, TaskClaim):
                 continue
+            if envelope.subject_id in collected_subject_ids:
+                continue
             if (envelope.run_id, envelope.run_revision) != run_identity:
                 continue
             try:
                 decision = _accepted_projection_decision(envelope, validation, source)
             except ContractError:
                 continue
-            authority_records.extend(envelope.authority_records())
+            # CAS expectations are dispatch-time preconditions, not durable
+            # run-authority ledger facts. Feeding one to reduce_run_authority
+            # makes the accepted-attempt projection fail closed even though
+            # the merge-time validation already accepted the envelope.
+            authority_records.extend(
+                record
+                for record in envelope.authority_records()
+                if not isinstance(record, CASExpectation)
+            )
             authority_records.extend((decision.idempotency, decision))
+            collected_subject_ids.add(envelope.subject_id)
             evidence_decisions[envelope.subject_id] = AuthorityDecision(
                 task_id=envelope.subject_id,
                 status=EvidenceStatus.satisfied,

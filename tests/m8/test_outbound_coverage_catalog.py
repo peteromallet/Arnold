@@ -119,7 +119,8 @@ def _discover_call_sites(root: Path) -> list[CallSite]:
     """Walk *root* and discover all call sites for tracked functions."""
     call_sites: list[CallSite] = []
     for filepath in sorted(root.rglob("*.py")):
-        if not _is_production_file(filepath):
+        rel_filepath = filepath.relative_to(root)
+        if not _is_production_file(rel_filepath):
             continue
         try:
             source = filepath.read_text(encoding="utf-8")
@@ -131,7 +132,7 @@ def _discover_call_sites(root: Path) -> list[CallSite]:
         except SyntaxError:
             continue
 
-        rel_path = str(filepath.relative_to(root))
+        rel_path = str(rel_filepath)
         visitor = _CallSiteVisitor(rel_path)
         visitor.visit(tree)
         call_sites.extend(visitor.sites)

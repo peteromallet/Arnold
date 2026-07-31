@@ -482,11 +482,46 @@ def validate_relationships(
             raise RevisionConflict(f"evidence revision mismatch: {evidence_id}")
 
 
+def validate_scope_binding(
+    *,
+    grant: CapabilityGrant,
+    fence: CoordinatorFence,
+    expected_grant_id: str,
+    subject_id: str,
+    fence_token: int | None = None,
+    required_capability: str | None = None,
+) -> None:
+    """Validate that a current grant/fence pair still authorizes one subject."""
+
+    if grant.grant_id != expected_grant_id:
+        raise RevisionConflict(
+            f"stale grant identity: expected {expected_grant_id!r}, got {grant.grant_id!r}"
+        )
+    if grant.run_id != fence.run_id:
+        raise IdentityConflict("grant/fence run mismatch")
+    if grant.run_revision != fence.run_revision:
+        raise RevisionConflict("grant/fence revision mismatch")
+    if grant.coordinator_attempt_id != fence.coordinator_attempt_id:
+        raise IdentityConflict("grant/fence coordinator mismatch")
+    if grant.fence_token != fence.token:
+        raise IdentityConflict("grant/fence token mismatch")
+    if fence_token is not None and grant.fence_token != fence_token:
+        raise RevisionConflict(
+            f"stale fence token: expected {fence_token!r}, got {grant.fence_token!r}"
+        )
+    if subject_id not in grant.subject_ids:
+        raise IdentityConflict(f"subject {subject_id!r} is outside current grant scope")
+    if required_capability and required_capability not in grant.capabilities:
+        raise IdentityConflict(
+            f"grant {grant.grant_id!r} lacks required capability {required_capability!r}"
+        )
+
+
 __all__ = [
     "CASExpectation", "CapabilityGrant", "Claim", "Contract", "ContractError",
     "CoordinatorFence", "Decision", "EvidenceEnvelope", "IdempotencyConflict",
     "IdempotencyKey", "IdentityConflict", "ObservationEnvelope", "PayloadConflict",
     "ProjectionMetadata", "QuarantineRecord", "RevisionConflict", "SubjectAttempt",
     "assert_idempotent", "canonical_json", "contract_from_dict", "payload_digest",
-    "validate_relationships",
+    "validate_relationships", "validate_scope_binding",
 ]

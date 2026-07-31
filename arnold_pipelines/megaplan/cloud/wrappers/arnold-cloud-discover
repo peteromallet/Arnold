@@ -208,6 +208,82 @@ def _classify(session: str, workspace: str, commands: list[str]) -> dict[str, st
     }
 
 
+# ---------------------------------------------------------------------------
+# Step 52 relaunch-materializer authority gate.
+#
+# Every relaunch command this wrapper emits is a NON-AUTHORITATIVE relaunch
+# materializer: a successful relaunch (return code 0) resumes plan/chain
+# execution but can never become accepted repair.  Accepted repair requires
+# canonical simple_fixer delegation with an exact F01 occurrence tuple.
+# Authority is never derived from a label, liveness signal, WBC receipt, or
+# rebuildable projection (SC19).
+# ---------------------------------------------------------------------------
+
+RELAUNCH_MATERIALIZER_NON_AUTHORITATIVE_FAMILIES = (
+    "direct_module.auto",
+    "direct_module.resume",
+    "direct_module.auto_or_resume",
+    "direct_module.chain_start",
+    "arnold_supervise.bash_lc",
+)
+
+_RELAUNCH_DIRECT_MODULE_RE = re.compile(
+    r"python3\b.*?\s+-m\s+arnold_pipelines\.megaplan\s+(\S+)"
+)
+_RELAUNCH_SUPERVISE_RE = re.compile(r"arnold-supervise\b.*?\sbash\s+-lc\b")
+
+_RELAUNCH_FORBIDDEN_AUTHORITY_SOURCES = (
+    ("label", re.compile(r"--authority-label|REPAIR_AUTHORITY_LABEL|repair-authority-label")),
+    ("liveness", re.compile(r"repair_accepted|accepted_repair_on|repair.*\$\?|repair.*returncode")),
+    ("wbc_receipt", re.compile(r"wbc[-_ ]?receipt|well[-_ ]?behaved[-_ ]?client")),
+    (
+        "rebuildable_projection",
+        re.compile(r"rebuildable[-_ ]?projection|reproject[-_ ]?authority"),
+    ),
+)
+
+
+def _relaunch_materializer_classify(relaunch_command: str) -> str:
+    if _RELAUNCH_SUPERVISE_RE.search(relaunch_command):
+        return "arnold_supervise.bash_lc"
+    match = _RELAUNCH_DIRECT_MODULE_RE.search(relaunch_command)
+    if match:
+        verb = match.group(1).strip("\"'")
+        tail = relaunch_command[match.end():]
+        if verb in ("auto", "resume"):
+            return "direct_module." + verb
+        if verb == "chain" and tail.lstrip().startswith("start"):
+            return "direct_module.chain_start"
+        if "PLAN_CMD" in verb:
+            return "direct_module.auto_or_resume"
+    return ""
+
+
+def _relaunch_materializer_authority_gate(relaunch_command: str) -> dict:
+    family = _relaunch_materializer_classify(relaunch_command)
+    forbidden_present = [
+        name
+        for name, pattern in _RELAUNCH_FORBIDDEN_AUTHORITY_SOURCES
+        if pattern.search(relaunch_command)
+    ]
+    return dict(
+        family=family,
+        is_non_authoritative_family=family
+        in RELAUNCH_MATERIALIZER_NON_AUTHORITATIVE_FAMILIES,
+        is_repair_authority=False,
+        can_become_accepted_repair_on_success=False,
+        accepted_repair_requires_canonical_delegation=True,
+        canonical_delegation_path="simple_fixer.singleton_claim.exact_f01_tuple",
+        forbidden_authority_sources=[
+            "label",
+            "liveness",
+            "wbc_receipt",
+            "rebuildable_projection",
+        ],
+        forbidden_sources_present=forbidden_present,
+    )
+
+
 for raw in panes_proc.stdout.splitlines():
     if not raw.strip():
         continue

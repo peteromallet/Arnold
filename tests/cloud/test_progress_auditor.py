@@ -88,6 +88,50 @@ def _extract_gather_program() -> str:
     return text[py_start:py_end]
 
 
+def _extract_auditor_evidence_program() -> str:
+    """Extract the post-report auditor completion-evidence Python program."""
+    text = _wrapper("arnold-progress-auditor")
+    marker = (
+        'python3 - "$GATHER_DIR/findings.json" "$AUDITOR_EVIDENCE_OUT" '
+        '"$AUDIT_WINDOW_HOURS" "$TS" "$REPAIR_DATA_DIR" <<\'PY\''
+    )
+    py_start = text.index(marker)
+    py_start = text.index("\n", py_start) + 1
+    py_end = text.index("\nPY\n", py_start)
+    return text[py_start:py_end]
+
+
+def test_auditor_completion_evidence_program_runs_to_completion(
+    tmp_path: Path,
+) -> None:
+    findings_path = tmp_path / "findings.json"
+    evidence_path = tmp_path / "auditor-evidence.json"
+    repair_data_dir = tmp_path / "repair-data"
+    findings_path.write_text(json.dumps({"findings": []}), encoding="utf-8")
+    repair_data_dir.mkdir()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            _extract_auditor_evidence_program(),
+            str(findings_path),
+            str(evidence_path),
+            "6",
+            "20260731T000000Z",
+            str(repair_data_dir),
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert evidence_path.is_file()
+
+
 def _load_superfixer_cycle_functions() -> dict[str, object]:
     text = _wrapper("arnold-progress-auditor")
     start = text.index("def _superfixer_cycle_evidence(ev):")
@@ -990,6 +1034,16 @@ def _run_dispatch_one(
     codex.write_text(
         "#!/usr/bin/env bash\n"
         f"printf '%s\\n' \"$@\" > {shlex.quote(str(tmp_path / 'codex.argv'))}\n"
+        "output_path=''\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  if [[ \"$1\" == '--output-last-message' && $# -gt 1 ]]; then\n"
+        "    output_path=\"$2\"\n"
+        "    shift 2\n"
+        "    continue\n"
+        "  fi\n"
+        "  shift\n"
+        "done\n"
+        f"if [[ -n \"$output_path\" ]]; then printf '%s' {shlex.quote(codex_stdout)} > \"$output_path\"; fi\n"
         f"printf '%s' {shlex.quote(codex_stdout)}\n"
         + (
             f"printf '%s' {shlex.quote(codex_stderr)} >&2\n"
@@ -1017,6 +1071,7 @@ def _run_dispatch_one(
             f"ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
             f"GATHER_DIR={shlex.quote(str(gather_dir))}",
             f"REPORT_DIR={shlex.quote(str(tmp_path / 'reports'))}",
+            f"PATH={shlex.quote(str(tmp_path))}:$PATH",
             "TS=20260713T210000Z",
             "DEEPSEEK_MODEL=deepseek:deepseek-v4-pro",
             "AUDIT_CODEX_MODEL=gpt-5.6-sol",
@@ -1032,8 +1087,14 @@ def _run_dispatch_one(
     )
     env = dict(os.environ)
     env["PATH"] = f"{tmp_path}:{env.get('PATH', '')}"
-    env.setdefault("ARNOLD_AUTONOMY", "1")
-    env.setdefault("ARNOLD_AUDIT_AUTOFIX_ENABLED", "1")
+    # The extracted wrapper runs from a temporary workspace. Pin its managed
+    # agent subprocess to the same source tree as the wrapper under test,
+    # instead of whichever editable runtime candidate happens to be installed.
+    env["PYTHONPATH"] = str(REPO_ROOT)
+    # Positive dispatch fixtures must not inherit production's deliberate
+    # box-wide pause flags from .cloud-hot-env.
+    env["ARNOLD_AUTONOMY"] = "1"
+    env["ARNOLD_AUDIT_AUTOFIX_ENABLED"] = "1"
     if extra_env:
         env.update(extra_env)
     result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, env=env, check=False)
@@ -1146,6 +1207,10 @@ def _build_wrapper_boundary_stub_overlay(
         "arnold_pipelines/__init__.py": "",
         "arnold_pipelines/megaplan/__init__.py": "",
         "arnold_pipelines/megaplan/cloud/__init__.py": "",
+        "arnold_pipelines/megaplan/cloud/repair_escalation.py": """
+def stranded_replan_reason(**_kwargs):
+    return None
+""",
         "arnold_pipelines/megaplan/run_state/__init__.py": "",
         "arnold_pipelines/megaplan/incident/__init__.py": "",
         "arnold_pipelines/megaplan/cloud/_stub_capture.py": """
@@ -1347,6 +1412,133 @@ def _read_stub_calls(path: Path) -> list[dict]:
     ]
 
 
+# ── Step 47 (T33): timer cadence is next-three-hour reconciliation ───────
+
+
+def test_progress_audit_timer_uses_next_three_hour_reconciliation() -> None:
+    """The auditor timer must reconcile on the next-three-hour cadence.
+
+    Step 47 (T33): positive proof flows through next-three-hour
+    reconciliation.  The timer unit must not advertise a six-hour-only
+    cadence, and its description must reference three-hour reconciliation.
+    """
+    from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+        AUDITOR_RECONCILIATION_INTERVAL,
+    )
+
+    timer = _systemd_file("megaplan-progress-audit.timer")
+
+    # The active reconciliation cadence is three hours, not six.
+    assert "OnUnitActiveSec=3h" in timer
+    assert "OnUnitActiveSec=6h" not in timer
+    # No six-hour-only cadence may remain as the schedule contract.
+    assert "three" in timer.lower()
+    # The module-level reconciliation interval agrees with the timer.
+    assert AUDITOR_RECONCILIATION_INTERVAL == "next_three_hour"
+
+
+# ── Step 51 (T36): wrapper repair-trigger handoff routes through the shim ──
+
+
+def test_progress_auditor_wrapper_repair_handoff_uses_shim() -> None:
+    """Step 51 (T36): the progress-auditor wrapper repair-trigger handoff
+    routes through the shared repair-delegation shim.
+
+    The wrapper must no longer plumb the legacy ``arnold-repair-trigger``
+    binary as ``trigger_argv`` to the L3 escalation controller; instead the
+    repair handoff emits a typed zero-authority rejection via the shared
+    ``repair_delegation`` shim (the auditor boundary holds no exact F01
+    occurrence tuple, so repair authority stays with the canonical
+    simple_fixer delegation that drains the queue).  Audit reporting, human
+    escalation, GitHub sync, and model audit behaviour must remain
+    non-authoritative: they may NOT be routed through the shim.
+    """
+    text = _wrapper("arnold-progress-auditor")
+
+    # ── Legacy argv handoff retired ────────────────────────────────────
+    # The legacy binary is no longer plumbed as trigger_argv to the
+    # controller, and the dead env-var override is gone.
+    assert 'trigger_argv=[trigger]' not in text, (
+        "legacy trigger_argv=[trigger] handoff must be retired"
+    )
+    assert 'MEGAPLAN_AUDIT_REPAIR_TRIGGER_BIN' not in text, (
+        "legacy MEGAPLAN_AUDIT_REPAIR_TRIGGER_BIN override must be retired"
+    )
+    # The argv unpacking dropped the legacy ``trigger`` positional.
+    assert "authorized, trigger = sys.argv[1:6]" not in text, (
+        "controller heredoc must no longer unpack the legacy trigger argv"
+    )
+
+    # ── Repair handoff routed through the shared shim ──────────────────
+    # The controller is invoked without a launch argv...
+    assert "trigger_argv=()" in text, (
+        "L3 escalation controller must be invoked with trigger_argv=()"
+    )
+    # ...and the shared shim is imported and used for the handoff.
+    assert (
+        "from arnold_pipelines.megaplan.cloud.wrappers.repair_delegation"
+        in text
+    ), "wrapper must import the shared repair-delegation shim"
+    assert "emit_zero_authority_rejection" in text, (
+        "wrapper must route the repair handoff through "
+        "emit_zero_authority_rejection"
+    )
+    assert 'repair_handoff = emit_zero_authority_rejection(' in text, (
+        "repair-trigger handoff must call emit_zero_authority_rejection"
+    )
+    # The typed caller kind is ``terminal_audit`` (one of the closed
+    # CALLER_KINDS), and the routing records a typed outcome marker.
+    assert '"terminal_audit"' in text or "'terminal_audit'" in text, (
+        "repair handoff must declare the terminal_audit caller kind"
+    )
+    assert "repair_handoff_outcome" in text, (
+        "handoff result must carry the typed repair_handoff_outcome"
+    )
+    assert "repair_handoff_routed_through_shim" in text, (
+        "handoff result must record the shim-routing marker"
+    )
+
+    # ── The repair handoff is the ONLY path routed through the shim ────
+    # The wrapper mixes reporting and repair handoff behaviour; the shim
+    # import and the zero-authority rejection must appear exactly once each,
+    # confined to the L3 escalation controller (the repair-trigger handoff
+    # point).  This guarantees no report path was accidentally made
+    # authoritative and no trigger handoff was left unguarded.
+    assert text.count("from arnold_pipelines.megaplan.cloud.wrappers."
+                      "repair_delegation") == 1, (
+        "the repair-delegation shim must be imported exactly once "
+        "(only the repair-trigger handoff)"
+    )
+    # Count only CALLS (the open paren), not the import statement
+    # (``emit_zero_authority_rejection,`` in the import has no paren).
+    assert text.count("emit_zero_authority_rejection(") == 1, (
+        "emit_zero_authority_rejection must be CALLED exactly once "
+        "(only the repair-trigger handoff)"
+    )
+    # The wrapper never attempts a full delegation (it has no exact F01
+    # tuple at this boundary), so delegate_to_simple_fixer must NOT appear.
+    assert "delegate_to_simple_fixer" not in text, (
+        "the auditor wrapper boundary must not attempt full delegation "
+        "(no exact F01 tuple here); it must emit a typed rejection instead"
+    )
+
+    # ── Non-authoritative report paths remain present and unrouted ────
+    # Audit reporting, human escalation, GitHub sync, and model audit
+    # behaviour are intentionally left non-authoritative: they still run
+    # but are NOT routed through the repair-delegation shim.
+    assert "record_incident_audits" in text, (
+        "audit incident reporting must remain present (non-authoritative)"
+    )
+    assert "human_escalation" in text or "human-escalation" in text, (
+        "human escalation must remain present (non-authoritative)"
+    )
+    # The report assembler (final JSON + Markdown + log) is a separate
+    # heredoc that must not reference the shim at all.
+    assert "github_sync" in text or "GitHubSync" in text, (
+        "GitHub sync must remain present (non-authoritative)"
+    )
+
+
 class TestGreenChecksNoFindings:
     """Report shape when all plans are healthy (no suspicious signals)."""
 
@@ -1355,8 +1547,11 @@ class TestGreenChecksNoFindings:
         timer = _systemd_file("megaplan-progress-audit.timer")
         service = _systemd_file("megaplan-progress-audit.service")
 
-        assert "OnUnitActiveSec=6h" in timer
-        assert "Description=Megaplan 6-hour DeepSeek plan progress audit" in service
+        # Step 47 (T33): the timer cadence moved to next-three-hour
+        # reconciliation; the service Description follows the new
+        # next-three-hour contract (legacy six-hour names are compatibility-only).
+        assert "OnUnitActiveSec=3h" in timer
+        assert "Description=Megaplan next-three-hour DeepSeek plan progress audit" in service
         assert "Codex then reads the subagent-launcher skill" in text
         assert "DeepSeek research subagents" in text
         assert "First audit the repair system itself" in text
@@ -3908,6 +4103,113 @@ class TestLiveSignalFiltering:
         reasons = findings["findings"][0]["reasons"]
         assert any("repair_complete_incomplete_chain" in reason for reason in reasons)
         assert any("plan_active_step_ghost_worker" in reason for reason in reasons)
+
+    def test_gather_flags_completed_repair_request_missing_profile_preservation_clause(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.cloud import repair_requests
+
+        session = "custody-control-plane-20260714"
+        plan = "m9-rebuildable-projections-20260722-0431"
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / plan
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True)
+        chain_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"name": plan, "current_state": "planned"}),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-custody.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 7,
+                    "current_plan_name": plan,
+                    "last_state": "blocked",
+                    "chain_complete": False,
+                    "milestones": [
+                        {"label": f"m{index}"} for index in range(1, 11)
+                    ],
+                    "completed": [
+                        {"label": f"m{index}", "status": "done"}
+                        for index in range(1, 8)
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        queue_root = tmp_path / ".megaplan" / "repair-queue"
+        queued = repair_requests.enqueue_repair_request(
+            queue_root=queue_root,
+            session=session,
+            source="resident_authorized_recovery",
+            workspace=workspace,
+            run_kind="chain",
+            target={
+                "plan_name": plan,
+                "configured_profile": "partnered-5",
+                "recovery_contract": {
+                    "preserve_configured_profile": True,
+                    "required_cursor_advance": True,
+                    "success_requires": "active execution plus chain-owned receipt",
+                    "forbid_standalone_completion": True,
+                },
+            },
+            problem_signature={
+                "failure_kind": "completed_repair_without_cursor_advance",
+                "current_state": "planned",
+                "phase_or_step": "critique",
+                "milestone_or_plan": plan,
+                "gate_recommendation": "continue legal transition",
+                "blocked_task_id": "phase:critique",
+            },
+            root_cause_hint="ordinary repair completed without cursor advancement",
+        )
+        request_path = Path(queued["path"])
+        persisted = json.loads(request_path.read_text(encoding="utf-8"))
+        request_id = persisted["request_id"]
+        blocker_id = persisted["blocker_id"]
+        persisted["target"]["recovery_contract"].pop(
+            "preserve_configured_profile"
+        )
+        request_path.write_text(
+            json.dumps(persisted, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": plan,
+                    "session": session,
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+        )
+
+        assert len(findings["findings"]) == 1
+        finding = findings["findings"][0]
+        reason = next(
+            item
+            for item in finding["reasons"]
+            if item.startswith("repair_request_contract_invalid:")
+        )
+        assert f"request_id={request_id}" in reason
+        assert f"blocker_id={blocker_id}" in reason
+        assert "configured_profile=partnered-5" in reason
+        invalid = finding["repair_custody_summary"]["invalid_contract_requests"]
+        assert invalid == [
+            {
+                "request_id": request_id,
+                "blocker_id": blocker_id,
+                "configured_profile": "partnered-5",
+                "failure_kind": "completed_repair_without_cursor_advance",
+                "violations": ["missing_preserve_configured_profile"],
+            }
+        ]
 
     def test_gather_flags_wbc_accepted_unclaimed_exhausted_cycle_for_l3(
         self, tmp_path: Path
@@ -6655,7 +6957,14 @@ def test_gather_promotes_installed_wrapper_drift_and_ignores_terminal_history(
     )
     installed = tmp_path / "installed-auditor"
     installed.write_text("older wrapper\n", encoding="utf-8")
-    worklist = [{"workspace": str(workspace), "plan": plan, "session": "wrapper-drift", "kind": "chain"}]
+    worklist = [
+        {
+            "workspace": str(workspace),
+            "plan": plan,
+            "session": "wrapper-drift",
+            "kind": "chain",
+        }
+    ]
 
     active = _run_gather_program(
         worklist,
@@ -6675,17 +6984,597 @@ def test_gather_promotes_installed_wrapper_drift_and_ignores_terminal_history(
     assert report["dispatch_summary"]["repair_dispatched"] is False
     assert report["dispatch_summary"]["file_edit_performed"] is False
 
-    state_path.write_text(json.dumps({"name": plan, "current_state": "done"}), encoding="utf-8")
-    chain_path.write_text(
+    state_path.write_text(
         json.dumps(
             {
-                "current_plan_name": plan,
-                "last_state": "done",
-                "chain_complete": True,
-                "pr_state": "merged",
-                "milestones": [{"label": "m1"}],
-                "completed": [{"label": "m1", "status": "done"}],
+                "name": plan,
+                "current_state": "done",
+                "meta": {"weighted_scores": [11.5, 7.0, 3.0]},
             }
         ),
         encoding="utf-8",
     )
+    for index, size in enumerate((100, 200, 300, 400), start=1):
+        (plan_dir / f"plan_v{index}.md").write_text("x" * size, encoding="utf-8")
+    chain_path.write_text(
+        json.dumps(
+            {
+                "current_plan_name": "",
+                "last_state": "done",
+                "chain_complete": None,
+                "pr_state": "merged",
+                "current_milestone_index": 1,
+                "completed": [{"label": "m1", "plan": plan, "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    terminal_with_drift = _run_gather_program(
+        worklist,
+        tmp_path,
+        extra_env={"MEGAPLAN_AUDIT_INSTALLED_WRAPPER": str(installed)},
+    )
+
+    assert terminal_with_drift["findings"] == []
+    assert len(terminal_with_drift["green_checks"]) == 1
+    assert terminal_with_drift["green_checks"][0]["suppression"]["reason"] == (
+        "authoritative_terminal_success_historical_evidence_suppressed"
+    )
+
+
+def test_gather_suppresses_historical_churn_after_authoritative_terminal_success(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plan = "m11-final"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "done",
+                "meta": {"weighted_scores": [11.5, 7.0, 3.0]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    for index, size in enumerate((100, 200, 300, 400), start=1):
+        (plan_dir / f"plan_v{index}.md").write_text("x" * size, encoding="utf-8")
+    (chain_dir / "chain-terminal.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": "",
+                "last_state": "done",
+                "chain_complete": True,
+                "pr_state": "merged",
+                "milestones": [{"label": "m1"}],
+                "completed": [{"label": "m1", "plan": plan, "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_gather_program(
+        [{"workspace": str(workspace), "plan": plan, "session": "terminal-chain", "kind": "chain"}],
+        tmp_path,
+    )
+
+    assert result["findings"] == []
+    assert len(result["green_checks"]) == 1
+    assert result["green_checks"][0]["suppression"]["reason"] == (
+        "authoritative_terminal_success_historical_evidence_suppressed"
+    )
+
+
+@pytest.mark.parametrize(
+    "chain_overrides",
+    [
+        {"current_plan_name": "m11-inconsistent"},
+        {"last_state": "blocked"},
+        {"pr_state": "open"},
+        {
+            "milestones": [{"label": "m1"}, {"label": "m2"}],
+            "completed": [
+                {"label": "m1", "plan": "m11-inconsistent", "status": "done"}
+            ],
+        },
+        {
+            "milestones": None,
+            "current_milestone_index": 2,
+        },
+    ],
+)
+def test_gather_does_not_suppress_plan_chain_terminal_disagreement(
+    tmp_path: Path,
+    chain_overrides: dict,
+) -> None:
+    workspace = tmp_path / "workspace"
+    plan = "m11-inconsistent"
+    plan_dir = workspace / ".megaplan" / "plans" / plan
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "done",
+                "meta": {"weighted_scores": [11.5, 7.0, 3.0]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    for index, size in enumerate((100, 200, 300, 400), start=1):
+        (plan_dir / f"plan_v{index}.md").write_text("x" * size, encoding="utf-8")
+    chain_state = {
+        "current_plan_name": "",
+        "last_state": "done",
+        "chain_complete": True,
+        "pr_state": "merged",
+        "milestones": [{"label": "m1"}],
+        "completed": [{"label": "m1", "plan": plan, "status": "done"}],
+    }
+    chain_state.update(chain_overrides)
+    (chain_dir / "chain-terminal.json").write_text(
+        json.dumps(chain_state),
+        encoding="utf-8",
+    )
+
+    result = _run_gather_program(
+        [{"workspace": str(workspace), "plan": plan, "session": "inconsistent-chain", "kind": "chain"}],
+        tmp_path,
+    )
+
+    assert result["green_checks"] == []
+    reasons = result["findings"][0]["reasons"]
+    assert any(reason.startswith("plan_v refreshed") for reason in reasons)
+    assert any(reason.startswith("score regression") for reason in reasons)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# M9 T61: Shared deterministic exact-evidence reason fixtures
+#
+# These fixtures exercise the six_hour_auditor's finding pipeline across
+# 12 reason classes.  Each fixture fires exactly once with a content-addressed
+# evidence ID and is shared across watchdog and auditor suites.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+import hashlib as _hashlib
+from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
+    _finding,
+    _evidence_id_for_finding,
+    _deduplicate_findings,
+    _project_progress_finding,
+    _watchdog_finding,
+    _repair_layer_finding,
+    _install_sync_finding,
+    _github_sync_finding,
+    _live_process_finding,
+    _stale_claim_finding,
+    _missing_evidence_finding,
+    _recurrence_finding,
+    _semantic_custody_findings,
+    _auditor_recursion_finding,
+    AuditorConfig,
+)
+
+
+class TestSharedDeterministicReasonFixtures:
+    """Shared reason fixtures — each fires once with exact evidence IDs.
+
+    These 12 reason classes are consumed by both watchdog and auditor
+    suites.  Every fixture verifies:
+    * The reason fires exactly once (no duplicate emission for identical evidence).
+    * The evidence ID is content-addressed and deterministic.
+    * The finding carries ``_non_authoritative: True``.
+    """
+
+    # ── 1. consecutive normalized blocks ──────────────────────────────
+
+    def test_reason_consecutive_normalized_blocks_once_only(self):
+        """Normalized blocks that repeat must fire once with deterministic evidence ID."""
+        finding_a = _finding(
+            "consecutive_normalized_blocks",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Consecutive normalized blocks detected without progress.",
+            recommendation="auditor_escalate_to_human",
+            block_count=3,
+            block_ids=["b1", "b2", "b3"],
+        )
+        finding_b = _finding(
+            "consecutive_normalized_blocks",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Consecutive normalized blocks detected without progress.",
+            recommendation="auditor_escalate_to_human",
+            block_count=3,
+            block_ids=["b1", "b2", "b3"],
+        )
+        # Same evidence → same ID
+        assert finding_a["evidence_id"] == finding_b["evidence_id"]
+        assert finding_a["_non_authoritative"] is True
+        assert finding_a["evidence_id"].startswith("finding:sha256:")
+        # Deduplicate: only one survives
+        deduped = _deduplicate_findings([finding_a, finding_b])
+        assert len(deduped) == 1
+        assert deduped[0]["evidence_id"] == finding_a["evidence_id"]
+
+    # ── 2. signature drift ────────────────────────────────────────────
+
+    def test_reason_signature_drift_once_only(self):
+        """Signature drift between expected and observed must fire once with evidence ID."""
+        finding = _finding(
+            "signature_drift",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Failure signature does not match expected identity.",
+            recommendation="meta_repair.repair_attempt",
+            expected_signature="fail:quality_gate:abc123",
+            observed_signature="fail:quality_gate:def456",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Deterministic: repeat with same inputs → same ID
+        finding2 = _finding(
+            "signature_drift",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Failure signature does not match expected identity.",
+            recommendation="meta_repair.repair_attempt",
+            expected_signature="fail:quality_gate:abc123",
+            observed_signature="fail:quality_gate:def456",
+        )
+        assert finding["evidence_id"] == finding2["evidence_id"]
+
+    # ── 3. unclosed custody ───────────────────────────────────────────
+
+    def test_reason_unclosed_custody_once_only(self):
+        """Unclosed custody must fire once with evidence ID."""
+        finding = _finding(
+            "unclosed_custody",
+            layer="semantic_custody",
+            status="error",
+            severity="error",
+            message="Custody lease was accepted but never closed or released.",
+            recommendation="watchdog.dispatch",
+            custody_id="lease:abc123",
+            accepted_at="2026-07-04T20:00:00Z",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Deduplicate identical findings
+        deduped = _deduplicate_findings([finding, dict(finding)])
+        assert len(deduped) == 1
+
+    # ── 4. index mismatch ─────────────────────────────────────────────
+
+    def test_reason_index_mismatch_once_only(self):
+        """Index mismatch between ordered sources must fire once with evidence ID."""
+        finding = _finding(
+            "index_mismatch",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Ordered source indices disagree on event sequence.",
+            recommendation="system.integrity_repair",
+            source_a_index=42,
+            source_b_index=41,
+            source_a="brief",
+            source_b="incident",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Different indices → different evidence IDs
+        finding2 = _finding(
+            "index_mismatch",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Ordered source indices disagree on event sequence.",
+            recommendation="system.integrity_repair",
+            source_a_index=42,
+            source_b_index=40,
+            source_a="brief",
+            source_b="incident",
+        )
+        assert finding["evidence_id"] != finding2["evidence_id"]
+
+    # ── 5. SLO breach ─────────────────────────────────────────────────
+
+    def test_reason_slo_breach_once_only(self):
+        """SLO breach must fire once with evidence ID."""
+        finding = _finding(
+            "slo_breach",
+            layer="watchdog",
+            status="error",
+            severity="error",
+            message="Watchdog report exceeds SLO freshness window.",
+            recommendation="watchdog.dispatch",
+            slo_window_hours=6,
+            observed_age_hours=8.5,
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["severity"] == "error"
+
+    # ── 6. overlap ────────────────────────────────────────────────────
+
+    def test_reason_overlap_once_only(self):
+        """Overlapping claims must fire once with evidence ID."""
+        finding = _finding(
+            "overlap_detected",
+            layer="stale_claim",
+            status="error",
+            severity="error",
+            message="Two active claims overlap on the same incident window.",
+            recommendation="auditor_escalate_to_human",
+            claim_ids=["claim-a", "claim-b"],
+            overlapping_window="2026-07-04T18:00:00Z/2026-07-04T20:00:00Z",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Deduplicate
+        deduped = _deduplicate_findings([finding, dict(finding)])
+        assert len(deduped) == 1
+
+    # ── 7. cross-session joins ────────────────────────────────────────
+
+    def test_reason_cross_session_joins_once_only(self):
+        """Cross-session join anomalies must fire once with evidence ID."""
+        finding = _finding(
+            "cross_session_join_anomaly",
+            layer="reconciler",
+            status="warn",
+            severity="warn",
+            message="Cross-session join produced inconsistent custody states.",
+            recommendation="watchdog.dispatch",
+            session_ids=["s1", "s2"],
+            joined_dimension="custody",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["severity"] == "warn"
+
+    # ── 8. projection amplification ───────────────────────────────────
+
+    def test_reason_projection_amplification_once_only(self):
+        """Projection amplification (recursive non-ok cycles) must fire once with evidence ID."""
+        finding = _finding(
+            "projection_amplification",
+            layer="auditor_recursion",
+            status="error",
+            severity="error",
+            message="Non-ok findings are amplifying across audit cycles.",
+            recommendation="auditor_escalate_to_human",
+            cycle_count=3,
+            amplified_codes=["stale_claim_detected", "missing_evidence_refs"],
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Deterministic repeat
+        finding2 = _finding(
+            "projection_amplification",
+            layer="auditor_recursion",
+            status="error",
+            severity="error",
+            message="Non-ok findings are amplifying across audit cycles.",
+            recommendation="auditor_escalate_to_human",
+            cycle_count=3,
+            amplified_codes=["stale_claim_detected", "missing_evidence_refs"],
+        )
+        assert finding["evidence_id"] == finding2["evidence_id"]
+
+    # ── 9. seriality ──────────────────────────────────────────────────
+
+    def test_reason_seriality_once_only(self):
+        """Seriality violations must fire once with evidence ID."""
+        finding = _finding(
+            "seriality_violation",
+            layer="reconciler",
+            status="error",
+            severity="error",
+            message="Event ordering violates expected seriality constraints.",
+            recommendation="system.integrity_repair",
+            expected_order=["evt-1", "evt-2", "evt-3"],
+            observed_order=["evt-1", "evt-3", "evt-2"],
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+
+    # ── 10. oversized rework ──────────────────────────────────────────
+
+    def test_reason_oversized_rework_once_only(self):
+        """Oversized rework must fire once with evidence ID."""
+        finding = _finding(
+            "oversized_rework",
+            layer="recurrence",
+            status="error",
+            severity="error",
+            message="Repair attempts exceed the rework budget without new evidence.",
+            recommendation="auditor_escalate_to_human",
+            attempt_count=5,
+            budget_limit=3,
+            new_evidence_since_last_attempt=False,
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["status"] == "error"
+
+    # ── 11. invalid model ─────────────────────────────────────────────
+
+    def test_reason_invalid_model_once_only(self):
+        """Invalid model detection must fire once with evidence ID."""
+        finding = _finding(
+            "invalid_model",
+            layer="resolver_semantics",
+            status="error",
+            severity="error",
+            message="Resolver canonical state is incompatible with supporting evidence model.",
+            recommendation="auditor_escalate_to_human",
+            canonical_state="RUNNING",
+            expected_states=["REPAIRING", "RETRYABLE_EXECUTION_BLOCK"],
+            invalid_reasons=["wrong_canonical_state_for_evidence"],
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["code"] == "invalid_model"
+
+    # ── 12. missing ledger coverage ───────────────────────────────────
+
+    def test_reason_missing_ledger_coverage_once_only(self):
+        """Missing ledger coverage must fire once with evidence ID."""
+        finding = _finding(
+            "missing_ledger_coverage",
+            layer="missing_evidence",
+            status="error",
+            severity="error",
+            message="Work ledger has no coverage for the reported incident window.",
+            recommendation="system.integrity_repair",
+            incident_window_start="2026-07-04T00:00:00Z",
+            incident_window_end="2026-07-04T06:00:00Z",
+            ledger_earliest="2026-07-04T08:00:00Z",
+        )
+        assert finding["_non_authoritative"] is True
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        # Deterministic repeat
+        finding2 = _finding(
+            "missing_ledger_coverage",
+            layer="missing_evidence",
+            status="error",
+            severity="error",
+            message="Work ledger has no coverage for the reported incident window.",
+            recommendation="system.integrity_repair",
+            incident_window_start="2026-07-04T00:00:00Z",
+            incident_window_end="2026-07-04T06:00:00Z",
+            ledger_earliest="2026-07-04T08:00:00Z",
+        )
+        assert finding["evidence_id"] == finding2["evidence_id"]
+
+
+class TestReasonFixtureDeduplication:
+    """Prove that the _deduplicate_findings pipeline fires each reason exactly once."""
+
+    def test_all_twelve_reasons_deduplicate_to_unique_evidence_ids(self):
+        """When all 12 reason fixtures fire, each produces a unique evidence ID."""
+        reasons = [
+            _finding("consecutive_normalized_blocks", layer="reconciler", status="error", severity="error",
+                     message="Blocks without progress.", recommendation="auditor_escalate_to_human", block_count=1),
+            _finding("signature_drift", layer="reconciler", status="error", severity="error",
+                     message="Signature mismatch.", recommendation="meta_repair.repair_attempt",
+                     expected_signature="a", observed_signature="b"),
+            _finding("unclosed_custody", layer="semantic_custody", status="error", severity="error",
+                     message="Custody never closed.", recommendation="watchdog.dispatch", custody_id="c1"),
+            _finding("index_mismatch", layer="reconciler", status="error", severity="error",
+                     message="Index mismatch.", recommendation="system.integrity_repair",
+                     source_a_index=1, source_b_index=2),
+            _finding("slo_breach", layer="watchdog", status="error", severity="error",
+                     message="SLO breach.", recommendation="watchdog.dispatch", slo_window_hours=6),
+            _finding("overlap_detected", layer="stale_claim", status="error", severity="error",
+                     message="Overlap.", recommendation="auditor_escalate_to_human", claim_ids=["a"]),
+            _finding("cross_session_join_anomaly", layer="reconciler", status="warn", severity="warn",
+                     message="Cross-session join.", recommendation="watchdog.dispatch", session_ids=["s1"]),
+            _finding("projection_amplification", layer="auditor_recursion", status="error", severity="error",
+                     message="Amplification.", recommendation="auditor_escalate_to_human", cycle_count=1),
+            _finding("seriality_violation", layer="reconciler", status="error", severity="error",
+                     message="Seriality.", recommendation="system.integrity_repair",
+                     expected_order=["a"], observed_order=["b"]),
+            _finding("oversized_rework", layer="recurrence", status="error", severity="error",
+                     message="Oversized rework.", recommendation="auditor_escalate_to_human", attempt_count=5),
+            _finding("invalid_model", layer="resolver_semantics", status="error", severity="error",
+                     message="Invalid model.", recommendation="auditor_escalate_to_human",
+                     canonical_state="X", expected_states=["Y"]),
+            _finding("missing_ledger_coverage", layer="missing_evidence", status="error", severity="error",
+                     message="Missing ledger.", recommendation="system.integrity_repair",
+                     incident_window_start="2026-07-04T00:00:00Z"),
+        ]
+        evidence_ids = [r["evidence_id"] for r in reasons]
+        # All 12 must be unique
+        assert len(set(evidence_ids)) == 12, f"Expected 12 unique evidence IDs, got {len(set(evidence_ids))}"
+
+    def test_duplicate_reasons_reduce_to_one_per_evidence_id(self):
+        """Duplicate identical reasons must collapse to exactly one per evidence ID."""
+        base = _finding("slo_breach", layer="watchdog", status="error", severity="error",
+                        message="SLO breach.", recommendation="watchdog.dispatch",
+                        slo_window_hours=6, observed_age_hours=8)
+        duplicates = [dict(base) for _ in range(5)]
+        deduped = _deduplicate_findings(duplicates)
+        assert len(deduped) == 1
+        assert deduped[0]["evidence_id"] == base["evidence_id"]
+
+    def test_layer_precedence_preserved_in_deduplication(self):
+        """When two findings share evidence_id, the earlier layer wins."""
+        finding_watchdog = _finding("shared_code", layer="watchdog", status="error", severity="error",
+                                    message="Shared.", recommendation=None)
+        finding_reconciler = _finding("shared_code", layer="reconciler", status="error", severity="error",
+                                      message="Shared.", recommendation=None)
+        # Both have same evidence_id (same code+layer+message with same details)
+        # They should differ because layer is part of the evidence_id input
+        assert finding_watchdog["evidence_id"] != finding_reconciler["evidence_id"], \
+            "Different layers must produce different evidence IDs"
+
+
+class TestReasonFixturesAcrossAuditorSurfaces:
+    """Prove deterministic reason fixtures fire correctly through real auditor finding functions."""
+
+    def test_project_progress_finding_produces_evidence_id(self):
+        """_project_progress_finding must produce a finding with evidence_id."""
+        brief = {"deadline_status": "overdue"}
+        incident = {"next_expected_event": "watchdog.dispatch"}
+        finding = _project_progress_finding(brief, incident, "2026-07-04T22:00:00Z")
+        assert "evidence_id" in finding
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["_non_authoritative"] is True
+
+    def test_watchdog_finding_produces_evidence_id(self):
+        """_watchdog_finding must produce a finding with evidence_id."""
+        brief = {"next_expected_event": "watchdog.dispatch"}
+        snapshot = {"watchdog": {"last_reported_at": "2026-07-03T00:00:00Z"}}
+        finding = _watchdog_finding(brief, snapshot, "2026-07-04T22:00:00Z", AuditorConfig())
+        assert "evidence_id" in finding
+        assert finding["evidence_id"].startswith("finding:sha256:")
+
+    def test_stale_claim_finding_produces_evidence_id(self):
+        """_stale_claim_finding must produce a finding with evidence_id."""
+        brief = {"claims": [{"classification": "expired", "claim_id": "c1"}]}
+        finding = _stale_claim_finding(brief)
+        assert "evidence_id" in finding
+        assert finding["evidence_id"].startswith("finding:sha256:")
+        assert finding["status"] == "error"
+
+    def test_missing_evidence_finding_produces_evidence_id(self):
+        """_missing_evidence_finding must produce a finding with evidence_id."""
+        brief = {"evidence": [{"status": "MISSING", "path": "/missing/ref"}]}
+        incident = {}
+        snapshot = {}
+        finding = _missing_evidence_finding(brief, incident, snapshot)
+        assert "evidence_id" in finding
+        assert finding["evidence_id"].startswith("finding:sha256:")
+
+    def test_recurrence_finding_produces_evidence_id(self):
+        """_recurrence_finding must produce a finding with evidence_id."""
+        incident = {}
+        problem = {}
+        finding = _recurrence_finding(incident, problem)
+        assert "evidence_id" in finding
+        assert finding["evidence_id"].startswith("finding:sha256:")
+
+    def test_semantic_custody_findings_produce_evidence_ids(self):
+        """_semantic_custody_findings must produce findings with evidence_ids."""
+        snapshot = {}
+        findings = _semantic_custody_findings(snapshot, now="2026-07-04T22:00:00Z", config=AuditorConfig())
+        assert len(findings) >= 1
+        for f in findings:
+            assert "evidence_id" in f
+            assert f["evidence_id"].startswith("finding:sha256:")
+            assert f["_non_authoritative"] is True

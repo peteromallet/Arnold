@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,6 @@ from arnold_pipelines.megaplan.handlers.override import (
     _override_set_profile,
 )
 from arnold_pipelines.megaplan.handlers.structured_output import (
-    _strip_unknown_keys,
     classify_scratch,
     promote_scratch,
 )
@@ -247,16 +247,37 @@ class TestAdaptiveCritiqueRouting:
 
 
 class TestCritiqueScratchPromotion:
-    def test_strip_unknown_keys_drops_injected_commentary(self) -> None:
-        payload = {
-            "checks": [{"id": "c1"}],
-            "flags": [{"id": "f1"}],
-            "extra_thoughts": "should be stripped",
-            "unknown_key": 123,
-        }
-        known = frozenset({"checks", "flags", "verified_flag_ids", "disputed_flag_ids"})
-        stripped = _strip_unknown_keys(payload, known)
-        assert set(stripped.keys()) == {"checks", "flags"}
+    def test_promote_scratch_rejects_injected_commentary(self, tmp_path: Path) -> None:
+        scratch = tmp_path / "critique_output.json"
+        seed = json.dumps({"checks": [], "flags": []})
+        scratch.write_text(
+            json.dumps(
+                {
+                    "checks": [{"id": "c1"}],
+                    "flags": [],
+                    "model_commentary": "must not be stripped",
+                }
+            ),
+            encoding="utf-8",
+        )
+        worker = WorkerResult(
+            payload={"checks": [], "flags": []},
+            raw_output="",
+            duration_ms=0,
+            cost_usd=0.0,
+        )
+
+        with pytest.raises(ValueError, match="model_commentary"):
+            promote_scratch(
+                tmp_path,
+                "critique_output.json",
+                frozenset(
+                    {"checks", "flags", "verified_flag_ids", "disputed_flag_ids"}
+                ),
+                worker,
+                seed_json=seed,
+                file_fill_instructed=True,
+            )
 
     def test_promote_scratch_falls_back_to_worker_payload_when_unmodified(self, tmp_path: Path) -> None:
         scratch = tmp_path / "critique_output.json"
@@ -1102,6 +1123,46 @@ class TestTiebreakerScenarioOutcomes:
 
 
 class TestOverrideReplanBehavior:
+    def test_override_replan_allows_blocked_iterate_gate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        plan_file = plan_dir / "plan_v7.md"
+        plan_file.write_text("# plan\n", encoding="utf-8")
+        state = {
+            "name": "demo",
+            "current_state": "blocked",
+            "iteration": 7,
+            "config": {},
+            "plan_versions": [{"version": 7, "file": "plan_v7.md"}],
+            "meta": {},
+            "last_gate": {"recommendation": "ITERATE", "passed": False},
+        }
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.save_state_merge_meta",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.latest_plan_path",
+            lambda *args, **kwargs: plan_file,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override._warn_best_effort_emit_failure",
+            lambda *args, **kwargs: None,
+        )
+
+        response = _override_replan(
+            tmp_path,
+            plan_dir,
+            state,
+            argparse.Namespace(reason="apply narrow gate fixes", note=None),
+        )
+
+        assert response["state"] == "planned"
+        assert state["current_state"] == "planned"
+        assert state["meta"]["overrides"][-1]["from_state"] == "blocked"
+
     def test_override_replan_clears_stale_loop_state_and_records_plan_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1161,6 +1222,69 @@ class TestOverrideReplanBehavior:
         assert "latest_failure" not in state
         assert "resume_cursor" not in state
         assert "active_step" not in state
+
+    def test_override_replan_archives_stale_finalize_epoch_artifacts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        plan_file = plan_dir / "plan_v2.md"
+        plan_file.write_text("# repaired plan\n", encoding="utf-8")
+        (plan_dir / "task_feasibility.json").write_text(
+            '{"admitted": false, "task_count": 35}\n', encoding="utf-8"
+        )
+        (plan_dir / "finalize_output.json").write_text(
+            '{"tasks": [{"id": "OLD"}]}\n', encoding="utf-8"
+        )
+        state = {
+            "name": "demo",
+            "current_state": "critiqued",
+            "iteration": 2,
+            "config": {},
+            "plan_versions": [
+                {
+                    "version": 2,
+                    "file": "plan_v2.md",
+                    "hash": "sha256:plan",
+                    "timestamp": "2026-01-02T03:04:05Z",
+                }
+            ],
+            "meta": {},
+            "last_gate": {"recommendation": "ITERATE"},
+        }
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.save_state_merge_meta",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.now_utc",
+            lambda: "2026-01-02T03:04:05Z",
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.latest_plan_path",
+            lambda *args, **kwargs: plan_file,
+        )
+
+        response = _override_replan(
+            tmp_path,
+            plan_dir,
+            state,
+            argparse.Namespace(reason="new planning epoch", note=None),
+        )
+
+        invalidation = response["artifact_invalidation"]
+        assert invalidation["schema_version"] == "megaplan-replan-artifact-invalidation-v1"
+        assert {item["artifact"] for item in invalidation["artifacts"]} == {
+            "task_feasibility.json",
+            "finalize_output.json",
+        }
+        assert not (plan_dir / "task_feasibility.json").exists()
+        assert not (plan_dir / "finalize_output.json").exists()
+        manifest = json.loads((plan_dir / invalidation["manifest"]).read_text())
+        for item in manifest["artifacts"]:
+            archived = plan_dir.parent / item["archive_path"]
+            assert archived.is_file()
+            assert item["sha256"].startswith("sha256:")
 
 
 class TestOverrideFallbackChains:
@@ -2278,7 +2402,34 @@ class TestAutoExecuteRecovery:
                 {
                     "current_state": "critiqued",
                     "active_step": {"phase": "gate"},
+                    "iteration": 2,
+                    "history": [
+                        {
+                            "step": "critique",
+                            "result": "success",
+                            "output_file": "critique_v2.json",
+                        }
+                    ],
                     "meta": {},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        custody_path = plan_dir / "critique_custody_v2.json"
+        custody_path.write_text('{"admitted": true}\n', encoding="utf-8")
+        (plan_dir / "critique_v2.json").write_text("{}\n", encoding="utf-8")
+        from arnold_pipelines.megaplan._core import sha256_file
+
+        (plan_dir / "gate_signals_v2.json").write_text(
+            json.dumps(
+                {
+                    "critique_custody": {
+                        "receipt": custody_path.name,
+                        "receipt_sha256": sha256_file(custody_path),
+                        "admitted": True,
+                        "loss_count": 0,
+                    }
                 }
             )
             + "\n",
@@ -2302,6 +2453,136 @@ class TestAutoExecuteRecovery:
         assert state["current_state"] == "gated"
         assert "active_step" not in state
         assert state["meta"]["gate_artifact_recovery"]["gate_recommendation"] == "PROCEED"
+        assert state["meta"]["gate_artifact_recovery"]["critique_custody_sha256"] == (
+            sha256_file(custody_path)
+        )
+
+    def test_stale_passing_gate_is_not_adopted_for_new_critique(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.auto import (
+            _recover_completed_gate_artifact_after_failure,
+        )
+        from arnold_pipelines.megaplan._core import sha256_file
+
+        plan_dir = tmp_path / ".megaplan" / "plans" / "p"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "current_state": "critiqued",
+                    "active_step": {"phase": "gate"},
+                    "iteration": 2,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        custody_path = plan_dir / "critique_custody_v2.json"
+        custody_path.write_text('{"receipt": "old"}\n', encoding="utf-8")
+        (plan_dir / "gate_signals_v2.json").write_text(
+            json.dumps(
+                {
+                    "critique_custody": {
+                        "receipt": custody_path.name,
+                        "receipt_sha256": sha256_file(custody_path),
+                        "admitted": True,
+                        "loss_count": 0,
+                    }
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "gate.json").write_text(
+            json.dumps(
+                {"recommendation": "PROCEED", "passed": True, "unresolved_flags": []}
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        custody_path.write_text('{"receipt": "new"}\n', encoding="utf-8")
+
+        assert _recover_completed_gate_artifact_after_failure(plan_dir) is False
+        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        assert state["current_state"] == "critiqued"
+
+    def test_stale_gate_artifact_is_not_adopted_after_replan(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.auto import (
+            _recover_completed_gate_artifact_after_failure,
+        )
+        from arnold_pipelines.megaplan._core import sha256_file
+
+        plan_dir = tmp_path / ".megaplan" / "plans" / "p"
+        plan_dir.mkdir(parents=True)
+        custody_path = plan_dir / "critique_custody_v2.json"
+        custody_path.write_text('{"admitted": true}\n', encoding="utf-8")
+        (plan_dir / "gate_signals_v2.json").write_text(
+            json.dumps(
+                {
+                    "critique_custody": {
+                        "receipt": custody_path.name,
+                        "receipt_sha256": sha256_file(custody_path),
+                        "admitted": True,
+                        "loss_count": 0,
+                    }
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        gate_path = plan_dir / "gate.json"
+        gate_path.write_text(
+            json.dumps(
+                {
+                    "recommendation": "PROCEED",
+                    "passed": True,
+                    "unresolved_flags": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "critique_v2.json").write_text("{}\n", encoding="utf-8")
+        os.utime(custody_path, ns=(1_000_000_000, 1_000_000_000))
+        os.utime(
+            plan_dir / "gate_signals_v2.json",
+            ns=(2_000_000_000, 2_000_000_000),
+        )
+        os.utime(gate_path, ns=(3_000_000_000, 3_000_000_000))
+        os.utime(
+            plan_dir / "critique_v2.json",
+            ns=(4_000_000_000, 4_000_000_000),
+        )
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "current_state": "critiqued",
+                    "iteration": 2,
+                    "history": [
+                        {
+                            "step": "critique",
+                            "result": "success",
+                            "output_file": "critique_v2.json",
+                        }
+                    ],
+                    "meta": {},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        assert gate_path.stat().st_mtime_ns < (
+            plan_dir / "critique_v2.json"
+        ).stat().st_mtime_ns
+        assert _recover_completed_gate_artifact_after_failure(plan_dir) is False
+
+        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        assert state["current_state"] == "critiqued"
+        assert "gate_artifact_recovery" not in state["meta"]
 
     def test_non_proceed_gate_artifact_is_not_adopted_after_worker_failure(
         self, tmp_path: Path
@@ -2893,3 +3174,238 @@ class TestFinalizeBoundaryTemplateUse:
         )
         for rec in evidence:
             assert rec["phase_identity"] == "finalize"
+
+
+# ── M8A T4: Deterministic recompilation and schema rejection coverage ────
+
+
+class TestValidationJobCompilationDeterminism:
+    """Tests that harness-owned validation jobs are deterministic and that
+    the task contract hash reconciles them."""
+
+    @staticmethod
+    def _minimal_payload(
+        *,
+        test_selection_mode: str = "full",
+        narrow_selectors: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Build a minimal v2 finalize payload for validation-job tests."""
+        payload: dict[str, Any] = {
+            "task_contract_version": 2,
+            "validation_jobs": [],
+            "tasks": [
+                {
+                    "id": "T1",
+                    "objective": "Add a helper function.",
+                    "description": "Write a small utility.",
+                    "kind": "code",
+                    "status": "pending",
+                    "complexity": 2,
+                    "complexity_justification": "Small, single-file change.",
+                    "estimated_minutes": 5,
+                    "depends_on": [],
+                    "dependency_reasons": {},
+                    "routing_group": "",
+                    "write_set": {"paths": ["src/util.py"], "complete": True},
+                    "narrow_tests": {
+                        "selectors": narrow_selectors or [],
+                        "max_seconds": 60,
+                        "max_runs": 1,
+                    },
+                    "checkpoint": {
+                        "required": False,
+                        "max_interval_seconds": 300,
+                        "records": [],
+                    },
+                }
+            ],
+            "user_actions": [],
+            "sense_checks": [],
+            "watch_items": [],
+            "meta_commentary": "",
+        }
+        if test_selection_mode != "none":
+            payload["test_selection"] = {
+                "mode": test_selection_mode,
+                "reason": "Full suite for determinism test.",
+                "selectors_used": [],
+            }
+        return payload
+
+    def test_compile_validation_jobs_is_deterministic(self) -> None:
+        """Compiling twice with the same payload returns identical jobs."""
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            compile_validation_jobs,
+        )
+
+        payload = self._minimal_payload(
+            test_selection_mode="full",
+            narrow_selectors=["tests/test_util.py"],
+        )
+        first = compile_validation_jobs(payload)
+        second = compile_validation_jobs(payload)
+
+        assert first == second, "Repeated compilation must be deterministic"
+        assert len(first) >= 1, "Should have at least the post-execute suite"
+
+    def test_compile_validation_jobs_no_narrow_selectors_still_emits_suite(
+        self,
+    ) -> None:
+        """A task without narrow selectors still triggers the post-execute suite."""
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            compile_validation_jobs,
+        )
+
+        payload = self._minimal_payload(test_selection_mode="full")
+        jobs = compile_validation_jobs(payload)
+
+        assert len(jobs) == 1
+        assert jobs[0]["kind"] == "post_execute_suite"
+        assert jobs[0]["writes_files"] is False
+
+    def test_compile_validation_jobs_none_mode_produces_no_suite(self) -> None:
+        """test_selection mode none produces no validation jobs at all."""
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            compile_validation_jobs,
+        )
+
+        payload = self._minimal_payload(test_selection_mode="none")
+        jobs = compile_validation_jobs(payload)
+        assert jobs == []
+
+    def test_narrow_recheck_job_references_source_task(self) -> None:
+        """Narrow recheck jobs carry the source task_id."""
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            compile_validation_jobs,
+        )
+
+        payload = self._minimal_payload(
+            test_selection_mode="scoped",
+            narrow_selectors=["tests/test_util.py"],
+        )
+        jobs = compile_validation_jobs(payload)
+        narrow_jobs = [j for j in jobs if j["kind"] == "narrow_recheck"]
+        assert len(narrow_jobs) == 1
+        assert narrow_jobs[0]["task_id"] == "T1"
+
+    def test_task_contract_hash_changes_with_validation_jobs(self) -> None:
+        """The task contract hash must incorporate validation_jobs."""
+        from arnold_pipelines.megaplan.orchestration.task_feasibility import (
+            task_contract_hash,
+        )
+
+        base = self._minimal_payload(
+            test_selection_mode="full",
+            narrow_selectors=["tests/test_util.py"],
+        )
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            compile_validation_jobs,
+        )
+
+        base["validation_jobs"] = compile_validation_jobs(base)
+
+        # Hash with a different test_selection mode that produces fewer jobs
+        alt = self._minimal_payload(
+            test_selection_mode="none",
+            narrow_selectors=["tests/test_util.py"],
+        )
+        alt["validation_jobs"] = compile_validation_jobs(alt)
+
+        assert task_contract_hash(base) != task_contract_hash(
+            alt
+        ), "Hash must differ when validation_jobs change"
+
+    def test_task_contract_hash_stable_on_recompile(self) -> None:
+        """Recompiling validation jobs and re-hashing produces identical hashes."""
+        from arnold_pipelines.megaplan.orchestration.task_feasibility import (
+            task_contract_hash,
+        )
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            compile_validation_jobs,
+        )
+
+        payload = self._minimal_payload(
+            test_selection_mode="full",
+            narrow_selectors=["tests/test_util.py"],
+        )
+        payload["validation_jobs"] = compile_validation_jobs(payload)
+        hash1 = task_contract_hash(payload)
+
+        # Recompile and re-hash
+        payload["validation_jobs"] = compile_validation_jobs(payload)
+        hash2 = task_contract_hash(payload)
+
+        assert hash1 == hash2, (
+            "Repeated compilation and hashing must produce identical hashes"
+        )
+
+
+class TestValidationJobSchemaRejection:
+    """Tests that model-emitted validation_jobs are properly rejected."""
+
+    def test_validate_model_rejects_nonempty_validation_jobs(self) -> None:
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            validate_model_validation_jobs,
+        )
+
+        issues = validate_model_validation_jobs(
+            [{"id": "VJ1", "kind": "post_execute_suite", "command": "pytest"}]
+        )
+        assert len(issues) >= 1
+        assert any("empty array" in issue.lower() for issue in issues)
+
+    def test_validate_model_rejects_non_list(self) -> None:
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            validate_model_validation_jobs,
+        )
+
+        issues = validate_model_validation_jobs(None)
+        assert len(issues) >= 1
+
+    def test_validate_model_accepts_empty_list(self) -> None:
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            validate_model_validation_jobs,
+        )
+
+        issues = validate_model_validation_jobs([])
+        assert issues == []
+
+    def test_validate_model_rejects_writes_files_true(self) -> None:
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            validate_model_validation_jobs,
+        )
+
+        issues = validate_model_validation_jobs(
+            [
+                {
+                    "id": "VJ1",
+                    "kind": "narrow_recheck",
+                    "command": "pytest",
+                    "writes_files": True,
+                    "reason": "should be rejected",
+                }
+            ]
+        )
+        assert any(
+            "writes_files" in issue.lower() for issue in issues
+        ), f"Expected writes_files rejection in: {issues}"
+
+    def test_validate_model_rejects_unknown_kind(self) -> None:
+        from arnold_pipelines.megaplan.orchestration.validation_jobs import (
+            validate_model_validation_jobs,
+        )
+
+        issues = validate_model_validation_jobs(
+            [
+                {
+                    "id": "VJ1",
+                    "kind": "unknown_kind",
+                    "command": "pytest",
+                    "writes_files": False,
+                    "reason": "should be rejected",
+                }
+            ]
+        )
+        assert any(
+            "unknown kind" in issue.lower() for issue in issues
+        ), f"Expected unknown kind rejection in: {issues}"

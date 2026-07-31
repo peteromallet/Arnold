@@ -273,7 +273,13 @@ def test_all_repair_producers_share_explicit_central_queue(tmp_path: Path) -> No
         session="generic",
         source="m1_acceptance",
         workspace=workspace,
-        problem_signature={"failure_kind": "execute_failed", "blocked_task_id": "T1"},
+        problem_signature={
+            "failure_kind": "execute_failed",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "m1",
+            "blocked_task_id": "T1",
+        },
     )
     human = repair_requests.enqueue_human_gate_repair_request(
         queue_root=queue_root,
@@ -287,10 +293,11 @@ def test_all_repair_producers_share_explicit_central_queue(tmp_path: Path) -> No
         step_name="approval",
         prompt="approval required",
     )
-    assert generic["request"]["queue_dir"] == human["request"]["queue_dir"] == str(queue_root)
+    assert generic["request"]["queue_dir"] == str(queue_root)
+    assert human["status"] == "zero_authority_rejected"
+    assert human["outcome"] == "zero_authority_rejected"
     assert {item["session"] for item in repair_requests.iter_repair_requests(queue_root)} == {
         "generic",
-        "human",
     }
     with pytest.raises(ValueError):
         repair_requests.validate_queue_root(workspace / ".megaplan" / "plans" / "m1")

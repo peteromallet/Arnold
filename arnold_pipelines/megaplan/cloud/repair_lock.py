@@ -1,7 +1,27 @@
-"""Repair lock helpers for serialized cloud repair mutation."""
+"""Repair lock helpers for serialized cloud repair mutation.
+
+The mkdir/PID lock provides **admission and projection evidence only** —
+it serialises concurrent repair attempts and records who is attempting
+the repair, but it does **not** confer authority to release, renew, or
+perform any repair action.  Authoritative decisions require a current
+Custody lease from the lease store (see
+:mod:`arnold_pipelines.megaplan.custody.lease_store`).
+
+Callers:
+  - Use :func:`acquire_repair_lock` / :func:`inspect_repair_lock` for
+    admission gating and projection evidence.
+  - Use :func:`validate_lease_authority` to confirm lease-store ownership
+    before performing any mutating repair action.
+  - Use :func:`release_repair_lock` with ``lease_store`` + ``lease_id``
+    for an authoritative release, or without them for a best-effort
+    admission cleanup.
+  - Use :func:`renew_repair_lock` (which always requires lease-store
+    ownership) to extend a lock's expiry.
+"""
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shlex
 import socket
@@ -15,7 +35,7 @@ from typing import Any, Callable, Iterator, Literal, Mapping
 
 from arnold_pipelines.megaplan.cloud.repair_contract import atomic_write_json, load_json
 
-RepairLockStatus = Literal["missing", "acquired", "busy", "stale"]
+RepairLockStatus = Literal["missing", "acquired", "busy", "stale", "unauthorized"]
 PidLivenessProbe = Callable[[int], bool]
 
 
@@ -38,6 +58,10 @@ class RepairLockResult:
     def stale(self) -> bool:
         return self.status == "stale"
 
+    @property
+    def unauthorized(self) -> bool:
+        return self.status == "unauthorized"
+
 
 def owner_metadata_path(lock_dir: str | Path) -> Path:
     """Return the canonical owner metadata path for *lock_dir*."""
@@ -49,15 +73,23 @@ def build_owner_metadata(
     *,
     session: str,
     target_id: str = "",
+    repair_identity: Mapping[str, Any] | None = None,
     pid: int | None = None,
     command: str | None = None,
     started_at: str | None = None,
     cwd: str | None = None,
     timeout_seconds: float | None = None,
     hostname: str | None = None,
+    boot_id: str | None = None,
     extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build normalized owner metadata for a repair lock holder."""
+    """Build normalized owner metadata for a repair lock holder.
+
+    *boot_id* carries the host/process-birth identity (machine boot time /
+    kernel identifier) so that PID reuse across reboots cannot spoof a live
+    lock holder (Step 13A).  When omitted it falls back to the current
+    process-birth identity reported by :func:`process_birth_identity`.
+    """
 
     metadata: dict[str, Any] = {
         "session": session,
@@ -69,6 +101,27 @@ def build_owner_metadata(
         "timeout_seconds": timeout_seconds,
         "hostname": _default_hostname() if hostname is None else hostname,
     }
+    if repair_identity is not None:
+        from arnold_pipelines.megaplan.cloud import repair_requests
+
+        normalized_identity = repair_requests.normalize_repair_identity(
+            repair_identity
+        )
+        if normalized_identity is not None:
+            metadata["repair_identity"] = normalized_identity
+            metadata["repair_identity_key"] = (
+                repair_requests.repair_identity_key(normalized_identity)
+            )
+    if boot_id is None:
+        try:
+            from arnold_pipelines.megaplan.custody.contracts import (
+                process_birth_identity,
+            )
+
+            boot_id = str(process_birth_identity().get("boot_id") or "")
+        except Exception:
+            boot_id = ""
+    metadata["boot_id"] = boot_id or ""
     if extra:
         metadata.update(dict(extra))
     return metadata
@@ -79,8 +132,16 @@ def inspect_repair_lock(
     *,
     now: datetime | None = None,
     is_pid_live: PidLivenessProbe | None = None,
+    expected_repair_identity: Mapping[str, Any] | None = None,
 ) -> RepairLockResult:
-    """Inspect an existing repair lock without mutating it."""
+    """Inspect an existing repair lock without mutating it.
+
+    The returned status (``stale``, ``busy``, etc.) is **advisory
+    admission/projection evidence only**.  It does not confer authority
+    to release, renew, or perform any repair action.  Callers must
+    validate lease-store ownership separately via
+    :func:`validate_lease_authority` before acting on inspection results.
+    """
 
     lock_path = Path(lock_dir)
     if not lock_path.exists():
@@ -99,6 +160,13 @@ def inspect_repair_lock(
 
     owner: dict[str, Any] | None = owner_payload if isinstance(owner_payload, dict) else None
     pid_probe = is_pid_live or _default_is_pid_live
+    expected_identity_key = ""
+    if expected_repair_identity is not None:
+        from arnold_pipelines.megaplan.cloud import repair_requests
+
+        expected_identity_key = repair_requests.repair_identity_key(
+            expected_repair_identity
+        )
     if owner is None:
         if owner_path.exists():
             evidence["reasons"].append("owner_metadata_invalid")
@@ -110,7 +178,10 @@ def inspect_repair_lock(
         if isinstance(pid, int):
             if not pid_probe(pid):
                 evidence["reasons"].append("owner_pid_not_live")
-            elif not _pid_matches_expected_repair_loop(owner, pid):
+            elif (
+                Path(f"/proc/{pid}").exists()
+                and not _pid_matches_expected_repair_loop(owner, pid)
+            ):
                 evidence["reasons"].append("owner_process_mismatch")
                 observed_command = _pid_command_text(pid)
                 if observed_command:
@@ -131,6 +202,18 @@ def inspect_repair_lock(
                 evidence["age_seconds"] = age_seconds
                 if age_seconds > float(timeout_seconds):
                     evidence["reasons"].append("timeout_expired")
+        if expected_identity_key:
+            observed_identity_key = str(
+                owner.get("repair_identity_key") or ""
+            )
+            if observed_identity_key != expected_identity_key:
+                evidence["reasons"].append("repair_identity_mismatch")
+                evidence["expected_repair_identity_key"] = (
+                    expected_identity_key
+                )
+                evidence["observed_repair_identity_key"] = (
+                    observed_identity_key
+                )
 
     if evidence["reasons"]:
         return RepairLockResult(
@@ -148,12 +231,14 @@ def acquire_repair_lock(
     *,
     session: str,
     target_id: str = "",
+    repair_identity: Mapping[str, Any] | None = None,
     pid: int | None = None,
     command: str | None = None,
     started_at: str | None = None,
     cwd: str | None = None,
     timeout_seconds: float | None = None,
     hostname: str | None = None,
+    boot_id: str | None = None,
     extra: Mapping[str, Any] | None = None,
     now: datetime | None = None,
     is_pid_live: PidLivenessProbe | None = None,
@@ -164,19 +249,26 @@ def acquire_repair_lock(
     owner = build_owner_metadata(
         session=session,
         target_id=target_id,
+        repair_identity=repair_identity,
         pid=pid,
         command=command,
         started_at=started_at,
         cwd=cwd,
         timeout_seconds=timeout_seconds,
         hostname=hostname,
+        boot_id=boot_id,
         extra=extra,
     )
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         lock_path.mkdir(parents=False)
     except FileExistsError:
-        return inspect_repair_lock(lock_path, now=now, is_pid_live=is_pid_live)
+        return inspect_repair_lock(
+            lock_path,
+            now=now,
+            is_pid_live=is_pid_live,
+            expected_repair_identity=repair_identity,
+        )
 
     try:
         # Owner equality is the release fence.  Additive provenance belongs on
@@ -201,19 +293,39 @@ def release_repair_lock(
     *,
     owner: Mapping[str, Any] | None = None,
     expected_pid: int | None = None,
+    lease_store: Any | None = None,
+    lease_id: str = "",
 ) -> bool:
-    """Release a repair lock if the current owner matches the expectation."""
+    """Release a repair lock if the current owner matches the expectation.
+
+    When *lease_store* and *lease_id* are both provided the release is
+    **authoritative**: the lease store must confirm current ownership by
+    the same host and PID that appear in the lock's owner metadata.
+    Without a lease store the release is a best-effort admission cleanup
+    only — it does not confer repair authority.
+
+    Returns ``True`` if the lock was released, ``False`` otherwise.
+    """
 
     lock_path = Path(lock_dir)
     if not lock_path.exists():
         return False
 
     owner_path = owner_metadata_path(lock_path)
-    current_owner = load_json(owner_path, default="__missing__")
+    current_owner_raw = load_json(owner_path, default="__missing__")
+    current_owner: dict[str, Any] | None = (
+        current_owner_raw if isinstance(current_owner_raw, dict) else None
+    )
+
     if owner is not None and current_owner != dict(owner):
         return False
     if expected_pid is not None:
-        if not isinstance(current_owner, dict) or current_owner.get("pid") != expected_pid:
+        if current_owner is None or current_owner.get("pid") != expected_pid:
+            return False
+
+    # ── Lease-store authority check (M7) ──────────────────────────────
+    if lease_store is not None and lease_id:
+        if not _validate_lease_authority_inner(lease_store, lease_id, current_owner):
             return False
 
     if owner_path.exists():
@@ -223,6 +335,164 @@ def release_repair_lock(
     except OSError:
         return False
     return True
+
+
+def validate_lease_authority(
+    lease_store: Any,
+    lease_id: str,
+    lock_owner: Mapping[str, Any] | None,
+) -> tuple[bool, dict[str, Any]]:
+    """Confirm that *lease_store* records current ownership for *lease_id*
+    matching the lock-owner identity from *lock_owner*.
+
+    Returns ``(authorized, diagnostics)`` where *authorized* is ``True``
+    only when the lease store contains a non-expired lease whose
+    ``owner_host`` and ``owner_pid`` match the lock's owner metadata.
+
+    This is the **authoritative** ownership check.  PID liveness alone
+    (from :func:`inspect_repair_lock`) is admission evidence, not authority.
+    """
+    if lease_store is None or not lease_id:
+        return False, {"reason": "missing_lease_store_or_lease_id"}
+    if not isinstance(lock_owner, Mapping):
+        return False, {"reason": "missing_lock_owner_metadata"}
+
+    diagnostics: dict[str, Any] = {"lease_id": lease_id}
+
+    try:
+        lease = lease_store.current_lease(lease_id)
+    except Exception as exc:
+        diagnostics["reason"] = "lease_store_read_error"
+        diagnostics["error"] = str(exc)
+        return False, diagnostics
+
+    if lease is None:
+        diagnostics["reason"] = "no_lease_found"
+        return False, diagnostics
+
+    # Check expiry
+    if lease.is_expired:
+        diagnostics["reason"] = "lease_expired"
+        diagnostics["lease_owner_host"] = lease.owner_host
+        diagnostics["lease_owner_pid"] = lease.owner_pid
+        return False, diagnostics
+
+    lock_host = str(lock_owner.get("hostname") or "")
+    lock_pid = str(lock_owner.get("pid") or "")
+
+    diagnostics["lease_owner_host"] = lease.owner_host
+    diagnostics["lease_owner_pid"] = lease.owner_pid
+    diagnostics["lock_host"] = lock_host
+    diagnostics["lock_pid"] = lock_pid
+
+    if lease.owner_host != lock_host:
+        diagnostics["reason"] = "owner_host_mismatch"
+        return False, diagnostics
+
+    if lease.owner_pid != lock_pid:
+        diagnostics["reason"] = "owner_pid_mismatch"
+        return False, diagnostics
+
+    diagnostics["reason"] = "authorized"
+    diagnostics["custody_epoch"] = lease.custody_epoch
+    diagnostics["expires_at"] = lease.expires_at
+    return True, diagnostics
+
+
+def _validate_lease_authority_inner(
+    lease_store: Any,
+    lease_id: str,
+    lock_owner: dict[str, Any] | None,
+) -> bool:
+    """Internal wrapper — returns a simple bool for release_repair_lock."""
+    authorized, _diag = validate_lease_authority(lease_store, lease_id, lock_owner)
+    return authorized
+
+
+def renew_repair_lock(
+    lock_dir: str | Path,
+    lease_store: Any,
+    lease_id: str,
+    *,
+    timeout_seconds: float | None = None,
+    now: datetime | None = None,
+    is_pid_live: PidLivenessProbe | None = None,
+) -> RepairLockResult:
+    """Renew (extend the expiry of) a repair lock with lease-store authority.
+
+    The lease store **must** confirm current ownership before the renewal
+    is allowed.  The lock directory is not mutated — only the owner
+    metadata's ``timeout_seconds`` and ``renewed_at`` fields are updated.
+
+    Returns a :class:`RepairLockResult` with status ``"acquired"`` on
+    success, ``"unauthorized"`` when the lease store does not confirm
+    ownership, or ``"stale"`` / ``"busy"`` / ``"missing"`` as appropriate.
+    """
+    lock_path = Path(lock_dir)
+
+    # First inspect the current lock state (admission evidence)
+    inspection = inspect_repair_lock(lock_path, now=now, is_pid_live=is_pid_live)
+
+    if inspection.status == "missing":
+        return inspection
+
+    if inspection.status != "busy" and inspection.status != "stale":
+        return inspection
+
+    if inspection.owner is None:
+        return RepairLockResult(
+            status="unauthorized",
+            lock_dir=lock_path,
+            owner=None,
+            stale_evidence={
+                "lock_dir": str(lock_path),
+                "reasons": ["no_owner_metadata_for_renewal"],
+            },
+        )
+
+    # ── Lease-store authority check ──────────────────────────────────
+    authorized, diagnostics = validate_lease_authority(
+        lease_store, lease_id, inspection.owner
+    )
+    if not authorized:
+        return RepairLockResult(
+            status="unauthorized",
+            lock_dir=lock_path,
+            owner=inspection.owner,
+            stale_evidence={
+                "lock_dir": str(lock_path),
+                "reasons": [f"lease_authority_check_failed: {diagnostics.get('reason')}"],
+                "lease_diagnostics": diagnostics,
+            },
+        )
+
+    # ── Update owner metadata with new timeout ────────────────────────
+    owner_path = owner_metadata_path(lock_path)
+    updated_owner = dict(inspection.owner)
+    updated_owner["timeout_seconds"] = timeout_seconds
+    updated_owner["renewed_at"] = _utc_now()
+    try:
+        atomic_write_json(
+            owner_path,
+            updated_owner,
+            include_resident_provenance=False,
+        )
+    except Exception:
+        return RepairLockResult(
+            status="unauthorized",
+            lock_dir=lock_path,
+            owner=inspection.owner,
+            stale_evidence={
+                "lock_dir": str(lock_path),
+                "reasons": ["owner_metadata_write_failed"],
+            },
+        )
+
+    return RepairLockResult(
+        status="acquired",
+        lock_dir=lock_path,
+        owner=updated_owner,
+    )
 
 
 @contextmanager
@@ -367,12 +637,36 @@ def _parse_datetime(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def occurrence_scoped_lock_dir(
+    claims_dir: str | Path,
+    occurrence_fingerprint: str,
+) -> Path:
+    """Return the lock directory for an exact-occurrence claim.
+
+    The directory is keyed by the deterministic occurrence fingerprint so
+    that two distinct occurrences of the same logical blocker cannot share
+    a claim slot — only one exact occurrence may be actively claimed at a
+    time.  The fingerprint MUST come from the canonical occurrence tuple
+    (the F01 repair-occurrence fields); it MUST NOT be derived from a
+    label, liveness signal, WBC receipt, or rebuildable projection, since
+    none of those uniquely and exactly identify a repair occurrence.
+    """
+
+    if not isinstance(occurrence_fingerprint, str) or not occurrence_fingerprint.strip():
+        raise ValueError("occurrence_fingerprint is required")
+    token = hashlib.sha256(occurrence_fingerprint.encode("utf-8")).hexdigest()
+    return Path(claims_dir) / f"{token}.lock"
+
+
 __all__ = [
     "RepairLockResult",
     "acquire_repair_lock",
     "build_owner_metadata",
     "inspect_repair_lock",
+    "occurrence_scoped_lock_dir",
     "owner_metadata_path",
     "release_repair_lock",
+    "renew_repair_lock",
     "repair_lock",
+    "validate_lease_authority",
 ]

@@ -414,7 +414,7 @@ class TestResolverObserveIntegration:
                 "test-session",
                 marker_dir="/nonexistent/markers",
             )
-            assert result["schema_version"] == 1
+            assert result["schema_version"] == 2
             assert result["session"] == "test-session"
             assert result["authoritative_source"] == "resolver_observe_disabled"
             assert "resolver observe disabled" in result["rationale"][0]

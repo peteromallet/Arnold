@@ -1,3 +1,5 @@
+> **Authority status (M11):** Zero-authority history. All auditor authority has been migrated to canonical delegation. These briefs are retained as non-runnable telemetry — they must not be used to launch repair actions, grant authority, or materialize commands.
+
 You are a DeepSeek subagent in a research swarm. Work read-only.
 
 Goal: enumerate signals around ordinary repair loop custody and effectiveness. Include repair-data sidecars, attempts, iteration history, current_attempt_id, attempt logs, repair-progress markers, needs-human records, run dirs, repeated same diagnosis, repair without relaunch, repair_running ghosts, and repair index reconciliation.
