@@ -39,14 +39,10 @@ STATUS_MAP = {
     "XPASS": "xpassed",
     "ERROR": "errors",
 }
-RESULT_RE = re.compile(
-    # Node IDs are opaque pytest strings.  In particular, parametrized IDs may
-    # contain spaces (and even words such as "PASSED"), so match greedily up to
-    # the final status token instead of treating node IDs as whitespace-free.
-    # Exclude ``-rA`` summary rows, whose status precedes the node ID.
-    r"^(?!(?:PASSED|FAILED|SKIPPED|XFAIL|XPASS|ERROR)\s)"
-    r"(?P<nodeid>.+::.+)\s+(?P<status>PASSED|FAILED|SKIPPED|XFAIL|XPASS|ERROR)"
-    r"(?:\s|$)"
+STATUS_RE = re.compile(
+    # Pytest may render a skip reason immediately after ``SKIPPED`` when its
+    # progress columns overflow.  Do not require a trailing word boundary.
+    r"\s+(?P<status>PASSED|FAILED|SKIPPED|XFAIL|XPASS|ERROR)"
 )
 SUMMARY_RE = re.compile(
     r"(?P<count>\d+)\s+(?P<status>passed|failed|skipped|xfailed|xpassed|error|errors|deselected)\b"
@@ -254,17 +250,26 @@ def _collect_inventory(root: Path, argv: Sequence[str], timeout: float) -> list[
     return inventory
 
 
-def _parse_outcomes(output: str) -> tuple[dict[str, int], list[str]]:
+def _parse_outcomes(
+    output: str, *, expected_inventory: Sequence[str]
+) -> tuple[dict[str, int], list[str]]:
+    expected = set(expected_inventory)
     statuses: dict[str, str] = {}
     for raw in output.splitlines():
-        match = RESULT_RE.match(raw.strip())
-        if match:
-            nodeid = match.group("nodeid")
+        # The frozen collect-only inventory is the authority for where an
+        # opaque node ID ends.  Trying every rendered status position avoids
+        # confusing status words inside parametrized IDs with pytest's actual
+        # terminal status, while still accepting glued-on skip reasons.
+        for match in STATUS_RE.finditer(raw):
+            nodeid = raw[: match.start()].strip()
+            if nodeid not in expected:
+                continue
             if nodeid in statuses:
                 raise ValidationShardError(
                     f"pytest reported duplicate terminal outcome for {nodeid!r}"
                 )
             statuses[nodeid] = STATUS_MAP[match.group("status")]
+            break
     counts = {name: 0 for name in OUTCOMES}
     for status in statuses.values():
         counts[status] += 1
@@ -368,7 +373,9 @@ def run_validation_shard(
                 exit_code = process.wait(timeout=10)
 
         output_text = log_path.read_text(encoding="utf-8")
-        counts, executed_inventory = _parse_outcomes(output_text)
+        counts, executed_inventory = _parse_outcomes(
+            output_text, expected_inventory=inventory
+        )
         after_revision, after_runtime = _assert_identity(
             root=root,
             expected_revision=expected_revision,
