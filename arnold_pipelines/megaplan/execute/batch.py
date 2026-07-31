@@ -4904,11 +4904,85 @@ def handle_execute_auto_loop(
         if isinstance(loaded_review, dict):
             review_data = loaded_review
             if _review_requests_rework(review_data):
-                review_rework_task_ids, unrunnable_rework_task_ids = _review_rework_task_ids(
-                    review_data,
-                    finalize_data,
+                from arnold_pipelines.megaplan.orchestration.rework_admission import (
+                    reconcile_review_rework,
                 )
-                if not review_rework_task_ids:
+                review_revision = None
+                review_evidence_path = plan_dir / "review_evidence.json"
+                if review_evidence_path.exists():
+                    try:
+                        review_evidence = read_json(review_evidence_path)
+                    except (OSError, UnicodeDecodeError, ValueError):
+                        review_evidence = {}
+                    if isinstance(review_evidence, dict):
+                        raw_revision = review_evidence.get("head_sha")
+                        if isinstance(raw_revision, str) and raw_revision:
+                            review_revision = raw_revision
+                authority_revision = _best_effort_git_head(root)
+                rework_admission = reconcile_review_rework(
+                    review_data,
+                    known_task_ids=set(all_task_ids),
+                    accepted_task_ids=set(completed_task_ids),
+                    authority_revision=authority_revision,
+                    review_revision=review_revision,
+                )
+                atomic_write_json(
+                    plan_dir / "review_rework_admission.json",
+                    rework_admission.to_dict(),
+                )
+                review_rework_task_ids = list(rework_admission.runnable_task_ids)
+                unrunnable_rework_task_ids = [
+                    str(row.get("code") or "rework_admission_blocked")
+                    for row in rework_admission.blockers
+                ]
+                validation_only_satisfied = False
+                if rework_admission.validation_jobs:
+                    import shlex as _shlex
+                    from arnold_pipelines.megaplan.execute.validation_runner import (
+                        run_single_validation_job,
+                    )
+
+                    validation_results = []
+                    for job in rework_admission.validation_jobs:
+                        validation_results.append(
+                            run_single_validation_job(
+                                {
+                                    "id": job["id"],
+                                    "command": _shlex.split(str(job["command"])),
+                                    "cwd": ".",
+                                    "environment": {},
+                                    "timeout_seconds": 600,
+                                    "expected_output_paths": [],
+                                },
+                                project_dir=Path(root),
+                            ).as_dict()
+                        )
+                    atomic_write_json(
+                        plan_dir / "review_rework_validation.json",
+                        {
+                            "schema": "megaplan.review_rework_validation",
+                            "schema_version": 1,
+                            "authority_digest": rework_admission.authority_digest,
+                            "results": validation_results,
+                        },
+                    )
+                    failed_validation = [
+                        row
+                        for row in validation_results
+                        if row.get("error") or row.get("timed_out") or row.get("exit_code") != 0
+                    ]
+                    if failed_validation:
+                        return _block_no_runnable_rework(
+                            plan_dir=plan_dir,
+                            state=state,
+                            auto_approve=auto_approve,
+                            reason=(
+                                "review bulk verification failed its bounded validation "
+                                "job; a scoped successor task is required"
+                            ),
+                        )
+                    validation_only_satisfied = not review_rework_task_ids
+                if not review_rework_task_ids and not validation_only_satisfied:
                     if unrunnable_rework_task_ids:
                         return _handle_unroutable_review_rework(
                             plan_dir=plan_dir,
@@ -4944,7 +5018,7 @@ def handle_execute_auto_loop(
                     state.setdefault("meta", {}).pop(
                         _UNROUTABLE_REWORK_ATTEMPTS_KEY, None
                     )
-                rework_mode = True
+                rework_mode = bool(review_rework_task_ids)
                 pending_tasks = [
                     task
                     for task in tasks
