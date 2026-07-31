@@ -25,16 +25,12 @@ from typing import Any
 from arnold_pipelines.megaplan._core import topology
 from arnold_pipelines.megaplan._core.workflow import workflow_next
 from arnold_pipelines.megaplan._core import (
-    add_or_increment_debt,
     atomic_write_json,
-    extract_subsystem_tag,
     find_command,
-    load_debt_registry,
     load_flag_registry,
     latest_plan_path,
     now_utc,
     read_json,
-    save_debt_registry,
     sha256_file,
     unresolved_significant_flags,
 )
@@ -103,6 +99,11 @@ from arnold_pipelines.megaplan.blocker_recovery import (
 )
 from arnold_pipelines.megaplan.control_interface import declared_override_policy_target
 from arnold_pipelines.megaplan.orchestration.phase_result import read_phase_result
+from arnold_pipelines.megaplan.orchestration.force_proceed_custody import (
+    build_force_proceed_custody,
+    critique_resolution_rows,
+    project_force_proceed_custody,
+)
 
 
 def _write_gate_json(plan_dir: Path, payload: dict[str, Any]) -> str:
@@ -674,6 +675,18 @@ def _force_proceed_gate_artifacts(
         "preflight_results": gate_checks["preflight_results"],
         "unresolved_flags": gate_checks["unresolved_flags"],
     }
+    custody = build_force_proceed_custody(
+        plan_dir,
+        state,
+        reason=str(transition.payload.get("reason") or ""),
+    )
+    # Preserve the actual North-Star subjects.  The CAS-owned custody record
+    # supplies their explicit waiver; replacing them with [] made finalize
+    # consume stale carry data or silently forget the blockers.
+    from arnold_pipelines.megaplan.north_star_actions import (
+        read_carried_north_star_actions,
+    )
+
     gate = build_gate_artifact(
         merged_signals,
         {
@@ -682,9 +695,9 @@ def _force_proceed_gate_artifacts(
             "signals_assessment": "Forced proceed override applied by the orchestrator.",
             "warnings": signals.get("warnings", []),
             "settled_decisions": [],
-            "flag_resolutions": [],
+            "flag_resolutions": critique_resolution_rows(custody),
             "accepted_tradeoffs": [],
-            "north_star_actions": [],
+            "north_star_actions": read_carried_north_star_actions(plan_dir),
         },
         override_forced=True,
         orchestrator_guidance="Force-proceed override applied. Proceed to finalize.",
@@ -693,6 +706,7 @@ def _force_proceed_gate_artifacts(
     return {
         "gate.json": gate,
         "unresolved_flags": unresolved_significant_flags(flag_registry),
+        "force_proceed_custody": custody,
     }
 
 
@@ -701,30 +715,14 @@ def _write_force_proceed_artifacts(
     transition: ControlTransition,
     artifacts: Mapping[str, object],
 ) -> int:
-    plan_dir = _plan_dir(state, transition)
-    root = _root_dir(state, transition)
-    gate = artifacts.get("gate.json")
-    if isinstance(gate, Mapping):
-        _write_gate_json(plan_dir, dict(gate))
-    unresolved_flags = artifacts.get("unresolved_flags")
-    flags = unresolved_flags if isinstance(unresolved_flags, list) else []
-    debt_registry = load_debt_registry(root)
-    for flag in flags:
-        if not isinstance(flag, Mapping):
-            continue
-        concern = flag.get("concern")
-        flag_id = flag.get("id")
-        if not isinstance(concern, str) or not isinstance(flag_id, str):
-            continue
-        add_or_increment_debt(
-            debt_registry,
-            subsystem=extract_subsystem_tag(concern),
-            concern=concern,
-            flag_ids=[flag_id],
-            plan_id=str(state.get("name") or ""),
-        )
-    save_debt_registry(root, debt_registry)
-    return len(flags)
+    """Return the disposition count; durable writes happen after the state CAS."""
+
+    custody = artifacts.get("force_proceed_custody")
+    if not isinstance(custody, Mapping):
+        return 0
+    return len(custody.get("critique_dispositions", [])) + len(
+        custody.get("north_star_dispositions", [])
+    )
 
 
 def _selected_profile_spec_value(spec_value: str | list[str], *, path: str) -> str:
@@ -1018,6 +1016,23 @@ class PlanningControlBinding:
             _strict_notes_guard(plan_dir, state, transition)
             current_state = state["current_state"]
             reason = transition.payload.get("reason")
+            existing_meta = state.get("meta")
+            existing_custody = (
+                existing_meta.get("force_proceed_custody")
+                if isinstance(existing_meta, Mapping)
+                else None
+            )
+            if current_state == STATE_GATED and isinstance(existing_custody, Mapping):
+                # A repeated delivery of the same operator decision is a
+                # projection repair, not a second waiver/debt occurrence.
+                artifacts = dict(self.synthesize_artifacts(run_state, transition))
+                artifacts["force_proceed_custody"] = dict(existing_custody)
+                return ControlTransitionResult(
+                    accepted=True,
+                    mutated=False,
+                    reason="force-proceed-idempotent",
+                    artifacts=artifacts,
+                )
             override_entry = {
                 "action": "force-proceed",
                 "timestamp": now_utc(),
@@ -1053,6 +1068,17 @@ class PlanningControlBinding:
             debt_entries_added = _write_force_proceed_artifacts(state, transition, artifacts)
             next_meta = _next_meta(state, override_entry=override_entry)
             next_meta.pop("user_approved_gate", None)
+            custody = artifacts.get("force_proceed_custody")
+            if not isinstance(custody, Mapping):
+                raise CliError(
+                    "force_proceed_custody_missing",
+                    "force-proceed could not build an authoritative custody disposition",
+                )
+            next_meta["force_proceed_custody"] = dict(custody)
+            override_entry["custody_transaction_id"] = custody["transaction_id"]
+            override_entry["debt_entries_added"] = debt_entries_added
+            # _next_meta copied the entry before the custody fields above.
+            next_meta["overrides"][-1] = dict(override_entry)
             gate = artifacts.get("gate.json")
             orchestrator_guidance = (
                 gate.get("orchestrator_guidance")
@@ -1606,6 +1632,30 @@ class PlanningControlBinding:
         if transition.op == "override" and transition.target_id == "force-proceed":
             return _force_proceed_gate_artifacts(state, transition)
         return {}
+
+    def commit_artifacts(
+        self,
+        state: Mapping[str, object],
+        transition: ControlTransition,
+        artifacts: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        """Materialize repairable projections after the authoritative CAS."""
+
+        if transition.op != "override" or transition.target_id != "force-proceed":
+            return artifacts
+        gate = artifacts.get("gate.json")
+        if not isinstance(gate, Mapping):
+            raise CliError(
+                "force_proceed_gate_projection_missing",
+                "force-proceed committed without a gate projection",
+            )
+        count = project_force_proceed_custody(
+            root=_root_dir(state, transition),
+            plan_dir=_plan_dir(state, transition),
+            state=state,
+            gate=gate,
+        )
+        return {**dict(artifacts), "debt_entries_added": count}
 
 
 def planning_control_binding() -> PlanningControlBinding:

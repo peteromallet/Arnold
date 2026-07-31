@@ -1976,6 +1976,25 @@ def _reject_finalize_unresolved_north_star(plan_dir: Path, state: PlanState) -> 
         raw_addressed = meta.get("north_star_actions_addressed")
         if isinstance(raw_addressed, list):
             addressed = raw_addressed
+    # ``force-proceed`` is a distinct operator disposition, not a fabricated
+    # plan mutation.  Its complete North-Star waiver set is committed in the
+    # same state CAS that advances to gated; consume that authority directly
+    # instead of requiring stale revise metadata.
+    state_meta = state.get("meta")
+    force_custody = (
+        state_meta.get("force_proceed_custody")
+        if isinstance(state_meta, Mapping)
+        else None
+    )
+    if isinstance(force_custody, Mapping):
+        from arnold_pipelines.megaplan.orchestration.force_proceed_custody import (
+            north_star_addressed_rows,
+        )
+
+        addressed = [
+            *(addressed or []),
+            *north_star_addressed_rows(force_custody),
+        ]
 
     unresolved = find_unresolved_blocking_actions(
         carried_blocking=carried_blocking,
