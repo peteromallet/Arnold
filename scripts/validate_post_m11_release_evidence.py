@@ -145,6 +145,18 @@ def validate(path: Path) -> None:
                     )
                 )
 
+    for index, item in enumerate(data.get("canonical_artifact_moves", [])):
+        source = repo / item["from"]
+        destination = repo / item["to"]
+        if source.exists():
+            raise ValueError(
+                f"canonical_artifact_moves[{index}].from still exists: {item['from']}"
+            )
+        if not destination.is_file():
+            raise ValueError(
+                f"canonical_artifact_moves[{index}].to is missing: {item['to']}"
+            )
+
     for sha in sorted(git_objects):
         _git("cat-file", "-e", f"{sha}^{{object}}", cwd=repo)
 

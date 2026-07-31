@@ -1,8 +1,8 @@
 # Post-M11 consolidation release evidence
 
 Status: **in progress**. Evidence cut:
-`730fbf08c0a493c928ae234f0a6716098e3c672b`, tree
-`5e74be82804962e17d3a97b4949f5a191e6551ac`.
+`20644b23a7e041caad15684ddba07e703ca1c5af`, tree
+`3518bd92e7ef7a1af6883879c41c179d1ff46d9c`.
 
 This is the human-readable projection of
 [`post-m11-release-evidence-20260731.json`](post-m11-release-evidence-20260731.json).
@@ -20,9 +20,9 @@ pending.
 - Origin base containing that plan:
   `96127731661b4aeec7e049b8a7b59170a9506b06`
 - Consolidation evidence cut:
-  `730fbf08c0a493c928ae234f0a6716098e3c672b`
+  `20644b23a7e041caad15684ddba07e703ca1c5af`
 - Exact evidence-cut tree:
-  `5e74be82804962e17d3a97b4949f5a191e6551ac`
+  `3518bd92e7ef7a1af6883879c41c179d1ff46d9c`
 
 The original dirty checkout is preserved, not normalized. Its encrypted
 payload and preservation bundle each have a local copy and a hash-matched
@@ -49,7 +49,10 @@ The first-parent lineage records eleven integration steps:
     post-M11 contracts; and
 13. repair of M11 validation node-ID accounting, recovering all 208 omitted
     node IDs and closing ticket `01KYV57FAPY2H0ZRQMM8MJ29EM`; and
-14. resolution of the three packaging release-contract blockers.
+14. resolution of the three packaging release-contract blockers;
+15. durable inclusion of the post-M11 evidence ledger; and
+16. canonicalization of four normative initiative artifacts, with obsolete
+    paths removed and references updated.
 
 Every `LAND` source in the JSON names both its immutable source SHA and the
 integration commit that contains it. The two dirty-work checkpoint branches
@@ -90,6 +93,20 @@ Packaging evidence is also partial:
 - rebuilt wheel and sdist hashes are recorded in the JSON; and
 - the packaging **code gate is complete**, but the cloud image build remains
   pending because the Docker daemon was unavailable during the local attempt.
+
+The fresh-wheel evidence log hash is
+`384cb2f6325a2bde92a625db9cace86117f89be76e05a53011788e55ed9bfdc5`;
+it supersedes the incorrectly recorded earlier value.
+
+The first full no-debt attempt at `cd7c6ac0ee` reached shard 002 and failed nine
+conformance tests. Its immutable receipt, custody, terminal, and failure-list
+hashes are retained in the JSON as superseded failure evidence. The underlying
+issue was real: four normative initiative artifacts occupied noncanonical
+locations and an obsolete legacy-reference exception remained. Commit
+`3ca68e0e3b` moved the artifacts into `validation/`, `research/`, `decisions/`,
+and `evidence/`, removed the obsolete locations, and passed 275 adjacent plus
+55 focused conformance tests. That fixes the observed defect but does not turn
+the failed shard into acceptance; a fresh full no-debt run is still required.
 
 The seven-failure run remains in the record because failure history must not be
 laundered by later fixes. A final green run must be bound to the final release
