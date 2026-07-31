@@ -444,6 +444,16 @@ This redaction applies to:
 - OpenSSH project/docs: https://www.openssh.com/
 - Config & environment map: [docs/configuration.md](configuration.md)
 
+The cloud image also includes a pinned Railway CLI for application deployments
+from the runner; Railway is not a Megaplan cloud provider. Its user
+configuration directory is `/root/.railway`, backed by the persistent
+`/workspace/.creds/railway` directory. Authenticate interactively with
+`railway login --browserless`, or use exactly one Railway-supported environment
+variable (`RAILWAY_TOKEN` for a project/environment or `RAILWAY_API_TOKEN` for
+account/workspace operations). Do not place either token in `cloud.yaml` or the
+repository. A legacy `/workspace/.creds/railway-config.json` seed is imported
+only when the persistent config is absent.
+
 ## M1 Cloud-Safe Repair Substrate
 
 The M1 substrate wraps the existing watchdog, repair loop, auditor, and Discord
