@@ -207,3 +207,64 @@ def test_canonical_budget_strips_hermes_colon_prefixes() -> None:
         tier=ModelTier.NON_ENFORCED,
     )
     assert budget.family is ModelFamily.DEEPSEEK
+
+
+def test_fallback_estimate_over_default_is_advisory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A conservative fallback cannot manufacture a family-limit rejection."""
+    from arnold.pipeline import model_seam
+
+    monkeypatch.setattr(model_seam, "_lazy_hf_tokenizer", lambda *_args: None)
+
+    budget = model_seam.budget_model_input(
+        "x" * 300_000,
+        model="glm-5.2",
+        tier=ModelTier.ENFORCED,
+    )
+
+    assert budget.input_tokens > budget.max_input_tokens
+    assert budget.budget_result is BudgetStatus.EXCEEDED
+    assert budget.tokenizer_source == "byte_estimate:fallback"
+    assert budget.degraded_reason == "estimated_input_budget_exceeded"
+
+
+def test_explicit_cap_remains_hard_with_fallback_estimate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit cap is operator authority even without a local tokenizer."""
+    from arnold.pipeline import model_seam
+
+    monkeypatch.setattr(model_seam, "_lazy_hf_tokenizer", lambda *_args: None)
+
+    with pytest.raises(ModelBudgetError, match="budget exceeded"):
+        model_seam.budget_model_input(
+            "x" * 300,
+            model="glm-5.2",
+            tier=ModelTier.ENFORCED,
+            max_input_tokens=10,
+        )
+
+
+def test_exact_tokenizer_count_over_default_remains_hard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real family tokenizer preserves the pre-dispatch hard limit."""
+    from arnold.pipeline import model_seam
+
+    class OversizedTokenizer:
+        def encode(self, _text: str) -> list[int]:
+            return [0] * 120_001
+
+    monkeypatch.setattr(
+        model_seam,
+        "_lazy_hf_tokenizer",
+        lambda *_args: OversizedTokenizer(),
+    )
+
+    with pytest.raises(ModelBudgetError, match="120001 tokens > 120000 tokens"):
+        model_seam.budget_model_input(
+            "small source text",
+            model="glm-5.2",
+            tier=ModelTier.ENFORCED,
+        )
